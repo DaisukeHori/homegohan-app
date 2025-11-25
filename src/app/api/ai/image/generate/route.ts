@@ -29,6 +29,8 @@ export async function POST(request: Request) {
     const genAI = new GoogleGenerativeAI(API_KEY);
     
     // 環境変数でモデルを切り替え可能（デフォルトは Gemini 2.5 Flash Image）
+    // 注意: 現在のSDKでは画像生成モデルが直接サポートされていない可能性があるため、
+    // REST APIを直接呼び出す実装に変更
     const modelName = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
     
     // プロンプトの構築（料理写真用に最適化）
@@ -37,15 +39,39 @@ export async function POST(request: Request) {
     let imageBase64 = '';
 
     try {
-      // Gemini 画像生成モデルを使用
-      // ドキュメントに基づき、generateContent で画像を生成
-      const model = genAI.getGenerativeModel({ model: modelName });
+      // Gemini REST APIを直接呼び出し（画像生成モデル用）
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`;
       
-      const result = await model.generateContent(enhancedPrompt);
-      const response = result.response;
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: enhancedPrompt
+            }]
+          }],
+          generationConfig: {
+            responseModalities: ['IMAGE'],
+            imageConfig: {
+              aspectRatio: '1:1'
+            }
+          }
+        })
+      });
 
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Gemini API Error:", errorText);
+        throw new Error(`Gemini API returned ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      
       // レスポンスから画像データを抽出
-      const parts = response.candidates?.[0]?.content?.parts || [];
+      const parts = data.candidates?.[0]?.content?.parts || [];
       
       for (const part of parts) {
         if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
@@ -55,12 +81,13 @@ export async function POST(request: Request) {
       }
 
       if (!imageBase64) {
-        throw new Error('No image data in response');
+        console.error("Response structure:", JSON.stringify(data, null, 2));
+        throw new Error('No image data in response. The model may not support image generation.');
       }
 
     } catch (genError: any) {
       console.error("Gemini Generation Error:", genError);
-      throw new Error(`Failed to generate image: ${genError.message}`);
+      throw new Error(`Failed to generate image: ${genError.message || 'Unknown error'}`);
     }
 
     const buffer = Buffer.from(imageBase64, 'base64');
