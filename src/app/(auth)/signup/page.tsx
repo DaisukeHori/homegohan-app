@@ -39,7 +39,7 @@ export default function SignupPage() {
     const password = formData.get('password') as string;
 
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -48,15 +48,22 @@ export default function SignupPage() {
       });
 
       if (error) {
-        alert('登録に失敗しました。');
+        console.error('Signup error:', error);
+        alert(`登録に失敗しました: ${error.message}`);
         return;
       }
 
-      // メール確認画面へ（あるいは自動ログイン設定次第でホームへ）
-      router.push('/auth/verify');
-    } catch (error) {
+      // メール確認画面へ
+      if (data.user && !data.session) {
+        // メール確認が必要な場合
+        router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
+      } else if (data.session) {
+        // 自動ログインされた場合（メール確認が不要な設定の場合）
+        router.push('/onboarding');
+      }
+    } catch (error: any) {
       console.error('Signup error:', error);
-      alert('予期せぬエラーが発生しました。');
+      alert(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
     } finally {
       setIsLoading(false);
     }

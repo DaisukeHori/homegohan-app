@@ -3,8 +3,48 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
+import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 export default function VerifyPage() {
+  const [isResending, setIsResending] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState(false);
+  const searchParams = useSearchParams();
+  const email = searchParams.get('email');
+  const supabase = createClient();
+
+  const handleResend = async () => {
+    if (!email) {
+      alert('メールアドレスが見つかりません。サインアップページから再度お試しください。');
+      return;
+    }
+
+    setIsResending(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) {
+        console.error('Resend error:', error);
+        alert(`再送信に失敗しました: ${error.message}`);
+        return;
+      }
+
+      setResendSuccess(true);
+      setTimeout(() => setResendSuccess(false), 5000);
+    } catch (error: any) {
+      console.error('Resend error:', error);
+      alert(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
+    } finally {
+      setIsResending(false);
+    }
+  };
   return (
     <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-8 animate-fade-up">
       
@@ -45,8 +85,23 @@ export default function VerifyPage() {
         
         <p className="text-xs text-gray-400">
           メールが届かない場合は、迷惑メールフォルダをご確認いただくか、<br/>
-          <button className="text-[#FF8A65] font-bold hover:underline">再送信</button> してください。
+          <button 
+            onClick={handleResend}
+            disabled={isResending}
+            className="text-[#FF8A65] font-bold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isResending ? '送信中...' : '再送信'}
+          </button> してください。
         </p>
+        {resendSuccess && (
+          <motion.p
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-sm text-green-600 font-bold"
+          >
+            ✓ 確認メールを再送信しました
+          </motion.p>
+        )}
       </div>
       
       <div className="pt-8">
