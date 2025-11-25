@@ -42,7 +42,7 @@ export default function OnboardingCompletePage() {
             transition={{ delay: 0.4 }}
             className="text-3xl md:text-4xl font-bold text-gray-900"
           >
-            All Set!
+            準備完了！
           </motion.h1>
           <motion.p 
             initial={{ opacity: 0 }}
@@ -64,9 +64,9 @@ export default function OnboardingCompletePage() {
         >
           <div className="space-y-4">
             {[
-              { label: 'Motivation', value: '100%' },
-              { label: 'Nutrition Plan', value: 'Optimized' },
-              { label: 'AI Partner', value: 'Active' },
+              { label: 'モチベーション', value: '100%' },
+              { label: '栄養プラン', value: '最適化済み' },
+              { label: 'AIパートナー', value: '稼働中' },
             ].map((item, i) => (
               <div key={i} className="flex items-center justify-between border-b border-gray-50 pb-2 last:border-0 last:pb-0">
                 <span className="text-sm font-bold text-gray-400">{item.label}</span>

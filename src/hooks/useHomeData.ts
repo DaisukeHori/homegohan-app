@@ -29,8 +29,23 @@ export const useHomeData = () => {
 
   const fetchHomeData = async () => {
     setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    setUser(user);
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    
+    // ユーザープロファイル情報を取得
+    if (authUser) {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('nickname')
+        .eq('id', authUser.id)
+        .single();
+      
+      setUser({
+        ...authUser,
+        nickname: profile?.nickname || null,
+      });
+    } else {
+      setUser(null);
+    }
 
     if (user) {
       // 1. Activity Log

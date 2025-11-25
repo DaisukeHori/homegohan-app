@@ -53,7 +53,7 @@ export default function HomePage() {
             </p>
             <h1 className="text-3xl lg:text-4xl font-bold leading-tight">
               {getGreeting()}、<br className="lg:hidden"/>
-              <span className="lg:text-5xl">{user?.email?.split('@')[0] || 'ゲスト'}</span> さん
+              <span className="lg:text-5xl">{user?.nickname || user?.email?.split('@')[0] || 'ゲスト'}</span> さん
             </h1>
           </div>
           
