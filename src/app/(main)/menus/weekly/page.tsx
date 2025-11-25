@@ -70,8 +70,24 @@ export default function WeeklyMenuPage() {
 
       const data = await response.json();
       
-      // 詳細画面へ遷移（そこでポーリングなどで完了を待つ）
-      router.push(`/menus/weekly/${data.id}`);
+      // 非同期処理なので、リクエスト作成後すぐに一覧を更新して表示
+      // 詳細画面に遷移せず、一覧ページでステータスを確認できるようにする
+      setLoading(false);
+      
+      // リクエスト一覧を再取得して最新状態を表示
+      const { data: updatedData } = await supabase
+        .from('weekly_menu_requests')
+        .select('*')
+        .eq('id', data.id)
+        .single();
+      
+      if (updatedData) {
+        const updatedRequest = toWeeklyMenuRequest(updatedData);
+        setRequests(prev => [updatedRequest, ...prev]);
+      }
+      
+      // 成功メッセージを表示
+      alert('献立生成を開始しました。バックグラウンドで処理が進みます。\n\n一覧でステータスを確認できます。');
 
     } catch (error: any) {
       alert(error.message || "エラーが発生しました");
@@ -85,7 +101,7 @@ export default function WeeklyMenuPage() {
       {/* ヘッダー */}
       <div className="bg-white p-6 pb-4 border-b border-gray-100 sticky top-0 z-20">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Weekly Plan</h1>
+          <h1 className="text-2xl font-bold text-gray-900">週献立</h1>
         </div>
       </div>
 
@@ -95,8 +111,8 @@ export default function WeeklyMenuPage() {
         {/* 新規生成カード */}
         <Card className="border-none shadow-lg">
           <CardHeader>
-            <CardTitle>New Plan</CardTitle>
-            <CardDescription>来週の献立をAIに依頼します</CardDescription>
+            <CardTitle>新しい献立を作成</CardTitle>
+            <CardDescription>AIがあなたに最適な1週間の献立を提案します</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -124,7 +140,7 @@ export default function WeeklyMenuPage() {
               className="w-full bg-[#FF8A65] hover:bg-[#FF7043] text-white font-bold rounded-full py-6"
               disabled={loading || !startDate}
             >
-              {loading ? "Requesting..." : "Generate Weekly Menu"}
+              {loading ? "生成を開始しています..." : "週献立を生成する"}
             </Button>
           </CardContent>
         </Card>

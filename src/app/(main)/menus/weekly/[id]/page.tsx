@@ -190,10 +190,73 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
   };
 
   // ... (Loading, Error states) ...
-  if (loading) return <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50"><div className="w-16 h-16 border-4 border-[#FF8A65] border-t-transparent rounded-full animate-spin" /><p className="mt-4 text-gray-500 font-bold">Loading Plan...</p></div>;
-  if (!request) return <div>Not Found</div>; // Improve later
-  if (request.status === 'pending' || request.status === 'processing') return <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-8 text-center"><div className="text-4xl animate-bounce mb-4">👨‍🍳</div><h1 className="font-bold">AI Nutritionist is working...</h1></div>;
-  if (request.status === 'failed') return <div>Failed</div>;
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+      <div className="w-16 h-16 border-4 border-[#FF8A65] border-t-transparent rounded-full animate-spin" />
+      <p className="mt-4 text-gray-500 font-bold">読み込み中...</p>
+    </div>
+  );
+  
+  if (!request) return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-8">
+      <p className="text-gray-500 font-bold">献立が見つかりませんでした</p>
+      <Link href="/menus/weekly" className="mt-4 text-accent hover:underline">一覧に戻る</Link>
+    </div>
+  );
+  
+  // 非同期処理中は、進行状況を表示しつつ、ユーザーを待たせない
+  if (request.status === 'pending' || request.status === 'processing') {
+    return (
+      <div className="min-h-screen bg-gray-50 pb-24">
+        <div className="bg-white p-6 pb-4 border-b border-gray-100 sticky top-0 z-20">
+          <Link href="/menus/weekly" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-4">
+            <Icons.Back className="w-4 h-4" /> 一覧に戻る
+          </Link>
+          <h1 className="text-2xl font-bold text-gray-900">週献立を生成中</h1>
+        </div>
+        
+        <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 text-center">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+            className="w-20 h-20 mb-6"
+          >
+            <div className="text-6xl">👨‍🍳</div>
+          </motion.div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">AI管理栄養士が献立を作成中です</h2>
+          <p className="text-gray-500 text-sm mb-6">
+            {request.status === 'pending' ? 'リクエストを受け付けました' : '献立を生成しています...'}
+          </p>
+          <div className="w-full max-w-md bg-gray-100 rounded-full h-2 overflow-hidden">
+            <motion.div
+              className="h-full bg-accent rounded-full"
+              initial={{ width: '0%' }}
+              animate={{ width: request.status === 'processing' ? '70%' : '30%' }}
+              transition={{ duration: 1, repeat: Infinity, repeatType: 'reverse' }}
+            />
+          </div>
+          <p className="text-xs text-gray-400 mt-4">
+            この画面を閉じても、バックグラウンドで処理は続行されます
+          </p>
+          <Link 
+            href="/menus/weekly" 
+            className="mt-6 text-accent hover:underline text-sm font-bold"
+          >
+            一覧ページに戻る →
+          </Link>
+        </div>
+      </div>
+    );
+  }
+  
+  if (request.status === 'failed') return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-8">
+      <div className="text-4xl mb-4">❌</div>
+      <h1 className="text-xl font-bold text-gray-900 mb-2">生成に失敗しました</h1>
+      <p className="text-gray-500 text-sm mb-6">{request.errorMessage || '不明なエラーが発生しました'}</p>
+      <Link href="/menus/weekly" className="text-accent hover:underline">一覧に戻る</Link>
+    </div>
+  );
 
   const result = request.resultJson;
   const days = result?.days || [];
@@ -228,17 +291,17 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
         {/* ... (既存のヘッダーコンテンツ) ... */}
         <div className="absolute inset-0 bg-gradient-to-br from-accent to-transparent opacity-20" />
         <div className="relative z-10">
-          <Link href="/home" className="inline-flex items-center gap-2 text-sm text-white/60 hover:text-white mb-6 group">
-            <Icons.Back className="w-4 h-4" /> Home
+          <Link href="/menus/weekly" className="inline-flex items-center gap-2 text-sm text-white/60 hover:text-white mb-6 group">
+            <Icons.Back className="w-4 h-4" /> 一覧に戻る
           </Link>
           <div className="flex justify-between items-start mb-6">
             <div>
-              <h1 className="text-2xl font-bold">Projected Impact</h1>
+              <h1 className="text-2xl font-bold">予測される効果</h1>
               <p className="text-white/60 text-sm">1週間後の予測変化</p>
             </div>
             <div className="text-right">
               <span className="text-4xl font-black text-accent">{impact?.weightChange || '-'}</span>
-              <p className="text-xs font-bold uppercase tracking-wider text-white/60">Weight</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-white/60">体重変化</p>
             </div>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
@@ -258,7 +321,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
                 activeTab === tab ? 'bg-foreground text-white shadow-md' : 'text-gray-400 hover:text-gray-600'
               }`}
             >
-              {tab === 'menu' ? 'Menu' : tab === 'shopping' ? 'Shopping' : 'Advice'}
+              {tab === 'menu' ? '献立' : tab === 'shopping' ? '買い物リスト' : 'アドバイス'}
             </button>
           ))}
         </div>
@@ -289,14 +352,31 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
                         <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden relative shrink-0">
                           {meal.imageUrl ? (
                              // eslint-disable-next-line @next/next/no-img-element
-                             <img src={meal.imageUrl} alt="meal" className="w-full h-full object-cover" />
-                          ) : (
-                             <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">No Image</div>
-                          )}
+                             <img 
+                               src={meal.imageUrl} 
+                               alt={meal.dishes[0]?.name || 'meal'} 
+                               className="w-full h-full object-cover"
+                               onError={(e) => {
+                                 // 画像読み込みエラー時はプレースホルダーを表示
+                                 const target = e.target as HTMLImageElement;
+                                 target.style.display = 'none';
+                                 const placeholder = target.nextElementSibling as HTMLElement;
+                                 if (placeholder) placeholder.style.display = 'flex';
+                               }}
+                             />
+                          ) : null}
+                          <div 
+                            className={`w-full h-full flex items-center justify-center text-xs text-gray-400 ${meal.imageUrl ? 'hidden' : ''}`}
+                            style={{ display: meal.imageUrl ? 'none' : 'flex' }}
+                          >
+                            {meal.imageUrl ? '読み込み中...' : '画像なし'}
+                          </div>
                         </div>
                         <div className="flex-1">
-                          <p className="font-bold text-sm text-gray-800">{meal.dishes[0].name}</p>
-                          <p className="text-xs text-gray-400">{meal.mealType}</p>
+                          <p className="font-bold text-sm text-gray-800">{meal.dishes[0]?.name || 'メニュー名'}</p>
+                          <p className="text-xs text-gray-400">
+                            {meal.mealType === 'breakfast' ? '朝食' : meal.mealType === 'lunch' ? '昼食' : meal.mealType === 'dinner' ? '夕食' : meal.mealType}
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -341,7 +421,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
              disabled={isConfirming}
              className="w-full max-w-md mx-auto rounded-full bg-black text-white font-bold h-12 text-lg shadow-xl hover:bg-gray-800 transition-all active:scale-95 block"
            >
-             {isConfirming ? "Confirming..." : "Confirm Plan 🚀"}
+             {isConfirming ? "確定中..." : "この献立で確定 🚀"}
            </Button>
         </div>
       )}
