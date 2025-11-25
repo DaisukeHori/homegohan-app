@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { toMeal, toMealNutritionEstimate, toAnnouncement, toDailyActivityLog } from "@/lib/converter";
+import { toMeal, toMealNutritionEstimate, toAnnouncement } from "@/lib/converter";
 import type { Meal, MealNutritionEstimate, Announcement } from "@/types/domain";
 
 interface MealWithNutrition extends Meal {
