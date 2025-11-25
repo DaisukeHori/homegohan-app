@@ -52,16 +52,17 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
 
   // 裏面（編集モード）
   if (isFlipped) {
-    
     return (
       <motion.div
+        key={`edit-${day.date}`}
         style={{ x: editX, rotate: editRotate, zIndex: total - index + 100 }}
         drag="x"
         dragConstraints={{ left: 0, right: 0 }}
         onDragEnd={handleEditDragEnd}
         className="absolute top-0 left-0 w-full h-full bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
-        initial={{ rotateY: -90 }}
-        animate={{ rotateY: 0 }}
+        initial={{ rotateY: -90, opacity: 0 }}
+        animate={{ rotateY: 0, opacity: 1 }}
+        exit={{ rotateY: 90, opacity: 0 }}
         transition={{ duration: 0.4 }}
       >
         <div className="p-6 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
@@ -136,18 +137,23 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
   }
 
   // 表面（カードスタック）
+  // 編集モードの時は非表示にして触れないようにする
   return (
-    <motion.div
-      style={{ x, rotate, opacity, zIndex: total - index }}
-      drag="x"
-      dragConstraints={{ left: 0, right: 0 }}
-      onDragEnd={handleDragEnd}
-      className="absolute top-0 left-0 w-full h-[500px] bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
-      initial={{ scale: 0.95, y: 20 }}
-      animate={{ scale: 1, y: 0 }}
-      exit={{ x: 500, opacity: 0 }}
-      transition={{ type: "spring", stiffness: 300, damping: 20 }}
-    >
+    <>
+      {/* 編集モードでない時のみ表面を表示 */}
+      {!isFlipped && (
+        <motion.div
+          key={`front-${day.date}`}
+          style={{ x, rotate, opacity, zIndex: total - index }}
+          drag="x"
+          dragConstraints={{ left: 0, right: 0 }}
+          onDragEnd={handleDragEnd}
+          className="absolute top-0 left-0 w-full h-[500px] bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
+          initial={{ scale: 0.95, y: 20 }}
+          animate={{ scale: 1, y: 0, opacity: 1 }}
+          exit={{ opacity: 0, scale: 0.9 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        >
       {/* Overlays for Swipe Feedback */}
       <motion.div style={{ opacity: overlayOpacityRight }} className="absolute inset-0 bg-green-500 z-10 flex items-center justify-center pointer-events-none">
         <span className="text-white font-black text-4xl tracking-widest border-4 border-white px-4 py-2 rounded-xl transform -rotate-12">KEEP</span>
@@ -194,6 +200,8 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
         </Button>
       </div>
     </motion.div>
+      )}
+    </>
   );
 };
 
