@@ -4,6 +4,11 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { toWeeklyMenuRequest } from "@/lib/converter";
+import type { WeeklyMenuRequest, ProjectedImpact } from "@/types/domain";
+import { PlanningDeck } from "@/components/planning/PlanningDeck";
+import { Icons } from "@/components/icons";
 
 interface WeeklyMenuPageProps {
   params: { id: string };
