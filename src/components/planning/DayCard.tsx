@@ -142,20 +142,20 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
           </motion.div>
 
           {/* Main Visual Area - Full Bleed */}
-          <div className="absolute inset-0 z-0 bg-gray-900">
+          <div className="absolute inset-0 z-0 bg-gray-900 pointer-events-none">
             {mainImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img 
                 src={mainImage} 
                 alt="Main Dish" 
-                className="w-full h-full object-cover opacity-90" 
+                className="w-full h-full object-cover opacity-90 pointer-events-none" 
                 onError={(e) => {
                   console.error("Image load error:", mainImage);
                   e.currentTarget.style.display = 'none';
                 }}
               />
             ) : (
-              <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex flex-col items-center justify-center text-white/20">
+              <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex flex-col items-center justify-center text-white/20 pointer-events-none">
                 <span className="text-6xl mb-4">🍽️</span>
               </div>
             )}
