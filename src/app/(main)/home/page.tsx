@@ -41,7 +41,7 @@ export default function HomePage() {
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-12 relative overflow-hidden">
       
       {/* 背景装飾 */}
-      <div className="absolute top-0 left-0 w-full h-64 lg:h-80 bg-foreground rounded-b-[40px] lg:rounded-b-[60px] z-0" />
+      <div className="absolute top-0 left-0 w-full h-48 lg:h-64 bg-foreground rounded-b-[40px] lg:rounded-b-[60px] z-0" />
       
       <div className="relative z-10 px-6 pt-12 lg:px-12 lg:pt-16 max-w-7xl mx-auto">
         

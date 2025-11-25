@@ -49,17 +49,19 @@ export default function LoginPage() {
         return;
       }
 
-      // ユーザーロールを確認してリダイレクト先を決定
+      // ユーザーロールとオンボーディング状態を確認してリダイレクト先を決定
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('role')
+          .select('role, nickname')
           .eq('id', user.id)
           .single();
         
         if (profile?.role === 'admin') {
           router.push('/admin');
+        } else if (!profile || !profile.nickname) {
+          router.push('/onboarding');
         } else {
           router.push('/home');
         }

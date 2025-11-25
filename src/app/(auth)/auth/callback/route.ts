@@ -11,12 +11,12 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     
     if (!error) {
-      // ユーザー情報を取得してロールを確認
+      // ユーザー情報を取得してロールとオンボーディング状態を確認
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('role')
+          .select('role, nickname')
           .eq('id', user.id)
           .single()
         
@@ -24,11 +24,8 @@ export async function GET(request: Request) {
         if (profile?.role === 'admin') {
           next = '/admin'
         }
-        
-        // プロフィールが存在しない（新規登録）場合はオンボーディングへ
-        // ただし、管理者の場合はオンボーディングをスキップしても良いが、
-        // 基本的に管理者は既存ユーザーから昇格するのでプロフィールはあるはず。
-        if (!profile && next !== '/admin') {
+        // プロフィールが存在しない、またはニックネームが未設定（オンボーディング未完了）の場合はオンボーディングへ
+        else if (!profile || !profile.nickname) {
           next = '/onboarding'
         }
       }
