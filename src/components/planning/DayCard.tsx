@@ -145,13 +145,23 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
           <div className="absolute inset-0 z-0 bg-gray-100">
             {mainImage ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={mainImage} alt="Main Dish" className="w-full h-full object-cover" />
+              <img 
+                src={mainImage} 
+                alt="Main Dish" 
+                className="w-full h-full object-cover" 
+                onError={(e) => {
+                  console.error("Image load error:", mainImage);
+                  e.currentTarget.style.display = 'none';
+                  // フォールバックを表示するロジックが必要ならここに追加
+                }}
+              />
             ) : (
-              <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-                <span className="text-6xl opacity-20">🍽️</span>
+              <div className="w-full h-full bg-gray-200 flex flex-col items-center justify-center text-gray-400">
+                <span className="text-6xl opacity-20 mb-2">🍽️</span>
+                <span className="text-xs font-mono opacity-50">No Image Data</span>
               </div>
             )}
-            {/* 上部のテキスト視認性確保のための繊細なグラデーション（黒ではなく白ベースまたは極薄いシャドウ） */}
+            {/* 上部のテキスト視認性確保のための繊細なグラデーション */}
             <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-transparent h-32" />
           </div>
 
