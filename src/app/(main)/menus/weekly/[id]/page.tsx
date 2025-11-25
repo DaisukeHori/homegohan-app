@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { toWeeklyMenuRequest } from "@/lib/converters";
-import type { WeeklyMenuRequest } from "@/types/domain";
+import type { WeeklyMenuRequest, ProjectedImpact } from "@/types/domain";
 
 import { Icons } from "@/components/icons";
 
@@ -95,7 +95,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
   const result = request.resultJson;
   const days = result?.days || [];
   const shoppingList = result?.shoppingList || [];
-  const impact = result?.projectedImpact || {};
+  const impact: ProjectedImpact | null = result?.projectedImpact || null;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -117,23 +117,23 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
               <p className="text-white/60 text-sm">1週間後の予測変化</p>
             </div>
             <div className="text-right">
-              <span className="text-4xl font-black text-accent">{impact.weightChange || '-'}</span>
+              <span className="text-4xl font-black text-accent">{impact?.weightChange || '-'}</span>
               <p className="text-xs font-bold uppercase tracking-wider text-white/60">Weight</p>
             </div>
           </div>
 
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
             <p className="text-sm leading-relaxed text-white/90">
-              &quot;{impact.comment || 'バランスの良い食事がパフォーマンスを向上させます。'}&quot;
+              &quot;{impact?.comment || 'バランスの良い食事がパフォーマンスを向上させます。'}&quot;
             </p>
             <div className="flex gap-4 mt-4">
-              {impact.energyLevel && (
+              {impact?.energyLevel && (
                 <div className="flex flex-col">
                   <span className="text-[10px] uppercase text-white/40">Energy</span>
                   <span className="font-bold text-sm">{impact.energyLevel}</span>
                 </div>
               )}
-              {impact.skinCondition && (
+              {impact?.skinCondition && (
                 <div className="flex flex-col">
                   <span className="text-[10px] uppercase text-white/40">Skin</span>
                   <span className="font-bold text-sm">{impact.skinCondition}</span>
@@ -282,7 +282,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
               <h3 className="text-lg font-bold mb-4">Coach's Advice</h3>
               <div className="prose prose-sm text-gray-600">
                 <p className="whitespace-pre-wrap leading-relaxed">
-                  {impact.comment}
+                  {impact?.comment || 'アドバイスがありません。'}
                 </p>
                 <h4 className="font-bold text-gray-900 mt-6 mb-2">今週のポイント</h4>
                 <ul className="list-disc pl-4 space-y-1">
