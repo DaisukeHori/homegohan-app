@@ -73,9 +73,13 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
       }
 
       // 初回ロード時、未確定ならプランニングモードをON
-      if (domainRequest.status === 'completed' && !isPlanningMode && activeTab === 'menu') {
-         // 自動でONにするか、ボタンでONにするか。今回は「未確定ならまずプランニング」とする
-         // ただし、ユーザーが一覧から戻ってきた場合なども考慮し、stateで管理
+      // status === 'completed' の場合のみプランニングモードにする（confirmedならしない）
+      if (domainRequest.status === 'completed' && !isPlanningMode) {
+         setIsPlanningMode(true);
+      }
+      
+      if (domainRequest.status === 'confirmed' && isPlanningMode) {
+         setIsPlanningMode(false);
       }
 
       if (domainRequest.status === 'completed' || domainRequest.status === 'failed' || domainRequest.status === 'confirmed') {
@@ -93,6 +97,8 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
   useEffect(() => {
     if (request?.status === 'completed') {
       setIsPlanningMode(true);
+    } else if (request?.status === 'confirmed') {
+      setIsPlanningMode(false);
     }
   }, [request?.status]);
 
@@ -197,7 +203,8 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
       if (!res.ok) throw new Error('Failed to confirm');
       
       setRequest({ ...request, status: 'confirmed' });
-      alert('Plan Confirmed! Check your dashboard.');
+      setIsPlanningMode(false); // 確定したらプランニングモード終了
+      alert('献立を確定しました！今週も頑張りましょう！');
     } catch (e) {
       console.error(e);
       alert('Failed to confirm plan.');
@@ -418,8 +425,8 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
         </AnimatePresence>
       </div>
 
-      {/* Re-open Planning Mode Button (if not confirmed) */}
-      {request.status !== 'confirmed' && !isPlanningMode && (
+      {/* Re-open Planning Mode Button (if confirmed but user wants to edit) */}
+      {request.status === 'confirmed' && !isPlanningMode && (
         <div className="fixed bottom-24 right-6 z-40">
           <Button 
             onClick={() => setIsPlanningMode(true)}
@@ -430,16 +437,26 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
         </div>
       )}
 
-      {/* Confirm Button Footer */}
+      {/* Confirm Button Footer (Only in Planning Mode or if not confirmed, but PlanningDeck has its own flow, so we might not need this if PlanningDeck calls confirm) */}
+      {/* 
+          今回の設計では PlanningDeck の最後に confirm を呼ぶか、
+          あるいは PlanningDeck を閉じた後に Confirm ボタンを出すか。
+          DayCard の "Keep" は右スワイプで次へ行くだけなので、
+          最後まで行ったら PlanningComplete が呼ばれ、そこで setIsPlanningMode(false) される。
+          その後、この画面で「確定」ボタンを押すフローにするのが自然。
+      */}
       {request.status !== 'confirmed' && !isPlanningMode && (
-        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-100 p-4 pb-8 z-30 shadow-lg">
-           <Button 
-             onClick={handleConfirmPlan} 
-             disabled={isConfirming}
-             className="w-full max-w-md mx-auto rounded-full bg-black text-white font-bold h-12 text-lg shadow-xl hover:bg-gray-800 transition-all active:scale-95 block"
-           >
-             {isConfirming ? "確定中..." : "この献立で確定 🚀"}
-           </Button>
+        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-100 p-4 pb-8 z-30 shadow-lg safe-area-pb">
+           <div className="max-w-md mx-auto">
+             <p className="text-center text-xs text-gray-400 mb-2">全ての調整が完了しましたか？</p>
+             <Button 
+               onClick={handleConfirmPlan} 
+               disabled={isConfirming}
+               className="w-full rounded-full bg-black text-white font-bold h-14 text-lg shadow-xl hover:bg-gray-800 transition-all active:scale-95 block"
+             >
+               {isConfirming ? "確定中..." : "この献立で確定する 🚀"}
+             </Button>
+           </div>
         </div>
       )}
 

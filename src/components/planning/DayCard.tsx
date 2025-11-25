@@ -18,117 +18,95 @@ interface DayCardProps {
 export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegenerate, onUpdateMeal }: DayCardProps) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const x = useMotionValue(0);
-  const editX = useMotionValue(0); // 編集モード用のmotion value
   const rotate = useTransform(x, [-200, 200], [-10, 10]);
-  const editRotate = useTransform(editX, [-200, 200], [-10, 10]);
-  // 左スワイプ時も透明度を維持（編集モードに切り替えるため）
-  const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0.3, 0.7, 1, 1, 0]);
-  const overlayOpacityRight = useTransform(x, [0, 150], [0, 0.5]); // Green overlay for Keep
-  const overlayOpacityLeft = useTransform(x, [0, -150], [0, 0.5]); // Orange overlay for Edit
+  const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0, 1, 1, 1, 0]);
+  
+  // Swipe overlays
+  const overlayOpacityRight = useTransform(x, [0, 150], [0, 0.7]); // Keep (Green)
+  const overlayOpacityLeft = useTransform(x, [0, -150], [0, 0.7]); // Edit (Orange)
 
   const handleDragEnd = (event: any, info: any) => {
-    // ドラッグ終了時に位置をリセット
     x.set(0);
-    
     if (info.offset.x > 100) {
       onSwipeRight();
     } else if (info.offset.x < -100) {
-      setIsFlipped(true); // Auto flip on left swipe attempt instead of discarding
+      setIsFlipped(true);
     }
   };
 
-  const handleEditDragEnd = (event: any, info: any) => {
-    editX.set(0);
-    
-    if (info.offset.x > 100) {
-      // 右にスワイプしたら決定して次へ
-      setIsFlipped(false);
-      onSwipeRight();
-    } else if (info.offset.x < -100) {
-      // 左にスワイプしたら編集モードを閉じる
-      setIsFlipped(false);
-    }
-  };
+  // メイン画像の取得（昼食または夕食の画像を優先）
+  const mainImage = day.meals.find((m: any) => (m.mealType === 'lunch' || m.mealType === 'dinner') && m.imageUrl)?.imageUrl 
+    || day.meals.find((m: any) => m.imageUrl)?.imageUrl;
 
-  // 裏面（編集モード）
+  // 裏面（詳細編集モード）
   if (isFlipped) {
     return (
       <motion.div
         key={`edit-${day.date}`}
-        style={{ x: editX, rotate: editRotate, zIndex: total - index + 100 }}
-        drag="x"
-        dragConstraints={{ left: 0, right: 0 }}
-        onDragEnd={handleEditDragEnd}
-        className="absolute top-0 left-0 w-full h-full bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
+        className="absolute top-0 left-0 w-full h-[600px] bg-white rounded-[32px] shadow-2xl border border-gray-100 overflow-hidden flex flex-col z-50"
         initial={{ rotateY: -90, opacity: 0 }}
         animate={{ rotateY: 0, opacity: 1 }}
         exit={{ rotateY: 90, opacity: 0 }}
         transition={{ duration: 0.4 }}
       >
-        <div className="p-6 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+        <div className="p-6 bg-gray-50 border-b border-gray-100 flex justify-between items-center sticky top-0 z-10">
           <div>
-            <h3 className="font-bold text-gray-900 text-lg">{day.dayOfWeek}</h3>
+            <h3 className="font-bold text-gray-900 text-xl">{day.dayOfWeek}</h3>
             <p className="text-xs text-gray-500">{day.date} の調整</p>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setIsFlipped(false)}>
-            <Icons.Close className="w-5 h-5" />
+          <Button variant="ghost" size="icon" onClick={() => setIsFlipped(false)} className="rounded-full hover:bg-gray-200">
+            <Icons.Close className="w-6 h-6" />
           </Button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
           {day.meals.map((meal: any, i: number) => (
-            <div key={i} className={`p-4 rounded-xl border transition-all ${meal.isSkipped ? 'bg-gray-100 border-gray-200 opacity-60' : 'bg-white border-gray-200 shadow-sm'}`}>
-              <div className="flex justify-between items-start mb-3">
-                <span className="text-xs font-bold uppercase bg-gray-100 px-2 py-1 rounded text-gray-500">{meal.mealType}</span>
-                <div className="flex gap-1">
-                  <button 
-                    onClick={() => onUpdateMeal(i, 'regen')}
-                    className="p-2 hover:bg-blue-50 text-blue-500 rounded-full"
-                    title="別のメニューを提案"
-                  >
+            <div key={i} className={`p-4 rounded-2xl transition-all ${meal.isSkipped ? 'bg-gray-100 border-transparent opacity-60' : 'bg-white border-gray-100 shadow-sm border'}`}>
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-[10px] font-black uppercase bg-gray-100 text-gray-500 px-2 py-1 rounded tracking-wider">{meal.mealType}</span>
+                <div className="flex gap-2">
+                  <button onClick={() => onUpdateMeal(i, 'regen')} className="p-2 hover:bg-blue-50 text-blue-500 rounded-full transition-colors" title="別のメニュー">
                     <Icons.Refresh className="w-4 h-4" />
                   </button>
-                  <button 
-                    onClick={() => onUpdateMeal(i, 'image')}
-                    className="p-2 hover:bg-purple-50 text-purple-500 rounded-full"
-                    title="画像を生成"
-                  >
+                  <button onClick={() => onUpdateMeal(i, 'image')} className="p-2 hover:bg-purple-50 text-purple-500 rounded-full transition-colors" title="画像生成">
                     📷
                   </button>
                 </div>
               </div>
               
-              <div className="flex gap-3">
-                <div className="w-16 h-16 bg-gray-100 rounded-lg relative overflow-hidden shrink-0">
+              <div className="flex gap-4">
+                <div className="w-20 h-20 bg-gray-100 rounded-xl relative overflow-hidden shrink-0 shadow-inner">
                    {meal.imageUrl ? (
                      // eslint-disable-next-line @next/next/no-img-element
                      <img src={meal.imageUrl} alt="meal" className="w-full h-full object-cover" />
                    ) : (
-                     <span className="absolute inset-0 flex items-center justify-center text-2xl">🍽️</span>
+                     <span className="absolute inset-0 flex items-center justify-center text-2xl opacity-50">🍽️</span>
                    )}
                 </div>
-                <div className="flex-1">
-                  <p className={`font-bold text-sm mb-1 ${meal.isSkipped ? 'line-through' : ''}`}>
+                <div className="flex-1 min-w-0">
+                  <p className={`font-bold text-base mb-1 truncate ${meal.isSkipped ? 'line-through text-gray-400' : 'text-gray-800'}`}>
                     {meal.dishes[0]?.name}
                   </p>
-                  <p className="text-xs text-gray-400 line-clamp-1">{meal.dishes.slice(1).map((d:any) => d.name).join(", ")}</p>
+                  <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">
+                    {meal.dishes.slice(1).map((d:any) => d.name).join(", ") || "副菜なし"}
+                  </p>
                 </div>
               </div>
 
               <Button 
                 variant="outline" 
                 size="sm" 
-                className={`w-full mt-3 h-8 text-xs ${meal.isSkipped ? 'text-gray-500' : 'text-red-500 border-red-100 hover:bg-red-50'}`}
+                className={`w-full mt-4 h-9 text-xs font-bold border-0 ${meal.isSkipped ? 'bg-gray-200 text-gray-500' : 'bg-red-50 text-red-500 hover:bg-red-100'}`}
                 onClick={() => onUpdateMeal(i, 'skip')}
               >
-                {meal.isSkipped ? "元に戻す" : "この食事をスキップ (外食など)"}
+                {meal.isSkipped ? "元に戻す" : "スキップする"}
               </Button>
             </div>
           ))}
         </div>
 
-        <div className="p-4 border-t border-gray-100 bg-white">
-          <Button onClick={onSwipeRight} className="w-full bg-black text-white font-bold py-6 rounded-xl shadow-lg">
+        <div className="p-6 border-t border-gray-100 bg-white">
+          <Button onClick={onSwipeRight} className="w-full bg-black hover:bg-gray-800 text-white font-bold py-6 rounded-2xl shadow-xl text-lg transition-all active:scale-95">
             これで決定 (Keep)
           </Button>
         </div>
@@ -136,72 +114,93 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
     );
   }
 
-  // 表面（カードスタック）
-  // 編集モードの時は非表示にして触れないようにする
+  // 表面（没入型カード）
   return (
-    <>
-      {/* 編集モードでない時のみ表面を表示 */}
+    <AnimatePresence>
       {!isFlipped && (
         <motion.div
           key={`front-${day.date}`}
-          style={{ x, rotate, opacity, zIndex: total - index }}
+          style={{ x, rotate, opacity, zIndex: 100 - index }} // Fix z-index stacking
           drag="x"
           dragConstraints={{ left: 0, right: 0 }}
           onDragEnd={handleDragEnd}
-          className="absolute top-0 left-0 w-full h-[500px] bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
-          initial={{ scale: 0.95, y: 20 }}
-          animate={{ scale: 1, y: 0, opacity: 1 }}
-          exit={{ opacity: 0, scale: 0.9 }}
-          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          className="absolute top-0 left-0 w-full h-[600px] bg-white rounded-[32px] shadow-2xl overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
+          initial={{ scale: 0.95, y: 30 }}
+          animate={{ scale: 1, y: index * 10, opacity: 1 }} // Stack effect
+          exit={{ scale: 1.1, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 300, damping: 25 }}
         >
-      {/* Overlays for Swipe Feedback */}
-      <motion.div style={{ opacity: overlayOpacityRight }} className="absolute inset-0 bg-green-500 z-10 flex items-center justify-center pointer-events-none">
-        <span className="text-white font-black text-4xl tracking-widest border-4 border-white px-4 py-2 rounded-xl transform -rotate-12">KEEP</span>
-      </motion.div>
-      <motion.div style={{ opacity: overlayOpacityLeft }} className="absolute inset-0 bg-orange-500 z-10 flex items-center justify-center pointer-events-none">
-        <span className="text-white font-black text-4xl tracking-widest border-4 border-white px-4 py-2 rounded-xl transform rotate-12">EDIT</span>
-      </motion.div>
+          {/* Overlays */}
+          <motion.div style={{ opacity: overlayOpacityRight }} className="absolute inset-0 bg-emerald-500 z-20 flex items-center justify-center pointer-events-none mix-blend-multiply" />
+          <motion.div style={{ opacity: overlayOpacityRight }} className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+             <span className="text-white font-black text-5xl tracking-widest border-[6px] border-white px-6 py-3 rounded-2xl transform -rotate-12 drop-shadow-lg">KEEP</span>
+          </motion.div>
 
-      {/* Card Content */}
-      <div className={`h-32 relative p-6 flex flex-col justify-between text-white ${day.isCheatDay ? 'bg-gradient-to-br from-yellow-400 to-orange-500' : 'bg-gradient-to-br from-gray-800 to-black'}`}>
-        <div className="flex justify-between items-start">
-          <div>
-            <span className="text-xs font-bold opacity-70 uppercase tracking-wider">Day {index + 1}</span>
-            <h2 className="text-3xl font-bold">{day.dayOfWeek}</h2>
-            <p className="opacity-80 text-sm">{day.date}</p>
+          <motion.div style={{ opacity: overlayOpacityLeft }} className="absolute inset-0 bg-orange-500 z-20 flex items-center justify-center pointer-events-none mix-blend-multiply" />
+          <motion.div style={{ opacity: overlayOpacityLeft }} className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+             <span className="text-white font-black text-5xl tracking-widest border-[6px] border-white px-6 py-3 rounded-2xl transform rotate-12 drop-shadow-lg">EDIT</span>
+          </motion.div>
+
+          {/* Main Visual Area (Full Height Image or Gradient) */}
+          <div className="absolute inset-0 z-0 bg-gray-900">
+            {mainImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={mainImage} alt="Main Dish" className="w-full h-full object-cover opacity-90" />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-br from-gray-800 to-black opacity-90" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/30" />
           </div>
-          {day.isCheatDay && <span className="bg-white text-orange-500 text-xs font-bold px-2 py-1 rounded-full">Cheat Day</span>}
-        </div>
-      </div>
 
-      <div className="flex-1 p-6 space-y-4 relative">
-        <div className="absolute top-0 right-0 p-4">
-           <div className="bg-accent/10 text-accent px-3 py-1 rounded-full text-xs font-bold">
-             Focus: {day.nutritionalAdvice.slice(0, 15)}...
-           </div>
-        </div>
+          {/* Content Overlay */}
+          <div className="relative z-10 h-full flex flex-col justify-between p-8 text-white">
+            
+            {/* Header */}
+            <div className="flex justify-between items-start">
+              <div className="bg-black/30 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10">
+                <span className="text-xs font-bold opacity-80 uppercase tracking-widest block mb-1">Day {index + 1}</span>
+                <h2 className="text-3xl font-black tracking-tight">{day.dayOfWeek}</h2>
+                <p className="opacity-80 text-sm font-medium">{day.date}</p>
+              </div>
+              {day.isCheatDay && (
+                <span className="bg-white text-orange-600 text-xs font-black px-3 py-1.5 rounded-full shadow-lg uppercase tracking-wider">
+                  Cheat Day ★
+                </span>
+              )}
+            </div>
 
-        {day.meals.map((meal: any, i: number) => (
-          <div key={i} className="flex items-center gap-4">
-            <div className="w-12 text-xs font-bold text-gray-400 uppercase text-right">{meal.mealType}</div>
-            <div className="flex-1 p-3 bg-gray-50 rounded-xl border border-gray-100">
-              <p className="font-bold text-gray-800 text-sm">{meal.dishes[0]?.name}</p>
+            {/* Bottom Info */}
+            <div className="space-y-6">
+              
+              {/* Focus Badge */}
+              <div className="inline-flex bg-accent/90 backdrop-blur-md text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-lg border border-white/20">
+                💡 Focus: {day.nutritionalAdvice.slice(0, 20)}...
+              </div>
+
+              {/* Menu List Preview */}
+              <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-5 border border-white/20 shadow-2xl">
+                <div className="space-y-4">
+                  {day.meals.map((meal: any, i: number) => (
+                    <div key={i} className="flex items-center gap-4">
+                      <div className="w-12 text-[10px] font-bold opacity-70 uppercase text-right tracking-wider">{meal.mealType}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-base truncate shadow-black drop-shadow-md">{meal.dishes[0]?.name}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Instruction */}
+              <div className="flex justify-between text-xs font-bold opacity-60 px-2">
+                <span>← Edit / Adjust</span>
+                <span>Keep →</span>
+              </div>
             </div>
           </div>
-        ))}
-      </div>
-
-      <div className="p-6 bg-gray-50 flex gap-3">
-        <Button variant="outline" className="flex-1 border-gray-300 text-gray-500" onClick={onRegenerate}>
-          <Icons.Refresh className="w-4 h-4 mr-2" /> 丸ごと変える
-        </Button>
-        <Button variant="outline" className="flex-1 border-gray-300 text-gray-500" onClick={() => setIsFlipped(true)}>
-          詳細調整
-        </Button>
-      </div>
-    </motion.div>
+        </motion.div>
       )}
-    </>
+    </AnimatePresence>
   );
 };
 

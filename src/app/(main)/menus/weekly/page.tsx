@@ -1,25 +1,29 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { toWeeklyMenuRequest } from "@/lib/converter";
 import type { WeeklyMenuRequest } from "@/types/domain";
+import { Icons } from "@/components/icons";
 
 export default function WeeklyMenuPage() {
   const router = useRouter();
   const supabase = createClient();
-  const [startDate, setStartDate] = useState("");
-  const [note, setNote] = useState("");
-  const [loading, setLoading] = useState(false);
   const [requests, setRequests] = useState<WeeklyMenuRequest[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [showNewMenuModal, setShowNewMenuModal] = useState(false);
+
+  // Form State
+  const [startDate, setStartDate] = useState("");
+  const [note, setNote] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
 
   // 過去のリクエスト一覧を取得
   useEffect(() => {
@@ -34,12 +38,9 @@ export default function WeeklyMenuPage() {
           .select('*')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
-          .limit(10);
+          .limit(20); // Fetch more for gallery
 
-        if (error) {
-          console.error('Failed to fetch menu requests:', error);
-          return;
-        }
+        if (error) throw error;
 
         const domainRequests = (data || []).map(toWeeklyMenuRequest);
         setRequests(domainRequests);
@@ -58,7 +59,7 @@ export default function WeeklyMenuPage() {
       return;
     }
 
-    setLoading(true);
+    setIsGenerating(true);
     try {
       const response = await fetch("/api/ai/menu/weekly/request", {
         method: "POST",
@@ -70,134 +71,195 @@ export default function WeeklyMenuPage() {
 
       const data = await response.json();
       
-      // 非同期処理なので、リクエスト作成後すぐに一覧を更新して表示
-      // 詳細画面に遷移せず、一覧ページでステータスを確認できるようにする
-      setLoading(false);
+      // 成功後、即座に詳細ページ（ローディング/プランニング画面）へ遷移
+      router.push(`/menus/weekly/${data.id}`);
       
-      // リクエスト一覧を再取得して最新状態を表示
-      const { data: updatedData } = await supabase
-        .from('weekly_menu_requests')
-        .select('*')
-        .eq('id', data.id)
-        .single();
-      
-      if (updatedData) {
-        const updatedRequest = toWeeklyMenuRequest(updatedData);
-        setRequests(prev => [updatedRequest, ...prev]);
-      }
-      
-      // 成功メッセージを表示
-      alert('献立生成を開始しました。バックグラウンドで処理が進みます。\n\n一覧でステータスを確認できます。');
-
     } catch (error: any) {
       alert(error.message || "エラーが発生しました");
-      setLoading(false);
+      setIsGenerating(false);
     }
   };
 
+  // 最新のアクティブな献立（あれば）
+  const activePlan = requests.find(r => r.status === 'confirmed' || r.status === 'completed');
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gray-50 pb-24">
       
-      {/* ヘッダー */}
-      <div className="bg-white p-6 pb-4 border-b border-gray-100 sticky top-0 z-20">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">週献立</h1>
+      {/* Header */}
+      <div className="bg-white sticky top-0 z-20 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+        <h1 className="text-xl font-black tracking-tight text-gray-900">Weekly Eats</h1>
+        <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+           <span className="text-lg">📅</span>
         </div>
       </div>
 
-      {/* メインエリア */}
-      <div className="p-6 space-y-8">
+      <main className="p-6 space-y-10">
         
-        {/* 新規生成カード */}
-        <Card className="border-none shadow-lg">
-          <CardHeader>
-            <CardTitle>新しい献立を作成</CardTitle>
-            <CardDescription>AIがあなたに最適な1週間の献立を提案します</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="startDate">開始日</Label>
-              <Input
-                id="startDate"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="rounded-xl border-gray-200"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="note">要望・状況</Label>
-              <textarea
-                id="note"
-                className="flex min-h-[100px] w-full rounded-xl border border-gray-200 bg-background px-3 py-2 text-sm focus:ring-[#FF8A65]"
-                placeholder="例: 週末に試合があります。水曜日は飲み会です。"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-              />
-            </div>
-            <Button
-              onClick={handleGenerate}
-              className="w-full bg-[#FF8A65] hover:bg-[#FF7043] text-white font-bold rounded-full py-6"
-              disabled={loading || !startDate}
-            >
-              {loading ? "生成を開始しています..." : "週献立を生成する"}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* 過去の履歴 */}
-        {requests.length > 0 && (
-          <div>
-            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">履歴</h2>
-            {loadingHistory ? (
-              <div className="text-center text-gray-400 py-8">読み込み中...</div>
-            ) : (
-              <div className="space-y-3">
-                {requests.map((req) => {
-                  const start = new Date(req.startDate);
-                  const end = new Date(start);
-                  end.setDate(end.getDate() + 6);
-                  const statusLabels: Record<string, string> = {
-                    pending: '生成中',
-                    processing: '処理中',
-                    completed: '完了',
-                    failed: '失敗',
-                  };
-                  const statusColors: Record<string, string> = {
-                    pending: 'text-yellow-600',
-                    processing: 'text-blue-600',
-                    completed: 'text-green-600',
-                    failed: 'text-red-600',
-                  };
+        {/* 1. Active Plan / Hero Section */}
+        <section>
+           <div className="flex justify-between items-end mb-4">
+             <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Current Focus</h2>
+           </div>
+           
+           {activePlan ? (
+             <Link href={`/menus/weekly/${activePlan.id}`}>
+               <motion.div 
+                 whileHover={{ scale: 1.02 }}
+                 whileTap={{ scale: 0.98 }}
+                 className="relative aspect-[4/3] rounded-[32px] overflow-hidden shadow-2xl group cursor-pointer"
+               >
+                  {/* Background Image (Mock for now, ideally from meals) */}
+                  <div className="absolute inset-0 bg-gray-900">
+                    {/* TODO: Show actual images from the plan */}
+                    <div className="w-full h-full bg-gradient-to-br from-orange-400 to-pink-500 opacity-80 group-hover:opacity-90 transition-opacity" />
+                  </div>
                   
-                  return (
-                    <Link key={req.id} href={`/menus/weekly/${req.id}`}>
-                      <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:bg-gray-50 transition-colors cursor-pointer"
-                      >
-                        <div>
-                          <p className="font-bold text-gray-900">
-                            {start.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })} - {end.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
-                          </p>
-                          <p className={`text-xs font-bold ${statusColors[req.status] || 'text-gray-400'}`}>
-                            {statusLabels[req.status] || req.status}
-                          </p>
-                        </div>
-                        <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </motion.div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+                  <div className="absolute inset-0 p-8 flex flex-col justify-between text-white">
+                    <div>
+                      <span className="inline-block px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold border border-white/10 mb-2">
+                        {activePlan.status === 'completed' ? 'Wait for Review' : 'Active'}
+                      </span>
+                      <h3 className="text-3xl font-black leading-tight">
+                        {new Date(activePlan.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        <br />
+                        Week
+                      </h3>
+                    </div>
+                    
+                    <div className="flex justify-between items-end">
+                       <div>
+                         <p className="text-sm font-bold opacity-80">Goal Impact</p>
+                         <p className="text-2xl font-black">{activePlan.resultJson?.projectedImpact?.weightChange || '---'}</p>
+                       </div>
+                       <div className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center font-bold shadow-lg group-hover:scale-110 transition-transform">
+                         →
+                       </div>
+                    </div>
+                  </div>
+               </motion.div>
+             </Link>
+           ) : (
+             <div 
+               onClick={() => setShowNewMenuModal(true)}
+               className="aspect-[4/3] rounded-[32px] bg-white border-2 border-dashed border-gray-200 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 hover:border-accent transition-colors group"
+             >
+                <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <Icons.Plus className="w-6 h-6 text-gray-400 group-hover:text-accent" />
+                </div>
+                <p className="font-bold text-gray-400 group-hover:text-gray-600">来週の献立を作る</p>
+             </div>
+           )}
+        </section>
 
-      </div>
+        {/* 2. Gallery (Past Logs) */}
+        <section>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Memories</h2>
+          
+          {loadingHistory ? (
+             <div className="grid grid-cols-2 gap-4">
+               {[1,2,3,4].map(i => <div key={i} className="aspect-square bg-gray-100 rounded-2xl animate-pulse" />)}
+             </div>
+          ) : (
+             <div className="grid grid-cols-2 gap-4">
+               {requests.filter(r => r.id !== activePlan?.id).map((req) => (
+                 <Link key={req.id} href={`/menus/weekly/${req.id}`}>
+                   <motion.div 
+                     whileHover={{ y: -4 }}
+                     className="aspect-square bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm relative group"
+                   >
+                      {/* Thumbnail logic can be added here */}
+                      <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/60" />
+                      <div className="absolute bottom-0 left-0 p-4 text-white">
+                        <p className="text-xs font-bold opacity-80">
+                          {new Date(req.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </p>
+                        <p className="font-bold text-sm truncate">
+                          {req.resultJson?.projectedImpact?.weightChange || 'Log'}
+                        </p>
+                      </div>
+                   </motion.div>
+                 </Link>
+               ))}
+               
+               {/* Add New Button in Grid */}
+               <button 
+                 onClick={() => setShowNewMenuModal(true)}
+                 className="aspect-square rounded-2xl bg-gray-50 border border-gray-100 flex flex-col items-center justify-center hover:bg-gray-100 transition-colors"
+               >
+                 <Icons.Plus className="w-6 h-6 text-gray-300 mb-2" />
+                 <span className="text-xs font-bold text-gray-400">New</span>
+               </button>
+             </div>
+          )}
+        </section>
+
+      </main>
+
+      {/* New Menu Modal (Bottom Sheet style) */}
+      <AnimatePresence>
+        {showNewMenuModal && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowNewMenuModal(false)}
+              className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="fixed bottom-0 left-0 right-0 bg-white rounded-t-[32px] z-50 p-8 pb-12 shadow-2xl"
+            >
+               <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-8" />
+               
+               <h2 className="text-2xl font-black text-gray-900 mb-2">Design Next Week</h2>
+               <p className="text-gray-500 text-sm mb-8">来週の目標や予定を教えてください。</p>
+               
+               <div className="space-y-6">
+                 <div className="space-y-2">
+                    <Label className="font-bold text-gray-700">開始日</Label>
+                    <Input 
+                      type="date" 
+                      value={startDate} 
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="h-14 rounded-xl bg-gray-50 border-gray-100 text-lg"
+                    />
+                 </div>
+                 
+                 <div className="space-y-2">
+                    <Label className="font-bold text-gray-700">今週のフォーカス・予定</Label>
+                    <textarea 
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="例: 水曜日は飲み会、週末はジムに行きます。"
+                      className="w-full h-32 p-4 rounded-xl bg-gray-50 border-gray-100 text-base resize-none focus:ring-2 focus:ring-accent focus:bg-white transition-all"
+                    />
+                 </div>
+                 
+                 <Button 
+                   onClick={handleGenerate}
+                   disabled={isGenerating || !startDate}
+                   className="w-full h-14 rounded-xl bg-black text-white font-bold text-lg shadow-xl hover:scale-[1.02] active:scale-95 transition-all"
+                 >
+                   {isGenerating ? "AIが思考中..." : "献立を生成する 🪄"}
+                 </Button>
+               </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Floating Action Button (New) */}
+      {!showNewMenuModal && (
+        <motion.button
+          initial={{ scale: 0 }} animate={{ scale: 1 }}
+          onClick={() => setShowNewMenuModal(true)}
+          className="fixed bottom-24 right-6 w-16 h-16 bg-black text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-110 transition-transform"
+        >
+          <Icons.Plus className="w-8 h-8" />
+        </motion.button>
+      )}
+
     </div>
   );
 }

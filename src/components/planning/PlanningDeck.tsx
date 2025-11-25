@@ -45,26 +45,39 @@ export const PlanningDeck = ({ days, onComplete, onUpdateMeal }: PlanningDeckPro
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-gray-100 flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md mb-8 text-center">
-        <h1 className="text-2xl font-bold text-gray-900">Weekly Planning</h1>
-        <p className="text-gray-500 text-sm">1週間をデザインしましょう。</p>
-        <div className="flex gap-1 justify-center mt-4">
+    <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md mb-6 text-center relative z-10">
+        <h1 className="text-2xl font-black text-white tracking-tight">Weekly Design</h1>
+        <p className="text-white/50 text-sm mt-1">あなたの1週間をキュレーション</p>
+        
+        {/* Progress Bar */}
+        <div className="flex gap-1.5 justify-center mt-6 px-8">
           {localDays.map((_, i) => (
-            <div key={i} className={`h-1 rounded-full transition-all ${i === currentIndex ? 'w-8 bg-black' : i < currentIndex ? 'w-2 bg-green-500' : 'w-2 bg-gray-300'}`} />
+            <div 
+              key={i} 
+              className={`h-1.5 rounded-full transition-all duration-300 ${
+                i === currentIndex 
+                  ? 'w-8 bg-white shadow-[0_0_10px_rgba(255,255,255,0.5)]' 
+                  : i < currentIndex 
+                    ? 'w-2 bg-accent' 
+                    : 'w-2 bg-white/20'
+              }`} 
+            />
           ))}
         </div>
       </div>
 
-      <div className="relative w-full max-w-md h-[500px]">
-        <AnimatePresence>
+      <div className="relative w-full max-w-md h-[600px] perspective-1000">
+        <AnimatePresence mode="popLayout">
           {localDays.map((day, index) => {
-            if (index < currentIndex) return null;
+            // Only render current and next few cards for performance
+            if (index < currentIndex || index > currentIndex + 2) return null;
+            
             return (
               <DayCard
-                key={day.date} // unique key is important
+                key={day.date}
                 day={day}
-                index={index}
+                index={index - currentIndex} // Pass relative index (0 = current)
                 total={localDays.length}
                 onSwipeRight={handleSwipeRight}
                 onSwipeLeft={handleSwipeLeft}
@@ -76,9 +89,9 @@ export const PlanningDeck = ({ days, onComplete, onUpdateMeal }: PlanningDeckPro
         </AnimatePresence>
       </div>
 
-      <div className="mt-8 text-center text-xs text-gray-400 font-bold">
-        <span className="mr-4">👈 Edit / Adjust</span>
-        <span>Keep / Next 👉</span>
+      <div className="mt-8 text-center text-xs font-bold text-white/40 tracking-widest uppercase">
+        <span className="mr-8 transition-opacity hover:text-white/80">← Edit Detail</span>
+        <span className="transition-opacity hover:text-white/80">Keep →</span>
       </div>
     </div>
   );
