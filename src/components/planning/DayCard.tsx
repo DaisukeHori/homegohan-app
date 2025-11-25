@@ -148,11 +148,12 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
               <img 
                 src={mainImage} 
                 alt="Main Dish" 
-                className="w-full h-full object-cover" 
+                // object-bottom寄りに設定し、下側の料理が見えるようにする
+                // さらに高さを100%確保しつつ、下半分が隠れることを考慮
+                className="w-full h-full object-cover object-[center_60%]" 
                 onError={(e) => {
                   console.error("Image load error:", mainImage);
                   e.currentTarget.style.display = 'none';
-                  // フォールバックを表示するロジックが必要ならここに追加
                 }}
               />
             ) : (
@@ -161,41 +162,41 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
                 <span className="text-xs font-mono opacity-50">No Image Data</span>
               </div>
             )}
-            {/* 上部のテキスト視認性確保のための繊細なグラデーション */}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-transparent h-32" />
+            {/* グラデーションを少し強めにして、白文字を見やすくする */}
+            <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-transparent h-40 pointer-events-none" />
           </div>
 
-          {/* Content Overlay - 日本のアプリらしい白ベースのシート */}
+          {/* Content Overlay */}
           <div className="relative z-10 h-full flex flex-col justify-between pointer-events-none">
             
-            {/* Header */}
-            <div className="p-6 pt-8 text-white drop-shadow-sm">
+            {/* Header - 文字色を白のまま維持、影をつけて視認性向上 */}
+            <div className="p-6 pt-8 text-white drop-shadow-md">
               <div className="flex justify-between items-start">
                 <div>
-                  <span className="text-xs font-bold opacity-90 tracking-wider bg-black/20 px-2 py-1 rounded-md backdrop-blur-sm">DAY {index + 1}</span>
-                  <h2 className="text-4xl font-bold mt-1 tracking-tight font-serif">{day.dayOfWeek}</h2>
-                  <p className="text-sm font-medium opacity-90">{day.date}</p>
+                  <span className="text-xs font-bold tracking-widest opacity-90 mb-1 block">DAY {index + 1}</span>
+                  <h2 className="text-5xl font-bold tracking-tighter font-serif leading-none">{day.dayOfWeek}</h2>
+                  <p className="text-sm font-medium opacity-90 mt-1">{day.date}</p>
                 </div>
                 {day.isCheatDay && (
-                  <span className="bg-white text-orange-500 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
-                    Cheat Day
+                  <span className="bg-white/90 backdrop-blur text-orange-600 text-[10px] font-black px-3 py-1 rounded-full shadow-lg uppercase tracking-widest">
+                    CHEAT DAY
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Bottom Info Panel - 白背景で情報を整理 */}
-            <div className="bg-white rounded-t-[32px] p-6 pb-8 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
+            {/* Bottom Info Panel - 高さを少し下げて画像エリアを確保 */}
+            <div className="bg-white/95 backdrop-blur-xl rounded-t-[32px] p-6 pb-8 shadow-[0_-10px_40px_rgba(0,0,0,0.1)] transition-transform">
               
               {/* Focus Badge */}
-              <div className="mb-6">
-                <div className="inline-flex items-center gap-2 bg-orange-50 text-orange-700 px-3 py-1.5 rounded-full text-xs font-bold border border-orange-100">
-                  <span>💡</span>
-                  <span>{day.nutritionalAdvice.slice(0, 24)}...</span>
+              <div className="mb-5 -mt-10 flex justify-center">
+                <div className="inline-flex items-center gap-2 bg-white text-gray-800 px-4 py-2 rounded-full text-xs font-bold shadow-lg border border-gray-100">
+                  <span className="text-orange-500 text-lg">💡</span>
+                  <span className="tracking-tight">{day.nutritionalAdvice.slice(0, 22)}...</span>
                 </div>
               </div>
 
-              {/* Menu List */}
+              {/* Menu List - コンパクトに */}
               <div className="space-y-4 mb-6">
                 {day.meals.map((meal: any, i: number) => (
                   <div key={i} className="flex items-start gap-4 group">
