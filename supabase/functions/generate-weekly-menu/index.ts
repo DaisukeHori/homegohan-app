@@ -303,18 +303,19 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
     }
 
     // Supabase Storage へアップロード
-    const buffer = new Uint8Array(
-      atob(imageBase64)
-        .split('')
-        .map((c) => c.charCodeAt(0))
-    )
+    // base64をバイナリに変換（Deno環境用）
+    const binaryString = atob(imageBase64)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
     
     const fileName = `generated/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`
     const bucketName = 'fridge-images'
     
     const { error: uploadError } = await supabase.storage
       .from(bucketName)
-      .upload(fileName, buffer, {
+      .upload(fileName, bytes, {
         contentType: 'image/png',
         upsert: false
       })
