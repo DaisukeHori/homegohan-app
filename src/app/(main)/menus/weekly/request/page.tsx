@@ -23,8 +23,114 @@ export default function MenuRequestWizard() {
   const supabase = createClient();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // ... (state definitions)
+  const [formData, setFormData] = useState({
+    imageUrl: '',
+    ingredients: [] as string[],
+    startDate: new Date().toISOString().split('T')[0],
+    cookingTimeWeekday: 30,
+    cookingTimeWeekend: 60,
+    themes: [] as string[],
+    familySize: 1,
+    cheatDay: '',
+    note: '',
+  });
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setAnalyzing(true);
+    try {
+      // Upload to Supabase Storage
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const { data, error } = await supabase.storage
+        .from('fridge-images')
+        .upload(fileName, file);
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('fridge-images')
+        .getPublicUrl(fileName);
+
+      setFormData(p => ({ ...p, imageUrl: publicUrl }));
+
+      // Call AI analysis API
+      const res = await fetch('/api/ai/analyze-fridge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageUrl: publicUrl }),
+      });
+
+      if (res.ok) {
+        const { ingredients } = await res.json();
+        setFormData(p => ({ ...p, ingredients: [...p.ingredients, ...ingredients] }));
+      }
+    } catch (err) {
+      console.error('Image upload failed:', err);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const addIngredient = (ingredient: string) => {
+    if (ingredient.trim() && !formData.ingredients.includes(ingredient.trim())) {
+      setFormData(p => ({ ...p, ingredients: [...p.ingredients, ingredient.trim()] }));
+    }
+  };
+
+  const removeIngredient = (ingredient: string) => {
+    setFormData(p => ({ ...p, ingredients: p.ingredients.filter(i => i !== ingredient) }));
+  };
+
+  const toggleTheme = (theme: string) => {
+    setFormData(p => ({
+      ...p,
+      themes: p.themes.includes(theme)
+        ? p.themes.filter(t => t !== theme)
+        : [...p.themes, theme]
+    }));
+  };
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/ai/menu/weekly/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startDate: formData.startDate,
+          constraints: {
+            ingredients: formData.ingredients,
+            cookingTime: {
+              weekday: formData.cookingTimeWeekday,
+              weekend: formData.cookingTimeWeekend,
+            },
+            themes: formData.themes,
+            familySize: formData.familySize,
+            cheatDay: formData.cheatDay,
+          },
+          inventoryImageUrl: formData.imageUrl || null,
+          detectedIngredients: formData.ingredients,
+          note: formData.note,
+        }),
+      });
+
+      if (!res.ok) throw new Error('Request failed');
+
+      const { id } = await res.json();
+      router.push(`/menus/weekly/${id}`);
+    } catch (err) {
+      console.error('Submit failed:', err);
+      alert('Failed to generate menu. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
