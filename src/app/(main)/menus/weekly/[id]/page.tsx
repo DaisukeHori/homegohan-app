@@ -125,7 +125,13 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
         });
         if (!res.ok) {
           const errorData = await res.json();
-          throw new Error(errorData.error || 'Failed to generate image');
+          // 429エラー（クォータ超過）の場合は特別なメッセージを表示
+          if (res.status === 429 || errorData.code === 'QUOTA_EXCEEDED') {
+            alert(`画像生成のクォータが超過しています。\n\n${errorData.error || 'しばらく待ってから再度お試しください。'}\n\n${errorData.suggestion || ''}`);
+          } else {
+            throw new Error(errorData.error || 'Failed to generate image');
+          }
+          return;
         }
         const { imageUrl } = await res.json();
         meal.imageUrl = imageUrl;
