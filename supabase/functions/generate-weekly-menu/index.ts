@@ -265,26 +265,11 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
 // 画像生成関数
 async function generateMealImage(dishName: string, userId: string, supabase: any): Promise<string> {
   const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
-  
-  // 正しいモデル名: 画像生成をサポートしているモデルを使用
-  // エラー: gemini-2.5-flash-preview-image は存在しない
-  // 実際には、Gemini APIの画像生成機能は限定的で、Imagen APIを使用する必要がある可能性があります
-  // 一時的に画像生成をスキップし、プレースホルダー画像を使用するか、
-  // Imagen APIに切り替える必要があります
-  // デフォルトモデル名を空にして、エラー時にスキップする
-  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || ''
+  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.5-flash-preview-image'
   
   console.log(`[Image Gen] Starting generation for: ${dishName}`)
   console.log(`[Image Gen] API Key present: ${GOOGLE_AI_API_KEY ? 'Yes' : 'No'}`)
-  console.log(`[Image Gen] Model: ${GEMINI_IMAGE_MODEL || 'NOT_SET'}`)
-  
-  // モデル名が設定されていない場合、画像生成をスキップ
-  if (!GEMINI_IMAGE_MODEL) {
-    console.warn(`[Image Gen] WARNING: GEMINI_IMAGE_MODEL not set. Image generation will be skipped.`)
-    console.warn(`[Image Gen] Please set GEMINI_IMAGE_MODEL environment variable to a valid image generation model name.`)
-    console.warn(`[Image Gen] Note: Gemini API may not support image generation. Consider using Imagen API instead.`)
-    throw new Error('IMAGE_GENERATION_SKIPPED: Model not configured. Please set GEMINI_IMAGE_MODEL or use Imagen API.')
-  }
+  console.log(`[Image Gen] Model: ${GEMINI_IMAGE_MODEL}`)
   
   if (!GOOGLE_AI_API_KEY) {
     console.error(`[Image Gen] ERROR: Google AI API Key is missing for ${dishName}`)
@@ -295,13 +280,7 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
   const enhancedPrompt = `A delicious, appetizing, professional food photography shot of ${dishName}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`
 
   try {
-    // まず、利用可能なモデルをリストアップして確認（デバッグ用）
-    // 実際の画像生成には、Imagen APIまたは画像生成をサポートしているモデルが必要です
-    // 一時的に画像生成をスキップし、プレースホルダー画像を使用するか、
-    // Imagen APIに切り替える必要があります
-    
-    // Gemini REST APIを直接呼び出し（画像生成をサポートしているモデルの場合）
-    // 注意: 現在のGemini APIでは画像生成がサポートされていない可能性が高いです
+    // Gemini REST APIを直接呼び出し
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`
     
     const response = await fetch(apiUrl, {
@@ -326,14 +305,6 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
 
     if (!response.ok) {
       const errorText = await response.text()
-      // 404エラー（モデルが見つからない）の場合
-      if (response.status === 404) {
-        console.error(`[Image Gen] Model not found: ${GEMINI_IMAGE_MODEL}`)
-        console.error(`[Image Gen] Error details: ${errorText}`)
-        // 画像生成をスキップし、プレースホルダー画像URLを返す
-        // または、Imagen APIに切り替える必要があります
-        throw new Error(`MODEL_NOT_FOUND: ${GEMINI_IMAGE_MODEL} does not support image generation. Please use Imagen API or a model that supports image generation.`)
-      }
       // 429エラー（クォータ超過）の場合はスキップ
       if (response.status === 429) {
         console.warn(`Quota exceeded for image generation, skipping: ${dishName}`)
