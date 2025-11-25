@@ -4,6 +4,10 @@
 export interface DbUserProfile {
   id: string;
   nickname: string;
+  age: number | null;
+  occupation: string | null;
+  height: number | null;
+  weight: number | null;
   age_group: string;
   gender: string;
   goal_text: string | null;

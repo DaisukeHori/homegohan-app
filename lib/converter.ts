@@ -11,6 +11,10 @@ import type {
 export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   id: db.id,
   nickname: db.nickname,
+  age: db.age,
+  occupation: db.occupation,
+  height: db.height,
+  weight: db.weight,
   ageGroup: db.age_group as any,
   gender: db.gender as any,
   goalText: db.goal_text,

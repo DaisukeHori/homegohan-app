@@ -51,6 +51,10 @@ export interface CheatDayConfig {
 export interface UserProfile {
   id: string;
   nickname: string;
+  age: number | null;
+  occupation: string | null;
+  height: number | null;
+  weight: number | null;
   ageGroup: AgeGroup;
   gender: Gender;
   goalText: string | null;
