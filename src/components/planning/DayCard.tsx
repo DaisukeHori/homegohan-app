@@ -18,25 +18,48 @@ interface DayCardProps {
 export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegenerate, onUpdateMeal }: DayCardProps) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const x = useMotionValue(0);
+  const editX = useMotionValue(0); // 編集モード用のmotion value
   const rotate = useTransform(x, [-200, 200], [-10, 10]);
-  const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0, 1, 1, 1, 0]);
+  const editRotate = useTransform(editX, [-200, 200], [-10, 10]);
+  // 左スワイプ時も透明度を維持（編集モードに切り替えるため）
+  const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0.3, 0.7, 1, 1, 0]);
   const overlayOpacityRight = useTransform(x, [0, 150], [0, 0.5]); // Green overlay for Keep
   const overlayOpacityLeft = useTransform(x, [0, -150], [0, 0.5]); // Orange overlay for Edit
 
   const handleDragEnd = (event: any, info: any) => {
+    // ドラッグ終了時に位置をリセット
+    x.set(0);
+    
     if (info.offset.x > 100) {
       onSwipeRight();
     } else if (info.offset.x < -100) {
       setIsFlipped(true); // Auto flip on left swipe attempt instead of discarding
-      // onSwipeLeft(); 
+    }
+  };
+
+  const handleEditDragEnd = (event: any, info: any) => {
+    editX.set(0);
+    
+    if (info.offset.x > 100) {
+      // 右にスワイプしたら決定して次へ
+      setIsFlipped(false);
+      onSwipeRight();
+    } else if (info.offset.x < -100) {
+      // 左にスワイプしたら編集モードを閉じる
+      setIsFlipped(false);
     }
   };
 
   // 裏面（編集モード）
   if (isFlipped) {
+    
     return (
       <motion.div
-        className="absolute top-0 left-0 w-full h-full bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden flex flex-col z-50"
+        style={{ x: editX, rotate: editRotate, zIndex: total - index + 100 }}
+        drag="x"
+        dragConstraints={{ left: 0, right: 0 }}
+        onDragEnd={handleEditDragEnd}
+        className="absolute top-0 left-0 w-full h-full bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
         initial={{ rotateY: -90 }}
         animate={{ rotateY: 0 }}
         transition={{ duration: 0.4 }}
