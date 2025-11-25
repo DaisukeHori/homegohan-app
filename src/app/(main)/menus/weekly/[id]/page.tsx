@@ -88,22 +88,49 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
     if (action === 'skip') {
       meal.isSkipped = !meal.isSkipped;
     } else if (action === 'regen') {
-      // Mock regen
-      alert('この機能はバックエンド実装待ちです（個別料理の再生成）');
-      return;
+      // 個別料理の再生成
+      try {
+        const res = await fetch('/api/ai/menu/meal/regenerate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mealName: meal.dishes[0].name,
+            mealType: meal.mealType,
+            dayIndex: dayIndex,
+            weeklyMenuRequestId: request.id,
+          }),
+        });
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData.error || 'Failed to regenerate meal');
+        }
+        const { updatedMenu } = await res.json();
+        // 更新されたメニューで状態を更新
+        setRequest({
+          ...request,
+          resultJson: updatedMenu
+        });
+        return; // 早期リターン（状態は既に更新済み）
+      } catch (e: any) {
+        alert(`メニュー再生成に失敗しました: ${e.message}`);
+        return;
+      }
     } else if (action === 'image') {
-      // Call existing image gen logic
+      // 画像生成
       try {
         const res = await fetch('/api/ai/image/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: meal.dishes[0].name }),
         });
-        if (!res.ok) throw new Error('Failed');
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData.error || 'Failed to generate image');
+        }
         const { imageUrl } = await res.json();
         meal.imageUrl = imageUrl;
-      } catch (e) {
-        alert('画像生成に失敗しました');
+      } catch (e: any) {
+        alert(`画像生成に失敗しました: ${e.message}`);
         return;
       }
     }
