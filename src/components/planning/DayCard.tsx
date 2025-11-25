@@ -64,7 +64,7 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
             <div key={i} className={`p-4 rounded-2xl transition-all ${meal.isSkipped ? 'bg-gray-100 border-transparent opacity-60' : 'bg-white border-gray-100 shadow-sm border'}`}>
               <div className="flex justify-between items-center mb-3">
                 <span className="text-[10px] font-black uppercase bg-gray-100 text-gray-500 px-2 py-1 rounded tracking-wider">{meal.mealType}</span>
-                <div className="flex gap-2">
+                <div className="flex gap-2" onPointerDownCapture={(e) => e.stopPropagation()}>
                   <button onClick={() => onUpdateMeal(i, 'regen')} className="p-2 hover:bg-blue-50 text-blue-500 rounded-full transition-colors" title="別のメニュー">
                     <Icons.Refresh className="w-4 h-4" />
                   </button>
@@ -93,14 +93,16 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
                 </div>
               </div>
 
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className={`w-full mt-4 h-9 text-xs font-bold border-0 ${meal.isSkipped ? 'bg-gray-200 text-gray-500' : 'bg-red-50 text-red-500 hover:bg-red-100'}`}
-                onClick={() => onUpdateMeal(i, 'skip')}
-              >
-                {meal.isSkipped ? "元に戻す" : "スキップする"}
-              </Button>
+              <div onPointerDownCapture={(e) => e.stopPropagation()}>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className={`w-full mt-4 h-9 text-xs font-bold border-0 ${meal.isSkipped ? 'bg-gray-200 text-gray-500' : 'bg-red-50 text-red-500 hover:bg-red-100'}`}
+                  onClick={() => onUpdateMeal(i, 'skip')}
+                >
+                  {meal.isSkipped ? "元に戻す" : "スキップする"}
+                </Button>
+              </div>
             </div>
           ))}
         </div>
