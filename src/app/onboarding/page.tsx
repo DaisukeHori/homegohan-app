@@ -36,6 +36,11 @@ const QUESTIONS = [
     ]
   },
   {
+    id: 'body_stats',
+    text: 'よりパーソナライズするために、\n年齢・職業・身長・体重を教えていただけますか？\n（正確な基礎代謝の計算に使用します）',
+    type: 'custom_stats', // 新しいタイプ
+  },
+  {
     id: 'goal',
     text: '最後に、一番大切にしたいことを教えてください。\nこれに合わせて、サポートの方針を決めますね。',
     type: 'choice',
@@ -82,7 +87,18 @@ export default function OnboardingPage() {
     } else {
       // 全ステップ完了
       setIsTyping(true);
-      // TODO: ここでAPIにデータを送信
+      
+      // APIへ送信
+      try {
+        await fetch('/api/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(answers),
+        });
+      } catch (e) {
+        console.error(e);
+      }
+
       setTimeout(() => {
         router.push("/onboarding/complete");
       }, 1500);
@@ -186,6 +202,59 @@ export default function OnboardingPage() {
                       <svg className="w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4" /></svg>
                     </Button>
                   ))}
+                </div>
+              )}
+              
+              {/* Custom Stats Input */}
+              {currentQuestion.type === 'custom_stats' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-bold text-gray-500 block mb-1">年齢</label>
+                      <Input 
+                        type="number" 
+                        placeholder="25" 
+                        className="py-6 rounded-xl text-center text-lg"
+                        onChange={(e) => setAnswers({...answers, age: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-bold text-gray-500 block mb-1">職業</label>
+                      <Input 
+                        type="text" 
+                        placeholder="会社員" 
+                        className="py-6 rounded-xl text-center text-lg"
+                        onChange={(e) => setAnswers({...answers, occupation: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-bold text-gray-500 block mb-1">身長 (cm)</label>
+                      <Input 
+                        type="number" 
+                        placeholder="170" 
+                        className="py-6 rounded-xl text-center text-lg"
+                        onChange={(e) => setAnswers({...answers, height: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-bold text-gray-500 block mb-1">体重 (kg)</label>
+                      <Input 
+                        type="number" 
+                        placeholder="60" 
+                        className="py-6 rounded-xl text-center text-lg"
+                        onChange={(e) => setAnswers({...answers, weight: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                  <Button 
+                    onClick={() => handleAnswer("completed")}
+                    disabled={!answers.age || !answers.occupation || !answers.height || !answers.weight}
+                    className="w-full py-6 rounded-full bg-[#333] hover:bg-black text-white font-bold mt-4"
+                  >
+                    次へ
+                  </Button>
                 </div>
               )}
             </motion.div>

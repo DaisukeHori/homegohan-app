@@ -27,7 +27,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: Request) {
+export async function POST(request: Request) {
   try {
     const supabase = createClient(cookies())
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -38,35 +38,48 @@ export async function PUT(request: Request) {
 
     const body = await request.json()
     
-    // キャメルケース(App) -> スネークケース(DB)へのマッピング
-    const updates: any = {};
-    if (body.nickname !== undefined) updates.nickname = body.nickname;
-    if (body.ageGroup !== undefined) updates.age_group = body.ageGroup;
-    if (body.gender !== undefined) updates.gender = body.gender;
-    if (body.goalText !== undefined) updates.goal_text = body.goalText;
-    if (body.performanceModes !== undefined) updates.perf_modes = body.performanceModes;
-    if (body.lifestyle !== undefined) updates.lifestyle = body.lifestyle;
-    if (body.dietFlags !== undefined) updates.diet_flags = body.dietFlags;
+    // マッピング
+    const updates: any = {
+      id: user.id,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (body.nickname) updates.nickname = body.nickname;
+    if (body.gender) updates.gender = body.gender;
+    if (body.lifestyle) updates.lifestyle = body.lifestyle; // JSONとして保存
+    if (body.goal) updates.goal_text = body.goal;
     
-    // 古いパラメータ名(snake_case)も念のためサポートする場合（移行期間）
-    if (body.goal_text !== undefined) updates.goal_text = body.goal_text;
+    // 追加項目
+    if (body.age) updates.age = parseInt(body.age);
+    if (body.age) updates.age_group = `${Math.floor(parseInt(body.age) / 10) * 10}s`; // 年代も自動計算
+    if (body.occupation) updates.occupation = body.occupation;
+    if (body.height) updates.height = parseFloat(body.height);
+    if (body.weight) updates.weight = parseFloat(body.weight);
+
+    // デフォルト値の補完（必須カラムエラー回避）
+    if (!updates.nickname) updates.nickname = 'Guest'; 
+    if (!updates.age_group && !updates.age) updates.age_group = 'unspecified';
+    if (!updates.gender) updates.gender = 'unspecified';
 
     const { data, error } = await supabase
       .from('user_profiles')
-      .update({
-        ...updates,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', user.id)
+      .upsert(updates) // upsertを使用
       .select()
       .single()
 
     if (error) {
+      console.error('Profile update error:', error);
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
     return NextResponse.json(data)
   } catch (error: any) {
+    console.error('API Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+}
+
+export async function PUT(request: Request) {
+  // PUTもPOSTと同じロジックで処理できるようにする
+  return POST(request);
 }
