@@ -54,6 +54,23 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
       const domainRequest = toWeeklyMenuRequest(data);
       setRequest(domainRequest);
       setLoading(false);
+      
+      // デバッグ: 画像URLの確認
+      if (domainRequest.resultJson?.days) {
+        const totalMeals = domainRequest.resultJson.days.reduce((sum: number, day: any) => sum + (day.meals?.length || 0), 0);
+        const mealsWithImages = domainRequest.resultJson.days.reduce((sum: number, day: any) => 
+          sum + (day.meals?.filter((m: any) => m.imageUrl).length || 0), 0
+        );
+        console.log(`[Debug] Meals with images: ${mealsWithImages}/${totalMeals}`);
+        // 画像がないmealをログ出力
+        domainRequest.resultJson.days.forEach((day: any, dayIdx: number) => {
+          day.meals?.forEach((meal: any, mealIdx: number) => {
+            if (!meal.imageUrl && meal.dishes?.[0]?.name) {
+              console.log(`[Debug] Missing image: Day ${dayIdx + 1}, Meal ${mealIdx + 1} (${meal.mealType}): ${meal.dishes[0].name}`);
+            }
+          });
+        });
+      }
 
       // 初回ロード時、未確定ならプランニングモードをON
       if (domainRequest.status === 'completed' && !isPlanningMode && activeTab === 'menu') {
