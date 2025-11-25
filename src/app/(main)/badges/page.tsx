@@ -33,11 +33,11 @@ const ICON_MAP: Record<string, string> = {
 
 // ランク定義
 const RANKS = [
-  { name: "Novice Eater", min: 0, color: "bg-gray-400" },
-  { name: "Healthy Rookie", min: 3, color: "bg-green-400" },
-  { name: "Balanced Pro", min: 8, color: "bg-blue-400" },
-  { name: "Nutrition Master", min: 15, color: "bg-purple-400" },
-  { name: "Food Legend", min: 25, color: "bg-yellow-400" },
+  { name: "食の初心者", min: 0, color: "bg-gray-400" },
+  { name: "健康ルーキー", min: 3, color: "bg-green-400" },
+  { name: "バランスの達人", min: 8, color: "bg-blue-400" },
+  { name: "栄養マスター", min: 15, color: "bg-purple-400" },
+  { name: "食のレジェンド", min: 25, color: "bg-yellow-400" },
 ];
 
 export default function BadgesPage() {
@@ -100,7 +100,7 @@ export default function BadgesPage() {
               className="bg-white p-8 rounded-3xl shadow-2xl text-center"
             >
               <div className="text-6xl mb-4">🎊</div>
-              <h2 className="text-2xl font-bold text-gray-900">New Badge Unlocked!</h2>
+              <h2 className="text-2xl font-bold text-gray-900">新しいバッジを獲得！</h2>
             </motion.div>
           </motion.div>
         )}
@@ -108,7 +108,7 @@ export default function BadgesPage() {
 
       {/* ヘッダー */}
       <div className="bg-white p-6 pb-12 rounded-b-[40px] shadow-sm mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Trophy Room</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">トロフィールーム</h1>
         <p className="text-gray-500">
           これまでの達成記録です。
         </p>
@@ -121,11 +121,11 @@ export default function BadgesPage() {
           <div className="flex-1">
             <div className="flex justify-between items-end mb-2">
               <div>
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Current Rank</span>
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">現在のランク</span>
                 <p className="font-bold text-gray-900">{currentRank.name}</p>
               </div>
               {nextRank && (
-                <span className="text-xs font-bold text-[#FF8A65]">Next: {nextRank.name}</span>
+                <span className="text-xs font-bold text-[#FF8A65]">次は: {nextRank.name}</span>
               )}
             </div>
             <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden">
@@ -145,7 +145,7 @@ export default function BadgesPage() {
 
       {/* バッジグリッド */}
       {loading ? (
-        <div className="text-center text-gray-400 py-12">Loading Trophies...</div>
+        <div className="text-center text-gray-400 py-12">読み込み中...</div>
       ) : (
         <div className="px-6 grid grid-cols-2 md:grid-cols-3 gap-4">
           {badges.map((badge, i) => (
