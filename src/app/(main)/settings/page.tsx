@@ -45,20 +45,20 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-gray-50 pb-24 relative">
       
       <div className="bg-white p-6 pb-4 border-b border-gray-100 sticky top-0 z-20">
-        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+        <h1 className="text-2xl font-bold text-gray-900">設定</h1>
       </div>
 
       <div className="p-6 space-y-8">
         
-        {/* セクション 1: アプリ設定 */}
+        {/* セクション 1: 一般設定 */}
         <div>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">General</h2>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">一般</h2>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
              
              <div className="flex items-center justify-between p-4 border-b border-gray-50">
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-500">🔔</div>
-                 <span className="font-bold text-gray-700">Notifications</span>
+                 <span className="font-bold text-gray-700">通知</span>
                </div>
                <Switch checked={settings.notifications} onChange={() => toggle('notifications')} />
              </div>
@@ -66,7 +66,7 @@ export default function SettingsPage() {
              <div className="flex items-center justify-between p-4">
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500">🤖</div>
-                 <span className="font-bold text-gray-700">Auto Analysis</span>
+                 <span className="font-bold text-gray-700">自動解析</span>
                </div>
                <Switch checked={settings.autoAnalyze} onChange={() => toggle('autoAnalyze')} />
              </div>
@@ -76,13 +76,16 @@ export default function SettingsPage() {
 
         {/* セクション 2: データ・プライバシー */}
         <div>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">Data & Privacy</h2>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">データとプライバシー</h2>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
              
              <button className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors">
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-green-500">☁️</div>
-                 <span className="font-bold text-gray-700">Export Data</span>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">データをエクスポート</span>
+                   <p className="text-xs text-gray-400">CSV, JSON, PDF形式で出力</p>
+                 </div>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
@@ -90,7 +93,10 @@ export default function SettingsPage() {
              <div className="flex items-center justify-between p-4">
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500">📊</div>
-                 <span className="font-bold text-gray-700">Share with Trainer</span>
+                 <div>
+                   <span className="font-bold text-gray-700">トレーナーと共有</span>
+                   <p className="text-xs text-gray-400">栄養士やジムと連携</p>
+                 </div>
                </div>
                <Switch checked={settings.dataShare} onChange={() => toggle('dataShare')} />
              </div>
@@ -100,7 +106,7 @@ export default function SettingsPage() {
 
         {/* セクション 3: サポート・法的情報 */}
         <div>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">Support & Legal</h2>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">サポートと法的情報</h2>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
              
              <button 
@@ -109,7 +115,7 @@ export default function SettingsPage() {
              >
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-500">📄</div>
-                 <span className="font-bold text-gray-700">Terms of Service</span>
+                 <span className="font-bold text-gray-700">利用規約</span>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
@@ -120,7 +126,7 @@ export default function SettingsPage() {
              >
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-500">🔒</div>
-                 <span className="font-bold text-gray-700">Privacy Policy</span>
+                 <span className="font-bold text-gray-700">プライバシーポリシー</span>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
@@ -131,7 +137,7 @@ export default function SettingsPage() {
              >
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-500">✉️</div>
-                 <span className="font-bold text-gray-700">Contact Support</span>
+                 <span className="font-bold text-gray-700">お問い合わせ</span>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </a>
@@ -146,11 +152,11 @@ export default function SettingsPage() {
             onClick={() => setShowLogoutModal(true)}
             className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
           >
-            Sign Out
+            ログアウト
           </Button>
           <p className="text-center text-xs text-gray-400">
-            Version 1.0.0 (Build 20250101)<br/>
-            © 2025 Homegohan Inc.
+            Version 1.0.0 (Build 20250125)<br/>
+            © 2025 ほめゴハン
           </p>
         </div>
 
@@ -174,7 +180,7 @@ export default function SettingsPage() {
               <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-6 text-3xl">
                 👋
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Sign Out?</h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">ログアウトしますか？</h3>
               <p className="text-gray-500 mb-8 text-sm">
                 ログアウトしてもデータは保持されます。<br/>
                 またすぐにお会いしましょう。
@@ -184,13 +190,13 @@ export default function SettingsPage() {
                   onClick={handleLogout}
                   className="w-full py-3 rounded-full bg-[#333] text-white font-bold hover:bg-black transition-colors shadow-lg"
                 >
-                  Sign Out
+                  ログアウト
                 </button>
                 <button 
                   onClick={() => setShowLogoutModal(false)}
                   className="w-full py-3 rounded-full font-bold text-gray-500 hover:bg-gray-100 transition-colors"
                 >
-                  Cancel
+                  キャンセル
                 </button>
               </div>
             </motion.div>
