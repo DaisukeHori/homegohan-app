@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 
 export default function OnboardingCompletePage() {
@@ -82,12 +81,12 @@ export default function OnboardingCompletePage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 1.2 }}
         >
-          <Button 
-            asChild
-            className="w-full py-6 rounded-full bg-[#333] hover:bg-black text-white font-bold text-lg shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105"
+          <Link 
+            href="/home"
+            className="inline-flex items-center justify-center w-full py-6 rounded-full bg-[#333] hover:bg-black text-white font-bold text-lg shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105"
           >
-            <Link href="/home">ダッシュボードへ移動</Link>
-          </Button>
+            ダッシュボードへ移動
+          </Link>
         </motion.div>
 
       </motion.div>
