@@ -28,7 +28,6 @@ export default function SettingsPage() {
   
   const [settings, setSettings] = useState({
     notifications: true,
-    darkMode: false,
     dataShare: true,
     autoAnalyze: true
   });
@@ -64,20 +63,12 @@ export default function SettingsPage() {
                <Switch checked={settings.notifications} onChange={() => toggle('notifications')} />
              </div>
 
-             <div className="flex items-center justify-between p-4 border-b border-gray-50">
+             <div className="flex items-center justify-between p-4">
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500">🤖</div>
                  <span className="font-bold text-gray-700">Auto Analysis</span>
                </div>
                <Switch checked={settings.autoAnalyze} onChange={() => toggle('autoAnalyze')} />
-             </div>
-
-             <div className="flex items-center justify-between p-4">
-               <div className="flex items-center gap-3">
-                 <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-500">🌙</div>
-                 <span className="font-bold text-gray-700">Dark Mode</span>
-               </div>
-               <Switch checked={settings.darkMode} onChange={() => toggle('darkMode')} />
              </div>
 
           </div>
