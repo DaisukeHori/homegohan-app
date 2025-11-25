@@ -80,6 +80,55 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  // PUTもPOSTと同じロジックで処理できるようにする
-  return POST(request);
+  try {
+    const supabase = createClient(cookies())
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const body = await request.json()
+    
+    // キャメルケース(App) -> スネークケース(DB)へのマッピング
+    const updates: any = {};
+    if (body.nickname !== undefined) updates.nickname = body.nickname;
+    if (body.age !== undefined) updates.age = body.age;
+    if (body.occupation !== undefined) updates.occupation = body.occupation;
+    if (body.height !== undefined) updates.height = body.height;
+    if (body.weight !== undefined) updates.weight = body.weight;
+    if (body.ageGroup !== undefined) updates.age_group = body.ageGroup;
+    if (body.gender !== undefined) updates.gender = body.gender;
+    if (body.goalText !== undefined) updates.goal_text = body.goalText;
+    if (body.performanceModes !== undefined) updates.perf_modes = body.performanceModes;
+    if (body.lifestyle !== undefined) updates.lifestyle = body.lifestyle;
+    if (body.dietFlags !== undefined) updates.diet_flags = body.dietFlags;
+    
+    // 年齢から年代を自動計算
+    if (body.age && !body.ageGroup) {
+      const age = typeof body.age === 'number' ? body.age : parseInt(body.age);
+      if (!isNaN(age)) {
+        updates.age_group = `${Math.floor(age / 10) * 10}s`;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id)
+      .select()
+      .single()
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json(data)
+  } catch (error: any) {
+    console.error("API Error (PUT /api/profile):", error);
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
 }
