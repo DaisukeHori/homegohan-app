@@ -12,9 +12,10 @@ Deno.serve(async (req) => {
     // request param に familySize, cheatDay を追加
     const { recordId, userId, startDate, note, familySize, cheatDay } = await req.json()
 
-    EdgeRuntime.waitUntil(
-      generateMenuBackgroundTask({ recordId, userId, startDate, note, familySize, cheatDay })
-    )
+    // 非同期でバックグラウンドタスクを実行（レスポンスをブロックしない）
+    generateMenuBackgroundTask({ recordId, userId, startDate, note, familySize, cheatDay }).catch((error) => {
+      console.error('Background task error:', error)
+    })
 
     return new Response(
       JSON.stringify({ message: 'Menu generation started in background' }),
