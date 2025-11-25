@@ -4,7 +4,6 @@ import { useState } from "react";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
 import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
-import Image from "next/image";
 
 interface DayCardProps {
   day: any; // WeeklyMenuDay
@@ -78,7 +77,8 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
               <div className="flex gap-3">
                 <div className="w-16 h-16 bg-gray-100 rounded-lg relative overflow-hidden shrink-0">
                    {meal.imageUrl ? (
-                     <Image src={meal.imageUrl} fill alt="meal" className="object-cover" />
+                     // eslint-disable-next-line @next/next/no-img-element
+                     <img src={meal.imageUrl} alt="meal" className="w-full h-full object-cover" />
                    ) : (
                      <span className="absolute inset-0 flex items-center justify-center text-2xl">🍽️</span>
                    )}

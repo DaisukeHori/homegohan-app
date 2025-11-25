@@ -4,12 +4,6 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
-import { toWeeklyMenuRequest } from "@/lib/converter";
-import type { WeeklyMenuRequest, ProjectedImpact, WeeklyMenuDay } from "@/types/domain";
-import { PlanningDeck } from "@/components/planning/PlanningDeck"; // Import new component
-
-import { Icons } from "@/components/icons";
 
 interface WeeklyMenuPageProps {
   params: { id: string };
@@ -256,7 +250,8 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
                       <div key={j} className={`flex gap-4 items-start p-2 rounded-lg ${meal.isSkipped ? 'opacity-40 bg-gray-100' : ''}`}>
                         <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden relative shrink-0">
                           {meal.imageUrl ? (
-                             <Image src={meal.imageUrl} alt="meal" fill className="object-cover" />
+                             // eslint-disable-next-line @next/next/no-img-element
+                             <img src={meal.imageUrl} alt="meal" className="w-full h-full object-cover" />
                           ) : (
                              <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">No Image</div>
                           )}
