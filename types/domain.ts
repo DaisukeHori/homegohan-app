@@ -114,7 +114,7 @@ export interface MealAiFeedback {
 
 // --- Weekly Menu ---
 
-export type WeeklyMenuRequestStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type WeeklyMenuRequestStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'confirmed';
 
 export interface WeeklyMenuRequest {
   id: string;
@@ -160,6 +160,8 @@ export interface WeeklyMenuDay {
 export interface DailyMealSet {
   mealType: 'breakfast' | 'lunch' | 'dinner';
   dishes: Dish[];
+  isSkipped?: boolean;
+  imageUrl?: string;
 }
 
 export interface Dish {

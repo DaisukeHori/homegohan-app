@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image"; // Added for meal images
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { toWeeklyMenuRequest } from "@/lib/converter";
-import type { WeeklyMenuRequest, ProjectedImpact } from "@/types/domain";
+import type { WeeklyMenuRequest, ProjectedImpact, WeeklyMenuDay } from "@/types/domain"; // Added WeeklyMenuDay
 
 import { Icons } from "@/components/icons";
 
@@ -18,6 +19,9 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
   const [request, setRequest] = useState<WeeklyMenuRequest | null>(null);
   const [activeTab, setActiveTab] = useState<'menu' | 'shopping' | 'report'>('menu');
   const [loading, setLoading] = useState(true);
+  const [isConfirming, setIsConfirming] = useState(false); // State for confirmation
+  const [generatingImageFor, setGeneratingImageFor] = useState<{dayIndex: number, mealIndex: number} | null>(null); // State for image gen
+
   const supabase = createClient();
 
   // ポーリングでステータス監視
@@ -34,7 +38,6 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
       if (error) {
         console.error(error);
         setLoading(false);
-        // UUID形式でない場合はエラーメッセージを表示
         if (error.code === '22P02' || params.id === 'dummy-1') {
           setRequest(null);
           return;
@@ -53,7 +56,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
       setRequest(domainRequest);
       setLoading(false);
 
-      if (domainRequest.status === 'completed' || domainRequest.status === 'failed') {
+      if (domainRequest.status === 'completed' || domainRequest.status === 'failed' || domainRequest.status === 'confirmed') {
         clearInterval(intervalId);
       }
     };
@@ -63,6 +66,91 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
 
     return () => clearInterval(intervalId);
   }, [params.id, supabase]);
+
+  const handleToggleSkip = (dayIndex: number, mealIndex: number) => {
+    if (!request?.resultJson) return;
+    const newDays = [...request.resultJson.days];
+    const meal = newDays[dayIndex].meals[mealIndex];
+    meal.isSkipped = !meal.isSkipped;
+    
+    // Optimistic update
+    setRequest({
+      ...request,
+      resultJson: {
+        ...request.resultJson,
+        days: newDays
+      }
+    });
+  };
+
+  const handleConfirmPlan = async () => {
+    if (!request?.resultJson) return;
+    setIsConfirming(true);
+    try {
+      const res = await fetch(`/api/ai/menu/weekly/${request.id}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: request.resultJson.days }),
+      });
+
+      if (!res.ok) throw new Error('Failed to confirm');
+      
+      // Update local state status
+      setRequest({ ...request, status: 'confirmed' });
+      alert('Plan Confirmed! Check your dashboard.');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to confirm plan.');
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const handleGenerateImage = async (dayIndex: number, mealIndex: number, mealName: string) => {
+    setGeneratingImageFor({ dayIndex, mealIndex });
+    try {
+      const res = await fetch('/api/ai/image/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: mealName }),
+      });
+
+      if (!res.ok) throw new Error('Failed to generate image');
+      const { imageUrl } = await res.json();
+
+      if (!request?.resultJson) return;
+      const newDays = [...request.resultJson.days];
+      newDays[dayIndex].meals[mealIndex].imageUrl = imageUrl;
+
+      // Optimistic update (Image only persists if plan is confirmed/saved, ideally should save immediately but relying on confirm for now or separate save)
+      // Actually, we should probably save this update to DB immediately or when confirming. 
+      // For now, let's just update local state and let "Confirm" save it, or if already confirmed, we might need a separate patch.
+      // Simplest: Confirm saves everything. If already confirmed, we need to call confirm endpoint again to update.
+      
+      setRequest({
+        ...request,
+        resultJson: {
+          ...request.resultJson,
+          days: newDays
+        }
+      });
+      
+      // If already confirmed, auto-save the image update
+      if (request.status === 'confirmed') {
+         await fetch(`/api/ai/menu/weekly/${request.id}/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ days: newDays }),
+        });
+      }
+
+    } catch (e) {
+      console.error(e);
+      alert('Failed to generate image.');
+    } finally {
+      setGeneratingImageFor(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -90,7 +178,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
     );
   }
 
-  if (request.status === 'pending') {
+  if (request.status === 'pending' || request.status === 'processing') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-8 text-center">
         <div className="w-24 h-24 bg-white rounded-full shadow-xl flex items-center justify-center mb-8 relative">
@@ -191,7 +279,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
       </div>
 
       {/* コンテンツ */}
-      <div className="px-6 pb-8">
+      <div className="px-6 pb-28"> {/* Bottom padding for confirm button */}
         <AnimatePresence mode="wait">
           
           {/* Menu Tab */}
@@ -206,7 +294,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
               {days.map((day: any, i: number) => (
                 <div 
                   key={i} 
-                  className={`rounded-3xl p-6 shadow-sm border relative overflow-hidden ${
+                  className={`rounded-3xl p-6 shadow-sm border relative overflow-hidden transition-all ${
                     day.isCheatDay ? 'bg-gradient-to-br from-yellow-50 to-orange-50 border-yellow-100' : 'bg-white border-gray-100'
                   }`}
                 >
@@ -229,16 +317,48 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
                     </div>
                   </div>
 
-                  <div className="space-y-3 pl-2">
+                  <div className="space-y-4 pl-2">
                     {day.meals.map((meal: any, j: number) => (
-                      <div key={j} className="flex gap-4 items-start">
-                        <div className="w-16 text-xs font-bold text-gray-400 uppercase pt-1">
-                          {meal.mealType}
+                      <div key={j} className={`relative flex gap-4 items-start p-3 rounded-xl transition-colors ${meal.isSkipped ? 'bg-gray-100 opacity-60' : 'hover:bg-gray-50'}`}>
+                        
+                        {/* Skip Toggle */}
+                        <div className="pt-1">
+                          <input 
+                            type="checkbox" 
+                            checked={!meal.isSkipped} 
+                            onChange={() => handleToggleSkip(i, j)}
+                            className="w-5 h-5 rounded-md border-gray-300 text-accent focus:ring-accent"
+                          />
                         </div>
-                        <div className="flex-1">
+
+                        {/* Image or Placeholder */}
+                        <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden relative shrink-0">
+                          {meal.imageUrl ? (
+                             <Image src={meal.imageUrl} alt={meal.dishes[0].name} fill className="object-cover" />
+                          ) : (
+                             <button 
+                               onClick={() => handleGenerateImage(i, j, meal.dishes[0].name)}
+                               disabled={generatingImageFor?.dayIndex === i && generatingImageFor?.mealIndex === j}
+                               className="w-full h-full flex items-center justify-center text-xs text-gray-400 hover:bg-gray-300 transition-colors"
+                             >
+                               {generatingImageFor?.dayIndex === i && generatingImageFor?.mealIndex === j ? (
+                                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                               ) : (
+                                 <span className="text-[10px] text-center px-1">📷<br/>Generate</span>
+                               )}
+                             </button>
+                          )}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-gray-400 uppercase mb-1">
+                            {meal.mealType}
+                          </div>
                           {meal.dishes.map((dish: any, k: number) => (
                             <div key={k} className="mb-1 last:mb-0">
-                              <p className="font-bold text-gray-800 text-sm">{dish.name}</p>
+                              <p className={`font-bold text-sm truncate ${meal.isSkipped ? 'text-gray-500 line-through' : 'text-gray-800'}`}>
+                                {dish.name}
+                              </p>
                               {dish.role && <p className="text-[10px] text-gray-400">{dish.role}</p>}
                             </div>
                           ))}
@@ -260,7 +380,8 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
               exit={{ opacity: 0, y: -10 }}
               className="space-y-4"
             >
-              <div className="bg-blue-50 p-4 rounded-xl flex items-start gap-3 mb-4">
+              {/* ... (Existing shopping content) ... */}
+               <div className="bg-blue-50 p-4 rounded-xl flex items-start gap-3 mb-4">
                 <span className="text-xl">💡</span>
                 <p className="text-sm text-blue-800 font-medium">
                   冷蔵庫の在庫 ({request.constraints?.ingredients?.length || 0}品) を除外済みです。
@@ -299,7 +420,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
 
           {/* Report Tab */}
           {activeTab === 'report' && (
-            <motion.div 
+             <motion.div 
               key="report"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -323,6 +444,39 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
 
         </AnimatePresence>
       </div>
+
+      {/* Commit Button Footer */}
+      {request.status !== 'confirmed' && (
+        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-100 p-4 pb-8 z-30 shadow-[0_-5px_20px_rgba(0,0,0,0.05)]">
+           <div className="max-w-md mx-auto flex gap-4">
+              <div className="flex-1">
+                 <p className="text-xs text-gray-400 font-bold">Total Meals</p>
+                 <p className="text-xl font-black text-gray-900">
+                   {days.reduce((acc: number, day: any) => acc + day.meals.filter((m: any) => !m.isSkipped).length, 0)}
+                   <span className="text-sm font-normal text-gray-400 ml-1">/ {days.length * 3}</span>
+                 </p>
+              </div>
+              <Button 
+                onClick={handleConfirmPlan} 
+                disabled={isConfirming}
+                className="flex-[2] rounded-full bg-foreground text-white font-bold h-12 text-lg shadow-lg hover:bg-black transition-all active:scale-95"
+              >
+                {isConfirming ? "Confirming..." : "Confirm Plan 🚀"}
+              </Button>
+           </div>
+        </div>
+      )}
+      
+      {/* Confirmed Banner */}
+      {request.status === 'confirmed' && (
+         <div className="fixed bottom-0 left-0 w-full bg-green-50 border-t border-green-100 p-4 pb-8 z-30">
+           <div className="max-w-md mx-auto flex items-center justify-center gap-2 text-green-700 font-bold">
+             <span>✅ Plan Confirmed</span>
+             <Link href="/home" className="underline text-sm ml-2">Go to Dashboard</Link>
+           </div>
+         </div>
+      )}
+
     </div>
   );
 }

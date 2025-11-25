@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { useHomeData } from "@/hooks/useHomeData";
 import { Icons } from "@/components/icons";
+import { createClient } from "@/lib/supabase/client";
 
 export default function HomePage() {
   const {
@@ -16,6 +17,7 @@ export default function HomePage() {
     dailySummary,
     announcement,
     activityLevel,
+    confirmedPlan, // New
     suggestion,
     updateActivityLevel,
     setAnnouncement,
@@ -23,6 +25,53 @@ export default function HomePage() {
   } = useHomeData();
 
   const [showSummary, setShowSummary] = useState(false);
+  const [loggingMeal, setLoggingMeal] = useState<string | null>(null); // For quick log loading state
+  const supabase = createClient();
+
+  // --- Helper: Find Today's Plan ---
+  const getTodayPlan = () => {
+    if (!confirmedPlan?.resultJson) return null;
+    
+    const today = new Date().toISOString().split('T')[0];
+    // Find the day in the plan that matches today
+    // Assuming resultJson.days has valid dates.
+    const todayPlan = confirmedPlan.resultJson.days.find((d: any) => d.date === today);
+    return todayPlan;
+  };
+
+  const todayPlan = getTodayPlan();
+
+  // --- Helper: Quick Log ---
+  const handleQuickLog = async (mealType: string, dishName: string, approxCals: number) => {
+    if (!user) return;
+    setLoggingMeal(dishName);
+    
+    try {
+      // Insert into meals table
+      const { error } = await supabase.from('meals').insert({
+        user_id: user.id,
+        meal_type: mealType,
+        eaten_at: new Date().toISOString(),
+        memo: dishName, // Use the dish name as memo
+        // Ideally we should also store estimated nutrition, but for now this is a simple log.
+        // If we want to be fancy, we could insert a dummy meal_nutrition_estimate too.
+      });
+
+      if (error) throw error;
+
+      // Optimistic UI update or refetch would be good here, 
+      // but useHomeData's useEffect dependency array is [] so it won't auto-refresh.
+      // For now, just reload or show success.
+      alert("記録しました！");
+      window.location.reload(); // Simple reload to refresh data
+
+    } catch (e) {
+      console.error("Quick log failed", e);
+      alert("記録に失敗しました");
+    } finally {
+      setLoggingMeal(null);
+    }
+  };
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -166,105 +215,171 @@ export default function HomePage() {
         {/* メイングリッド */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* 左カラム: Today's Meals */}
-          <div className="lg:col-span-8 order-2 lg:order-1">
-            <div className="flex justify-between items-center mb-6">
-               <h3 className="font-bold text-gray-900 text-xl flex items-center gap-2">
-                 🍽️ 今日の食事
-                 <span className="text-sm font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                   {meals.length}食
-                 </span>
-               </h3>
-               <Link href="/meals/new">
-                 <Button variant="outline" size="sm" className="hidden lg:flex gap-2">
-                   <Icons.Plus className="w-4 h-4" /> 記録する
-                 </Button>
-               </Link>
-            </div>
+          {/* 左カラム: Today's Meals & Plan */}
+          <div className="lg:col-span-8 order-2 lg:order-1 space-y-8">
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {loading ? (
-                [...Array(2)].map((_, i) => (
-                  <div key={i} className="bg-white h-32 rounded-2xl animate-pulse shadow-sm" />
-                ))
-              ) : meals.length === 0 ? (
-                <div className="col-span-full bg-white border-2 border-dashed border-gray-200 rounded-3xl p-12 text-center text-gray-400">
-                  <p className="mb-4">まだ記録がありません</p>
-                  <Link href="/meals/new">
-                    <Button className="bg-accent hover:bg-accent-dark text-white rounded-full px-8">
-                      最初の食事を記録
-                    </Button>
+            {/* 🎯 Today's Mission Widget (New) */}
+            {todayPlan && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-6 shadow-xl text-white relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-64 h-64 bg-accent rounded-full blur-3xl opacity-20 -translate-y-1/2 translate-x-1/4" />
+                
+                <div className="flex justify-between items-center mb-4 relative z-10">
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    🚀 今日のミッション
+                    <span className="text-xs bg-accent px-2 py-0.5 rounded text-white font-bold">Plan</span>
+                  </h3>
+                  <Link href={`/menus/weekly/${confirmedPlan?.id}`} className="text-xs text-white/60 hover:text-white transition-colors">
+                    全てのプランを見る &rarr;
                   </Link>
                 </div>
-              ) : (
-                meals.map((meal, i) => (
-                  <Link key={meal.id} href={`/meals/${meal.id}`} className="block h-full">
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: i * 0.05 }}
-                      className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group h-full flex flex-col"
-                    >
-                      <div className="flex gap-4 items-start">
-                        <div className="relative w-24 h-24 rounded-xl overflow-hidden bg-gray-100 shrink-0">
-                          {meal.photoUrl ? (
-                            <Image src={meal.photoUrl} fill alt={meal.mealType} className="object-cover group-hover:scale-105 transition-transform duration-500" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-3xl text-gray-300">🍽️</div>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex justify-between items-start mb-2">
-                            <span className="text-xs font-bold text-accent uppercase tracking-wider bg-orange-50 px-2 py-0.5 rounded-full">
-                              {meal.mealType}
-                            </span>
-                            <span className="text-xs text-gray-400 font-mono">
-                              {new Date(meal.eatenAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                            </span>
-                          </div>
-                          
-                          <div className="space-y-1">
-                             {meal.nutrition?.energyKcal ? (
-                               <p className="font-bold text-gray-900 text-lg">
-                                 {Math.round(meal.nutrition.energyKcal)} <span className="text-xs font-normal text-gray-500">kcal</span>
-                               </p>
-                             ) : (
-                               <p className="text-sm text-gray-400 animate-pulse">解析中...</p>
-                             )}
-                          </div>
 
-                          {meal.nutrition?.vegScore && (
-                            <div className="mt-2 flex items-center gap-1">
-                               <div className="flex gap-0.5">
-                                 {[...Array(5)].map((_, idx) => (
-                                   <div key={idx} className={`w-1.5 h-1.5 rounded-full ${idx < meal.nutrition!.vegScore! ? 'bg-green-500' : 'bg-gray-200'}`} />
-                                 ))}
-                               </div>
-                               <span className="text-[10px] text-gray-500 ml-1">野菜スコア</span>
-                            </div>
-                          )}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 relative z-10">
+                  {['breakfast', 'lunch', 'dinner'].map((type) => {
+                    const plannedMeal = todayPlan.meals.find((m: any) => m.mealType === type);
+                    const isSkipped = plannedMeal?.isSkipped;
+                    const isLogged = meals.some(m => m.mealType === type); // Simple check if logged
+
+                    if (!plannedMeal || isSkipped) return null;
+
+                    return (
+                      <div key={type} className={`bg-white/10 backdrop-blur border border-white/10 rounded-xl p-3 ${isLogged ? 'opacity-50' : ''}`}>
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-[10px] font-bold uppercase text-white/60 tracking-wider">{type}</span>
+                          {isLogged && <span className="text-[10px] bg-green-500 text-white px-1.5 py-0.5 rounded-md">Done</span>}
                         </div>
-                        <Icons.ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-accent transition-colors" />
+                        
+                        <p className="font-bold text-sm mb-3 line-clamp-2 min-h-[2.5em]">
+                          {plannedMeal.dishes[0].name}
+                        </p>
+
+                        {!isLogged ? (
+                          <button 
+                            onClick={() => handleQuickLog(type, plannedMeal.dishes[0].name, 600)} // Mock calories for now
+                            disabled={loggingMeal === plannedMeal.dishes[0].name}
+                            className="w-full py-2 rounded-lg bg-accent hover:bg-accent-dark text-white text-xs font-bold transition-colors flex items-center justify-center gap-1"
+                          >
+                            {loggingMeal === plannedMeal.dishes[0].name ? (
+                              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <><span>👍</span> 食べた！</>
+                            )}
+                          </button>
+                        ) : (
+                          <div className="w-full py-2 text-center text-xs text-white/40 font-bold border border-white/10 rounded-lg">
+                            完了
+                          </div>
+                        )}
                       </div>
-                      
-                      {/* メモがあれば表示 */}
-                      {meal.memo && (
-                        <div className="mt-3 pt-3 border-t border-gray-50">
-                          <p className="text-xs text-gray-500 line-clamp-1">{meal.memo}</p>
-                        </div>
-                      )}
-                    </motion.div>
-                  </Link>
-                ))
-              )}
-              
-              {/* 追加ボタン（モバイルではFABがあるので非表示でもいいが、デスクトップでは有用） */}
-              <Link href="/meals/new" className="hidden lg:block">
-                <div className="h-full min-h-[140px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-2 text-gray-400 hover:bg-gray-100 hover:border-gray-300 hover:text-gray-600 transition-all cursor-pointer">
-                   <div className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center text-2xl mb-1">+</div>
-                   <span className="font-bold text-sm">食事を追加</span>
+                    );
+                  })}
                 </div>
-              </Link>
+              </motion.div>
+            )}
+
+            {/* Today's Meals List */}
+            <div>
+              <div className="flex justify-between items-center mb-6">
+                 <h3 className="font-bold text-gray-900 text-xl flex items-center gap-2">
+                   🍽️ 食事ログ
+                   <span className="text-sm font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                     {meals.length}食
+                   </span>
+                 </h3>
+                 <Link href="/meals/new">
+                   <Button variant="outline" size="sm" className="hidden lg:flex gap-2">
+                     <Icons.Plus className="w-4 h-4" /> 記録する
+                   </Button>
+                 </Link>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {loading ? (
+                  [...Array(2)].map((_, i) => (
+                    <div key={i} className="bg-white h-32 rounded-2xl animate-pulse shadow-sm" />
+                  ))
+                ) : meals.length === 0 ? (
+                  <div className="col-span-full bg-white border-2 border-dashed border-gray-200 rounded-3xl p-12 text-center text-gray-400">
+                    <p className="mb-4">まだ記録がありません</p>
+                    <Link href="/meals/new">
+                      <Button className="bg-accent hover:bg-accent-dark text-white rounded-full px-8">
+                        最初の食事を記録
+                      </Button>
+                    </Link>
+                  </div>
+                ) : (
+                  meals.map((meal, i) => (
+                    <Link key={meal.id} href={`/meals/${meal.id}`} className="block h-full">
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.05 }}
+                        className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all group h-full flex flex-col"
+                      >
+                        <div className="flex gap-4 items-start">
+                          <div className="relative w-24 h-24 rounded-xl overflow-hidden bg-gray-100 shrink-0">
+                            {meal.photoUrl ? (
+                              <Image src={meal.photoUrl} fill alt={meal.mealType} className="object-cover group-hover:scale-105 transition-transform duration-500" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-3xl text-gray-300">🍽️</div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start mb-2">
+                              <span className="text-xs font-bold text-accent uppercase tracking-wider bg-orange-50 px-2 py-0.5 rounded-full">
+                                {meal.mealType}
+                              </span>
+                              <span className="text-xs text-gray-400 font-mono">
+                                {new Date(meal.eatenAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                              </span>
+                            </div>
+                            
+                            <div className="space-y-1">
+                               {meal.nutrition?.energyKcal ? (
+                                 <p className="font-bold text-gray-900 text-lg">
+                                   {Math.round(meal.nutrition.energyKcal)} <span className="text-xs font-normal text-gray-500">kcal</span>
+                                 </p>
+                               ) : (
+                                 <p className="text-sm text-gray-400 animate-pulse">解析中...</p>
+                               )}
+                            </div>
+
+                            {meal.nutrition?.vegScore && (
+                              <div className="mt-2 flex items-center gap-1">
+                                 <div className="flex gap-0.5">
+                                   {[...Array(5)].map((_, idx) => (
+                                     <div key={idx} className={`w-1.5 h-1.5 rounded-full ${idx < meal.nutrition!.vegScore! ? 'bg-green-500' : 'bg-gray-200'}`} />
+                                   ))}
+                                 </div>
+                                 <span className="text-[10px] text-gray-500 ml-1">野菜スコア</span>
+                              </div>
+                            )}
+                          </div>
+                          <Icons.ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-accent transition-colors" />
+                        </div>
+                        
+                        {/* メモがあれば表示 */}
+                        {meal.memo && (
+                          <div className="mt-3 pt-3 border-t border-gray-50">
+                            <p className="text-xs text-gray-500 line-clamp-1">{meal.memo}</p>
+                          </div>
+                        )}
+                      </motion.div>
+                    </Link>
+                  ))
+                )}
+                
+                {/* 追加ボタン（モバイルではFABがあるので非表示でもいいが、デスクトップでは有用） */}
+                <Link href="/meals/new" className="hidden lg:block">
+                  <div className="h-full min-h-[140px] bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-2 text-gray-400 hover:bg-gray-100 hover:border-gray-300 hover:text-gray-600 transition-all cursor-pointer">
+                     <div className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center text-2xl mb-1">+</div>
+                     <span className="font-bold text-sm">食事を追加</span>
+                  </div>
+                </Link>
+              </div>
             </div>
           </div>
 

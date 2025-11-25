@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { toMeal, toMealNutritionEstimate, toAnnouncement } from "@/lib/converter";
-import type { Meal, MealNutritionEstimate, Announcement } from "@/types/domain";
+import { toMeal, toMealNutritionEstimate, toAnnouncement, toWeeklyMenuRequest } from "@/lib/converter";
+import type { Meal, MealNutritionEstimate, Announcement, WeeklyMenuRequest } from "@/types/domain";
 
 interface MealWithNutrition extends Meal {
   nutrition?: MealNutritionEstimate;
@@ -10,6 +10,7 @@ interface MealWithNutrition extends Meal {
 export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [meals, setMeals] = useState<MealWithNutrition[]>([]);
+  const [confirmedPlan, setConfirmedPlan] = useState<WeeklyMenuRequest | null>(null); // New state
   const [loading, setLoading] = useState(true);
   const [dailySummary, setDailySummary] = useState({
     energyKcal: 0,
@@ -111,9 +112,23 @@ export const useHomeData = () => {
 
         setDailySummary(prev => ({ ...prev, ...summary }));
       }
+
+      // 3. Confirmed Weekly Plan (Latest active)
+      const { data: planData } = await supabase
+        .from('weekly_menu_requests')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('status', 'confirmed')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (planData) {
+        setConfirmedPlan(toWeeklyMenuRequest(planData));
+      }
     }
 
-    // 3. Announcements
+    // 4. Announcements
     try {
       const annRes = await fetch('/api/announcements?mode=public');
       if (annRes.ok) {
@@ -158,6 +173,7 @@ export const useHomeData = () => {
     dailySummary,
     announcement,
     activityLevel,
+    confirmedPlan, // Exported
     suggestion,
     updateActivityLevel,
     setAnnouncement,
