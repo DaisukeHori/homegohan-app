@@ -190,6 +190,35 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
       }
     }
 
+    // 画像生成: 各日の各食事のメイン料理の画像を生成
+    console.log('Starting image generation for meals...')
+    const imageGenerationPromises: Promise<void>[] = []
+    
+    for (const day of resultJson.days) {
+      for (const meal of day.meals) {
+        if (meal.dishes && meal.dishes.length > 0) {
+          const dishName = meal.dishes[0].name
+          // 画像生成を非同期で実行（並列処理）
+          imageGenerationPromises.push(
+            generateMealImage(dishName, userId, supabase)
+              .then((imageUrl) => {
+                // 画像URLをmealオブジェクトに追加
+                meal.imageUrl = imageUrl
+                console.log(`Generated image for ${dishName}: ${imageUrl}`)
+              })
+              .catch((error) => {
+                console.error(`Failed to generate image for ${dishName}:`, error)
+                // 画像生成に失敗しても献立生成は続行（画像なしで保存）
+              })
+          )
+        }
+      }
+    }
+    
+    // すべての画像生成が完了するまで待つ（最大30秒）
+    await Promise.allSettled(imageGenerationPromises)
+    console.log('Image generation completed')
+
     const { error: updateError } = await supabase
       .from('weekly_menu_requests')
       .update({
@@ -207,5 +236,102 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
       .from('weekly_menu_requests')
       .update({ status: 'failed', error_message: error.message })
       .eq('id', recordId)
+  }
+}
+
+// 画像生成関数
+async function generateMealImage(dishName: string, userId: string, supabase: any): Promise<string> {
+  const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
+  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.5-flash-preview-image'
+  
+  if (!GOOGLE_AI_API_KEY) {
+    throw new Error('Google AI API Key is missing')
+  }
+
+  // プロンプトの構築
+  const enhancedPrompt = `A delicious, appetizing, professional food photography shot of ${dishName}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`
+
+  try {
+    // Gemini REST APIを直接呼び出し
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: enhancedPrompt
+          }]
+        }],
+        generationConfig: {
+          responseModalities: ['IMAGE'],
+          imageConfig: {
+            aspectRatio: '1:1'
+          }
+        }
+      })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      // 429エラー（クォータ超過）の場合はスキップ
+      if (response.status === 429) {
+        console.warn(`Quota exceeded for image generation, skipping: ${dishName}`)
+        throw new Error('QUOTA_EXCEEDED')
+      }
+      throw new Error(`Gemini API returned ${response.status}: ${errorText}`)
+    }
+
+    const data = await response.json()
+    
+    // レスポンスから画像データを抽出
+    const parts = data.candidates?.[0]?.content?.parts || []
+    let imageBase64 = ''
+    
+    for (const part of parts) {
+      if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
+        imageBase64 = part.inlineData.data
+        break
+      }
+    }
+
+    if (!imageBase64) {
+      throw new Error('No image data in response')
+    }
+
+    // Supabase Storage へアップロード
+    const buffer = new Uint8Array(
+      atob(imageBase64)
+        .split('')
+        .map((c) => c.charCodeAt(0))
+    )
+    
+    const fileName = `generated/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`
+    const bucketName = 'fridge-images'
+    
+    const { error: uploadError } = await supabase.storage
+      .from(bucketName)
+      .upload(fileName, buffer, {
+        contentType: 'image/png',
+        upsert: false
+      })
+
+    if (uploadError) {
+      throw new Error(`Storage upload failed: ${uploadError.message}`)
+    }
+
+    // 公開URLの取得
+    const { data: { publicUrl } } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(fileName)
+
+    return publicUrl
+
+  } catch (error: any) {
+    // エラーを再スロー（呼び出し元で処理）
+    throw error
   }
 }
