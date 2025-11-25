@@ -64,11 +64,34 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
     if (!OPENAI_API_KEY) throw new Error('OpenAI API Key is missing')
 
+    // startDateから7日分の日付を生成
+    const start = new Date(startDate)
+    const weekDates: string[] = []
+    const weekDays: string[] = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日']
+    const weekDaysEn: string[] = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+    
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(start)
+      date.setDate(start.getDate() + i)
+      const dateStr = date.toISOString().split('T')[0]
+      const dayIndex = date.getDay()
+      weekDates.push(`${dateStr} (${weekDays[dayIndex]})`)
+    }
+
     const prompt = `
       あなたはトップアスリートや経営者を支える超一流の「AI管理栄養士」です。
-      以下のユーザー情報に基づき、1週間分の献立、買い物リスト、そして未来予測レポートをJSON形式で生成してください。
+      以下のユーザー情報に基づき、**必ず7日分（1週間）の献立**、買い物リスト、そして未来予測レポートをJSON形式で生成してください。
+
+      【開始日と期間】
+      - 開始日: ${startDate}
+      - 以下の7日分の献立を生成してください:
+        ${weekDates.map((d, i) => `${i + 1}. ${d}`).join('\n        ')}
 
       【ユーザー情報】
+      - 年齢: ${profile.age || '不明'}歳
+      - 職業: ${profile.occupation || '不明'}
+      - 身長: ${profile.height || '不明'}cm
+      - 体重: ${profile.weight || '不明'}kg
       - 年代/性別: ${profile.age_group} / ${profile.gender || '不明'}
       - 目標: ${profile.goal_text || '健康維持'}
       - 家族人数: ${familySize}人分 (買い物リストはこの人数分で計算)
@@ -80,10 +103,12 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
       - 最近食べたもの: ${recentMenus} (被りを避ける)
       - 今週のリクエスト: ${note || '特になし'}
       
-      【生成要件】
-      1. 献立 (days):
+      【生成要件 - 重要】
+      1. 献立 (days): **必ず7日分（上記の7日すべて）を生成してください**
+         - 各日に朝食(breakfast)、昼食(lunch)、夕食(dinner)を含める
          - 一汁三菜ベース。チートデイ以外はPFCバランス重視。
          - チートデイは「ストレス解消」をテーマに少し豪華またはジャンキーでも可。
+         - 各日のdateフィールドは "YYYY-MM-DD" 形式で、dayOfWeekは英語（Monday, Tuesday等）で記載
       
       2. 買い物リスト (shoppingList):
          - ${familySize}人分の分量を概算して記載 (例: "鶏もも肉 2枚(600g)")。
@@ -93,19 +118,21 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
          - この献立を1週間続けた場合の「期待される効果」をシミュレーション。
          - 体重変化予測、肌質、集中力、睡眠の質などへの影響をポジティブに記述。
 
-      【JSON出力スキーマ】
+      【JSON出力スキーマ - 必ず7日分を含めること】
       {
         "days": [
           {
             "date": "YYYY-MM-DD",
             "dayOfWeek": "Monday",
-            "isCheatDay": boolean,
+            "isCheatDay": false,
             "meals": [
-              { "mealType": "breakfast", "dishes": [{"name": "料理名", "role": "主食"}] },
-              ...
+              { "mealType": "breakfast", "dishes": [{"name": "料理名", "role": "主食"}, {"name": "味噌汁", "role": "汁物"}] },
+              { "mealType": "lunch", "dishes": [{"name": "料理名", "role": "主菜"}] },
+              { "mealType": "dinner", "dishes": [{"name": "料理名", "role": "主菜"}] }
             ],
             "nutritionalAdvice": "アドバイス"
-          }
+          },
+          ... (必ず7日分すべてを含める)
         ],
         "shoppingList": [
           { "category": "野菜", "items": ["キャベツ 1玉", "..."] }
@@ -117,6 +144,8 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
           "comment": "ビタミンB群が豊富で、週末には疲労回復が実感できるでしょう。"
         }
       }
+      
+      **重要: days配列には必ず7つのオブジェクト（7日分）を含めてください。**
     `
 
     const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -140,6 +169,26 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
 
     const aiData = await aiResponse.json()
     const resultJson = JSON.parse(aiData.choices[0].message.content)
+
+    // 7日分の献立が生成されているか検証
+    if (!resultJson.days || !Array.isArray(resultJson.days) || resultJson.days.length !== 7) {
+      throw new Error(`Invalid response: Expected 7 days, but got ${resultJson.days?.length || 0} days. Please regenerate.`)
+    }
+
+    // 各日に必要なmealTypeが含まれているか確認
+    const requiredMealTypes = ['breakfast', 'lunch', 'dinner']
+    for (let i = 0; i < resultJson.days.length; i++) {
+      const day = resultJson.days[i]
+      if (!day.meals || !Array.isArray(day.meals)) {
+        throw new Error(`Day ${i + 1} is missing meals array`)
+      }
+      const mealTypes = day.meals.map((m: any) => m.mealType)
+      for (const required of requiredMealTypes) {
+        if (!mealTypes.includes(required)) {
+          console.warn(`Day ${i + 1} is missing ${required} meal`)
+        }
+      }
+    }
 
     const { error: updateError } = await supabase
       .from('weekly_menu_requests')
