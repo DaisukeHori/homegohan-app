@@ -141,92 +141,81 @@ export const DayCard = ({ day, index, total, onSwipeRight, onSwipeLeft, onRegene
              <span className="text-white font-black text-5xl tracking-widest border-[6px] border-white px-6 py-3 rounded-2xl transform rotate-12 drop-shadow-lg">EDIT</span>
           </motion.div>
 
-          {/* Main Visual Area */}
-          <div className="absolute inset-0 z-0 bg-gray-100">
+          {/* Main Visual Area - Full Bleed */}
+          <div className="absolute inset-0 z-0 bg-gray-900">
             {mainImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img 
                 src={mainImage} 
                 alt="Main Dish" 
-                // object-bottom寄りに設定し、下側の料理が見えるようにする
-                // さらに高さを100%確保しつつ、下半分が隠れることを考慮
-                className="w-full h-full object-cover object-[center_60%]" 
+                className="w-full h-full object-cover opacity-90" 
                 onError={(e) => {
                   console.error("Image load error:", mainImage);
                   e.currentTarget.style.display = 'none';
                 }}
               />
             ) : (
-              <div className="w-full h-full bg-gray-200 flex flex-col items-center justify-center text-gray-400">
-                <span className="text-6xl opacity-20 mb-2">🍽️</span>
-                <span className="text-xs font-mono opacity-50">No Image Data</span>
+              <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex flex-col items-center justify-center text-white/20">
+                <span className="text-6xl mb-4">🍽️</span>
               </div>
             )}
-            {/* グラデーションを少し強めにして、白文字を見やすくする */}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-transparent h-40 pointer-events-none" />
+            {/* 全体の視認性を高めるためのグラデーションオーバーレイ */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/60 pointer-events-none" />
           </div>
 
           {/* Content Overlay */}
-          <div className="relative z-10 h-full flex flex-col justify-between pointer-events-none">
+          <div className="relative z-10 h-full flex flex-col justify-between p-6 text-white pointer-events-none">
             
-            {/* Header - 文字色を白のまま維持、影をつけて視認性向上 */}
-            <div className="p-6 pt-8 text-white drop-shadow-md">
+            {/* Header - Floating */}
+            <div className="pt-4 drop-shadow-lg">
               <div className="flex justify-between items-start">
                 <div>
-                  <span className="text-xs font-bold tracking-widest opacity-90 mb-1 block">DAY {index + 1}</span>
-                  <h2 className="text-5xl font-bold tracking-tighter font-serif leading-none">{day.dayOfWeek}</h2>
-                  <p className="text-sm font-medium opacity-90 mt-1">{day.date}</p>
+                  <div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-md px-3 py-1 rounded-full mb-3 border border-white/10">
+                    <span className="text-[10px] font-bold tracking-widest uppercase">DAY {index + 1}</span>
+                  </div>
+                  <h2 className="text-6xl font-bold tracking-tighter font-serif leading-none">{day.dayOfWeek}</h2>
+                  <p className="text-lg font-medium opacity-90 mt-1 ml-1">{day.date}</p>
                 </div>
                 {day.isCheatDay && (
-                  <span className="bg-white/90 backdrop-blur text-orange-600 text-[10px] font-black px-3 py-1 rounded-full shadow-lg uppercase tracking-widest">
+                  <div className="bg-orange-500 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg uppercase tracking-widest transform rotate-6 border border-orange-400">
                     CHEAT DAY
-                  </span>
+                  </div>
                 )}
               </div>
             </div>
 
-            {/* Bottom Info Panel - 高さを少し下げて画像エリアを確保 */}
-            <div className="bg-white/95 backdrop-blur-xl rounded-t-[32px] p-6 pb-8 shadow-[0_-10px_40px_rgba(0,0,0,0.1)] transition-transform">
+            {/* Bottom Info - Glass Card */}
+            <div className="space-y-4">
               
               {/* Focus Badge */}
-              <div className="mb-5 -mt-10 flex justify-center">
-                <div className="inline-flex items-center gap-2 bg-white text-gray-800 px-4 py-2 rounded-full text-xs font-bold shadow-lg border border-gray-100">
-                  <span className="text-orange-500 text-lg">💡</span>
-                  <span className="tracking-tight">{day.nutritionalAdvice.slice(0, 22)}...</span>
-                </div>
+              <div className="inline-flex items-center gap-2 bg-black/40 backdrop-blur-md text-white px-4 py-2 rounded-full text-xs font-bold border border-white/10 shadow-lg">
+                <span className="text-yellow-400 text-base">💡</span>
+                <span>{day.nutritionalAdvice.slice(0, 25)}...</span>
               </div>
 
-              {/* Menu List - コンパクトに */}
-              <div className="space-y-4 mb-6">
-                {day.meals.map((meal: any, i: number) => (
-                  <div key={i} className="flex items-start gap-4 group">
-                    <div className="w-14 pt-1 text-[10px] font-bold text-gray-400 uppercase text-right tracking-wider shrink-0">
-                      {meal.mealType === 'breakfast' ? '朝食' : meal.mealType === 'lunch' ? '昼食' : meal.mealType === 'dinner' ? '夕食' : meal.mealType}
-                    </div>
-                    <div className="flex-1 min-w-0 pb-3 border-b border-gray-50 last:border-0">
-                      <p className="font-bold text-gray-800 text-base leading-snug group-first:text-lg">
-                        {meal.dishes[0]?.name}
-                      </p>
-                      {meal.dishes.length > 1 && (
-                        <p className="text-xs text-gray-400 mt-1 truncate">
-                          {meal.dishes.slice(1).map((d:any) => d.name).join(" / ")}
+              {/* Menu List Card - Glassmorphism */}
+              <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-5 border border-white/20 shadow-2xl">
+                <div className="space-y-3">
+                  {day.meals.map((meal: any, i: number) => (
+                    <div key={i} className="flex items-center gap-4">
+                      <div className="w-12 text-[10px] font-bold opacity-60 uppercase text-right tracking-wider">{meal.mealType}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-base text-white leading-tight truncate drop-shadow-md">
+                          {meal.dishes[0]?.name}
                         </p>
-                      )}
+                        <p className="text-[10px] text-white/60 truncate">
+                          {meal.dishes.slice(1).map((d:any) => d.name).join(", ")}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
 
-              {/* Swipe Instruction */}
-              <div className="flex justify-between items-center text-xs font-bold text-gray-400 border-t border-gray-100 pt-4">
-                <div className="flex items-center gap-1">
-                  <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px]">←</div>
-                  <span>編集・調整</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span>採用する</span>
-                  <div className="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-[10px]">→</div>
-                </div>
+              {/* Action Hint */}
+              <div className="flex justify-between px-2 pt-2 text-[10px] font-bold tracking-widest opacity-60 uppercase">
+                <span className="flex items-center gap-1">← Edit</span>
+                <span className="flex items-center gap-1">Keep →</span>
               </div>
             </div>
           </div>
