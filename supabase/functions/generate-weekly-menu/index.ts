@@ -194,7 +194,19 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
     console.log('Starting image generation for meals...')
     const imageGenerationPromises: Promise<void>[] = []
     let imageCount = 0
+    let failedCount = 0
     const totalMeals = resultJson.days.reduce((sum: number, day: any) => sum + (day.meals?.length || 0), 0)
+    
+    console.log(`Total meals to generate images for: ${totalMeals}`)
+    
+    // 環境変数の確認
+    const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
+    if (!GOOGLE_AI_API_KEY) {
+      console.warn('WARNING: Google AI API Key not found in Edge Function environment variables. Image generation will be skipped.')
+      console.warn('Please set GOOGLE_AI_STUDIO_API_KEY in Supabase Dashboard → Edge Functions → Settings → Secrets')
+    } else {
+      console.log('Google AI API Key found, proceeding with image generation...')
+    }
     
     for (const day of resultJson.days) {
       for (const meal of day.meals) {
@@ -207,10 +219,12 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
                 // 画像URLをmealオブジェクトに追加
                 meal.imageUrl = imageUrl
                 imageCount++
-                console.log(`[${imageCount}/${totalMeals}] Generated image for ${dishName}: ${imageUrl}`)
+                console.log(`[${imageCount}/${totalMeals}] ✅ Generated image for "${dishName}": ${imageUrl}`)
               })
               .catch((error) => {
-                console.error(`Failed to generate image for ${dishName}:`, error.message || error)
+                failedCount++
+                const errorMsg = error.message || String(error)
+                console.error(`[${failedCount} failed] ❌ Failed to generate image for "${dishName}": ${errorMsg}`)
                 // 画像生成に失敗しても献立生成は続行（画像なしで保存）
                 // meal.imageUrl は undefined のまま
               })
@@ -219,10 +233,14 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
       }
     }
     
-    // すべての画像生成が完了するまで待つ（タイムアウト: 60秒）
-    console.log(`Waiting for ${imageGenerationPromises.length} image generations...`)
-    await Promise.allSettled(imageGenerationPromises)
-    console.log(`Image generation completed: ${imageCount}/${totalMeals} images generated`)
+    // すべての画像生成が完了するまで待つ
+    if (imageGenerationPromises.length > 0) {
+      console.log(`Waiting for ${imageGenerationPromises.length} image generations...`)
+      await Promise.allSettled(imageGenerationPromises)
+      console.log(`Image generation summary: ${imageCount} succeeded, ${failedCount} failed out of ${totalMeals} total`)
+    } else {
+      console.log('No images to generate (no meals found)')
+    }
 
     const { error: updateError } = await supabase
       .from('weekly_menu_requests')
@@ -249,8 +267,13 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
   const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
   const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.5-flash-preview-image'
   
+  console.log(`[Image Gen] Starting generation for: ${dishName}`)
+  console.log(`[Image Gen] API Key present: ${GOOGLE_AI_API_KEY ? 'Yes' : 'No'}`)
+  console.log(`[Image Gen] Model: ${GEMINI_IMAGE_MODEL}`)
+  
   if (!GOOGLE_AI_API_KEY) {
-    throw new Error('Google AI API Key is missing')
+    console.error(`[Image Gen] ERROR: Google AI API Key is missing for ${dishName}`)
+    throw new Error('Google AI API Key is missing in Edge Function environment')
   }
 
   // プロンプトの構築
@@ -304,8 +327,12 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
     }
 
     if (!imageBase64) {
+      console.error(`[Image Gen] ERROR: No image data in response for ${dishName}`)
+      console.error(`[Image Gen] Response structure:`, JSON.stringify(data, null, 2))
       throw new Error('No image data in response')
     }
+
+    console.log(`[Image Gen] Image data received (${imageBase64.length} chars), uploading to Storage...`)
 
     // Supabase Storage へアップロード
     // base64をバイナリに変換（Deno環境用）
@@ -318,6 +345,8 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
     const fileName = `generated/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`
     const bucketName = 'fridge-images'
     
+    console.log(`[Image Gen] Uploading to: ${bucketName}/${fileName}`)
+    
     const { error: uploadError } = await supabase.storage
       .from(bucketName)
       .upload(fileName, bytes, {
@@ -326,6 +355,7 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
       })
 
     if (uploadError) {
+      console.error(`[Image Gen] Storage upload failed for ${dishName}:`, uploadError)
       throw new Error(`Storage upload failed: ${uploadError.message}`)
     }
 
@@ -334,9 +364,12 @@ async function generateMealImage(dishName: string, userId: string, supabase: any
       .from(bucketName)
       .getPublicUrl(fileName)
 
+    console.log(`[Image Gen] ✅ Successfully generated and uploaded image for ${dishName}: ${publicUrl}`)
+
     return publicUrl
 
   } catch (error: any) {
+    console.error(`[Image Gen] ❌ Error generating image for ${dishName}:`, error.message || error)
     // エラーを再スロー（呼び出し元で処理）
     throw error
   }
