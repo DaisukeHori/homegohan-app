@@ -24,12 +24,12 @@ export function PageHeader({ title, subtitle, backUrl }: PageHeaderProps) {
         {backUrl ? (
           <Link href={backUrl} className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 transition-colors group">
             <Icons.Back className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-            Back
+            戻る
           </Link>
         ) : (
           <button onClick={handleBack} className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 transition-colors group">
             <Icons.Back className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-            Back
+            戻る
           </button>
         )}
       </div>
