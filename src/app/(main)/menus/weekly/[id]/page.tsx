@@ -5,7 +5,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { toWeeklyMenuRequest } from "@/lib/converters";
+import { toWeeklyMenuRequest } from "@/lib/converter";
 import type { WeeklyMenuRequest, ProjectedImpact } from "@/types/domain";
 
 import { Icons } from "@/components/icons";

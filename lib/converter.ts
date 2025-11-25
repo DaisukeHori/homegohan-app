@@ -1,6 +1,6 @@
 import type { 
   UserProfile, Meal, MealNutritionEstimate, WeeklyMenuRequest, 
-  Announcement, OrgDailyStats 
+  Announcement, OrgDailyStats, Organization, DailyActivityLog, Badge 
 } from '@/types/domain';
 import type { 
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
@@ -95,3 +95,30 @@ export const toOrgDailyStats = (db: DbOrgDailyStats): OrgDailyStats => ({
   createdAt: db.created_at,
 });
 
+// Organization (Converted from any for now as DbOrganization is missing)
+export const toOrganization = (data: any): Organization => ({
+  id: data.id,
+  name: data.name,
+  plan: data.plan,
+  createdAt: data.created_at,
+});
+
+// Activity (Converted from any for now as DbDailyActivityLog is missing)
+export const toDailyActivityLog = (data: any): DailyActivityLog => ({
+  id: data.id,
+  userId: data.user_id,
+  date: data.date,
+  steps: data.steps,
+  caloriesBurned: data.calories_burned,
+  feeling: data.feeling,
+  createdAt: data.created_at,
+});
+
+// Badge (Converted from any for now as DbBadge is missing)
+export const toBadge = (data: any): Badge => ({
+  id: data.id,
+  code: data.code,
+  name: data.name,
+  description: data.description,
+  conditionJson: data.condition_json,
+});
