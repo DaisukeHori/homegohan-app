@@ -99,41 +99,46 @@ export default function WeeklyMenuPage() {
         {/* 1. Active Plan / Hero Section */}
         <section>
            <div className="flex justify-between items-end mb-4">
-             <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Current Focus</h2>
+             <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest">今週の献立</h2>
            </div>
            
            {activePlan ? (
              <Link href={`/menus/weekly/${activePlan.id}`}>
                <motion.div 
-                 whileHover={{ scale: 1.02 }}
-                 whileTap={{ scale: 0.98 }}
-                 className="relative aspect-[4/3] rounded-[32px] overflow-hidden shadow-2xl group cursor-pointer"
+                 whileHover={{ scale: 1.01 }}
+                 whileTap={{ scale: 0.99 }}
+                 className="relative aspect-[4/3] rounded-[32px] overflow-hidden shadow-sm border border-gray-100 bg-white group cursor-pointer"
                >
-                  {/* Background Image (Mock for now, ideally from meals) */}
-                  <div className="absolute inset-0 bg-gray-900">
-                    {/* TODO: Show actual images from the plan */}
-                    <div className="w-full h-full bg-gradient-to-br from-orange-400 to-pink-500 opacity-80 group-hover:opacity-90 transition-opacity" />
+                  {/* Background Image Area - シンプルに */}
+                  <div className="absolute inset-0 bg-gray-50">
+                    {/* TODO: 実際の料理画像を表示する。今回はプレースホルダーとして穏やかなパターンを表示 */}
+                    <div className="w-full h-full opacity-30 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px]" />
                   </div>
                   
-                  <div className="absolute inset-0 p-8 flex flex-col justify-between text-white">
-                    <div>
-                      <span className="inline-block px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold border border-white/10 mb-2">
-                        {activePlan.status === 'completed' ? 'Wait for Review' : 'Active'}
-                      </span>
-                      <h3 className="text-3xl font-black leading-tight">
-                        {new Date(activePlan.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        <br />
-                        Week
-                      </h3>
+                  <div className="absolute inset-0 p-6 flex flex-col justify-between">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${
+                          activePlan.status === 'confirmed' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'
+                        }`}>
+                          {activePlan.status === 'completed' ? '確認待ち' : '進行中'}
+                        </span>
+                        <h3 className="text-2xl font-bold text-gray-800 leading-tight font-serif">
+                          {new Date(activePlan.startDate).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
+                          <span className="text-sm font-sans text-gray-400 ml-1">からの週</span>
+                        </h3>
+                      </div>
                     </div>
                     
-                    <div className="flex justify-between items-end">
+                    <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 flex justify-between items-center border border-gray-100">
                        <div>
-                         <p className="text-sm font-bold opacity-80">Goal Impact</p>
-                         <p className="text-2xl font-black">{activePlan.resultJson?.projectedImpact?.weightChange || '---'}</p>
+                         <p className="text-xs font-bold text-gray-400 mb-0.5">予想される変化</p>
+                         <p className="text-lg font-bold text-gray-800">
+                           体重 <span className="text-orange-500">{activePlan.resultJson?.projectedImpact?.weightChange || '---'}</span>
+                         </p>
                        </div>
-                       <div className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center font-bold shadow-lg group-hover:scale-110 transition-transform">
-                         →
+                       <div className="w-10 h-10 rounded-full bg-gray-900 text-white flex items-center justify-center font-bold shadow-md">
+                         <Icons.ChevronRight className="w-4 h-4" />
                        </div>
                     </div>
                   </div>
@@ -142,12 +147,13 @@ export default function WeeklyMenuPage() {
            ) : (
              <div 
                onClick={() => setShowNewMenuModal(true)}
-               className="aspect-[4/3] rounded-[32px] bg-white border-2 border-dashed border-gray-200 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 hover:border-accent transition-colors group"
+               className="aspect-[4/3] rounded-[32px] bg-white border border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 hover:border-orange-300 transition-all group"
              >
-                <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <Icons.Plus className="w-6 h-6 text-gray-400 group-hover:text-accent" />
+                <div className="w-14 h-14 rounded-full bg-orange-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <Icons.Plus className="w-6 h-6 text-orange-400" />
                 </div>
-                <p className="font-bold text-gray-400 group-hover:text-gray-600">来週の献立を作る</p>
+                <p className="font-bold text-gray-600">来週の献立を作る</p>
+                <p className="text-xs text-gray-400 mt-1">AIが提案します</p>
              </div>
            )}
         </section>
