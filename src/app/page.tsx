@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import Image from "next/image";
 
@@ -5,7 +7,7 @@ export default function WelcomePage() {
   return (
     <div className="relative w-full min-h-screen bg-white overflow-x-hidden">
       
-      {/* 背景の装飾（控えめで上品に） */}
+      {/* 背景の装飾 */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="blob-shape bg-orange-100 w-[600px] h-[600px] -top-[10%] -left-[10%]" />
         <div className="blob-shape bg-blue-50 w-[500px] h-[500px] top-[40%] -right-[10%]" />
@@ -86,17 +88,18 @@ export default function WelcomePage() {
               </div>
             </div>
 
-            {/* ビジュアルエリア（スマホモックアップ風） */}
+            {/* ビジュアルエリア */}
             <div className="relative animate-fade-up delay-200 lg:translate-x-8">
               <div className="relative z-10 mx-auto w-[320px] md:w-[380px]">
                 {/* スマホフレーム */}
                 <div className="bg-white rounded-[3rem] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.1)] border-[8px] border-white overflow-hidden relative z-10">
                   <div className="relative aspect-[9/19] bg-gray-50">
                     <Image 
-                      src="https://images.unsplash.com/photo-1543362906-acfc16c67564?q=80&w=800&auto=format&fit=crop" 
+                      src="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?q=80&w=800&auto=format&fit=crop" 
                       fill 
                       alt="App Screen" 
                       className="object-cover"
+                      unoptimized
                     />
                     {/* UIオーバーレイ */}
                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-6 pt-20 text-white">
@@ -148,7 +151,7 @@ export default function WelcomePage() {
         </div>
       </section>
 
-      {/* 機能セクション（3カラム） */}
+      {/* 機能セクション */}
       <section id="features" className="py-32 bg-gray-50/50">
         <div className="container mx-auto px-6">
           <div className="text-center max-w-2xl mx-auto mb-20">
@@ -211,15 +214,17 @@ export default function WelcomePage() {
                    fill 
                    alt="Healthy Lifestyle" 
                    className="object-cover hover:scale-105 transition-transform duration-700"
+                   unoptimized
                  />
                </div>
                {/* 装飾画像 */}
                <div className="absolute -bottom-10 -right-10 w-2/3 aspect-square rounded-[40px] overflow-hidden shadow-2xl border-8 border-white hidden md:block">
                  <Image 
-                   src="https://images.unsplash.com/photo-1498837167922-ddd27525d352?q=80&w=1000&auto=format&fit=crop" 
+                   src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=1000&auto=format&fit=crop" 
                    fill 
                    alt="Cooking" 
                    className="object-cover hover:scale-105 transition-transform duration-700"
+                   unoptimized
                  />
                </div>
             </div>
@@ -250,10 +255,11 @@ export default function WelcomePage() {
          {/* 背景画像 */}
          <div className="absolute inset-0 opacity-20">
            <Image 
-             src="https://images.unsplash.com/photo-1494859802809-d069c3b71a8a?q=80&w=2000&auto=format&fit=crop" 
+             src="https://images.unsplash.com/photo-1490818387583-1baba5e638af?q=80&w=2000&auto=format&fit=crop" 
              fill 
              alt="Background" 
              className="object-cover"
+             unoptimized
            />
          </div>
          
