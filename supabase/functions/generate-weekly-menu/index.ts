@@ -193,6 +193,8 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
     // 画像生成: 各日の各食事のメイン料理の画像を生成
     console.log('Starting image generation for meals...')
     const imageGenerationPromises: Promise<void>[] = []
+    let imageCount = 0
+    const totalMeals = resultJson.days.reduce((sum: number, day: any) => sum + (day.meals?.length || 0), 0)
     
     for (const day of resultJson.days) {
       for (const meal of day.meals) {
@@ -204,20 +206,23 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
               .then((imageUrl) => {
                 // 画像URLをmealオブジェクトに追加
                 meal.imageUrl = imageUrl
-                console.log(`Generated image for ${dishName}: ${imageUrl}`)
+                imageCount++
+                console.log(`[${imageCount}/${totalMeals}] Generated image for ${dishName}: ${imageUrl}`)
               })
               .catch((error) => {
-                console.error(`Failed to generate image for ${dishName}:`, error)
+                console.error(`Failed to generate image for ${dishName}:`, error.message || error)
                 // 画像生成に失敗しても献立生成は続行（画像なしで保存）
+                // meal.imageUrl は undefined のまま
               })
           )
         }
       }
     }
     
-    // すべての画像生成が完了するまで待つ（最大30秒）
+    // すべての画像生成が完了するまで待つ（タイムアウト: 60秒）
+    console.log(`Waiting for ${imageGenerationPromises.length} image generations...`)
     await Promise.allSettled(imageGenerationPromises)
-    console.log('Image generation completed')
+    console.log(`Image generation completed: ${imageCount}/${totalMeals} images generated`)
 
     const { error: updateError } = await supabase
       .from('weekly_menu_requests')
