@@ -121,19 +121,56 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(imageBase64, 'base64');
 
     // 3. Supabase Storage へアップロード
+    // バケット名: 'fridge-images' または 'meal-images' など、プロジェクトに合わせて変更可能
+    const bucketName = 'fridge-images';
     const fileName = `generated/${user.id}/${Date.now()}.png`;
+    
+    // バケットが存在しない場合は作成を試みる（権限がある場合）
+    const { data: buckets, error: listError } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(b => b.name === bucketName);
+    
+    if (!bucketExists) {
+      // バケットが存在しない場合は作成を試みる
+      const { error: createError } = await supabase.storage.createBucket(bucketName, {
+        public: true,
+        allowedMimeTypes: ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'],
+        fileSizeLimit: 5242880 // 5MB
+      });
+      
+      if (createError) {
+        console.error("Failed to create bucket:", createError);
+        // バケット作成に失敗した場合は、エラーメッセージを返す
+        return NextResponse.json({ 
+          error: `Storage bucket '${bucketName}' not found and could not be created. Please create it in Supabase Dashboard.`,
+          code: 'BUCKET_NOT_FOUND',
+          suggestion: `Go to Supabase Dashboard → Storage → Create bucket named '${bucketName}' and make it public.`
+        }, { status: 500 });
+      }
+    }
+    
     const { error: uploadError } = await supabase.storage
-      .from('fridge-images')
+      .from(bucketName)
       .upload(fileName, buffer, {
         contentType: 'image/png',
         upsert: true
       });
 
-    if (uploadError) throw uploadError;
+    if (uploadError) {
+      console.error("Upload error:", uploadError);
+      // バケットが見つからない場合のエラーハンドリング
+      if (uploadError.message?.includes('Bucket not found') || uploadError.message?.includes('not found')) {
+        return NextResponse.json({ 
+          error: `Storage bucket '${bucketName}' not found. Please create it in Supabase Dashboard.`,
+          code: 'BUCKET_NOT_FOUND',
+          suggestion: `Go to Supabase Dashboard → Storage → Create bucket named '${bucketName}' and make it public.`
+        }, { status: 500 });
+      }
+      throw uploadError;
+    }
 
     // 4. 公開URLの取得
     const { data: { publicUrl } } = supabase.storage
-      .from('fridge-images')
+      .from(bucketName)
       .getPublicUrl(fileName);
 
     return NextResponse.json({ imageUrl: publicUrl });
