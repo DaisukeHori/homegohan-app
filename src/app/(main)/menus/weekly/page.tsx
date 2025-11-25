@@ -8,23 +8,49 @@ import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { toWeeklyMenuRequest } from "@/lib/converter";
+import type { WeeklyMenuRequest } from "@/types/domain";
 
 export default function WeeklyMenuPage() {
   const router = useRouter();
+  const supabase = createClient();
   const [startDate, setStartDate] = useState("");
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
-  const [requests, setRequests] = useState<any[]>([]);
+  const [requests, setRequests] = useState<WeeklyMenuRequest[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
 
-  // 過去のリクエスト一覧を取得（簡易実装）
-  /*
+  // 過去のリクエスト一覧を取得
   useEffect(() => {
     const fetchRequests = async () => {
-      // TODO: 一覧取得APIの実装
+      setLoadingHistory(true);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from('weekly_menu_requests')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        if (error) {
+          console.error('Failed to fetch menu requests:', error);
+          return;
+        }
+
+        const domainRequests = (data || []).map(toWeeklyMenuRequest);
+        setRequests(domainRequests);
+      } catch (error) {
+        console.error('Error fetching menu requests:', error);
+      } finally {
+        setLoadingHistory(false);
+      }
     };
     fetchRequests();
-  }, []);
-  */
+  }, [supabase]);
 
   const handleGenerate = async () => {
     if (!startDate) {
@@ -45,7 +71,7 @@ export default function WeeklyMenuPage() {
       const data = await response.json();
       
       // 詳細画面へ遷移（そこでポーリングなどで完了を待つ）
-      router.push(`/menus/weekly/${data.requestId}`);
+      router.push(`/menus/weekly/${data.id}`);
 
     } catch (error: any) {
       alert(error.message || "エラーが発生しました");
@@ -103,21 +129,57 @@ export default function WeeklyMenuPage() {
           </CardContent>
         </Card>
 
-        {/* 過去の履歴（ダミー） */}
-        <div>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">History</h2>
-          <div className="space-y-3">
-            <Link href="/menus/weekly/dummy-1">
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:bg-gray-50 transition-colors">
-                <div>
-                  <p className="font-bold text-gray-900">Jan 20 - Jan 26</p>
-                  <p className="text-xs text-gray-400">Completed</p>
-                </div>
-                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+        {/* 過去の履歴 */}
+        {requests.length > 0 && (
+          <div>
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">履歴</h2>
+            {loadingHistory ? (
+              <div className="text-center text-gray-400 py-8">読み込み中...</div>
+            ) : (
+              <div className="space-y-3">
+                {requests.map((req) => {
+                  const start = new Date(req.startDate);
+                  const end = new Date(start);
+                  end.setDate(end.getDate() + 6);
+                  const statusLabels: Record<string, string> = {
+                    pending: '生成中',
+                    processing: '処理中',
+                    completed: '完了',
+                    failed: '失敗',
+                  };
+                  const statusColors: Record<string, string> = {
+                    pending: 'text-yellow-600',
+                    processing: 'text-blue-600',
+                    completed: 'text-green-600',
+                    failed: 'text-red-600',
+                  };
+                  
+                  return (
+                    <Link key={req.id} href={`/menus/weekly/${req.id}`}>
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:bg-gray-50 transition-colors cursor-pointer"
+                      >
+                        <div>
+                          <p className="font-bold text-gray-900">
+                            {start.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })} - {end.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
+                          </p>
+                          <p className={`text-xs font-bold ${statusColors[req.status] || 'text-gray-400'}`}>
+                            {statusLabels[req.status] || req.status}
+                          </p>
+                        </div>
+                        <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </motion.div>
+                    </Link>
+                  );
+                })}
               </div>
-            </Link>
+            )}
           </div>
-        </div>
+        )}
 
       </div>
     </div>

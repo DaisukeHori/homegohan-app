@@ -33,6 +33,18 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
 
       if (error) {
         console.error(error);
+        setLoading(false);
+        // UUID形式でない場合はエラーメッセージを表示
+        if (error.code === '22P02' || params.id === 'dummy-1') {
+          setRequest(null);
+          return;
+        }
+        return;
+      }
+
+      if (!data) {
+        setLoading(false);
+        setRequest(null);
         return;
       }
 
@@ -61,7 +73,22 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
     );
   }
 
-  if (!request) return <div>Not Found</div>;
+  if (!request) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-8 text-center">
+        <div className="text-6xl mb-4">🔍</div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">メニューが見つかりません</h1>
+        <p className="text-gray-500 mb-6">
+          指定されたIDのメニューは存在しないか、アクセス権限がありません。
+        </p>
+        <Link href="/menus/weekly">
+          <Button className="rounded-full bg-[#FF8A65] hover:bg-[#FF7043] text-white font-bold">
+            週間メニュー一覧に戻る
+          </Button>
+        </Link>
+      </div>
+    );
+  }
 
   if (request.status === 'pending') {
     return (

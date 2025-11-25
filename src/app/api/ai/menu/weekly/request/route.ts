@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ 
-      requestId: reqData.id, 
+      id: reqData.id, 
       status: 'pending',
       message: 'Generation started in background' 
     });
