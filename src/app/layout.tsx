@@ -26,6 +26,22 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className={`${notoSans.variable} ${notoSerif.variable}`}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  // ダークモード設定を削除
+                  localStorage.removeItem('darkMode');
+                  // html要素からdarkクラスを削除
+                  document.documentElement.classList.remove('dark');
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className="font-sans antialiased">
         {children}
       </body>
