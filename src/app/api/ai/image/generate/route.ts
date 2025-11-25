@@ -125,47 +125,58 @@ export async function POST(request: Request) {
     const bucketName = 'fridge-images';
     const fileName = `generated/${user.id}/${Date.now()}.png`;
     
-    // バケットが存在しない場合は作成を試みる（権限がある場合）
-    const { data: buckets, error: listError } = await supabase.storage.listBuckets();
-    const bucketExists = buckets?.some(b => b.name === bucketName);
-    
-    if (!bucketExists) {
-      // バケットが存在しない場合は作成を試みる
-      const { error: createError } = await supabase.storage.createBucket(bucketName, {
-        public: true,
-        allowedMimeTypes: ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'],
-        fileSizeLimit: 5242880 // 5MB
-      });
-      
-      if (createError) {
-        console.error("Failed to create bucket:", createError);
-        // バケット作成に失敗した場合は、エラーメッセージを返す
-        return NextResponse.json({ 
-          error: `Storage bucket '${bucketName}' not found and could not be created. Please create it in Supabase Dashboard.`,
-          code: 'BUCKET_NOT_FOUND',
-          suggestion: `Go to Supabase Dashboard → Storage → Create bucket named '${bucketName}' and make it public.`
-        }, { status: 500 });
-      }
-    }
-    
+    // バケットの存在確認とアップロード
+    // 注意: サーバーサイドのクライアントは匿名キーを使用しているため、
+    // StorageへのアクセスにはRLSポリシーが必要です
     const { error: uploadError } = await supabase.storage
       .from(bucketName)
       .upload(fileName, buffer, {
         contentType: 'image/png',
-        upsert: true
+        upsert: true,
+        cacheControl: '3600'
       });
 
     if (uploadError) {
       console.error("Upload error:", uploadError);
-      // バケットが見つからない場合のエラーハンドリング
-      if (uploadError.message?.includes('Bucket not found') || uploadError.message?.includes('not found')) {
+      console.error("Error details:", JSON.stringify(uploadError, null, 2));
+      
+      // エラーメッセージを取得
+      const errorMessage = uploadError.message || String(uploadError);
+      const errorStatus = (uploadError as any).statusCode || (uploadError as any).status;
+      
+      // バケットが見つからない場合
+      if (errorMessage.includes('Bucket not found') || 
+          errorMessage.includes('not found') ||
+          errorMessage.includes('does not exist') ||
+          errorStatus === 404) {
         return NextResponse.json({ 
-          error: `Storage bucket '${bucketName}' not found. Please create it in Supabase Dashboard.`,
+          error: `Storage bucket '${bucketName}' not found.`,
           code: 'BUCKET_NOT_FOUND',
-          suggestion: `Go to Supabase Dashboard → Storage → Create bucket named '${bucketName}' and make it public.`
-        }, { status: 500 });
+          details: errorMessage,
+          suggestion: `1. Go to Supabase Dashboard → Storage\n2. Verify bucket '${bucketName}' exists and is Public\n3. Check bucket name spelling (case-sensitive)`
+        }, { status: 404 });
       }
-      throw uploadError;
+      
+      // 権限エラーの場合（RLSポリシーが不足）
+      if (errorMessage.includes('permission') || 
+          errorMessage.includes('policy') || 
+          errorMessage.includes('RLS') ||
+          errorMessage.includes('new row violates') ||
+          errorStatus === 403) {
+        return NextResponse.json({ 
+          error: `Permission denied for Storage bucket '${bucketName}'.`,
+          code: 'PERMISSION_DENIED',
+          details: errorMessage,
+          suggestion: `Set up Storage RLS policies:\n1. Go to Supabase Dashboard → Storage → ${bucketName}\n2. Click "Policies" tab\n3. Create policy:\n   - Policy name: "Allow authenticated users to upload"\n   - Allowed operation: INSERT\n   - Target roles: authenticated\n   - USING expression: auth.role() = 'authenticated'\n   - WITH CHECK expression: auth.role() = 'authenticated'`
+        }, { status: 403 });
+      }
+      
+      // その他のエラー
+      return NextResponse.json({ 
+        error: `Failed to upload image: ${errorMessage}`,
+        code: 'UPLOAD_ERROR',
+        details: errorMessage
+      }, { status: 500 });
     }
 
     // 4. 公開URLの取得
