@@ -121,6 +121,9 @@ export const useHomeData = () => {
             dishes: m.dishes,
             isSimple: m.is_simple,
             cookingTimeMinutes: m.cooking_time_minutes,
+            memo: m.memo || null,
+            vegScore: m.veg_score || null,
+            qualityTags: m.quality_tags || null,
             createdAt: m.created_at,
             updatedAt: m.updated_at,
           }));

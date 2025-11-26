@@ -123,7 +123,7 @@ export async function POST(request: Request) {
           .select()
           .single();
 
-        if (planError) throw planError;
+        if (planError || !newPlan) throw planError || new Error('Failed to create meal plan');
         planData = newPlan;
       }
 
@@ -131,14 +131,14 @@ export async function POST(request: Request) {
       const { data: newDay, error: dayError } = await supabase
         .from('meal_plan_days')
         .insert({
-          meal_plan_id: planData.id,
+          meal_plan_id: planData!.id,
           day_date: date,
           day_of_week: getDayOfWeek(new Date(date)),
         })
         .select()
         .single();
 
-      if (dayError) throw dayError;
+      if (dayError || !newDay) throw dayError || new Error('Failed to create meal plan day');
       dayData = { ...newDay, meal_plans: { user_id: user.id } };
     }
 
@@ -146,7 +146,7 @@ export async function POST(request: Request) {
     const { data: meal, error: mealError } = await supabase
       .from('planned_meals')
       .insert({
-        meal_plan_day_id: dayData.id,
+        meal_plan_day_id: dayData!.id,
         meal_type: mealType,
         dish_name: dishName,
         mode: mode,
