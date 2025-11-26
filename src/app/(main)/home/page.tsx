@@ -29,6 +29,7 @@ const colors = {
   purpleLight: '#F5F3F8',
   blue: '#5B8BC7',
   blueLight: '#EEF4FB',
+  border: '#E5E5E5',
 };
 
 type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
