@@ -145,6 +145,8 @@ export default function WeeklyMenuPage() {
   const [addMealDayIndex, setAddMealDayIndex] = useState<number>(0);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [isRegeneratingMeal, setIsRegeneratingMeal] = useState(false);
+  // 生成中の食事を追跡: { dayIndex: number, mealType: MealType } | null
+  const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
   
   // Pantry & Shopping
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
@@ -358,16 +360,56 @@ export default function WeeklyMenuPage() {
   // Render Components
   // ============================================
 
-  const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => (
-    <button
-      onClick={() => { setAddMealKey(mealKey); setAddMealDayIndex(dayIndex); setActiveModal('add'); }}
-      className="w-full flex items-center justify-center gap-2 rounded-[14px] p-5 mb-2 cursor-pointer transition-all hover:border-[#E07A5F]"
-      style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
-    >
-      <Plus size={18} color={colors.textMuted} />
-      <span style={{ fontSize: 14, color: colors.textMuted }}>{MEAL_LABELS[mealKey]}を追加</span>
-    </button>
-  );
+  const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => {
+    const isGenerating = generatingMeal?.dayIndex === dayIndex && generatingMeal?.mealType === mealKey;
+    
+    if (isGenerating) {
+      // AIが献立を作成中の表示
+      return (
+        <div
+          className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
+          style={{ background: `linear-gradient(135deg, ${colors.accentLight} 0%, ${colors.card} 100%)`, border: `2px solid ${colors.accent}` }}
+        >
+          {/* アニメーション背景 */}
+          <div className="absolute inset-0 overflow-hidden">
+            <div 
+              className="absolute inset-0 opacity-20"
+              style={{
+                background: `repeating-linear-gradient(90deg, transparent, transparent 10px, ${colors.accent} 10px, ${colors.accent} 20px)`,
+                animation: 'shimmer 1.5s infinite linear',
+              }}
+            />
+          </div>
+          
+          <div className="relative z-10 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+              <Sparkles size={20} color="#fff" className="animate-pulse" />
+            </div>
+            <div className="flex-1">
+              <p style={{ fontSize: 14, fontWeight: 600, color: colors.accent }}>
+                AIが{MEAL_LABELS[mealKey]}を考え中...
+              </p>
+              <p style={{ fontSize: 11, color: colors.textMuted }}>
+                数秒〜数十秒かかります
+              </p>
+            </div>
+            <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+          </div>
+        </div>
+      );
+    }
+    
+    return (
+      <button
+        onClick={() => { setAddMealKey(mealKey); setAddMealDayIndex(dayIndex); setActiveModal('add'); }}
+        className="w-full flex items-center justify-center gap-2 rounded-[14px] p-5 mb-2 cursor-pointer transition-all hover:border-[#E07A5F]"
+        style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
+      >
+        <Plus size={18} color={colors.textMuted} />
+        <span style={{ fontSize: 14, color: colors.textMuted }}>{MEAL_LABELS[mealKey]}を追加</span>
+      </button>
+    );
+  };
 
   const CollapsedMealCard = ({ mealKey, meal, isPast }: { mealKey: MealType; meal: PlannedMeal; isPast: boolean }) => {
     const mode = MODE_CONFIG[getMealMode(meal)];
@@ -1187,7 +1229,6 @@ export default function WeeklyMenuPage() {
                 <div className="px-4 py-4 mb-20 lg:mb-0 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={async () => {
-                      // プランがなくても1食分だけ生成する（週全体には飛ばない）
                       if (!addMealKey) {
                         alert('食事タイプが選択されていません');
                         return;
@@ -1203,51 +1244,37 @@ export default function WeeklyMenuPage() {
                           if (c === 'ヘルシーに') preferences.healthy = true;
                         });
 
-                        // sourceRequestIdがある場合は既存プランを更新
-                        if (currentPlan?.sourceRequestId) {
-                          const res = await fetch('/api/ai/menu/meal/regenerate', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              weeklyMenuRequestId: currentPlan.sourceRequestId,
-                              dayIndex: addMealDayIndex,
-                              mealType: addMealKey,
-                              preferences,
-                              note: aiChatInput
-                            })
-                          });
+                        const dayDate = weekDates[addMealDayIndex]?.dateStr;
+                        
+                        // 1食分だけを生成するAPIを呼び出し
+                        const res = await fetch('/api/ai/menu/meal/generate', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            dayDate,
+                            mealType: addMealKey,
+                            preferences,
+                            note: aiChatInput
+                          })
+                        });
 
-                          if (res.ok) {
-                            setActiveModal(null);
-                            setSelectedConditions([]);
-                            setAiChatInput("");
-                            alert('AIが献立を考えています。数秒後に更新されます。');
-                            setTimeout(() => window.location.reload(), 3000);
-                          } else {
-                            const err = await res.json();
-                            alert(`エラー: ${err.error || '生成に失敗しました'}`);
-                          }
+                        if (res.ok) {
+                          // 生成中状態を設定
+                          setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
+                          setActiveModal(null);
+                          setSelectedConditions([]);
+                          setAiChatInput("");
+                          // 数秒後にリロード（バックグラウンド処理完了を待つ）
+                          setTimeout(() => {
+                            setGeneratingMeal(null);
+                            window.location.reload();
+                          }, 8000);
                         } else {
-                          // プランがない場合は週全体を生成（この1食分だけでは意味がないため）
-                          const weekStartDate = weekDates[0]?.dateStr || new Date().toISOString().split('T')[0];
-                          const response = await fetch("/api/ai/menu/weekly/request", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ 
-                              startDate: weekStartDate, 
-                              note: aiChatInput + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
-                              preferences,
-                            }),
-                          });
-                          if (response.ok) {
-                            const data = await response.json();
-                            router.push(`/menus/weekly/${data.id}`);
-                          } else {
-                            alert('生成に失敗しました');
-                          }
+                          const err = await res.json();
+                          alert(`エラー: ${err.error || '生成に失敗しました'}`);
                         }
                       } catch (error) {
-                        console.error('Meal regeneration error:', error);
+                        console.error('Meal generation error:', error);
                         alert('エラーが発生しました');
                       } finally {
                         setIsRegeneratingMeal(false);
@@ -1265,17 +1292,10 @@ export default function WeeklyMenuPage() {
                     ) : (
                       <>
                         <Sparkles size={16} color="#fff" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>
-                          {currentPlan?.sourceRequestId ? 'この1食をAIに提案してもらう' : '週全体の献立を作成'}
-                        </span>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>この1食をAIに提案してもらう</span>
                       </>
                     )}
                   </button>
-                  {!currentPlan?.sourceRequestId && (
-                    <p style={{ fontSize: 11, color: colors.textMuted, textAlign: 'center', marginTop: 8 }}>
-                      ※ 献立がないため、まず週全体を作成します
-                    </p>
-                  )}
                 </div>
               </motion.div>
             )}
