@@ -83,17 +83,24 @@ export default function MainLayout({
             
             if (item.isFab) {
               return (
-                <div key={item.href} className="relative -top-6">
-                   <Link href={item.href}>
-                     <motion.div 
-                       whileHover={{ scale: 1.05 }}
-                       whileTap={{ scale: 0.95 }}
-                       className="w-[72px] h-[72px] rounded-full bg-foreground flex items-center justify-center shadow-lg shadow-gray-400/50 border-4 border-gray-50 text-white"
-                     >
-                       <Icon className="w-10 h-10" />
-                     </motion.div>
-                   </Link>
-                </div>
+                <Link 
+                  key={item.href} 
+                  href={item.href}
+                  className={`flex flex-col items-center gap-1 p-2 transition-colors ${
+                    isActive ? 'text-accent' : 'text-gray-400'
+                  }`}
+                >
+                  <motion.div 
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="w-10 h-10 rounded-full bg-foreground flex items-center justify-center text-white"
+                  >
+                    <Icon className="w-6 h-6" />
+                  </motion.div>
+                  {isActive && (
+                    <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full bg-accent" />
+                  )}
+                </Link>
               );
             }
 
