@@ -1171,13 +1171,25 @@ export default function WeeklyMenuPage() {
                       </button>
                     );
                   })}
+                  
+                  {/* フリーコメント入力 */}
+                  <div className="mt-4">
+                    <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
+                    <textarea 
+                      value={aiChatInput}
+                      onChange={(e) => setAiChatInput(e.target.value)}
+                      placeholder="例: 昨日カレーだったので違うものがいい、野菜多めで..."
+                      className="w-full p-3 rounded-[10px] text-[13px] outline-none resize-none"
+                      style={{ background: colors.bg, minHeight: 80 }}
+                    />
+                  </div>
                 </div>
                 <div className="px-4 py-4 mb-20 lg:mb-0 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={async () => {
-                      if (!currentPlan?.sourceRequestId || !addMealKey) {
-                        // プランがない場合は週全体の生成へ
-                        setActiveModal('newMenu');
+                      // プランがなくても1食分だけ生成する（週全体には飛ばない）
+                      if (!addMealKey) {
+                        alert('食事タイプが選択されていません');
                         return;
                       }
                       
@@ -1191,27 +1203,48 @@ export default function WeeklyMenuPage() {
                           if (c === 'ヘルシーに') preferences.healthy = true;
                         });
 
-                        const res = await fetch('/api/ai/menu/meal/regenerate', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            weeklyMenuRequestId: currentPlan.sourceRequestId,
-                            dayIndex: addMealDayIndex,
-                            mealType: addMealKey,
-                            preferences
-                          })
-                        });
+                        // sourceRequestIdがある場合は既存プランを更新
+                        if (currentPlan?.sourceRequestId) {
+                          const res = await fetch('/api/ai/menu/meal/regenerate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              weeklyMenuRequestId: currentPlan.sourceRequestId,
+                              dayIndex: addMealDayIndex,
+                              mealType: addMealKey,
+                              preferences,
+                              note: aiChatInput
+                            })
+                          });
 
-                        if (res.ok) {
-                          setActiveModal(null);
-                          setSelectedConditions([]);
-                          // 少し待ってからリロード（バックグラウンド処理のため）
-                          setTimeout(() => {
-                            window.location.reload();
-                          }, 3000);
+                          if (res.ok) {
+                            setActiveModal(null);
+                            setSelectedConditions([]);
+                            setAiChatInput("");
+                            alert('AIが献立を考えています。数秒後に更新されます。');
+                            setTimeout(() => window.location.reload(), 3000);
+                          } else {
+                            const err = await res.json();
+                            alert(`エラー: ${err.error || '生成に失敗しました'}`);
+                          }
                         } else {
-                          const err = await res.json();
-                          alert(`エラー: ${err.error || '生成に失敗しました'}`);
+                          // プランがない場合は週全体を生成（この1食分だけでは意味がないため）
+                          const weekStartDate = weekDates[0]?.dateStr || new Date().toISOString().split('T')[0];
+                          const response = await fetch("/api/ai/menu/weekly/request", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ 
+                              startDate: weekStartDate, 
+                              note: aiChatInput + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
+                              preferences,
+                            }),
+                          });
+                          if (response.ok) {
+                            const data = await response.json();
+                            router.push(`/menus/weekly/${data.id}`);
+                          } else {
+                            alert('生成に失敗しました');
+                          }
                         }
                       } catch (error) {
                         console.error('Meal regeneration error:', error);
@@ -1232,13 +1265,15 @@ export default function WeeklyMenuPage() {
                     ) : (
                       <>
                         <Sparkles size={16} color="#fff" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIに提案してもらう</span>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>
+                          {currentPlan?.sourceRequestId ? 'この1食をAIに提案してもらう' : '週全体の献立を作成'}
+                        </span>
                       </>
                     )}
                   </button>
                   {!currentPlan?.sourceRequestId && (
                     <p style={{ fontSize: 11, color: colors.textMuted, textAlign: 'center', marginTop: 8 }}>
-                      ※ まだ献立がないため、週全体を生成します
+                      ※ 献立がないため、まず週全体を作成します
                     </p>
                   )}
                 </div>
