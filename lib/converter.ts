@@ -1,6 +1,7 @@
 import type { 
   UserProfile, Meal, MealNutritionEstimate, WeeklyMenuRequest, 
-  Announcement, OrgDailyStats, Organization, DailyActivityLog, Badge 
+  Announcement, OrgDailyStats, Organization, DailyActivityLog, Badge,
+  MealPlan, MealPlanDay, PlannedMeal, ShoppingListItem, WeeklyMenuResult
 } from '@/types/domain';
 import type { 
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
@@ -121,4 +122,66 @@ export const toBadge = (data: any): Badge => ({
   name: data.name,
   description: data.description,
   conditionJson: data.condition_json,
+});
+
+// Meal Plan (Converted from DB snake_case to camelCase)
+export const toMealPlan = (data: any): MealPlan => ({
+  id: data.id,
+  userId: data.user_id,
+  title: data.title,
+  startDate: data.start_date,
+  endDate: data.end_date,
+  status: data.status,
+  isActive: data.is_active,
+  sourceRequestId: data.source_request_id,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+  // Joined data if available
+  days: data.meal_plan_days?.map(toMealPlanDay),
+  shoppingList: data.shopping_list_items?.map(toShoppingListItem),
+});
+
+export const toMealPlanDay = (data: any): MealPlanDay => ({
+  id: data.id,
+  mealPlanId: data.meal_plan_id,
+  dayDate: data.day_date,
+  dayOfWeek: data.day_of_week,
+  theme: data.theme,
+  nutritionalFocus: data.nutritional_focus,
+  isCheatDay: data.is_cheat_day,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+  // Joined data if available
+  meals: data.planned_meals?.map(toPlannedMeal),
+});
+
+export const toPlannedMeal = (data: any): PlannedMeal => ({
+  id: data.id,
+  mealPlanDayId: data.meal_plan_day_id,
+  mealType: data.meal_type,
+  dishName: data.dish_name,
+  recipeUrl: data.recipe_url,
+  imageUrl: data.image_url,
+  description: data.description,
+  ingredients: data.ingredients,
+  caloriesKcal: data.calories_kcal,
+  proteinG: data.protein_g,
+  fatG: data.fat_g,
+  carbsG: data.carbs_g,
+  isCompleted: data.is_completed,
+  completedAt: data.completed_at,
+  actualMealId: data.actual_meal_id,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+});
+
+export const toShoppingListItem = (data: any): ShoppingListItem => ({
+  id: data.id,
+  mealPlanId: data.meal_plan_id,
+  category: data.category,
+  itemName: data.item_name,
+  quantity: data.quantity,
+  isChecked: data.is_checked,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
 });

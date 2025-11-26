@@ -112,7 +112,7 @@ export interface MealAiFeedback {
   createdAt: ISODateTimeString;
 }
 
-// --- Weekly Menu ---
+// --- Weekly Menu (AI Request Log) ---
 
 export type WeeklyMenuRequestStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'confirmed';
 
@@ -180,6 +180,73 @@ export interface ProjectedImpact {
   energyLevel: string;
   skinCondition: string;
   comment: string;
+}
+
+// --- Meal Planner (Structured Plan) ---
+
+export type MealPlanStatus = 'draft' | 'active' | 'completed' | 'archived';
+
+export interface MealPlan {
+  id: string;
+  userId: string;
+  title: string;
+  startDate: ISODateString;
+  endDate: ISODateString;
+  status: MealPlanStatus;
+  isActive: boolean;
+  sourceRequestId: string | null;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+
+  // Joined
+  days?: MealPlanDay[];
+  shoppingList?: ShoppingListItem[];
+}
+
+export interface MealPlanDay {
+  id: string;
+  mealPlanId: string;
+  dayDate: ISODateString;
+  dayOfWeek: string | null;
+  theme: string | null;
+  nutritionalFocus: string | null;
+  isCheatDay: boolean;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+
+  // Joined
+  meals?: PlannedMeal[];
+}
+
+export interface PlannedMeal {
+  id: string;
+  mealPlanDayId: string;
+  mealType: MealType;
+  dishName: string;
+  recipeUrl: string | null;
+  imageUrl: string | null;
+  description: string | null;
+  ingredients: string[];
+  caloriesKcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  isCompleted: boolean;
+  completedAt: ISODateTimeString | null;
+  actualMealId: string | null;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+}
+
+export interface ShoppingListItem {
+  id: string;
+  mealPlanId: string;
+  category: string;
+  itemName: string;
+  quantity: string | null;
+  isChecked: boolean;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
 }
 
 // --- Organization & Stats ---
