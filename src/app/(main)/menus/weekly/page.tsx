@@ -3,55 +3,52 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { toWeeklyMenuRequest } from "@/lib/converter";
-import type { WeeklyMenuRequest } from "@/types/domain";
+import type { MealPlan, PlannedMeal } from "@/types/domain";
+import { WeeklyMealPlanner } from "@/components/planning/WeeklyMealPlanner";
 import { Icons } from "@/components/icons";
 
 export default function WeeklyMenuPage() {
   const router = useRouter();
   const supabase = createClient();
-  const [requests, setRequests] = useState<WeeklyMenuRequest[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(true);
+  
+  const [currentPlan, setCurrentPlan] = useState<MealPlan | null>(null);
+  const [loading, setLoading] = useState(true);
   const [showNewMenuModal, setShowNewMenuModal] = useState(false);
+  
+  // Date Navigation
+  const [targetDate, setTargetDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Form State
   const [startDate, setStartDate] = useState("");
   const [note, setNote] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // 過去のリクエスト一覧を取得
+  // Fetch Plan based on targetDate
   useEffect(() => {
-    const fetchRequests = async () => {
-      setLoadingHistory(true);
+    const fetchPlan = async () => {
+      setLoading(true);
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        const { data, error } = await supabase
-          .from('weekly_menu_requests')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(20); // Fetch more for gallery
-
-        if (error) throw error;
-
-        const domainRequests = (data || []).map(toWeeklyMenuRequest);
-        setRequests(domainRequests);
-      } catch (error) {
-        console.error('Error fetching menu requests:', error);
+        const res = await fetch(`/api/meal-plans?date=${targetDate}`);
+        if (res.ok) {
+          const { mealPlan } = await res.json();
+          setCurrentPlan(mealPlan);
+        } else {
+          // If no plan found for date, maybe fetch latest?
+          // For now, just null
+          setCurrentPlan(null);
+        }
+      } catch (e) {
+        console.error("Failed to fetch meal plan", e);
       } finally {
-        setLoadingHistory(false);
+        setLoading(false);
       }
     };
-    fetchRequests();
-  }, [supabase]);
+    fetchPlan();
+  }, [targetDate]);
 
   const handleGenerate = async () => {
     if (!startDate) {
@@ -71,7 +68,7 @@ export default function WeeklyMenuPage() {
 
       const data = await response.json();
       
-      // 成功後、即座に詳細ページ（ローディング/プランニング画面）へ遷移
+      // 生成後は詳細ページ（プランニング画面）へ遷移
       router.push(`/menus/weekly/${data.id}`);
       
     } catch (error: any) {
@@ -80,129 +77,111 @@ export default function WeeklyMenuPage() {
     }
   };
 
-  // 最新のアクティブな献立（あれば）
-  const activePlan = requests.find(r => r.status === 'confirmed' || r.status === 'completed');
+  const handleUpdateMeal = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
+    if (!currentPlan) return;
+    
+    // Optimistic Update
+    const updatedDays = currentPlan.days?.map(day => {
+      if (day.id !== dayId) return day;
+      return {
+        ...day,
+        meals: day.meals?.map(meal => {
+          if (meal.id !== mealId) return meal;
+          return { ...meal, ...updates };
+        })
+      };
+    });
+
+    setCurrentPlan({ ...currentPlan, days: updatedDays });
+    
+    if (mealId) {
+      try {
+        await fetch(`/api/meal-plans/meals/${mealId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+      } catch (e) {
+        console.error('Failed to update meal:', e);
+      }
+    }
+  };
+
+  const navigateWeek = (direction: 'prev' | 'next') => {
+    const date = new Date(targetDate);
+    date.setDate(date.getDate() + (direction === 'next' ? 7 : -7));
+    setTargetDate(date.toISOString().split('T')[0]);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-[#F7F6F3]">
       
-      {/* Header */}
-      <div className="bg-white sticky top-0 z-20 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-        <h1 className="text-xl font-black tracking-tight text-gray-900">Weekly Eats</h1>
-        <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-           <span className="text-lg">📅</span>
+      {/* Top Navigation Bar */}
+      <div className="bg-white px-4 py-3 sticky top-0 z-20 border-b border-gray-100 flex justify-between items-center">
+        <button 
+          onClick={() => navigateWeek('prev')}
+          className="p-2 rounded-full hover:bg-gray-100 text-gray-400"
+        >
+          <Icons.Back className="w-5 h-5 rotate-180" /> {/* Left Arrow */}
+        </button>
+        
+        <div className="text-center">
+          <h1 className="text-sm font-bold text-gray-900">
+            {currentPlan ? currentPlan.title : 'No Plan'}
+          </h1>
+          <p className="text-[10px] text-gray-400">
+            {currentPlan 
+              ? `${new Date(currentPlan.startDate).toLocaleDateString()} - ${new Date(currentPlan.endDate).toLocaleDateString()}`
+              : targetDate
+            }
+          </p>
         </div>
+
+        <button 
+          onClick={() => navigateWeek('next')}
+          className="p-2 rounded-full hover:bg-gray-100 text-gray-400"
+        >
+          <Icons.Back className="w-5 h-5 rotate-180 transform scale-x-[-1]" /> {/* Right Arrow */}
+        </button>
       </div>
 
-      <main className="p-6 space-y-10">
-        
-        {/* 1. Active Plan / Hero Section */}
-        <section>
-           <div className="flex justify-between items-end mb-4">
-             <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest">今週の献立</h2>
-           </div>
-           
-           {activePlan ? (
-             <Link href={`/menus/weekly/${activePlan.id}`}>
-               <motion.div 
-                 whileHover={{ scale: 1.01 }}
-                 whileTap={{ scale: 0.99 }}
-                 className="relative aspect-[4/3] rounded-[32px] overflow-hidden shadow-sm border border-gray-100 bg-white group cursor-pointer"
-               >
-                  {/* Background Image Area - シンプルに */}
-                  <div className="absolute inset-0 bg-gray-50">
-                    {/* TODO: 実際の料理画像を表示する。今回はプレースホルダーとして穏やかなパターンを表示 */}
-                    <div className="w-full h-full opacity-30 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px]" />
-                  </div>
-                  
-                  <div className="absolute inset-0 p-6 flex flex-col justify-between">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${
-                          activePlan.status === 'confirmed' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'
-                        }`}>
-                          {activePlan.status === 'completed' ? '確認待ち' : '進行中'}
-                        </span>
-                        <h3 className="text-2xl font-bold text-gray-800 leading-tight font-serif">
-                          {new Date(activePlan.startDate).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
-                          <span className="text-sm font-sans text-gray-400 ml-1">からの週</span>
-                        </h3>
-                      </div>
-                    </div>
-                    
-                    <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 flex justify-between items-center border border-gray-100">
-                       <div>
-                         <p className="text-xs font-bold text-gray-400 mb-0.5">予想される変化</p>
-                         <p className="text-lg font-bold text-gray-800">
-                           体重 <span className="text-orange-500">{activePlan.resultJson?.projectedImpact?.weightChange || '---'}</span>
-                         </p>
-                       </div>
-                       <div className="w-10 h-10 rounded-full bg-gray-900 text-white flex items-center justify-center font-bold shadow-md">
-                         <Icons.ChevronRight className="w-4 h-4" />
-                       </div>
-                    </div>
-                  </div>
-               </motion.div>
-             </Link>
-           ) : (
-             <div 
-               onClick={() => setShowNewMenuModal(true)}
-               className="aspect-[4/3] rounded-[32px] bg-white border border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 hover:border-orange-300 transition-all group"
-             >
-                <div className="w-14 h-14 rounded-full bg-orange-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <Icons.Plus className="w-6 h-6 text-orange-400" />
-                </div>
-                <p className="font-bold text-gray-600">来週の献立を作る</p>
-                <p className="text-xs text-gray-400 mt-1">AIが提案します</p>
-             </div>
-           )}
-        </section>
-
-        {/* 2. Gallery (Past Logs) */}
-        <section>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Memories</h2>
-          
-          {loadingHistory ? (
-             <div className="grid grid-cols-2 gap-4">
-               {[1,2,3,4].map(i => <div key={i} className="aspect-square bg-gray-100 rounded-2xl animate-pulse" />)}
-             </div>
-          ) : (
-             <div className="grid grid-cols-2 gap-4">
-               {requests.filter(r => r.id !== activePlan?.id).map((req) => (
-                 <Link key={req.id} href={`/menus/weekly/${req.id}`}>
-                   <motion.div 
-                     whileHover={{ y: -4 }}
-                     className="aspect-square bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm relative group"
-                   >
-                      {/* Thumbnail logic can be added here */}
-                      <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/60" />
-                      <div className="absolute bottom-0 left-0 p-4 text-white">
-                        <p className="text-xs font-bold opacity-80">
-                          {new Date(req.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        </p>
-                        <p className="font-bold text-sm truncate">
-                          {req.resultJson?.projectedImpact?.weightChange || 'Log'}
-                        </p>
-                      </div>
-                   </motion.div>
-                 </Link>
-               ))}
-               
-               {/* Add New Button in Grid */}
-               <button 
-                 onClick={() => setShowNewMenuModal(true)}
-                 className="aspect-square rounded-2xl bg-gray-50 border border-gray-100 flex flex-col items-center justify-center hover:bg-gray-100 transition-colors"
-               >
-                 <Icons.Plus className="w-6 h-6 text-gray-300 mb-2" />
-                 <span className="text-xs font-bold text-gray-400">New</span>
-               </button>
-             </div>
-          )}
-        </section>
-
+      {/* Main Content */}
+      <main>
+        {currentPlan ? (
+          <WeeklyMealPlanner 
+            mealPlan={currentPlan}
+            onUpdateMeal={handleUpdateMeal}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center">
+            <div className="w-20 h-20 bg-white rounded-full shadow-sm flex items-center justify-center mb-6">
+              <span className="text-4xl">📅</span>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">献立がありません</h2>
+            <p className="text-gray-500 text-sm mb-8">
+              この週の献立はまだ作成されていません。<br/>
+              AIと一緒に新しい献立を作りましょう。
+            </p>
+            <Button 
+              onClick={() => setShowNewMenuModal(true)}
+              className="rounded-full px-8 py-6 bg-black text-white font-bold shadow-xl hover:scale-105 transition-transform"
+            >
+              <Icons.Plus className="w-5 h-5 mr-2" />
+              献立を作成する
+            </Button>
+          </div>
+        )}
       </main>
 
-      {/* New Menu Modal (Bottom Sheet style) */}
+      {/* New Menu Modal */}
       <AnimatePresence>
         {showNewMenuModal && (
           <>
@@ -255,14 +234,14 @@ export default function WeeklyMenuPage() {
         )}
       </AnimatePresence>
 
-      {/* Floating Action Button (New) */}
-      {!showNewMenuModal && (
+      {/* Floating Action Button (Only show if plan exists to avoid duplicate CTA) */}
+      {currentPlan && !showNewMenuModal && (
         <motion.button
           initial={{ scale: 0 }} animate={{ scale: 1 }}
           onClick={() => setShowNewMenuModal(true)}
-          className="fixed bottom-24 right-6 w-16 h-16 bg-black text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-110 transition-transform"
+          className="fixed bottom-24 right-6 w-14 h-14 bg-black text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-110 transition-transform"
         >
-          <Icons.Plus className="w-8 h-8" />
+          <Icons.Plus className="w-6 h-6" />
         </motion.button>
       )}
 
