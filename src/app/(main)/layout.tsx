@@ -86,20 +86,15 @@ export default function MainLayout({
                 <Link 
                   key={item.href} 
                   href={item.href}
-                  className={`flex flex-col items-center gap-1 p-2 transition-colors ${
-                    isActive ? 'text-accent' : 'text-gray-400'
-                  }`}
+                  className="flex flex-col items-center gap-1 p-2 transition-colors"
                 >
                   <motion.div 
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
-                    className="w-10 h-10 rounded-full bg-foreground flex items-center justify-center text-white"
+                    className="w-12 h-12 rounded-full bg-foreground flex items-center justify-center text-white shadow-lg"
                   >
-                    <Icon className="w-6 h-6" />
+                    <Icon className="w-7 h-7" />
                   </motion.div>
-                  {isActive && (
-                    <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full bg-accent" />
-                  )}
                 </Link>
               );
             }

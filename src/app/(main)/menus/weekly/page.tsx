@@ -162,6 +162,7 @@ export default function WeeklyMenuPage() {
   // Regenerating meal
   const [regeneratingMeal, setRegeneratingMeal] = useState<PlannedMeal | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regeneratingMealId, setRegeneratingMealId] = useState<string | null>(null);
   
   // Manual edit state
   const [manualEditMeal, setManualEditMeal] = useState<PlannedMeal | null>(null);
@@ -561,6 +562,7 @@ export default function WeeklyMenuPage() {
     if (!regeneratingMeal || !currentPlan) return;
     
     setIsRegenerating(true);
+    setRegeneratingMealId(regeneratingMeal.id);
     
     try {
       const preferences: Record<string, boolean> = {};
@@ -579,6 +581,7 @@ export default function WeeklyMenuPage() {
       if (!day) {
         alert('日付が見つかりません');
         setIsRegenerating(false);
+        setRegeneratingMealId(null);
         return;
       }
       
@@ -621,17 +624,20 @@ export default function WeeklyMenuPage() {
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
             setIsRegenerating(false);
+            setRegeneratingMealId(null);
           }
         }, 2000);
         
         setTimeout(() => {
           clearInterval(pollInterval);
           setIsRegenerating(false);
+          setRegeneratingMealId(null);
         }, 30000);
       } else {
         const err = await res.json();
         alert(`エラー: ${err.error || '再生成に失敗しました'}`);
         setIsRegenerating(false);
+        setRegeneratingMealId(null);
       }
     } catch (error) {
       console.error('Regenerate error:', error);
@@ -942,6 +948,45 @@ export default function WeeklyMenuPage() {
     const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
+    const isRegeneratingThis = regeneratingMealId === meal.id;
+    
+    // dishes配列から主菜と他の品数を取得
+    const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
+      ? meal.dishes 
+      : meal.dishes 
+        ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
+        : [];
+    const mainDish = dishesArray.find(d => d.role === 'main') || dishesArray[0];
+    const otherCount = dishesArray.length > 1 ? dishesArray.length - 1 : 0;
+    
+    // 表示名を決定（主菜名 + 他○品）
+    const displayName = meal.isSimple || dishesArray.length === 0 
+      ? meal.dishName 
+      : mainDish 
+        ? `${mainDish.name}${otherCount > 0 ? ` 他${otherCount}品` : ''}`
+        : meal.dishName;
+
+    // 再生成中の場合
+    if (isRegeneratingThis) {
+      return (
+        <div className="flex items-center gap-2 mb-2">
+          <div
+            className="flex-1 flex items-center justify-between rounded-[14px] p-3"
+            style={{ background: colors.accentLight }}
+          >
+            <div className="flex items-center gap-2.5">
+              <span style={{ fontSize: 13, fontWeight: 600, color: colors.text, width: 28 }}>
+                {MEAL_LABELS[mealKey].slice(0, 1)}
+              </span>
+              <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+              <span style={{ fontSize: 13, color: colors.accent }}>
+                AIが考え中...
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="flex items-center gap-2 mb-2">
@@ -978,7 +1023,7 @@ export default function WeeklyMenuPage() {
               color: colors.textLight,
               textDecoration: meal.isCompleted ? 'line-through' : 'none',
             }}>
-              {meal.isSimple || !meal.dishes ? meal.dishName : `${Object.keys(meal.dishes).length}品`}
+              {displayName}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -994,6 +1039,7 @@ export default function WeeklyMenuPage() {
     const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
+    const isRegeneratingThis = regeneratingMealId === meal.id;
     
     // dishes は配列形式に対応（可変数）
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
@@ -1008,6 +1054,24 @@ export default function WeeklyMenuPage() {
                    : dishesArray.length === 2 ? 'grid-cols-2'
                    : dishesArray.length === 3 ? 'grid-cols-3'
                    : 'grid-cols-2';
+
+    // 再生成中の場合はローディング表示
+    if (isRegeneratingThis) {
+      return (
+        <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
+          <div className="flex justify-between items-center mb-3">
+            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>{MEAL_LABELS[mealKey]}</span>
+          </div>
+          <div className="flex items-center justify-center rounded-[14px] p-8" style={{ background: colors.accentLight }}>
+            <div className="text-center">
+              <div className="w-10 h-10 border-3 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+              <p style={{ fontSize: 14, fontWeight: 500, color: colors.accent, margin: 0 }}>AIが新しい献立を考え中...</p>
+              <p style={{ fontSize: 11, color: colors.textMuted, margin: '4px 0 0' }}>少々お待ちください</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
@@ -1114,29 +1178,13 @@ export default function WeeklyMenuPage() {
       <div className="pt-4 px-4 pb-2 sticky top-0 z-20" style={{ background: colors.card }}>
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <button 
-              onClick={goToPreviousWeek}
-              className="w-8 h-8 rounded-full flex items-center justify-center"
-              style={{ background: colors.bg }}
-            >
-              <ChevronLeft size={18} color={colors.textLight} />
-            </button>
-            <div className="flex items-center gap-2">
-              <Calendar size={18} color={colors.accent} />
-              <div>
-                <h1 style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>献立表</h1>
-                <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>
-                  {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} - {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()}
-                </p>
-              </div>
+            <Calendar size={18} color={colors.accent} />
+            <div>
+              <h1 style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>献立表</h1>
+              <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>
+                {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} - {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()}
+              </p>
             </div>
-            <button 
-              onClick={goToNextWeek}
-              className="w-8 h-8 rounded-full flex items-center justify-center"
-              style={{ background: colors.bg }}
-            >
-              <ChevronRight size={18} color={colors.textLight} />
-            </button>
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => setActiveModal('stats')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
@@ -1173,29 +1221,50 @@ export default function WeeklyMenuPage() {
           </div>
         </div>
 
-        {/* Day Tabs */}
-        <div className="flex py-0 pb-2.5" style={{ borderBottom: `1px solid ${colors.border}` }}>
-          {weekDates.map((day, idx) => {
-            const isSelected = idx === selectedDayIndex;
-            const isToday = day.dateStr === todayStr;
-            const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
-            const isPast = day.dateStr < todayStr;
-            return (
-              <button
-                key={day.dateStr}
-                onClick={() => setSelectedDayIndex(idx)}
-                className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all"
-                style={{
-                  background: isSelected ? colors.accent : 'transparent',
-                  border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
-                  opacity: isPast && !isSelected ? 0.4 : 1,
-                }}
-              >
-                <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#fff' : isWeekend ? colors.accent : colors.text }}>{day.dayOfWeek}</span>
-              </button>
-            );
-          })}
+        {/* Day Tabs with Week Navigation */}
+        <div className="flex items-center py-0 pb-2.5" style={{ borderBottom: `1px solid ${colors.border}` }}>
+          {/* 前の週ボタン */}
+          <button 
+            onClick={goToPreviousWeek}
+            className="flex flex-col items-center justify-center px-1.5 py-1 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <ChevronLeft size={16} color={colors.textMuted} />
+            <span style={{ fontSize: 8, color: colors.textMuted, whiteSpace: 'nowrap' }}>前の週</span>
+          </button>
+          
+          {/* 日付タブ */}
+          <div className="flex flex-1">
+            {weekDates.map((day, idx) => {
+              const isSelected = idx === selectedDayIndex;
+              const isToday = day.dateStr === todayStr;
+              const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+              const isPast = day.dateStr < todayStr;
+              return (
+                <button
+                  key={day.dateStr}
+                  onClick={() => setSelectedDayIndex(idx)}
+                  className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all"
+                  style={{
+                    background: isSelected ? colors.accent : 'transparent',
+                    border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
+                    opacity: isPast && !isSelected ? 0.4 : 1,
+                  }}
+                >
+                  <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#fff' : isWeekend ? colors.accent : colors.text }}>{day.dayOfWeek}</span>
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* 翌週ボタン */}
+          <button 
+            onClick={goToNextWeek}
+            className="flex flex-col items-center justify-center px-1.5 py-1 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <ChevronRight size={16} color={colors.textMuted} />
+            <span style={{ fontSize: 8, color: colors.textMuted, whiteSpace: 'nowrap' }}>翌週</span>
+          </button>
         </div>
       </div>
 
