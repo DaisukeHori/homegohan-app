@@ -8,7 +8,6 @@ export async function POST(request: Request) {
 
   try {
     const { dayDate, mealType, preferences, note } = await request.json();
-    console.log('[API] Generate single meal request:', { dayDate, mealType, preferences, note });
 
     if (!dayDate || !mealType) {
       return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });

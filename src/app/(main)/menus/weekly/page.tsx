@@ -171,16 +171,12 @@ export default function WeeklyMenuPage() {
       setLoading(true);
       try {
         const targetDate = formatLocalDate(weekStart);
-        console.log('[DEBUG] Fetching meal plan for date:', targetDate);
         const res = await fetch(`/api/meal-plans?date=${targetDate}`);
         if (res.ok) {
           const { mealPlan } = await res.json();
-          console.log('[DEBUG] Received meal plan:', mealPlan);
-          console.log('[DEBUG] Days in plan:', mealPlan?.days?.map((d: any) => ({ dayDate: d.dayDate, meals: d.meals?.length })));
           setCurrentPlan(mealPlan);
           if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
         } else {
-          console.log('[DEBUG] No meal plan found');
           setCurrentPlan(null);
         }
       } catch (e) {
@@ -1256,7 +1252,6 @@ export default function WeeklyMenuPage() {
                         });
 
                         const dayDate = weekDates[addMealDayIndex]?.dateStr;
-                        console.log('[DEBUG] Generating meal for:', { dayDate, addMealDayIndex, mealType: addMealKey, weekDates: weekDates.map(d => d.dateStr) });
                         
                         // 1食分だけを生成するAPIを呼び出し
                         const res = await fetch('/api/ai/menu/meal/generate', {
@@ -1276,11 +1271,44 @@ export default function WeeklyMenuPage() {
                           setActiveModal(null);
                           setSelectedConditions([]);
                           setAiChatInput("");
-                          // 数秒後にリロード（バックグラウンド処理完了を待つ）
-                          setTimeout(() => {
-                            setGeneratingMeal(null);
-                            window.location.reload();
-                          }, 8000);
+                          
+                          // 生成した日付を選択状態にする
+                          setSelectedDayIndex(addMealDayIndex);
+                          
+                          // ポーリングでデータを再取得（最大30秒、3秒間隔）
+                          let attempts = 0;
+                          const maxAttempts = 10;
+                          const pollInterval = setInterval(async () => {
+                            attempts++;
+                            try {
+                              const targetDate = formatLocalDate(weekStart);
+                              const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+                              if (pollRes.ok) {
+                                const { mealPlan } = await pollRes.json();
+                                if (mealPlan) {
+                                  // 生成した日・食事タイプのデータがあるかチェック
+                                  const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
+                                  const targetMeal = targetDay?.meals?.find((m: any) => m.mealType === addMealKey);
+                                  if (targetMeal) {
+                                    // データが見つかった！
+                                    setCurrentPlan(mealPlan);
+                                    setGeneratingMeal(null);
+                                    clearInterval(pollInterval);
+                                    console.log('[DEBUG] Meal generated successfully:', targetMeal);
+                                  }
+                                }
+                              }
+                            } catch (e) {
+                              console.error('Polling error:', e);
+                            }
+                            
+                            if (attempts >= maxAttempts) {
+                              // タイムアウト - リロードにフォールバック
+                              setGeneratingMeal(null);
+                              clearInterval(pollInterval);
+                              window.location.reload();
+                            }
+                          }, 3000);
                         } else {
                           const err = await res.json();
                           alert(`エラー: ${err.error || '生成に失敗しました'}`);
