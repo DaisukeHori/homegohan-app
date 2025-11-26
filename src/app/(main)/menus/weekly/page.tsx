@@ -1268,19 +1268,19 @@ export default function WeeklyMenuPage() {
       </div>
 
       {/* === AI Banner === */}
-      {emptySlotCount > 0 && (
-        <button
-          onClick={() => setActiveModal('ai')}
-          className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
-          style={{ background: colors.accent }}
-        >
-          <div className="flex items-center gap-2">
-            <Sparkles size={16} color="#fff" />
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>空欄{emptySlotCount}件 → AIに埋めてもらう</span>
-          </div>
-          <ChevronRight size={16} color="rgba(255,255,255,0.7)" />
-        </button>
-      )}
+      <button
+        onClick={() => setActiveModal('ai')}
+        className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
+        style={{ background: colors.accent }}
+      >
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} color="#fff" />
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
+            {emptySlotCount > 0 ? `空欄${emptySlotCount}件 → AIに埋めてもらう` : 'AIアシスタント'}
+          </span>
+        </div>
+        <ChevronRight size={16} color="rgba(255,255,255,0.7)" />
+      </button>
 
       {/* Expiring Items Alert */}
       {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).length > 0 && (
