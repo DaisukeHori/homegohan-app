@@ -46,24 +46,8 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
 
     if (profileError) throw new Error(`Profile not found: ${profileError.message}`)
 
-    // 直近データの取得（planned_mealsから）
-    const oneWeekAgo = new Date()
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
-    const oneWeekAgoStr = oneWeekAgo.toISOString().split('T')[0]
-    
-    const { data: recentMeals } = await supabase
-      .from('planned_meals')
-      .select(`
-        dish_name,
-        meal_plan_days!inner(
-          day_date,
-          meal_plans!inner(user_id)
-        )
-      `)
-      .eq('meal_plan_days.meal_plans.user_id', userId)
-      .gte('meal_plan_days.day_date', oneWeekAgoStr)
-      .limit(20)
-    const recentMenus = recentMeals?.map(m => m.dish_name).filter(Boolean).join(', ') || '特になし';
+    // 直近データの取得は省略（シンプル化）
+    const recentMenus = '特になし';
 
     const allergies = profile.diet_flags?.allergies?.join(', ') || 'なし';
     const dislikes = profile.diet_flags?.dislikes?.join(', ') || 'なし';
@@ -174,7 +158,7 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
       .from('meal_plans')
       .select('id')
       .eq('user_id', userId)
-      .eq('week_start_date', startDate)
+      .eq('start_date', startDate)
       .single()
     
     let mealPlanId: string
@@ -183,11 +167,17 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
       mealPlanId = existingPlan.id
       console.log(`Using existing meal_plan: ${mealPlanId}`)
     } else {
+      // end_dateは7日後
+      const endDate = new Date(startDate)
+      endDate.setDate(endDate.getDate() + 6)
+      const endDateStr = endDate.toISOString().split('T')[0]
+      
       const { data: newPlan, error: planError } = await supabase
         .from('meal_plans')
         .insert({
           user_id: userId,
-          week_start_date: startDate,
+          start_date: startDate,
+          end_date: endDateStr,
           status: 'active'
         })
         .select()
