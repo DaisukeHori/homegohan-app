@@ -267,6 +267,112 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
 
     if (updateError) throw updateError
     
+    // === planned_mealsテーブルにもデータを保存 ===
+    console.log('Saving to planned_meals table...')
+    
+    // 1. meal_planを作成または取得
+    const { data: existingPlan } = await supabase
+      .from('meal_plans')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('week_start_date', startDate)
+      .single()
+    
+    let mealPlanId: string
+    
+    if (existingPlan) {
+      mealPlanId = existingPlan.id
+      console.log(`Using existing meal_plan: ${mealPlanId}`)
+    } else {
+      const { data: newPlan, error: planError } = await supabase
+        .from('meal_plans')
+        .insert({
+          user_id: userId,
+          week_start_date: startDate,
+          source_request_id: recordId,
+          status: 'active'
+        })
+        .select()
+        .single()
+      
+      if (planError) throw new Error(`Failed to create meal_plan: ${planError.message}`)
+      mealPlanId = newPlan.id
+      console.log(`Created new meal_plan: ${mealPlanId}`)
+    }
+    
+    // 2. 各日のmeal_plan_daysとplanned_mealsを作成
+    for (const day of resultJson.days) {
+      const dayDate = day.date
+      
+      // meal_plan_dayを作成または取得
+      const { data: existingDay } = await supabase
+        .from('meal_plan_days')
+        .select('id')
+        .eq('meal_plan_id', mealPlanId)
+        .eq('day_date', dayDate)
+        .single()
+      
+      let mealPlanDayId: string
+      
+      if (existingDay) {
+        mealPlanDayId = existingDay.id
+        // 既存の献立を削除
+        await supabase
+          .from('planned_meals')
+          .delete()
+          .eq('meal_plan_day_id', mealPlanDayId)
+      } else {
+        const { data: newDay, error: dayError } = await supabase
+          .from('meal_plan_days')
+          .insert({
+            meal_plan_id: mealPlanId,
+            day_date: dayDate
+          })
+          .select()
+          .single()
+        
+        if (dayError) throw new Error(`Failed to create meal_plan_day: ${dayError.message}`)
+        mealPlanDayId = newDay.id
+      }
+      
+      // 3. 各食事をplanned_mealsに保存
+      for (const meal of day.meals) {
+        const mealType = meal.mealType
+        const dishes = meal.dishes || []
+        const mainDish = dishes.find((d: any) => d.role === '主菜' || d.role === '主食') || dishes[0]
+        const dishName = mainDish?.name || '献立'
+        
+        // dishesをDishDetail[]形式に変換
+        const dishDetails = dishes.map((d: any, index: number) => ({
+          name: d.name,
+          role: d.role || (index === 0 ? 'main' : `side${index}`),
+          cal: 0 // カロリーは個別に設定されていないのでデフォルト0
+        }))
+        
+        const { error: mealError } = await supabase
+          .from('planned_meals')
+          .insert({
+            meal_plan_day_id: mealPlanDayId,
+            meal_type: mealType,
+            mode: 'cook',
+            dish_name: dishName,
+            description: day.nutritionalAdvice || '',
+            image_url: meal.imageUrl || null,
+            dishes: dishDetails,
+            is_simple: false,
+            is_completed: false
+          })
+        
+        if (mealError) {
+          console.error(`Failed to insert planned_meal for ${dayDate} ${mealType}:`, mealError)
+        } else {
+          console.log(`✅ Saved planned_meal: ${dayDate} ${mealType} - ${dishName}`)
+        }
+      }
+    }
+    
+    console.log('✅ All meals saved to planned_meals table')
+    
   } catch (error: any) {
     console.error(`Error: ${error.message}`)
     await supabase
