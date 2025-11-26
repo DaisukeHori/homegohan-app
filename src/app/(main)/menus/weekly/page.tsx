@@ -129,6 +129,61 @@ export default function WeeklyMenuPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
   
+  // 生成中状態をlocalStorageから復元し、ポーリングを再開
+  useEffect(() => {
+    const stored = localStorage.getItem('weeklyMenuGenerating');
+    if (stored) {
+      try {
+        const { weekStartDate, timestamp } = JSON.parse(stored);
+        const elapsed = Date.now() - timestamp;
+        // 5分以内なら生成中とみなしてポーリング再開
+        if (elapsed < 5 * 60 * 1000 && weekStartDate === formatLocalDate(weekStart)) {
+          setIsGenerating(true);
+          
+          // ポーリング再開
+          const remainingTime = 5 * 60 * 1000 - elapsed;
+          const maxAttempts = Math.ceil(remainingTime / 3000);
+          let attempts = 0;
+          
+          const pollInterval = setInterval(async () => {
+            attempts++;
+            try {
+              const targetDate = formatLocalDate(weekStart);
+              const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+              if (pollRes.ok) {
+                const { mealPlan } = await pollRes.json();
+                if (mealPlan && mealPlan.days && mealPlan.days.length > 0) {
+                  const hasAnyMeal = mealPlan.days.some((d: any) => d.meals && d.meals.length > 0);
+                  if (hasAnyMeal) {
+                    setCurrentPlan(mealPlan);
+                    setShoppingList(mealPlan.shoppingList || []);
+                    setIsGenerating(false);
+                    localStorage.removeItem('weeklyMenuGenerating');
+                    clearInterval(pollInterval);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('Polling error:', e);
+            }
+            
+            if (attempts >= maxAttempts) {
+              clearInterval(pollInterval);
+              setIsGenerating(false);
+              localStorage.removeItem('weeklyMenuGenerating');
+            }
+          }, 3000);
+          
+          return () => clearInterval(pollInterval);
+        } else {
+          localStorage.removeItem('weeklyMenuGenerating');
+        }
+      } catch {
+        localStorage.removeItem('weeklyMenuGenerating');
+      }
+    }
+  }, [weekStart]);
+  
   // Edit meal state
   const [editingMeal, setEditingMeal] = useState<PlannedMeal | null>(null);
   const [editMealName, setEditMealName] = useState("");
@@ -408,6 +463,13 @@ export default function WeeklyMenuPage() {
     setIsGenerating(true);
     setActiveModal(null); // モーダルを閉じて一覧画面に戻る
     
+    // localStorageに生成中状態を保存（画面遷移しても維持するため）
+    const weekStartDate = formatLocalDate(weekStart);
+    localStorage.setItem('weeklyMenuGenerating', JSON.stringify({
+      weekStartDate,
+      timestamp: Date.now()
+    }));
+    
     try {
       const preferences = {
         useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
@@ -447,6 +509,7 @@ export default function WeeklyMenuPage() {
                 setCurrentPlan(mealPlan);
                 setShoppingList(mealPlan.shoppingList || []);
                 setIsGenerating(false);
+                localStorage.removeItem('weeklyMenuGenerating'); // 生成完了
                 clearInterval(pollInterval);
               }
             }
@@ -458,6 +521,7 @@ export default function WeeklyMenuPage() {
         if (attempts >= maxAttempts) {
           clearInterval(pollInterval);
           setIsGenerating(false);
+          localStorage.removeItem('weeklyMenuGenerating'); // タイムアウト
           // タイムアウト後はリロードして最新データを取得
           window.location.reload();
         }
@@ -466,6 +530,7 @@ export default function WeeklyMenuPage() {
     } catch (error: any) {
       alert(error.message || "エラーが発生しました");
       setIsGenerating(false);
+      localStorage.removeItem('weeklyMenuGenerating'); // エラー時
     }
   };
 
