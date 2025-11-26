@@ -153,6 +153,18 @@ ${preferences.healthy ? '- ヘルシー志向（低カロリー・高タンパ�
       meal.totalCalories = newMealData.totalCalories
       meal.cookingTime = newMealData.cookingTime
       meal.nutritionalAdvice = newMealData.nutritionalAdvice
+      
+      // 画像生成（メイン料理のみ）
+      if (newMealData.dishes && newMealData.dishes.length > 0) {
+        const mainDish = newMealData.dishes[0]
+        try {
+          const imageUrl = await generateMealImage(mainDish.name, userId, supabase)
+          meal.imageUrl = imageUrl
+          console.log(`✅ Image generated for ${mainDish.name}`)
+        } catch (imgError: any) {
+          console.warn(`⚠️ Image generation skipped: ${imgError.message}`)
+        }
+      }
     }
 
     // 6. データベースを更新
@@ -170,7 +182,70 @@ ${preferences.healthy ? '- ヘルシー志向（低カロリー・高タンパ�
 
   } catch (error: any) {
     console.error(`❌ Meal regeneration failed:`, error.message)
-    // エラーをログに記録（オプション：DBにエラーステータスを保存）
   }
+}
+
+// 画像生成関数（Gemini API）
+async function generateMealImage(dishName: string, userId: string, supabase: any): Promise<string> {
+  const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
+  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.0-flash-exp'
+  
+  if (!GOOGLE_AI_API_KEY) {
+    throw new Error('Google AI API Key is missing')
+  }
+
+  const enhancedPrompt = `A delicious, appetizing, professional food photography shot of ${dishName}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`
+
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`
+  
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: enhancedPrompt }] }],
+      generationConfig: {
+        responseModalities: ['IMAGE'],
+        imageConfig: { aspectRatio: '1:1' }
+      }
+    })
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Gemini API error: ${errorText}`)
+  }
+
+  const data = await response.json()
+  const parts = data.candidates?.[0]?.content?.parts || []
+  let imageBase64 = ''
+  
+  for (const part of parts) {
+    if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
+      imageBase64 = part.inlineData.data
+      break
+    }
+  }
+
+  if (!imageBase64) {
+    throw new Error('No image data in response')
+  }
+
+  // Supabase Storageへアップロード
+  const binaryString = atob(imageBase64)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  
+  const fileName = `generated/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`
+  
+  const { error: uploadError } = await supabase.storage
+    .from('fridge-images')
+    .upload(fileName, bytes, { contentType: 'image/png', upsert: false })
+
+  if (uploadError) throw new Error(`Storage upload failed: ${uploadError.message}`)
+
+  const { data: { publicUrl } } = supabase.storage.from('fridge-images').getPublicUrl(fileName)
+  return publicUrl
 }
 
