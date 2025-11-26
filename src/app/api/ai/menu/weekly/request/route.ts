@@ -7,7 +7,7 @@ export async function POST(request: Request) {
 
   try {
     // パラメータ受け取りを更新
-    const { startDate, note, familySize, cheatDay } = await request.json();
+    const { startDate, note, familySize, cheatDay, preferences } = await request.json();
 
     // 1. ユーザー確認
     const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -15,12 +15,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // constraints オブジェクトの構築
+    // constraints オブジェクトの構築（preferencesを含む）
     const constraints = {
       familySize: familySize || 1,
       cheatDay: cheatDay || null,
-      // 他の条件（ingredients等）もここに含まれるべきだが、現状UIからはnoteにテキストとして埋め込んでいる
-      // 将来的にはUIから直接 constraints オブジェクトを受け取るようにすべき
+      preferences: preferences || {}, // UI選択された条件
     };
 
     // 2. リクエストレコード作成
@@ -38,15 +37,16 @@ export async function POST(request: Request) {
 
     if (dbError) throw dbError;
 
-    // 3. Edge Function の呼び出し
+    // 3. Edge Function の呼び出し（非同期バックグラウンド処理）
     const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu', {
       body: {
         recordId: reqData.id,
         userId: user.id,
         startDate,
         note,
-        familySize, // Edge Function側もこれらを受け取るよう修正済み
-        cheatDay
+        familySize,
+        cheatDay,
+        preferences, // UI選択された条件を渡す
       },
     });
 

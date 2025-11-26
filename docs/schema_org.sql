@@ -46,3 +46,4 @@ CREATE POLICY "Org admins can view org members" ON user_profiles
 CREATE INDEX IF NOT EXISTS idx_user_profiles_org_id ON user_profiles(organization_id);
 
 
+

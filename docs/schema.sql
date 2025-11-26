@@ -185,3 +185,4 @@ CREATE POLICY "Anyone can view badges" ON badges
   FOR SELECT USING (true);
 
 
+

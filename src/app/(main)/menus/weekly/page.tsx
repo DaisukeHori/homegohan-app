@@ -205,10 +205,22 @@ export default function WeeklyMenuPage() {
     if (!startDate) { alert("開始日を選択してください"); return; }
     setIsGenerating(true);
     try {
+      // 選択した条件を構造化データとして渡す
+      const preferences = {
+        useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
+        quickMeals: selectedConditions.includes('時短メニュー中心'),
+        japaneseStyle: selectedConditions.includes('和食多め'),
+        healthy: selectedConditions.includes('ヘルシーに'),
+      };
+
       const response = await fetch("/api/ai/menu/weekly/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startDate, note }),
+        body: JSON.stringify({ 
+          startDate, 
+          note: note + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
+          preferences,
+        }),
       });
       if (!response.ok) throw new Error("生成リクエストに失敗しました");
       const data = await response.json();

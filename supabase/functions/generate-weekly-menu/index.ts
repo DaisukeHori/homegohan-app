@@ -9,11 +9,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // request param に familySize, cheatDay を追加
-    const { recordId, userId, startDate, note, familySize, cheatDay } = await req.json()
+    // request param に familySize, cheatDay, preferences を追加
+    const { recordId, userId, startDate, note, familySize, cheatDay, preferences } = await req.json()
 
     // 非同期でバックグラウンドタスクを実行（レスポンスをブロックしない）
-    generateMenuBackgroundTask({ recordId, userId, startDate, note, familySize, cheatDay }).catch((error) => {
+    generateMenuBackgroundTask({ recordId, userId, startDate, note, familySize, cheatDay, preferences }).catch((error) => {
       console.error('Background task error:', error)
     })
 
@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   }
 })
 
-async function generateMenuBackgroundTask({ recordId, userId, startDate, note, familySize = 1, cheatDay }: any) {
+async function generateMenuBackgroundTask({ recordId, userId, startDate, note, familySize = 1, cheatDay, preferences = {} }: any) {
   console.log(`Starting generation for request: ${recordId}`)
   
   const supabase = createClient(
@@ -102,6 +102,12 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
       【直近の状況】
       - 最近食べたもの: ${recentMenus} (被りを避ける)
       - 今週のリクエスト: ${note || '特になし'}
+      
+      【献立スタイルの指定】
+      ${preferences.useFridgeFirst ? '- 【重要】冷蔵庫にある食材を優先的に使用してください' : ''}
+      ${preferences.quickMeals ? '- 【重要】時短メニュー中心（調理時間15-20分以内）で構成してください' : ''}
+      ${preferences.japaneseStyle ? '- 【重要】和食を中心に構成してください（洋食・中華は控えめに）' : ''}
+      ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・高タンパク・野菜多め）で構成してください' : ''}
       
       【生成要件 - 重要】
       1. 献立 (days): **必ず7日分（上記の7日すべて）を生成してください**
