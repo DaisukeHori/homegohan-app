@@ -170,13 +170,17 @@ export default function WeeklyMenuPage() {
     const fetchPlan = async () => {
       setLoading(true);
       try {
-        const targetDate = weekStart.toISOString().split('T')[0];
+        const targetDate = formatLocalDate(weekStart);
+        console.log('[DEBUG] Fetching meal plan for date:', targetDate);
         const res = await fetch(`/api/meal-plans?date=${targetDate}`);
         if (res.ok) {
           const { mealPlan } = await res.json();
+          console.log('[DEBUG] Received meal plan:', mealPlan);
+          console.log('[DEBUG] Days in plan:', mealPlan?.days?.map((d: any) => ({ dayDate: d.dayDate, meals: d.meals?.length })));
           setCurrentPlan(mealPlan);
           if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
         } else {
+          console.log('[DEBUG] No meal plan found');
           setCurrentPlan(null);
         }
       } catch (e) {
@@ -1252,6 +1256,7 @@ export default function WeeklyMenuPage() {
                         });
 
                         const dayDate = weekDates[addMealDayIndex]?.dateStr;
+                        console.log('[DEBUG] Generating meal for:', { dayDate, addMealDayIndex, mealType: addMealKey, weekDates: weekDates.map(d => d.dateStr) });
                         
                         // 1食分だけを生成するAPIを呼び出し
                         const res = await fetch('/api/ai/menu/meal/generate', {
