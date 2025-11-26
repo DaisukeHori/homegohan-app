@@ -1,48 +1,74 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem } from "@/types/domain";
-import { Icons } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,
   Flame, Refrigerator, Trash2, AlertTriangle,
-  BarChart3, ShoppingCart, ChevronDown, ChevronLeft, ChevronRight
+  BarChart3, ShoppingCart, ChevronDown, ChevronLeft, ChevronRight,
+  Clock, Users, BookOpen, Heart, RefreshCw, Send, Package
 } from 'lucide-react';
 
-// --- Types & Constants ---
-type MealType = 'breakfast' | 'lunch' | 'dinner';
-type ModalType = 'newMenu' | 'ai' | 'fridge' | 'shopping' | 'stats' | null;
+// ============================================
+// Types & Constants (Reference UI Style)
+// ============================================
 
-const MODE_CONFIG = {
-  cook: { icon: ChefHat, label: '自炊', color: 'text-green-600', bg: 'bg-green-50' },
-  quick: { icon: Zap, label: '時短', color: 'text-blue-600', bg: 'bg-blue-50' },
-  buy: { icon: Store, label: '買う', color: 'text-purple-600', bg: 'bg-purple-50' },
-  out: { icon: UtensilsCrossed, label: '外食', color: 'text-orange-500', bg: 'bg-orange-50' },
-  skip: { icon: FastForward, label: 'なし', color: 'text-gray-400', bg: 'bg-gray-100' },
+type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
+type MealType = 'breakfast' | 'lunch' | 'dinner';
+type DishType = 'main' | 'side1' | 'side2' | 'soup';
+type ModalType = 'newMenu' | 'ai' | 'aiPreview' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | null;
+
+// Reference UI Color Palette
+const colors = {
+  bg: '#F7F6F3',
+  card: '#FFFFFF',
+  text: '#2D2D2D',
+  textLight: '#6B6B6B',
+  textMuted: '#A0A0A0',
+  accent: '#E07A5F',
+  accentLight: '#FDF0ED',
+  success: '#6B9B6B',
+  successLight: '#EDF5ED',
+  warning: '#E5A84B',
+  warningLight: '#FEF9EE',
+  purple: '#7C6BA0',
+  purpleLight: '#F5F3F8',
+  blue: '#5B8BC7',
+  blueLight: '#EEF4FB',
+  border: '#E8E8E8',
+  danger: '#D64545',
+  dangerLight: '#FDECEC',
+};
+
+const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
+  cook: { icon: ChefHat, label: '自炊', color: colors.success, bg: colors.successLight },
+  quick: { icon: Zap, label: '時短', color: colors.blue, bg: colors.blueLight },
+  buy: { icon: Store, label: '買う', color: colors.purple, bg: colors.purpleLight },
+  out: { icon: UtensilsCrossed, label: '外食', color: colors.warning, bg: colors.warningLight },
+  skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
+};
+
+const DISH_TYPE_CONFIG: Record<DishType, { label: string; color: string; bg: string }> = {
+  main: { label: '主菜', color: colors.accent, bg: colors.accentLight },
+  side1: { label: '副菜', color: colors.success, bg: colors.successLight },
+  side2: { label: '副菜', color: colors.success, bg: colors.successLight },
+  soup: { label: '汁物', color: colors.blue, bg: colors.blueLight },
 };
 
 const MEAL_LABELS: Record<MealType, string> = { breakfast: '朝食', lunch: '昼食', dinner: '夕食' };
 
-// Helper to generate week dates
+// Helper functions
 const getWeekDates = (startDate: Date): { date: Date; dayOfWeek: string; dateStr: string }[] => {
   const days = [];
   const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
   for (let i = 0; i < 7; i++) {
     const d = new Date(startDate);
     d.setDate(startDate.getDate() + i);
-    days.push({
-      date: d,
-      dayOfWeek: dayNames[d.getDay()],
-      dateStr: d.toISOString().split('T')[0],
-    });
+    days.push({ date: d, dayOfWeek: dayNames[d.getDay()], dateStr: d.toISOString().split('T')[0] });
   }
   return days;
 };
@@ -50,15 +76,53 @@ const getWeekDates = (startDate: Date): { date: Date; dayOfWeek: string; dateStr
 const getWeekStart = (date: Date): Date => {
   const d = new Date(date);
   const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday as start
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
   d.setDate(diff);
   d.setHours(0, 0, 0, 0);
   return d;
 };
 
+const getDaysUntil = (dateStr: string | null | undefined): number | null => {
+  if (!dateStr) return null;
+  const target = new Date(dateStr);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+};
+
+// ============================================
+// Mock Data for Demo (Replace with real API)
+// ============================================
+
+const MOCK_RECIPES: Record<string, { time: number; servings: number; calories: number; ingredients: { name: string; amount: string }[]; steps: string[] }> = {
+  '麻婆豆腐': {
+    time: 20, servings: 2, calories: 350,
+    ingredients: [
+      { name: '豆腐', amount: '1丁' },
+      { name: '豚ひき肉', amount: '150g' },
+      { name: '長ねぎ', amount: '1/2本' },
+      { name: '豆板醤', amount: '大さじ1' },
+      { name: '甜麺醤', amount: '大さじ1' },
+    ],
+    steps: [
+      '豆腐を2cm角に切り、熱湯で軽く茹でる',
+      'フライパンで豚ひき肉を炒める',
+      '豆板醤、甜麺醤を加えて香りを出す',
+      '水と調味料を加え、豆腐を入れて煮込む',
+      '水溶き片栗粉でとろみをつけて完成',
+    ],
+  },
+};
+
+// AI Suggestions for demo
+const AI_CONDITIONS = ['冷蔵庫の食材を優先', '時短メニュー中心', '和食多め', 'ヘルシーに'];
+
+// ============================================
+// Main Component
+// ============================================
+
 export default function WeeklyMenuPage() {
   const router = useRouter();
-  const supabase = createClient();
   
   const [currentPlan, setCurrentPlan] = useState<MealPlan | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,10 +133,15 @@ export default function WeeklyMenuPage() {
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const weekDates = getWeekDates(weekStart);
 
+  // Expanded Meal State
+  const [expandedMeal, setExpandedMeal] = useState<MealType>('dinner');
+
   // Form State for New Menu
   const [startDate, setStartDate] = useState("");
   const [note, setNote] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [aiChatInput, setAiChatInput] = useState("");
+  const [addMealKey, setAddMealKey] = useState<MealType | null>(null);
   
   // Pantry & Shopping
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
@@ -81,7 +150,10 @@ export default function WeeklyMenuPage() {
   const [newItemAmount, setNewItemAmount] = useState("");
   const [newItemDate, setNewItemDate] = useState("");
 
-  // Fetch Plan based on weekStart
+  // Recipe Modal
+  const [selectedRecipe, setSelectedRecipe] = useState<string | null>(null);
+
+  // Fetch Plan
   useEffect(() => {
     const fetchPlan = async () => {
       setLoading(true);
@@ -91,9 +163,7 @@ export default function WeeklyMenuPage() {
         if (res.ok) {
           const { mealPlan } = await res.json();
           setCurrentPlan(mealPlan);
-          if (mealPlan) {
-            setShoppingList(mealPlan.shoppingList || []);
-          }
+          if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
         } else {
           setCurrentPlan(null);
         }
@@ -131,10 +201,7 @@ export default function WeeklyMenuPage() {
   }, [weekStart]);
 
   const handleGenerate = async () => {
-    if (!startDate) {
-      alert("開始日を選択してください");
-      return;
-    }
+    if (!startDate) { alert("開始日を選択してください"); return; }
     setIsGenerating(true);
     try {
       const response = await fetch("/api/ai/menu/weekly/request", {
@@ -153,7 +220,6 @@ export default function WeeklyMenuPage() {
 
   const handleUpdateMeal = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
     if (!currentPlan || !mealId) return;
-    // Optimistic Update
     const updatedDays = currentPlan.days?.map(day => {
       if (day.id !== dayId) return day;
       return { ...day, meals: day.meals?.map(meal => meal.id === mealId ? { ...meal, ...updates } : meal) };
@@ -165,9 +231,7 @@ export default function WeeklyMenuPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
-    } catch (e) {
-      console.error('Failed to update meal:', e);
-    }
+    } catch (e) { console.error('Failed to update meal:', e); }
   };
 
   const navigateWeek = (direction: 'prev' | 'next') => {
@@ -193,12 +257,14 @@ export default function WeeklyMenuPage() {
       }
     } catch (e) { alert("追加に失敗しました"); }
   };
+
   const deletePantryItem = async (id: string) => {
     try {
       await fetch(`/api/pantry/${id}`, { method: 'DELETE' });
       setFridgeItems(prev => prev.filter(i => i.id !== id));
     } catch (e) { alert("削除に失敗しました"); }
   };
+
   const toggleShoppingItem = async (id: string, currentChecked: boolean) => {
     setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
     try {
@@ -209,58 +275,275 @@ export default function WeeklyMenuPage() {
   // --- Computed ---
   const currentDay = currentPlan?.days?.find(d => d.dayDate === weekDates[selectedDayIndex]?.dateStr);
   const getMeal = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.find(m => m.mealType === type);
-  const expiringItems = fridgeItems.filter(i => i.expirationDate && new Date(i.expirationDate) <= new Date(new Date().setDate(new Date().getDate() + 3)));
-  const emptySlotCount = currentPlan ? 0 : 21; // All slots empty if no plan
+  const expiringItems = fridgeItems.filter(i => {
+    const days = getDaysUntil(i.expirationDate);
+    return days !== null && days <= 3;
+  }).sort((a, b) => (getDaysUntil(a.expirationDate) || 0) - (getDaysUntil(b.expirationDate) || 0));
+
+  const countEmptySlots = () => {
+    if (!currentPlan?.days) return 21;
+    let count = 0;
+    currentPlan.days.forEach(day => {
+      (['breakfast', 'lunch', 'dinner'] as MealType[]).forEach(type => {
+        if (!getMeal(day, type)) count++;
+      });
+    });
+    return count;
+  };
 
   const getWeekStats = () => {
-    if (!currentPlan?.days) return { cookRate: 0, avgCal: 0 };
-    let totalCal = 0, mealCount = 0;
+    if (!currentPlan?.days) return { cookRate: 0, avgCal: 0, cookCount: 0, buyCount: 0, outCount: 0 };
+    let cookCount = 0, buyCount = 0, outCount = 0, totalCal = 0, mealCount = 0;
     currentPlan.days.forEach(day => {
-      day.meals?.forEach(meal => { totalCal += meal.caloriesKcal || 0; mealCount++; });
+      day.meals?.forEach(meal => {
+        // For now, count all as cook. In real app, use meal.mode
+        cookCount++;
+        totalCal += meal.caloriesKcal || 0;
+        mealCount++;
+      });
     });
-    return { cookRate: mealCount > 0 ? 100 : 0, avgCal: currentPlan.days.length > 0 ? Math.round(totalCal / currentPlan.days.length) : 0 };
+    const total = cookCount + buyCount + outCount;
+    return {
+      cookRate: total > 0 ? Math.round((cookCount / total) * 100) : 0,
+      avgCal: currentPlan.days.length > 0 ? Math.round(totalCal / currentPlan.days.length) : 0,
+      cookCount, buyCount, outCount
+    };
   };
+
   const stats = getWeekStats();
+  const emptySlotCount = countEmptySlots();
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  // Get total cal for a day
+  const getDayTotalCal = (day: MealPlanDay | undefined) => {
+    if (!day?.meals) return 0;
+    return day.meals.reduce((sum, m) => sum + (m.caloriesKcal || 0), 0);
+  };
+
+  // Get meal mode (for demo, derive from meal data or default)
+  const getMealMode = (meal: PlannedMeal | undefined): MealMode => {
+    if (!meal) return 'skip';
+    // In real app, this would come from meal.mode
+    // For now, use heuristics
+    if (meal.dishName?.includes('コンビニ') || meal.dishName?.includes('弁当')) return 'buy';
+    if (meal.dishName?.includes('外食') || meal.dishName?.includes('ラーメン')) return 'out';
+    if (meal.dishName?.includes('冷凍') || meal.dishName?.includes('時短')) return 'quick';
+    return 'cook';
+  };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F7F6F3] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: colors.bg }}>
+        <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
       </div>
     );
   }
 
-  // --- Render ---
+  // ============================================
+  // Render Components
+  // ============================================
+
+  const EmptySlot = ({ mealKey }: { mealKey: MealType }) => (
+    <button
+      onClick={() => { setAddMealKey(mealKey); setActiveModal('add'); }}
+      className="w-full flex items-center justify-center gap-2 rounded-[14px] p-5 mb-2 cursor-pointer transition-all hover:border-[#E07A5F]"
+      style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
+    >
+      <Plus size={18} color={colors.textMuted} />
+      <span style={{ fontSize: 14, color: colors.textMuted }}>{MEAL_LABELS[mealKey]}を追加</span>
+    </button>
+  );
+
+  const CollapsedMealCard = ({ mealKey, meal, isPast }: { mealKey: MealType; meal: PlannedMeal; isPast: boolean }) => {
+    const mode = MODE_CONFIG[getMealMode(meal)];
+    const ModeIcon = mode.icon;
+    const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
+    const canCheck = isToday && !isPast;
+
+    return (
+      <div className="flex items-center gap-2 mb-2">
+        {/* Check button */}
+        {isToday && (
+          <button
+            onClick={() => !meal.isCompleted && handleUpdateMeal(currentDay!.id, meal.id, { isCompleted: true })}
+            className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+            style={{
+              border: meal.isCompleted ? 'none' : `2px solid ${colors.border}`,
+              background: meal.isCompleted ? colors.success : 'transparent',
+              cursor: meal.isCompleted ? 'default' : 'pointer',
+            }}
+          >
+            {meal.isCompleted && <Check size={14} color="#fff" />}
+          </button>
+        )}
+        
+        <button
+          onClick={() => !isPast && setExpandedMeal(mealKey)}
+          className="flex-1 flex items-center justify-between rounded-[14px] p-3 text-left transition-all"
+          style={{
+            background: isPast ? colors.bg : colors.card,
+            opacity: isPast ? 0.6 : (meal.isCompleted ? 0.7 : 1),
+          }}
+        >
+          <div className="flex items-center gap-2.5">
+            <span style={{ fontSize: 13, fontWeight: 600, color: colors.text, width: 28 }}>
+              {MEAL_LABELS[mealKey].slice(0, 1)}
+            </span>
+            <div className="flex items-center gap-1 px-2 py-1 rounded-md" style={{ background: mode.bg }}>
+              <ModeIcon size={12} color={mode.color} />
+            </div>
+            <span style={{ 
+              fontSize: 13, 
+              color: colors.textLight,
+              textDecoration: meal.isCompleted ? 'line-through' : 'none',
+            }}>
+              {meal.dishName || '未設定'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span style={{ fontSize: 12, color: colors.textMuted }}>{meal.caloriesKcal || '-'}kcal</span>
+            {!isPast && <ChevronDown size={14} color={colors.textMuted} />}
+          </div>
+        </button>
+      </div>
+    );
+  };
+
+  const ExpandedMealCard = ({ mealKey, meal }: { mealKey: MealType; meal: PlannedMeal }) => {
+    const mode = MODE_CONFIG[getMealMode(meal)];
+    const ModeIcon = mode.icon;
+    const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
+    const hasRecipe = MOCK_RECIPES[meal.dishName || ''];
+
+    // For demo, create mock dishes if it's a cook meal
+    const isCookMeal = getMealMode(meal) === 'cook';
+    const mockDishes = isCookMeal ? {
+      main: { name: meal.dishName || '主菜', cal: Math.round((meal.caloriesKcal || 350) * 0.6), ingredient: '豆腐' },
+      side1: { name: 'ほうれん草おひたし', cal: 40, ingredient: 'ほうれん草' },
+      side2: { name: 'もやしナムル', cal: 45 },
+      soup: { name: '卵スープ', cal: 55 },
+    } : null;
+
+    return (
+      <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
+        {/* Header */}
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center gap-2.5">
+            {isToday && (
+              <button
+                onClick={() => !meal.isCompleted && handleUpdateMeal(currentDay!.id, meal.id, { isCompleted: true })}
+                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors"
+                style={{
+                  border: meal.isCompleted ? 'none' : `2px solid ${colors.border}`,
+                  background: meal.isCompleted ? colors.success : 'transparent',
+                  cursor: meal.isCompleted ? 'default' : 'pointer',
+                }}
+              >
+                {meal.isCompleted && <Check size={14} color="#fff" />}
+              </button>
+            )}
+            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>{MEAL_LABELS[mealKey]}</span>
+            <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg" style={{ background: mode.bg }}>
+              <ModeIcon size={14} color={mode.color} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: mode.color }}>{mode.label}</span>
+            </div>
+          </div>
+          <span style={{ fontSize: 14, color: colors.textMuted }}>{meal.caloriesKcal || '-'} kcal</span>
+        </div>
+
+        {/* Content */}
+        {isCookMeal && mockDishes ? (
+          // Grid layout for cook meals
+          <div className="grid grid-cols-2 gap-2">
+            {(Object.entries(mockDishes) as [DishType, { name: string; cal: number; ingredient?: string }][]).map(([type, dish]) => {
+              const config = DISH_TYPE_CONFIG[type];
+              const dishHasRecipe = MOCK_RECIPES[dish.name];
+              return (
+                <button
+                  key={type}
+                  onClick={() => {
+                    if (dishHasRecipe) {
+                      setSelectedRecipe(dish.name);
+                      setActiveModal('recipe');
+                    }
+                  }}
+                  className="text-left flex flex-col min-h-[75px] rounded-xl p-3"
+                  style={{ background: config.bg, cursor: dishHasRecipe ? 'pointer' : 'default' }}
+                >
+                  <div className="flex justify-between mb-1">
+                    <span style={{ fontSize: 9, fontWeight: 700, color: config.color }}>{config.label}</span>
+                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.cal}kcal</span>
+                  </div>
+                  <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, margin: 0, flex: 1 }}>{dish.name}</p>
+                  {dish.ingredient && (
+                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[9px]" style={{ color: colors.success, background: 'rgba(255,255,255,0.7)' }}>
+                      <Package size={9} /> {dish.ingredient}
+                    </span>
+                  )}
+                  {dishHasRecipe && (
+                    <span className="inline-flex items-center gap-1 mt-1 text-[9px]" style={{ color: colors.blue }}>
+                      <BookOpen size={9} /> レシピを見る
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          // Simple display for non-cook meals
+          <div className="flex items-center justify-center rounded-[14px] p-6" style={{ background: colors.bg }}>
+            <div className="text-center">
+              <ModeIcon size={24} color={mode.color} className="mx-auto mb-1.5" />
+              <p style={{ fontSize: 15, fontWeight: 500, color: colors.text, margin: 0 }}>{meal.dishName || '未設定'}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Change button */}
+        <button className="w-full mt-3 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" style={{ background: colors.bg }}>
+          <RefreshCw size={13} color={colors.textLight} />
+          <span style={{ fontSize: 12, color: colors.textLight }}>変更する</span>
+        </button>
+      </div>
+    );
+  };
+
+  // ============================================
+  // Main Render
+  // ============================================
+
   return (
-    <div className="min-h-screen bg-[#F7F6F3] flex flex-col pb-20">
+    <div className="min-h-screen flex flex-col pb-20" style={{ background: colors.bg, fontFamily: '-apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif' }}>
       
       {/* === Header === */}
-      <div className="bg-white pt-4 px-4 pb-2 sticky top-0 z-20 shadow-sm">
-        <div className="flex justify-between items-center mb-3">
-          <div className="flex items-center gap-2">
-            <Calendar size={20} className="text-orange-500" />
+      <div className="pt-4 px-4 pb-2 sticky top-0 z-20" style={{ background: colors.card }}>
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2.5">
+            <Calendar size={20} color={colors.accent} />
             <div>
-              <h1 className="text-lg font-bold text-gray-900 leading-none">献立表</h1>
-              <p className="text-[10px] text-gray-400 mt-0.5">
-                {weekDates[0]?.date.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })} - {weekDates[6]?.date.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
+              <h1 style={{ fontSize: 18, fontWeight: 600, color: colors.text, margin: 0 }}>献立表</h1>
+              <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>
+                {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} - {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()}
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={() => setActiveModal('stats')} className="w-9 h-9 rounded-full bg-gray-50 flex items-center justify-center hover:bg-gray-100">
-              <BarChart3 size={18} className="text-gray-500" />
+          <div className="flex gap-1.5">
+            <button onClick={() => setActiveModal('stats')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+              <BarChart3 size={16} color={colors.textLight} />
             </button>
-            <button onClick={() => setActiveModal('fridge')} className="w-9 h-9 rounded-full bg-gray-50 flex items-center justify-center hover:bg-gray-100 relative">
-              <Refrigerator size={18} className={expiringItems.some(i => i.expirationDate && new Date(i.expirationDate) <= new Date(new Date().setDate(new Date().getDate() + 1))) ? "text-red-500" : "text-gray-500"} />
+            <button onClick={() => setActiveModal('fridge')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative" style={{ background: expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.dangerLight : colors.bg }}>
+              <Refrigerator size={16} color={expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.danger : colors.textLight} />
               {expiringItems.length > 0 && (
-                <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center text-[9px] font-bold text-white">{expiringItems.length}</div>
+                <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: colors.warning }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: '#fff' }}>{expiringItems.length}</span>
+                </div>
               )}
             </button>
-            <button onClick={() => setActiveModal('shopping')} className="w-9 h-9 rounded-full bg-gray-50 flex items-center justify-center hover:bg-gray-100 relative">
-              <ShoppingCart size={18} className="text-gray-500" />
+            <button onClick={() => setActiveModal('shopping')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative" style={{ background: colors.bg }}>
+              <ShoppingCart size={16} color={colors.textLight} />
               {shoppingList.filter(i => !i.isChecked).length > 0 && (
-                <div className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center text-[9px] font-bold text-white">
-                  {shoppingList.filter(i => !i.isChecked).length}
+                <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: '#fff' }}>{shoppingList.filter(i => !i.isChecked).length}</span>
                 </div>
               )}
             </button>
@@ -268,305 +551,486 @@ export default function WeeklyMenuPage() {
         </div>
 
         {/* Week Stats Mini */}
-        <div className="flex gap-4 mb-3 text-xs text-gray-500">
+        <div className="flex gap-3 mt-2.5 py-2">
           <div className="flex items-center gap-1">
-            <ChefHat size={12} className="text-green-600" />
-            <span>自炊率 {stats.cookRate}%</span>
+            <ChefHat size={12} color={colors.success} />
+            <span style={{ fontSize: 11, color: colors.textLight }}>自炊率 {stats.cookRate}%</span>
           </div>
           <div className="flex items-center gap-1">
-            <Flame size={12} className="text-orange-500" />
-            <span>平均 {stats.avgCal}kcal/日</span>
+            <Flame size={12} color={colors.accent} />
+            <span style={{ fontSize: 11, color: colors.textLight }}>平均 {stats.avgCal}kcal/日</span>
           </div>
         </div>
 
-        {/* Day Tabs with Week Navigation */}
-        <div className="flex items-center gap-1">
-          <button onClick={() => navigateWeek('prev')} className="p-1 rounded-full hover:bg-gray-100 text-gray-400">
-            <ChevronLeft size={18} />
+        {/* Day Tabs */}
+        <div className="flex py-0 pb-2.5" style={{ borderBottom: `1px solid ${colors.border}` }}>
+          <button onClick={() => navigateWeek('prev')} className="p-1 mr-1">
+            <ChevronLeft size={16} color={colors.textMuted} />
           </button>
-          <div className="flex flex-1 justify-around">
-            {weekDates.map((day, idx) => {
-              const isSelected = idx === selectedDayIndex;
-              const isToday = day.dateStr === new Date().toISOString().split('T')[0];
-              const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
-              const hasMeals = currentPlan?.days?.some(d => d.dayDate === day.dateStr && d.meals && d.meals.length > 0);
-              return (
-                <button
-                  key={day.dateStr}
-                  onClick={() => setSelectedDayIndex(idx)}
-                  className={cn(
-                    "flex flex-col items-center justify-center min-w-[36px] py-1.5 rounded-xl transition-all relative",
-                    isSelected ? "bg-orange-500 text-white shadow-md" : isToday ? "border-2 border-orange-400 text-orange-500" : "text-gray-400 hover:bg-gray-50"
-                  )}
-                >
-                  <span className="text-[9px] opacity-80">{day.date.getDate()}</span>
-                  <span className={cn("text-xs font-bold", isWeekend && !isSelected && "text-orange-400")}>{day.dayOfWeek}</span>
-                  {hasMeals && !isSelected && <div className="absolute bottom-0.5 w-1 h-1 bg-green-500 rounded-full" />}
-                </button>
-              );
-            })}
-          </div>
-          <button onClick={() => navigateWeek('next')} className="p-1 rounded-full hover:bg-gray-100 text-gray-400">
-            <ChevronRight size={18} />
+          {weekDates.map((day, idx) => {
+            const isSelected = idx === selectedDayIndex;
+            const isToday = day.dateStr === todayStr;
+            const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+            return (
+              <button
+                key={day.dateStr}
+                onClick={() => setSelectedDayIndex(idx)}
+                className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all"
+                style={{
+                  background: isSelected ? colors.accent : 'transparent',
+                  border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
+                  opacity: day.date < new Date(todayStr) && !isSelected ? 0.4 : 1,
+                }}
+              >
+                <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#fff' : isWeekend ? colors.accent : colors.text }}>{day.dayOfWeek}</span>
+              </button>
+            );
+          })}
+          <button onClick={() => navigateWeek('next')} className="p-1 ml-1">
+            <ChevronRight size={16} color={colors.textMuted} />
           </button>
         </div>
       </div>
 
       {/* === AI Banner === */}
-      {!currentPlan && (
+      {emptySlotCount > 0 && (
         <button
-          onClick={() => setActiveModal('newMenu')}
-          className="mx-4 mt-3 p-3 bg-orange-500 rounded-xl flex items-center justify-between shadow-lg hover:bg-orange-600 transition-colors"
+          onClick={() => setActiveModal('ai')}
+          className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
+          style={{ background: colors.accent }}
         >
           <div className="flex items-center gap-2">
-            <Sparkles size={18} className="text-white" />
-            <span className="text-sm font-bold text-white">AIで献立を作成する</span>
+            <Sparkles size={16} color="#fff" />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>空欄{emptySlotCount}件 → AIに埋めてもらう</span>
           </div>
-          <ChevronRight size={18} className="text-white/70" />
+          <ChevronRight size={16} color="rgba(255,255,255,0.7)" />
         </button>
       )}
 
       {/* Expiring Items Alert */}
-      {expiringItems.filter(i => i.expirationDate && new Date(i.expirationDate) <= new Date(new Date().setDate(new Date().getDate() + 2))).length > 0 && (
-        <div className="mx-4 mt-3 p-2 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
-          <AlertTriangle size={14} className="text-amber-600" />
-          <span className="text-[11px] text-gray-700">
-            <strong>早めに使い切り:</strong> {expiringItems.filter(i => i.expirationDate && new Date(i.expirationDate) <= new Date(new Date().setDate(new Date().getDate() + 2))).map(i => i.name).join(', ')}
+      {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).length > 0 && (
+        <div className="mx-3 mt-2 px-3 py-2 rounded-[10px] flex items-center gap-2" style={{ background: colors.warningLight }}>
+          <AlertTriangle size={14} color={colors.warning} />
+          <span style={{ fontSize: 11, color: colors.text }}>
+            <strong>早めに使い切り:</strong> {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).map(i => `${i.name}(${getDaysUntil(i.expirationDate)}日)`).join(', ')}
           </span>
         </div>
       )}
 
       {/* === Main Content === */}
-      <main className="flex-1 p-4">
-        <div className="flex justify-between items-center mb-3 px-1">
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-bold text-gray-900">
-              {weekDates[selectedDayIndex]?.date.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })} ({weekDates[selectedDayIndex]?.dayOfWeek})
+      <main className="flex-1 p-3 overflow-y-auto">
+        <div className="flex justify-between items-center mb-2 px-1">
+          <div className="flex items-center gap-1.5">
+            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
+              {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()}（{weekDates[selectedDayIndex]?.dayOfWeek}）
             </span>
-            {weekDates[selectedDayIndex]?.dateStr === new Date().toISOString().split('T')[0] && (
-              <span className="text-[10px] font-bold bg-orange-500 text-white px-2 py-0.5 rounded">今日</span>
+            {weekDates[selectedDayIndex]?.dateStr === todayStr && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
             )}
           </div>
+          <span style={{ fontSize: 12, color: colors.textMuted }}>{getDayTotalCal(currentDay)} kcal</span>
         </div>
 
-        <div className="space-y-2">
-          {(['breakfast', 'lunch', 'dinner'] as MealType[]).map(type => {
-            const meal = getMeal(currentDay, type);
-            if (meal) {
-              // --- Meal Card ---
-              return (
-                <div key={type} className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleUpdateMeal(currentDay!.id, meal.id, { isCompleted: !meal.isCompleted })}
-                    className={cn(
-                      "w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 border-2 transition-colors",
-                      meal.isCompleted ? "bg-green-500 border-green-500" : "bg-transparent border-gray-200 hover:border-green-400"
-                    )}
-                  >
-                    {meal.isCompleted && <Check size={14} className="text-white" />}
-                  </button>
-                  <div className={cn(
-                    "flex-1 flex items-center justify-between bg-white rounded-2xl p-3 shadow-sm transition-all",
-                    meal.isCompleted && "opacity-60"
-                  )}>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-bold text-gray-800 w-7">{MEAL_LABELS[type].slice(0, 1)}</span>
-                      <span className={cn("text-sm text-gray-600", meal.isCompleted && "line-through")}>
-                        {meal.dishName}
-                      </span>
-                    </div>
-                    <span className="text-xs text-gray-400">{meal.caloriesKcal || '-'}kcal</span>
-                  </div>
-                </div>
-              );
-            } else {
-              // --- Empty Slot ---
-              return (
-                <button
-                  key={type}
-                  onClick={() => setActiveModal('newMenu')}
-                  className="w-full flex items-center justify-center gap-2 bg-white border-2 border-dashed border-gray-200 rounded-2xl p-5 hover:border-orange-300 hover:bg-orange-50/30 transition-colors"
-                >
-                  <Plus size={18} className="text-gray-400" />
-                  <span className="text-sm text-gray-400">{MEAL_LABELS[type]}を追加</span>
-                </button>
-              );
-            }
-          })}
-        </div>
+        {/* Meal Cards */}
+        {(['breakfast', 'lunch', 'dinner'] as MealType[]).map(type => {
+          const meal = getMeal(currentDay, type);
+          const isPast = weekDates[selectedDayIndex]?.date < new Date(todayStr);
+          const isExpanded = expandedMeal === type && !isPast && meal;
+
+          if (!meal) return <EmptySlot key={type} mealKey={type} />;
+          return isPast ? (
+            <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={true} />
+          ) : isExpanded ? (
+            <ExpandedMealCard key={type} mealKey={type} meal={meal} />
+          ) : (
+            <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={false} />
+          );
+        })}
       </main>
 
-      {/* === FAB (if plan exists) === */}
-      {currentPlan && (
-        <motion.button
-          initial={{ scale: 0 }} animate={{ scale: 1 }}
-          onClick={() => setActiveModal('newMenu')}
-          className="fixed bottom-24 right-6 w-14 h-14 bg-black text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-110 transition-transform"
-        >
-          <Plus className="w-6 h-6" />
-        </motion.button>
-      )}
-
-      {/* === Modals === */}
+      {/* ============================================ */}
+      {/* === MODALS === */}
+      {/* ============================================ */}
       <AnimatePresence>
         {activeModal && (
           <>
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setActiveModal(null)}
-              className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm"
+              className="fixed inset-0 z-[100]"
+              style={{ background: 'rgba(0,0,0,0.5)' }}
             />
-            <motion.div
-              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="fixed bottom-0 md:bottom-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 w-full md:w-[480px] bg-white rounded-t-[32px] md:rounded-[32px] z-[101] shadow-2xl max-h-[85vh] flex flex-col overflow-hidden"
-            >
-              {/* Modal Header */}
-              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white flex-shrink-0">
-                <h3 className="font-bold text-lg flex items-center gap-2">
-                  {activeModal === 'newMenu' && <><Sparkles size={20} className="text-orange-500" /> 新しい献立を作成</>}
-                  {activeModal === 'fridge' && <><Refrigerator size={20} className="text-blue-500" /> 冷蔵庫</>}
-                  {activeModal === 'shopping' && <><ShoppingCart size={20} className="text-purple-500" /> 買い物リスト</>}
-                  {activeModal === 'stats' && <><BarChart3 size={20} className="text-green-500" /> 週間サマリー</>}
-                </h3>
-                <button onClick={() => setActiveModal(null)} className="p-2 bg-gray-50 rounded-full hover:bg-gray-100">
-                  <X size={16} className="text-gray-500" />
-                </button>
-              </div>
-
-              {/* Modal Content */}
-              <div className="flex-1 overflow-y-auto p-6 pb-32 md:pb-8">
-                {/* New Menu Modal */}
-                {activeModal === 'newMenu' && (
-                  <div className="space-y-6">
-                    <p className="text-gray-500 text-sm">来週の目標や予定を教えてください。AIが最適な献立を提案します。</p>
-                    <div className="space-y-2">
-                      <Label className="font-bold text-gray-700">開始日</Label>
-                      <Input 
-                        type="date" 
-                        value={startDate} 
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="h-14 rounded-xl bg-gray-50 border-gray-100 text-lg"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="font-bold text-gray-700">今週のフォーカス・予定</Label>
-                      <textarea 
-                        value={note}
-                        onChange={(e) => setNote(e.target.value)}
-                        placeholder="例: 水曜日は飲み会、週末はジムに行きます。"
-                        className="w-full h-32 p-4 rounded-xl bg-gray-50 border border-gray-100 text-base resize-none focus:ring-2 focus:ring-orange-400 focus:bg-white transition-all"
-                      />
-                    </div>
-                    <Button 
-                      onClick={handleGenerate}
-                      disabled={isGenerating || !startDate}
-                      className="w-full h-14 rounded-xl bg-black text-white font-bold text-lg shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
-                    >
-                      {isGenerating ? "AIが思考中..." : "献立を生成する 🪄"}
-                    </Button>
+            
+            {/* AI Assistant Modal */}
+            {activeModal === 'ai' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 z-[101] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '60%' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={18} color={colors.accent} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>AIアシスタント</span>
                   </div>
-                )}
-
-                {/* Fridge Modal */}
-                {activeModal === 'fridge' && (
-                  <>
-                    <div className="flex gap-2 mb-4">
-                      <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="食材名" className="flex-1 p-3 border border-gray-200 rounded-xl bg-gray-50" />
-                      <input type="date" value={newItemDate} onChange={(e) => setNewItemDate(e.target.value)} className="w-32 p-3 border border-gray-200 rounded-xl bg-gray-50" />
-                      <button onClick={addPantryItem} className="bg-orange-500 text-white p-3 rounded-xl hover:bg-orange-600"><Plus size={20} /></button>
+                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  <button
+                    onClick={() => { setActiveModal('newMenu'); }}
+                    className="w-full p-4 mb-3 rounded-[14px] text-left"
+                    style={{ background: colors.accent }}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Sparkles size={18} color="#fff" />
+                      <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>空欄をすべて埋める</span>
                     </div>
-                    <div className="space-y-2">
-                      {fridgeItems.length === 0 ? (
-                        <p className="text-center text-gray-400 py-8">冷蔵庫は空です</p>
-                      ) : (
-                        fridgeItems.sort((a, b) => (a.expirationDate || '').localeCompare(b.expirationDate || '')).map(item => {
-                          const daysLeft = item.expirationDate ? Math.ceil((new Date(item.expirationDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null;
-                          return (
-                            <div key={item.id} className={cn(
-                              "flex items-center justify-between p-3 rounded-xl",
-                              daysLeft !== null && daysLeft <= 1 ? "bg-red-50" : daysLeft !== null && daysLeft <= 3 ? "bg-amber-50" : "bg-gray-50"
-                            )}>
-                              <div>
-                                <p className="font-medium text-gray-800">{item.name}</p>
-                                <p className="text-xs text-gray-500">{item.expirationDate ? `期限: ${item.expirationDate}` : '期限なし'}</p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {daysLeft !== null && (
-                                  <span className={cn(
-                                    "text-[10px] font-bold px-2 py-0.5 rounded",
-                                    daysLeft <= 1 ? "bg-red-500 text-white" : daysLeft <= 3 ? "bg-amber-500 text-white" : "bg-gray-200 text-gray-600"
-                                  )}>
-                                    {daysLeft <= 0 ? '今日まで' : `${daysLeft}日`}
-                                  </span>
-                                )}
-                                <button onClick={() => deletePantryItem(item.id)} className="text-gray-400 hover:text-red-500 p-1"><Trash2 size={16} /></button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </>
-                )}
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: 0 }}>{emptySlotCount}件の空欄にAIが献立を提案します</p>
+                  </button>
+                  <p style={{ fontSize: 11, color: colors.textMuted, margin: '12px 0 8px' }}>条件を指定</p>
+                  {AI_CONDITIONS.map((text, i) => (
+                    <button key={i} className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px]" style={{ background: colors.bg, color: colors.text }}>{text}</button>
+                  ))}
+                </div>
+                <div className="px-4 py-2.5 pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                  <input 
+                    type="text" 
+                    value={aiChatInput}
+                    onChange={(e) => setAiChatInput(e.target.value)}
+                    placeholder="例: 木金は簡単に..." 
+                    className="flex-1 px-3.5 py-2.5 rounded-full text-[13px] outline-none"
+                    style={{ background: colors.bg }}
+                  />
+                  <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+                    <Send size={16} color="#fff" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
 
-                {/* Shopping Modal */}
-                {activeModal === 'shopping' && (
-                  <div className="space-y-2">
-                    {shoppingList.length === 0 ? (
-                      <p className="text-center text-gray-400 py-8">買い物リストは空です</p>
-                    ) : (
-                      shoppingList.map(item => (
-                        <button
-                          key={item.id}
-                          onClick={() => toggleShoppingItem(item.id, item.isChecked)}
-                          className={cn(
-                            "w-full flex items-center gap-3 p-3 rounded-xl text-left transition-colors",
-                            item.isChecked ? "bg-gray-100" : "bg-gray-50 hover:bg-gray-100"
-                          )}
-                        >
-                          <div className={cn(
-                            "w-5 h-5 rounded-full border-2 flex items-center justify-center",
-                            item.isChecked ? "bg-green-500 border-green-500" : "border-gray-300"
-                          )}>
-                            {item.isChecked && <Check size={12} className="text-white" />}
+            {/* New Menu Modal */}
+            {activeModal === 'newMenu' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 md:bottom-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 w-full md:w-[480px] z-[101] flex flex-col max-h-[85vh] overflow-hidden"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderRadius: 'inherit' }}
+              >
+                <div className="flex justify-between items-center px-5 py-4" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={18} color={colors.accent} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>新しい献立を作成</span>
+                  </div>
+                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-5 pb-32 md:pb-8 overflow-auto">
+                  <p style={{ fontSize: 14, color: colors.textLight, marginBottom: 20 }}>来週の目標や予定を教えてください。</p>
+                  <div className="mb-5">
+                    <label style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, display: 'block', marginBottom: 6 }}>開始日</label>
+                    <input 
+                      type="date" 
+                      value={startDate} 
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full h-14 px-4 rounded-xl text-lg outline-none"
+                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                    />
+                  </div>
+                  <div className="mb-5">
+                    <label style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, display: 'block', marginBottom: 6 }}>今週のフォーカス・予定</label>
+                    <textarea 
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="例: 水曜日は飲み会、週末はジムに行きます。"
+                      className="w-full h-32 p-4 rounded-xl text-base resize-none outline-none"
+                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                    />
+                  </div>
+                  <button 
+                    onClick={handleGenerate}
+                    disabled={isGenerating || !startDate}
+                    className="w-full h-14 rounded-xl font-bold text-lg shadow-xl transition-all disabled:opacity-50"
+                    style={{ background: colors.text, color: '#fff' }}
+                  >
+                    {isGenerating ? "AIが思考中..." : "献立を生成する 🪄"}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Stats Modal */}
+            {activeModal === 'stats' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 z-[101] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '55%' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <BarChart3 size={18} color={colors.purple} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>今週のサマリー</span>
+                  </div>
+                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  {/* Big Stats */}
+                  <div className="flex gap-2.5 mb-4">
+                    <div className="flex-1 rounded-[14px] p-3.5 text-center" style={{ background: colors.successLight }}>
+                      <ChefHat size={24} color={colors.success} className="mx-auto mb-1" />
+                      <p style={{ fontSize: 24, fontWeight: 700, color: colors.success, margin: 0 }}>{stats.cookRate}%</p>
+                      <p style={{ fontSize: 11, color: colors.textLight, margin: '2px 0 0' }}>自炊率</p>
+                    </div>
+                    <div className="flex-1 rounded-[14px] p-3.5 text-center" style={{ background: colors.accentLight }}>
+                      <Flame size={24} color={colors.accent} className="mx-auto mb-1" />
+                      <p style={{ fontSize: 24, fontWeight: 700, color: colors.accent, margin: 0 }}>{stats.avgCal}</p>
+                      <p style={{ fontSize: 11, color: colors.textLight, margin: '2px 0 0' }}>平均kcal/日</p>
+                    </div>
+                  </div>
+                  {/* Breakdown */}
+                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 10px' }}>内訳</p>
+                  <div className="flex gap-2 mb-4">
+                    {[
+                      { label: '自炊', count: stats.cookCount, color: colors.success, bg: colors.successLight },
+                      { label: '買う', count: stats.buyCount, color: colors.purple, bg: colors.purpleLight },
+                      { label: '外食', count: stats.outCount, color: colors.warning, bg: colors.warningLight },
+                    ].map(item => (
+                      <div key={item.label} className="flex-1 rounded-[10px] p-2.5 text-center" style={{ background: item.bg }}>
+                        <p style={{ fontSize: 18, fontWeight: 600, color: item.color, margin: 0 }}>{item.count}</p>
+                        <p style={{ fontSize: 10, color: colors.textLight, margin: '2px 0 0' }}>{item.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Tips */}
+                  <div className="p-3 rounded-xl" style={{ background: colors.purpleLight }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: colors.purple, margin: '0 0 4px' }}>💡 ヒント</p>
+                    <p style={{ fontSize: 11, color: colors.text, margin: 0, lineHeight: 1.5 }}>
+                      今週の自炊率は{stats.cookRate}%です。週末にまとめて作り置きすると、平日の自炊率が上がりますよ！
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Fridge Modal */}
+            {activeModal === 'fridge' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 z-[101] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '70%' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Refrigerator size={18} color={colors.blue} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>冷蔵庫</span>
+                    <span style={{ fontSize: 11, color: colors.textMuted }}>{fridgeItems.length}品</span>
+                  </div>
+                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-3 overflow-auto">
+                  {fridgeItems.length === 0 ? (
+                    <p className="text-center py-8" style={{ color: colors.textMuted }}>冷蔵庫は空です</p>
+                  ) : (
+                    fridgeItems.sort((a, b) => (getDaysUntil(a.expirationDate) || 999) - (getDaysUntil(b.expirationDate) || 999)).map(item => {
+                      const daysLeft = getDaysUntil(item.expirationDate);
+                      return (
+                        <div key={item.id} className="flex items-center justify-between px-3 py-2.5 rounded-[10px] mb-1.5" style={{ 
+                          background: daysLeft !== null && daysLeft <= 1 ? colors.dangerLight : daysLeft !== null && daysLeft <= 3 ? colors.warningLight : colors.bg 
+                        }}>
+                          <div className="flex items-center gap-2.5">
+                            <span style={{ fontSize: 14, fontWeight: 500, color: colors.text }}>{item.name}</span>
+                            <span style={{ fontSize: 11, color: colors.textMuted }}>{item.amount || ''}</span>
                           </div>
-                          <span className={cn("flex-1 font-medium", item.isChecked && "text-gray-400 line-through")}>{item.itemName}</span>
-                          <span className="text-xs text-gray-400">{item.quantity}</span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                )}
+                          <div className="flex items-center gap-2">
+                            <span style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: daysLeft !== null && daysLeft <= 1 ? colors.danger : daysLeft !== null && daysLeft <= 3 ? colors.warning : colors.textMuted,
+                            }}>
+                              {daysLeft === null ? '' : daysLeft === 0 ? '今日まで' : daysLeft === 1 ? '明日まで' : `${daysLeft}日`}
+                            </span>
+                            <button onClick={() => deletePantryItem(item.id)} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.05)' }}>
+                              <Trash2 size={12} color={colors.textMuted} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="px-4 py-2.5 pb-6" style={{ borderTop: `1px solid ${colors.border}` }}>
+                  <button onClick={addPantryItem} className="w-full p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
+                    <Plus size={16} color={colors.textMuted} />
+                    <span style={{ fontSize: 13, color: colors.textMuted }}>食材を追加</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
 
-                {/* Stats Modal */}
-                {activeModal === 'stats' && (
-                  <div className="space-y-6">
-                    <div className="flex gap-4">
-                      <div className="flex-1 bg-green-50 p-5 rounded-2xl text-center">
-                        <ChefHat size={28} className="text-green-600 mx-auto mb-1" />
-                        <p className="text-3xl font-black text-green-700">{stats.cookRate}%</p>
-                        <p className="text-xs text-green-600 font-bold">自炊率</p>
-                      </div>
-                      <div className="flex-1 bg-orange-50 p-5 rounded-2xl text-center">
-                        <Flame size={28} className="text-orange-500 mx-auto mb-1" />
-                        <p className="text-3xl font-black text-orange-700">{stats.avgCal}</p>
-                        <p className="text-xs text-orange-600 font-bold">平均kcal/日</p>
-                      </div>
+            {/* Shopping List Modal */}
+            {activeModal === 'shopping' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 z-[101] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '70%' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart size={18} color={colors.accent} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>買い物リスト</span>
+                    <span style={{ fontSize: 11, color: colors.textMuted }}>{shoppingList.filter(i => !i.isChecked).length}/{shoppingList.length}</span>
+                  </div>
+                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-3 overflow-auto">
+                  {shoppingList.length === 0 ? (
+                    <p className="text-center py-8" style={{ color: colors.textMuted }}>買い物リストは空です</p>
+                  ) : (
+                    shoppingList.map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => toggleShoppingItem(item.id, item.isChecked)}
+                        className="w-full flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5 text-left"
+                        style={{ background: item.isChecked ? colors.bg : colors.card, border: item.isChecked ? 'none' : `1px solid ${colors.border}` }}
+                      >
+                        <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center" style={{ 
+                          border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
+                          background: item.isChecked ? colors.success : 'transparent'
+                        }}>
+                          {item.isChecked && <Check size={12} color="#fff" />}
+                        </div>
+                        <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
+                          {item.itemName}
+                        </span>
+                        <span style={{ fontSize: 12, color: colors.textMuted }}>{item.quantity}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ color: colors.textMuted, background: colors.bg }}>{item.category || '食材'}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+                <div className="px-4 py-2.5 pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                  <button className="flex-1 p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
+                    <Plus size={14} color={colors.textMuted} />
+                    <span style={{ fontSize: 12, color: colors.textMuted }}>追加</span>
+                  </button>
+                  <button className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.accent }}>
+                    <RefreshCw size={14} color="#fff" />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>献立から再生成</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Recipe Modal */}
+            {activeModal === 'recipe' && selectedRecipe && MOCK_RECIPES[selectedRecipe] && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 z-[101] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '75%' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <BookOpen size={18} color={colors.accent} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>{selectedRecipe}</span>
+                  </div>
+                  <button onClick={() => { setActiveModal(null); setSelectedRecipe(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  {/* Meta */}
+                  <div className="flex gap-4 mb-4">
+                    <div className="flex items-center gap-1">
+                      <Clock size={14} color={colors.textMuted} />
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{MOCK_RECIPES[selectedRecipe].time}分</span>
                     </div>
-                    <div className="bg-purple-50 p-4 rounded-xl">
-                      <p className="text-sm font-bold text-purple-700 mb-1">💡 ヒント</p>
-                      <p className="text-xs text-gray-700 leading-relaxed">
-                        {currentPlan 
-                          ? `今週の献立は${currentPlan.days?.length || 0}日分登録されています。毎日の食事を記録して、自炊率を上げましょう！`
-                          : '献立を作成して、計画的な食生活を始めましょう！AIがあなたに合った献立を提案します。'
-                        }
-                      </p>
+                    <div className="flex items-center gap-1">
+                      <Users size={14} color={colors.textMuted} />
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{MOCK_RECIPES[selectedRecipe].servings}人前</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Flame size={14} color={colors.textMuted} />
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{MOCK_RECIPES[selectedRecipe].calories}kcal</span>
                     </div>
                   </div>
-                )}
-              </div>
-            </motion.div>
+                  {/* Ingredients */}
+                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>材料</p>
+                  <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
+                    {MOCK_RECIPES[selectedRecipe].ingredients.map((ing, i) => (
+                      <div key={i} className="flex justify-between py-1.5" style={{ borderBottom: i < MOCK_RECIPES[selectedRecipe].ingredients.length - 1 ? `1px solid ${colors.border}` : 'none' }}>
+                        <span style={{ fontSize: 13, color: colors.text }}>{ing.name}</span>
+                        <span style={{ fontSize: 13, color: colors.textMuted }}>{ing.amount}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Steps */}
+                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>作り方</p>
+                  {MOCK_RECIPES[selectedRecipe].steps.map((step, i) => (
+                    <div key={i} className="flex gap-2.5 mb-2.5">
+                      <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0" style={{ background: colors.accent }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>{i + 1}</span>
+                      </div>
+                      <p style={{ fontSize: 13, color: colors.text, margin: 0, lineHeight: 1.5 }}>{step}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-4 py-2.5 pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                  <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <Heart size={18} color={colors.textMuted} />
+                  </button>
+                  <button className="flex-1 p-3 rounded-xl font-semibold text-[14px]" style={{ background: colors.accent, color: '#fff' }}>
+                    材料を買い物リストに追加
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Add Meal Modal */}
+            {activeModal === 'add' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 z-[101] px-4 py-3.5 pb-7"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-3.5">
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>{addMealKey && MEAL_LABELS[addMealKey]}を追加</span>
+                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).filter(([k]) => k !== 'skip').map(([key, mode]) => {
+                    const ModeIcon = mode.icon;
+                    return (
+                      <button key={key} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: mode.bg }}>
+                        <ModeIcon size={18} color={mode.color} />
+                        <span style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>{mode.label}で追加</span>
+                      </button>
+                    );
+                  })}
+                  <button onClick={() => setActiveModal('ai')} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}>
+                    <Sparkles size={18} color={colors.accent} />
+                    <span style={{ fontSize: 13, fontWeight: 500, color: colors.accent }}>AIに提案してもらう</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
           </>
         )}
       </AnimatePresence>
