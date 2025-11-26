@@ -1175,7 +1175,7 @@ export default function WeeklyMenuPage() {
                 <div className="px-4 py-4 mb-20 lg:mb-0 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={async () => {
-                      if (!currentPlan?.weeklyMenuRequestId || !addMealKey) {
+                      if (!currentPlan?.sourceRequestId || !addMealKey) {
                         // プランがない場合は週全体の生成へ
                         setActiveModal('newMenu');
                         return;
@@ -1195,7 +1195,7 @@ export default function WeeklyMenuPage() {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
-                            weeklyMenuRequestId: currentPlan.weeklyMenuRequestId,
+                            weeklyMenuRequestId: currentPlan.sourceRequestId,
                             dayIndex: addMealDayIndex,
                             mealType: addMealKey,
                             preferences
@@ -1236,7 +1236,7 @@ export default function WeeklyMenuPage() {
                       </>
                     )}
                   </button>
-                  {!currentPlan?.weeklyMenuRequestId && (
+                  {!currentPlan?.sourceRequestId && (
                     <p style={{ fontSize: 11, color: colors.textMuted, textAlign: 'center', marginTop: 8 }}>
                       ※ まだ献立がないため、週全体を生成します
                     </p>
