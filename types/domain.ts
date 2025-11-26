@@ -258,7 +258,7 @@ export interface PlannedMeal {
   // Additional fields (migrated from meals/meal_nutrition_estimates)
   memo: string | null;
   vegScore: number | null;
-  qualityTags: string[];
+  qualityTags: string[] | null;
 }
 
 export interface ShoppingListItem {

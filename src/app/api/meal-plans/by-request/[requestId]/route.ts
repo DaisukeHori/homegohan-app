@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
+
 import { NextResponse } from 'next/server';
 import { toMealPlan } from '@/lib/converter';
 
@@ -7,7 +7,7 @@ export async function GET(
   request: Request,
   { params }: { params: { requestId: string } }
 ) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   const { requestId } = params;
 
   try {

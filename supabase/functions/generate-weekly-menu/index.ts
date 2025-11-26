@@ -47,16 +47,24 @@ async function generateMenuBackgroundTask({ recordId, userId, startDate, note, f
 
     if (profileError) throw new Error(`Profile not found: ${profileError.message}`)
 
-    // 直近データの取得（省略可能だが精度向上のため維持）
+    // 直近データの取得（planned_mealsから）
     const oneWeekAgo = new Date()
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
+    const oneWeekAgoStr = oneWeekAgo.toISOString().split('T')[0]
+    
     const { data: recentMeals } = await supabase
-      .from('meals')
-      .select('memo')
-      .eq('user_id', userId)
-      .gte('created_at', oneWeekAgo.toISOString())
+      .from('planned_meals')
+      .select(`
+        dish_name,
+        meal_plan_days!inner(
+          day_date,
+          meal_plans!inner(user_id)
+        )
+      `)
+      .eq('meal_plan_days.meal_plans.user_id', userId)
+      .gte('meal_plan_days.day_date', oneWeekAgoStr)
       .limit(20)
-    const recentMenus = recentMeals?.map(m => m.memo).filter(Boolean).join(', ') || '特になし';
+    const recentMenus = recentMeals?.map(m => m.dish_name).filter(Boolean).join(', ') || '特になし';
 
     const allergies = profile.diet_flags?.allergies?.join(', ') || 'なし';
     const dislikes = profile.diet_flags?.dislikes?.join(', ') || 'なし';

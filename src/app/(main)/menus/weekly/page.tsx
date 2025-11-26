@@ -593,8 +593,7 @@ export default function WeeklyMenuPage() {
           dayDate: day.dayDate,
           mealType: regeneratingMeal.mealType,
           preferences,
-          note: aiChatInput,
-          weeklyMenuRequestId: currentPlan.sourceRequestId
+          note: aiChatInput
         })
       });
       

@@ -1,15 +1,14 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
 
   try {
-    const { weeklyMenuRequestId, dayIndex, preferences } = await request.json();
+    const { mealPlanDayId, dayDate, preferences } = await request.json();
 
-    if (dayIndex === undefined || !weeklyMenuRequestId) {
-      return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
+    if (!mealPlanDayId && !dayDate) {
+      return NextResponse.json({ error: 'Either mealPlanDayId or dayDate is required' }, { status: 400 });
     }
 
     // 1. ユーザー認証
@@ -18,40 +17,71 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. 週献立リクエストの所有権確認
-    const { data: menuRequest, error: menuError } = await supabase
-      .from('weekly_menu_requests')
-      .select('id, user_id, status')
-      .eq('id', weeklyMenuRequestId)
-      .eq('user_id', user.id)
-      .single();
+    // 2. meal_plan_day_idを取得
+    let targetDayId = mealPlanDayId;
+    
+    if (!targetDayId && dayDate) {
+      // dayDateからmeal_plan_day_idを取得
+      const { data: dayData, error: dayError } = await supabase
+        .from('meal_plan_days')
+        .select(`
+          id,
+          meal_plans!inner(user_id)
+        `)
+        .eq('day_date', dayDate)
+        .eq('meal_plans.user_id', user.id)
+        .single();
 
-    if (menuError || !menuRequest) {
-      return NextResponse.json({ error: 'Weekly menu request not found' }, { status: 404 });
+      if (dayError || !dayData) {
+        return NextResponse.json({ error: 'Day not found' }, { status: 404 });
+      }
+      targetDayId = dayData.id;
     }
 
-    if (menuRequest.status !== 'completed') {
-      return NextResponse.json({ error: 'Weekly menu must be completed before regenerating days' }, { status: 400 });
+    // 3. その日の全てのplanned_mealsを取得
+    const { data: meals, error: mealsError } = await supabase
+      .from('planned_meals')
+      .select(`
+        id,
+        meal_type,
+        meal_plan_days!inner(
+          day_date,
+          meal_plans!inner(user_id)
+        )
+      `)
+      .eq('meal_plan_day_id', targetDayId)
+      .eq('meal_plan_days.meal_plans.user_id', user.id);
+
+    if (mealsError) {
+      return NextResponse.json({ error: mealsError.message }, { status: 500 });
     }
 
-    // 3. Edge Function を非同期で呼び出し
-    const { error: invokeError } = await supabase.functions.invoke('regenerate-day', {
-      body: {
-        weeklyMenuRequestId,
-        dayIndex,
-        userId: user.id,
-        preferences: preferences || {},
-      },
+    // 4. 各食事を個別に再生成
+    const regenerationPromises = (meals || []).map(async (meal) => {
+      const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct', {
+        body: {
+          mealId: meal.id,
+          dayDate: (meal.meal_plan_days as any)?.day_date,
+          mealType: meal.meal_type,
+          userId: user.id,
+          preferences: preferences || {},
+          note: '',
+        },
+      });
+
+      if (invokeError) {
+        console.error(`Failed to regenerate meal ${meal.id}:`, invokeError);
+      }
     });
 
-    if (invokeError) {
-      throw new Error(`Edge Function invoke failed: ${invokeError.message}`);
-    }
+    // 全ての再生成を開始（非同期で実行されるため、すぐに返す）
+    Promise.all(regenerationPromises).catch(console.error);
 
     return NextResponse.json({ 
       success: true,
       message: 'Day regeneration started in background',
-      status: 'processing'
+      status: 'processing',
+      mealsCount: meals?.length || 0
     });
 
   } catch (error: any) {
@@ -59,4 +89,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

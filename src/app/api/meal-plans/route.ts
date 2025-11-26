@@ -1,10 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { toMealPlan } from '@/lib/converter';
 
 export async function GET(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

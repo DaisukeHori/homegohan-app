@@ -1,12 +1,12 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
+
 import { NextResponse } from 'next/server';
 
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
 
   try {
     const { days } = await request.json();

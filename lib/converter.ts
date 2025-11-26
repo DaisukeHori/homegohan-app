@@ -178,9 +178,9 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   dishes: data.dishes || null,
   isSimple: data.is_simple ?? true,
   cookingTimeMinutes: data.cooking_time_minutes,
-  memo: data.memo,
-  vegScore: data.veg_score,
-  qualityTags: data.quality_tags || [],
+  memo: data.memo || null,
+  vegScore: data.veg_score || null,
+  qualityTags: data.quality_tags || null,
 });
 
 export const toShoppingListItem = (data: any): ShoppingListItem => ({
