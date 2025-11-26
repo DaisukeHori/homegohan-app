@@ -681,7 +681,7 @@ export default function WeeklyMenuPage() {
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
                 className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '70%', maxHeight: 'calc(100vh - 120px)' }}
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 200px)' }}
               >
                 <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -736,7 +736,7 @@ export default function WeeklyMenuPage() {
                     );
                   })}
                 </div>
-                <div className="px-4 py-3 pb-28 lg:pb-6 flex gap-2 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-3 flex gap-2 flex-shrink-0 mb-20 lg:mb-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <input 
                     type="text" 
                     value={aiChatInput}
@@ -747,13 +747,22 @@ export default function WeeklyMenuPage() {
                   />
                   <button 
                     onClick={() => {
-                      if (aiChatInput.trim()) {
-                        setNote(prev => prev + (prev ? '\n' : '') + aiChatInput);
+                      // 条件が選択されている場合はそれを使って生成
+                      if (selectedConditions.length > 0 || aiChatInput.trim()) {
+                        if (selectedConditions.length > 0) {
+                          setNote(prev => prev + (prev ? '\n' : '') + selectedConditions.join('、'));
+                        }
+                        if (aiChatInput.trim()) {
+                          setNote(prev => prev + (prev ? '\n' : '') + aiChatInput);
+                        }
                         setAiChatInput("");
+                        setActiveModal('newMenu');
+                      } else {
+                        // 何も選択されていない場合でも新規メニューモーダルへ
                         setActiveModal('newMenu');
                       }
                     }}
-                    className="w-11 h-11 rounded-full flex items-center justify-center" 
+                    className="w-11 h-11 rounded-full flex items-center justify-center cursor-pointer hover:opacity-90 transition-opacity" 
                     style={{ background: colors.accent }}
                   >
                     <Send size={16} color="#fff" />
