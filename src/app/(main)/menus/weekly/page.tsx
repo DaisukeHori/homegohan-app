@@ -188,12 +188,12 @@ export default function WeeklyMenuPage() {
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setShowNewMenuModal(false)}
-              className="fixed inset-0 bg-black/60 z-[60] backdrop-blur-sm"
+              className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-end md:items-center justify-center"
             />
             <motion.div
               initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 bg-white rounded-t-[32px] z-[70] p-8 pb-32 shadow-2xl max-h-[90vh] overflow-y-auto"
+              className="fixed bottom-0 md:bottom-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 w-full md:w-[480px] bg-white rounded-t-[32px] md:rounded-[32px] z-[101] p-8 pb-32 md:pb-8 shadow-2xl max-h-[90vh] overflow-y-auto"
             >
                <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-8" />
                
