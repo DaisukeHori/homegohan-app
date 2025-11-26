@@ -6,82 +6,125 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import type { Meal, MealNutritionEstimate, MealAiFeedback } from "@/types/domain";
+import { 
+  ChefHat, Store, UtensilsCrossed, Zap, FastForward,
+  Check, Flame, Clock, Users, ChevronLeft, MoreVertical,
+  Trash2, Edit, Coffee, Sun, Moon, X
+} from 'lucide-react';
 
-interface MealDetailData extends Meal {
-  nutrition?: MealNutritionEstimate;
-  feedback?: MealAiFeedback;
+// カラーパレット
+const colors = {
+  bg: '#F7F6F3',
+  card: '#FFFFFF',
+  text: '#2D2D2D',
+  textLight: '#6B6B6B',
+  textMuted: '#A0A0A0',
+  accent: '#E07A5F',
+  accentLight: '#FDF0ED',
+  success: '#6B9B6B',
+  successLight: '#EDF5ED',
+  warning: '#E5A84B',
+  warningLight: '#FEF9EE',
+  purple: '#7C6BA0',
+  purpleLight: '#F5F3F8',
+  blue: '#5B8BC7',
+  blueLight: '#EEF4FB',
+};
+
+type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
+type MealType = 'breakfast' | 'lunch' | 'dinner';
+
+const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
+  cook: { icon: ChefHat, label: '自炊', color: colors.success, bg: colors.successLight },
+  quick: { icon: Zap, label: '時短', color: colors.blue, bg: colors.blueLight },
+  buy: { icon: Store, label: '買う', color: colors.purple, bg: colors.purpleLight },
+  out: { icon: UtensilsCrossed, label: '外食', color: colors.warning, bg: colors.warningLight },
+  skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
+};
+
+const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string }> = {
+  breakfast: { icon: Coffee, label: '朝食', color: colors.warning },
+  lunch: { icon: Sun, label: '昼食', color: colors.accent },
+  dinner: { icon: Moon, label: '夕食', color: colors.purple },
+};
+
+interface DishDetail {
+  name: string;
+  role: string;
+  cal?: number;
+  ingredients?: string;
+}
+
+interface PlannedMealDetail {
+  id: string;
+  mealPlanDayId: string;
+  mealType: MealType;
+  mode: MealMode;
+  dishName: string;
+  description: string | null;
+  recipeUrl: string | null;
+  imageUrl: string | null;
+  ingredients: string[] | null;
+  caloriesKcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  isCompleted: boolean;
+  completedAt: string | null;
+  dishes: DishDetail[] | null;
+  isSimple: boolean;
+  cookingTimeMinutes: number | null;
+  dayDate: string;
 }
 
 export default function MealDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
   const supabase = createClient();
-  const [meal, setMeal] = useState<MealDetailData | null>(null);
+  const [meal, setMeal] = useState<PlannedMealDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'feedback' | 'nutrition'>('feedback');
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      // 1. 食事基本データ取得
-      const { data: mealData, error: mealError } = await supabase
-        .from('meals')
-        .select('*')
+      
+      // planned_mealsとmeal_plan_daysをJOINして取得
+      const { data, error } = await supabase
+        .from('planned_meals')
+        .select(`
+          *,
+          meal_plan_days!inner(day_date)
+        `)
         .eq('id', params.id)
         .single();
 
-      if (mealError || !mealData) {
-        console.error("Error fetching meal:", mealError);
-        // エラー時はホームへ戻すなどの処理が望ましい
+      if (error || !data) {
+        console.error("Error fetching meal:", error);
         setLoading(false);
         return;
       }
 
-      // 2. 栄養推定データ取得
-      const { data: nutritionData } = await supabase
-        .from('meal_nutrition_estimates')
-        .select('*')
-        .eq('meal_id', params.id)
-        .single();
-
-      // 3. フィードバックデータ取得
-      const { data: feedbackData } = await supabase
-        .from('meal_ai_feedbacks')
-        .select('*')
-        .eq('meal_id', params.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      // マッピング（snake_case -> camelCase）
-      // ※本来は型変換ユーティリティを使うべきだが、ここでは手動マッピング
-      const mappedMeal: MealDetailData = {
-        ...mealData,
-        userId: mealData.user_id,
-        eatenAt: mealData.eaten_at,
-        mealType: mealData.meal_type,
-        photoUrl: mealData.photo_url,
-        createdAt: mealData.created_at,
-        updatedAt: mealData.updated_at,
-        nutrition: nutritionData ? {
-          ...nutritionData,
-          mealId: nutritionData.meal_id,
-          energyKcal: nutritionData.energy_kcal,
-          proteinG: nutritionData.protein_g,
-          fatG: nutritionData.fat_g,
-          carbsG: nutritionData.carbs_g,
-          vegScore: nutritionData.veg_score,
-          qualityTags: nutritionData.quality_tags || [],
-        } : undefined,
-        feedback: feedbackData ? {
-          ...feedbackData,
-          mealId: feedbackData.meal_id,
-          feedbackText: feedbackData.feedback_text,
-          adviceText: feedbackData.advice_text,
-          modelName: feedbackData.model_name,
-        } : undefined
+      const mappedMeal: PlannedMealDetail = {
+        id: data.id,
+        mealPlanDayId: data.meal_plan_day_id,
+        mealType: data.meal_type as MealType,
+        mode: (data.mode || 'cook') as MealMode,
+        dishName: data.dish_name,
+        description: data.description,
+        recipeUrl: data.recipe_url,
+        imageUrl: data.image_url,
+        ingredients: data.ingredients,
+        caloriesKcal: data.calories_kcal,
+        proteinG: data.protein_g,
+        fatG: data.fat_g,
+        carbsG: data.carbs_g,
+        isCompleted: data.is_completed || false,
+        completedAt: data.completed_at,
+        dishes: data.dishes,
+        isSimple: data.is_simple,
+        cookingTimeMinutes: data.cooking_time_minutes,
+        dayDate: data.meal_plan_days.day_date,
       };
 
       setMeal(mappedMeal);
@@ -91,18 +134,32 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
     fetchData();
   }, [params.id]);
 
+  const toggleCompletion = async () => {
+    if (!meal) return;
+    const newStatus = !meal.isCompleted;
+    
+    setMeal({ ...meal, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null });
+
+    await supabase
+      .from('planned_meals')
+      .update({
+        is_completed: newStatus,
+        completed_at: newStatus ? new Date().toISOString() : null,
+      })
+      .eq('id', meal.id);
+  };
+
   const handleDelete = async () => {
     try {
       const { error } = await supabase
-        .from('meals')
+        .from('planned_meals')
         .delete()
         .eq('id', params.id);
       
       if (error) throw error;
 
       setShowDeleteModal(false);
-      // 削除完了演出の後、ホームへ
-      setTimeout(() => router.push('/home'), 500);
+      setTimeout(() => router.push('/menus/weekly'), 300);
     } catch (error) {
       alert("削除に失敗しました");
     }
@@ -110,78 +167,90 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <div className="w-10 h-10 border-4 border-[#FF8A65] border-t-transparent rounded-full animate-spin"></div>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: colors.bg }}>
+        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }}></div>
       </div>
     );
   }
 
   if (!meal) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-white p-4">
+      <div className="min-h-screen flex flex-col items-center justify-center p-4" style={{ background: colors.bg }}>
         <p className="text-gray-500 mb-4">食事データが見つかりませんでした。</p>
-        <Link href="/home">
-          <button className="px-6 py-2 bg-[#FF8A65] text-white rounded-full">ホームへ戻る</button>
+        <Link href="/menus/weekly">
+          <button className="px-6 py-2 rounded-full text-white font-bold" style={{ background: colors.accent }}>献立表へ戻る</button>
         </Link>
       </div>
     );
   }
 
-  // 表示用データの整形
-  const timeString = new Date(meal.eatenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const score = meal.nutrition?.vegScore ? meal.nutrition.vegScore * 20 : null; // 5段階を100点満点換算（仮）
-  const calories = meal.nutrition?.energyKcal ? Math.round(meal.nutrition.energyKcal) : "---";
-  
+  const mealConfig = MEAL_CONFIG[meal.mealType];
+  const modeConfig = MODE_CONFIG[meal.mode];
+  const ModeIcon = modeConfig.icon;
+  const MealIcon = mealConfig.icon;
+
+  const formattedDate = new Date(meal.dayDate).toLocaleDateString('ja-JP', {
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  });
+
   return (
-    <div className="min-h-screen bg-white pb-20 relative">
+    <div className="min-h-screen pb-20" style={{ background: colors.bg }}>
       
       {/* ヒーロー画像エリア */}
-      <div className="relative h-[40vh] w-full">
-        {meal.photoUrl ? (
+      <div className="relative h-[35vh] w-full">
+        {meal.imageUrl ? (
           <Image 
-            src={meal.photoUrl} 
+            src={meal.imageUrl} 
             fill 
-            alt="Meal" 
+            alt={meal.dishName} 
             className="object-cover"
           />
         ) : (
-          <div className="w-full h-full bg-gray-200 flex items-center justify-center text-4xl">🍽️</div>
+          <div className="w-full h-full flex items-center justify-center text-6xl" style={{ background: modeConfig.bg }}>
+            <ModeIcon size={64} color={modeConfig.color} />
+          </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30" />
         
         {/* ナビゲーション */}
-        <div className="absolute top-0 w-full p-6 flex justify-between items-center z-10">
-          <Link href="/home" className="w-10 h-10 rounded-full bg-black/40 backdrop-blur flex items-center justify-center border border-white/20 text-white hover:bg-black/60 transition-colors">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-          </Link>
+        <div className="absolute top-0 w-full p-5 flex justify-between items-center z-10">
+          <button 
+            onClick={() => router.back()}
+            className="w-10 h-10 rounded-full bg-black/40 backdrop-blur flex items-center justify-center border border-white/20 text-white hover:bg-black/60 transition-colors"
+          >
+            <ChevronLeft size={24} />
+          </button>
           <div className="relative">
             <button 
               onClick={() => setShowMenu(!showMenu)}
               className="w-10 h-10 rounded-full bg-black/40 backdrop-blur flex items-center justify-center border border-white/20 text-white hover:bg-black/60 transition-colors"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
+              <MoreVertical size={20} />
             </button>
 
-            {/* ドロップダウンメニュー */}
             <AnimatePresence>
               {showMenu && (
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9, y: 10 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.9, y: 10 }}
-                  className="absolute right-0 top-12 w-48 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50 origin-top-right"
+                  className="absolute right-0 top-12 w-44 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50"
                 >
-                  <button className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                    Edit Meal
-                  </button>
-                  <div className="h-px bg-gray-100 my-1" />
+                  <Link href={`/menus/weekly`}>
+                    <button className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-bold text-gray-700 flex items-center gap-2">
+                      <Edit size={16} />
+                      編集する
+                    </button>
+                  </Link>
+                  <div className="h-px bg-gray-100" />
                   <button 
                     onClick={() => { setShowMenu(false); setShowDeleteModal(true); }}
                     className="w-full text-left px-4 py-3 hover:bg-red-50 text-sm font-bold text-red-500 flex items-center gap-2"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                    Delete
+                    <Trash2 size={16} />
+                    削除する
                   </button>
                 </motion.div>
               )}
@@ -190,142 +259,134 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
         </div>
 
         {/* 基本情報 */}
-        <div className="absolute bottom-0 w-full p-6 text-white">
-          <div className="flex justify-between items-end mb-2">
-             <div>
-               <p className="text-sm font-bold opacity-80 uppercase tracking-widest">{meal.mealType}</p>
-               <h1 className="text-3xl font-bold">{timeString}</h1>
-             </div>
-             {score && (
-               <div className="text-right">
-                 <div className="text-4xl font-black text-[#FF8A65] drop-shadow-lg">{score}</div>
-                 <p className="text-xs font-bold opacity-80 uppercase">AI Score</p>
-               </div>
-             )}
+        <div className="absolute bottom-0 w-full p-5 text-white">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: modeConfig.bg }}>
+              <ModeIcon size={14} color={modeConfig.color} />
+              <span className="text-xs font-bold" style={{ color: modeConfig.color }}>{modeConfig.label}</span>
+            </div>
+            <span className="text-xs text-white/70">{formattedDate}</span>
+            <span className="text-xs font-bold" style={{ color: mealConfig.color }}>{mealConfig.label}</span>
           </div>
-          <div className="flex gap-2 mt-4 overflow-x-auto pb-1">
-             {meal.nutrition?.qualityTags?.map((tag, i) => (
-               <span key={i} className="px-3 py-1 bg-white/20 backdrop-blur rounded-full text-xs font-bold whitespace-nowrap">{tag}</span>
-             ))}
-          </div>
+          <h1 className="text-2xl font-bold mb-1">{meal.dishName}</h1>
+          {meal.description && (
+            <p className="text-sm text-white/80 line-clamp-2">{meal.description}</p>
+          )}
         </div>
       </div>
 
       {/* コンテンツエリア */}
-      <div className="relative -mt-6 bg-white rounded-t-3xl px-6 pt-8">
+      <div className="relative -mt-4 bg-white rounded-t-3xl px-5 pt-6">
         
-        {/* メモ表示 */}
-        {meal.memo && (
-          <div className="mb-6 p-4 bg-gray-50 rounded-xl text-sm text-gray-600 font-medium italic border border-gray-100">
-             “ {meal.memo} ”
+        {/* 完了ボタン */}
+        <button
+          onClick={toggleCompletion}
+          className={`w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all mb-6 ${
+            meal.isCompleted 
+              ? 'bg-gray-100 text-gray-500' 
+              : 'text-white'
+          }`}
+          style={{ background: meal.isCompleted ? undefined : colors.success }}
+        >
+          {meal.isCompleted ? (
+            <>
+              <Check size={18} />
+              完了済み（タップで取り消し）
+            </>
+          ) : (
+            <>
+              <Check size={18} />
+              食べた！
+            </>
+          )}
+        </button>
+
+        {/* 栄養情報 */}
+        <div className="mb-6">
+          <h3 className="text-sm font-bold text-gray-900 mb-3">栄養情報</h3>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'カロリー', value: meal.caloriesKcal || '-', unit: 'kcal', color: colors.accent, bg: colors.accentLight },
+              { label: 'タンパク質', value: meal.proteinG || '-', unit: 'g', color: colors.success, bg: colors.successLight },
+              { label: '脂質', value: meal.fatG || '-', unit: 'g', color: colors.warning, bg: colors.warningLight },
+              { label: '炭水化物', value: meal.carbsG || '-', unit: 'g', color: colors.purple, bg: colors.purpleLight },
+            ].map((item, i) => (
+              <div key={i} className="p-3 rounded-xl text-center" style={{ background: item.bg }}>
+                <p className="text-lg font-bold" style={{ color: item.color }}>{item.value}</p>
+                <p className="text-[10px] text-gray-500">{item.unit}</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">{item.label}</p>
+              </div>
+            ))}
           </div>
-        )}
-        
-        {/* タブ切り替え */}
-        <div className="flex bg-gray-100 p-1 rounded-xl mb-8">
-           <button 
-             onClick={() => setActiveTab('feedback')}
-             className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'feedback' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'}`}
-           >
-             AI Feedback
-           </button>
-           <button 
-             onClick={() => setActiveTab('nutrition')}
-             className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'nutrition' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'}`}
-           >
-             Nutrition Data
-           </button>
         </div>
 
-        <motion.div
-          key={activeTab}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          {activeTab === 'feedback' ? (
-            <div className="space-y-6">
-              {meal.feedback ? (
-                <>
-                  <div className="bg-orange-50 border border-orange-100 p-6 rounded-2xl relative">
-                     <div className="absolute -top-3 -left-2 text-4xl text-orange-200">❝</div>
-                     <p className="text-gray-700 leading-relaxed font-medium relative z-10 pt-2">
-                       {meal.feedback.feedbackText}
-                     </p>
-                     <div className="mt-4 flex items-center gap-3">
-                       <div className="w-8 h-8 rounded-full bg-[#FF8A65] flex items-center justify-center text-white font-bold text-xs">AI</div>
-                       <span className="text-xs font-bold text-gray-400">AI Nutritionist</span>
-                     </div>
-                  </div>
-
-                  {meal.feedback.adviceText && (
-                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                      <span className="text-2xl mb-2 block">💡</span>
-                      <p className="text-xs font-bold text-blue-800 uppercase mb-1">Advice</p>
-                      <p className="text-sm font-bold text-gray-700">{meal.feedback.adviceText}</p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="text-center text-gray-400 py-8">
-                  <p>AIフィードバックはまだありません。<br/>（解析待ちか、エラーが発生しました）</p>
+        {/* 調理情報（自炊の場合） */}
+        {(meal.mode === 'cook' || meal.mode === 'quick') && (
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-900 mb-3">調理情報</h3>
+            <div className="flex gap-4">
+              {meal.cookingTimeMinutes && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: colors.blueLight }}>
+                  <Clock size={16} color={colors.blue} />
+                  <span className="text-sm font-medium" style={{ color: colors.blue }}>{meal.cookingTimeMinutes}分</span>
                 </div>
               )}
-            </div>
-          ) : (
-            <div className="space-y-8">
-              {/* 簡易的なレーダーチャート風ビジュアル（データがあれば表示） */}
-              {meal.nutrition && (
-                <div className="relative aspect-square max-w-[240px] mx-auto">
-                   <div className="absolute inset-0 rounded-full border border-gray-100" />
-                   <div className="absolute inset-4 rounded-full border border-gray-100" />
-                   <div className="absolute inset-8 rounded-full border border-gray-100" />
-                   
-                   {/* 軸 */}
-                   <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-full h-px bg-gray-100 absolute" />
-                      <div className="h-full w-px bg-gray-100 absolute" />
-                      <div className="w-full h-px bg-gray-100 absolute rotate-45" />
-                      <div className="h-full w-px bg-gray-100 absolute rotate-45" />
-                   </div>
-
-                   {/* データポリゴン（※静的モック表示のまま。動的描画は複雑なため） */}
-                   <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-3/4 h-3/4 bg-[#FF8A65]/20 border-2 border-[#FF8A65] rounded-full blur-[2px]" 
-                           style={{ clipPath: 'polygon(50% 0%, 90% 20%, 100% 60%, 75% 100%, 25% 100%, 0% 60%, 10% 20%)' }}
-                      />
-                   </div>
-                   
-                   <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-gray-400">VITAMIN</span>
-                   <span className="absolute top-1/4 -right-8 text-xs font-bold text-gray-400">PROTEIN</span>
-                   <span className="absolute bottom-1/4 -right-8 text-xs font-bold text-gray-400">FAT</span>
-                   <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs font-bold text-gray-400">CARBS</span>
-                   <span className="absolute bottom-1/4 -left-10 text-xs font-bold text-gray-400">MINERAL</span>
-                   <span className="absolute top-1/4 -left-8 text-xs font-bold text-gray-400">FIBER</span>
-                </div>
-              )}
-
-              <div className="space-y-4">
-                 <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-                   <span className="font-bold text-gray-500">Energy</span>
-                   <span className="font-bold text-xl text-gray-900">{calories} <span className="text-sm font-normal text-gray-400">kcal</span></span>
-                 </div>
-                 <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-                   <span className="font-bold text-gray-500">Protein</span>
-                   <span className="font-bold text-xl text-gray-900">{meal.nutrition?.proteinG || '-'} <span className="text-sm font-normal text-gray-400">g</span></span>
-                 </div>
-                 <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-                   <span className="font-bold text-gray-500">Fat</span>
-                   <span className="font-bold text-xl text-gray-900">{meal.nutrition?.fatG || '-'} <span className="text-sm font-normal text-gray-400">g</span></span>
-                 </div>
-                 <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-                   <span className="font-bold text-gray-500">Carbs</span>
-                   <span className="font-bold text-xl text-gray-900">{meal.nutrition?.carbsG || '-'} <span className="text-sm font-normal text-gray-400">g</span></span>
-                 </div>
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: colors.successLight }}>
+                <Users size={16} color={colors.success} />
+                <span className="text-sm font-medium" style={{ color: colors.success }}>1人前</span>
               </div>
             </div>
-          )}
-        </motion.div>
+          </div>
+        )}
+
+        {/* おかず一覧（複数ある場合） */}
+        {meal.dishes && meal.dishes.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-900 mb-3">メニュー構成</h3>
+            <div className="space-y-2">
+              {meal.dishes.map((dish, i) => (
+                <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-600 font-bold">
+                      {dish.role === 'main' ? '主菜' : dish.role === 'soup' ? '汁物' : '副菜'}
+                    </span>
+                    <span className="text-sm font-medium text-gray-900">{dish.name}</span>
+                  </div>
+                  {dish.cal && (
+                    <span className="text-xs text-gray-500">{dish.cal} kcal</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 材料（あれば） */}
+        {meal.ingredients && meal.ingredients.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-900 mb-3">材料</h3>
+            <div className="flex flex-wrap gap-2">
+              {meal.ingredients.map((ing, i) => (
+                <span key={i} className="px-3 py-1.5 rounded-full bg-gray-100 text-xs font-medium text-gray-700">
+                  {ing}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* レシピリンク */}
+        {meal.recipeUrl && (
+          <a 
+            href={meal.recipeUrl} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="block w-full py-3.5 rounded-xl font-bold text-sm text-center border-2 mb-6 transition-all hover:bg-gray-50"
+            style={{ borderColor: colors.accent, color: colors.accent }}
+          >
+            レシピを見る →
+          </a>
+        )}
       </div>
 
       {/* 削除確認モーダル */}
@@ -343,33 +404,31 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
               exit={{ scale: 0.9, y: 20 }}
               className="bg-white rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl"
             >
-              <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4 text-3xl">
-                🗑
+              <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">
+                <Trash2 size={28} color="#ef4444" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Delete this meal?</h3>
-              <p className="text-gray-500 mb-8 text-sm leading-relaxed">
-                この操作は取り消せません。<br/>
-                解析データと獲得ポイントも削除されます。
+              <h3 className="text-xl font-bold text-gray-900 mb-2">この献立を削除しますか？</h3>
+              <p className="text-gray-500 mb-6 text-sm">
+                この操作は取り消せません。
               </p>
-              <div className="flex gap-4">
+              <div className="flex gap-3">
                 <button 
                   onClick={() => setShowDeleteModal(false)}
                   className="flex-1 py-3 rounded-full font-bold text-gray-600 hover:bg-gray-100 transition-colors"
                 >
-                  Cancel
+                  キャンセル
                 </button>
                 <button 
                   onClick={handleDelete}
-                  className="flex-1 py-3 rounded-full bg-red-500 text-white font-bold hover:bg-red-600 transition-colors shadow-lg shadow-red-200"
+                  className="flex-1 py-3 rounded-full bg-red-500 text-white font-bold hover:bg-red-600 transition-colors"
                 >
-                  Delete
+                  削除する
                 </button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
-
     </div>
   );
 }

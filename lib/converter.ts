@@ -173,11 +173,14 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   actualMealId: data.actual_meal_id,
   createdAt: data.created_at,
   updatedAt: data.updated_at,
-  // New fields
+  // Extended fields
   mode: data.mode || 'cook',
   dishes: data.dishes || null,
   isSimple: data.is_simple ?? true,
   cookingTimeMinutes: data.cooking_time_minutes,
+  memo: data.memo,
+  vegScore: data.veg_score,
+  qualityTags: data.quality_tags || [],
 });
 
 export const toShoppingListItem = (data: any): ShoppingListItem => ({

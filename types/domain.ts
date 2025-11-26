@@ -249,11 +249,16 @@ export interface PlannedMeal {
   createdAt: ISODateTimeString;
   updatedAt: ISODateTimeString;
   
-  // New fields for mode and dishes
+  // Extended fields for mode and dishes
   mode: MealMode;
   dishes: MealDishes | null;
   isSimple: boolean;
   cookingTimeMinutes: number | null;
+  
+  // Additional fields (migrated from meals/meal_nutrition_estimates)
+  memo: string | null;
+  vegScore: number | null;
+  qualityTags: string[];
 }
 
 export interface ShoppingListItem {
