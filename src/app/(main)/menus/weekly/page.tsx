@@ -3,13 +3,12 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem } from "@/types/domain";
-import { cn } from "@/lib/utils";
+import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes } from "@/types/domain";
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,
   Flame, Refrigerator, Trash2, AlertTriangle,
-  BarChart3, ShoppingCart, ChevronDown, ChevronLeft, ChevronRight,
+  BarChart3, ShoppingCart, ChevronDown, ChevronRight,
   Clock, Users, BookOpen, Heart, RefreshCw, Send, Package
 } from 'lucide-react';
 
@@ -17,10 +16,9 @@ import {
 // Types & Constants (Reference UI Style)
 // ============================================
 
-type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
 type MealType = 'breakfast' | 'lunch' | 'dinner';
 type DishType = 'main' | 'side1' | 'side2' | 'soup';
-type ModalType = 'newMenu' | 'ai' | 'aiMeal' | 'aiPreview' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | null;
+type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | null;
 
 // Reference UI Color Palette
 const colors = {
@@ -60,6 +58,7 @@ const DISH_TYPE_CONFIG: Record<DishType, { label: string; color: string; bg: str
 };
 
 const MEAL_LABELS: Record<MealType, string> = { breakfast: '朝食', lunch: '昼食', dinner: '夕食' };
+const AI_CONDITIONS = ['冷蔵庫の食材を優先', '時短メニュー中心', '和食多め', 'ヘルシーに'];
 
 // Helper functions
 const formatLocalDate = (date: Date): string => {
@@ -98,33 +97,6 @@ const getDaysUntil = (dateStr: string | null | undefined): number | null => {
 };
 
 // ============================================
-// Mock Data for Demo (Replace with real API)
-// ============================================
-
-const MOCK_RECIPES: Record<string, { time: number; servings: number; calories: number; ingredients: { name: string; amount: string }[]; steps: string[] }> = {
-  '麻婆豆腐': {
-    time: 20, servings: 2, calories: 350,
-    ingredients: [
-      { name: '豆腐', amount: '1丁' },
-      { name: '豚ひき肉', amount: '150g' },
-      { name: '長ねぎ', amount: '1/2本' },
-      { name: '豆板醤', amount: '大さじ1' },
-      { name: '甜麺醤', amount: '大さじ1' },
-    ],
-    steps: [
-      '豆腐を2cm角に切り、熱湯で軽く茹でる',
-      'フライパンで豚ひき肉を炒める',
-      '豆板醤、甜麺醤を加えて香りを出す',
-      '水と調味料を加え、豆腐を入れて煮込む',
-      '水溶き片栗粉でとろみをつけて完成',
-    ],
-  },
-};
-
-// AI Suggestions for demo
-const AI_CONDITIONS = ['冷蔵庫の食材を優先', '時短メニュー中心', '和食多め', 'ヘルシーに'];
-
-// ============================================
 // Main Component
 // ============================================
 
@@ -143,27 +115,39 @@ export default function WeeklyMenuPage() {
   // Expanded Meal State
   const [expandedMeal, setExpandedMeal] = useState<MealType>('dinner');
 
-  // Form State for New Menu
-  const [startDate, setStartDate] = useState("");
-  const [note, setNote] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
+  // Form States
   const [aiChatInput, setAiChatInput] = useState("");
   const [addMealKey, setAddMealKey] = useState<MealType | null>(null);
   const [addMealDayIndex, setAddMealDayIndex] = useState<number>(0);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
-  const [isRegeneratingMeal, setIsRegeneratingMeal] = useState(false);
-  // 生成中の食事を追跡: { dayIndex: number, mealType: MealType } | null
+  const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
+  
+  // Edit meal state
+  const [editingMeal, setEditingMeal] = useState<PlannedMeal | null>(null);
+  const [editMealName, setEditMealName] = useState("");
+  const [editMealMode, setEditMealMode] = useState<MealMode>('cook');
   
   // Pantry & Shopping
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
-  const [newItemName, setNewItemName] = useState("");
-  const [newItemAmount, setNewItemAmount] = useState("");
-  const [newItemDate, setNewItemDate] = useState("");
+  
+  // Add fridge item form
+  const [newFridgeName, setNewFridgeName] = useState("");
+  const [newFridgeAmount, setNewFridgeAmount] = useState("");
+  const [newFridgeExpiry, setNewFridgeExpiry] = useState("");
+  
+  // Add shopping item form
+  const [newShoppingName, setNewShoppingName] = useState("");
+  const [newShoppingAmount, setNewShoppingAmount] = useState("");
+  const [newShoppingCategory, setNewShoppingCategory] = useState("食材");
 
   // Recipe Modal
   const [selectedRecipe, setSelectedRecipe] = useState<string | null>(null);
+  const [selectedRecipeData, setSelectedRecipeData] = useState<any>(null);
+  
+  // AI Preview
+  const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
 
   // Fetch Plan
   useEffect(() => {
@@ -207,41 +191,13 @@ export default function WeeklyMenuPage() {
 
   // Initialize selected day to today
   useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const idx = weekDates.findIndex(d => d.dateStr === today);
+    const todayStr = formatLocalDate(new Date());
+    const idx = weekDates.findIndex(d => d.dateStr === todayStr);
     if (idx !== -1) setSelectedDayIndex(idx);
   }, [weekStart]);
 
-  const handleGenerate = async () => {
-    if (!startDate) { alert("開始日を選択してください"); return; }
-    setIsGenerating(true);
-    try {
-      // 選択した条件を構造化データとして渡す
-      const preferences = {
-        useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
-        quickMeals: selectedConditions.includes('時短メニュー中心'),
-        japaneseStyle: selectedConditions.includes('和食多め'),
-        healthy: selectedConditions.includes('ヘルシーに'),
-      };
-
-      const response = await fetch("/api/ai/menu/weekly/request", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          startDate, 
-          note: note + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
-          preferences,
-        }),
-      });
-      if (!response.ok) throw new Error("生成リクエストに失敗しました");
-      const data = await response.json();
-      router.push(`/menus/weekly/${data.id}`);
-    } catch (error: any) {
-      alert(error.message || "エラーが発生しました");
-      setIsGenerating(false);
-    }
-  };
-
+  // --- Handlers ---
+  
   const handleUpdateMeal = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
     if (!currentPlan || !mealId) return;
     const updatedDays = currentPlan.days?.map(day => {
@@ -258,26 +214,27 @@ export default function WeeklyMenuPage() {
     } catch (e) { console.error('Failed to update meal:', e); }
   };
 
-  const navigateWeek = (direction: 'prev' | 'next') => {
-    const newStart = new Date(weekStart);
-    newStart.setDate(newStart.getDate() + (direction === 'next' ? 7 : -7));
-    setWeekStart(newStart);
-    setSelectedDayIndex(0);
-  };
-
-  // Pantry & Shopping Handlers
+  // Add pantry item
   const addPantryItem = async () => {
-    if (!newItemName) return;
+    if (!newFridgeName) return;
     try {
       const res = await fetch('/api/pantry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newItemName, amount: newItemAmount, category: "other", expirationDate: newItemDate || null })
+        body: JSON.stringify({ 
+          name: newFridgeName, 
+          amount: newFridgeAmount, 
+          category: "other", 
+          expirationDate: newFridgeExpiry || null 
+        })
       });
       if (res.ok) {
         const { item } = await res.json();
         setFridgeItems(prev => [...prev, item]);
-        setNewItemName(""); setNewItemAmount(""); setNewItemDate("");
+        setNewFridgeName(""); 
+        setNewFridgeAmount(""); 
+        setNewFridgeExpiry("");
+        setActiveModal('fridge');
       }
     } catch (e) { alert("追加に失敗しました"); }
   };
@@ -289,11 +246,264 @@ export default function WeeklyMenuPage() {
     } catch (e) { alert("削除に失敗しました"); }
   };
 
+  // Add shopping item
+  const addShoppingItem = async () => {
+    if (!newShoppingName || !currentPlan) return;
+    try {
+      const res = await fetch('/api/shopping-list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          mealPlanId: currentPlan.id,
+          itemName: newShoppingName, 
+          quantity: newShoppingAmount, 
+          category: newShoppingCategory
+        })
+      });
+      if (res.ok) {
+        const { item } = await res.json();
+        setShoppingList(prev => [...prev, item]);
+        setNewShoppingName(""); 
+        setNewShoppingAmount(""); 
+        setNewShoppingCategory("食材");
+        setActiveModal('shopping');
+      }
+    } catch (e) { alert("追加に失敗しました"); }
+  };
+
   const toggleShoppingItem = async (id: string, currentChecked: boolean) => {
     setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
     try {
-      await fetch(`/api/shopping-list/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isChecked: !currentChecked }) });
-    } catch (e) { setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i)); }
+      await fetch(`/api/shopping-list/${id}`, { 
+        method: 'PATCH', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ isChecked: !currentChecked }) 
+      });
+    } catch (e) { 
+      setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i)); 
+    }
+  };
+
+  // Regenerate shopping list from menu
+  const regenerateShoppingList = async () => {
+    if (!currentPlan) return;
+    try {
+      const res = await fetch(`/api/shopping-list/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mealPlanId: currentPlan.id })
+      });
+      if (res.ok) {
+        const { items } = await res.json();
+        setShoppingList(items);
+        alert('買い物リストを再生成しました');
+      }
+    } catch (e) { alert("再生成に失敗しました"); }
+  };
+
+  // Add recipe ingredients to shopping list
+  const addRecipeToShoppingList = async () => {
+    if (!selectedRecipeData || !currentPlan) return;
+    try {
+      const res = await fetch('/api/shopping-list/add-recipe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          mealPlanId: currentPlan.id,
+          ingredients: selectedRecipeData.ingredients 
+        })
+      });
+      if (res.ok) {
+        const { items } = await res.json();
+        setShoppingList(prev => [...prev, ...items]);
+        alert('材料を買い物リストに追加しました');
+        setActiveModal(null);
+      }
+    } catch (e) { alert("追加に失敗しました"); }
+  };
+
+  // Generate weekly menu with AI
+  const handleGenerateWeekly = async () => {
+    setIsGenerating(true);
+    try {
+      const preferences = {
+        useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
+        quickMeals: selectedConditions.includes('時短メニュー中心'),
+        japaneseStyle: selectedConditions.includes('和食多め'),
+        healthy: selectedConditions.includes('ヘルシーに'),
+      };
+
+      const response = await fetch("/api/ai/menu/weekly/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          startDate: weekDates[0]?.dateStr, 
+          note: aiChatInput + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
+          preferences,
+        }),
+      });
+      if (!response.ok) throw new Error("生成リクエストに失敗しました");
+      const data = await response.json();
+      router.push(`/menus/weekly/${data.id}`);
+    } catch (error: any) {
+      alert(error.message || "エラーが発生しました");
+      setIsGenerating(false);
+    }
+  };
+
+  // Generate single meal with AI
+  const handleGenerateSingleMeal = async () => {
+    if (!addMealKey) return;
+    
+    setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
+    setActiveModal(null);
+    
+    try {
+      const preferences: Record<string, boolean> = {};
+      selectedConditions.forEach(c => {
+        if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
+        if (c === '時短メニュー中心') preferences.quickMeals = true;
+        if (c === '和食多め') preferences.japaneseStyle = true;
+        if (c === 'ヘルシーに') preferences.healthy = true;
+      });
+
+      const dayDate = weekDates[addMealDayIndex]?.dateStr;
+      
+      const res = await fetch('/api/ai/menu/meal/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dayDate,
+          mealType: addMealKey,
+          preferences,
+          note: aiChatInput
+        })
+      });
+
+      if (res.ok) {
+        setSelectedConditions([]);
+        setAiChatInput("");
+        setSelectedDayIndex(addMealDayIndex);
+        
+        // Poll for data
+        let attempts = 0;
+        const maxAttempts = 10;
+        const pollInterval = setInterval(async () => {
+          attempts++;
+          try {
+            const targetDate = formatLocalDate(weekStart);
+            const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+            if (pollRes.ok) {
+              const { mealPlan } = await pollRes.json();
+              if (mealPlan) {
+                const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
+                const targetMeal = targetDay?.meals?.find((m: any) => m.mealType === addMealKey);
+                if (targetMeal) {
+                  setCurrentPlan(mealPlan);
+                  setGeneratingMeal(null);
+                  clearInterval(pollInterval);
+                }
+              }
+            }
+          } catch (e) {
+            console.error('Polling error:', e);
+          }
+          
+          if (attempts >= maxAttempts) {
+            setGeneratingMeal(null);
+            clearInterval(pollInterval);
+            window.location.reload();
+          }
+        }, 3000);
+      } else {
+        const err = await res.json();
+        alert(`エラー: ${err.error || '生成に失敗しました'}`);
+        setGeneratingMeal(null);
+      }
+    } catch (error) {
+      console.error('Meal generation error:', error);
+      alert('エラーが発生しました');
+      setGeneratingMeal(null);
+    }
+  };
+
+  // Add meal with specific mode
+  const handleAddMealWithMode = async (mode: MealMode) => {
+    if (!addMealKey) return;
+    
+    const dayDate = weekDates[addMealDayIndex]?.dateStr;
+    const defaultNames: Record<MealMode, string> = {
+      cook: '自炊メニュー',
+      quick: '時短メニュー',
+      buy: 'コンビニ・惣菜',
+      out: '外食',
+      skip: 'スキップ'
+    };
+    
+    try {
+      const res = await fetch('/api/meal-plans/meals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dayDate,
+          mealType: addMealKey,
+          mode,
+          dishName: defaultNames[mode],
+          isSimple: true
+        })
+      });
+      
+      if (res.ok) {
+        // Refresh data
+        const targetDate = formatLocalDate(weekStart);
+        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        if (refreshRes.ok) {
+          const { mealPlan } = await refreshRes.json();
+          setCurrentPlan(mealPlan);
+        }
+        setActiveModal(null);
+      }
+    } catch (e) {
+      alert('追加に失敗しました');
+    }
+  };
+
+  // Edit meal (change button)
+  const openEditMeal = (meal: PlannedMeal) => {
+    setEditingMeal(meal);
+    setEditMealName(meal.dishName);
+    setEditMealMode(meal.mode || 'cook');
+    setActiveModal('editMeal');
+  };
+
+  const saveEditMeal = async () => {
+    if (!editingMeal || !currentPlan) return;
+    
+    try {
+      await fetch(`/api/meal-plans/meals/${editingMeal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dishName: editMealName,
+          mode: editMealMode
+        })
+      });
+      
+      // Update local state
+      const updatedDays = currentPlan.days?.map(day => ({
+        ...day,
+        meals: day.meals?.map(m => 
+          m.id === editingMeal.id 
+            ? { ...m, dishName: editMealName, mode: editMealMode }
+            : m
+        )
+      }));
+      setCurrentPlan({ ...currentPlan, days: updatedDays });
+      setActiveModal(null);
+      setEditingMeal(null);
+    } catch (e) {
+      alert('更新に失敗しました');
+    }
   };
 
   // --- Computed ---
@@ -307,10 +517,13 @@ export default function WeeklyMenuPage() {
   const countEmptySlots = () => {
     if (!currentPlan?.days) return 21;
     let count = 0;
+    const todayStr = formatLocalDate(new Date());
     currentPlan.days.forEach(day => {
-      (['breakfast', 'lunch', 'dinner'] as MealType[]).forEach(type => {
-        if (!getMeal(day, type)) count++;
-      });
+      if (day.dayDate >= todayStr) {
+        (['breakfast', 'lunch', 'dinner'] as MealType[]).forEach(type => {
+          if (!getMeal(day, type)) count++;
+        });
+      }
     });
     return count;
   };
@@ -320,8 +533,10 @@ export default function WeeklyMenuPage() {
     let cookCount = 0, buyCount = 0, outCount = 0, totalCal = 0, mealCount = 0;
     currentPlan.days.forEach(day => {
       day.meals?.forEach(meal => {
-        // For now, count all as cook. In real app, use meal.mode
-        cookCount++;
+        const mode = meal.mode || 'cook';
+        if (mode === 'cook' || mode === 'quick') cookCount++;
+        else if (mode === 'buy') buyCount++;
+        else if (mode === 'out') outCount++;
         totalCal += meal.caloriesKcal || 0;
         mealCount++;
       });
@@ -338,21 +553,9 @@ export default function WeeklyMenuPage() {
   const emptySlotCount = countEmptySlots();
   const todayStr = formatLocalDate(new Date());
 
-  // Get total cal for a day
   const getDayTotalCal = (day: MealPlanDay | undefined) => {
     if (!day?.meals) return 0;
     return day.meals.reduce((sum, m) => sum + (m.caloriesKcal || 0), 0);
-  };
-
-  // Get meal mode (for demo, derive from meal data or default)
-  const getMealMode = (meal: PlannedMeal | undefined): MealMode => {
-    if (!meal) return 'skip';
-    // In real app, this would come from meal.mode
-    // For now, use heuristics
-    if (meal.dishName?.includes('コンビニ') || meal.dishName?.includes('弁当')) return 'buy';
-    if (meal.dishName?.includes('外食') || meal.dishName?.includes('ラーメン')) return 'out';
-    if (meal.dishName?.includes('冷凍') || meal.dishName?.includes('時短')) return 'quick';
-    return 'cook';
   };
 
   if (loading) {
@@ -368,26 +571,14 @@ export default function WeeklyMenuPage() {
   // ============================================
 
   const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => {
-    const isGenerating = generatingMeal?.dayIndex === dayIndex && generatingMeal?.mealType === mealKey;
+    const isGeneratingThis = generatingMeal?.dayIndex === dayIndex && generatingMeal?.mealType === mealKey;
     
-    if (isGenerating) {
-      // AIが献立を作成中の表示
+    if (isGeneratingThis) {
       return (
         <div
           className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
           style={{ background: `linear-gradient(135deg, ${colors.accentLight} 0%, ${colors.card} 100%)`, border: `2px solid ${colors.accent}` }}
         >
-          {/* アニメーション背景 */}
-          <div className="absolute inset-0 overflow-hidden">
-            <div 
-              className="absolute inset-0 opacity-20"
-              style={{
-                background: `repeating-linear-gradient(90deg, transparent, transparent 10px, ${colors.accent} 10px, ${colors.accent} 20px)`,
-                animation: 'shimmer 1.5s infinite linear',
-              }}
-            />
-          </div>
-          
           <div className="relative z-10 flex items-center gap-3">
             <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
               <Sparkles size={20} color="#fff" className="animate-pulse" />
@@ -419,15 +610,13 @@ export default function WeeklyMenuPage() {
   };
 
   const CollapsedMealCard = ({ mealKey, meal, isPast }: { mealKey: MealType; meal: PlannedMeal; isPast: boolean }) => {
-    const mode = MODE_CONFIG[getMealMode(meal)];
+    const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
-    const canCheck = isToday && !isPast;
 
     return (
       <div className="flex items-center gap-2 mb-2">
-        {/* Check button */}
-        {isToday && (
+        {isToday && !isPast && (
           <button
             onClick={() => !meal.isCompleted && handleUpdateMeal(currentDay!.id, meal.id, { isCompleted: true })}
             className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
@@ -461,7 +650,7 @@ export default function WeeklyMenuPage() {
               color: colors.textLight,
               textDecoration: meal.isCompleted ? 'line-through' : 'none',
             }}>
-              {meal.dishName || '未設定'}
+              {meal.isSimple || !meal.dishes ? meal.dishName : `${Object.keys(meal.dishes).length}品`}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -474,23 +663,14 @@ export default function WeeklyMenuPage() {
   };
 
   const ExpandedMealCard = ({ mealKey, meal }: { mealKey: MealType; meal: PlannedMeal }) => {
-    const mode = MODE_CONFIG[getMealMode(meal)];
+    const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
-    const hasRecipe = MOCK_RECIPES[meal.dishName || ''];
-
-    // For demo, create mock dishes if it's a cook meal
-    const isCookMeal = getMealMode(meal) === 'cook';
-    const mockDishes = isCookMeal ? {
-      main: { name: meal.dishName || '主菜', cal: Math.round((meal.caloriesKcal || 350) * 0.6), ingredient: '豆腐' },
-      side1: { name: 'ほうれん草おひたし', cal: 40, ingredient: 'ほうれん草' },
-      side2: { name: 'もやしナムル', cal: 45 },
-      soup: { name: '卵スープ', cal: 55 },
-    } : null;
+    const dishes = meal.dishes as MealDishes | null;
+    const hasDishes = dishes && Object.keys(dishes).length > 0;
 
     return (
       <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
-        {/* Header */}
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center gap-2.5">
             {isToday && (
@@ -515,24 +695,21 @@ export default function WeeklyMenuPage() {
           <span style={{ fontSize: 14, color: colors.textMuted }}>{meal.caloriesKcal || '-'} kcal</span>
         </div>
 
-        {/* Content */}
-        {isCookMeal && mockDishes ? (
-          // Grid layout for cook meals
+        {hasDishes ? (
           <div className="grid grid-cols-2 gap-2">
-            {(Object.entries(mockDishes) as [DishType, { name: string; cal: number; ingredient?: string }][]).map(([type, dish]) => {
+            {(Object.entries(dishes) as [DishType, any][]).map(([type, dish]) => {
+              if (!dish) return null;
               const config = DISH_TYPE_CONFIG[type];
-              const dishHasRecipe = MOCK_RECIPES[dish.name];
               return (
                 <button
                   key={type}
                   onClick={() => {
-                    if (dishHasRecipe) {
-                      setSelectedRecipe(dish.name);
-                      setActiveModal('recipe');
-                    }
+                    setSelectedRecipe(dish.name);
+                    setSelectedRecipeData({ name: dish.name, calories: dish.cal, ingredient: dish.ingredient });
+                    setActiveModal('recipe');
                   }}
                   className="text-left flex flex-col min-h-[75px] rounded-xl p-3"
-                  style={{ background: config.bg, cursor: dishHasRecipe ? 'pointer' : 'default' }}
+                  style={{ background: config.bg }}
                 >
                   <div className="flex justify-between mb-1">
                     <span style={{ fontSize: 9, fontWeight: 700, color: config.color }}>{config.label}</span>
@@ -544,17 +721,14 @@ export default function WeeklyMenuPage() {
                       <Package size={9} /> {dish.ingredient}
                     </span>
                   )}
-                  {dishHasRecipe && (
-                    <span className="inline-flex items-center gap-1 mt-1 text-[9px]" style={{ color: colors.blue }}>
-                      <BookOpen size={9} /> レシピを見る
-                    </span>
-                  )}
+                  <span className="inline-flex items-center gap-1 mt-1 text-[9px]" style={{ color: colors.blue }}>
+                    <BookOpen size={9} /> レシピを見る
+                  </span>
                 </button>
               );
             })}
           </div>
         ) : (
-          // Simple display for non-cook meals
           <div className="flex items-center justify-center rounded-[14px] p-6" style={{ background: colors.bg }}>
             <div className="text-center">
               <ModeIcon size={24} color={mode.color} className="mx-auto mb-1.5" />
@@ -563,8 +737,11 @@ export default function WeeklyMenuPage() {
           </div>
         )}
 
-        {/* Change button */}
-        <button className="w-full mt-3 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" style={{ background: colors.bg }}>
+        <button 
+          onClick={() => openEditMeal(meal)}
+          className="w-full mt-3 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+          style={{ background: colors.bg }}
+        >
           <RefreshCw size={13} color={colors.textLight} />
           <span style={{ fontSize: 12, color: colors.textLight }}>変更する</span>
         </button>
@@ -628,13 +805,11 @@ export default function WeeklyMenuPage() {
 
         {/* Day Tabs */}
         <div className="flex py-0 pb-2.5" style={{ borderBottom: `1px solid ${colors.border}` }}>
-          <button onClick={() => navigateWeek('prev')} className="p-1 mr-1">
-            <ChevronLeft size={16} color={colors.textMuted} />
-          </button>
           {weekDates.map((day, idx) => {
             const isSelected = idx === selectedDayIndex;
             const isToday = day.dateStr === todayStr;
             const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+            const isPast = day.dateStr < todayStr;
             return (
               <button
                 key={day.dateStr}
@@ -643,7 +818,7 @@ export default function WeeklyMenuPage() {
                 style={{
                   background: isSelected ? colors.accent : 'transparent',
                   border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
-                  opacity: day.date < new Date(todayStr) && !isSelected ? 0.4 : 1,
+                  opacity: isPast && !isSelected ? 0.4 : 1,
                 }}
               >
                 <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
@@ -651,9 +826,6 @@ export default function WeeklyMenuPage() {
               </button>
             );
           })}
-          <button onClick={() => navigateWeek('next')} className="p-1 ml-1">
-            <ChevronRight size={16} color={colors.textMuted} />
-          </button>
         </div>
       </div>
 
@@ -699,7 +871,7 @@ export default function WeeklyMenuPage() {
         {/* Meal Cards */}
         {(['breakfast', 'lunch', 'dinner'] as MealType[]).map(type => {
           const meal = getMeal(currentDay, type);
-          const isPast = weekDates[selectedDayIndex]?.date < new Date(todayStr);
+          const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
           const isExpanded = expandedMeal === type && !isPast && meal;
 
           if (!meal) return <EmptySlot key={type} mealKey={type} dayIndex={selectedDayIndex} />;
@@ -732,7 +904,7 @@ export default function WeeklyMenuPage() {
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
                 className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 200px)' }}
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '60%' }}
               >
                 <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -745,37 +917,7 @@ export default function WeeklyMenuPage() {
                 </div>
                 <div className="flex-1 p-4 overflow-auto">
                   <button
-                    onClick={async () => { 
-                      // 週全体の献立を直接生成開始
-                      const weekStartDate = weekDates[0]?.dateStr || new Date().toISOString().split('T')[0];
-                      setStartDate(weekStartDate);
-                      setIsGenerating(true);
-                      
-                      try {
-                        const preferences = {
-                          useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
-                          quickMeals: selectedConditions.includes('時短メニュー中心'),
-                          japaneseStyle: selectedConditions.includes('和食多め'),
-                          healthy: selectedConditions.includes('ヘルシーに'),
-                        };
-
-                        const response = await fetch("/api/ai/menu/weekly/request", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ 
-                            startDate: weekStartDate, 
-                            note: aiChatInput + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
-                            preferences,
-                          }),
-                        });
-                        if (!response.ok) throw new Error("生成リクエストに失敗しました");
-                        const data = await response.json();
-                        router.push(`/menus/weekly/${data.id}`);
-                      } catch (error: any) {
-                        alert(error.message || "エラーが発生しました");
-                        setIsGenerating(false);
-                      }
-                    }}
+                    onClick={handleGenerateWeekly}
                     disabled={isGenerating}
                     className="w-full p-4 mb-3 rounded-[14px] text-left transition-opacity"
                     style={{ background: colors.accent, opacity: isGenerating ? 0.6 : 1 }}
@@ -800,13 +942,7 @@ export default function WeeklyMenuPage() {
                     return (
                       <button 
                         key={i} 
-                        onClick={() => {
-                          setSelectedConditions(prev => 
-                            isSelected 
-                              ? prev.filter(c => c !== text)
-                              : [...prev, text]
-                          );
-                        }}
+                        onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
                         className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
                         style={{ 
                           background: isSelected ? colors.accentLight : colors.bg, 
@@ -820,7 +956,7 @@ export default function WeeklyMenuPage() {
                     );
                   })}
                 </div>
-                <div className="px-4 py-3 flex gap-2 flex-shrink-0 mb-20 lg:mb-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-3 flex gap-2 flex-shrink-0 pb-24 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <input 
                     type="text" 
                     value={aiChatInput}
@@ -830,77 +966,12 @@ export default function WeeklyMenuPage() {
                     style={{ background: colors.bg }}
                   />
                   <button 
-                    onClick={() => {
-                      // 条件が選択されている場合はそれを使って生成
-                      if (selectedConditions.length > 0 || aiChatInput.trim()) {
-                        if (selectedConditions.length > 0) {
-                          setNote(prev => prev + (prev ? '\n' : '') + selectedConditions.join('、'));
-                        }
-                        if (aiChatInput.trim()) {
-                          setNote(prev => prev + (prev ? '\n' : '') + aiChatInput);
-                        }
-                        setAiChatInput("");
-                        setActiveModal('newMenu');
-                      } else {
-                        // 何も選択されていない場合でも新規メニューモーダルへ
-                        setActiveModal('newMenu');
-                      }
-                    }}
+                    onClick={handleGenerateWeekly}
+                    disabled={isGenerating}
                     className="w-11 h-11 rounded-full flex items-center justify-center cursor-pointer hover:opacity-90 transition-opacity" 
                     style={{ background: colors.accent }}
                   >
                     <Send size={16} color="#fff" />
-                  </button>
-                </div>
-              </motion.div>
-            )}
-
-            {/* New Menu Modal */}
-            {activeModal === 'newMenu' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:bottom-auto lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:w-[480px] z-[201] flex flex-col max-h-[85vh] overflow-hidden"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
-              >
-                <div className="flex justify-between items-center px-5 py-4" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={18} color={colors.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>新しい献立を作成</span>
-                  </div>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-5 pb-32 lg:pb-8 overflow-auto">
-                  <p style={{ fontSize: 14, color: colors.textLight, marginBottom: 20 }}>来週の目標や予定を教えてください。</p>
-                  <div className="mb-5">
-                    <label style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, display: 'block', marginBottom: 6 }}>開始日</label>
-                    <input 
-                      type="date" 
-                      value={startDate} 
-                      onChange={(e) => setStartDate(e.target.value)}
-                      className="w-full h-14 px-4 rounded-xl text-lg outline-none"
-                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                    />
-                  </div>
-                  <div className="mb-5">
-                    <label style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, display: 'block', marginBottom: 6 }}>今週のフォーカス・予定</label>
-                    <textarea 
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      placeholder="例: 水曜日は飲み会、週末はジムに行きます。"
-                      className="w-full h-32 p-4 rounded-xl text-base resize-none outline-none"
-                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                    />
-                  </div>
-                  <button 
-                    onClick={handleGenerate}
-                    disabled={isGenerating || !startDate}
-                    className="w-full h-14 rounded-xl font-bold text-lg shadow-xl transition-all disabled:opacity-50"
-                    style={{ background: colors.text, color: '#fff' }}
-                  >
-                    {isGenerating ? "AIが思考中..." : "献立を生成する 🪄"}
                   </button>
                 </div>
               </motion.div>
@@ -923,8 +994,7 @@ export default function WeeklyMenuPage() {
                     <X size={14} color={colors.textLight} />
                   </button>
                 </div>
-                <div className="flex-1 p-4 overflow-auto">
-                  {/* Big Stats */}
+                <div className="flex-1 p-4 overflow-auto pb-24 lg:pb-6">
                   <div className="flex gap-2.5 mb-4">
                     <div className="flex-1 rounded-[14px] p-3.5 text-center" style={{ background: colors.successLight }}>
                       <ChefHat size={24} color={colors.success} className="mx-auto mb-1" />
@@ -937,7 +1007,6 @@ export default function WeeklyMenuPage() {
                       <p style={{ fontSize: 11, color: colors.textLight, margin: '2px 0 0' }}>平均kcal/日</p>
                     </div>
                   </div>
-                  {/* Breakdown */}
                   <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 10px' }}>内訳</p>
                   <div className="flex gap-2 mb-4">
                     {[
@@ -951,7 +1020,6 @@ export default function WeeklyMenuPage() {
                       </div>
                     ))}
                   </div>
-                  {/* Tips */}
                   <div className="p-3 rounded-xl" style={{ background: colors.purpleLight }}>
                     <p style={{ fontSize: 12, fontWeight: 600, color: colors.purple, margin: '0 0 4px' }}>💡 ヒント</p>
                     <p style={{ fontSize: 11, color: colors.text, margin: 0, lineHeight: 1.5 }}>
@@ -1012,9 +1080,60 @@ export default function WeeklyMenuPage() {
                   )}
                 </div>
                 <div className="px-4 py-2.5 pb-24 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <button onClick={addPantryItem} className="w-full p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
+                  <button onClick={() => setActiveModal('addFridge')} className="w-full p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
                     <Plus size={16} color={colors.textMuted} />
                     <span style={{ fontSize: 13, color: colors.textMuted }}>食材を追加</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Add Fridge Item Modal */}
+            {activeModal === 'addFridge' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-28 lg:pb-6"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>食材を追加</span>
+                  <button onClick={() => setActiveModal('fridge')} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={newFridgeName}
+                    onChange={(e) => setNewFridgeName(e.target.value)}
+                    placeholder="食材名（例: 鶏もも肉）"
+                    className="w-full p-3 rounded-xl text-[14px] outline-none"
+                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                  />
+                  <input
+                    type="text"
+                    value={newFridgeAmount}
+                    onChange={(e) => setNewFridgeAmount(e.target.value)}
+                    placeholder="量（例: 300g）"
+                    className="w-full p-3 rounded-xl text-[14px] outline-none"
+                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                  />
+                  <input
+                    type="date"
+                    value={newFridgeExpiry}
+                    onChange={(e) => setNewFridgeExpiry(e.target.value)}
+                    className="w-full p-3 rounded-xl text-[14px] outline-none"
+                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                  />
+                  <button
+                    onClick={addPantryItem}
+                    disabled={!newFridgeName}
+                    className="w-full p-3 rounded-xl font-semibold text-[14px] disabled:opacity-50"
+                    style={{ background: colors.accent, color: '#fff' }}
+                  >
+                    追加する
                   </button>
                 </div>
               </motion.div>
@@ -1065,11 +1184,11 @@ export default function WeeklyMenuPage() {
                   )}
                 </div>
                 <div className="px-4 py-2.5 pb-24 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <button className="flex-1 p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
+                  <button onClick={() => setActiveModal('addShopping')} className="flex-1 p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
                     <Plus size={14} color={colors.textMuted} />
                     <span style={{ fontSize: 12, color: colors.textMuted }}>追加</span>
                   </button>
-                  <button className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.accent }}>
+                  <button onClick={regenerateShoppingList} className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.accent }}>
                     <RefreshCw size={14} color="#fff" />
                     <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>献立から再生成</span>
                   </button>
@@ -1077,8 +1196,66 @@ export default function WeeklyMenuPage() {
               </motion.div>
             )}
 
+            {/* Add Shopping Item Modal */}
+            {activeModal === 'addShopping' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-28 lg:pb-6"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>買い物リストに追加</span>
+                  <button onClick={() => setActiveModal('shopping')} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={newShoppingName}
+                    onChange={(e) => setNewShoppingName(e.target.value)}
+                    placeholder="品名（例: もやし）"
+                    className="w-full p-3 rounded-xl text-[14px] outline-none"
+                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                  />
+                  <input
+                    type="text"
+                    value={newShoppingAmount}
+                    onChange={(e) => setNewShoppingAmount(e.target.value)}
+                    placeholder="量（例: 2袋）"
+                    className="w-full p-3 rounded-xl text-[14px] outline-none"
+                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                  />
+                  <select
+                    value={newShoppingCategory}
+                    onChange={(e) => setNewShoppingCategory(e.target.value)}
+                    className="w-full p-3 rounded-xl text-[14px] outline-none"
+                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                  >
+                    <option value="野菜">野菜</option>
+                    <option value="肉">肉</option>
+                    <option value="魚">魚</option>
+                    <option value="乳製品">乳製品</option>
+                    <option value="調味料">調味料</option>
+                    <option value="乾物">乾物</option>
+                    <option value="食材">その他</option>
+                  </select>
+                  <button
+                    onClick={addShoppingItem}
+                    disabled={!newShoppingName}
+                    className="w-full p-3 rounded-xl font-semibold text-[14px] disabled:opacity-50"
+                    style={{ background: colors.accent, color: '#fff' }}
+                  >
+                    追加する
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
             {/* Recipe Modal */}
-            {activeModal === 'recipe' && selectedRecipe && MOCK_RECIPES[selectedRecipe] && (
+            {activeModal === 'recipe' && selectedRecipe && (
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
@@ -1095,47 +1272,34 @@ export default function WeeklyMenuPage() {
                   </button>
                 </div>
                 <div className="flex-1 p-4 overflow-auto">
-                  {/* Meta */}
                   <div className="flex gap-4 mb-4">
                     <div className="flex items-center gap-1">
                       <Clock size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{MOCK_RECIPES[selectedRecipe].time}分</span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>20分</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Users size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{MOCK_RECIPES[selectedRecipe].servings}人前</span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>2人前</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Flame size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{MOCK_RECIPES[selectedRecipe].calories}kcal</span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories || 350}kcal</span>
                     </div>
                   </div>
-                  {/* Ingredients */}
                   <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>材料</p>
                   <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                    {MOCK_RECIPES[selectedRecipe].ingredients.map((ing, i) => (
-                      <div key={i} className="flex justify-between py-1.5" style={{ borderBottom: i < MOCK_RECIPES[selectedRecipe].ingredients.length - 1 ? `1px solid ${colors.border}` : 'none' }}>
-                        <span style={{ fontSize: 13, color: colors.text }}>{ing.name}</span>
-                        <span style={{ fontSize: 13, color: colors.textMuted }}>{ing.amount}</span>
-                      </div>
-                    ))}
+                    <p className="py-1.5" style={{ fontSize: 13, color: colors.text }}>
+                      {selectedRecipeData?.ingredient || '材料情報なし'}
+                    </p>
                   </div>
-                  {/* Steps */}
                   <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>作り方</p>
-                  {MOCK_RECIPES[selectedRecipe].steps.map((step, i) => (
-                    <div key={i} className="flex gap-2.5 mb-2.5">
-                      <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0" style={{ background: colors.accent }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>{i + 1}</span>
-                      </div>
-                      <p style={{ fontSize: 13, color: colors.text, margin: 0, lineHeight: 1.5 }}>{step}</p>
-                    </div>
-                  ))}
+                  <p style={{ fontSize: 13, color: colors.textMuted }}>レシピの詳細は準備中です</p>
                 </div>
                 <div className="px-4 py-2.5 pb-24 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <Heart size={18} color={colors.textMuted} />
                   </button>
-                  <button className="flex-1 p-3 rounded-xl font-semibold text-[14px]" style={{ background: colors.accent, color: '#fff' }}>
+                  <button onClick={addRecipeToShoppingList} className="flex-1 p-3 rounded-xl font-semibold text-[14px]" style={{ background: colors.accent, color: '#fff' }}>
                     材料を買い物リストに追加
                   </button>
                 </div>
@@ -1161,7 +1325,12 @@ export default function WeeklyMenuPage() {
                   {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).filter(([k]) => k !== 'skip').map(([key, mode]) => {
                     const ModeIcon = mode.icon;
                     return (
-                      <button key={key} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: mode.bg }}>
+                      <button 
+                        key={key} 
+                        onClick={() => handleAddMealWithMode(key)}
+                        className="flex items-center gap-2.5 p-3 rounded-[10px]" 
+                        style={{ background: mode.bg }}
+                      >
                         <ModeIcon size={18} color={mode.color} />
                         <span style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>{mode.label}で追加</span>
                       </button>
@@ -1175,7 +1344,7 @@ export default function WeeklyMenuPage() {
               </motion.div>
             )}
 
-            {/* AI Single Meal Modal - 1食分のAI提案 */}
+            {/* AI Single Meal Modal */}
             {activeModal === 'aiMeal' && (
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -1187,7 +1356,7 @@ export default function WeeklyMenuPage() {
                   <div className="flex items-center gap-2">
                     <Sparkles size={18} color={colors.accent} />
                     <span style={{ fontSize: 15, fontWeight: 600 }}>
-                      {weekDates[addMealDayIndex] && `${weekDates[addMealDayIndex].date.getMonth() + 1}/${weekDates[addMealDayIndex].date.getDate()}（${weekDates[addMealDayIndex].dayOfWeek}）`}の{addMealKey && MEAL_LABELS[addMealKey]}をAIに提案
+                      {weekDates[addMealDayIndex] && `${weekDates[addMealDayIndex].date.getMonth() + 1}/${weekDates[addMealDayIndex].date.getDate()}（${weekDates[addMealDayIndex].dayOfWeek}）`}の{addMealKey && MEAL_LABELS[addMealKey]}
                     </span>
                   </div>
                   <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
@@ -1201,13 +1370,7 @@ export default function WeeklyMenuPage() {
                     return (
                       <button 
                         key={i} 
-                        onClick={() => {
-                          setSelectedConditions(prev => 
-                            isSelected 
-                              ? prev.filter(c => c !== text)
-                              : [...prev, text]
-                          );
-                        }}
+                        onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
                         className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
                         style={{ 
                           background: isSelected ? colors.accentLight : colors.bg, 
@@ -1220,8 +1383,6 @@ export default function WeeklyMenuPage() {
                       </button>
                     );
                   })}
-                  
-                  {/* フリーコメント入力 */}
                   <div className="mt-4">
                     <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
                     <textarea 
@@ -1233,108 +1394,74 @@ export default function WeeklyMenuPage() {
                     />
                   </div>
                 </div>
-                <div className="px-4 py-4 mb-20 lg:mb-0 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
-                    onClick={async () => {
-                      if (!addMealKey) {
-                        alert('食事タイプが選択されていません');
-                        return;
-                      }
-                      
-                      setIsRegeneratingMeal(true);
-                      try {
-                        const preferences: Record<string, boolean> = {};
-                        selectedConditions.forEach(c => {
-                          if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
-                          if (c === '時短メニュー中心') preferences.quickMeals = true;
-                          if (c === '和食多め') preferences.japaneseStyle = true;
-                          if (c === 'ヘルシーに') preferences.healthy = true;
-                        });
-
-                        const dayDate = weekDates[addMealDayIndex]?.dateStr;
-                        
-                        // 1食分だけを生成するAPIを呼び出し
-                        const res = await fetch('/api/ai/menu/meal/generate', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            dayDate,
-                            mealType: addMealKey,
-                            preferences,
-                            note: aiChatInput
-                          })
-                        });
-
-                        if (res.ok) {
-                          // 生成中状態を設定
-                          setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
-                          setActiveModal(null);
-                          setSelectedConditions([]);
-                          setAiChatInput("");
-                          
-                          // 生成した日付を選択状態にする
-                          setSelectedDayIndex(addMealDayIndex);
-                          
-                          // ポーリングでデータを再取得（最大30秒、3秒間隔）
-                          let attempts = 0;
-                          const maxAttempts = 10;
-                          const pollInterval = setInterval(async () => {
-                            attempts++;
-                            try {
-                              const targetDate = formatLocalDate(weekStart);
-                              const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-                              if (pollRes.ok) {
-                                const { mealPlan } = await pollRes.json();
-                                if (mealPlan) {
-                                  // 生成した日・食事タイプのデータがあるかチェック
-                                  const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
-                                  const targetMeal = targetDay?.meals?.find((m: any) => m.mealType === addMealKey);
-                                  if (targetMeal) {
-                                    // データが見つかった！
-                                    setCurrentPlan(mealPlan);
-                                    setGeneratingMeal(null);
-                                    clearInterval(pollInterval);
-                                    console.log('[DEBUG] Meal generated successfully:', targetMeal);
-                                  }
-                                }
-                              }
-                            } catch (e) {
-                              console.error('Polling error:', e);
-                            }
-                            
-                            if (attempts >= maxAttempts) {
-                              // タイムアウト - リロードにフォールバック
-                              setGeneratingMeal(null);
-                              clearInterval(pollInterval);
-                              window.location.reload();
-                            }
-                          }, 3000);
-                        } else {
-                          const err = await res.json();
-                          alert(`エラー: ${err.error || '生成に失敗しました'}`);
-                        }
-                      } catch (error) {
-                        console.error('Meal generation error:', error);
-                        alert('エラーが発生しました');
-                      } finally {
-                        setIsRegeneratingMeal(false);
-                      }
-                    }}
-                    disabled={isRegeneratingMeal}
-                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 transition-opacity"
-                    style={{ background: colors.accent, opacity: isRegeneratingMeal ? 0.6 : 1 }}
+                    onClick={handleGenerateSingleMeal}
+                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
+                    style={{ background: colors.accent }}
                   >
-                    {isRegeneratingMeal ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>生成中...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} color="#fff" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>この1食をAIに提案してもらう</span>
-                      </>
-                    )}
+                    <Sparkles size={16} color="#fff" />
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>この1食をAIに提案してもらう</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Edit Meal Modal */}
+            {activeModal === 'editMeal' && editingMeal && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-28 lg:pb-6"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>食事を変更</span>
+                  <button onClick={() => { setActiveModal(null); setEditingMeal(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 4 }}>料理名</label>
+                    <input
+                      type="text"
+                      value={editMealName}
+                      onChange={(e) => setEditMealName(e.target.value)}
+                      className="w-full p-3 rounded-xl text-[14px] outline-none"
+                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 4 }}>タイプ</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).map(([key, mode]) => {
+                        const ModeIcon = mode.icon;
+                        const isSelected = editMealMode === key;
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => setEditMealMode(key)}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+                            style={{ 
+                              background: isSelected ? mode.bg : colors.bg,
+                              border: isSelected ? `2px solid ${mode.color}` : '2px solid transparent'
+                            }}
+                          >
+                            <ModeIcon size={14} color={isSelected ? mode.color : colors.textMuted} />
+                            <span style={{ fontSize: 12, color: isSelected ? mode.color : colors.textMuted }}>{mode.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <button
+                    onClick={saveEditMeal}
+                    className="w-full p-3 rounded-xl font-semibold text-[14px]"
+                    style={{ background: colors.accent, color: '#fff' }}
+                  >
+                    保存する
                   </button>
                 </div>
               </motion.div>

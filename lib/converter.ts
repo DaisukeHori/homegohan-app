@@ -163,7 +163,7 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   recipeUrl: data.recipe_url,
   imageUrl: data.image_url,
   description: data.description,
-  ingredients: data.ingredients,
+  ingredients: data.ingredients || [],
   caloriesKcal: data.calories_kcal,
   proteinG: data.protein_g,
   fatG: data.fat_g,
@@ -173,6 +173,11 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   actualMealId: data.actual_meal_id,
   createdAt: data.created_at,
   updatedAt: data.updated_at,
+  // New fields
+  mode: data.mode || 'cook',
+  dishes: data.dishes || null,
+  isSimple: data.is_simple ?? true,
+  cookingTimeMinutes: data.cooking_time_minutes,
 });
 
 export const toShoppingListItem = (data: any): ShoppingListItem => ({

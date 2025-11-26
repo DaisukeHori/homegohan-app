@@ -218,6 +218,21 @@ export interface MealPlanDay {
   meals?: PlannedMeal[];
 }
 
+export type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
+
+export interface DishDetail {
+  name: string;
+  cal: number;
+  ingredient?: string;
+}
+
+export interface MealDishes {
+  main?: DishDetail;
+  side1?: DishDetail;
+  side2?: DishDetail;
+  soup?: DishDetail;
+}
+
 export interface PlannedMeal {
   id: string;
   mealPlanDayId: string;
@@ -236,6 +251,12 @@ export interface PlannedMeal {
   actualMealId: string | null;
   createdAt: ISODateTimeString;
   updatedAt: ISODateTimeString;
+  
+  // New fields for mode and dishes
+  mode: MealMode;
+  dishes: MealDishes | null;
+  isSimple: boolean;
+  cookingTimeMinutes: number | null;
 }
 
 export interface ShoppingListItem {
