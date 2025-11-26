@@ -1138,7 +1138,7 @@ export default function WeeklyMenuPage() {
                   <div className="flex items-center gap-2">
                     <Sparkles size={18} color={colors.accent} />
                     <span style={{ fontSize: 15, fontWeight: 600 }}>
-                      {weekDates[addMealDayIndex]?.label}の{addMealKey && MEAL_LABELS[addMealKey]}をAIに提案
+                      {weekDates[addMealDayIndex] && `${weekDates[addMealDayIndex].date.getMonth() + 1}/${weekDates[addMealDayIndex].date.getDate()}（${weekDates[addMealDayIndex].dayOfWeek}）`}の{addMealKey && MEAL_LABELS[addMealKey]}をAIに提案
                     </span>
                   </div>
                   <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
