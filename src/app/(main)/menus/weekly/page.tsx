@@ -142,7 +142,9 @@ export default function WeeklyMenuPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiChatInput, setAiChatInput] = useState("");
   const [addMealKey, setAddMealKey] = useState<MealType | null>(null);
+  const [addMealDayIndex, setAddMealDayIndex] = useState<number>(0);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
+  const [isRegeneratingMeal, setIsRegeneratingMeal] = useState(false);
   
   // Pantry & Shopping
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
@@ -356,9 +358,9 @@ export default function WeeklyMenuPage() {
   // Render Components
   // ============================================
 
-  const EmptySlot = ({ mealKey }: { mealKey: MealType }) => (
+  const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => (
     <button
-      onClick={() => { setAddMealKey(mealKey); setActiveModal('add'); }}
+      onClick={() => { setAddMealKey(mealKey); setAddMealDayIndex(dayIndex); setActiveModal('add'); }}
       className="w-full flex items-center justify-center gap-2 rounded-[14px] p-5 mb-2 cursor-pointer transition-all hover:border-[#E07A5F]"
       style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
     >
@@ -651,7 +653,7 @@ export default function WeeklyMenuPage() {
           const isPast = weekDates[selectedDayIndex]?.date < new Date(todayStr);
           const isExpanded = expandedMeal === type && !isPast && meal;
 
-          if (!meal) return <EmptySlot key={type} mealKey={type} />;
+          if (!meal) return <EmptySlot key={type} mealKey={type} dayIndex={selectedDayIndex} />;
           return isPast ? (
             <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={true} />
           ) : isExpanded ? (
@@ -694,21 +696,54 @@ export default function WeeklyMenuPage() {
                 </div>
                 <div className="flex-1 p-4 overflow-auto">
                   <button
-                    onClick={() => { 
-                      // 選択した条件をnoteに追加してnewMenuモーダルへ
-                      if (selectedConditions.length > 0) {
-                        setNote(prev => prev + (prev ? '\n' : '') + selectedConditions.join('、'));
+                    onClick={async () => { 
+                      // 週全体の献立を直接生成開始
+                      const weekStartDate = weekDates[0]?.dateStr || new Date().toISOString().split('T')[0];
+                      setStartDate(weekStartDate);
+                      setIsGenerating(true);
+                      
+                      try {
+                        const preferences = {
+                          useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
+                          quickMeals: selectedConditions.includes('時短メニュー中心'),
+                          japaneseStyle: selectedConditions.includes('和食多め'),
+                          healthy: selectedConditions.includes('ヘルシーに'),
+                        };
+
+                        const response = await fetch("/api/ai/menu/weekly/request", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ 
+                            startDate: weekStartDate, 
+                            note: aiChatInput + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
+                            preferences,
+                          }),
+                        });
+                        if (!response.ok) throw new Error("生成リクエストに失敗しました");
+                        const data = await response.json();
+                        router.push(`/menus/weekly/${data.id}`);
+                      } catch (error: any) {
+                        alert(error.message || "エラーが発生しました");
+                        setIsGenerating(false);
                       }
-                      setActiveModal('newMenu'); 
                     }}
-                    className="w-full p-4 mb-3 rounded-[14px] text-left"
-                    style={{ background: colors.accent }}
+                    disabled={isGenerating}
+                    className="w-full p-4 mb-3 rounded-[14px] text-left transition-opacity"
+                    style={{ background: colors.accent, opacity: isGenerating ? 0.6 : 1 }}
                   >
                     <div className="flex items-center gap-2 mb-1">
-                      <Sparkles size={18} color="#fff" />
-                      <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>空欄をすべて埋める</span>
+                      {isGenerating ? (
+                        <div className="w-[18px] h-[18px] border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Sparkles size={18} color="#fff" />
+                      )}
+                      <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+                        {isGenerating ? '生成中...' : '空欄をすべて埋める'}
+                      </span>
                     </div>
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: 0 }}>{emptySlotCount}件の空欄にAIが献立を提案します</p>
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: 0 }}>
+                      {isGenerating ? 'AIが献立を作成しています...' : `${emptySlotCount}件の空欄にAIが献立を提案します`}
+                    </p>
                   </button>
                   <p style={{ fontSize: 11, color: colors.textMuted, margin: '12px 0 8px' }}>条件を指定（複数選択可）</p>
                   {AI_CONDITIONS.map((text, i) => {
@@ -1083,10 +1118,129 @@ export default function WeeklyMenuPage() {
                       </button>
                     );
                   })}
-                  <button onClick={() => setActiveModal('ai')} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}>
+                  <button onClick={() => setActiveModal('aiMeal')} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}>
                     <Sparkles size={18} color={colors.accent} />
                     <span style={{ fontSize: 13, fontWeight: 500, color: colors.accent }}>AIに提案してもらう</span>
                   </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* AI Single Meal Modal - 1食分のAI提案 */}
+            {activeModal === 'aiMeal' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 200px)' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={18} color={colors.accent} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>
+                      {weekDates[addMealDayIndex]?.label}の{addMealKey && MEAL_LABELS[addMealKey]}をAIに提案
+                    </span>
+                  </div>
+                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>条件を指定（複数選択可）</p>
+                  {AI_CONDITIONS.map((text, i) => {
+                    const isSelected = selectedConditions.includes(text);
+                    return (
+                      <button 
+                        key={i} 
+                        onClick={() => {
+                          setSelectedConditions(prev => 
+                            isSelected 
+                              ? prev.filter(c => c !== text)
+                              : [...prev, text]
+                          );
+                        }}
+                        className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
+                        style={{ 
+                          background: isSelected ? colors.accentLight : colors.bg, 
+                          color: isSelected ? colors.accent : colors.text,
+                          border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
+                        }}
+                      >
+                        <span>{text}</span>
+                        {isSelected && <Check size={16} color={colors.accent} />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="px-4 py-4 mb-20 lg:mb-0 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                  <button 
+                    onClick={async () => {
+                      if (!currentPlan?.weeklyMenuRequestId || !addMealKey) {
+                        // プランがない場合は週全体の生成へ
+                        setActiveModal('newMenu');
+                        return;
+                      }
+                      
+                      setIsRegeneratingMeal(true);
+                      try {
+                        const preferences: Record<string, boolean> = {};
+                        selectedConditions.forEach(c => {
+                          if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
+                          if (c === '時短メニュー中心') preferences.quickMeals = true;
+                          if (c === '和食多め') preferences.japaneseStyle = true;
+                          if (c === 'ヘルシーに') preferences.healthy = true;
+                        });
+
+                        const res = await fetch('/api/ai/menu/meal/regenerate', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            weeklyMenuRequestId: currentPlan.weeklyMenuRequestId,
+                            dayIndex: addMealDayIndex,
+                            mealType: addMealKey,
+                            preferences
+                          })
+                        });
+
+                        if (res.ok) {
+                          setActiveModal(null);
+                          setSelectedConditions([]);
+                          // 少し待ってからリロード（バックグラウンド処理のため）
+                          setTimeout(() => {
+                            window.location.reload();
+                          }, 3000);
+                        } else {
+                          const err = await res.json();
+                          alert(`エラー: ${err.error || '生成に失敗しました'}`);
+                        }
+                      } catch (error) {
+                        console.error('Meal regeneration error:', error);
+                        alert('エラーが発生しました');
+                      } finally {
+                        setIsRegeneratingMeal(false);
+                      }
+                    }}
+                    disabled={isRegeneratingMeal}
+                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 transition-opacity"
+                    style={{ background: colors.accent, opacity: isRegeneratingMeal ? 0.6 : 1 }}
+                  >
+                    {isRegeneratingMeal ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>生成中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} color="#fff" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIに提案してもらう</span>
+                      </>
+                    )}
+                  </button>
+                  {!currentPlan?.weeklyMenuRequestId && (
+                    <p style={{ fontSize: 11, color: colors.textMuted, textAlign: 'center', marginTop: 8 }}>
+                      ※ まだ献立がないため、週全体を生成します
+                    </p>
+                  )}
                 </div>
               </motion.div>
             )}
