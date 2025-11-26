@@ -1273,8 +1273,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '60%' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '70vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -1326,7 +1326,7 @@ export default function WeeklyMenuPage() {
                     );
                   })}
                 </div>
-                <div className="px-4 py-3 flex gap-2 flex-shrink-0 pb-24 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-3 flex gap-2 flex-shrink-0 pb-4 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <input 
                     type="text" 
                     value={aiChatInput}
@@ -1352,8 +1352,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '55%' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '65vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -1364,7 +1364,7 @@ export default function WeeklyMenuPage() {
                     <X size={14} color={colors.textLight} />
                   </button>
                 </div>
-                <div className="flex-1 p-4 overflow-auto pb-24 lg:pb-6">
+                <div className="flex-1 p-4 overflow-auto pb-4 lg:pb-6">
                   <div className="flex gap-2.5 mb-4">
                     <div className="flex-1 rounded-[14px] p-3.5 text-center" style={{ background: colors.successLight }}>
                       <ChefHat size={24} color={colors.success} className="mx-auto mb-1" />
@@ -1415,8 +1415,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '70%' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '75vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -1459,7 +1459,7 @@ export default function WeeklyMenuPage() {
                     })
                   )}
                 </div>
-                <div className="px-4 py-2.5 pb-24 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}` }}>
+                <div className="px-4 py-2.5 pb-4 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button onClick={() => setActiveModal('addFridge')} className="w-full p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
                     <Plus size={16} color={colors.textMuted} />
                     <span style={{ fontSize: 13, color: colors.textMuted }}>食材を追加</span>
@@ -1473,8 +1473,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-28 lg:pb-6"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl"
+                style={{ background: colors.card }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex justify-between items-center mb-4">
@@ -1524,8 +1524,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '70%' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '75vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -1563,7 +1563,7 @@ export default function WeeklyMenuPage() {
                     ))
                   )}
                 </div>
-                <div className="px-4 py-2.5 pb-24 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button onClick={() => setActiveModal('addShopping')} className="flex-1 p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
                     <Plus size={14} color={colors.textMuted} />
                     <span style={{ fontSize: 12, color: colors.textMuted }}>追加</span>
@@ -1581,8 +1581,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-28 lg:pb-6"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl"
+                style={{ background: colors.card }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex justify-between items-center mb-4">
@@ -1639,8 +1639,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '75%' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '75vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -1675,7 +1675,7 @@ export default function WeeklyMenuPage() {
                   <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>作り方</p>
                   <p style={{ fontSize: 13, color: colors.textMuted }}>レシピの詳細は準備中です</p>
                 </div>
-                <div className="px-4 py-2.5 pb-24 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <Heart size={18} color={colors.textMuted} />
                   </button>
@@ -1691,8 +1691,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-3.5 pb-28 lg:pb-7"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-3.5 pb-4 lg:pb-7 rounded-t-3xl"
+                style={{ background: colors.card }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex justify-between items-center mb-3.5">
@@ -1729,8 +1729,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 200px)' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '70vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -1774,7 +1774,7 @@ export default function WeeklyMenuPage() {
                     />
                   </div>
                 </div>
-                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={handleGenerateSingleMeal}
                     className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
@@ -1792,8 +1792,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-28 lg:pb-6"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl"
+                style={{ background: colors.card }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex justify-between items-center mb-4">
@@ -1852,8 +1852,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 200px)' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '70vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -1902,7 +1902,7 @@ export default function WeeklyMenuPage() {
                     />
                   </div>
                 </div>
-                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={handleRegenerateMeal}
                     disabled={isRegenerating}
@@ -1930,8 +1930,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 150px)' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '75vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -2029,7 +2029,7 @@ export default function WeeklyMenuPage() {
                     <span style={{ fontSize: 13, color: colors.blue }}>写真から入力（AI解析）</span>
                   </button>
                 </div>
-                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={saveManualEdit}
                     className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
@@ -2047,8 +2047,8 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 150px)' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '75vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -2117,7 +2117,7 @@ export default function WeeklyMenuPage() {
                     </p>
                   </div>
                 </div>
-                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={analyzePhotoWithAI}
                     disabled={!photoFile || isAnalyzingPhoto}

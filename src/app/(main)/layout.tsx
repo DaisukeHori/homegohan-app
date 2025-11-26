@@ -75,7 +75,7 @@ export default function MainLayout({
       </main>
 
       {/* モバイル用ボトムナビゲーション (Floating) */}
-      <div className="lg:hidden fixed bottom-6 left-6 right-6 z-50">
+      <div className="lg:hidden fixed bottom-4 left-4 right-4 z-50">
         <div className="bg-white/90 backdrop-blur-xl border border-white/20 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] p-2 flex items-center justify-between px-6">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
@@ -83,14 +83,14 @@ export default function MainLayout({
             
             if (item.isFab) {
               return (
-                <div key={item.href} className="relative -top-8">
+                <div key={item.href} className="relative -top-6">
                    <Link href={item.href}>
                      <motion.div 
                        whileHover={{ scale: 1.05 }}
                        whileTap={{ scale: 0.95 }}
-                       className="w-16 h-16 rounded-full bg-foreground flex items-center justify-center shadow-lg shadow-gray-400/50 border-4 border-gray-50 text-white"
+                       className="w-[72px] h-[72px] rounded-full bg-foreground flex items-center justify-center shadow-lg shadow-gray-400/50 border-4 border-gray-50 text-white"
                      >
-                       <Icon className="w-8 h-8" />
+                       <Icon className="w-10 h-10" />
                      </motion.div>
                    </Link>
                 </div>
