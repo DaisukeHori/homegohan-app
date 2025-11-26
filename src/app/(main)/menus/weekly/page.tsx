@@ -62,13 +62,20 @@ const DISH_TYPE_CONFIG: Record<DishType, { label: string; color: string; bg: str
 const MEAL_LABELS: Record<MealType, string> = { breakfast: '朝食', lunch: '昼食', dinner: '夕食' };
 
 // Helper functions
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const getWeekDates = (startDate: Date): { date: Date; dayOfWeek: string; dateStr: string }[] => {
   const days = [];
   const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
   for (let i = 0; i < 7; i++) {
     const d = new Date(startDate);
     d.setDate(startDate.getDate() + i);
-    days.push({ date: d, dayOfWeek: dayNames[d.getDay()], dateStr: d.toISOString().split('T')[0] });
+    days.push({ date: d, dayOfWeek: dayNames[d.getDay()], dateStr: formatLocalDate(d) });
   }
   return days;
 };
@@ -329,7 +336,7 @@ export default function WeeklyMenuPage() {
 
   const stats = getWeekStats();
   const emptySlotCount = countEmptySlots();
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = formatLocalDate(new Date());
 
   // Get total cal for a day
   const getDayTotalCal = (day: MealPlanDay | undefined) => {
