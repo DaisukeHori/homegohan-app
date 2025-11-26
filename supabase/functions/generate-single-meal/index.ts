@@ -215,18 +215,23 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       .eq('meal_plan_day_id', dayId)
       .eq('meal_type', mealType)
 
-    // 新しいplanned_mealを挿入
+    // 新しいplanned_mealを挿入（テーブル構造に合わせる）
+    // planned_meals: dish_name, description, ingredients, calories_kcal, image_url, is_completed
+    const mainDish = newMealData.dishes?.[0] || { name: '献立', calories: 0 }
+    const allDishNames = newMealData.dishes?.map((d: any) => d.name).join('、') || mainDish.name
+    const allIngredients = newMealData.dishes?.flatMap((d: any) => d.ingredients || []) || []
+    
     const { error: mealError } = await supabase
       .from('planned_meals')
       .insert({
         meal_plan_day_id: dayId,
         meal_type: mealType,
-        dishes: newMealData.dishes,
-        total_calories: newMealData.totalCalories,
-        cooking_time: newMealData.cookingTime,
+        dish_name: allDishNames,
+        description: newMealData.nutritionalAdvice || `${newMealData.cookingTime || ''}で作れます`,
+        ingredients: allIngredients.length > 0 ? allIngredients : null,
+        calories_kcal: newMealData.totalCalories || mainDish.calories || null,
         image_url: imageUrl,
         is_completed: false,
-        is_skipped: false,
       })
 
     if (mealError) throw mealError
