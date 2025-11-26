@@ -1,12 +1,10 @@
 import { createClient } from '@/lib/supabase/server';
-
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    // パラメータ受け取りを更新
     const { startDate, note, familySize, cheatDay, preferences } = await request.json();
 
     // 1. ユーザー確認
@@ -15,52 +13,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // constraints オブジェクトの構築（preferencesを含む）
-    const constraints = {
-      familySize: familySize || 1,
-      cheatDay: cheatDay || null,
-      preferences: preferences || {}, // UI選択された条件
-    };
-
-    // 2. リクエストレコード作成
-    const { data: reqData, error: dbError } = await supabase
-      .from('weekly_menu_requests')
-      .insert({
-        user_id: user.id,
-        start_date: startDate,
-        status: 'pending',
-        prompt: note,
-        constraints: constraints // JSONBカラムへ保存
-      })
-      .select()
-      .single();
-
-    if (dbError) throw dbError;
-
-    // 3. Edge Function の呼び出し（非同期バックグラウンド処理）
+    // 2. Edge Function の呼び出し（非同期バックグラウンド処理）
+    // planned_mealsに直接保存するため、recordIdは不要
     const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu', {
       body: {
-        recordId: reqData.id,
         userId: user.id,
         startDate,
         note,
         familySize,
         cheatDay,
-        preferences, // UI選択された条件を渡す
+        preferences,
       },
     });
 
     if (invokeError) {
-      await supabase
-        .from('weekly_menu_requests')
-        .update({ status: 'failed', error_message: 'Failed to invoke AI function' })
-        .eq('id', reqData.id);
-      
       throw new Error(`Edge Function invoke failed: ${invokeError.message}`);
     }
 
     return NextResponse.json({ 
-      id: reqData.id, 
       status: 'pending',
       message: 'Generation started in background' 
     });
