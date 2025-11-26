@@ -151,8 +151,8 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
     }
   };
 
-  // ダッシュボードモードでの食事更新 (モック)
-  const handleDashboardUpdate = (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
+  // ダッシュボードモードでの食事更新
+  const handleDashboardUpdate = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
     // UI Optimistic Update
     if (!mealPlan) return;
     
@@ -169,8 +169,17 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
 
     setMealPlan({ ...mealPlan, days: updatedDays });
     
-    // TODO: API Call to persist update
-    console.log('Update meal:', mealId, updates);
+    if (mealId) {
+      try {
+        await fetch(`/api/meal-plans/meals/${mealId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+      } catch (e) {
+        console.error('Failed to update meal:', e);
+      }
+    }
   };
 
   // --- Render Helpers ---
