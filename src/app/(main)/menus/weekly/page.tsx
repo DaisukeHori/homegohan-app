@@ -142,6 +142,7 @@ export default function WeeklyMenuPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiChatInput, setAiChatInput] = useState("");
   const [addMealKey, setAddMealKey] = useState<MealType | null>(null);
+  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   
   // Pantry & Shopping
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
@@ -668,9 +669,9 @@ export default function WeeklyMenuPage() {
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
                 className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
-                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '60%' }}
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '70%', maxHeight: 'calc(100vh - 120px)' }}
               >
-                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
                     <Sparkles size={18} color={colors.accent} />
                     <span style={{ fontSize: 15, fontWeight: 600 }}>AIアシスタント</span>
@@ -681,7 +682,13 @@ export default function WeeklyMenuPage() {
                 </div>
                 <div className="flex-1 p-4 overflow-auto">
                   <button
-                    onClick={() => { setActiveModal('newMenu'); }}
+                    onClick={() => { 
+                      // 選択した条件をnoteに追加してnewMenuモーダルへ
+                      if (selectedConditions.length > 0) {
+                        setNote(prev => prev + (prev ? '\n' : '') + selectedConditions.join('、'));
+                      }
+                      setActiveModal('newMenu'); 
+                    }}
                     className="w-full p-4 mb-3 rounded-[14px] text-left"
                     style={{ background: colors.accent }}
                   >
@@ -691,12 +698,33 @@ export default function WeeklyMenuPage() {
                     </div>
                     <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: 0 }}>{emptySlotCount}件の空欄にAIが献立を提案します</p>
                   </button>
-                  <p style={{ fontSize: 11, color: colors.textMuted, margin: '12px 0 8px' }}>条件を指定</p>
-                  {AI_CONDITIONS.map((text, i) => (
-                    <button key={i} className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px]" style={{ background: colors.bg, color: colors.text }}>{text}</button>
-                  ))}
+                  <p style={{ fontSize: 11, color: colors.textMuted, margin: '12px 0 8px' }}>条件を指定（複数選択可）</p>
+                  {AI_CONDITIONS.map((text, i) => {
+                    const isSelected = selectedConditions.includes(text);
+                    return (
+                      <button 
+                        key={i} 
+                        onClick={() => {
+                          setSelectedConditions(prev => 
+                            isSelected 
+                              ? prev.filter(c => c !== text)
+                              : [...prev, text]
+                          );
+                        }}
+                        className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
+                        style={{ 
+                          background: isSelected ? colors.accentLight : colors.bg, 
+                          color: isSelected ? colors.accent : colors.text,
+                          border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
+                        }}
+                      >
+                        <span>{text}</span>
+                        {isSelected && <Check size={16} color={colors.accent} />}
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="px-4 py-2.5 pb-24 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                <div className="px-4 py-3 pb-28 lg:pb-6 flex gap-2 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <input 
                     type="text" 
                     value={aiChatInput}
@@ -705,7 +733,17 @@ export default function WeeklyMenuPage() {
                     className="flex-1 px-3.5 py-2.5 rounded-full text-[13px] outline-none"
                     style={{ background: colors.bg }}
                   />
-                  <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+                  <button 
+                    onClick={() => {
+                      if (aiChatInput.trim()) {
+                        setNote(prev => prev + (prev ? '\n' : '') + aiChatInput);
+                        setAiChatInput("");
+                        setActiveModal('newMenu');
+                      }
+                    }}
+                    className="w-11 h-11 rounded-full flex items-center justify-center" 
+                    style={{ background: colors.accent }}
+                  >
                     <Send size={16} color="#fff" />
                   </button>
                 </div>
