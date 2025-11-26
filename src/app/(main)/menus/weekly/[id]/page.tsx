@@ -275,31 +275,44 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
                       </div>
                     </div>
 
-                    <div className="pl-12 space-y-3">
+                    <div className="pl-12 space-y-4">
                       {meals?.map((meal: any, j: number) => (
-                        <div key={j} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex gap-4">
-                          <div className="w-16 h-16 bg-gray-100 rounded-xl shrink-0 overflow-hidden">
+                        <div key={j} className="relative bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden group">
+                          {/* Meal Image Background (Parallax-ish effect) */}
+                          <div className="absolute inset-0 h-full w-1/3 bg-gray-100">
                             {(meal.imageUrl || meal.image_url) ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={meal.imageUrl || meal.image_url} alt="meal" className="w-full h-full object-cover" />
+                              <img 
+                                src={meal.imageUrl || meal.image_url} 
+                                alt="meal" 
+                                className="w-full h-full object-cover opacity-90 group-hover:scale-105 transition-transform duration-500" 
+                              />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center text-lg">🍽️</div>
+                              <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🍽️</div>
                             )}
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white" />
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-start">
-                              <p className="text-xs font-bold text-gray-400 uppercase mb-1">{meal.mealType || meal.meal_type}</p>
-                              {/* Dashboard Mode Checkbox */}
-                              {isDashboardMode && (
-                                <button className="w-6 h-6 rounded-full border-2 border-gray-200 hover:border-accent hover:bg-accent/10 transition-colors" />
-                              )}
+
+                          <div className="relative flex gap-4 p-4 pl-[35%]">
+                            <div className="flex-1 min-w-0 py-1">
+                              <div className="flex justify-between items-start mb-1">
+                                <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-0.5 rounded uppercase tracking-wider">
+                                  {meal.mealType || meal.meal_type}
+                                </span>
+                                {/* Dashboard Mode Checkbox */}
+                                {isDashboardMode && (
+                                  <button className="w-6 h-6 rounded-full border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 transition-all flex items-center justify-center">
+                                    {/* Check Icon if completed (TODO) */}
+                                  </button>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-gray-900 text-lg leading-tight mb-1">
+                                {isDashboardMode ? meal.dishName : meal.dishes[0].name}
+                              </h4>
+                              <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                                {isDashboardMode ? (meal.description || '') : meal.dishes.slice(1).map((d: any) => d.name).join(', ')}
+                              </p>
                             </div>
-                            <p className="font-bold text-gray-900 truncate">
-                              {isDashboardMode ? meal.dishName : meal.dishes[0].name}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1 line-clamp-1">
-                              {isDashboardMode ? (meal.description || 'No description') : meal.dishes.slice(1).map((d: any) => d.name).join(', ')}
-                            </p>
                           </div>
                         </div>
                       ))}
