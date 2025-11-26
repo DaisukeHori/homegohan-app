@@ -20,7 +20,7 @@ import {
 type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
 type MealType = 'breakfast' | 'lunch' | 'dinner';
 type DishType = 'main' | 'side1' | 'side2' | 'soup';
-type ModalType = 'newMenu' | 'ai' | 'aiPreview' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | null;
+type ModalType = 'newMenu' | 'ai' | 'aiMeal' | 'aiPreview' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | null;
 
 // Reference UI Color Palette
 const colors = {
