@@ -52,3 +52,4 @@ CREATE POLICY "Users can view public recipes" ON recipes
 CREATE POLICY "Users can manage own recipes" ON recipes
   FOR ALL USING (auth.uid() = user_id);
 
+

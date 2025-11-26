@@ -62,3 +62,4 @@ CREATE POLICY "Admins can create audit logs" ON admin_audit_logs
     )
   );
 
+

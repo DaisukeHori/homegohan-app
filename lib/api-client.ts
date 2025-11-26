@@ -35,3 +35,4 @@ export const api = {
   delete: <T>(endpoint: string) => apiRequest<T>(endpoint, { method: 'DELETE' }),
 }
 
+

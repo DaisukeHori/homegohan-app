@@ -219,3 +219,4 @@ cat .env.local
 - [Supabase API Keys](https://supabase.com/docs/guides/api/api-keys)
 - [Google AI Studio](https://aistudio.google.com/)
 
+

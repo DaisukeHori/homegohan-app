@@ -184,3 +184,4 @@ ALTER TABLE badges ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Anyone can view badges" ON badges
   FOR SELECT USING (true);
 
+

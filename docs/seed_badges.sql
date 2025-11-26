@@ -34,3 +34,4 @@ ON CONFLICT (code) DO UPDATE SET
   description = EXCLUDED.description,
   condition_json = EXCLUDED.condition_json;
 
+

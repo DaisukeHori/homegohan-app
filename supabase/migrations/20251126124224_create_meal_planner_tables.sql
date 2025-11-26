@@ -110,3 +110,4 @@ CREATE POLICY "Users can manage own shopping list" ON shopping_list_items
     )
   );
 
+
