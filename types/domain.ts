@@ -249,6 +249,41 @@ export interface ShoppingListItem {
   updatedAt: ISODateTimeString;
 }
 
+// --- Pantry & Recipes ---
+
+export interface PantryItem {
+  id: string;
+  userId: string;
+  name: string;
+  amount: string | null;
+  category: 'meat' | 'vegetable' | 'fish' | 'dairy' | 'other';
+  expirationDate: ISODateString | null;
+  addedAt: ISODateString;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+}
+
+export interface Recipe {
+  id: string;
+  userId: string | null;
+  name: string;
+  description: string | null;
+  caloriesKcal: number | null;
+  cookingTimeMinutes: number | null;
+  servings: number;
+  imageUrl: string | null;
+  ingredients: RecipeIngredient[];
+  steps: string[];
+  isPublic: boolean;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+}
+
+export interface RecipeIngredient {
+  name: string;
+  amount: string;
+}
+
 // --- Organization & Stats ---
 
 export interface Organization {

@@ -6,8 +6,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { toWeeklyMenuRequest } from "@/lib/converter";
-import type { WeeklyMenuRequest, ProjectedImpact, MealPlan } from "@/types/domain";
+import type { WeeklyMenuRequest, ProjectedImpact, MealPlan, PlannedMeal } from "@/types/domain";
 import { PlanningDeck } from "@/components/planning/PlanningDeck";
+import { WeeklyMealPlanner } from "@/components/planning/WeeklyMealPlanner";
 import { Icons } from "@/components/icons";
 
 interface WeeklyMenuPageProps {
@@ -94,11 +95,9 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
     if (action === 'skip') {
       meal.isSkipped = !meal.isSkipped;
     } else if (action === 'regen') {
-      // 再生成ロジック (省略)
       alert('再生成機能は開発中です');
       return;
     } else if (action === 'image') {
-      // 画像生成ロジック (既存のまま)
       try {
         const res = await fetch('/api/ai/image/generate', {
           method: 'POST',
@@ -143,7 +142,6 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
 
       if (!res.ok) throw new Error('Failed to confirm');
       
-      // リロードして MealPlan を取得させる
       window.location.reload(); 
       
     } catch (e) {
@@ -151,6 +149,28 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
       alert('Failed to confirm plan.');
       setIsConfirming(false);
     }
+  };
+
+  // ダッシュボードモードでの食事更新 (モック)
+  const handleDashboardUpdate = (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
+    // UI Optimistic Update
+    if (!mealPlan) return;
+    
+    const updatedDays = mealPlan.days?.map(day => {
+      if (day.id !== dayId) return day;
+      return {
+        ...day,
+        meals: day.meals?.map(meal => {
+          if (meal.id !== mealId) return meal;
+          return { ...meal, ...updates };
+        })
+      };
+    });
+
+    setMealPlan({ ...mealPlan, days: updatedDays });
+    
+    // TODO: API Call to persist update
+    console.log('Update meal:', mealId, updates);
   };
 
   // --- Render Helpers ---
@@ -164,7 +184,6 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
   
   if (!request) return <div>Not Found</div>;
 
-  // Processing View
   if (request.status === 'pending' || request.status === 'processing') {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8 text-center">
@@ -177,13 +196,8 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
   }
 
   // Data Source Selection
-  // 確定済みで MealPlan が取得できていればそれを使う、そうでなければ Request JSON を使う
   const isDashboardMode = request.status === 'confirmed' && mealPlan;
-  
-  const daysData = (isDashboardMode 
-    ? mealPlan!.days 
-    : request.resultJson?.days) || [];
-    
+  const daysData = (isDashboardMode ? mealPlan!.days : request.resultJson?.days) || [];
   const impact = request.resultJson?.projectedImpact;
 
   return (
@@ -207,7 +221,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
         )}
       </AnimatePresence>
 
-      {/* Header Area */}
+      {/* Header Area (Common) */}
       <div className="bg-white sticky top-0 z-20 border-b border-gray-100">
         <div className="px-6 py-4 flex items-center justify-between">
           <Link href="/menus/weekly" className="inline-flex items-center gap-2 text-gray-500 hover:text-gray-900">
@@ -216,135 +230,103 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
           <h1 className="font-bold text-lg">
             {isDashboardMode ? '今週の献立' : 'プランニング'}
           </h1>
-          <div className="w-5" /> {/* Spacer */}
+          <div className="w-5" />
         </div>
         
         {/* Impact Summary (Collapsed in Dashboard) */}
-        <div className="px-6 pb-4">
-          <div className="flex justify-between items-end">
-            <div>
-              <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">EXPECTED IMPACT</p>
-              <p className="text-sm text-gray-600 mt-1 line-clamp-1">{impact?.comment}</p>
-            </div>
-            <div className="text-right">
-              <span className="text-2xl font-black text-accent">{impact?.weightChange}</span>
+        {!isDashboardMode && (
+          <div className="px-6 pb-4">
+            <div className="flex justify-between items-end">
+              <div>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">EXPECTED IMPACT</p>
+                <p className="text-sm text-gray-600 mt-1 line-clamp-1">{impact?.comment}</p>
+              </div>
+              <div className="text-right">
+                <span className="text-2xl font-black text-accent">{impact?.weightChange}</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Tabs */}
-        <div className="px-6 pb-0 flex gap-6 border-b border-gray-100">
-          {['menu', 'shopping'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab as any)}
-              className={`pb-3 text-sm font-bold transition-colors relative ${
-                activeTab === tab ? 'text-gray-900' : 'text-gray-400'
-              }`}
-            >
-              {tab === 'menu' ? '献立' : '買い物リスト'}
-              {activeTab === tab && (
-                <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-black" />
-              )}
-            </button>
-          ))}
-        </div>
+        {/* Tabs (Only for Planning Mode) */}
+        {!isDashboardMode && (
+          <div className="px-6 pb-0 flex gap-6 border-b border-gray-100">
+            {['menu', 'shopping'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab as any)}
+                className={`pb-3 text-sm font-bold transition-colors relative ${
+                  activeTab === tab ? 'text-gray-900' : 'text-gray-400'
+                }`}
+              >
+                {tab === 'menu' ? '献立' : '買い物リスト'}
+                {activeTab === tab && (
+                  <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-black" />
+                )}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Content Area */}
-      <div className="p-6">
-        <AnimatePresence mode="wait">
-          {activeTab === 'menu' && (
-            <motion.div key="menu" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6">
-              {daysData?.map((day: any, i: number) => {
-                // データ構造の差異を吸収
-                const dateStr = isDashboardMode ? day.dayDate : day.date;
-                const meals = isDashboardMode ? day.meals : day.meals;
-                const advice = isDashboardMode ? day.nutritionalFocus : day.nutritionalAdvice;
-
-                return (
+      <div className={isDashboardMode ? "" : "p-6"}>
+        {isDashboardMode ? (
+          // Dashboard Mode: Use the new WeeklyMealPlanner component
+          <WeeklyMealPlanner 
+            mealPlan={mealPlan!} 
+            onUpdateMeal={handleDashboardUpdate}
+          />
+        ) : (
+          // Planning Mode (Fallback list view before confirm)
+          <AnimatePresence mode="wait">
+            {activeTab === 'menu' && (
+              <motion.div key="menu" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6">
+                {daysData?.map((day: any, i: number) => (
                   <div key={i} className="space-y-3">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-gray-100 flex flex-col items-center justify-center text-xs font-bold text-gray-600">
-                        <span>{new Date(dateStr).getDate()}</span>
+                        <span>{new Date(day.date).getDate()}</span>
                         <span className="text-[10px] opacity-60">{day.dayOfWeek.slice(0,3)}</span>
                       </div>
                       <div>
                         <p className="font-bold text-gray-900">{day.dayOfWeek}</p>
-                        <p className="text-xs text-gray-500">{advice}</p>
+                        <p className="text-xs text-gray-500">{day.nutritionalAdvice}</p>
                       </div>
                     </div>
-
                     <div className="pl-12 space-y-4">
-                      {meals?.map((meal: any, j: number) => (
-                        <div key={j} className="relative bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden group">
-                          {/* Meal Image Background (Parallax-ish effect) */}
-                          <div className="absolute inset-0 h-full w-1/3 bg-gray-100">
-                            {(meal.imageUrl || meal.image_url) ? (
+                      {day.meals?.map((meal: any, j: number) => (
+                        <div key={j} className="relative bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex gap-4 p-4">
+                          <div className="w-16 h-16 bg-gray-100 rounded-xl shrink-0 overflow-hidden">
+                            {meal.imageUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img 
-                                src={meal.imageUrl || meal.image_url} 
-                                alt="meal" 
-                                className="w-full h-full object-cover opacity-90 group-hover:scale-105 transition-transform duration-500" 
-                              />
+                              <img src={meal.imageUrl} alt="meal" className="w-full h-full object-cover" />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🍽️</div>
+                              <div className="w-full h-full flex items-center justify-center text-lg">🍽️</div>
                             )}
-                            <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white" />
                           </div>
-
-                          <div className="relative flex gap-4 p-4 pl-[35%]">
-                            <div className="flex-1 min-w-0 py-1">
-                              <div className="flex justify-between items-start mb-1">
-                                <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-0.5 rounded uppercase tracking-wider">
-                                  {meal.mealType || meal.meal_type}
-                                </span>
-                                {/* Dashboard Mode Checkbox */}
-                                {isDashboardMode && (
-                                  <button className="w-6 h-6 rounded-full border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 transition-all flex items-center justify-center">
-                                    {/* Check Icon if completed (TODO) */}
-                                  </button>
-                                )}
-                              </div>
-                              <h4 className="font-bold text-gray-900 text-lg leading-tight mb-1">
-                                {isDashboardMode ? meal.dishName : meal.dishes[0].name}
-                              </h4>
-                              <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
-                                {isDashboardMode ? (meal.description || '') : meal.dishes.slice(1).map((d: any) => d.name).join(', ')}
-                              </p>
-                            </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-gray-400 uppercase mb-1">{meal.mealType}</p>
+                            <h4 className="font-bold text-gray-900 text-sm mb-1">{meal.dishes[0].name}</h4>
+                            <p className="text-xs text-gray-500 line-clamp-1">{meal.dishes.slice(1).map((d: any) => d.name).join(', ')}</p>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                );
-              })}
-            </motion.div>
-          )}
-
-          {activeTab === 'shopping' && (
-            <motion.div key="shopping" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-              {/* Shopping List Logic (Need to adapt for new structure) */}
-              <div className="bg-white p-6 rounded-2xl border border-gray-100 text-center text-gray-500">
-                <p>買い物リスト機能は更新中です</p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                ))}
+              </motion.div>
+            )}
+            {activeTab === 'shopping' && (
+              <motion.div key="shopping" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <div className="bg-white p-6 rounded-2xl border border-gray-100 text-center text-gray-500">
+                  <p>買い物リストは確定後に詳細表示されます</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
       </div>
-
-      {/* Floating Action for Edit (Dashboard Mode) */}
-      {isDashboardMode && (
-        <div className="fixed bottom-6 right-6">
-          <Button 
-            onClick={() => setIsPlanningMode(true)}
-            className="w-14 h-14 rounded-full bg-black text-white shadow-xl flex items-center justify-center"
-          >
-            <Icons.Edit className="w-6 h-6" />
-          </Button>
-        </div>
-      )}
 
       {/* Confirm Button (Planning Mode / Not Confirmed) */}
       {!isDashboardMode && !isPlanningMode && (
