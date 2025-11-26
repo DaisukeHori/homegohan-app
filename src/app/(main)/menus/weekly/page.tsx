@@ -849,16 +849,20 @@ export default function WeeklyMenuPage() {
   }).sort((a, b) => (getDaysUntil(a.expirationDate) || 0) - (getDaysUntil(b.expirationDate) || 0));
 
   const countEmptySlots = () => {
-    if (!currentPlan?.days) return 21;
-    let count = 0;
     const todayStr = formatLocalDate(new Date());
-    currentPlan.days.forEach(day => {
-      if (day.dayDate >= todayStr) {
+    let count = 0;
+    
+    // weekDatesを使って表示中の週の空欄をカウント
+    weekDates.forEach(({ dateStr }) => {
+      // 今日以降の日付のみカウント
+      if (dateStr >= todayStr) {
+        const day = currentPlan?.days?.find(d => d.dayDate === dateStr);
         (['breakfast', 'lunch', 'dinner'] as MealType[]).forEach(type => {
           if (!getMeal(day, type)) count++;
         });
       }
     });
+    
     return count;
   };
 
