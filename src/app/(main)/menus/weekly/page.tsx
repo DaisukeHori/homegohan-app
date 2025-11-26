@@ -1,15 +1,16 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes } from "@/types/domain";
+import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail } from "@/types/domain";
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,
   Flame, Refrigerator, Trash2, AlertTriangle,
   BarChart3, ShoppingCart, ChevronDown, ChevronRight, ChevronLeft,
-  Clock, Users, BookOpen, Heart, RefreshCw, Send, Package
+  Clock, Users, BookOpen, Heart, RefreshCw, Send, Package,
+  Camera, Pencil, Image as ImageIcon
 } from 'lucide-react';
 
 // ============================================
@@ -17,8 +18,7 @@ import {
 // ============================================
 
 type MealType = 'breakfast' | 'lunch' | 'dinner';
-type DishType = 'main' | 'side1' | 'side2' | 'soup';
-type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | null;
+type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | null;
 
 // Reference UI Color Palette
 const colors = {
@@ -50,11 +50,17 @@ const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
 };
 
-const DISH_TYPE_CONFIG: Record<DishType, { label: string; color: string; bg: string }> = {
-  main: { label: '主菜', color: colors.accent, bg: colors.accentLight },
-  side1: { label: '副菜', color: colors.success, bg: colors.successLight },
-  side2: { label: '副菜', color: colors.success, bg: colors.successLight },
-  soup: { label: '汁物', color: colors.blue, bg: colors.blueLight },
+// 役割に応じた色設定（可変数対応）
+const getDishConfig = (role?: string): { label: string; color: string; bg: string } => {
+  switch (role) {
+    case 'main': return { label: '主菜', color: colors.accent, bg: colors.accentLight };
+    case 'side': return { label: '副菜', color: colors.success, bg: colors.successLight };
+    case 'soup': return { label: '汁物', color: colors.blue, bg: colors.blueLight };
+    case 'rice': return { label: 'ご飯', color: colors.warning, bg: colors.warningLight };
+    case 'salad': return { label: 'サラダ', color: colors.success, bg: colors.successLight };
+    case 'dessert': return { label: 'デザート', color: colors.purple, bg: colors.purpleLight };
+    default: return { label: 'おかず', color: colors.textLight, bg: colors.bg };
+  }
 };
 
 const MEAL_LABELS: Record<MealType, string> = { breakfast: '朝食', lunch: '昼食', dinner: '夕食' };
@@ -156,6 +162,18 @@ export default function WeeklyMenuPage() {
   // Regenerating meal
   const [regeneratingMeal, setRegeneratingMeal] = useState<PlannedMeal | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  
+  // Manual edit state
+  const [manualEditMeal, setManualEditMeal] = useState<PlannedMeal | null>(null);
+  const [manualDishes, setManualDishes] = useState<DishDetail[]>([]);
+  const [manualMode, setManualMode] = useState<MealMode>('cook');
+  
+  // Photo edit state
+  const [photoEditMeal, setPhotoEditMeal] = useState<PlannedMeal | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch Plan
   useEffect(() => {
@@ -660,6 +678,163 @@ export default function WeeklyMenuPage() {
     }
   };
 
+  // Open manual edit modal
+  const openManualEdit = (meal: PlannedMeal) => {
+    setManualEditMeal(meal);
+    // dishes配列形式に変換
+    const existingDishes: DishDetail[] = Array.isArray(meal.dishes)
+      ? meal.dishes
+      : meal.dishes
+        ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
+        : [{ name: meal.dishName, cal: meal.caloriesKcal || 0, role: 'main' }];
+    setManualDishes(existingDishes.length > 0 ? existingDishes : [{ name: '', cal: 0, role: 'main' }]);
+    setManualMode(meal.mode || 'cook');
+    setActiveModal('manualEdit');
+  };
+
+  // Add dish to manual edit
+  const addManualDish = () => {
+    setManualDishes(prev => [...prev, { name: '', cal: 0, role: 'side' }]);
+  };
+
+  // Remove dish from manual edit
+  const removeManualDish = (index: number) => {
+    setManualDishes(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Update dish in manual edit
+  const updateManualDish = (index: number, field: keyof DishDetail, value: string | number) => {
+    setManualDishes(prev => prev.map((dish, i) => 
+      i === index ? { ...dish, [field]: value } : dish
+    ));
+  };
+
+  // Save manual edit
+  const saveManualEdit = async () => {
+    if (!manualEditMeal || !currentPlan) return;
+    
+    const validDishes = manualDishes.filter(d => d.name.trim());
+    if (validDishes.length === 0) {
+      alert('少なくとも1つの料理名を入力してください');
+      return;
+    }
+    
+    const totalCal = validDishes.reduce((sum, d) => sum + (d.cal || 0), 0);
+    const dishName = validDishes.map(d => d.name).join('、');
+    
+    try {
+      await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dishName,
+          mode: manualMode,
+          dishes: validDishes,
+          isSimple: validDishes.length === 1,
+          caloriesKcal: totalCal > 0 ? totalCal : null
+        })
+      });
+      
+      // Update local state
+      const updatedDays = currentPlan.days?.map(day => ({
+        ...day,
+        meals: day.meals?.map(m => 
+          m.id === manualEditMeal.id 
+            ? { ...m, dishName, mode: manualMode, dishes: validDishes, isSimple: validDishes.length === 1, caloriesKcal: totalCal > 0 ? totalCal : null }
+            : m
+        )
+      }));
+      setCurrentPlan({ ...currentPlan, days: updatedDays });
+      setActiveModal(null);
+      setManualEditMeal(null);
+    } catch (e) {
+      alert('更新に失敗しました');
+    }
+  };
+
+  // Open photo edit modal
+  const openPhotoEdit = (meal: PlannedMeal) => {
+    setPhotoEditMeal(meal);
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setActiveModal('photoEdit');
+  };
+
+  // Handle photo selection
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPhotoFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPhotoPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Analyze photo with AI
+  const analyzePhotoWithAI = async () => {
+    if (!photoFile || !photoEditMeal || !currentPlan) return;
+    
+    setIsAnalyzingPhoto(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append('image', photoFile);
+      formData.append('mealId', photoEditMeal.id);
+      formData.append('mealType', photoEditMeal.mealType);
+      
+      const res = await fetch('/api/ai/analyze-meal-photo', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (res.ok) {
+        setActiveModal(null);
+        setPhotoEditMeal(null);
+        
+        // Poll for updated data
+        let attempts = 0;
+        const maxAttempts = 15;
+        const pollInterval = setInterval(async () => {
+          attempts++;
+          try {
+            const targetDate = formatLocalDate(weekStart);
+            const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+            if (pollRes.ok) {
+              const { mealPlan } = await pollRes.json();
+              if (mealPlan) {
+                setCurrentPlan(mealPlan);
+                setShoppingList(mealPlan.shoppingList || []);
+              }
+            }
+          } catch (e) {
+            console.error('Polling error:', e);
+          }
+          
+          if (attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            setIsAnalyzingPhoto(false);
+          }
+        }, 2000);
+        
+        setTimeout(() => {
+          clearInterval(pollInterval);
+          setIsAnalyzingPhoto(false);
+        }, 30000);
+      } else {
+        const err = await res.json();
+        alert(`エラー: ${err.error || '解析に失敗しました'}`);
+        setIsAnalyzingPhoto(false);
+      }
+    } catch (error) {
+      console.error('Photo analysis error:', error);
+      alert('エラーが発生しました');
+      setIsAnalyzingPhoto(false);
+    }
+  };
+
   // --- Computed ---
   const currentDay = currentPlan?.days?.find(d => d.dayDate === weekDates[selectedDayIndex]?.dateStr);
   const getMeal = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.find(m => m.mealType === type);
@@ -819,8 +994,20 @@ export default function WeeklyMenuPage() {
     const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
-    const dishes = meal.dishes as MealDishes | null;
-    const hasDishes = dishes && Object.keys(dishes).length > 0;
+    
+    // dishes は配列形式に対応（可変数）
+    const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
+      ? meal.dishes 
+      : meal.dishes 
+        ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
+        : [];
+    const hasDishes = dishesArray.length > 0;
+    
+    // グリッドのカラム数を動的に決定
+    const gridCols = dishesArray.length === 1 ? 'grid-cols-1' 
+                   : dishesArray.length === 2 ? 'grid-cols-2'
+                   : dishesArray.length === 3 ? 'grid-cols-3'
+                   : 'grid-cols-2';
 
     return (
       <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
@@ -848,20 +1035,19 @@ export default function WeeklyMenuPage() {
         </div>
 
         {hasDishes ? (
-          <div className="grid grid-cols-2 gap-2">
-            {(Object.entries(dishes) as [DishType, any][]).map(([type, dish]) => {
-              if (!dish) return null;
-              const config = DISH_TYPE_CONFIG[type];
+          <div className={`grid ${gridCols} gap-2`}>
+            {dishesArray.map((dish, idx) => {
+              const config = getDishConfig(dish.role);
               return (
                 <button
-                  key={type}
+                  key={idx}
                   onClick={() => {
                     setSelectedRecipe(dish.name);
                     setSelectedRecipeData({ 
                       name: dish.name, 
                       calories: dish.cal, 
                       ingredient: dish.ingredient,
-                      ingredients: dish.ingredients || (dish.ingredient ? [{ name: dish.ingredient, amount: '' }] : [])
+                      ingredients: dish.ingredient ? [{ name: dish.ingredient, amount: '' }] : []
                     });
                     setActiveModal('recipe');
                   }}
@@ -894,14 +1080,25 @@ export default function WeeklyMenuPage() {
           </div>
         )}
 
-        <button 
-          onClick={() => openRegenerateMeal(meal)}
-          className="w-full mt-3 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
-          style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
-        >
-          <Sparkles size={13} color={colors.accent} />
-          <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更する</span>
-        </button>
+        {/* 変更ボタン群 */}
+        <div className="flex gap-2 mt-3">
+          <button 
+            onClick={() => openRegenerateMeal(meal)}
+            className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+            style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
+          >
+            <Sparkles size={13} color={colors.accent} />
+            <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
+          </button>
+          <button 
+            onClick={() => openManualEdit(meal)}
+            className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+            style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+          >
+            <Pencil size={13} color={colors.textLight} />
+            <span style={{ fontSize: 12, fontWeight: 500, color: colors.textLight }}>手動で変更</span>
+          </button>
+        </div>
       </div>
     );
   };
@@ -1721,6 +1918,221 @@ export default function WeeklyMenuPage() {
                       <>
                         <Sparkles size={16} color="#fff" />
                         <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIで別の献立に変更</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Manual Edit Modal */}
+            {activeModal === 'manualEdit' && manualEditMeal && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 150px)' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Pencil size={18} color={colors.textLight} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>手動で変更</span>
+                  </div>
+                  <button onClick={() => { setActiveModal(null); setManualEditMeal(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  {/* Mode Selection */}
+                  <div className="mb-4">
+                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>タイプ</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).map(([key, mode]) => {
+                        const ModeIcon = mode.icon;
+                        const isSelected = manualMode === key;
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => setManualMode(key)}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
+                            style={{ 
+                              background: isSelected ? mode.bg : colors.bg,
+                              border: isSelected ? `2px solid ${mode.color}` : '2px solid transparent'
+                            }}
+                          >
+                            <ModeIcon size={14} color={isSelected ? mode.color : colors.textMuted} />
+                            <span style={{ fontSize: 12, color: isSelected ? mode.color : colors.textMuted }}>{mode.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  
+                  {/* Dishes */}
+                  <div className="mb-4">
+                    <div className="flex justify-between items-center mb-2">
+                      <label style={{ fontSize: 12, color: colors.textMuted }}>料理（複数可）</label>
+                      <button onClick={addManualDish} className="text-[12px] flex items-center gap-1" style={{ color: colors.accent }}>
+                        <Plus size={12} /> 追加
+                      </button>
+                    </div>
+                    {manualDishes.map((dish, idx) => (
+                      <div key={idx} className="flex gap-2 mb-2">
+                        <select
+                          value={dish.role || 'main'}
+                          onChange={(e) => updateManualDish(idx, 'role', e.target.value)}
+                          className="w-20 p-2 rounded-lg text-[12px] outline-none"
+                          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                        >
+                          <option value="main">主菜</option>
+                          <option value="side">副菜</option>
+                          <option value="soup">汁物</option>
+                          <option value="rice">ご飯</option>
+                          <option value="salad">サラダ</option>
+                          <option value="dessert">デザート</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={dish.name}
+                          onChange={(e) => updateManualDish(idx, 'name', e.target.value)}
+                          placeholder="料理名"
+                          className="flex-1 p-2 rounded-lg text-[13px] outline-none"
+                          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                        />
+                        <input
+                          type="number"
+                          value={dish.cal || ''}
+                          onChange={(e) => updateManualDish(idx, 'cal', parseInt(e.target.value) || 0)}
+                          placeholder="kcal"
+                          className="w-16 p-2 rounded-lg text-[13px] outline-none text-center"
+                          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                        />
+                        {manualDishes.length > 1 && (
+                          <button onClick={() => removeManualDish(idx)} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: colors.dangerLight }}>
+                            <Trash2 size={14} color={colors.danger} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Photo input option */}
+                  <button
+                    onClick={() => {
+                      setActiveModal('photoEdit');
+                      setPhotoEditMeal(manualEditMeal);
+                    }}
+                    className="w-full p-3 rounded-xl flex items-center justify-center gap-2 mb-3"
+                    style={{ background: colors.blueLight, border: `1px solid ${colors.blue}` }}
+                  >
+                    <Camera size={16} color={colors.blue} />
+                    <span style={{ fontSize: 13, color: colors.blue }}>写真から入力（AI解析）</span>
+                  </button>
+                </div>
+                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                  <button 
+                    onClick={saveManualEdit}
+                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
+                    style={{ background: colors.accent }}
+                  >
+                    <Check size={16} color="#fff" />
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>保存する</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Photo Edit Modal */}
+            {activeModal === 'photoEdit' && photoEditMeal && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 150px)' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Camera size={18} color={colors.blue} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>写真から入力</span>
+                  </div>
+                  <button onClick={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFile(null); setPhotoPreview(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>
+                    食事の写真を撮影またはアップロードすると、AIが料理を認識して栄養素を推定します。
+                  </p>
+                  
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handlePhotoSelect}
+                    className="hidden"
+                  />
+                  
+                  {photoPreview ? (
+                    <div className="relative mb-4">
+                      <img src={photoPreview} alt="Preview" className="w-full rounded-xl object-cover" style={{ maxHeight: 300 }} />
+                      <button
+                        onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}
+                        className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ background: 'rgba(0,0,0,0.5)' }}
+                      >
+                        <X size={16} color="#fff" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-3 mb-4">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex-1 p-6 rounded-xl flex flex-col items-center gap-2"
+                        style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
+                      >
+                        <Camera size={32} color={colors.textMuted} />
+                        <span style={{ fontSize: 13, color: colors.textMuted }}>撮影する</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/*';
+                          input.onchange = (e) => handlePhotoSelect(e as any);
+                          input.click();
+                        }}
+                        className="flex-1 p-6 rounded-xl flex flex-col items-center gap-2"
+                        style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
+                      >
+                        <ImageIcon size={32} color={colors.textMuted} />
+                        <span style={{ fontSize: 13, color: colors.textMuted }}>選択する</span>
+                      </button>
+                    </div>
+                  )}
+                  
+                  <div className="p-3 rounded-xl" style={{ background: colors.blueLight }}>
+                    <p style={{ fontSize: 11, color: colors.blue, margin: 0 }}>
+                      💡 AIが写真から料理名、カロリー、栄養素を自動で推定します。解析には数秒〜数十秒かかります。
+                    </p>
+                  </div>
+                </div>
+                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                  <button 
+                    onClick={analyzePhotoWithAI}
+                    disabled={!photoFile || isAnalyzingPhoto}
+                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
+                    style={{ background: colors.blue }}
+                  >
+                    {isAnalyzingPhoto ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIが解析中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} color="#fff" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIで解析する</span>
                       </>
                     )}
                   </button>

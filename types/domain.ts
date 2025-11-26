@@ -224,14 +224,11 @@ export interface DishDetail {
   name: string;
   cal: number;
   ingredient?: string;
+  role?: string; // 'main' | 'side' | 'soup' | 'rice' | 'salad' | etc.
 }
 
-export interface MealDishes {
-  main?: DishDetail;
-  side1?: DishDetail;
-  side2?: DishDetail;
-  soup?: DishDetail;
-}
+// dishes は配列形式で可変数に対応
+export type MealDishes = DishDetail[];
 
 export interface PlannedMeal {
   id: string;

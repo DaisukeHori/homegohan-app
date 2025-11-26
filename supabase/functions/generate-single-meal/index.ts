@@ -215,22 +215,19 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       .eq('meal_plan_day_id', dayId)
       .eq('meal_type', mealType)
 
-    // 新しいplanned_mealを挿入（テーブル構造に合わせる）
-    // dishes JSONB構造: { main: {...}, side1: {...}, side2: {...}, soup: {...} }
+    // 新しいplanned_mealを挿入
+    // dishes は配列形式で可変数に対応
     const aiDishes = newMealData.dishes || []
+    
+    // 配列形式でdishesを保存（可変数対応）
+    const dishesArray = aiDishes.map((d: any) => ({
+      name: d.name,
+      cal: d.calories || 0,
+      role: d.role || 'side',
+      ingredient: d.ingredient || ''
+    }))
+    
     const mainDish = aiDishes.find((d: any) => d.role === 'main') || aiDishes[0] || { name: '献立', calories: 0 }
-    const sideDishes = aiDishes.filter((d: any) => d.role === 'side')
-    const soupDish = aiDishes.find((d: any) => d.role === 'soup')
-    
-    // 複数おかずがある場合はdishes構造を作成
-    const hasMutipleDishes = aiDishes.length > 1
-    const dishesJson = hasMutipleDishes ? {
-      main: mainDish ? { name: mainDish.name, cal: mainDish.calories || 0, ingredient: mainDish.ingredient || '' } : null,
-      side1: sideDishes[0] ? { name: sideDishes[0].name, cal: sideDishes[0].calories || 0, ingredient: sideDishes[0].ingredient || '' } : null,
-      side2: sideDishes[1] ? { name: sideDishes[1].name, cal: sideDishes[1].calories || 0, ingredient: sideDishes[1].ingredient || '' } : null,
-      soup: soupDish ? { name: soupDish.name, cal: soupDish.calories || 0, ingredient: soupDish.ingredient || '' } : null,
-    } : null
-    
     const allDishNames = aiDishes.map((d: any) => d.name).join('、') || mainDish.name
     const allIngredients = aiDishes.flatMap((d: any) => d.ingredients || []) || []
     
@@ -246,8 +243,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
         calories_kcal: newMealData.totalCalories || mainDish.calories || null,
         image_url: imageUrl,
         is_completed: false,
-        dishes: dishesJson,
-        is_simple: !hasMutipleDishes,
+        dishes: dishesArray.length > 0 ? dishesArray : null,
+        is_simple: dishesArray.length <= 1,
       })
 
     if (mealError) throw mealError
