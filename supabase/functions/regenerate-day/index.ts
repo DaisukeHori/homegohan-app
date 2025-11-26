@@ -210,67 +210,116 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
   }
 }
 
-// 画像生成関数（Gemini API）
+// 画像生成関数（Gemini API - generate-weekly-menuと同じ方式）
 async function generateMealImage(dishName: string, userId: string, supabase: any): Promise<string> {
   const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
-  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.0-flash-exp'
+  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.5-flash-preview-image'
+  
+  console.log(`[Image Gen] Starting generation for: ${dishName}`)
+  console.log(`[Image Gen] API Key present: ${GOOGLE_AI_API_KEY ? 'Yes' : 'No'}`)
+  console.log(`[Image Gen] Model: ${GEMINI_IMAGE_MODEL}`)
   
   if (!GOOGLE_AI_API_KEY) {
-    throw new Error('Google AI API Key is missing')
+    console.error(`[Image Gen] ERROR: Google AI API Key is missing for ${dishName}`)
+    throw new Error('Google AI API Key is missing in Edge Function environment')
   }
 
+  // プロンプトの構築（generate-weekly-menuと同じ）
   const enhancedPrompt = `A delicious, appetizing, professional food photography shot of ${dishName}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`
 
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`
-  
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: enhancedPrompt }] }],
-      generationConfig: {
-        responseModalities: ['IMAGE'],
-        imageConfig: { aspectRatio: '1:1' }
-      }
+  try {
+    // Gemini REST APIを直接呼び出し
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GOOGLE_AI_API_KEY}`
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: enhancedPrompt
+          }]
+        }],
+        generationConfig: {
+          responseModalities: ['IMAGE'],
+          imageConfig: {
+            aspectRatio: '1:1'
+          }
+        }
+      })
     })
-  })
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Gemini API error: ${errorText}`)
-  }
-
-  const data = await response.json()
-  const parts = data.candidates?.[0]?.content?.parts || []
-  let imageBase64 = ''
-  
-  for (const part of parts) {
-    if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
-      imageBase64 = part.inlineData.data
-      break
+    if (!response.ok) {
+      const errorText = await response.text()
+      // 429エラー（クォータ超過）の場合はスキップ
+      if (response.status === 429) {
+        console.warn(`Quota exceeded for image generation, skipping: ${dishName}`)
+        throw new Error('QUOTA_EXCEEDED')
+      }
+      throw new Error(`Gemini API returned ${response.status}: ${errorText}`)
     }
+
+    const data = await response.json()
+    
+    // レスポンスから画像データを抽出
+    const parts = data.candidates?.[0]?.content?.parts || []
+    let imageBase64 = ''
+    
+    for (const part of parts) {
+      if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
+        imageBase64 = part.inlineData.data
+        break
+      }
+    }
+
+    if (!imageBase64) {
+      console.error(`[Image Gen] ERROR: No image data in response for ${dishName}`)
+      console.error(`[Image Gen] Response structure:`, JSON.stringify(data, null, 2))
+      throw new Error('No image data in response')
+    }
+
+    console.log(`[Image Gen] Image data received (${imageBase64.length} chars), uploading to Storage...`)
+
+    // Supabase Storage へアップロード
+    // base64をバイナリに変換（Deno環境用）
+    const binaryString = atob(imageBase64)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
+    
+    const fileName = `generated/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`
+    const bucketName = 'fridge-images'
+    
+    console.log(`[Image Gen] Uploading to: ${bucketName}/${fileName}`)
+    
+    const { error: uploadError } = await supabase.storage
+      .from(bucketName)
+      .upload(fileName, bytes, {
+        contentType: 'image/png',
+        upsert: false
+      })
+
+    if (uploadError) {
+      console.error(`[Image Gen] Storage upload failed for ${dishName}:`, uploadError)
+      throw new Error(`Storage upload failed: ${uploadError.message}`)
+    }
+
+    // 公開URLの取得
+    const { data: { publicUrl } } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(fileName)
+
+    console.log(`[Image Gen] ✅ Successfully generated and uploaded image for ${dishName}: ${publicUrl}`)
+
+    return publicUrl
+
+  } catch (error: any) {
+    console.error(`[Image Gen] ❌ Error generating image for ${dishName}:`, error.message || error)
+    // エラーを再スロー（呼び出し元で処理）
+    throw error
   }
-
-  if (!imageBase64) {
-    throw new Error('No image data in response')
-  }
-
-  // Supabase Storageへアップロード
-  const binaryString = atob(imageBase64)
-  const bytes = new Uint8Array(binaryString.length)
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
-  
-  const fileName = `generated/${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`
-  
-  const { error: uploadError } = await supabase.storage
-    .from('fridge-images')
-    .upload(fileName, bytes, { contentType: 'image/png', upsert: false })
-
-  if (uploadError) throw new Error(`Storage upload failed: ${uploadError.message}`)
-
-  const { data: { publicUrl } } = supabase.storage.from('fridge-images').getPublicUrl(fileName)
-  return publicUrl
 }
 
