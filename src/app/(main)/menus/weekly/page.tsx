@@ -406,6 +406,8 @@ export default function WeeklyMenuPage() {
   // Generate weekly menu with AI
   const handleGenerateWeekly = async () => {
     setIsGenerating(true);
+    setActiveModal(null); // モーダルを閉じて一覧画面に戻る
+    
     try {
       const preferences = {
         useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
@@ -424,8 +426,43 @@ export default function WeeklyMenuPage() {
         }),
       });
       if (!response.ok) throw new Error("生成リクエストに失敗しました");
-      const data = await response.json();
-      router.push(`/menus/weekly/${data.id}`);
+      
+      setSelectedConditions([]);
+      setAiChatInput("");
+      
+      // ページ遷移せずにポーリングでデータを取得
+      let attempts = 0;
+      const maxAttempts = 20; // 最大60秒
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        try {
+          const targetDate = formatLocalDate(weekStart);
+          const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+          if (pollRes.ok) {
+            const { mealPlan } = await pollRes.json();
+            if (mealPlan && mealPlan.days && mealPlan.days.length > 0) {
+              // 献立データがあれば更新
+              const hasAnyMeal = mealPlan.days.some((d: any) => d.meals && d.meals.length > 0);
+              if (hasAnyMeal) {
+                setCurrentPlan(mealPlan);
+                setShoppingList(mealPlan.shoppingList || []);
+                setIsGenerating(false);
+                clearInterval(pollInterval);
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Polling error:', e);
+        }
+        
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          setIsGenerating(false);
+          // タイムアウト後はリロードして最新データを取得
+          window.location.reload();
+        }
+      }, 3000);
+      
     } catch (error: any) {
       alert(error.message || "エラーが発生しました");
       setIsGenerating(false);
