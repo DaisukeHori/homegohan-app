@@ -6,9 +6,9 @@ export async function POST(request: Request) {
   const supabase = createClient(cookies());
 
   try {
-    const { weeklyMenuRequestId, dayIndex, mealType, preferences } = await request.json();
+    const { weeklyMenuRequestId, dayIndex, preferences } = await request.json();
 
-    if (dayIndex === undefined || !mealType || !weeklyMenuRequestId) {
+    if (dayIndex === undefined || !weeklyMenuRequestId) {
       return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
     }
 
@@ -31,15 +31,14 @@ export async function POST(request: Request) {
     }
 
     if (menuRequest.status !== 'completed') {
-      return NextResponse.json({ error: 'Weekly menu must be completed before regenerating meals' }, { status: 400 });
+      return NextResponse.json({ error: 'Weekly menu must be completed before regenerating days' }, { status: 400 });
     }
 
     // 3. Edge Function を非同期で呼び出し
-    const { error: invokeError } = await supabase.functions.invoke('regenerate-meal', {
+    const { error: invokeError } = await supabase.functions.invoke('regenerate-day', {
       body: {
         weeklyMenuRequestId,
         dayIndex,
-        mealType,
         userId: user.id,
         preferences: preferences || {},
       },
@@ -51,12 +50,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ 
       success: true,
-      message: 'Meal regeneration started in background',
+      message: 'Day regeneration started in background',
       status: 'processing'
     });
 
   } catch (error: any) {
-    console.error("Meal Regeneration Error:", error);
+    console.error("Day Regeneration Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
