@@ -180,9 +180,9 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
   // 確定済みで MealPlan が取得できていればそれを使う、そうでなければ Request JSON を使う
   const isDashboardMode = request.status === 'confirmed' && mealPlan;
   
-  const daysData = isDashboardMode 
+  const daysData = (isDashboardMode 
     ? mealPlan!.days 
-    : request.resultJson?.days || [];
+    : request.resultJson?.days) || [];
     
   const impact = request.resultJson?.projectedImpact;
 
@@ -199,7 +199,7 @@ export default function WeeklyMenuDetailPage({ params }: WeeklyMenuPageProps) {
             className="fixed inset-0 z-50 bg-gray-100"
           >
             <PlanningDeck 
-              days={daysData} 
+              days={daysData as any[]} 
               onComplete={handlePlanningComplete}
               onUpdateMeal={handleUpdateMeal}
             />
