@@ -911,7 +911,11 @@ export default function WeeklyMenuPage() {
   const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => {
     const isGeneratingThis = generatingMeal?.dayIndex === dayIndex && generatingMeal?.mealType === mealKey;
     
-    if (isGeneratingThis) {
+    // 一括生成中かつ今日以降の日付の場合も「作成中」表示
+    const dayDateStr = weekDates[dayIndex]?.dateStr;
+    const isGeneratingBulk = isGenerating && dayDateStr && dayDateStr >= todayStr;
+    
+    if (isGeneratingThis || isGeneratingBulk) {
       return (
         <div
           className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
