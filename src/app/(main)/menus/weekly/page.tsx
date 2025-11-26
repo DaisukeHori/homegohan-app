@@ -8,7 +8,7 @@ import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,
   Flame, Refrigerator, Trash2, AlertTriangle,
-  BarChart3, ShoppingCart, ChevronDown, ChevronRight,
+  BarChart3, ShoppingCart, ChevronDown, ChevronRight, ChevronLeft,
   Clock, Users, BookOpen, Heart, RefreshCw, Send, Package
 } from 'lucide-react';
 
@@ -18,7 +18,7 @@ import {
 
 type MealType = 'breakfast' | 'lunch' | 'dinner';
 type DishType = 'main' | 'side1' | 'side2' | 'soup';
-type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | null;
+type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | null;
 
 // Reference UI Color Palette
 const colors = {
@@ -148,6 +148,14 @@ export default function WeeklyMenuPage() {
   
   // AI Preview
   const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
+  
+  // AI Hint
+  const [aiHint, setAiHint] = useState<string>("");
+  const [isLoadingHint, setIsLoadingHint] = useState(false);
+  
+  // Regenerating meal
+  const [regeneratingMeal, setRegeneratingMeal] = useState<PlannedMeal | null>(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   // Fetch Plan
   useEffect(() => {
@@ -195,6 +203,54 @@ export default function WeeklyMenuPage() {
     const idx = weekDates.findIndex(d => d.dateStr === todayStr);
     if (idx !== -1) setSelectedDayIndex(idx);
   }, [weekStart]);
+  
+  // Fetch AI hint when stats change
+  useEffect(() => {
+    if (currentPlan?.days && currentPlan.days.length > 0) {
+      fetchAiHint();
+    }
+  }, [currentPlan?.id]);
+  
+  const fetchAiHint = async () => {
+    setIsLoadingHint(true);
+    try {
+      const res = await fetch('/api/ai/hint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cookRate: stats.cookRate,
+          avgCal: stats.avgCal,
+          cookCount: stats.cookCount,
+          buyCount: stats.buyCount,
+          outCount: stats.outCount,
+          expiringItems: expiringItems.map(i => i.name)
+        })
+      });
+      if (res.ok) {
+        const { hint } = await res.json();
+        setAiHint(hint);
+      }
+    } catch (e) {
+      console.error('Failed to fetch AI hint:', e);
+    } finally {
+      setIsLoadingHint(false);
+    }
+  };
+  
+  // Week Navigation
+  const goToPreviousWeek = () => {
+    const newStart = new Date(weekStart);
+    newStart.setDate(weekStart.getDate() - 7);
+    setWeekStart(newStart);
+    setSelectedDayIndex(0);
+  };
+  
+  const goToNextWeek = () => {
+    const newStart = new Date(weekStart);
+    newStart.setDate(weekStart.getDate() + 7);
+    setWeekStart(newStart);
+    setSelectedDayIndex(0);
+  };
 
   // --- Handlers ---
   
@@ -212,6 +268,12 @@ export default function WeeklyMenuPage() {
         body: JSON.stringify(updates)
       });
     } catch (e) { console.error('Failed to update meal:', e); }
+  };
+  
+  // Toggle completion (can check and uncheck)
+  const toggleMealCompletion = async (dayId: string, meal: PlannedMeal) => {
+    const newCompleted = !meal.isCompleted;
+    handleUpdateMeal(dayId, meal.id, { isCompleted: newCompleted });
   };
 
   // Add pantry item
@@ -468,7 +530,99 @@ export default function WeeklyMenuPage() {
     }
   };
 
-  // Edit meal (change button)
+  // Edit meal (change button) - now opens regenerate modal
+  const openRegenerateMeal = (meal: PlannedMeal) => {
+    setRegeneratingMeal(meal);
+    setSelectedConditions([]);
+    setAiChatInput("");
+    setActiveModal('regenerateMeal');
+  };
+
+  // Regenerate meal with AI
+  const handleRegenerateMeal = async () => {
+    if (!regeneratingMeal || !currentPlan) return;
+    
+    setIsRegenerating(true);
+    
+    try {
+      const preferences: Record<string, boolean> = {};
+      selectedConditions.forEach(c => {
+        if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
+        if (c === '時短メニュー中心') preferences.quickMeals = true;
+        if (c === '和食多め') preferences.japaneseStyle = true;
+        if (c === 'ヘルシーに') preferences.healthy = true;
+      });
+      
+      // Find the day for this meal
+      const day = currentPlan.days?.find(d => 
+        d.meals?.some(m => m.id === regeneratingMeal.id)
+      );
+      
+      if (!day) {
+        alert('日付が見つかりません');
+        setIsRegenerating(false);
+        return;
+      }
+      
+      const res = await fetch('/api/ai/menu/meal/regenerate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mealId: regeneratingMeal.id,
+          dayDate: day.dayDate,
+          mealType: regeneratingMeal.mealType,
+          preferences,
+          note: aiChatInput,
+          weeklyMenuRequestId: currentPlan.sourceRequestId
+        })
+      });
+      
+      if (res.ok) {
+        setActiveModal(null);
+        setRegeneratingMeal(null);
+        
+        // Poll for updated data
+        let attempts = 0;
+        const maxAttempts = 15;
+        const pollInterval = setInterval(async () => {
+          attempts++;
+          try {
+            const targetDate = formatLocalDate(weekStart);
+            const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+            if (pollRes.ok) {
+              const { mealPlan } = await pollRes.json();
+              if (mealPlan) {
+                setCurrentPlan(mealPlan);
+                setShoppingList(mealPlan.shoppingList || []);
+              }
+            }
+          } catch (e) {
+            console.error('Polling error:', e);
+          }
+          
+          if (attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            setIsRegenerating(false);
+          }
+        }, 2000);
+        
+        setTimeout(() => {
+          clearInterval(pollInterval);
+          setIsRegenerating(false);
+        }, 30000);
+      } else {
+        const err = await res.json();
+        alert(`エラー: ${err.error || '再生成に失敗しました'}`);
+        setIsRegenerating(false);
+      }
+    } catch (error) {
+      console.error('Regenerate error:', error);
+      alert('エラーが発生しました');
+      setIsRegenerating(false);
+    }
+  };
+  
+  // Edit meal (legacy - keep for simple edits)
   const openEditMeal = (meal: PlannedMeal) => {
     setEditingMeal(meal);
     setEditMealName(meal.dishName);
@@ -618,12 +772,11 @@ export default function WeeklyMenuPage() {
       <div className="flex items-center gap-2 mb-2">
         {isToday && !isPast && (
           <button
-            onClick={() => !meal.isCompleted && handleUpdateMeal(currentDay!.id, meal.id, { isCompleted: true })}
-            className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+            onClick={() => currentDay && toggleMealCompletion(currentDay.id, meal)}
+            className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer"
             style={{
               border: meal.isCompleted ? 'none' : `2px solid ${colors.border}`,
               background: meal.isCompleted ? colors.success : 'transparent',
-              cursor: meal.isCompleted ? 'default' : 'pointer',
             }}
           >
             {meal.isCompleted && <Check size={14} color="#fff" />}
@@ -675,12 +828,11 @@ export default function WeeklyMenuPage() {
           <div className="flex items-center gap-2.5">
             {isToday && (
               <button
-                onClick={() => !meal.isCompleted && handleUpdateMeal(currentDay!.id, meal.id, { isCompleted: true })}
-                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors"
+                onClick={() => currentDay && toggleMealCompletion(currentDay.id, meal)}
+                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer"
                 style={{
                   border: meal.isCompleted ? 'none' : `2px solid ${colors.border}`,
                   background: meal.isCompleted ? colors.success : 'transparent',
-                  cursor: meal.isCompleted ? 'default' : 'pointer',
                 }}
               >
                 {meal.isCompleted && <Check size={14} color="#fff" />}
@@ -705,7 +857,12 @@ export default function WeeklyMenuPage() {
                   key={type}
                   onClick={() => {
                     setSelectedRecipe(dish.name);
-                    setSelectedRecipeData({ name: dish.name, calories: dish.cal, ingredient: dish.ingredient });
+                    setSelectedRecipeData({ 
+                      name: dish.name, 
+                      calories: dish.cal, 
+                      ingredient: dish.ingredient,
+                      ingredients: dish.ingredients || (dish.ingredient ? [{ name: dish.ingredient, amount: '' }] : [])
+                    });
                     setActiveModal('recipe');
                   }}
                   className="text-left flex flex-col min-h-[75px] rounded-xl p-3"
@@ -713,7 +870,7 @@ export default function WeeklyMenuPage() {
                 >
                   <div className="flex justify-between mb-1">
                     <span style={{ fontSize: 9, fontWeight: 700, color: config.color }}>{config.label}</span>
-                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.cal}kcal</span>
+                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.cal || '-'}kcal</span>
                   </div>
                   <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, margin: 0, flex: 1 }}>{dish.name}</p>
                   {dish.ingredient && (
@@ -738,12 +895,12 @@ export default function WeeklyMenuPage() {
         )}
 
         <button 
-          onClick={() => openEditMeal(meal)}
+          onClick={() => openRegenerateMeal(meal)}
           className="w-full mt-3 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
-          style={{ background: colors.bg }}
+          style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
         >
-          <RefreshCw size={13} color={colors.textLight} />
-          <span style={{ fontSize: 12, color: colors.textLight }}>変更する</span>
+          <Sparkles size={13} color={colors.accent} />
+          <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更する</span>
         </button>
       </div>
     );
@@ -759,14 +916,30 @@ export default function WeeklyMenuPage() {
       {/* === Header === */}
       <div className="pt-4 px-4 pb-2 sticky top-0 z-20" style={{ background: colors.card }}>
         <div className="flex justify-between items-center">
-          <div className="flex items-center gap-2.5">
-            <Calendar size={20} color={colors.accent} />
-            <div>
-              <h1 style={{ fontSize: 18, fontWeight: 600, color: colors.text, margin: 0 }}>献立表</h1>
-              <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>
-                {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} - {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()}
-              </p>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={goToPreviousWeek}
+              className="w-8 h-8 rounded-full flex items-center justify-center"
+              style={{ background: colors.bg }}
+            >
+              <ChevronLeft size={18} color={colors.textLight} />
+            </button>
+            <div className="flex items-center gap-2">
+              <Calendar size={18} color={colors.accent} />
+              <div>
+                <h1 style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>献立表</h1>
+                <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>
+                  {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} - {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()}
+                </p>
+              </div>
             </div>
+            <button 
+              onClick={goToNextWeek}
+              className="w-8 h-8 rounded-full flex items-center justify-center"
+              style={{ background: colors.bg }}
+            >
+              <ChevronRight size={18} color={colors.textLight} />
+            </button>
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => setActiveModal('stats')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
@@ -1021,10 +1194,20 @@ export default function WeeklyMenuPage() {
                     ))}
                   </div>
                   <div className="p-3 rounded-xl" style={{ background: colors.purpleLight }}>
-                    <p style={{ fontSize: 12, fontWeight: 600, color: colors.purple, margin: '0 0 4px' }}>💡 ヒント</p>
-                    <p style={{ fontSize: 11, color: colors.text, margin: 0, lineHeight: 1.5 }}>
-                      今週の自炊率は{stats.cookRate}%です。週末にまとめて作り置きすると、平日の自炊率が上がりますよ！
-                    </p>
+                    <div className="flex items-center gap-1 mb-1">
+                      <Sparkles size={12} color={colors.purple} />
+                      <p style={{ fontSize: 12, fontWeight: 600, color: colors.purple, margin: 0 }}>AIヒント</p>
+                    </div>
+                    {isLoadingHint ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                        <span style={{ fontSize: 11, color: colors.textMuted }}>ヒントを生成中...</span>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 11, color: colors.text, margin: 0, lineHeight: 1.5 }}>
+                        {aiHint || `今週の自炊率は${stats.cookRate}%です。週末にまとめて作り置きすると、平日の自炊率が上がりますよ！`}
+                      </p>
+                    )}
                   </div>
                 </div>
               </motion.div>
@@ -1462,6 +1645,84 @@ export default function WeeklyMenuPage() {
                     style={{ background: colors.accent, color: '#fff' }}
                   >
                     保存する
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* AI Regenerate Meal Modal */}
+            {activeModal === 'regenerateMeal' && regeneratingMeal && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col"
+                style={{ background: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 'calc(100vh - 200px)' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={18} color={colors.accent} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>
+                      {MEAL_LABELS[regeneratingMeal.mealType as MealType]}をAIで変更
+                    </span>
+                  </div>
+                  <button onClick={() => { setActiveModal(null); setRegeneratingMeal(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  <div className="p-3 rounded-xl mb-4" style={{ background: colors.bg }}>
+                    <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 4px' }}>現在の献立</p>
+                    <p style={{ fontSize: 14, fontWeight: 500, color: colors.text, margin: 0 }}>{regeneratingMeal.dishName}</p>
+                  </div>
+                  
+                  <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>新しい条件を指定（複数選択可）</p>
+                  {AI_CONDITIONS.map((text, i) => {
+                    const isSelected = selectedConditions.includes(text);
+                    return (
+                      <button 
+                        key={i} 
+                        onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
+                        className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
+                        style={{ 
+                          background: isSelected ? colors.accentLight : colors.bg, 
+                          color: isSelected ? colors.accent : colors.text,
+                          border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
+                        }}
+                      >
+                        <span>{text}</span>
+                        {isSelected && <Check size={16} color={colors.accent} />}
+                      </button>
+                    );
+                  })}
+                  <div className="mt-4">
+                    <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
+                    <textarea 
+                      value={aiChatInput}
+                      onChange={(e) => setAiChatInput(e.target.value)}
+                      placeholder="例: もっとヘルシーに、魚料理がいい..."
+                      className="w-full p-3 rounded-[10px] text-[13px] outline-none resize-none"
+                      style={{ background: colors.bg, minHeight: 80 }}
+                    />
+                  </div>
+                </div>
+                <div className="px-4 py-4 pb-24 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                  <button 
+                    onClick={handleRegenerateMeal}
+                    disabled={isRegenerating}
+                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
+                    style={{ background: colors.accent, opacity: isRegenerating ? 0.7 : 1 }}
+                  >
+                    {isRegenerating ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIが新しい献立を考え中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} color="#fff" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIで別の献立に変更</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </motion.div>
