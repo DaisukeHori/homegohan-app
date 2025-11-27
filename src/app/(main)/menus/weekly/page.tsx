@@ -838,6 +838,34 @@ export default function WeeklyMenuPage() {
     setActiveModal('manualEdit');
   };
 
+  // Delete meal
+  const handleDeleteMeal = async (mealId: string) => {
+    if (!confirm('この食事を削除しますか？')) return;
+    
+    try {
+      const res = await fetch(`/api/meal-plans/meals/${mealId}`, {
+        method: 'DELETE',
+      });
+      
+      if (res.ok) {
+        // UIを更新
+        setExpandedMealId(null);
+        // データを再取得
+        const targetDate = formatLocalDate(weekStart);
+        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        if (refreshRes.ok) {
+          const { mealPlan } = await refreshRes.json();
+          setCurrentPlan(mealPlan);
+        }
+      } else {
+        alert('削除に失敗しました');
+      }
+    } catch (error) {
+      console.error('Delete meal error:', error);
+      alert('削除に失敗しました');
+    }
+  };
+
   // Add dish to manual edit
   const addManualDish = () => {
     setManualDishes(prev => [...prev, { name: '', cal: 0, role: 'side' }]);
@@ -1365,26 +1393,44 @@ export default function WeeklyMenuPage() {
         )}
 
         {/* 変更ボタン群（過去の場合はAIボタンを非表示） */}
-        <div className="flex gap-2 mt-3">
-          {!isPast && (
-            <button 
-              onClick={() => openRegenerateMeal(meal)}
-              className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
-              style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
-            >
-              <Sparkles size={13} color={colors.accent} />
-              <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
-            </button>
-          )}
-          <button 
-            onClick={() => openManualEdit(meal)}
-            className={`${isPast ? 'w-full' : 'flex-1'} p-2.5 rounded-[10px] flex items-center justify-center gap-1.5`}
-            style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-          >
-            <Pencil size={13} color={colors.textLight} />
-            <span style={{ fontSize: 12, fontWeight: 500, color: colors.textLight }}>手動で修正</span>
-          </button>
-        </div>
+        {(() => {
+          // 基本の3食（朝・昼・夕）は最低1つ残す
+          const isBaseMealType = BASE_MEAL_TYPES.includes(mealKey);
+          const sameMealsCount = getMeals(currentDay, mealKey).length;
+          const canDelete = !isBaseMealType || sameMealsCount > 1;
+          
+          return (
+            <div className="flex gap-2 mt-3">
+              {!isPast && (
+                <button 
+                  onClick={() => openRegenerateMeal(meal)}
+                  className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+                  style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
+                >
+                  <Sparkles size={13} color={colors.accent} />
+                  <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
+                </button>
+              )}
+              <button 
+                onClick={() => openManualEdit(meal)}
+                className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5"
+                style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+              >
+                <Pencil size={13} color={colors.textLight} />
+                <span style={{ fontSize: 12, fontWeight: 500, color: colors.textLight }}>手動で修正</span>
+              </button>
+              {canDelete && (
+                <button 
+                  onClick={() => handleDeleteMeal(meal.id)}
+                  className="p-2.5 rounded-[10px] flex items-center justify-center"
+                  style={{ background: colors.dangerLight, border: `1px solid ${colors.danger}` }}
+                >
+                  <Trash2 size={13} color={colors.danger} />
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   };
