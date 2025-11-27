@@ -1157,7 +1157,8 @@ export default function WeeklyMenuPage() {
 
     return (
       <div className="flex items-center gap-2 mb-2">
-        {isToday && !isPast && (
+        {/* 今日または過去の献立でチェックボックスを表示 */}
+        {(isToday || isPast) && (
           <button
             onClick={() => currentDay && toggleMealCompletion(currentDay.id, meal)}
             className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer"
@@ -1171,11 +1172,11 @@ export default function WeeklyMenuPage() {
         )}
         
         <button
-          onClick={() => !isPast && setExpandedMeal(mealKey)}
+          onClick={() => setExpandedMeal(mealKey)}
           className="flex-1 flex items-center justify-between rounded-[14px] p-3 text-left transition-all"
           style={{
-            background: isPast ? colors.bg : colors.card,
-            opacity: isPast ? 0.6 : (meal.isCompleted ? 0.7 : 1),
+            background: colors.card,
+            opacity: isPast ? 0.7 : (meal.isCompleted ? 0.7 : 1),
           }}
         >
           <div className="flex items-center gap-2.5">
@@ -1192,24 +1193,27 @@ export default function WeeklyMenuPage() {
             }}>
               {displayName}
             </span>
+            {isPast && (
+              <span style={{ fontSize: 10, color: colors.textMuted, marginLeft: 4 }}>（過去）</span>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <span style={{ fontSize: 12, color: colors.textMuted }}>{meal.caloriesKcal || '-'}kcal</span>
-            {!isPast && <ChevronDown size={14} color={colors.textMuted} />}
+            <ChevronDown size={14} color={colors.textMuted} />
           </div>
         </button>
       </div>
     );
   };
 
-  const ExpandedMealCard = ({ mealKey, meal }: { mealKey: MealType; meal: PlannedMeal }) => {
+  const ExpandedMealCard = ({ mealKey, meal, isPast = false }: { mealKey: MealType; meal: PlannedMeal; isPast?: boolean }) => {
     const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
-    // 一括生成中かどうか（ExpandedMealCardは過去の日付では表示されないのでシンプルに）
-    const isGeneratingBulk = isGenerating;
+    // 一括生成中かどうか（過去でない場合のみ）
+    const isGeneratingBulk = isGenerating && !isPast;
     
     // dishes は配列形式に対応（可変数）
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
@@ -1483,15 +1487,13 @@ export default function WeeklyMenuPage() {
         {(['breakfast', 'lunch', 'dinner'] as MealType[]).map(type => {
           const meal = getMeal(currentDay, type);
           const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
-          const isExpanded = expandedMeal === type && !isPast && meal;
+          const isExpanded = expandedMeal === type && meal;
 
           if (!meal) return <EmptySlot key={type} mealKey={type} dayIndex={selectedDayIndex} />;
-          return isPast ? (
-            <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={true} />
-          ) : isExpanded ? (
-            <ExpandedMealCard key={type} mealKey={type} meal={meal} />
+          return isExpanded ? (
+            <ExpandedMealCard key={type} mealKey={type} meal={meal} isPast={isPast} />
           ) : (
-            <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={false} />
+            <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={isPast} />
           );
         })}
       </main>
