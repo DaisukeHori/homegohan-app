@@ -41,6 +41,8 @@ export async function GET(
       role: m.role,
       content: m.content,
       proposedActions: m.proposed_actions,
+      isImportant: m.is_important || false,
+      importanceReason: m.importance_reason,
       createdAt: m.created_at,
     }));
 
@@ -363,13 +365,13 @@ export async function POST(
     // システムプロンプトを構築（ユーザー情報を含む）
     const systemPrompt = await buildSystemPrompt(supabase, user.id);
 
-    // 過去のメッセージを取得（システムプロンプト以外）
+    // 過去のメッセージを取得（システムプロンプト以外）- 50件まで
     const { data: historyData } = await supabase
       .from('ai_consultation_messages')
-      .select('role, content, metadata')
+      .select('role, content, metadata, is_important')
       .eq('session_id', params.sessionId)
       .order('created_at', { ascending: true })
-      .limit(30);
+      .limit(50);
 
     // メッセージを構築
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [

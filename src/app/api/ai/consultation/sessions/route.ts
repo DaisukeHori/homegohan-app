@@ -17,6 +17,7 @@ export async function GET(request: Request) {
       title,
       status,
       summary,
+      key_topics,
       created_at,
       updated_at,
       ai_consultation_messages(id)
@@ -37,6 +38,7 @@ export async function GET(request: Request) {
     title: s.title,
     status: s.status,
     summary: s.summary,
+    keyTopics: s.key_topics,
     messageCount: s.ai_consultation_messages?.length || 0,
     createdAt: s.created_at,
     updatedAt: s.updated_at,
@@ -85,6 +87,30 @@ export async function POST(request: Request) {
       .order('record_date', { ascending: false })
       .limit(7);
 
+    // 過去のセッション要約を取得（最新10件）
+    const { data: pastSessions } = await supabase
+      .from('ai_consultation_sessions')
+      .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+      .eq('user_id', user.id)
+      .eq('status', 'closed')
+      .not('summary', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(10);
+
+    // 重要メッセージを取得（最新20件）
+    const { data: importantMessages } = await supabase
+      .from('ai_consultation_messages')
+      .select(`
+        content,
+        importance_reason,
+        created_at,
+        ai_consultation_sessions!inner(user_id, title)
+      `)
+      .eq('is_important', true)
+      .eq('ai_consultation_sessions.user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
     const contextSnapshot = {
       profile: profile ? {
         age: profile.age,
@@ -99,6 +125,8 @@ export async function POST(request: Request) {
       } : null,
       recentMeals: recentMeals || [],
       healthRecords: healthRecords || [],
+      pastSessionSummaries: pastSessions || [],
+      importantMessages: importantMessages || [],
       capturedAt: new Date().toISOString(),
     };
 
@@ -114,6 +142,28 @@ export async function POST(request: Request) {
 
     if (error) throw error;
 
+    // 過去のセッション要約を整形
+    const pastSessionsInfo = pastSessions && pastSessions.length > 0
+      ? `【過去の相談履歴（最新10件）】
+${pastSessions.map((s: any) => {
+  const keyFacts = s.context_snapshot?.key_facts || [];
+  const userInsights = s.context_snapshot?.user_insights || [];
+  return `
+■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP') : '日付不明'}）
+  概要: ${s.summary || '要約なし'}
+  トピック: ${(s.key_topics || []).join(', ') || 'なし'}
+  ${keyFacts.length > 0 ? `重要な事実:
+${keyFacts.map((f: any) => `    - [${f.category}] ${f.date ? f.date + ': ' : ''}${f.content}`).join('\n')}` : ''}
+  ${userInsights.length > 0 ? `判明したこと: ${userInsights.join(', ')}` : ''}`;
+}).join('\n')}`
+      : '';
+
+    // 重要メッセージを整形
+    const importantMessagesInfo = importantMessages && importantMessages.length > 0
+      ? `【ユーザーが重要とマークした過去の会話（最新20件）】
+${importantMessages.map((m: any) => `- ${m.content.substring(0, 150)}${m.content.length > 150 ? '...' : ''} ${m.importance_reason ? `(理由: ${m.importance_reason})` : ''}`).join('\n')}`
+      : '';
+
     // システムメッセージを追加
     await supabase
       .from('ai_consultation_messages')
@@ -128,12 +178,17 @@ export async function POST(request: Request) {
 2. 共感する：ユーザーの悩みや状況に寄り添う
 3. 具体的に提案：実行可能な具体的なアドバイスを提供
 4. アクション提案：必要に応じて献立の作成や変更を提案
+5. 過去の相談内容を踏まえて、一貫性のあるアドバイスを提供
 
 【ユーザー情報】
 ${JSON.stringify(contextSnapshot.profile, null, 2)}
 
 【最近の食事傾向】
 ${recentMeals?.length || 0}件の食事記録があります。
+
+${pastSessionsInfo}
+
+${importantMessagesInfo}
 
 あなたはユーザーの代わりに以下のアクションを実行できます：
 - generate_day_menu: 特定の日の献立を作成
@@ -148,7 +203,9 @@ ${recentMeals?.length || 0}件の食事記録があります。
   "type": "アクション種類",
   "params": { ... }
 }
-\`\`\``,
+\`\`\`
+
+【重要】過去の相談で判明したユーザーの好みや傾向、設定した目標を覚えておき、一貫性のあるアドバイスを心がけてください。`,
         metadata: { isSystemPrompt: true },
       });
 

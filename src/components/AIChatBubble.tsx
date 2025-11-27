@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   MessageCircle, X, Send, Sparkles, ChevronDown, 
   Check, XCircle, Loader2, Calendar, ShoppingCart, 
-  Target, UtensilsCrossed, BookOpen
+  Target, UtensilsCrossed, BookOpen, Star, Archive, MoreVertical
 } from "lucide-react";
 
 const colors = {
@@ -31,6 +31,7 @@ interface Message {
   content: string;
   proposedActions?: ProposedAction | null;
   createdAt: string;
+  isImportant?: boolean;
 }
 
 interface ProposedAction {
@@ -43,6 +44,8 @@ interface Session {
   id: string;
   title: string;
   messageCount: number;
+  status?: string;
+  summary?: string;
 }
 
 const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }> = {
@@ -68,6 +71,8 @@ export default function AIChatBubble() {
   const [showSessionList, setShowSessionList] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [showMessageMenu, setShowMessageMenu] = useState<string | null>(null);
+  const [isClosingSession, setIsClosingSession] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -116,7 +121,10 @@ export default function AIChatBubble() {
       const res = await fetch(`/api/ai/consultation/sessions/${sessionId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        setMessages(data.messages || []);
+        setMessages((data.messages || []).map((m: any) => ({
+          ...m,
+          isImportant: m.isImportant || false,
+        })));
       }
     } catch (e) {
       console.error('Failed to fetch messages:', e);
@@ -301,6 +309,70 @@ export default function AIChatBubble() {
     await fetchMessages(sessionId);
   };
 
+  // 重要マークをトグル
+  const toggleImportant = async (messageId: string) => {
+    if (!currentSessionId) return;
+    
+    try {
+      const res = await fetch(
+        `/api/ai/consultation/sessions/${currentSessionId}/messages/${messageId}/important`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }
+      );
+      
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(prev => prev.map(m => 
+          m.id === messageId ? { ...m, isImportant: data.isImportant } : m
+        ));
+      }
+    } catch (e) {
+      console.error('Failed to toggle important:', e);
+    }
+    setShowMessageMenu(null);
+  };
+
+  // セッションを終了して要約を生成
+  const closeSession = async () => {
+    if (!currentSessionId || isClosingSession) return;
+    
+    setIsClosingSession(true);
+    try {
+      const res = await fetch(
+        `/api/ai/consultation/sessions/${currentSessionId}/close`,
+        { method: 'POST' }
+      );
+      
+      if (res.ok) {
+        const data = await res.json();
+        // セッション一覧を更新
+        await fetchSessions();
+        // 新しいセッションを作成
+        await createNewSession();
+        
+        if (data.summary) {
+          // 要約完了メッセージを表示
+          setMessages(prev => [
+            ...prev,
+            {
+              id: `summary-${Date.now()}`,
+              role: 'assistant',
+              content: `📝 前回の相談を要約しました：\n\n${data.summary.summary}\n\nトピック: ${(data.summary.key_topics || []).join(', ')}`,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to close session:', e);
+    } finally {
+      setIsClosingSession(false);
+    }
+  };
+
   // サーバーサイドでは何もレンダリングしない
   if (!isMounted) {
     return null;
@@ -366,6 +438,18 @@ export default function AIChatBubble() {
               
               <div className="flex items-center gap-1">
                 <button
+                  onClick={closeSession}
+                  disabled={isClosingSession || !currentSessionId}
+                  className="p-2 rounded-full hover:bg-gray-100"
+                  title="相談を終了して要約を保存"
+                >
+                  {isClosingSession ? (
+                    <Loader2 size={16} color={colors.textMuted} className="animate-spin" />
+                  ) : (
+                    <Archive size={16} color={colors.textMuted} />
+                  )}
+                </button>
+                <button
                   onClick={() => setShowSessionList(!showSessionList)}
                   className="p-2 rounded-full hover:bg-gray-100"
                 >
@@ -409,12 +493,27 @@ export default function AIChatBubble() {
                           currentSessionId === session.id ? 'bg-gray-100' : ''
                         }`}
                       >
-                        <span style={{ fontSize: 13, color: colors.text }}>
-                          {session.title}
-                        </span>
-                        <span style={{ fontSize: 11, color: colors.textMuted, marginLeft: 8 }}>
-                          ({session.messageCount}件)
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span style={{ fontSize: 13, color: colors.text }}>
+                            {session.title}
+                          </span>
+                          {session.status === 'closed' && (
+                            <span 
+                              className="px-1.5 py-0.5 rounded text-[10px]"
+                              style={{ background: colors.border, color: colors.textMuted }}
+                            >
+                              終了
+                            </span>
+                          )}
+                          <span style={{ fontSize: 11, color: colors.textMuted }}>
+                            ({session.messageCount}件)
+                          </span>
+                        </div>
+                        {session.summary && (
+                          <p style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }} className="truncate">
+                            {session.summary}
+                          </p>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -453,22 +552,72 @@ export default function AIChatBubble() {
               ) : (
                 <>
                   {messages.map((msg) => (
-                    <div key={msg.id}>
+                    <div key={msg.id} className="group relative">
                       {/* メッセージバブル */}
                       <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div
-                          className="max-w-[85%] px-3 py-2 rounded-2xl"
-                          style={{
-                            background: msg.role === 'user' ? colors.primary : colors.card,
-                            color: msg.role === 'user' ? '#fff' : colors.text,
-                            borderBottomRightRadius: msg.role === 'user' ? 4 : 16,
-                            borderBottomLeftRadius: msg.role === 'user' ? 16 : 4,
-                            boxShadow: msg.role === 'assistant' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                          }}
-                        >
-                          <p style={{ fontSize: 14, margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                            {msg.content}
-                          </p>
+                        <div className="relative max-w-[85%]">
+                          {/* 重要マーク */}
+                          {msg.isImportant && (
+                            <div 
+                              className="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center z-10"
+                              style={{ background: colors.warning }}
+                            >
+                              <Star size={10} color="#fff" fill="#fff" />
+                            </div>
+                          )}
+                          
+                          <div
+                            className="px-3 py-2 rounded-2xl"
+                            style={{
+                              background: msg.role === 'user' ? colors.primary : colors.card,
+                              color: msg.role === 'user' ? '#fff' : colors.text,
+                              borderBottomRightRadius: msg.role === 'user' ? 4 : 16,
+                              borderBottomLeftRadius: msg.role === 'user' ? 16 : 4,
+                              boxShadow: msg.role === 'assistant' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                              border: msg.isImportant ? `2px solid ${colors.warning}` : 'none',
+                            }}
+                          >
+                            <p style={{ fontSize: 14, margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                              {msg.content}
+                            </p>
+                          </div>
+
+                          {/* メッセージメニューボタン */}
+                          {!msg.id.startsWith('temp-') && !msg.id.startsWith('welcome') && !msg.id.startsWith('action-') && !msg.id.startsWith('summary-') && (
+                            <button
+                              onClick={() => setShowMessageMenu(showMessageMenu === msg.id ? null : msg.id)}
+                              className="absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full hover:bg-gray-200"
+                              style={{ 
+                                right: msg.role === 'user' ? 'auto' : -24,
+                                left: msg.role === 'user' ? -24 : 'auto',
+                              }}
+                            >
+                              <MoreVertical size={14} color={colors.textMuted} />
+                            </button>
+                          )}
+
+                          {/* メッセージメニュー */}
+                          {showMessageMenu === msg.id && (
+                            <div 
+                              className="absolute top-6 z-20 py-1 rounded-lg shadow-lg border"
+                              style={{ 
+                                background: colors.card, 
+                                borderColor: colors.border,
+                                right: msg.role === 'user' ? 'auto' : -80,
+                                left: msg.role === 'user' ? -80 : 'auto',
+                              }}
+                            >
+                              <button
+                                onClick={() => toggleImportant(msg.id)}
+                                className="w-full px-3 py-2 text-left hover:bg-gray-100 flex items-center gap-2"
+                              >
+                                <Star size={14} color={msg.isImportant ? colors.warning : colors.textMuted} fill={msg.isImportant ? colors.warning : 'none'} />
+                                <span style={{ fontSize: 12, color: colors.text }}>
+                                  {msg.isImportant ? '重要を解除' : '重要としてマーク'}
+                                </span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 
