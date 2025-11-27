@@ -1,5 +1,4 @@
 import { createClient } from '@/lib/supabase/server';
-
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
@@ -9,9 +8,14 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { imageBase64, mimeType, mealType, mealId } = body;
+    // 複数枚対応: images配列または従来のimageBase64を受け付ける
+    const { images, imageBase64, mimeType, mealType, mealId } = body;
+    
+    // images配列がある場合は複数枚、なければ従来の単一画像
+    const imageDataArray: { base64: string; mimeType: string }[] = images || 
+      (imageBase64 ? [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }] : []);
 
-    if (!imageBase64) {
+    if (imageDataArray.length === 0) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
     }
 
@@ -19,8 +23,7 @@ export async function POST(request: Request) {
     if (mealId) {
       const { error: invokeError } = await supabase.functions.invoke('analyze-meal-photo', {
         body: {
-          imageBase64,
-          mimeType: mimeType || 'image/jpeg',
+          images: imageDataArray,
           mealId,
           mealType,
           userId: user.id,
@@ -45,9 +48,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'AI API key not configured' }, { status: 500 });
     }
 
-    const mealTypeJa = mealType === 'breakfast' ? '朝食' : mealType === 'lunch' ? '昼食' : '夕食';
+    const mealTypeJa = mealType === 'breakfast' ? '朝食' 
+      : mealType === 'lunch' ? '昼食' 
+      : mealType === 'dinner' ? '夕食'
+      : mealType === 'snack' ? 'おやつ'
+      : mealType === 'midnight_snack' ? '夜食'
+      : '食事';
 
-    const prompt = `この${mealTypeJa}の写真を分析してください。
+    const imageCountText = imageDataArray.length > 1 ? `${imageDataArray.length}枚の` : '';
+    const prompt = `この${imageCountText}${mealTypeJa}の写真を分析してください。
 
 以下のJSON形式で、写真に写っている全ての料理を特定し、それぞれの栄養情報を推定してください：
 
@@ -55,7 +64,7 @@ export async function POST(request: Request) {
   "dishes": [
     {
       "name": "料理名",
-      "role": "main または side または soup または rice または salad",
+      "role": "main または side または soup または rice または salad または dessert",
       "cal": 推定カロリー（数値）,
       "ingredient": "主な食材"
     }
@@ -65,27 +74,28 @@ export async function POST(request: Request) {
 }
 
 注意：
-- 写真に写っている全ての料理を含めてください
+- 全ての写真に写っている全ての料理を含めてください
 - カロリーは1人前として推定してください
-- roleは料理の種類に応じて適切に設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad）
+- roleは料理の種類に応じて適切に設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート/おやつ=dessert）
 - JSONのみを出力してください`;
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GOOGLE_AI_API_KEY}`;
+    
+    // 複数枚の画像をpartsに追加
+    const parts: any[] = imageDataArray.map(img => ({
+      inlineData: {
+        mimeType: img.mimeType,
+        data: img.base64
+      }
+    }));
+    parts.push({ text: prompt });
     
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType || 'image/jpeg',
-                data: imageBase64
-              }
-            },
-            { text: prompt }
-          ]
+          parts: parts
         }],
         generationConfig: {
           temperature: 0.4,

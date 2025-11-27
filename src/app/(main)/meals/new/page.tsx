@@ -81,8 +81,9 @@ export default function MealCaptureModal() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   
   const [step, setStep] = useState<Step>('capture');
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  // 複数枚対応
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   
   // 解析結果
@@ -105,40 +106,54 @@ export default function MealCaptureModal() {
   const weekDates = getWeekDates(weekStart);
   const todayStr = formatLocalDate(new Date());
 
-  // 写真選択
+  // 写真選択（複数枚対応）
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setPhotoFile(file);
-      const url = URL.createObjectURL(file);
-      setPhotoPreview(url);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const newFiles = Array.from(files);
+      setPhotoFiles(prev => [...prev, ...newFiles]);
+      
+      newFiles.forEach(file => {
+        const url = URL.createObjectURL(file);
+        setPhotoPreviews(prev => [...prev, url]);
+      });
     }
   };
+  
+  // 写真を削除
+  const removePhoto = (index: number) => {
+    setPhotoFiles(prev => prev.filter((_, i) => i !== index));
+    setPhotoPreviews(prev => prev.filter((_, i) => i !== index));
+  };
 
-  // AI解析
+  // AI解析（複数枚対応）
   const analyzePhoto = async () => {
-    if (!photoFile) return;
+    if (photoFiles.length === 0) return;
     
     setStep('analyzing');
     setIsAnalyzing(true);
     
     try {
-      // Base64に変換
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const result = reader.result as string;
-          resolve(result.split(',')[1]);
-        };
-        reader.readAsDataURL(photoFile);
-      });
+      // 複数枚をBase64に変換
+      const imageDataArray = await Promise.all(photoFiles.map(async (file) => {
+        return new Promise<{ base64: string; mimeType: string }>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve({
+              base64: result.split(',')[1],
+              mimeType: file.type
+            });
+          };
+          reader.readAsDataURL(file);
+        });
+      }));
       
       const res = await fetch('/api/ai/analyze-meal-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          imageBase64: base64,
-          mimeType: photoFile.type,
+          images: imageDataArray,
           mealType: selectedMealType,
         }),
       });
@@ -262,26 +277,52 @@ export default function MealCaptureModal() {
             className="flex-1 p-4"
           >
             <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 16, textAlign: 'center' }}>
-              食事の写真を撮影またはアップロードすると、<br/>AIが料理を認識して栄養素を推定します。
+              食事の写真を撮影またはアップロードすると、<br/>AIが料理を認識して栄養素を推定します。<br/>
+              <strong>複数枚の写真をまとめて追加できます。</strong>
             </p>
             
-            {photoPreview ? (
-              <div className="relative mb-4">
-                <img 
-                  src={photoPreview} 
-                  alt="Preview" 
-                  className="w-full rounded-2xl object-cover" 
-                  style={{ maxHeight: 350 }} 
-                />
-                <button
-                  onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}
-                  className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center"
-                  style={{ background: 'rgba(0,0,0,0.5)' }}
-                >
-                  <X size={20} color="#fff" />
-                </button>
+            {/* 選択済み写真のプレビュー */}
+            {photoPreviews.length > 0 && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
+                    選択した写真 ({photoPreviews.length}枚)
+                  </span>
+                  <button
+                    onClick={() => { setPhotoFiles([]); setPhotoPreviews([]); }}
+                    style={{ fontSize: 12, color: colors.accent }}
+                  >
+                    すべて削除
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {photoPreviews.map((preview, idx) => (
+                    <div key={idx} className="relative aspect-square">
+                      <img src={preview} alt={`Preview ${idx + 1}`} className="w-full h-full rounded-xl object-cover" />
+                      <button
+                        onClick={() => removePhoto(idx)}
+                        className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center"
+                        style={{ background: 'rgba(0,0,0,0.6)' }}
+                      >
+                        <X size={12} color="#fff" />
+                      </button>
+                    </div>
+                  ))}
+                  {/* 追加ボタン */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="aspect-square rounded-xl flex flex-col items-center justify-center"
+                    style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
+                  >
+                    <Plus size={24} color={colors.textMuted} />
+                    <span style={{ fontSize: 10, color: colors.textMuted }}>追加</span>
+                  </button>
+                </div>
               </div>
-            ) : (
+            )}
+            
+            {/* 写真未選択時のボタン */}
+            {photoPreviews.length === 0 && (
               <div className="flex gap-4 mb-6">
                 <button
                   onClick={() => cameraInputRef.current?.click()}
@@ -318,24 +359,27 @@ export default function MealCaptureModal() {
               type="file"
               ref={fileInputRef}
               accept="image/*"
+              multiple
               onChange={handlePhotoSelect}
               className="hidden"
             />
             
-            {photoPreview && (
+            {photoPreviews.length > 0 && (
               <button
                 onClick={analyzePhoto}
                 className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
                 style={{ background: colors.accent }}
               >
                 <Sparkles size={20} color="#fff" />
-                <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>AIで解析する</span>
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+                  {photoFiles.length > 1 ? `${photoFiles.length}枚をAIで解析` : 'AIで解析する'}
+                </span>
               </button>
             )}
             
             <div className="mt-6 p-4 rounded-xl" style={{ background: colors.blueLight }}>
               <p style={{ fontSize: 12, color: colors.blue, margin: 0 }}>
-                💡 ヒント: 料理全体が写るように撮影すると、より正確に解析できます。
+                💡 ヒント: 複数の料理がある場合は、それぞれ別の写真で撮影するとより正確に解析できます。
               </p>
             </div>
           </motion.div>

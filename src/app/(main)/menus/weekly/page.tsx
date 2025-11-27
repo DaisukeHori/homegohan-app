@@ -149,8 +149,8 @@ export default function WeeklyMenuPage() {
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const weekDates = getWeekDates(weekStart);
 
-  // Expanded Meal State
-  const [expandedMeal, setExpandedMeal] = useState<MealType>('dinner');
+  // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
+  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
 
   // Form States
   const [aiChatInput, setAiChatInput] = useState("");
@@ -256,10 +256,10 @@ export default function WeeklyMenuPage() {
   const [manualDishes, setManualDishes] = useState<DishDetail[]>([]);
   const [manualMode, setManualMode] = useState<MealMode>('cook');
   
-  // Photo edit state
+  // Photo edit state（複数枚対応）
   const [photoEditMeal, setPhotoEditMeal] = useState<PlannedMeal | null>(null);
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -903,39 +903,67 @@ export default function WeeklyMenuPage() {
     setActiveModal('photoEdit');
   };
 
-  // Handle photo selection
+  // Handle photo selection（複数枚対応）
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setPhotoFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const newFiles = Array.from(files);
+      setPhotoFiles(prev => [...prev, ...newFiles]);
+      
+      // プレビュー画像を生成
+      newFiles.forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setPhotoPreviews(prev => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
     }
   };
+  
+  // 写真を削除
+  const removePhoto = (index: number) => {
+    setPhotoFiles(prev => prev.filter((_, i) => i !== index));
+    setPhotoPreviews(prev => prev.filter((_, i) => i !== index));
+  };
 
-  // Analyze photo with AI
+  // Analyze photo with AI（複数枚対応）
   const analyzePhotoWithAI = async () => {
-    if (!photoFile || !photoEditMeal || !currentPlan) return;
+    if (photoFiles.length === 0 || !photoEditMeal || !currentPlan) return;
     
     setIsAnalyzingPhoto(true);
     
     try {
-      const formData = new FormData();
-      formData.append('image', photoFile);
-      formData.append('mealId', photoEditMeal.id);
-      formData.append('mealType', photoEditMeal.mealType);
+      // 複数枚の写真をBase64に変換して送信
+      const imageDataArray = await Promise.all(photoFiles.map(async (file) => {
+        return new Promise<{ base64: string; mimeType: string }>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve({
+              base64: result.split(',')[1],
+              mimeType: file.type
+            });
+          };
+          reader.readAsDataURL(file);
+        });
+      }));
       
       const res = await fetch('/api/ai/analyze-meal-photo', {
         method: 'POST',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          images: imageDataArray,
+          mealId: photoEditMeal.id,
+          mealType: photoEditMeal.mealType,
+        })
       });
       
       if (res.ok) {
         setActiveModal(null);
         setPhotoEditMeal(null);
+        setPhotoFiles([]);
+        setPhotoPreviews([]);
         
         // Poll for updated data
         let attempts = 0;
@@ -980,7 +1008,10 @@ export default function WeeklyMenuPage() {
 
   // --- Computed ---
   const currentDay = currentPlan?.days?.find(d => d.dayDate === weekDates[selectedDayIndex]?.dateStr);
+  // 単一の食事を取得（AI生成用、空欄チェック用）
   const getMeal = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.find(m => m.mealType === type);
+  // 同じタイプの食事を全て取得（複数回の食事対応）
+  const getMeals = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.filter(m => m.mealType === type) || [];
   const expiringItems = fridgeItems.filter(i => {
     const days = getDaysUntil(i.expirationDate);
     return days !== null && days <= 3;
@@ -1116,7 +1147,7 @@ export default function WeeklyMenuPage() {
     );
   };
 
-  const CollapsedMealCard = ({ mealKey, meal, isPast }: { mealKey: MealType; meal: PlannedMeal; isPast: boolean }) => {
+  const CollapsedMealCard = ({ mealKey, meal, isPast, mealIndex = 0 }: { mealKey: MealType; meal: PlannedMeal; isPast: boolean; mealIndex?: number }) => {
     const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
@@ -1131,6 +1162,9 @@ export default function WeeklyMenuPage() {
       : meal.dishes 
         ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
         : [];
+    
+    // 複数回目の食事の場合はラベルに番号を追加
+    const mealLabel = mealIndex > 0 ? `${MEAL_LABELS[mealKey]}${mealIndex + 1}` : MEAL_LABELS[mealKey];
     // 主菜を探す（英語・日本語両方対応）
     const mainDish = dishesArray.find(d => 
       d.role === 'main' || d.role === '主菜' || d.role === '主食'
@@ -1183,7 +1217,7 @@ export default function WeeklyMenuPage() {
         )}
         
         <button
-          onClick={() => setExpandedMeal(mealKey)}
+          onClick={() => setExpandedMealId(meal.id)}
           className="flex-1 flex items-center justify-between rounded-[14px] p-3 text-left transition-all"
           style={{
             background: colors.card,
@@ -1191,8 +1225,8 @@ export default function WeeklyMenuPage() {
           }}
         >
           <div className="flex items-center gap-2.5">
-            <span style={{ fontSize: 13, fontWeight: 600, color: colors.text, width: 28 }}>
-              {MEAL_LABELS[mealKey].slice(0, 1)}
+            <span style={{ fontSize: 13, fontWeight: 600, color: colors.text, minWidth: 28 }}>
+              {mealIndex > 0 ? `${MEAL_LABELS[mealKey].slice(0, 1)}${mealIndex + 1}` : MEAL_LABELS[mealKey].slice(0, 1)}
             </span>
             <div className="flex items-center gap-1 px-2 py-1 rounded-md" style={{ background: mode.bg }}>
               <ModeIcon size={12} color={mode.color} />
@@ -1217,10 +1251,11 @@ export default function WeeklyMenuPage() {
     );
   };
 
-  const ExpandedMealCard = ({ mealKey, meal, isPast = false }: { mealKey: MealType; meal: PlannedMeal; isPast?: boolean }) => {
+  const ExpandedMealCard = ({ mealKey, meal, isPast = false, mealIndex = 0 }: { mealKey: MealType; meal: PlannedMeal; isPast?: boolean; mealIndex?: number }) => {
     const mode = MODE_CONFIG[meal.mode || 'cook'];
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
+    const mealLabel = mealIndex > 0 ? `${MEAL_LABELS[mealKey]}${mealIndex + 1}` : MEAL_LABELS[mealKey];
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
     // 一括生成中かどうか（過去でない場合のみ）
@@ -1245,7 +1280,7 @@ export default function WeeklyMenuPage() {
       return (
         <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
           <div className="flex justify-between items-center mb-3">
-            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>{MEAL_LABELS[mealKey]}</span>
+            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>{mealLabel}</span>
           </div>
           <div className="flex items-center justify-center rounded-[14px] p-8" style={{ background: colors.accentLight }}>
             <div className="text-center">
@@ -1274,7 +1309,7 @@ export default function WeeklyMenuPage() {
                 {meal.isCompleted && <Check size={14} color="#fff" />}
               </button>
             )}
-            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>{MEAL_LABELS[mealKey]}</span>
+            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>{mealLabel}</span>
             <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg" style={{ background: mode.bg }}>
               <ModeIcon size={14} color={mode.color} />
               <span style={{ fontSize: 11, fontWeight: 600, color: mode.color }}>{mode.label}</span>
@@ -1494,31 +1529,84 @@ export default function WeeklyMenuPage() {
           <span style={{ fontSize: 12, color: colors.textMuted }}>{getDayTotalCal(currentDay)} kcal</span>
         </div>
 
-        {/* Meal Cards - 基本の3食 */}
+        {/* Meal Cards - 基本の3食（複数対応） */}
         {BASE_MEAL_TYPES.map(type => {
-          const meal = getMeal(currentDay, type);
+          const meals = getMeals(currentDay, type);
           const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
-          const isExpanded = expandedMeal === type && meal;
+          const hasAnyMeal = meals.length > 0;
 
-          if (!meal) return <EmptySlot key={type} mealKey={type} dayIndex={selectedDayIndex} />;
-          return isExpanded ? (
-            <ExpandedMealCard key={type} mealKey={type} meal={meal} isPast={isPast} />
-          ) : (
-            <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={isPast} />
+          return (
+            <div key={type}>
+              {/* 空欄の場合 */}
+              {!hasAnyMeal && <EmptySlot mealKey={type} dayIndex={selectedDayIndex} />}
+              
+              {/* 登録済みの食事（複数可） */}
+              {meals.map((meal, idx) => {
+                const isExpanded = expandedMealId === meal.id;
+                return isExpanded ? (
+                  <ExpandedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                ) : (
+                  <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                );
+              })}
+              
+              {/* 同じタイプの食事を追加するボタン（既に1つ以上ある場合） */}
+              {hasAnyMeal && (
+                <button
+                  onClick={() => {
+                    setAddMealKey(type);
+                    setAddMealDayIndex(selectedDayIndex);
+                    setActiveModal('add');
+                  }}
+                  className="w-full flex items-center justify-center gap-1 rounded-lg p-2 mb-2 transition-colors"
+                  style={{ 
+                    background: 'transparent', 
+                    border: `1px dashed ${colors.border}`,
+                  }}
+                >
+                  <Plus size={12} color={colors.textMuted} />
+                  <span style={{ fontSize: 11, color: colors.textMuted }}>{MEAL_LABELS[type]}を追加</span>
+                </button>
+              )}
+            </div>
           );
         })}
 
-        {/* Extra Meals - おやつ・夜食 */}
+        {/* Extra Meals - おやつ・夜食（複数対応） */}
         {EXTRA_MEAL_TYPES.map(type => {
-          const meal = getMeal(currentDay, type);
+          const meals = getMeals(currentDay, type);
           const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
-          const isExpanded = expandedMeal === type && meal;
 
-          if (!meal) return null; // 追加されていない場合は表示しない
-          return isExpanded ? (
-            <ExpandedMealCard key={type} mealKey={type} meal={meal} isPast={isPast} />
-          ) : (
-            <CollapsedMealCard key={type} mealKey={type} meal={meal} isPast={isPast} />
+          if (meals.length === 0) return null;
+
+          return (
+            <div key={type}>
+              {meals.map((meal, idx) => {
+                const isExpanded = expandedMealId === meal.id;
+                return isExpanded ? (
+                  <ExpandedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                ) : (
+                  <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                );
+              })}
+              
+              {/* 同じタイプを追加 */}
+              <button
+                onClick={() => {
+                  setAddMealKey(type);
+                  setAddMealDayIndex(selectedDayIndex);
+                  setActiveModal('add');
+                }}
+                className="w-full flex items-center justify-center gap-1 rounded-lg p-2 mb-2 transition-colors"
+                style={{ 
+                  background: 'transparent', 
+                  border: `1px dashed ${colors.border}`,
+                }}
+              >
+                <Plus size={12} color={colors.textMuted} />
+                <span style={{ fontSize: 11, color: colors.textMuted }}>{MEAL_LABELS[type]}を追加</span>
+              </button>
+            </div>
           );
         })}
 
@@ -2401,7 +2489,7 @@ export default function WeeklyMenuPage() {
               </motion.div>
             )}
 
-            {/* Photo Edit Modal */}
+            {/* Photo Edit Modal（複数枚対応） */}
             {activeModal === 'photoEdit' && photoEditMeal && (
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -2413,14 +2501,20 @@ export default function WeeklyMenuPage() {
                   <div className="flex items-center gap-2">
                     <Camera size={18} color={colors.blue} />
                     <span style={{ fontSize: 15, fontWeight: 600 }}>写真から入力</span>
+                    {photoPreviews.length > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.accentLight, color: colors.accent }}>
+                        {photoPreviews.length}枚
+                      </span>
+                    )}
                   </div>
-                  <button onClick={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFile(null); setPhotoPreview(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                  <button onClick={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <X size={14} color={colors.textLight} />
                   </button>
                 </div>
                 <div className="flex-1 p-4 overflow-auto">
                   <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>
-                    食事の写真を撮影またはアップロードすると、AIが料理を認識して栄養素を推定します。
+                    食事の写真を撮影またはアップロードすると、AIが料理を認識して栄養素を推定します。<br/>
+                    <strong>複数枚の写真をまとめて追加できます。</strong>
                   </p>
                   
                   <input
@@ -2428,22 +2522,49 @@ export default function WeeklyMenuPage() {
                     ref={fileInputRef}
                     accept="image/*"
                     capture="environment"
+                    multiple
                     onChange={handlePhotoSelect}
                     className="hidden"
                   />
                   
-                  {photoPreview ? (
-                    <div className="relative mb-4">
-                      <img src={photoPreview} alt="Preview" className="w-full rounded-xl object-cover" style={{ maxHeight: 300 }} />
-                      <button
-                        onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}
-                        className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center"
-                        style={{ background: 'rgba(0,0,0,0.5)' }}
-                      >
-                        <X size={16} color="#fff" />
-                      </button>
+                  {/* 選択済み写真のプレビュー */}
+                  {photoPreviews.length > 0 && (
+                    <div className="mb-4">
+                      <div className="grid grid-cols-3 gap-2">
+                        {photoPreviews.map((preview, idx) => (
+                          <div key={idx} className="relative aspect-square">
+                            <img src={preview} alt={`Preview ${idx + 1}`} className="w-full h-full rounded-lg object-cover" />
+                            <button
+                              onClick={() => removePhoto(idx)}
+                              className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center"
+                              style={{ background: 'rgba(0,0,0,0.6)' }}
+                            >
+                              <X size={12} color="#fff" />
+                            </button>
+                          </div>
+                        ))}
+                        {/* 追加ボタン */}
+                        <button
+                          onClick={() => {
+                            const input = document.createElement('input');
+                            input.type = 'file';
+                            input.accept = 'image/*';
+                            input.multiple = true;
+                            input.onchange = (e) => handlePhotoSelect(e as any);
+                            input.click();
+                          }}
+                          className="aspect-square rounded-lg flex flex-col items-center justify-center"
+                          style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
+                        >
+                          <Plus size={24} color={colors.textMuted} />
+                          <span style={{ fontSize: 10, color: colors.textMuted }}>追加</span>
+                        </button>
+                      </div>
                     </div>
-                  ) : (
+                  )}
+                  
+                  {/* 写真未選択時のボタン */}
+                  {photoPreviews.length === 0 && (
                     <div className="flex gap-3 mb-4">
                       <button
                         onClick={() => fileInputRef.current?.click()}
@@ -2458,6 +2579,7 @@ export default function WeeklyMenuPage() {
                           const input = document.createElement('input');
                           input.type = 'file';
                           input.accept = 'image/*';
+                          input.multiple = true;
                           input.onchange = (e) => handlePhotoSelect(e as any);
                           input.click();
                         }}
@@ -2472,14 +2594,14 @@ export default function WeeklyMenuPage() {
                   
                   <div className="p-3 rounded-xl" style={{ background: colors.blueLight }}>
                     <p style={{ fontSize: 11, color: colors.blue, margin: 0 }}>
-                      💡 AIが写真から料理名、カロリー、栄養素を自動で推定します。解析には数秒〜数十秒かかります。
+                      💡 AIが写真から料理名、カロリー、栄養素を自動で推定します。複数枚の場合はまとめて解析します。
                     </p>
                   </div>
                 </div>
                 <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
                     onClick={analyzePhotoWithAI}
-                    disabled={!photoFile || isAnalyzingPhoto}
+                    disabled={photoFiles.length === 0 || isAnalyzingPhoto}
                     className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
                     style={{ background: colors.blue }}
                   >
@@ -2491,7 +2613,9 @@ export default function WeeklyMenuPage() {
                     ) : (
                       <>
                         <Sparkles size={16} color="#fff" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIで解析する</span>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>
+                          {photoFiles.length > 1 ? `${photoFiles.length}枚をAIで解析` : 'AIで解析する'}
+                        </span>
                       </>
                     )}
                   </button>
