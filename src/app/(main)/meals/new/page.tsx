@@ -182,11 +182,11 @@ export default function MealCaptureModal() {
     setIsSaving(true);
     
     try {
-      // 1. まず写真をアップロード
+      // 1. まず写真をアップロード（最初の1枚を使用）
       let imageUrl = null;
-      if (photoFile) {
+      if (photoFiles.length > 0) {
         const formData = new FormData();
-        formData.append('file', photoFile);
+        formData.append('file', photoFiles[0]);
         formData.append('folder', 'meals');
         
         const uploadRes = await fetch('/api/upload', {
