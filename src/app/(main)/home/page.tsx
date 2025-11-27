@@ -9,8 +9,8 @@ import { Icons } from "@/components/icons";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Calendar, Coffee, Sun, Moon, Sparkles,
-  ChevronRight, TrendingUp, ShoppingCart, Trophy, AlertTriangle,
-  Camera, Clock, Target, Award, Refrigerator, X
+  ChevronRight, TrendingUp, TrendingDown, ShoppingCart, Trophy, AlertTriangle,
+  Camera, Clock, Target, Award, Refrigerator, X, Scale, Heart, Activity
 } from 'lucide-react';
 
 // カラーパレット
@@ -27,6 +27,7 @@ const colors = {
   successLight: '#E8F5E9',
   warning: '#FF9800',
   warningLight: '#FFF3E0',
+  error: '#F44336',
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -81,6 +82,7 @@ export default function HomePage() {
     badgeCount,
     latestBadge,
     bestMealThisWeek,
+    healthSummary,
     toggleMealCompletion,
     updateActivityLevel,
     setAnnouncement,
@@ -176,6 +178,103 @@ export default function HomePage() {
               </div>
             </motion.div>
           </div>
+
+          {/* 健康記録サマリー */}
+          <Link href="/health">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ delay: 0.15 }}
+              className="mb-4 bg-white rounded-2xl p-4 shadow-sm border border-purple-100 hover:shadow-md transition-shadow"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Activity size={18} style={{ color: colors.purple }} />
+                  <span className="font-semibold text-sm" style={{ color: colors.text }}>健康記録</span>
+                  {healthSummary.hasAlert && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-600">
+                      要確認
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 text-xs" style={{ color: colors.purple }}>
+                  詳細を見る <ChevronRight size={14} />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-3 gap-3">
+                {/* 体重 */}
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-1 mb-1">
+                    <Scale size={14} style={{ color: colors.accent }} />
+                    <span className="text-xs" style={{ color: colors.textMuted }}>体重</span>
+                  </div>
+                  <p className="text-lg font-bold" style={{ color: colors.text }}>
+                    {healthSummary.latestWeight ? `${healthSummary.latestWeight}` : '-'}
+                    <span className="text-xs font-normal ml-0.5">kg</span>
+                  </p>
+                  {healthSummary.weightChange !== null && (
+                    <div className="flex items-center justify-center gap-0.5">
+                      {healthSummary.weightChange < 0 ? (
+                        <TrendingDown size={12} style={{ color: colors.success }} />
+                      ) : healthSummary.weightChange > 0 ? (
+                        <TrendingUp size={12} style={{ color: colors.error }} />
+                      ) : null}
+                      <span 
+                        className="text-xs"
+                        style={{ 
+                          color: healthSummary.weightChange < 0 ? colors.success : 
+                                 healthSummary.weightChange > 0 ? colors.error : colors.textMuted 
+                        }}
+                      >
+                        {healthSummary.weightChange > 0 ? '+' : ''}{healthSummary.weightChange}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 連続記録 */}
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-1 mb-1">
+                    <Flame size={14} style={{ color: colors.streak }} />
+                    <span className="text-xs" style={{ color: colors.textMuted }}>連続</span>
+                  </div>
+                  <p className="text-lg font-bold" style={{ color: colors.text }}>
+                    {healthSummary.healthStreak}
+                    <span className="text-xs font-normal ml-0.5">日</span>
+                  </p>
+                </div>
+
+                {/* 目標まで */}
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-1 mb-1">
+                    <Target size={14} style={{ color: colors.success }} />
+                    <span className="text-xs" style={{ color: colors.textMuted }}>目標まで</span>
+                  </div>
+                  {healthSummary.latestWeight && healthSummary.targetWeight ? (
+                    <p className="text-lg font-bold" style={{ color: colors.text }}>
+                      {(healthSummary.latestWeight - healthSummary.targetWeight).toFixed(1)}
+                      <span className="text-xs font-normal ml-0.5">kg</span>
+                    </p>
+                  ) : (
+                    <p className="text-lg font-bold" style={{ color: colors.textMuted }}>-</p>
+                  )}
+                </div>
+              </div>
+
+              {/* 今日の記録ステータス */}
+              {!healthSummary.todayRecord && (
+                <div 
+                  className="mt-3 pt-3 border-t flex items-center justify-center gap-2"
+                  style={{ borderColor: colors.border }}
+                >
+                  <span className="text-xs" style={{ color: colors.accent }}>
+                    📝 今日の記録がまだありません
+                  </span>
+                </div>
+              )}
+            </motion.div>
+          </Link>
 
           {/* お知らせ */}
           <AnimatePresence>

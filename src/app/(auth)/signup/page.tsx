@@ -140,7 +140,7 @@ export default function SignupPage() {
         </p>
 
         <p className="text-xs text-center text-gray-400 mt-8">
-          続行することで、<Link href="#" className="underline">利用規約</Link>および<Link href="#" className="underline">プライバシーポリシー</Link>に同意したものとみなされます。
+          続行することで、<Link href="/terms" className="underline">利用規約</Link>および<Link href="/privacy" className="underline">プライバシーポリシー</Link>に同意したものとみなされます。
         </p>
       </div>
     </div>

@@ -292,9 +292,9 @@ export default function WelcomePage() {
              <span className="font-bold text-gray-900">ほめゴハン</span>
           </div>
           <div className="flex gap-8 text-sm text-gray-500">
-            <Link href="#" className="hover:text-[#FF8A65] transition-colors">利用規約</Link>
-            <Link href="#" className="hover:text-[#FF8A65] transition-colors">プライバシー</Link>
-            <Link href="#" className="hover:text-[#FF8A65] transition-colors">お問い合わせ</Link>
+            <Link href="/terms" className="hover:text-[#FF8A65] transition-colors">利用規約</Link>
+            <Link href="/privacy" className="hover:text-[#FF8A65] transition-colors">プライバシー</Link>
+            <Link href="/contact" className="hover:text-[#FF8A65] transition-colors">お問い合わせ</Link>
           </div>
           <div className="text-xs text-gray-400">
             © 2025 Homegohan Inc.

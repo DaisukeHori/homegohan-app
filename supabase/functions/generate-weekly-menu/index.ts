@@ -47,10 +47,38 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
 
     if (profileError) throw new Error(`Profile not found: ${profileError.message}`)
 
+    // 最新の健康記録を取得（過去7日間）
+    const weekAgo = new Date()
+    weekAgo.setDate(weekAgo.getDate() - 7)
+    const { data: healthRecords } = await supabase
+      .from('health_records')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('record_date', weekAgo.toISOString().split('T')[0])
+      .order('record_date', { ascending: false })
+      .limit(7)
+
+    // 最新のAI分析結果を取得
+    const { data: healthInsights } = await supabase
+      .from('health_insights')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_alert', true)
+      .eq('is_dismissed', false)
+      .order('created_at', { ascending: false })
+      .limit(3)
+
+    // 健康目標を取得
+    const { data: healthGoals } = await supabase
+      .from('health_goals')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+
     // プロファイルからパーソナライズ情報を構築
     const profileSummary = buildProfileSummary(profile)
-    const nutritionTarget = calculateNutritionTarget(profile)
-    const healthConstraints = buildHealthConstraints(profile)
+    const nutritionTarget = calculateNutritionTarget(profile, healthRecords, healthGoals)
+    const healthConstraints = buildHealthConstraints(profile, healthRecords, healthInsights)
     const cookingConstraints = buildCookingConstraints(profile)
 
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
@@ -389,29 +417,49 @@ ${formatCuisinePreferences(profile.cuisine_preferences)}
 `
 }
 
-function calculateNutritionTarget(profile: any): any {
+function calculateNutritionTarget(profile: any, healthRecords?: any[], healthGoals?: any[]): any {
+  // 最新の健康記録から体重を取得（あれば）
+  const latestWeight = healthRecords?.find(r => r.weight)?.weight || profile.weight
+
   // 基礎代謝計算（Mifflin-St Jeor式）
   let bmr = 1800
-  if (profile.weight && profile.height && profile.age) {
+  if (latestWeight && profile.height && profile.age) {
     if (profile.gender === 'male') {
-      bmr = Math.round(10 * profile.weight + 6.25 * profile.height - 5 * profile.age + 5)
+      bmr = Math.round(10 * latestWeight + 6.25 * profile.height - 5 * profile.age + 5)
     } else {
-      bmr = Math.round(10 * profile.weight + 6.25 * profile.height - 5 * profile.age - 161)
+      bmr = Math.round(10 * latestWeight + 6.25 * profile.height - 5 * profile.age - 161)
     }
   }
 
-  // 活動係数
+  // 活動係数（健康記録の歩数も考慮）
   let activityMultiplier = 1.2
   const weeklyExercise = profile.weekly_exercise_minutes || 0
-  if (weeklyExercise > 300) activityMultiplier = 1.7
-  else if (weeklyExercise > 150) activityMultiplier = 1.5
-  else if (weeklyExercise > 60) activityMultiplier = 1.4
+  
+  // 最近の平均歩数を計算
+  const avgSteps = healthRecords?.filter(r => r.step_count)
+    .reduce((sum, r, _, arr) => sum + r.step_count / arr.length, 0) || 0
+  
+  if (weeklyExercise > 300 || avgSteps > 12000) activityMultiplier = 1.7
+  else if (weeklyExercise > 150 || avgSteps > 8000) activityMultiplier = 1.5
+  else if (weeklyExercise > 60 || avgSteps > 5000) activityMultiplier = 1.4
 
   let tdee = bmr * activityMultiplier
 
   // 目標による調整
   const goals = profile.fitness_goals || []
-  if (goals.includes('lose_weight')) {
+  
+  // 健康目標から体重目標を取得
+  const weightGoal = healthGoals?.find(g => g.goal_type === 'weight')
+  if (weightGoal && latestWeight) {
+    const weightDiff = latestWeight - weightGoal.target_value
+    if (weightDiff > 0) {
+      // 減量が必要
+      tdee -= Math.min(500, weightDiff * 50) // 最大500kcal減
+    } else if (weightDiff < 0) {
+      // 増量が必要
+      tdee += Math.min(300, Math.abs(weightDiff) * 50)
+    }
+  } else if (goals.includes('lose_weight')) {
     tdee -= 500
   } else if (goals.includes('gain_weight') || goals.includes('build_muscle')) {
     tdee += 300
@@ -441,21 +489,31 @@ function calculateNutritionTarget(profile: any): any {
 
   const dailyCalories = Math.max(Math.round(tdee), 1200)
 
+  // 減塩が必要かどうかを健康記録から判断
+  const avgBP = healthRecords?.filter(r => r.systolic_bp)
+    .reduce((sum, r, _, arr) => sum + r.systolic_bp / arr.length, 0) || 0
+  const needsLowSodium = conditions.includes('高血圧') || avgBP > 130
+
   return {
     dailyCalories,
     protein: Math.round((dailyCalories * proteinRatio) / 4),
     fat: Math.round((dailyCalories * fatRatio) / 9),
     carbs: Math.round((dailyCalories * carbsRatio) / 4),
     fiber: profile.gender === 'male' ? 21 : 18,
-    sodium: conditions.includes('高血圧') ? 1500 : 2300
+    sodium: needsLowSodium ? 1500 : 2300,
+    currentWeight: latestWeight,
+    targetWeight: weightGoal?.target_value,
+    avgSteps,
+    avgBP
   }
 }
 
-function buildHealthConstraints(profile: any): string[] {
+function buildHealthConstraints(profile: any, healthRecords?: any[], healthInsights?: any[]): string[] {
   const constraints: string[] = []
   const conditions = profile.health_conditions || []
   const goals = profile.fitness_goals || []
 
+  // 既存の健康状態に基づく制約
   if (conditions.includes('高血圧')) {
     constraints.push('【高血圧】塩分6g以下、カリウム豊富な食材（バナナ、ほうれん草）を積極的に。漬物・ラーメン・カップ麺は避ける')
   }
@@ -472,6 +530,52 @@ function buildHealthConstraints(profile: any): string[] {
     constraints.push('【痛風】プリン体を制限。レバー・白子・あん肝・ビールは避ける')
   }
 
+  // 健康記録からの動的な制約
+  if (healthRecords && healthRecords.length > 0) {
+    // 血圧が高めの場合
+    const avgSystolic = healthRecords.filter(r => r.systolic_bp)
+      .reduce((sum, r, _, arr) => sum + r.systolic_bp / arr.length, 0)
+    if (avgSystolic > 130 && !conditions.includes('高血圧')) {
+      constraints.push('【血圧注意】最近の血圧が高めです。塩分控えめ、野菜多めの献立を心がけてください')
+    }
+
+    // 睡眠の質が低い場合
+    const avgSleepQuality = healthRecords.filter(r => r.sleep_quality)
+      .reduce((sum, r, _, arr) => sum + r.sleep_quality / arr.length, 0)
+    if (avgSleepQuality < 3) {
+      constraints.push('【睡眠サポート】睡眠の質を上げる食材（トリプトファン含有: 牛乳、バナナ、鶏肉）を夕食に取り入れてください')
+    }
+
+    // ストレスレベルが高い場合
+    const avgStress = healthRecords.filter(r => r.stress_level)
+      .reduce((sum, r, _, arr) => sum + r.stress_level / arr.length, 0)
+    if (avgStress > 3.5) {
+      constraints.push('【ストレス緩和】ビタミンB群、マグネシウム豊富な食材（玄米、ナッツ、緑黄色野菜）を積極的に')
+    }
+
+    // 体調が優れない場合
+    const avgCondition = healthRecords.filter(r => r.overall_condition)
+      .reduce((sum, r, _, arr) => sum + r.overall_condition / arr.length, 0)
+    if (avgCondition < 3) {
+      constraints.push('【体調回復】消化に優しく栄養価の高い食事を心がけてください。温かいスープや煮込み料理がおすすめ')
+    }
+  }
+
+  // AI分析結果からの推奨事項を追加
+  if (healthInsights && healthInsights.length > 0) {
+    for (const insight of healthInsights) {
+      if (insight.recommendations && insight.recommendations.length > 0) {
+        const foodRelated = insight.recommendations.find((r: string) => 
+          r.includes('食') || r.includes('栄養') || r.includes('塩分') || r.includes('カロリー')
+        )
+        if (foodRelated) {
+          constraints.push(`【AI推奨】${foodRelated}`)
+        }
+      }
+    }
+  }
+
+  // 目標に基づく制約
   if (goals.includes('improve_skin')) {
     constraints.push('【美肌】ビタミンA/C/E、コラーゲン豊富な食材（にんじん、トマト、鶏手羽）を積極的に')
   }

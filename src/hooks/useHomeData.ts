@@ -84,6 +84,23 @@ export const useHomeData = () => {
   const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
   const [bestMealThisWeek, setBestMealThisWeek] = useState<PlannedMeal | null>(null);
 
+  // 健康記録データ
+  const [healthSummary, setHealthSummary] = useState<{
+    todayRecord: any | null;
+    healthStreak: number;
+    weightChange: number | null;
+    latestWeight: number | null;
+    targetWeight: number | null;
+    hasAlert: boolean;
+  }>({
+    todayRecord: null,
+    healthStreak: 0,
+    weightChange: null,
+    latestWeight: null,
+    targetWeight: null,
+    hasAlert: false,
+  });
+
   const supabase = createClient();
   const todayStr = formatLocalDate(new Date());
 
@@ -206,6 +223,9 @@ export const useHomeData = () => {
 
       // 10. 今週のベスト料理
       await fetchBestMealThisWeek(authUser.id);
+
+      // 11. 健康記録サマリー
+      await fetchHealthSummary(authUser.id);
 
     } else {
       setUser(null);
@@ -530,6 +550,73 @@ export const useHomeData = () => {
     }
   };
 
+  // 健康記録サマリー
+  const fetchHealthSummary = async (userId: string) => {
+    try {
+      // 今日の記録
+      const { data: todayRecord } = await supabase
+        .from('health_records')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('record_date', todayStr)
+        .single();
+
+      // 連続記録
+      const { data: streak } = await supabase
+        .from('health_streaks')
+        .select('current_streak')
+        .eq('user_id', userId)
+        .eq('streak_type', 'daily_record')
+        .single();
+
+      // 最新の体重と昨日の体重
+      const { data: recentWeights } = await supabase
+        .from('health_records')
+        .select('weight, record_date')
+        .eq('user_id', userId)
+        .not('weight', 'is', null)
+        .order('record_date', { ascending: false })
+        .limit(2);
+
+      let weightChange = null;
+      let latestWeight = null;
+      if (recentWeights && recentWeights.length > 0) {
+        latestWeight = recentWeights[0].weight;
+        if (recentWeights.length > 1) {
+          weightChange = parseFloat((recentWeights[0].weight - recentWeights[1].weight).toFixed(2));
+        }
+      }
+
+      // 目標体重
+      const { data: weightGoal } = await supabase
+        .from('health_goals')
+        .select('target_value')
+        .eq('user_id', userId)
+        .eq('goal_type', 'weight')
+        .eq('status', 'active')
+        .single();
+
+      // アラートがあるか確認
+      const { count: alertCount } = await supabase
+        .from('health_insights')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('is_alert', true)
+        .eq('is_dismissed', false);
+
+      setHealthSummary({
+        todayRecord,
+        healthStreak: streak?.current_streak || 0,
+        weightChange,
+        latestWeight,
+        targetWeight: weightGoal?.target_value || null,
+        hasAlert: (alertCount || 0) > 0,
+      });
+    } catch (e) {
+      console.error('Health summary fetch error:', e);
+    }
+  };
+
   // 食事完了をトグル
   const toggleMealCompletion = async (mealId: string, currentStatus: boolean) => {
     const newStatus = !currentStatus;
@@ -613,6 +700,7 @@ export const useHomeData = () => {
     badgeCount,
     latestBadge,
     bestMealThisWeek,
+    healthSummary,
     // 関数
     toggleMealCompletion,
     updateActivityLevel,

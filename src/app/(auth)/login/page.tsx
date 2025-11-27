@@ -123,7 +123,7 @@ export default function LoginPage() {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="password">パスワード</Label>
-              <Link href="#" className="text-sm font-medium text-[#FF8A65] hover:text-[#FF7043]">
+              <Link href="/auth/forgot-password" className="text-sm font-medium text-[#FF8A65] hover:text-[#FF7043]">
                 忘れた場合
               </Link>
             </div>

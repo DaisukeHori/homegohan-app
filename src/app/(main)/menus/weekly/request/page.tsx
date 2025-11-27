@@ -122,8 +122,8 @@ export default function MenuRequestWizard() {
 
       if (!res.ok) throw new Error('Request failed');
 
-      const { id } = await res.json();
-      router.push(`/menus/weekly/${id}`);
+      // 献立生成リクエストが成功したら週次メニュー一覧に戻る
+      router.push('/menus/weekly');
     } catch (err) {
       console.error('Submit failed:', err);
       alert('Failed to generate menu. Please try again.');
