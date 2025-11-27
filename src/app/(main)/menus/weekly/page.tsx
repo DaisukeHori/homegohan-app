@@ -898,8 +898,8 @@ export default function WeeklyMenuPage() {
   // Open photo edit modal
   const openPhotoEdit = (meal: PlannedMeal) => {
     setPhotoEditMeal(meal);
-    setPhotoFile(null);
-    setPhotoPreview(null);
+    setPhotoFiles([]);
+    setPhotoPreviews([]);
     setActiveModal('photoEdit');
   };
 

@@ -494,7 +494,7 @@ export default function MealCaptureModal() {
             </button>
             
             <button
-              onClick={() => { setStep('capture'); setPhotoFile(null); setPhotoPreview(null); setAnalyzedDishes([]); }}
+              onClick={() => { setStep('capture'); setPhotoFiles([]); setPhotoPreviews([]); setAnalyzedDishes([]); }}
               className="w-full py-3 mt-2 rounded-xl"
               style={{ background: colors.bg }}
             >
