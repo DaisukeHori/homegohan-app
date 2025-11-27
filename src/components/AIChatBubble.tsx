@@ -563,7 +563,14 @@ export default function AIChatBubble() {
                     type="text"
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                    onKeyDown={(e) => {
+                      // IME変換中（日本語入力の変換確定時など）は送信しない
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                      }
+                    }}
                     placeholder="メッセージを入力..."
                     className="flex-1 px-4 py-2 rounded-full border-none outline-none"
                     style={{ 
