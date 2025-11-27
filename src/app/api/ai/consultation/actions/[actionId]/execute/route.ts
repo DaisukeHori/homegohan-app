@@ -140,7 +140,7 @@ export async function POST(
 
       case 'create_meal': {
         // 新規食事を登録
-        const { date, mealType, dishName, mode, calories, protein, fat, carbs, memo } = action.action_params;
+        const { date, mealType, dishName, mode, calories, protein, fat, carbs, memo, dishes } = action.action_params;
         
         // 献立プランを取得または作成
         const activePlan = await getOrCreateActivePlan(supabase, user.id, date);
@@ -166,6 +166,23 @@ export async function POST(
         }
 
         if (dayData) {
+          // dishes配列の処理
+          let dishesData = null;
+          let isSimple = true;
+          
+          if (dishes && Array.isArray(dishes) && dishes.length > 0) {
+            dishesData = dishes;
+            isSimple = dishes.length === 1;
+          } else if (dishName) {
+            // dishesが提供されていない場合は単品として作成
+            dishesData = [{
+              name: dishName,
+              role: 'main',
+              cal: calories || null,
+              ingredient: '',
+            }];
+          }
+
           const { data: newMeal, error: insertError } = await supabase
             .from('planned_meals')
             .insert({
@@ -178,10 +195,15 @@ export async function POST(
               fat_g: fat,
               carbs_g: carbs,
               memo,
+              dishes: dishesData,
+              is_simple: isSimple,
             })
             .select('id')
             .single();
           success = !insertError;
+          if (insertError) {
+            console.error('Failed to create meal:', insertError);
+          }
           result = { mealId: newMeal?.id, created: success };
         }
         break;
@@ -215,21 +237,27 @@ export async function POST(
         }
 
         // updated_atを明示的に追加
-        // dish_nameが更新される場合、dishesも更新（単品料理として設定）
         const updateData: Record<string, any> = {
           ...updates,
           updated_at: new Date().toISOString(),
         };
         
-        // dish_nameが含まれている場合、dishesを単品料理として再構築
-        if (updates.dish_name) {
+        // dishesの処理
+        if (updates.dishes && Array.isArray(updates.dishes) && updates.dishes.length > 0) {
+          // AIからdishes配列が提供された場合はそのまま使用
+          updateData.dishes = updates.dishes;
+          updateData.is_simple = updates.dishes.length === 1;
+          console.log('Using AI-provided dishes:', updates.dishes);
+        } else if (updates.dish_name && !updates.dishes) {
+          // dish_nameのみが更新され、dishesが提供されていない場合は単品として再構築
           updateData.dishes = [{
             name: updates.dish_name,
             role: 'main',
             cal: updates.calories_kcal || null,
             ingredient: '',
           }];
-          updateData.is_simple = true; // 単品料理フラグ
+          updateData.is_simple = true;
+          console.log('Created single dish from dish_name:', updates.dish_name);
         }
 
         const { data: updatedMeal, error: updateError } = await supabase

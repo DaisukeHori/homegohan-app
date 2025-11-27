@@ -538,8 +538,9 @@ ${importantMessagesInfo}
 ■ 献立関連:
 - generate_day_menu: 1日の献立を作成 (params: { date: "YYYY-MM-DD" })
 - generate_week_menu: 1週間の献立を作成 (params: { startDate: "YYYY-MM-DD" })
-- create_meal: 新規食事を登録 (params: { date: "YYYY-MM-DD", mealType: "breakfast|lunch|dinner|snack|midnight_snack", dishName: "料理名", mode: "cook|out|buy", calories?: number, protein?: number, fat?: number, carbs?: number, memo?: string })
-- update_meal: 献立を更新 (params: { mealId: "uuid", updates: { dish_name?, calories_kcal?, protein_g?, fat_g?, carbs_g?, memo?, mode? } })
+- create_meal: 新規食事を登録 (params: { date: "YYYY-MM-DD", mealType: "breakfast|lunch|dinner|snack|midnight_snack", dishName: "料理名", mode: "cook|out|buy", calories?: number, protein?: number, fat?: number, carbs?: number, memo?: string, dishes?: [{name, role, cal, ingredient}] })
+- update_meal: 献立を更新 (params: { mealId: "uuid", updates: { dish_name?, calories_kcal?, protein_g?, fat_g?, carbs_g?, memo?, mode?, dishes?: [{name: "料理名", role: "main|side|soup", cal: カロリー数値, ingredient: "主な材料"}] } })
+  ※ dishes配列は必ず含めてください。主菜(main)、副菜(side)、汁物(soup)などの役割を指定
 - delete_meal: 献立を削除 (params: { mealId: "uuid" })
 - complete_meal: 食事を完了マーク (params: { mealId: "uuid", isCompleted: true|false })
 
@@ -602,18 +603,46 @@ ${importantMessagesInfo}
   "params": {
     "mealId": "ここに実際のmealIdを入れる",
     "updates": {
-      "dish_name": "サーロインステーキ",
-      "calories_kcal": 650,
-      "protein_g": 45,
-      "fat_g": 40,
-      "carbs_g": 5,
-      "mode": "cook"
+      "dish_name": "サーロインステーキ定食",
+      "calories_kcal": 750,
+      "protein_g": 50,
+      "fat_g": 45,
+      "carbs_g": 30,
+      "mode": "cook",
+      "dishes": [
+        {"name": "サーロインステーキ", "role": "main", "cal": 550, "ingredient": "牛サーロイン"},
+        {"name": "ガーリックライス", "role": "side", "cal": 150, "ingredient": "ご飯、にんにく"},
+        {"name": "サラダ", "role": "side", "cal": 50, "ingredient": "レタス、トマト"}
+      ]
     }
   }
 }
 \`\`\`
 
 変更完了です！美味しく召し上がってください😊
+
+【アクション出力例2 - 単品の場合】
+ユーザー: 「昼をカレーにして」
+
+\`\`\`action
+{
+  "type": "update_meal",
+  "params": {
+    "mealId": "mealIdをここに",
+    "updates": {
+      "dish_name": "ビーフカレー",
+      "calories_kcal": 700,
+      "protein_g": 25,
+      "fat_g": 20,
+      "carbs_g": 100,
+      "mode": "cook",
+      "dishes": [
+        {"name": "ビーフカレー", "role": "main", "cal": 700, "ingredient": "牛肉、じゃがいも、にんじん、玉ねぎ"}
+      ]
+    }
+  }
+}
+\`\`\`
 
 【アクション出力例2】
 ユーザー: 「OK」「それでお願い」「はい」（前の提案に対して）
