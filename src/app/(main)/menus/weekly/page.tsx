@@ -152,9 +152,9 @@ export default function WeeklyMenuPage() {
               const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
               if (pollRes.ok) {
                 const { mealPlan } = await pollRes.json();
-                if (mealPlan && mealPlan.days && mealPlan.days.length > 0) {
-                  const hasAnyMeal = mealPlan.days.some((d: any) => d.meals && d.meals.length > 0);
-                  if (hasAnyMeal) {
+                if (mealPlan && mealPlan.days && mealPlan.days.length >= 7) {
+                  const mealCount = mealPlan.days.reduce((sum: number, d: any) => sum + (d.meals?.length || 0), 0);
+                  if (mealCount >= 21) {
                     setCurrentPlan(mealPlan);
                     setShoppingList(mealPlan.shoppingList || []);
                     setIsGenerating(false);
@@ -171,6 +171,7 @@ export default function WeeklyMenuPage() {
               clearInterval(pollInterval);
               setIsGenerating(false);
               localStorage.removeItem('weeklyMenuGenerating');
+              window.location.reload();
             }
           }, 3000);
           
@@ -494,23 +495,27 @@ export default function WeeklyMenuPage() {
       
       // ページ遷移せずにポーリングでデータを取得
       let attempts = 0;
-      const maxAttempts = 20; // 最大60秒
+      const maxAttempts = 40; // 最大120秒（2分）
       const pollInterval = setInterval(async () => {
         attempts++;
+        console.log(`Polling attempt ${attempts}/${maxAttempts}`);
         try {
           const targetDate = formatLocalDate(weekStart);
           const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
           if (pollRes.ok) {
             const { mealPlan } = await pollRes.json();
-            if (mealPlan && mealPlan.days && mealPlan.days.length > 0) {
-              // 献立データがあれば更新
-              const hasAnyMeal = mealPlan.days.some((d: any) => d.meals && d.meals.length > 0);
-              if (hasAnyMeal) {
+            console.log('Poll response:', mealPlan?.days?.length, 'days');
+            if (mealPlan && mealPlan.days && mealPlan.days.length >= 7) {
+              // 7日分のデータがあれば更新
+              const mealCount = mealPlan.days.reduce((sum: number, d: any) => sum + (d.meals?.length || 0), 0);
+              console.log('Total meals:', mealCount);
+              if (mealCount >= 21) { // 7日 × 3食 = 21
                 setCurrentPlan(mealPlan);
                 setShoppingList(mealPlan.shoppingList || []);
                 setIsGenerating(false);
-                localStorage.removeItem('weeklyMenuGenerating'); // 生成完了
+                localStorage.removeItem('weeklyMenuGenerating');
                 clearInterval(pollInterval);
+                console.log('✅ All meals loaded!');
               }
             }
           }
@@ -521,8 +526,8 @@ export default function WeeklyMenuPage() {
         if (attempts >= maxAttempts) {
           clearInterval(pollInterval);
           setIsGenerating(false);
-          localStorage.removeItem('weeklyMenuGenerating'); // タイムアウト
-          // タイムアウト後はリロードして最新データを取得
+          localStorage.removeItem('weeklyMenuGenerating');
+          console.log('Polling timeout, reloading...');
           window.location.reload();
         }
       }, 3000);
