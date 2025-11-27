@@ -154,6 +154,72 @@ export default function WeeklyMenuPage() {
 
   // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
+  const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
+  
+  // 直近の食事を自動展開する関数
+  const autoExpandNextMeal = (plan: MealPlan | null, dates: { dateStr: string }[]) => {
+    if (!plan || !plan.days || hasAutoExpanded) return;
+    
+    const now = new Date();
+    const todayStr = formatLocalDate(now);
+    const currentHour = now.getHours();
+    
+    // 時間帯に応じた食事タイプの優先順位
+    const getMealPriority = (hour: number): MealType[] => {
+      if (hour < 10) return ['breakfast', 'lunch', 'dinner'];
+      if (hour < 14) return ['lunch', 'dinner', 'breakfast'];
+      if (hour < 20) return ['dinner', 'lunch', 'breakfast'];
+      return ['dinner', 'midnight_snack', 'snack'];
+    };
+    
+    const mealPriority = getMealPriority(currentHour);
+    
+    // 今日の日付インデックスを探す
+    const todayIndex = dates.findIndex(d => d.dateStr === todayStr);
+    
+    // 検索する日付の順序を決定（今日から順番に）
+    const searchOrder: number[] = [];
+    if (todayIndex >= 0) {
+      // 今日から週末まで
+      for (let i = todayIndex; i < dates.length; i++) {
+        searchOrder.push(i);
+      }
+    } else {
+      // 今日が範囲外の場合は最初から
+      for (let i = 0; i < dates.length; i++) {
+        searchOrder.push(i);
+      }
+    }
+    
+    // 直近の未完了食事を探す
+    for (const dayIdx of searchOrder) {
+      const dayDate = dates[dayIdx].dateStr;
+      const day = plan.days.find(d => d.dayDate === dayDate);
+      if (!day || !day.meals) continue;
+      
+      // 今日の場合は時間帯優先、それ以外は朝食から
+      const priorities = dayIdx === todayIndex ? mealPriority : ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
+      
+      for (const mealType of priorities) {
+        const meal = day.meals.find(m => m.mealType === mealType && !m.isCompleted);
+        if (meal) {
+          setExpandedMealId(meal.id);
+          setSelectedDayIndex(dayIdx);
+          setHasAutoExpanded(true);
+          return;
+        }
+      }
+    }
+    
+    // 未完了がない場合は今日（または最初の日）の最初の食事を展開
+    const fallbackDayIdx = todayIndex >= 0 ? todayIndex : 0;
+    const fallbackDay = plan.days.find(d => d.dayDate === dates[fallbackDayIdx]?.dateStr);
+    if (fallbackDay?.meals?.[0]) {
+      setExpandedMealId(fallbackDay.meals[0].id);
+      setSelectedDayIndex(fallbackDayIdx);
+      setHasAutoExpanded(true);
+    }
+  };
 
   // Form States
   const [aiChatInput, setAiChatInput] = useState("");
@@ -391,7 +457,11 @@ export default function WeeklyMenuPage() {
         if (res.ok) {
           const { mealPlan } = await res.json();
           setCurrentPlan(mealPlan);
-          if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+          if (mealPlan) {
+            setShoppingList(mealPlan.shoppingList || []);
+            // 直近の食事を自動展開
+            autoExpandNextMeal(mealPlan, weekDates);
+          }
         } else {
           setCurrentPlan(null);
         }
@@ -522,6 +592,8 @@ export default function WeeklyMenuPage() {
     newStart.setDate(weekStart.getDate() - 7);
     setWeekStart(newStart);
     setSelectedDayIndex(0);
+    setHasAutoExpanded(false); // 週が変わったらリセット
+    setExpandedMealId(null);
   };
   
   const goToNextWeek = () => {
@@ -529,6 +601,8 @@ export default function WeeklyMenuPage() {
     newStart.setDate(weekStart.getDate() + 7);
     setWeekStart(newStart);
     setSelectedDayIndex(0);
+    setHasAutoExpanded(false); // 週が変わったらリセット
+    setExpandedMealId(null);
   };
 
   // --- Handlers ---
