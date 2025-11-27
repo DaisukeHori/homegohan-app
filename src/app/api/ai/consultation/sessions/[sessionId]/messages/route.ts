@@ -371,13 +371,29 @@ ${todayMeals.map((m: any) => {
 }).join('\n')}
 ` : `【📅 今日（${today}）の献立なし - 新規作成が必要】`;
 
-  // 今後1週間の献立を整形
-  const upcomingMealsInfo = upcomingMeals && upcomingMeals.length > 0 ? `
+  // 今後1週間の献立を整形（日付順、朝→昼→夕の順）
+  const mealTypeOrder: Record<string, number> = {
+    breakfast: 1,
+    lunch: 2,
+    dinner: 3,
+    snack: 4,
+    midnight_snack: 5,
+  };
+  
+  const sortedUpcomingMeals = [...(upcomingMeals || [])].sort((a, b) => {
+    const dateA = a.meal_plan_days?.day_date || '';
+    const dateB = b.meal_plan_days?.day_date || '';
+    if (dateA !== dateB) return dateA.localeCompare(dateB);
+    return (mealTypeOrder[a.meal_type] || 99) - (mealTypeOrder[b.meal_type] || 99);
+  });
+  
+  const upcomingMealsInfo = sortedUpcomingMeals.length > 0 ? `
 【📆 今後1週間の献立】
-${upcomingMeals.map((m: any) => {
+${sortedUpcomingMeals.map((m: any) => {
   const date = m.meal_plan_days?.day_date || '不明';
   const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
-  return `- ${date} ${mealTypeJa}: ${m.dish_name || '未設定'} (mealId: "${m.id}")`;
+  // mealIdは内部用途のみ（ユーザーには見せない）
+  return `- ${date} ${mealTypeJa}: ${m.dish_name || '未設定'} [内部ID: ${m.id}]`;
 }).join('\n')}
 ` : '';
 
@@ -877,7 +893,10 @@ ${importantMessagesInfo}
 - **献立は必ず一汁三菜（主菜1、副菜2、汁物1）で提案する**
 - ユーザーが依頼したら、確認せずに即座にアクションJSONを出力する
 - **⚠️ 献立を提案する際は、必ず応答テキストに料理名とカロリーを箇条書きで記載する**
-- アクションJSONは自動的に除去されるため、応答テキストだけで献立内容がわかるようにする`;
+- アクションJSONは自動的に除去されるため、応答テキストだけで献立内容がわかるようにする
+- **⚠️⚠️⚠️ 絶対厳守：mealId、itemId、goalIdなどの内部IDは絶対にユーザーに表示しない ⚠️⚠️⚠️**
+- 内部IDは「[内部ID: xxx]」形式でシステムプロンプトに含まれているが、これはアクション実行用の参照情報であり、ユーザーへの応答には含めてはいけない
+- 献立を紹介する際は「朝食→昼食→夕食」の順番で整理して表示する`;
 }
 
 // メッセージ送信（AI応答を含む）
