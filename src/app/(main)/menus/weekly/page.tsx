@@ -1294,8 +1294,9 @@ export default function WeeklyMenuPage() {
   const currentDay = currentPlan?.days?.find(d => d.dayDate === weekDates[selectedDayIndex]?.dateStr);
   // 単一の食事を取得（AI生成用、空欄チェック用）
   const getMeal = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.find(m => m.mealType === type);
-  // 同じタイプの食事を全て取得（複数回の食事対応）
-  const getMeals = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.filter(m => m.mealType === type) || [];
+  // 同じタイプの食事を全て取得（複数回の食事対応）- displayOrder順にソート
+  const getMeals = (day: MealPlanDay | undefined, type: MealType) => 
+    (day?.meals?.filter(m => m.mealType === type) || []).sort((a, b) => a.displayOrder - b.displayOrder);
   
   // 食事の順序変更
   const reorderMeal = async (mealId: string, direction: 'up' | 'down') => {
