@@ -1,10 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 // 1食分だけをAIで生成するAPI（新規追加用）
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
 
   try {
     const { dayDate, mealType, preferences, note } = await request.json();

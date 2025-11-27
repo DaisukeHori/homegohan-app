@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
+
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get('mode'); // 'admin' | 'public'
 
@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
 
   try {
     // 1. 権限チェック

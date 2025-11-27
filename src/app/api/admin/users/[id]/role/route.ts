@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
+
 import { NextResponse } from 'next/server';
 
 export async function PUT(request: Request, { params }: { params: { id: string } }) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
 
   try {
     // 1. 実行者の権限チェック

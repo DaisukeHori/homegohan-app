@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { cookies } from "next/headers";
 
 // Helper: 週の開始日（月曜日）を取得
 function getWeekStart(date: Date): Date {
@@ -13,7 +12,7 @@ function getWeekStart(date: Date): Date {
 }
 
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   
   try {
     const { dayDate, mealType, dishes, totalCalories, imageUrl, nutritionalAdvice } = await request.json();
