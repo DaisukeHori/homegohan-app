@@ -1605,11 +1605,13 @@ export default function WeeklyMenuPage() {
           const meals = getMeals(currentDay, type);
           const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
           const hasAnyMeal = meals.length > 0;
+          // この食事タイプでAI生成中かどうか
+          const isGeneratingThisType = generatingMeal?.dayIndex === selectedDayIndex && generatingMeal?.mealType === type;
 
           return (
             <div key={type}>
               {/* 空欄の場合 */}
-              {!hasAnyMeal && <EmptySlot mealKey={type} dayIndex={selectedDayIndex} />}
+              {!hasAnyMeal && !isGeneratingThisType && <EmptySlot mealKey={type} dayIndex={selectedDayIndex} />}
               
               {/* 登録済みの食事（複数可） */}
               {meals.map((meal, idx) => {
@@ -1620,6 +1622,29 @@ export default function WeeklyMenuPage() {
                   <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
                 );
               })}
+              
+              {/* AI生成中の追加カード（既存の食事がある場合に表示） */}
+              {isGeneratingThisType && (
+                <div
+                  className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
+                  style={{ background: `linear-gradient(135deg, ${colors.accentLight} 0%, ${colors.card} 100%)`, border: `2px solid ${colors.accent}` }}
+                >
+                  <div className="relative z-10 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+                      <Sparkles size={20} color="#fff" className="animate-pulse" />
+                    </div>
+                    <div className="flex-1">
+                      <p style={{ fontSize: 14, fontWeight: 600, color: colors.accent }}>
+                        {hasAnyMeal ? `${MEAL_LABELS[type]}${meals.length + 1}` : MEAL_LABELS[type]} AIが考え中...
+                      </p>
+                      <p style={{ fontSize: 11, color: colors.textMuted }}>
+                        数秒〜数十秒かかります
+                      </p>
+                    </div>
+                    <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -1628,8 +1653,10 @@ export default function WeeklyMenuPage() {
         {EXTRA_MEAL_TYPES.map(type => {
           const meals = getMeals(currentDay, type);
           const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
+          // この食事タイプでAI生成中かどうか
+          const isGeneratingThisType = generatingMeal?.dayIndex === selectedDayIndex && generatingMeal?.mealType === type;
 
-          if (meals.length === 0) return null;
+          if (meals.length === 0 && !isGeneratingThisType) return null;
 
           return (
             <div key={type}>
@@ -1641,6 +1668,29 @@ export default function WeeklyMenuPage() {
                   <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
                 );
               })}
+              
+              {/* AI生成中の追加カード */}
+              {isGeneratingThisType && (
+                <div
+                  className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
+                  style={{ background: `linear-gradient(135deg, ${colors.accentLight} 0%, ${colors.card} 100%)`, border: `2px solid ${colors.accent}` }}
+                >
+                  <div className="relative z-10 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+                      <Sparkles size={20} color="#fff" className="animate-pulse" />
+                    </div>
+                    <div className="flex-1">
+                      <p style={{ fontSize: 14, fontWeight: 600, color: colors.accent }}>
+                        {meals.length > 0 ? `${MEAL_LABELS[type]}${meals.length + 1}` : MEAL_LABELS[type]} AIが考え中...
+                      </p>
+                      <p style={{ fontSize: 11, color: colors.textMuted }}>
+                        数秒〜数十秒かかります
+                      </p>
+                    </div>
+                    <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
