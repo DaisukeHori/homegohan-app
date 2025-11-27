@@ -581,6 +581,12 @@ export default function WeeklyMenuPage() {
   const handleGenerateSingleMeal = async () => {
     if (!addMealKey) return;
     
+    const dayDate = weekDates[addMealDayIndex]?.dateStr;
+    
+    // 生成開始前の該当食事タイプの数を記録
+    const currentDay = currentPlan?.days?.find((d: any) => d.dayDate === dayDate);
+    const initialMealCount = currentDay?.meals?.filter((m: any) => m.mealType === addMealKey).length || 0;
+    
     setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
     setActiveModal(null);
     
@@ -592,8 +598,6 @@ export default function WeeklyMenuPage() {
         if (c === '和食多め') preferences.japaneseStyle = true;
         if (c === 'ヘルシーに') preferences.healthy = true;
       });
-
-      const dayDate = weekDates[addMealDayIndex]?.dateStr;
       
       const res = await fetch('/api/ai/menu/meal/generate', {
         method: 'POST',
@@ -611,9 +615,9 @@ export default function WeeklyMenuPage() {
         setAiChatInput("");
         setSelectedDayIndex(addMealDayIndex);
         
-        // Poll for data
+        // Poll for data - 食事の数が増えたら完了
         let attempts = 0;
-        const maxAttempts = 10;
+        const maxAttempts = 20; // 60秒まで待つ
         const pollInterval = setInterval(async () => {
           attempts++;
           try {
@@ -623,11 +627,15 @@ export default function WeeklyMenuPage() {
               const { mealPlan } = await pollRes.json();
               if (mealPlan) {
                 const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
-                const targetMeal = targetDay?.meals?.find((m: any) => m.mealType === addMealKey);
-                if (targetMeal) {
+                const currentMealCount = targetDay?.meals?.filter((m: any) => m.mealType === addMealKey).length || 0;
+                
+                // 食事の数が増えたら完了
+                if (currentMealCount > initialMealCount) {
+                  console.log(`Meal generated! Count: ${initialMealCount} -> ${currentMealCount}`);
                   setCurrentPlan(mealPlan);
                   setGeneratingMeal(null);
                   clearInterval(pollInterval);
+                  return;
                 }
               }
             }
@@ -636,6 +644,7 @@ export default function WeeklyMenuPage() {
           }
           
           if (attempts >= maxAttempts) {
+            console.log('Polling timeout, reloading...');
             setGeneratingMeal(null);
             clearInterval(pollInterval);
             window.location.reload();

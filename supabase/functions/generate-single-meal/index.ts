@@ -208,14 +208,7 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       dayId = newDay.id
     }
 
-    // 既存のplanned_mealがあれば削除
-    await supabase
-      .from('planned_meals')
-      .delete()
-      .eq('meal_plan_day_id', dayId)
-      .eq('meal_type', mealType)
-
-    // 新しいplanned_mealを挿入
+    // 新しいplanned_mealを挿入（既存を削除せず追加）
     // dishes は配列形式で可変数に対応
     const aiDishes = newMealData.dishes || []
     
