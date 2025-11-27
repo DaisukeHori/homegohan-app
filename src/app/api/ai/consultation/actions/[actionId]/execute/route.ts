@@ -11,8 +11,9 @@ export async function POST(
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    // アクション取得と所有者確認
-    const { data: action, error: actionError } = await supabase
+    // actionIdはメッセージIDまたはアクションログIDの可能性がある
+    // まずアクションログIDとして検索
+    let { data: action, error: actionError } = await supabase
       .from('ai_action_logs')
       .select(`
         *,
@@ -21,7 +22,25 @@ export async function POST(
       .eq('id', params.actionId)
       .single();
 
+    // 見つからない場合はメッセージIDとして検索
     if (actionError || !action) {
+      const { data: actionByMessage, error: msgError } = await supabase
+        .from('ai_action_logs')
+        .select(`
+          *,
+          ai_consultation_sessions!inner(user_id)
+        `)
+        .eq('message_id', params.actionId)
+        .eq('status', 'pending')
+        .single();
+      
+      if (msgError || !actionByMessage) {
+        return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+      }
+      action = actionByMessage;
+    }
+
+    if (!action) {
       return NextResponse.json({ error: 'Action not found' }, { status: 404 });
     }
 
@@ -176,7 +195,7 @@ export async function POST(
         result,
         executed_at: new Date().toISOString(),
       })
-      .eq('id', params.actionId);
+      .eq('id', action.id);
 
     return NextResponse.json({
       success,
@@ -186,15 +205,6 @@ export async function POST(
 
   } catch (error: any) {
     console.error('Action execution error:', error);
-    
-    // エラー時もステータスを更新
-    await supabase
-      .from('ai_action_logs')
-      .update({
-        status: 'failed',
-        result: { error: error.message },
-      })
-      .eq('id', params.actionId);
 
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -210,10 +220,20 @@ export async function DELETE(
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
+    // メッセージIDからアクションを検索
+    const { data: action } = await supabase
+      .from('ai_action_logs')
+      .select('id')
+      .eq('message_id', params.actionId)
+      .eq('status', 'pending')
+      .single();
+
+    const actionId = action?.id || params.actionId;
+
     const { error } = await supabase
       .from('ai_action_logs')
       .update({ status: 'rejected' })
-      .eq('id', params.actionId);
+      .eq('id', actionId);
 
     if (error) throw error;
 

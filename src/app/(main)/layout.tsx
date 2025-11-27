@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
+import AIChatBubble from "@/components/AIChatBubble";
 
 const NAV_ITEMS = [
   { href: "/home", label: "ホーム", icon: Icons.Home },
@@ -73,6 +74,9 @@ export default function MainLayout({
       <main className="flex-1 lg:ml-64 relative z-0 min-h-screen">
         {children}
       </main>
+
+      {/* AIチャットバブル */}
+      <AIChatBubble />
 
       {/* モバイル用ボトムナビゲーション (Floating) */}
       <div className="lg:hidden fixed bottom-4 left-4 right-4 z-50">
