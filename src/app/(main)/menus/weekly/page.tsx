@@ -18,7 +18,10 @@ import {
 // ============================================
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
-type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addExtra' | null;
+type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addMealSlot' | null;
+
+// 全ての食事タイプ
+const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
 // Reference UI Color Palette
 const colors = {
@@ -1556,25 +1559,6 @@ export default function WeeklyMenuPage() {
                   <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
                 );
               })}
-              
-              {/* 同じタイプの食事を追加するボタン（既に1つ以上ある場合） */}
-              {hasAnyMeal && (
-                <button
-                  onClick={() => {
-                    setAddMealKey(type);
-                    setAddMealDayIndex(selectedDayIndex);
-                    setActiveModal('add');
-                  }}
-                  className="w-full flex items-center justify-center gap-1 rounded-lg p-2 mb-2 transition-colors"
-                  style={{ 
-                    background: 'transparent', 
-                    border: `1px dashed ${colors.border}`,
-                  }}
-                >
-                  <Plus size={12} color={colors.textMuted} />
-                  <span style={{ fontSize: 11, color: colors.textMuted }}>{MEAL_LABELS[type]}を追加</span>
-                </button>
-              )}
             </div>
           );
         })}
@@ -1596,38 +1580,21 @@ export default function WeeklyMenuPage() {
                   <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
                 );
               })}
-              
-              {/* 同じタイプを追加 */}
-              <button
-                onClick={() => {
-                  setAddMealKey(type);
-                  setAddMealDayIndex(selectedDayIndex);
-                  setActiveModal('add');
-                }}
-                className="w-full flex items-center justify-center gap-1 rounded-lg p-2 mb-2 transition-colors"
-                style={{ 
-                  background: 'transparent', 
-                  border: `1px dashed ${colors.border}`,
-                }}
-              >
-                <Plus size={12} color={colors.textMuted} />
-                <span style={{ fontSize: 11, color: colors.textMuted }}>{MEAL_LABELS[type]}を追加</span>
-              </button>
             </div>
           );
         })}
 
-        {/* おやつ・夜食を追加ボタン */}
+        {/* 食事を追加ボタン */}
         <button
-          onClick={() => setActiveModal('addExtra')}
-          className="w-full flex items-center justify-center gap-2 rounded-xl p-3 mt-2 transition-colors"
+          onClick={() => setActiveModal('addMealSlot')}
+          className="w-full flex items-center justify-center gap-2 rounded-xl p-4 mt-2 transition-colors"
           style={{ 
             background: colors.card, 
             border: `1px dashed ${colors.border}`,
           }}
         >
-          <Plus size={16} color={colors.textMuted} />
-          <span style={{ fontSize: 13, color: colors.textMuted }}>おやつ・夜食を追加</span>
+          <Plus size={18} color={colors.textMuted} />
+          <span style={{ fontSize: 14, color: colors.textMuted }}>食事を追加</span>
         </button>
       </main>
 
@@ -2108,8 +2075,8 @@ export default function WeeklyMenuPage() {
               </motion.div>
             )}
 
-            {/* Add Extra Meal Modal (おやつ・夜食) */}
-            {activeModal === 'addExtra' && (
+            {/* Add Meal Slot Modal - 食事を追加 */}
+            {activeModal === 'addMealSlot' && (
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
@@ -2118,62 +2085,47 @@ export default function WeeklyMenuPage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex justify-between items-center mb-3.5">
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>おやつ・夜食を追加</span>
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>食事を追加</span>
                   <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <X size={14} color={colors.textLight} />
                   </button>
                 </div>
                 <p style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
-                  {weekDates[selectedDayIndex] && `${weekDates[selectedDayIndex].date.getMonth() + 1}/${weekDates[selectedDayIndex].date.getDate()}（${weekDates[selectedDayIndex].dayOfWeek}）`}に追加します
+                  {weekDates[selectedDayIndex] && `${weekDates[selectedDayIndex].date.getMonth() + 1}/${weekDates[selectedDayIndex].date.getDate()}（${weekDates[selectedDayIndex].dayOfWeek}）`}に追加する食事を選んでください
                 </p>
                 <div className="flex flex-col gap-2">
-                  {EXTRA_MEAL_TYPES.map(type => {
-                    const existingMeal = getMeal(currentDay, type);
-                    if (existingMeal) return null; // 既に追加済みの場合は表示しない
-                    return (
-                      <div key={type}>
-                        <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, marginBottom: 8 }}>{MEAL_LABELS[type]}</p>
-                        <div className="flex flex-col gap-2">
-                          {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).filter(([k]) => k !== 'skip').map(([key, mode]) => {
-                            const ModeIcon = mode.icon;
-                            return (
-                              <button 
-                                key={key} 
-                                onClick={() => {
-                                  setAddMealKey(type);
-                                  handleAddMealWithMode(key);
-                                }}
-                                className="flex items-center gap-2.5 p-3 rounded-[10px]" 
-                                style={{ background: mode.bg }}
-                              >
-                                <ModeIcon size={18} color={mode.color} />
-                                <span style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>{mode.label}で追加</span>
-                              </button>
-                            );
-                          })}
-                          <button 
-                            onClick={() => {
-                              setAddMealKey(type);
-                              setAddMealDayIndex(selectedDayIndex);
-                              setActiveModal('photoEdit');
-                            }} 
-                            className="flex items-center gap-2.5 p-3 rounded-[10px]" 
-                            style={{ background: colors.purpleLight }}
-                          >
-                            <Camera size={18} color={colors.purple} />
-                            <span style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>写真から追加</span>
-                          </button>
+                  {ALL_MEAL_TYPES.map(type => (
+                    <button 
+                      key={type}
+                      onClick={() => {
+                        setAddMealKey(type);
+                        setAddMealDayIndex(selectedDayIndex);
+                        setActiveModal('add');
+                      }}
+                      className="w-full flex items-center justify-between p-4 rounded-xl transition-colors"
+                      style={{ background: colors.bg }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ 
+                          background: type === 'breakfast' ? colors.warningLight 
+                            : type === 'lunch' ? colors.accentLight 
+                            : type === 'dinner' ? colors.purpleLight 
+                            : type === 'snack' ? colors.successLight 
+                            : colors.blueLight 
+                        }}>
+                          <span style={{ fontSize: 18 }}>
+                            {type === 'breakfast' ? '🌅' 
+                              : type === 'lunch' ? '☀️' 
+                              : type === 'dinner' ? '🌙' 
+                              : type === 'snack' ? '🍪' 
+                              : '🌃'}
+                          </span>
                         </div>
-                        <div className="my-3" style={{ borderTop: `1px solid ${colors.border}` }} />
+                        <span style={{ fontSize: 15, fontWeight: 500, color: colors.text }}>{MEAL_LABELS[type]}</span>
                       </div>
-                    );
-                  })}
-                  {/* 両方追加済みの場合 */}
-                  {EXTRA_MEAL_TYPES.every(type => getMeal(currentDay, type)) && (
-                    <p style={{ fontSize: 13, color: colors.textMuted, textAlign: 'center', padding: 16 }}>
-                      おやつ・夜食は既に追加されています
-                    </p>
-                  )}
+                      <ChevronRight size={18} color={colors.textMuted} />
+                    </button>
+                  ))}
                 </div>
               </motion.div>
             )}
