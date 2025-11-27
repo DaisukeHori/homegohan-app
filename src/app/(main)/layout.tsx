@@ -9,7 +9,7 @@ const NAV_ITEMS = [
   { href: "/home", label: "ホーム", icon: Icons.Home },
   { href: "/menus/weekly", label: "献立", icon: Icons.Menu },
   { href: "/meals/new", label: "スキャン", isFab: true, icon: Icons.Scan },
-  { href: "/badges", label: "バッジ", icon: Icons.Badge },
+  { href: "/comparison", label: "比較", icon: Icons.Chart },
   { href: "/profile", label: "マイページ", icon: Icons.Profile },
 ];
 
