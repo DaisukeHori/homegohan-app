@@ -209,16 +209,13 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     shoppingList = shoppingData || [];
   }
 
-  // 10. 冷蔵庫/パントリー（IDを含める）
-  let pantryItems: any[] = [];
-  if (userActivePlan) {
-    const { data: pantryData } = await supabase
-      .from('pantry_items')
-      .select('id, item_name, quantity, unit, category, expiry_date')
-      .eq('meal_plan_id', userActivePlan.id)
-      .order('expiry_date', { ascending: true });
-    pantryItems = pantryData || [];
-  }
+  // 10. 冷蔵庫/パントリー（IDを含める）- user_idで取得
+  const { data: pantryData } = await supabase
+    .from('pantry_items')
+    .select('id, name, amount, category, expiration_date, added_at')
+    .eq('user_id', userId)
+    .order('expiration_date', { ascending: true, nullsFirst: false });
+  const pantryItems = pantryData || [];
 
   // 11. レシピコレクション
   const { data: recipeCollections } = await supabase
@@ -443,12 +440,12 @@ ${shoppingList.map((item: any) => {
 
   // 冷蔵庫/パントリーを整形（IDを含める）
   const pantryInfo = pantryItems.length > 0 ? `
-【🧊 冷蔵庫/パントリー】※変更・削除時はitemIdを使用
+【🧊 冷蔵庫/パントリー（${pantryItems.length}品）】※変更・削除時はitemIdを使用
 ${pantryItems.map((item: any) => {
-  const expiry = item.expiry_date ? `期限:${item.expiry_date}` : '';
-  const isExpiringSoon = item.expiry_date && new Date(item.expiry_date) <= new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-  const warning = isExpiringSoon ? '⚠️' : '';
-  return `${warning} ${item.item_name} ${item.quantity || ''}${item.unit || ''} [${item.category || 'その他'}] ${expiry}
+  const expiry = item.expiration_date ? `期限:${item.expiration_date}` : '';
+  const isExpiringSoon = item.expiration_date && new Date(item.expiration_date) <= new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  const warning = isExpiringSoon ? '⚠️期限間近!' : '';
+  return `- ${item.name} ${item.amount || ''} [${item.category || 'その他'}] ${expiry} ${warning}
   itemId: "${item.id}"`;
 }).join('\n')}
 ` : '【冷蔵庫/パントリーなし】';
