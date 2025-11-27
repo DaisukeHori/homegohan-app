@@ -58,7 +58,46 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .eq('id', userId)
     .single();
 
-  // 2. 最近の食事データ（過去14日分）
+  // 2. 今日の献立を取得（アクション実行用にIDを含める）
+  const today = new Date().toISOString().split('T')[0];
+  const { data: todayMeals } = await supabase
+    .from('planned_meals')
+    .select(`
+      id,
+      meal_type,
+      dish_name,
+      dishes,
+      calories_kcal,
+      protein_g,
+      fat_g,
+      carbs_g,
+      is_completed,
+      mode,
+      memo,
+      meal_plan_days!inner(day_date, meal_plan_id)
+    `)
+    .eq('meal_plan_days.day_date', today);
+
+  // 3. 明日〜1週間の献立も取得
+  const oneWeekLater = new Date();
+  oneWeekLater.setDate(oneWeekLater.getDate() + 7);
+  const { data: upcomingMeals } = await supabase
+    .from('planned_meals')
+    .select(`
+      id,
+      meal_type,
+      dish_name,
+      calories_kcal,
+      is_completed,
+      mode,
+      meal_plan_days!inner(day_date)
+    `)
+    .gt('meal_plan_days.day_date', today)
+    .lte('meal_plan_days.day_date', oneWeekLater.toISOString().split('T')[0])
+    .order('meal_plan_days(day_date)', { ascending: true })
+    .limit(30);
+
+  // 4. 最近の食事データ（過去14日分）
   const fourteenDaysAgo = new Date();
   fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
   
@@ -78,6 +117,7 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       meal_plan_days!inner(day_date)
     `)
     .gte('meal_plan_days.day_date', fourteenDaysAgo.toISOString().split('T')[0])
+    .lt('meal_plan_days.day_date', today)
     .order('meal_plan_days(day_date)', { ascending: false })
     .limit(50);
 
@@ -90,21 +130,21 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .order('record_date', { ascending: false })
     .limit(14);
 
-  // 4. 健康目標
+  // 5. 健康目標（IDを含める）
   const { data: healthGoals } = await supabase
     .from('health_goals')
     .select('*')
     .eq('user_id', userId)
     .eq('status', 'active');
 
-  // 5. 栄養目標
+  // 6. 栄養目標
   const { data: nutritionTargets } = await supabase
     .from('nutrition_targets')
     .select('*')
     .eq('user_id', userId)
     .single();
 
-  // 6. 獲得バッジ
+  // 7. 獲得バッジ
   const { data: badges } = await supabase
     .from('user_badges')
     .select(`
@@ -115,13 +155,50 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .order('obtained_at', { ascending: false })
     .limit(10);
 
-  // 7. AIインサイト（最新のもの）
+  // 8. AIインサイト（最新のもの）
   const { data: insights } = await supabase
     .from('health_insights')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(5);
+
+  // 9. アクティブな献立プランを取得
+  const { data: activePlan } = await supabase
+    .from('meal_plans')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .single();
+
+  // 10. 買い物リスト（IDを含める）
+  let shoppingList: any[] = [];
+  if (activePlan) {
+    const { data: shoppingData } = await supabase
+      .from('shopping_list_items')
+      .select('id, item_name, quantity, category, is_checked')
+      .eq('meal_plan_id', activePlan.id)
+      .order('category', { ascending: true });
+    shoppingList = shoppingData || [];
+  }
+
+  // 11. 冷蔵庫/パントリー（IDを含める）
+  let pantryItems: any[] = [];
+  if (activePlan) {
+    const { data: pantryData } = await supabase
+      .from('pantry_items')
+      .select('id, item_name, quantity, unit, category, expiry_date')
+      .eq('meal_plan_id', activePlan.id)
+      .order('expiry_date', { ascending: true });
+    pantryItems = pantryData || [];
+  }
+
+  // 12. レシピコレクション
+  const { data: recipeCollections } = await supabase
+    .from('recipe_collections')
+    .select('id, name, recipe_ids')
+    .eq('user_id', userId)
+    .limit(10);
 
   // プロフィール情報を整形
   const profileInfo = profile ? `
@@ -201,12 +278,42 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
 - アウトドア活動: ${(profile.outdoor_activities || []).join(', ') || '未設定'}
 ` : '【プロフィール未設定】';
 
-  // 食事履歴を整形
+  // 今日の献立を整形（アクション実行用にmealIdを含める）
+  const mealTypeLabels: Record<string, string> = {
+    breakfast: '朝食',
+    lunch: '昼食', 
+    dinner: '夕食',
+    snack: 'おやつ',
+    midnight_snack: '夜食',
+  };
+
+  const todayMealsInfo = todayMeals && todayMeals.length > 0 ? `
+【📅 今日（${today}）の献立】※変更時はmealIdを使用
+${todayMeals.map((m: any) => {
+  const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
+  const status = m.is_completed ? '✅完了' : '⬜未完了';
+  const mode = m.mode === 'cook' ? '🍳自炊' : m.mode === 'out' ? '🍽️外食' : m.mode === 'buy' ? '🛒中食' : '';
+  return `- ${mealTypeJa}: ${m.dish_name || '未設定'} (${m.calories_kcal || 0}kcal) ${mode} ${status}
+  mealId: "${m.id}"`;
+}).join('\n')}
+` : `【📅 今日（${today}）の献立なし】`;
+
+  // 今後1週間の献立を整形
+  const upcomingMealsInfo = upcomingMeals && upcomingMeals.length > 0 ? `
+【📆 今後1週間の献立】
+${upcomingMeals.map((m: any) => {
+  const date = m.meal_plan_days?.day_date || '不明';
+  const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
+  return `- ${date} ${mealTypeJa}: ${m.dish_name || '未設定'} (mealId: "${m.id}")`;
+}).join('\n')}
+` : '';
+
+  // 食事履歴を整形（過去分）
   const mealHistory = recentMeals && recentMeals.length > 0 ? `
 【最近の食事履歴（過去14日）】
 ${recentMeals.map((m: any) => {
   const date = m.meal_plan_days?.day_date || '不明';
-  const mealTypeJa = m.meal_type === 'breakfast' ? '朝食' : m.meal_type === 'lunch' ? '昼食' : m.meal_type === 'dinner' ? '夕食' : m.meal_type === 'snack' ? 'おやつ' : '夜食';
+  const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
   const status = m.is_completed ? '✓完了' : '未完了';
   const mode = m.mode === 'cook' ? '自炊' : m.mode === 'out' ? '外食' : m.mode === 'buy' ? '中食' : m.mode === 'skip' ? 'スキップ' : '';
   return `- ${date} ${mealTypeJa}: ${m.dish_name || '未設定'} (${m.calories_kcal || 0}kcal, P:${m.protein_g || 0}g) [${mode}] ${status}`;
@@ -230,15 +337,16 @@ ${healthRecords.map((r: any) => {
 }).join('\n')}
 ` : '【健康記録なし】';
 
-  // 健康目標を整形
+  // 健康目標を整形（IDを含める）
   const goalsInfo = healthGoals && healthGoals.length > 0 ? `
-【現在の健康目標】
-${healthGoals.map((g: any) => `- ${g.goal_type}: 目標${g.target_value}${g.target_unit} (現在${g.current_value || '未測定'}) 期限:${g.target_date || '未設定'}`).join('\n')}
+【🎯 現在の健康目標】※変更・削除時はgoalIdを使用
+${healthGoals.map((g: any) => `- ${g.goal_type}: 目標${g.target_value}${g.target_unit || ''} (現在${g.current_value || '未測定'}) 期限:${g.target_date || '未設定'}
+  goalId: "${g.id}"`).join('\n')}
 ` : '【健康目標未設定】';
 
   // 栄養目標を整形
   const nutritionInfo = nutritionTargets ? `
-【1日の栄養目標】
+【🥗 1日の栄養目標】
 - カロリー: ${nutritionTargets.daily_calories || '未設定'}kcal
 - タンパク質: ${nutritionTargets.protein_g || '未設定'}g
 - 脂質: ${nutritionTargets.fat_g || '未設定'}g
@@ -247,20 +355,48 @@ ${healthGoals.map((g: any) => `- ${g.goal_type}: 目標${g.target_value}${g.targ
 - ナトリウム: ${nutritionTargets.sodium_g || '未設定'}g
 ` : '【栄養目標未設定】';
 
+  // 買い物リストを整形（IDを含める）
+  const shoppingListInfo = shoppingList.length > 0 ? `
+【🛒 買い物リスト】※変更・削除・チェック時はitemIdを使用
+${shoppingList.map((item: any) => {
+  const checked = item.is_checked ? '✅' : '⬜';
+  return `${checked} ${item.item_name} ${item.quantity || ''} [${item.category || 'その他'}]
+  itemId: "${item.id}"`;
+}).join('\n')}
+` : '【買い物リストなし】';
+
+  // 冷蔵庫/パントリーを整形（IDを含める）
+  const pantryInfo = pantryItems.length > 0 ? `
+【🧊 冷蔵庫/パントリー】※変更・削除時はitemIdを使用
+${pantryItems.map((item: any) => {
+  const expiry = item.expiry_date ? `期限:${item.expiry_date}` : '';
+  const isExpiringSoon = item.expiry_date && new Date(item.expiry_date) <= new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  const warning = isExpiringSoon ? '⚠️' : '';
+  return `${warning} ${item.item_name} ${item.quantity || ''}${item.unit || ''} [${item.category || 'その他'}] ${expiry}
+  itemId: "${item.id}"`;
+}).join('\n')}
+` : '【冷蔵庫/パントリーなし】';
+
+  // レシピコレクションを整形
+  const collectionsInfo = recipeCollections && recipeCollections.length > 0 ? `
+【📚 レシピコレクション】
+${recipeCollections.map((c: any) => `- ${c.name}: ${(c.recipe_ids || []).length}件 (collectionId: "${c.id}")`).join('\n')}
+` : '';
+
   // バッジを整形
   const badgesInfo = badges && badges.length > 0 ? `
-【獲得バッジ（最新10件）】
+【🏆 獲得バッジ（最新10件）】
 ${badges.map((b: any) => `- ${b.badges?.name}: ${b.badges?.description}`).join('\n')}
 ` : '';
 
   // インサイトを整形
   const insightsInfo = insights && insights.length > 0 ? `
-【最近のAI分析結果】
+【💡 最近のAI分析結果】
 ${insights.map((i: any) => `- ${i.title}: ${i.summary}`).join('\n')}
 ` : '';
 
-  // 今日の日付
-  const today = new Date().toLocaleDateString('ja-JP', { 
+  // 今日の日付（表示用）
+  const todayDisplay = new Date().toLocaleDateString('ja-JP', { 
     year: 'numeric', 
     month: 'long', 
     day: 'numeric', 
@@ -268,26 +404,37 @@ ${insights.map((i: any) => `- ${i.title}: ${i.summary}`).join('\n')}
   });
 
   return `あなたは「ほめゴハン」のAI栄養アドバイザーです。
-今日は${today}です。
+今日は${todayDisplay}（${today}）です。
 
 【あなたの役割】
 1. ユーザーの食事や健康について相談に乗り、具体的なアドバイスを提供する
 2. まず褒める：ユーザーの努力や良い点を見つけて褒める
 3. 共感する：ユーザーの悩みや状況に寄り添う
 4. 具体的に提案：実行可能な具体的なアドバイスを提供
-5. 必要に応じてアクションを提案（献立作成、買い物リスト追加など）
+5. 必要に応じてアクションを実行（献立変更、買い物リスト追加など）
 
 【重要】以下のユーザー情報を参考にして、パーソナライズされたアドバイスを提供してください。
+各データにはIDが含まれています。変更・削除などのアクションを実行する際は、必ずそのIDを使用してください。
 
 ${profileInfo}
 
-${mealHistory}
+${todayMealsInfo}
 
-${healthHistory}
+${upcomingMealsInfo}
+
+${shoppingListInfo}
+
+${pantryInfo}
 
 ${goalsInfo}
 
 ${nutritionInfo}
+
+${collectionsInfo}
+
+${mealHistory}
+
+${healthHistory}
 
 ${badgesInfo}
 
@@ -343,13 +490,41 @@ ${insightsInfo}
 - update_profile_preferences: 食事の好みや生活習慣を更新 (params: { updates: { diet_style?, cuisine_preferences?, taste_preferences?, favorite_ingredients?, favorite_dishes?, cooking_experience?, weekday_cooking_minutes?, weekend_cooking_minutes?, snacking_habit?, alcohol_frequency?, daily_water_ml?, etc } })
   ※ email, avatar_url等のセキュリティ関連フィールドは更新不可
 
+【⚠️ 重要：アクション実行のルール】
+1. ユーザーが「変えて」「それでお願い」「OK」「はい」「やって」などの同意・承認の言葉を言った場合、必ずアクションJSONを出力してください
+2. アクションを提案する際は、必ず \`\`\`action ... \`\`\` 形式で出力してください。これがないとシステムは何も実行しません
+3. 「変更しますね」「追加しますね」と言葉で言うだけでは実行されません。必ずアクションJSONを含めてください
+4. 既存の献立を変更する場合は、まず現在の献立のmealIdを確認し、update_mealアクションを使用してください
+5. 新しい献立を作成する場合は、create_mealアクションを使用してください
+
+【アクション出力例】
+ユーザー: 「今日の昼食をあっさりしたものに変えて」
+→ 以下のようにアクションJSONを必ず含める：
+
+\`\`\`action
+{
+  "type": "update_meal",
+  "params": {
+    "mealId": "既存のmealId",
+    "updates": {
+      "dish_name": "鶏肉と野菜の蒸し物定食",
+      "calories_kcal": 450,
+      "protein_g": 30,
+      "fat_g": 10,
+      "carbs_g": 50
+    }
+  }
+}
+\`\`\`
+
 【応答のガイドライン】
 - 親しみやすく、温かい口調で話す
 - 絵文字を適度に使用する
 - 専門用語は避け、わかりやすく説明する
 - ユーザーの状況（仕事、家族構成、健康状態など）を考慮する
 - 無理のない、実現可能な提案をする
-- 長すぎない、読みやすい回答を心がける`;
+- 長すぎない、読みやすい回答を心がける
+- ユーザーが同意したら、必ずアクションJSONを出力する`;
 }
 
 // メッセージ送信（AI応答を含む）
