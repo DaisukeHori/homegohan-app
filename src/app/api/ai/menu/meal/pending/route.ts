@@ -8,10 +8,26 @@ export async function GET(request: Request) {
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
-  const date = searchParams.get('date');
+  const weekStartDate = searchParams.get('date'); // 週の開始日
   const mealType = searchParams.get('mealType');
 
   try {
+    // 週の日付範囲を計算
+    let startDate: string | null = null;
+    let endDate: string | null = null;
+    
+    if (weekStartDate) {
+      const start = new Date(weekStartDate);
+      const dayOfWeek = start.getDay();
+      const weekStart = new Date(start);
+      weekStart.setDate(weekStart.getDate() - dayOfWeek);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      
+      startDate = weekStart.toISOString().split('T')[0];
+      endDate = weekEnd.toISOString().split('T')[0];
+    }
+
     // pending または processing の単一食事リクエストを確認
     let query = supabase
       .from('weekly_menu_requests')
@@ -21,8 +37,9 @@ export async function GET(request: Request) {
       .in('status', ['pending', 'processing'])
       .order('created_at', { ascending: false });
 
-    if (date) {
-      query = query.eq('target_date', date);
+    // 週の範囲でフィルタ
+    if (startDate && endDate) {
+      query = query.gte('target_date', startDate).lte('target_date', endDate);
     }
     if (mealType) {
       query = query.eq('target_meal_type', mealType);
@@ -54,4 +71,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

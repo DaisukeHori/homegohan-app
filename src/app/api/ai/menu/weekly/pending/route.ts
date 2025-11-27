@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
-// 生成中のリクエストがあるか確認
+// 週間生成中のリクエストがあるか確認
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -15,19 +15,20 @@ export async function GET(request: Request) {
   }
 
   try {
-    // 週の開始日を計算
+    // 週の開始日を計算（日曜日始まり）
     const targetDate = new Date(date);
     const dayOfWeek = targetDate.getDay();
     const weekStart = new Date(targetDate);
     weekStart.setDate(weekStart.getDate() - dayOfWeek);
     const weekStartStr = weekStart.toISOString().split('T')[0];
 
-    // pending または processing のリクエストを確認
+    // pending または processing の週間生成リクエストを確認（mode = 'weekly' または null）
     const { data: pendingRequest, error } = await supabase
       .from('weekly_menu_requests')
       .select('id, status, mode, created_at')
       .eq('user_id', user.id)
       .eq('start_date', weekStartStr)
+      .or('mode.eq.weekly,mode.is.null')
       .in('status', ['pending', 'processing'])
       .order('created_at', { ascending: false })
       .limit(1)
@@ -55,4 +56,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-
