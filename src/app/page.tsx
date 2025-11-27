@@ -734,17 +734,17 @@ export default function LandingPage() {
                 <li><Link href="/about" className="hover:underline">サービスについて</Link></li>
                 <li><Link href="/signup" className="hover:underline">新規登録</Link></li>
                 <li><Link href="/login" className="hover:underline">ログイン</Link></li>
-                <li><a href="#" className="hover:underline">料金プラン</a></li>
+                <li><Link href="/pricing" className="hover:underline">料金プラン</Link></li>
               </ul>
             </div>
             
             <div>
               <h4 className="font-bold mb-4" style={{ color: colors.text }}>サポート</h4>
               <ul className="space-y-2 text-sm" style={{ color: colors.textLight }}>
-                <li><a href="#" className="hover:underline">使い方ガイド</a></li>
+                <li><Link href="/guide" className="hover:underline">使い方ガイド</Link></li>
                 <li><Link href="/contact" className="hover:underline">お問い合わせ</Link></li>
-                <li><a href="#" className="hover:underline">よくある質問</a></li>
-                <li><a href="#" className="hover:underline">お知らせ</a></li>
+                <li><Link href="/faq" className="hover:underline">よくある質問</Link></li>
+                <li><Link href="/news" className="hover:underline">お知らせ</Link></li>
               </ul>
             </div>
             
@@ -753,8 +753,8 @@ export default function LandingPage() {
               <ul className="space-y-2 text-sm" style={{ color: colors.textLight }}>
                 <li><Link href="/terms" className="hover:underline">利用規約</Link></li>
                 <li><Link href="/privacy" className="hover:underline">プライバシーポリシー</Link></li>
-                <li><a href="#" className="hover:underline">特定商取引法に基づく表記</a></li>
-                <li><a href="#" className="hover:underline">運営会社</a></li>
+                <li><Link href="/legal" className="hover:underline">特定商取引法に基づく表記</Link></li>
+                <li><Link href="/company" className="hover:underline">運営会社</Link></li>
               </ul>
             </div>
           </div>
