@@ -1233,14 +1233,11 @@ export default function WeeklyMenuPage() {
             </div>
             <span style={{ 
               fontSize: 13, 
-              color: colors.textLight,
+              color: isPast ? colors.textMuted : colors.textLight,
               textDecoration: meal.isCompleted ? 'line-through' : 'none',
             }}>
               {displayName}
             </span>
-            {isPast && (
-              <span style={{ fontSize: 10, color: colors.textMuted, marginLeft: 4 }}>（過去）</span>
-            )}
           </div>
           <div className="flex items-center gap-1.5">
             <span style={{ fontSize: 12, color: colors.textMuted }}>{meal.caloriesKcal || '-'}kcal</span>
@@ -1364,23 +1361,25 @@ export default function WeeklyMenuPage() {
           </div>
         )}
 
-        {/* 変更ボタン群 */}
+        {/* 変更ボタン群（過去の場合はAIボタンを非表示） */}
         <div className="flex gap-2 mt-3">
-          <button 
-            onClick={() => openRegenerateMeal(meal)}
-            className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
-            style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
-          >
-            <Sparkles size={13} color={colors.accent} />
-            <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
-          </button>
+          {!isPast && (
+            <button 
+              onClick={() => openRegenerateMeal(meal)}
+              className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+              style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
+            >
+              <Sparkles size={13} color={colors.accent} />
+              <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
+            </button>
+          )}
           <button 
             onClick={() => openManualEdit(meal)}
-            className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+            className={`${isPast ? 'w-full' : 'flex-1'} p-2.5 rounded-[10px] flex items-center justify-center gap-1.5`}
             style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
           >
             <Pencil size={13} color={colors.textLight} />
-            <span style={{ fontSize: 12, fontWeight: 500, color: colors.textLight }}>手動で変更</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: colors.textLight }}>手動で修正</span>
           </button>
         </div>
       </div>
@@ -1463,15 +1462,20 @@ export default function WeeklyMenuPage() {
                 <button
                   key={day.dateStr}
                   onClick={() => setSelectedDayIndex(idx)}
-                  className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all"
+                  className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all relative"
                   style={{
-                    background: isSelected ? colors.accent : 'transparent',
+                    background: isSelected 
+                      ? (isPast ? colors.textMuted : colors.accent) 
+                      : (isPast ? 'rgba(0,0,0,0.03)' : 'transparent'),
                     border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
-                    opacity: isPast && !isSelected ? 0.4 : 1,
                   }}
                 >
                   <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#fff' : isWeekend ? colors.accent : colors.text }}>{day.dayOfWeek}</span>
+                  <span style={{ 
+                    fontSize: 13, 
+                    fontWeight: 600, 
+                    color: isSelected ? '#fff' : isPast ? colors.textMuted : isWeekend ? colors.accent : colors.text 
+                  }}>{day.dayOfWeek}</span>
                 </button>
               );
             })}
@@ -1519,11 +1523,14 @@ export default function WeeklyMenuPage() {
       <main className="flex-1 p-3 overflow-y-auto">
         <div className="flex justify-between items-center mb-2 px-1">
           <div className="flex items-center gap-1.5">
-            <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
+            <span style={{ fontSize: 16, fontWeight: 600, color: weekDates[selectedDayIndex]?.dateStr < todayStr ? colors.textMuted : colors.text }}>
               {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()}（{weekDates[selectedDayIndex]?.dayOfWeek}）
             </span>
             {weekDates[selectedDayIndex]?.dateStr === todayStr && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
+            )}
+            {weekDates[selectedDayIndex]?.dateStr < todayStr && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.textMuted, color: '#fff' }}>過去</span>
             )}
           </div>
           <span style={{ fontSize: 12, color: colors.textMuted }}>{getDayTotalCal(currentDay)} kcal</span>
