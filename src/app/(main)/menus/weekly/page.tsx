@@ -165,10 +165,11 @@ export default function WeeklyMenuPage() {
   
   // 生成中状態をlocalStorageから復元し、ポーリングを再開
   useEffect(() => {
-    const stored = localStorage.getItem('weeklyMenuGenerating');
-    if (stored) {
+    // 一括生成の復元
+    const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
+    if (storedWeekly) {
       try {
-        const { weekStartDate, timestamp } = JSON.parse(stored);
+        const { weekStartDate, timestamp } = JSON.parse(storedWeekly);
         const elapsed = Date.now() - timestamp;
         // 5分以内なら生成中とみなしてポーリング再開
         if (elapsed < 5 * 60 * 1000 && weekStartDate === formatLocalDate(weekStart)) {
@@ -215,6 +216,62 @@ export default function WeeklyMenuPage() {
         }
       } catch {
         localStorage.removeItem('weeklyMenuGenerating');
+      }
+    }
+    
+    // 単一食事生成の復元
+    const storedSingle = localStorage.getItem('singleMealGenerating');
+    if (storedSingle) {
+      try {
+        const { dayIndex, mealType, dayDate, initialCount, timestamp } = JSON.parse(storedSingle);
+        const elapsed = Date.now() - timestamp;
+        // 2分以内なら生成中とみなしてポーリング再開
+        if (elapsed < 2 * 60 * 1000) {
+          setGeneratingMeal({ dayIndex, mealType });
+          setSelectedDayIndex(dayIndex);
+          
+          // ポーリング再開
+          const remainingTime = 2 * 60 * 1000 - elapsed;
+          const maxAttempts = Math.ceil(remainingTime / 3000);
+          let attempts = 0;
+          
+          const pollInterval = setInterval(async () => {
+            attempts++;
+            try {
+              const targetDate = formatLocalDate(weekStart);
+              const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+              if (pollRes.ok) {
+                const { mealPlan } = await pollRes.json();
+                if (mealPlan) {
+                  const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
+                  const currentMealCount = targetDay?.meals?.filter((m: any) => m.mealType === mealType).length || 0;
+                  
+                  if (currentMealCount > initialCount) {
+                    setCurrentPlan(mealPlan);
+                    setGeneratingMeal(null);
+                    localStorage.removeItem('singleMealGenerating');
+                    clearInterval(pollInterval);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('Polling error:', e);
+            }
+            
+            if (attempts >= maxAttempts) {
+              clearInterval(pollInterval);
+              setGeneratingMeal(null);
+              localStorage.removeItem('singleMealGenerating');
+              window.location.reload();
+            }
+          }, 3000);
+          
+          return () => clearInterval(pollInterval);
+        } else {
+          localStorage.removeItem('singleMealGenerating');
+        }
+      } catch {
+        localStorage.removeItem('singleMealGenerating');
       }
     }
   }, [weekStart]);
@@ -590,6 +647,15 @@ export default function WeeklyMenuPage() {
     setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
     setActiveModal(null);
     
+    // localStorageに生成中状態を保存（リロードしても維持するため）
+    localStorage.setItem('singleMealGenerating', JSON.stringify({
+      dayIndex: addMealDayIndex,
+      mealType: addMealKey,
+      dayDate,
+      initialCount: initialMealCount,
+      timestamp: Date.now()
+    }));
+    
     try {
       const preferences: Record<string, boolean> = {};
       selectedConditions.forEach(c => {
@@ -634,6 +700,7 @@ export default function WeeklyMenuPage() {
                   console.log(`Meal generated! Count: ${initialMealCount} -> ${currentMealCount}`);
                   setCurrentPlan(mealPlan);
                   setGeneratingMeal(null);
+                  localStorage.removeItem('singleMealGenerating');
                   clearInterval(pollInterval);
                   return;
                 }
@@ -645,6 +712,7 @@ export default function WeeklyMenuPage() {
           
           if (attempts >= maxAttempts) {
             console.log('Polling timeout, reloading...');
+            localStorage.removeItem('singleMealGenerating');
             setGeneratingMeal(null);
             clearInterval(pollInterval);
             window.location.reload();
@@ -654,11 +722,13 @@ export default function WeeklyMenuPage() {
         const err = await res.json();
         alert(`エラー: ${err.error || '生成に失敗しました'}`);
         setGeneratingMeal(null);
+        localStorage.removeItem('singleMealGenerating');
       }
     } catch (error) {
       console.error('Meal generation error:', error);
       alert('エラーが発生しました');
       setGeneratingMeal(null);
+      localStorage.removeItem('singleMealGenerating');
     }
   };
 
