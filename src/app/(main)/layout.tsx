@@ -2,9 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
 import AIChatBubble from "@/components/AIChatBubble";
+import { createClient } from "@/lib/supabase/client";
+
+// ロール別の管理メニュー
+const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
+  support: { href: "/support", label: "サポート", icon: "🎧", color: "bg-teal-500" },
+  org_admin: { href: "/org/dashboard", label: "組織管理", icon: "🏢", color: "bg-blue-500" },
+  admin: { href: "/admin", label: "管理者", icon: "🛡", color: "bg-orange-500" },
+  super_admin: { href: "/super-admin", label: "Super Admin", icon: "👑", color: "bg-purple-500" },
+};
 
 const NAV_ITEMS = [
   { href: "/home", label: "ホーム", icon: Icons.Home },
@@ -20,6 +30,55 @@ export default function MainLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname();
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const supabase = createClient();
+
+  useEffect(() => {
+    const fetchUserRole = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single();
+        if (profile?.role && profile.role !== 'user') {
+          setUserRole(profile.role);
+        }
+      }
+    };
+    fetchUserRole();
+  }, [supabase]);
+
+  // ロールに応じた管理メニューを取得
+  const getAdminMenuItems = () => {
+    if (!userRole) return [];
+    
+    const items = [];
+    // super_adminは全てにアクセス可能
+    if (userRole === 'super_admin') {
+      items.push(ADMIN_MENU_ITEMS.super_admin);
+      items.push(ADMIN_MENU_ITEMS.admin);
+      items.push(ADMIN_MENU_ITEMS.support);
+    }
+    // adminはadmin, supportにアクセス可能
+    else if (userRole === 'admin') {
+      items.push(ADMIN_MENU_ITEMS.admin);
+      items.push(ADMIN_MENU_ITEMS.support);
+    }
+    // supportはsupportのみ
+    else if (userRole === 'support') {
+      items.push(ADMIN_MENU_ITEMS.support);
+    }
+    // org_adminはorg管理のみ
+    else if (userRole === 'org_admin') {
+      items.push(ADMIN_MENU_ITEMS.org_admin);
+    }
+    
+    return items;
+  };
+
+  const adminMenuItems = getAdminMenuItems();
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -61,6 +120,27 @@ export default function MainLayout({
             );
           })}
         </nav>
+
+        {/* 管理メニュー（権限がある場合のみ表示） */}
+        {adminMenuItems.length > 0 && (
+          <div className="px-4 pb-2">
+            <div className="text-xs font-medium text-gray-400 px-4 mb-2">管理メニュー</div>
+            <div className="space-y-1">
+              {adminMenuItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="flex items-center gap-3 px-4 py-2.5 text-gray-600 hover:bg-gray-50 rounded-xl transition-colors group"
+                >
+                  <span className={`w-7 h-7 ${item.color} rounded-lg flex items-center justify-center text-sm shadow-sm group-hover:shadow-md transition-shadow`}>
+                    {item.icon}
+                  </span>
+                  <span className="text-sm font-medium">{item.label}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="p-4 border-t border-gray-100">
            <Link href="/settings" className="flex items-center gap-4 px-4 py-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-xl transition-colors">
