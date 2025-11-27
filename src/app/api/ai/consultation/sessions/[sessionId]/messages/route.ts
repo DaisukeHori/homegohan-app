@@ -208,12 +208,38 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     pantryItems = pantryData || [];
   }
 
-  // 12. レシピコレクション
+  // 11. レシピコレクション
   const { data: recipeCollections } = await supabase
     .from('recipe_collections')
     .select('id, name, recipe_ids')
     .eq('user_id', userId)
     .limit(10);
+
+  // 12. 過去のセッション要約（最新5件）
+  const { data: pastSessions } = await supabase
+    .from('ai_consultation_sessions')
+    .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+    .eq('user_id', userId)
+    .eq('status', 'closed')
+    .not('summary', 'is', null)
+    .order('updated_at', { ascending: false })
+    .limit(5);
+
+  // 13. 重要メッセージ（最新20件）
+  const { data: importantMessages } = await supabase
+    .from('ai_consultation_messages')
+    .select(`
+      content,
+      importance_reason,
+      created_at,
+      role,
+      metadata,
+      ai_consultation_sessions!inner(user_id, title)
+    `)
+    .eq('is_important', true)
+    .eq('ai_consultation_sessions.user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(20);
 
   // プロフィール情報を整形
   const profileInfo = profile ? `
@@ -410,6 +436,34 @@ ${badges.map((b: any) => `- ${b.badges?.name}: ${b.badges?.description}`).join('
 ${insights.map((i: any) => `- ${i.title}: ${i.summary}`).join('\n')}
 ` : '';
 
+  // 過去のセッション要約を整形
+  const pastSessionsInfo = pastSessions && pastSessions.length > 0 ? `
+【📜 過去の相談履歴（最新5件）】
+${pastSessions.map((s: any) => {
+  const keyFacts = s.context_snapshot?.key_facts || [];
+  const userInsights = s.context_snapshot?.user_insights || [];
+  return `
+■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP') : '日付不明'}）
+  概要: ${s.summary || '要約なし'}
+  トピック: ${(s.key_topics || []).join(', ') || 'なし'}
+  ${keyFacts.length > 0 ? `重要な事実:
+${keyFacts.map((f: any) => `    - [${f.category}] ${f.date ? f.date + ': ' : ''}${f.content}`).join('\n')}` : ''}
+  ${userInsights.length > 0 ? `判明したこと: ${userInsights.join(', ')}` : ''}`;
+}).join('\n')}
+` : '';
+
+  // 重要メッセージを整形
+  const importantMessagesInfo = importantMessages && importantMessages.length > 0 ? `
+【⭐ ユーザーが重要とマークした過去の会話（最新20件）】
+${importantMessages.map((m: any) => {
+  const date = new Date(m.created_at).toLocaleDateString('ja-JP');
+  const role = m.role === 'user' ? 'ユーザー' : 'AI';
+  const reason = m.importance_reason ? ` (理由: ${m.importance_reason})` : '';
+  const category = m.metadata?.category ? ` [${m.metadata.category}]` : '';
+  return `- ${date}${category} [${role}] ${m.content.substring(0, 150)}${m.content.length > 150 ? '...' : ''}${reason}`;
+}).join('\n')}
+` : '';
+
   // 今日の日付（表示用）
   const todayDisplay = new Date().toLocaleDateString('ja-JP', { 
     year: 'numeric', 
@@ -454,6 +508,10 @@ ${healthHistory}
 ${badgesInfo}
 
 ${insightsInfo}
+
+${pastSessionsInfo}
+
+${importantMessagesInfo}
 
 【アクション提案について】
 必要に応じて以下のアクションを提案できます。提案する場合は、以下の形式でJSONを含めてください：
