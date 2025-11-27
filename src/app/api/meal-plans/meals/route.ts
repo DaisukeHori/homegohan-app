@@ -84,13 +84,7 @@ export async function POST(request: Request) {
       dayId = newDay.id;
     }
 
-    // Delete existing meal of same type for this day (if any)
-    await supabase
-      .from('planned_meals')
-      .delete()
-      .eq('meal_plan_day_id', dayId)
-      .eq('meal_type', mealType);
-
+    // 同じタイプの食事を複数追加可能にするため、削除はしない
     // Create new planned meal
     const { data: newMeal, error: mealError } = await supabase
       .from('planned_meals')

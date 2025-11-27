@@ -13,7 +13,7 @@ function getWeekStart(date: Date): Date {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
+  const supabase = createClient(cookies());
   
   try {
     const { dayDate, mealType, dishes, totalCalories, imageUrl, nutritionalAdvice } = await request.json();

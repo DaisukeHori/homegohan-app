@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { cookies } from "next/headers";
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
+  const supabase = createClient(cookies());
   
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
