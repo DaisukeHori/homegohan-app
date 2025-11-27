@@ -972,6 +972,32 @@ export default function WeeklyMenuPage() {
     
     return count;
   };
+  
+  // これからの献立数をカウント（空欄 + 既存の献立）
+  const countFutureMeals = () => {
+    const todayStr = formatLocalDate(new Date());
+    let count = 0;
+    
+    weekDates.forEach(({ dateStr }) => {
+      if (dateStr >= todayStr) {
+        count += 3; // 朝・昼・夕の3食
+      }
+    });
+    
+    return count;
+  };
+  
+  // 既存の献立があるかどうか
+  const hasFutureMeals = () => {
+    const todayStr = formatLocalDate(new Date());
+    return weekDates.some(({ dateStr }) => {
+      if (dateStr >= todayStr) {
+        const day = currentPlan?.days?.find(d => d.dayDate === dateStr);
+        return (['breakfast', 'lunch', 'dinner'] as MealType[]).some(type => getMeal(day, type));
+      }
+      return false;
+    });
+  };
 
   const getWeekStats = () => {
     if (!currentPlan?.days) return { cookRate: 0, avgCal: 0, cookCount: 0, buyCount: 0, outCount: 0 };
@@ -996,6 +1022,7 @@ export default function WeeklyMenuPage() {
 
   const stats = getWeekStats();
   const emptySlotCount = countEmptySlots();
+  const futureMealCount = countFutureMeals();
   const todayStr = formatLocalDate(new Date());
 
   const getDayTotalCal = (day: MealPlanDay | undefined) => {
@@ -1391,7 +1418,9 @@ export default function WeeklyMenuPage() {
         <div className="flex items-center gap-2">
           <Sparkles size={16} color="#fff" />
           <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-            {emptySlotCount > 0 ? `空欄${emptySlotCount}件 → AIに埋めてもらう` : 'AIアシスタント'}
+            {emptySlotCount > 0 
+              ? `空欄${emptySlotCount}件 → AIに埋めてもらう` 
+              : `これからの${futureMealCount}件 → AIで作り直す`}
           </span>
         </div>
         <ChevronRight size={16} color="rgba(255,255,255,0.7)" />
@@ -1482,11 +1511,19 @@ export default function WeeklyMenuPage() {
                         <Sparkles size={18} color="#fff" />
                       )}
                       <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
-                        {isGenerating ? '生成中...' : '空欄をすべて埋める'}
+                        {isGenerating 
+                          ? '生成中...' 
+                          : emptySlotCount > 0 
+                            ? '空欄をすべて埋める' 
+                            : 'これからの献立を作り直す'}
                       </span>
                     </div>
                     <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: 0 }}>
-                      {isGenerating ? 'AIが献立を作成しています...' : `${emptySlotCount}件の空欄にAIが献立を提案します`}
+                      {isGenerating 
+                        ? 'AIが献立を作成しています...' 
+                        : emptySlotCount > 0
+                          ? `${emptySlotCount}件の空欄にAIが献立を提案します`
+                          : `これからの${futureMealCount}件の献立をAIが書き換えます`}
                     </p>
                   </button>
                   <p style={{ fontSize: 11, color: colors.textMuted, margin: '12px 0 8px' }}>条件を指定（複数選択可）</p>
