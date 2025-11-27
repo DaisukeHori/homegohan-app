@@ -438,10 +438,41 @@ export interface PlannedMeal {
   imageUrl: string | null;
   description: string | null;
   ingredients: string[];
+  
+  // 基本栄養素
   caloriesKcal: number | null;
   proteinG: number | null;
   fatG: number | null;
   carbsG: number | null;
+  
+  // 拡張栄養素
+  sodiumG: number | null;
+  aminoAcidG: number | null;
+  sugarG: number | null;
+  fiberG: number | null;
+  fiberSolubleG: number | null;
+  fiberInsolubleG: number | null;
+  potassiumMg: number | null;
+  calciumMg: number | null;
+  phosphorusMg: number | null;
+  ironMg: number | null;
+  zincMg: number | null;
+  iodineUg: number | null;
+  cholesterolMg: number | null;
+  vitaminB1Mg: number | null;
+  vitaminB2Mg: number | null;
+  vitaminCMg: number | null;
+  vitaminB6Mg: number | null;
+  vitaminB12Ug: number | null;
+  folicAcidUg: number | null;
+  vitaminAUg: number | null;
+  vitaminDUg: number | null;
+  vitaminKUg: number | null;
+  vitaminEMg: number | null;
+  saturatedFatG: number | null;
+  monounsaturatedFatG: number | null;
+  polyunsaturatedFatG: number | null;
+  
   isCompleted: boolean;
   completedAt: ISODateTimeString | null;
   actualMealId: string | null;
@@ -461,6 +492,74 @@ export interface PlannedMeal {
   
   // Display order for reordering meals
   displayOrder: number;
+}
+
+// 栄養素の詳細型
+export interface NutritionDetails {
+  caloriesKcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  sodiumG: number;
+  aminoAcidG: number;
+  sugarG: number;
+  fiberG: number;
+  fiberSolubleG: number;
+  fiberInsolubleG: number;
+  potassiumMg: number;
+  calciumMg: number;
+  phosphorusMg: number;
+  ironMg: number;
+  zincMg: number;
+  iodineUg: number;
+  cholesterolMg: number;
+  vitaminB1Mg: number;
+  vitaminB2Mg: number;
+  vitaminCMg: number;
+  vitaminB6Mg: number;
+  vitaminB12Ug: number;
+  folicAcidUg: number;
+  vitaminAUg: number;
+  vitaminDUg: number;
+  vitaminKUg: number;
+  vitaminEMg: number;
+  saturatedFatG: number;
+  monounsaturatedFatG: number;
+  polyunsaturatedFatG: number;
+}
+
+// 栄養目標
+export interface NutritionTargets {
+  id: string;
+  userId: string;
+  dailyCalories: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  sodiumG: number | null;
+  sugarG: number | null;
+  fiberG: number | null;
+  potassiumMg: number | null;
+  calciumMg: number | null;
+  phosphorusMg: number | null;
+  ironMg: number | null;
+  zincMg: number | null;
+  iodineUg: number | null;
+  cholesterolMg: number | null;
+  vitaminB1Mg: number | null;
+  vitaminB2Mg: number | null;
+  vitaminB6Mg: number | null;
+  vitaminB12Ug: number | null;
+  folicAcidUg: number | null;
+  vitaminCMg: number | null;
+  vitaminAUg: number | null;
+  vitaminDUg: number | null;
+  vitaminKUg: number | null;
+  vitaminEMg: number | null;
+  saturatedFatG: number | null;
+  autoCalculate: boolean;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
 }
 
 export interface ShoppingListItem {

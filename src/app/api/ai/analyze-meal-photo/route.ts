@@ -79,6 +79,36 @@ export async function POST(request: Request) {
   "totalProtein": 合計タンパク質（g、数値）,
   "totalCarbs": 合計炭水化物（g、数値）,
   "totalFat": 合計脂質（g、数値）,
+  
+  "nutrition": {
+    "sodium_g": ナトリウム（塩分）g,
+    "amino_acid_g": アミノ酸 g（タンパク質とほぼ同等）,
+    "sugar_g": 糖質 g,
+    "fiber_g": 食物繊維 g,
+    "fiber_soluble_g": 水溶性食物繊維 g,
+    "fiber_insoluble_g": 不溶性食物繊維 g,
+    "potassium_mg": カリウム mg,
+    "calcium_mg": カルシウム mg,
+    "phosphorus_mg": リン mg,
+    "iron_mg": 鉄分 mg,
+    "zinc_mg": 亜鉛 mg,
+    "iodine_ug": ヨウ素 µg,
+    "cholesterol_mg": コレステロール mg,
+    "vitamin_b1_mg": ビタミンB1 mg,
+    "vitamin_b2_mg": ビタミンB2 mg,
+    "vitamin_c_mg": ビタミンC mg,
+    "vitamin_b6_mg": ビタミンB6 mg,
+    "vitamin_b12_ug": ビタミンB12 µg,
+    "folic_acid_ug": 葉酸 µg,
+    "vitamin_a_ug": ビタミンA µg,
+    "vitamin_d_ug": ビタミンD µg,
+    "vitamin_k_ug": ビタミンK µg,
+    "vitamin_e_mg": ビタミンE mg,
+    "saturated_fat_g": 飽和脂肪酸 g,
+    "monounsaturated_fat_g": 一価不飽和脂肪酸 g,
+    "polyunsaturated_fat_g": 多価不飽和脂肪酸 g
+  },
+  
   "overallScore": 総合スコア（0-100の数値、栄養バランス・彩り・食材の多様性を考慮）,
   "vegScore": 野菜スコア（0-100の数値、野菜の量と種類を考慮）,
   "praiseComment": "【重要】この食事の良いところを見つけて、温かく褒めるコメント（80-120文字程度）。絵文字を1-2個使用。ダメ出しは絶対にしない。例：「わぁ、すごい彩り！アボカドの良質な脂質と、たっぷりの野菜でビタミンもバッチリですね。見た目も美しくて、食べるのがもったいないくらい✨」",
@@ -91,6 +121,7 @@ export async function POST(request: Request) {
 - roleは料理の種類に応じて適切に設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート/おやつ=dessert）
 - praiseCommentは必ずポジティブな内容にしてください。批判や改善提案は含めないでください
 - overallScoreは厳しすぎず、70-95の範囲で評価してください（普通の食事でも75以上）
+- nutritionオブジェクト内の全ての栄養素を推定してください（日本食品標準成分表を参考に）
 - JSONのみを出力してください`;
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GOOGLE_AI_API_KEY}`;
@@ -136,12 +167,45 @@ export async function POST(request: Request) {
     
     const analysisResult = JSON.parse(jsonMatch[0]);
     
+    const nutrition = analysisResult.nutrition || {};
+    
     return NextResponse.json({
       dishes: analysisResult.dishes || [],
       totalCalories: analysisResult.totalCalories || 0,
       totalProtein: analysisResult.totalProtein || 0,
       totalCarbs: analysisResult.totalCarbs || 0,
       totalFat: analysisResult.totalFat || 0,
+      
+      // 拡張栄養素
+      nutrition: {
+        sodiumG: nutrition.sodium_g || 0,
+        aminoAcidG: nutrition.amino_acid_g || 0,
+        sugarG: nutrition.sugar_g || 0,
+        fiberG: nutrition.fiber_g || 0,
+        fiberSolubleG: nutrition.fiber_soluble_g || 0,
+        fiberInsolubleG: nutrition.fiber_insoluble_g || 0,
+        potassiumMg: nutrition.potassium_mg || 0,
+        calciumMg: nutrition.calcium_mg || 0,
+        phosphorusMg: nutrition.phosphorus_mg || 0,
+        ironMg: nutrition.iron_mg || 0,
+        zincMg: nutrition.zinc_mg || 0,
+        iodineUg: nutrition.iodine_ug || 0,
+        cholesterolMg: nutrition.cholesterol_mg || 0,
+        vitaminB1Mg: nutrition.vitamin_b1_mg || 0,
+        vitaminB2Mg: nutrition.vitamin_b2_mg || 0,
+        vitaminCMg: nutrition.vitamin_c_mg || 0,
+        vitaminB6Mg: nutrition.vitamin_b6_mg || 0,
+        vitaminB12Ug: nutrition.vitamin_b12_ug || 0,
+        folicAcidUg: nutrition.folic_acid_ug || 0,
+        vitaminAUg: nutrition.vitamin_a_ug || 0,
+        vitaminDUg: nutrition.vitamin_d_ug || 0,
+        vitaminKUg: nutrition.vitamin_k_ug || 0,
+        vitaminEMg: nutrition.vitamin_e_mg || 0,
+        saturatedFatG: nutrition.saturated_fat_g || 0,
+        monounsaturatedFatG: nutrition.monounsaturated_fat_g || 0,
+        polyunsaturatedFatG: nutrition.polyunsaturated_fat_g || 0,
+      },
+      
       overallScore: analysisResult.overallScore || 75,
       vegScore: analysisResult.vegScore || 50,
       praiseComment: analysisResult.praiseComment || 'おいしそうな食事ですね！',
