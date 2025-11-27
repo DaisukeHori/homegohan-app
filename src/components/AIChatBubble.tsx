@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   MessageCircle, X, Send, Sparkles, ChevronDown, 
@@ -9,6 +9,50 @@ import {
   Plus, Trash2, CheckCircle, Refrigerator, Heart, FolderPlus,
   Activity, User, Edit
 } from "lucide-react";
+
+// シンプルなマークダウンパーサー
+const parseMarkdown = (text: string): string => {
+  if (!text) return '';
+  
+  // アクションブロックを除去（別途表示されるため）
+  let html = text.replace(/```action[\s\S]*?```/g, '');
+  
+  // コードブロック（```）を処理
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="md-code-block"><code>$2</code></pre>');
+  
+  // インラインコード（`）を処理
+  html = html.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
+  
+  // 太字（**text** または __text__）
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  
+  // 斜体（*text* または _text_）- 太字の後に処理
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+  
+  // 見出し（### ## #）
+  html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>');
+  
+  // 箇条書き（- または *）
+  html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li">$1</li>');
+  // 連続するliをulで囲む
+  html = html.replace(/(<li class="md-li">.*?<\/li>\n?)+/g, '<ul class="md-ul">$&</ul>');
+  
+  // 番号付きリスト
+  html = html.replace(/^\d+\. (.+)$/gm, '<li class="md-li-num">$1</li>');
+  html = html.replace(/(<li class="md-li-num">.*?<\/li>\n?)+/g, '<ol class="md-ol">$&</ol>');
+  
+  // リンク [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="md-link">$1</a>');
+  
+  // 改行を<br>に変換（ただし、HTMLタグの直後は除く）
+  html = html.replace(/\n(?!<)/g, '<br>');
+  
+  return html;
+};
 
 const colors = {
   primary: '#E07A5F',
@@ -601,7 +645,7 @@ export default function AIChatBubble() {
                           )}
                           
                           <div
-                            className="px-3 py-2 rounded-2xl"
+                            className="px-3 py-2 rounded-2xl markdown-content"
                             style={{
                               background: msg.role === 'user' ? colors.primary : colors.card,
                               color: msg.role === 'user' ? '#fff' : colors.text,
@@ -611,9 +655,17 @@ export default function AIChatBubble() {
                               border: msg.isImportant ? `2px solid ${colors.warning}` : 'none',
                             }}
                           >
-                            <p style={{ fontSize: 14, margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                              {msg.content}
-                            </p>
+                            {msg.role === 'user' ? (
+                              <p style={{ fontSize: 14, margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                                {msg.content}
+                              </p>
+                            ) : (
+                              <div 
+                                className="markdown-body"
+                                style={{ fontSize: 14, lineHeight: 1.6 }}
+                                dangerouslySetInnerHTML={{ __html: parseMarkdown(msg.content) }}
+                              />
+                            )}
                           </div>
 
                           {/* メッセージメニューボタン */}
@@ -780,6 +832,73 @@ export default function AIChatBubble() {
           </motion.div>
         )}
       </AnimatePresence>
+      
+      {/* マークダウン用スタイル */}
+      <style jsx global>{`
+        .markdown-body {
+          word-wrap: break-word;
+        }
+        .markdown-body strong {
+          font-weight: 600;
+        }
+        .markdown-body em {
+          font-style: italic;
+        }
+        .markdown-body .md-h2 {
+          font-size: 18px;
+          font-weight: 700;
+          margin: 12px 0 8px 0;
+        }
+        .markdown-body .md-h3 {
+          font-size: 16px;
+          font-weight: 600;
+          margin: 10px 0 6px 0;
+        }
+        .markdown-body .md-h4 {
+          font-size: 14px;
+          font-weight: 600;
+          margin: 8px 0 4px 0;
+        }
+        .markdown-body .md-ul,
+        .markdown-body .md-ol {
+          margin: 8px 0;
+          padding-left: 20px;
+        }
+        .markdown-body .md-li {
+          list-style-type: disc;
+          margin: 4px 0;
+        }
+        .markdown-body .md-li-num {
+          list-style-type: decimal;
+          margin: 4px 0;
+        }
+        .markdown-body .md-inline-code {
+          background: rgba(0,0,0,0.08);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: monospace;
+          font-size: 13px;
+        }
+        .markdown-body .md-code-block {
+          background: rgba(0,0,0,0.08);
+          padding: 12px;
+          border-radius: 8px;
+          margin: 8px 0;
+          overflow-x: auto;
+        }
+        .markdown-body .md-code-block code {
+          font-family: monospace;
+          font-size: 13px;
+          white-space: pre-wrap;
+        }
+        .markdown-body .md-link {
+          color: #3B82F6;
+          text-decoration: underline;
+        }
+        .markdown-body .md-link:hover {
+          color: #2563EB;
+        }
+      `}</style>
     </>
   );
 }
