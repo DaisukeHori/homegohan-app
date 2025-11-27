@@ -67,6 +67,7 @@ export default function AIChatBubble() {
   const [executingActionId, setExecutingActionId] = useState<string | null>(null);
   const [showSessionList, setShowSessionList] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -91,12 +92,20 @@ export default function AIChatBubble() {
   const fetchSessions = useCallback(async () => {
     try {
       const res = await fetch('/api/ai/consultation/sessions?status=all');
+      if (res.status === 401) {
+        setIsAuthenticated(false);
+        return false;
+      }
       if (res.ok) {
+        setIsAuthenticated(true);
         const data = await res.json();
         setSessions(data.sessions || []);
+        return true;
       }
+      return false;
     } catch (e) {
       console.error('Failed to fetch sessions:', e);
+      return false;
     }
   }, []);
 
@@ -120,7 +129,11 @@ export default function AIChatBubble() {
   const openChat = async () => {
     setIsOpen(true);
     setHasUnread(false);
-    await fetchSessions();
+    const authenticated = await fetchSessions();
+    
+    if (!authenticated) {
+      return; // 認証されていない場合は何もしない
+    }
     
     // 既存のアクティブセッションがあればそれを使う、なければ新規作成
     if (sessions.length > 0 && !currentSessionId) {
@@ -411,7 +424,29 @@ export default function AIChatBubble() {
 
             {/* メッセージエリア */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {isLoading ? (
+              {isAuthenticated === false ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <div 
+                    className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+                    style={{ background: colors.primaryLight }}
+                  >
+                    <Sparkles size={28} color={colors.primary} />
+                  </div>
+                  <h4 style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: '0 0 8px 0' }}>
+                    ログインが必要です
+                  </h4>
+                  <p style={{ fontSize: 13, color: colors.textMuted, margin: '0 0 16px 0', lineHeight: 1.5 }}>
+                    AIアドバイザーと相談するには<br />ログインしてください
+                  </p>
+                  <a
+                    href="/login"
+                    className="px-6 py-2 rounded-full"
+                    style={{ background: colors.primary, color: '#fff', fontSize: 14, fontWeight: 500, textDecoration: 'none' }}
+                  >
+                    ログインする
+                  </a>
+                </div>
+              ) : isLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 size={24} color={colors.primary} className="animate-spin" />
                 </div>
@@ -517,39 +552,41 @@ export default function AIChatBubble() {
             </div>
 
             {/* 入力エリア */}
-            <div 
-              className="p-3 border-t"
-              style={{ background: colors.card, borderColor: colors.border }}
-            >
-              <div className="flex items-center gap-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-                  placeholder="メッセージを入力..."
-                  className="flex-1 px-4 py-2 rounded-full border-none outline-none"
-                  style={{ 
-                    background: colors.bg, 
-                    fontSize: 14,
-                    color: colors.text,
-                  }}
-                  disabled={isSending || !currentSessionId}
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={!inputText.trim() || isSending || !currentSessionId}
-                  className="w-10 h-10 rounded-full flex items-center justify-center"
-                  style={{ 
-                    background: inputText.trim() ? colors.primary : colors.border,
-                    opacity: isSending ? 0.7 : 1,
-                  }}
-                >
-                  <Send size={18} color={inputText.trim() ? '#fff' : colors.textMuted} />
-                </button>
+            {isAuthenticated !== false && (
+              <div 
+                className="p-3 border-t"
+                style={{ background: colors.card, borderColor: colors.border }}
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                    placeholder="メッセージを入力..."
+                    className="flex-1 px-4 py-2 rounded-full border-none outline-none"
+                    style={{ 
+                      background: colors.bg, 
+                      fontSize: 14,
+                      color: colors.text,
+                    }}
+                    disabled={isSending || !currentSessionId}
+                  />
+                  <button
+                    onClick={sendMessage}
+                    disabled={!inputText.trim() || isSending || !currentSessionId}
+                    className="w-10 h-10 rounded-full flex items-center justify-center"
+                    style={{ 
+                      background: inputText.trim() ? colors.primary : colors.border,
+                      opacity: isSending ? 0.7 : 1,
+                    }}
+                  >
+                    <Send size={18} color={inputText.trim() ? '#fff' : colors.textMuted} />
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
