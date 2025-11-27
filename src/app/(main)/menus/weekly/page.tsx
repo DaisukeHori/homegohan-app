@@ -1138,10 +1138,51 @@ export default function WeeklyMenuPage() {
   // 同じタイプの食事を全て取得（複数回の食事対応）
   const getMeals = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.filter(m => m.mealType === type) || [];
   
-  // 食事の順序変更
+  // 食事の順序変更（楽観的更新）
   const reorderMeal = async (mealId: string, direction: 'up' | 'down') => {
-    if (!currentDay) return;
+    if (!currentDay || !currentPlan) return;
     
+    const meals = currentDay.meals || [];
+    const sortedMeals = [...meals].sort((a, b) => a.displayOrder - b.displayOrder);
+    const currentIndex = sortedMeals.findIndex(m => m.id === mealId);
+    
+    if (currentIndex === -1) return;
+    
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    
+    // 範囲チェック
+    if (targetIndex < 0 || targetIndex >= sortedMeals.length) return;
+    
+    const currentMeal = sortedMeals[currentIndex];
+    const targetMeal = sortedMeals[targetIndex];
+    
+    // おやつ以外は同じタイプか、相手がおやつでないと入れ替え不可
+    const isSnack = currentMeal.mealType === 'snack';
+    if (!isSnack && targetMeal.mealType !== currentMeal.mealType && targetMeal.mealType !== 'snack') {
+      return;
+    }
+    
+    // 楽観的更新: 即座にUIを更新
+    const previousPlan = currentPlan;
+    const newMeals = sortedMeals.map(meal => {
+      if (meal.id === currentMeal.id) {
+        return { ...meal, displayOrder: targetMeal.displayOrder };
+      }
+      if (meal.id === targetMeal.id) {
+        return { ...meal, displayOrder: currentMeal.displayOrder };
+      }
+      return meal;
+    });
+    
+    const newDays = currentPlan.days?.map(day => 
+      day.id === currentDay.id 
+        ? { ...day, meals: newMeals.sort((a, b) => a.displayOrder - b.displayOrder) }
+        : day
+    );
+    
+    setCurrentPlan({ ...currentPlan, days: newDays });
+    
+    // バックグラウンドでAPIを呼び出し
     try {
       const res = await fetch('/api/meal-plans/meals/reorder', {
         method: 'POST',
@@ -1155,21 +1196,16 @@ export default function WeeklyMenuPage() {
       
       const data = await res.json();
       
-      if (res.ok && data.success) {
-        // 献立を再取得
-        const targetDate = formatLocalDate(weekStart);
-        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-        if (refreshRes.ok) {
-          const { mealPlan } = await refreshRes.json();
-          if (mealPlan) {
-            setCurrentPlan(mealPlan);
-          }
+      if (!res.ok || !data.success) {
+        // エラー時は元に戻す
+        setCurrentPlan(previousPlan);
+        if (data.message) {
+          console.log(data.message);
         }
-      } else if (data.message) {
-        // 移動できない場合のメッセージ（静かに無視）
-        console.log(data.message);
       }
     } catch (error) {
+      // エラー時は元に戻す
+      setCurrentPlan(previousPlan);
       console.error('Reorder error:', error);
     }
   };
