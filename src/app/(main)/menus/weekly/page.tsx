@@ -1091,9 +1091,13 @@ export default function WeeklyMenuPage() {
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
-    // 一括生成中かどうか（今日以降の日付の場合）
-    const dayDateStr = weekDates[selectedDayIndex]?.dateStr;
-    const isGeneratingBulk = isGenerating && dayDateStr && dayDateStr >= todayStr;
+    // 一括生成中かどうか（過去でない場合）
+    const isGeneratingBulk = isGenerating && !isPast;
+    
+    // デバッグログ
+    if (isGenerating) {
+      console.log(`CollapsedMealCard: ${mealKey}, isGenerating=${isGenerating}, isPast=${isPast}, isGeneratingBulk=${isGeneratingBulk}`);
+    }
     
     // dishes配列から主菜と他の品数を取得
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
@@ -1186,9 +1190,13 @@ export default function WeeklyMenuPage() {
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
-    // 一括生成中かどうか（今日以降の日付の場合）
-    const dayDateStr = weekDates[selectedDayIndex]?.dateStr;
-    const isGeneratingBulk = isGenerating && dayDateStr && dayDateStr >= todayStr;
+    // 一括生成中かどうか（ExpandedMealCardは過去の日付では表示されないのでシンプルに）
+    const isGeneratingBulk = isGenerating;
+    
+    // デバッグログ
+    if (isGenerating) {
+      console.log(`ExpandedMealCard: ${mealKey}, isGenerating=${isGenerating}, isGeneratingBulk=${isGeneratingBulk}`);
+    }
     
     // dishes は配列形式に対応（可変数）
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
