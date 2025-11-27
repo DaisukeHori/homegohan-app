@@ -163,118 +163,137 @@ export default function WeeklyMenuPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
   
-  // 生成中状態をlocalStorageから復元し、ポーリングを再開
+  // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
-    // 一括生成の復元
-    const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
-    if (storedWeekly) {
+    const checkPendingRequests = async () => {
+      const targetDate = formatLocalDate(weekStart);
+      
+      // 1. 単一食事の生成中リクエストをDBで確認
       try {
-        const { weekStartDate, timestamp } = JSON.parse(storedWeekly);
-        const elapsed = Date.now() - timestamp;
-        // 5分以内なら生成中とみなしてポーリング再開
-        if (elapsed < 5 * 60 * 1000 && weekStartDate === formatLocalDate(weekStart)) {
-          setIsGenerating(true);
-          
-          // ポーリング再開
-          const remainingTime = 5 * 60 * 1000 - elapsed;
-          const maxAttempts = Math.ceil(remainingTime / 3000);
-          let attempts = 0;
-          
-          const pollInterval = setInterval(async () => {
-            attempts++;
-            try {
-              const targetDate = formatLocalDate(weekStart);
-              const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-              if (pollRes.ok) {
-                const { mealPlan } = await pollRes.json();
-                if (mealPlan && mealPlan.days && mealPlan.days.length >= 7) {
-                  const mealCount = mealPlan.days.reduce((sum: number, d: any) => sum + (d.meals?.length || 0), 0);
-                  if (mealCount >= 21) {
-                    setCurrentPlan(mealPlan);
-                    setShoppingList(mealPlan.shoppingList || []);
-                    setIsGenerating(false);
-                    localStorage.removeItem('weeklyMenuGenerating');
-                    clearInterval(pollInterval);
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('Polling error:', e);
-            }
+        const singleRes = await fetch(`/api/ai/menu/meal/pending?date=${targetDate}`);
+        if (singleRes.ok) {
+          const { hasPending, requests } = await singleRes.json();
+          if (hasPending && requests.length > 0) {
+            const latestRequest = requests[0];
+            // 日付から dayIndex を計算
+            const targetDayDate = latestRequest.targetDate;
+            const dayIdx = weekDates.findIndex(d => d.dateStr === targetDayDate);
             
-            if (attempts >= maxAttempts) {
-              clearInterval(pollInterval);
-              setIsGenerating(false);
-              localStorage.removeItem('weeklyMenuGenerating');
-              window.location.reload();
+            if (dayIdx !== -1) {
+              setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
+              setSelectedDayIndex(dayIdx);
+              startSingleMealPolling(latestRequest.requestId, targetDate, targetDayDate, latestRequest.targetMealType);
             }
-          }, 3000);
-          
-          return () => clearInterval(pollInterval);
-        } else {
-          localStorage.removeItem('weeklyMenuGenerating');
+          }
         }
-      } catch {
-        localStorage.removeItem('weeklyMenuGenerating');
+      } catch (e) {
+        console.error('Failed to check pending single meal requests:', e);
       }
-    }
-    
-    // 単一食事生成の復元
-    const storedSingle = localStorage.getItem('singleMealGenerating');
-    if (storedSingle) {
-      try {
-        const { dayIndex, mealType, dayDate, initialCount, timestamp } = JSON.parse(storedSingle);
-        const elapsed = Date.now() - timestamp;
-        // 2分以内なら生成中とみなしてポーリング再開
-        if (elapsed < 2 * 60 * 1000) {
-          setGeneratingMeal({ dayIndex, mealType });
-          setSelectedDayIndex(dayIndex);
-          
-          // ポーリング再開
-          const remainingTime = 2 * 60 * 1000 - elapsed;
-          const maxAttempts = Math.ceil(remainingTime / 3000);
-          let attempts = 0;
-          
-          const pollInterval = setInterval(async () => {
-            attempts++;
-            try {
-              const targetDate = formatLocalDate(weekStart);
-              const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-              if (pollRes.ok) {
-                const { mealPlan } = await pollRes.json();
-                if (mealPlan) {
-                  const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
-                  const currentMealCount = targetDay?.meals?.filter((m: any) => m.mealType === mealType).length || 0;
-                  
-                  if (currentMealCount > initialCount) {
-                    setCurrentPlan(mealPlan);
-                    setGeneratingMeal(null);
-                    localStorage.removeItem('singleMealGenerating');
-                    clearInterval(pollInterval);
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('Polling error:', e);
-            }
+      
+      // 2. localStorageからも復元を試みる（後方互換性のため）
+      const storedSingle = localStorage.getItem('singleMealGenerating');
+      if (storedSingle) {
+        try {
+          const { dayIndex, mealType, dayDate, initialCount, timestamp, requestId } = JSON.parse(storedSingle);
+          const elapsed = Date.now() - timestamp;
+          // 2分以内なら生成中とみなしてポーリング再開
+          if (elapsed < 2 * 60 * 1000) {
+            setGeneratingMeal({ dayIndex, mealType });
+            setSelectedDayIndex(dayIndex);
             
-            if (attempts >= maxAttempts) {
-              clearInterval(pollInterval);
-              setGeneratingMeal(null);
-              localStorage.removeItem('singleMealGenerating');
-              window.location.reload();
+            if (requestId) {
+              startSingleMealPolling(requestId, targetDate, dayDate, mealType);
+            } else {
+              // requestIdがない場合は旧方式でポーリング
+              startLegacySingleMealPolling(dayIndex, mealType, dayDate, initialCount);
             }
-          }, 3000);
-          
-          return () => clearInterval(pollInterval);
-        } else {
+          } else {
+            localStorage.removeItem('singleMealGenerating');
+          }
+        } catch {
           localStorage.removeItem('singleMealGenerating');
         }
-      } catch {
-        localStorage.removeItem('singleMealGenerating');
       }
-    }
-  }, [weekStart]);
+    };
+    
+    checkPendingRequests();
+  }, [weekStart, weekDates]);
+  
+  // 単一食事のDBベースポーリング
+  const startSingleMealPolling = (requestId: string, weekStartDate: string, targetDayDate: string, mealType: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        if (statusRes.ok) {
+          const { status } = await statusRes.json();
+          
+          if (status === 'completed') {
+            // 完了したら献立を再取得
+            const planRes = await fetch(`/api/meal-plans?date=${weekStartDate}`);
+            if (planRes.ok) {
+              const { mealPlan } = await planRes.json();
+              setCurrentPlan(mealPlan);
+              if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+            }
+            setGeneratingMeal(null);
+            localStorage.removeItem('singleMealGenerating');
+            clearInterval(pollInterval);
+          } else if (status === 'failed') {
+            setGeneratingMeal(null);
+            localStorage.removeItem('singleMealGenerating');
+            clearInterval(pollInterval);
+            alert('献立の生成に失敗しました。もう一度お試しください。');
+          }
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+    }, 3000);
+    
+    // 3分でタイムアウト
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      setGeneratingMeal(null);
+      localStorage.removeItem('singleMealGenerating');
+    }, 3 * 60 * 1000);
+  };
+  
+  // 旧方式のポーリング（後方互換性）
+  const startLegacySingleMealPolling = (dayIndex: number, mealType: string, dayDate: string, initialCount: number) => {
+    let attempts = 0;
+    const maxAttempts = 40;
+    
+    const pollInterval = setInterval(async () => {
+      attempts++;
+      try {
+        const targetDate = formatLocalDate(weekStart);
+        const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        if (pollRes.ok) {
+          const { mealPlan } = await pollRes.json();
+          if (mealPlan) {
+            const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
+            const currentMealCount = targetDay?.meals?.filter((m: any) => m.mealType === mealType).length || 0;
+            
+            if (currentMealCount > initialCount) {
+              setCurrentPlan(mealPlan);
+              setGeneratingMeal(null);
+              localStorage.removeItem('singleMealGenerating');
+              clearInterval(pollInterval);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+      
+      if (attempts >= maxAttempts) {
+        clearInterval(pollInterval);
+        setGeneratingMeal(null);
+        localStorage.removeItem('singleMealGenerating');
+        window.location.reload();
+      }
+    }, 3000);
+  };
   
   // Edit meal state
   const [editingMeal, setEditingMeal] = useState<PlannedMeal | null>(null);
@@ -327,7 +346,7 @@ export default function WeeklyMenuPage() {
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch Plan
+  // Fetch Plan & Check for pending generation requests
   useEffect(() => {
     const fetchPlan = async () => {
       setLoading(true);
@@ -341,6 +360,17 @@ export default function WeeklyMenuPage() {
         } else {
           setCurrentPlan(null);
         }
+        
+        // DBで生成中のリクエストがあるか確認
+        const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
+        if (pendingRes.ok) {
+          const { hasPending, requestId } = await pendingRes.json();
+          if (hasPending && requestId) {
+            // 生成中状態を復元してポーリング開始
+            setIsGenerating(true);
+            startPollingForCompletion(targetDate, requestId);
+          }
+        }
       } catch (e) {
         console.error("Failed to fetch meal plan", e);
         setCurrentPlan(null);
@@ -350,6 +380,47 @@ export default function WeeklyMenuPage() {
     };
     fetchPlan();
   }, [weekStart]);
+  
+  // ポーリングで生成完了を待つ
+  const startPollingForCompletion = (targetDate: string, requestId: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        // リクエストのステータスを確認
+        const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        if (statusRes.ok) {
+          const { status } = await statusRes.json();
+          
+          if (status === 'completed') {
+            // 完了したら献立を再取得
+            const planRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+            if (planRes.ok) {
+              const { mealPlan } = await planRes.json();
+              setCurrentPlan(mealPlan);
+              if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+            }
+            setIsGenerating(false);
+            localStorage.removeItem('weeklyMenuGenerating');
+            clearInterval(pollInterval);
+          } else if (status === 'failed') {
+            setIsGenerating(false);
+            localStorage.removeItem('weeklyMenuGenerating');
+            clearInterval(pollInterval);
+            alert('献立の生成に失敗しました。もう一度お試しください。');
+          }
+          // status === 'pending' or 'processing' の場合は継続
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+    }, 3000);
+    
+    // 5分でタイムアウト
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      setIsGenerating(false);
+      localStorage.removeItem('weeklyMenuGenerating');
+    }, 5 * 60 * 1000);
+  };
   
   // Fetch Pantry
   useEffect(() => {
@@ -647,15 +718,6 @@ export default function WeeklyMenuPage() {
     setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
     setActiveModal(null);
     
-    // localStorageに生成中状態を保存（リロードしても維持するため）
-    localStorage.setItem('singleMealGenerating', JSON.stringify({
-      dayIndex: addMealDayIndex,
-      mealType: addMealKey,
-      dayDate,
-      initialCount: initialMealCount,
-      timestamp: Date.now()
-    }));
-    
     try {
       const preferences: Record<string, boolean> = {};
       selectedConditions.forEach(c => {
@@ -677,47 +739,29 @@ export default function WeeklyMenuPage() {
       });
 
       if (res.ok) {
+        const { requestId } = await res.json();
+        
+        // localStorageに生成中状態を保存（リロードしても維持するため）
+        localStorage.setItem('singleMealGenerating', JSON.stringify({
+          dayIndex: addMealDayIndex,
+          mealType: addMealKey,
+          dayDate,
+          initialCount: initialMealCount,
+          timestamp: Date.now(),
+          requestId // DBのリクエストIDを保存
+        }));
+        
         setSelectedConditions([]);
         setAiChatInput("");
         setSelectedDayIndex(addMealDayIndex);
         
-        // Poll for data - 食事の数が増えたら完了
-        let attempts = 0;
-        const maxAttempts = 20; // 60秒まで待つ
-        const pollInterval = setInterval(async () => {
-          attempts++;
-          try {
-            const targetDate = formatLocalDate(weekStart);
-            const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-            if (pollRes.ok) {
-              const { mealPlan } = await pollRes.json();
-              if (mealPlan) {
-                const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
-                const currentMealCount = targetDay?.meals?.filter((m: any) => m.mealType === addMealKey).length || 0;
-                
-                // 食事の数が増えたら完了
-                if (currentMealCount > initialMealCount) {
-                  console.log(`Meal generated! Count: ${initialMealCount} -> ${currentMealCount}`);
-                  setCurrentPlan(mealPlan);
-                  setGeneratingMeal(null);
-                  localStorage.removeItem('singleMealGenerating');
-                  clearInterval(pollInterval);
-                  return;
-                }
-              }
-            }
-          } catch (e) {
-            console.error('Polling error:', e);
-          }
-          
-          if (attempts >= maxAttempts) {
-            console.log('Polling timeout, reloading...');
-            localStorage.removeItem('singleMealGenerating');
-            setGeneratingMeal(null);
-            clearInterval(pollInterval);
-            window.location.reload();
-          }
-        }, 3000);
+        // DBベースのポーリングを開始
+        if (requestId) {
+          startSingleMealPolling(requestId, formatLocalDate(weekStart), dayDate, addMealKey);
+        } else {
+          // requestIdがない場合は旧方式でポーリング
+          startLegacySingleMealPolling(addMealDayIndex, addMealKey, dayDate, initialMealCount);
+        }
       } else {
         const err = await res.json();
         alert(`エラー: ${err.error || '生成に失敗しました'}`);
@@ -1138,72 +1182,40 @@ export default function WeeklyMenuPage() {
   // 同じタイプの食事を全て取得（複数回の食事対応）
   const getMeals = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.filter(m => m.mealType === type) || [];
   
-  // 食事の順序変更（楽観的更新）
-  const reorderMeal = (mealId: string, direction: 'up' | 'down') => {
-    // 楽観的更新: 関数形式で最新の状態を参照
-    setCurrentPlan(prevPlan => {
-      if (!prevPlan) return prevPlan;
-      
-      const dateStr = weekDates[selectedDayIndex]?.dateStr;
-      const day = prevPlan.days?.find(d => d.dayDate === dateStr);
-      if (!day) return prevPlan;
-      
-      const meals = day.meals || [];
-      const sortedMeals = [...meals].sort((a, b) => a.displayOrder - b.displayOrder);
-      const currentIndex = sortedMeals.findIndex(m => m.id === mealId);
-      
-      if (currentIndex === -1) return prevPlan;
-      
-      const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-      
-      // 範囲チェック
-      if (targetIndex < 0 || targetIndex >= sortedMeals.length) return prevPlan;
-      
-      const currentMeal = sortedMeals[currentIndex];
-      const targetMeal = sortedMeals[targetIndex];
-      
-      // おやつ以外は同じタイプか、相手がおやつでないと入れ替え不可
-      const isSnack = currentMeal.mealType === 'snack';
-      if (!isSnack && targetMeal.mealType !== currentMeal.mealType && targetMeal.mealType !== 'snack') {
-        return prevPlan;
-      }
-      
-      // displayOrderを入れ替えた新しいmeals配列を作成
-      const newMeals = sortedMeals.map(meal => {
-        if (meal.id === currentMeal.id) {
-          return { ...meal, displayOrder: targetMeal.displayOrder };
-        }
-        if (meal.id === targetMeal.id) {
-          return { ...meal, displayOrder: currentMeal.displayOrder };
-        }
-        return meal;
-      });
-      
-      const newDays = prevPlan.days?.map(d => 
-        d.id === day.id 
-          ? { ...d, meals: newMeals.sort((a, b) => a.displayOrder - b.displayOrder) }
-          : d
-      );
-      
-      // バックグラウンドでAPIを呼び出し（状態更新とは独立）
-      fetch('/api/meal-plans/meals/reorder', {
+  // 食事の順序変更
+  const reorderMeal = async (mealId: string, direction: 'up' | 'down') => {
+    if (!currentDay) return;
+    
+    try {
+      const res = await fetch('/api/meal-plans/meals/reorder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mealId,
           direction,
-          dayId: day.id,
+          dayId: currentDay.id,
         }),
-      }).then(res => res.json()).then(data => {
-        if (!data.success && data.message) {
-          console.log(data.message);
-        }
-      }).catch(error => {
-        console.error('Reorder error:', error);
       });
       
-      return { ...prevPlan, days: newDays };
-    });
+      const data = await res.json();
+      
+      if (res.ok && data.success) {
+        // 献立を再取得
+        const targetDate = formatLocalDate(weekStart);
+        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        if (refreshRes.ok) {
+          const { mealPlan } = await refreshRes.json();
+          if (mealPlan) {
+            setCurrentPlan(mealPlan);
+          }
+        }
+      } else if (data.message) {
+        // 移動できない場合のメッセージ（静かに無視）
+        console.log(data.message);
+      }
+    } catch (error) {
+      console.error('Reorder error:', error);
+    }
   };
   
   // 食事が上に移動可能かどうかを判定

@@ -9,10 +9,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { userId, startDate, note, familySize, cheatDay, preferences } = await req.json()
+    const { userId, startDate, note, familySize, cheatDay, preferences, requestId = null } = await req.json()
 
     // 非同期でバックグラウンドタスクを実行（レスポンスをブロックしない）
-    generateMenuBackgroundTask({ userId, startDate, note, familySize, cheatDay, preferences }).catch((error) => {
+    generateMenuBackgroundTask({ userId, startDate, note, familySize, cheatDay, preferences, requestId }).catch((error) => {
       console.error('Background task error:', error)
     })
 
@@ -29,13 +29,21 @@ Deno.serve(async (req) => {
   }
 })
 
-async function generateMenuBackgroundTask({ userId, startDate, note, familySize = 1, cheatDay, preferences = {} }: any) {
-  console.log(`Starting personalized generation for user: ${userId}, startDate: ${startDate}`)
+async function generateMenuBackgroundTask({ userId, startDate, note, familySize = 1, cheatDay, preferences = {}, requestId = null }: any) {
+  console.log(`Starting personalized generation for user: ${userId}, startDate: ${startDate}, requestId: ${requestId}`)
   
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   )
+
+  // リクエストステータスを processing に更新
+  if (requestId) {
+    await supabase
+      .from('weekly_menu_requests')
+      .update({ status: 'processing', updated_at: new Date().toISOString() })
+      .eq('id', requestId)
+  }
 
   try {
     // ユーザープロファイルを取得（拡張版）
@@ -364,10 +372,33 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
       }
     }
     
+    // リクエストステータスを completed に更新
+    if (requestId) {
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ 
+          status: 'completed', 
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', requestId)
+    }
+    
     console.log('✅ All meals saved to planned_meals table')
     
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`)
+    
+    // リクエストステータスを failed に更新
+    if (requestId) {
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ 
+          status: 'failed', 
+          error_message: error.message,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', requestId)
+    }
   }
 }
 

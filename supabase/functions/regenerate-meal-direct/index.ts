@@ -19,7 +19,8 @@ Deno.serve(async (req) => {
       mealType, 
       userId,
       preferences = {},
-      note = ''
+      note = '',
+      requestId = null
     } = await req.json()
 
     // 非同期でバックグラウンドタスクを実行
@@ -29,7 +30,8 @@ Deno.serve(async (req) => {
       mealType, 
       userId,
       preferences,
-      note
+      note,
+      requestId
     }).catch((error) => {
       console.error('Background task error:', error)
     })
@@ -53,14 +55,23 @@ async function regenerateMealBackgroundTask({
   mealType, 
   userId,
   preferences,
-  note
+  note,
+  requestId
 }: any) {
-  console.log(`Starting meal regeneration for mealId: ${mealId}, user: ${userId}`)
+  console.log(`Starting meal regeneration for mealId: ${mealId}, user: ${userId}, requestId: ${requestId}`)
   
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   )
+
+  // リクエストステータスを processing に更新
+  if (requestId) {
+    await supabase
+      .from('weekly_menu_requests')
+      .update({ status: 'processing', updated_at: new Date().toISOString() })
+      .eq('id', requestId)
+  }
 
   try {
     // 1. 既存の食事データを取得
@@ -192,10 +203,34 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 
     if (updateError) throw updateError
 
+    // リクエストステータスを completed に更新
+    if (requestId) {
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ 
+          status: 'completed', 
+          updated_at: new Date().toISOString(),
+          result_json: newMealData
+        })
+        .eq('id', requestId)
+    }
+
     console.log(`✅ Meal regeneration completed for ${mealTypeJa}`)
 
   } catch (error: any) {
     console.error(`❌ Meal regeneration failed:`, error.message)
+    
+    // リクエストステータスを failed に更新
+    if (requestId) {
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ 
+          status: 'failed', 
+          error_message: error.message,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', requestId)
+    }
   }
 }
 

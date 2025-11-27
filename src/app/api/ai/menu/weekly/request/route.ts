@@ -13,8 +13,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. Edge Function の呼び出し（非同期バックグラウンド処理）
-    // planned_mealsに直接保存するため、recordIdは不要
+    // 2. リクエストをDBに保存（ステータス追跡用）
+    const { data: requestData, error: insertError } = await supabase
+      .from('weekly_menu_requests')
+      .insert({
+        user_id: user.id,
+        start_date: startDate,
+        mode: 'weekly',
+        status: 'pending',
+        prompt: note || '',
+        constraints: preferences || {},
+      })
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error('Failed to create request record:', insertError);
+    }
+
+    // 3. Edge Function の呼び出し（非同期バックグラウンド処理）
     const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu', {
       body: {
         userId: user.id,
@@ -23,16 +40,33 @@ export async function POST(request: Request) {
         familySize,
         cheatDay,
         preferences,
+        requestId: requestData?.id,
       },
     });
 
     if (invokeError) {
+      // エラー時はリクエストステータスを更新
+      if (requestData?.id) {
+        await supabase
+          .from('weekly_menu_requests')
+          .update({ status: 'failed', error_message: invokeError.message })
+          .eq('id', requestData.id);
+      }
       throw new Error(`Edge Function invoke failed: ${invokeError.message}`);
+    }
+
+    // ステータスを processing に更新
+    if (requestData?.id) {
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ status: 'processing' })
+        .eq('id', requestData.id);
     }
 
     return NextResponse.json({ 
       status: 'pending',
-      message: 'Generation started in background' 
+      message: 'Generation started in background',
+      requestId: requestData?.id,
     });
 
   } catch (error: any) {

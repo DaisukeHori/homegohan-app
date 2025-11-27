@@ -18,7 +18,8 @@ Deno.serve(async (req) => {
       mealType, 
       userId,
       preferences = {},
-      note = ''
+      note = '',
+      requestId = null
     } = await req.json()
 
     // 非同期でバックグラウンドタスクを実行
@@ -27,7 +28,8 @@ Deno.serve(async (req) => {
       mealType, 
       userId,
       preferences,
-      note
+      note,
+      requestId
     }).catch((error) => {
       console.error('Background task error:', error)
     })
@@ -50,14 +52,23 @@ async function generateSingleMealBackgroundTask({
   mealType, 
   userId,
   preferences,
-  note
+  note,
+  requestId
 }: any) {
-  console.log(`Starting personalized single meal generation for user: ${userId}, date: ${dayDate}, meal: ${mealType}`)
+  console.log(`Starting personalized single meal generation for user: ${userId}, date: ${dayDate}, meal: ${mealType}, requestId: ${requestId}`)
   
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   )
+
+  // リクエストステータスを processing に更新
+  if (requestId) {
+    await supabase
+      .from('weekly_menu_requests')
+      .update({ status: 'processing', updated_at: new Date().toISOString() })
+      .eq('id', requestId)
+  }
 
   try {
     // 1. ユーザープロファイルを取得（拡張版）
@@ -275,10 +286,34 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 
     if (mealError) throw mealError
 
+    // リクエストステータスを completed に更新
+    if (requestId) {
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ 
+          status: 'completed', 
+          updated_at: new Date().toISOString(),
+          result_json: newMealData
+        })
+        .eq('id', requestId)
+    }
+
     console.log(`✅ Single meal generation completed for ${mealTypeJa} on ${dayDate} (${newMealData.totalCalories}kcal)`)
 
   } catch (error: any) {
     console.error(`❌ Single meal generation failed:`, error.message)
+    
+    // リクエストステータスを failed に更新
+    if (requestId) {
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ 
+          status: 'failed', 
+          error_message: error.message,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', requestId)
+    }
   }
 }
 
