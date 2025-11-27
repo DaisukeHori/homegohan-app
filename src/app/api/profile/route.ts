@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { fromUserProfile } from '@/lib/converter'
 
 export async function GET() {
   try {
-    const supabase = createClient(cookies())
+    const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
@@ -29,7 +29,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const supabase = createClient(cookies())
+    const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
@@ -46,12 +46,12 @@ export async function POST(request: Request) {
 
     if (body.nickname) updates.nickname = body.nickname;
     if (body.gender) updates.gender = body.gender;
-    if (body.lifestyle) updates.lifestyle = body.lifestyle; // JSONとして保存
+    if (body.lifestyle) updates.lifestyle = body.lifestyle;
     if (body.goal) updates.goal_text = body.goal;
     
     // 追加項目
     if (body.age) updates.age = parseInt(body.age);
-    if (body.age) updates.age_group = `${Math.floor(parseInt(body.age) / 10) * 10}s`; // 年代も自動計算
+    if (body.age) updates.age_group = `${Math.floor(parseInt(body.age) / 10) * 10}s`;
     if (body.occupation) updates.occupation = body.occupation;
     if (body.height) updates.height = parseFloat(body.height);
     if (body.weight) updates.weight = parseFloat(body.weight);
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
 
     const { data, error } = await supabase
       .from('user_profiles')
-      .upsert(updates) // upsertを使用
+      .upsert(updates)
       .select()
       .single()
 
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const supabase = createClient(cookies())
+    const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
@@ -90,19 +90,8 @@ export async function PUT(request: Request) {
 
     const body = await request.json()
     
-    // キャメルケース(App) -> スネークケース(DB)へのマッピング
-    const updates: any = {};
-    if (body.nickname !== undefined) updates.nickname = body.nickname;
-    if (body.age !== undefined) updates.age = body.age;
-    if (body.occupation !== undefined) updates.occupation = body.occupation;
-    if (body.height !== undefined) updates.height = body.height;
-    if (body.weight !== undefined) updates.weight = body.weight;
-    if (body.ageGroup !== undefined) updates.age_group = body.ageGroup;
-    if (body.gender !== undefined) updates.gender = body.gender;
-    if (body.goalText !== undefined) updates.goal_text = body.goalText;
-    if (body.performanceModes !== undefined) updates.perf_modes = body.performanceModes;
-    if (body.lifestyle !== undefined) updates.lifestyle = body.lifestyle;
-    if (body.dietFlags !== undefined) updates.diet_flags = body.dietFlags;
+    // fromUserProfile を使用して camelCase -> snake_case 変換
+    const updates = fromUserProfile(body);
     
     // 年齢から年代を自動計算
     if (body.age && !body.ageGroup) {
@@ -111,6 +100,10 @@ export async function PUT(request: Request) {
         updates.age_group = `${Math.floor(age / 10) * 10}s`;
       }
     }
+    
+    // プロファイル完成度を計算
+    updates.profile_completeness = calculateProfileCompleteness(body);
+    updates.last_profile_update = new Date().toISOString();
 
     const { data, error } = await supabase
       .from('user_profiles')
@@ -131,4 +124,68 @@ export async function PUT(request: Request) {
     console.error("API Error (PUT /api/profile):", error);
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+}
+
+// プロファイル完成度を計算
+function calculateProfileCompleteness(profile: any): number {
+  const fields = [
+    // 基本情報 (20%)
+    { key: 'nickname', weight: 4 },
+    { key: 'age', weight: 4 },
+    { key: 'gender', weight: 4 },
+    { key: 'height', weight: 4 },
+    { key: 'weight', weight: 4 },
+    
+    // 目標 (15%)
+    { key: 'goalText', weight: 5 },
+    { key: 'fitnessGoals', weight: 5, isArray: true },
+    { key: 'targetWeight', weight: 5 },
+    
+    // 仕事・生活 (15%)
+    { key: 'occupation', weight: 5 },
+    { key: 'workStyle', weight: 5 },
+    { key: 'weeklyExerciseMinutes', weight: 5 },
+    
+    // 健康 (15%)
+    { key: 'healthConditions', weight: 5, isArray: true },
+    { key: 'sleepQuality', weight: 5 },
+    { key: 'stressLevel', weight: 5 },
+    
+    // 食事制限 (15%)
+    { key: 'dietFlags', weight: 5, isObject: true },
+    { key: 'dietStyle', weight: 5 },
+    { key: 'dislikedCookingMethods', weight: 5, isArray: true },
+    
+    // 調理環境 (10%)
+    { key: 'cookingExperience', weight: 5 },
+    { key: 'weekdayCookingMinutes', weight: 5 },
+    
+    // 嗜好 (10%)
+    { key: 'cuisinePreferences', weight: 5, isObject: true },
+    { key: 'favoriteIngredients', weight: 5, isArray: true },
+  ];
+  
+  let totalWeight = 0;
+  let earnedWeight = 0;
+  
+  for (const field of fields) {
+    totalWeight += field.weight;
+    const value = profile[field.key];
+    
+    if (field.isArray) {
+      if (Array.isArray(value) && value.length > 0) {
+        earnedWeight += field.weight;
+      }
+    } else if (field.isObject) {
+      if (value && typeof value === 'object' && Object.keys(value).length > 0) {
+        earnedWeight += field.weight;
+      }
+    } else {
+      if (value !== null && value !== undefined && value !== '' && value !== 'unspecified') {
+        earnedWeight += field.weight;
+      }
+    }
+  }
+  
+  return Math.round((earnedWeight / totalWeight) * 100);
 }

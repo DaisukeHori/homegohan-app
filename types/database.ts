@@ -18,9 +18,115 @@ export interface DbUserProfile {
   organization_id: string | null;
   department: string | null;
   family_size: number;
+  family_config: any | null;
   cheat_day_config: any | null;
   created_at: string;
   updated_at: string;
+
+  // === Extended: Body Info ===
+  body_fat_percentage: number | null;
+  muscle_mass: number | null;
+  basal_body_temp: number | null;
+
+  // === Extended: Goals ===
+  target_weight: number | null;
+  target_body_fat: number | null;
+  target_date: string | null;
+  fitness_goals: string[] | null;
+
+  // === Extended: Work & Career ===
+  industry: string | null;
+  work_style: string | null;
+  work_hours: any | null;
+  overtime_frequency: string | null;
+  commute: any | null;
+  business_trip_frequency: string | null;
+  entertainment_frequency: string | null;
+  desk_hours_per_day: number | null;
+
+  // === Extended: Sports & Exercise ===
+  sports_activities: any[] | null;
+  gym_member: boolean | null;
+  personal_trainer: boolean | null;
+  weekly_exercise_minutes: number | null;
+
+  // === Extended: Health & Medical ===
+  health_conditions: string[] | null;
+  medications: string[] | null;
+  health_checkup_results: any | null;
+  pregnancy_status: string | null;
+  menopause: boolean | null;
+  sleep_quality: string | null;
+  stress_level: string | null;
+  bowel_movement: string | null;
+  skin_condition: string | null;
+  cold_sensitivity: boolean | null;
+  swelling_prone: boolean | null;
+
+  // === Extended: Diet Restrictions ===
+  diet_style: string | null;
+  religious_restrictions: string | null;
+  disliked_cooking_methods: string[] | null;
+
+  // === Extended: Lifestyle Rhythm ===
+  wake_time: string | null;
+  sleep_time: string | null;
+  meal_times: any | null;
+  snacking_habit: string | null;
+  alcohol_frequency: string | null;
+  smoking: boolean | null;
+  caffeine_intake: string | null;
+  daily_water_ml: number | null;
+
+  // === Extended: Cooking Environment ===
+  cooking_experience: string | null;
+  specialty_cuisines: string[] | null;
+  disliked_cooking: string[] | null;
+  weekday_cooking_minutes: number | null;
+  weekend_cooking_minutes: number | null;
+  kitchen_appliances: string[] | null;
+  meal_prep_ok: boolean | null;
+  freezer_capacity: string | null;
+
+  // === Extended: Budget & Shopping ===
+  weekly_food_budget: number | null;
+  shopping_frequency: string | null;
+  preferred_stores: string[] | null;
+  online_grocery: boolean | null;
+  costco_member: boolean | null;
+  organic_preference: string | null;
+
+  // === Extended: Taste Preferences ===
+  cuisine_preferences: any | null;
+  taste_preferences: any | null;
+  favorite_ingredients: string[] | null;
+  favorite_dishes: string[] | null;
+  texture_preferences: string[] | null;
+  temperature_preference: string | null;
+  presentation_importance: string | null;
+
+  // === Extended: Family ===
+  household_members: any[] | null;
+  has_children: boolean | null;
+  children_ages: number[] | null;
+  has_elderly: boolean | null;
+  pets: string[] | null;
+
+  // === Extended: Lifestyle ===
+  hobbies: string[] | null;
+  weekend_activity: string | null;
+  travel_frequency: string | null;
+  outdoor_activities: string[] | null;
+  sns_food_posting: boolean | null;
+
+  // === Extended: Environment ===
+  region: string | null;
+  climate_sensitivity: string | null;
+
+  // === Extended: Meta ===
+  profile_completeness: number | null;
+  last_profile_update: string | null;
+  ai_learning_enabled: boolean | null;
 }
 
 export interface DbMeal {
@@ -84,4 +190,3 @@ export interface DbOrgDailyStats {
   avg_score: number;
   created_at: string;
 }
-

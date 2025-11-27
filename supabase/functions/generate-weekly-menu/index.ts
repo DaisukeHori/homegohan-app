@@ -1,7 +1,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
-console.log("Hello from Functions!")
+console.log("Generate Weekly Menu Function loaded (Personalized)")
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
 })
 
 async function generateMenuBackgroundTask({ userId, startDate, note, familySize = 1, cheatDay, preferences = {} }: any) {
-  console.log(`Starting generation for user: ${userId}, startDate: ${startDate}`)
+  console.log(`Starting personalized generation for user: ${userId}, startDate: ${startDate}`)
   
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -38,6 +38,7 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
   )
 
   try {
+    // ユーザープロファイルを取得（拡張版）
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
       .select('*')
@@ -46,11 +47,11 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
 
     if (profileError) throw new Error(`Profile not found: ${profileError.message}`)
 
-    // 直近データの取得は省略（シンプル化）
-    const recentMenus = '特になし';
-
-    const allergies = profile.diet_flags?.allergies?.join(', ') || 'なし';
-    const dislikes = profile.diet_flags?.dislikes?.join(', ') || 'なし';
+    // プロファイルからパーソナライズ情報を構築
+    const profileSummary = buildProfileSummary(profile)
+    const nutritionTarget = calculateNutritionTarget(profile)
+    const healthConstraints = buildHealthConstraints(profile)
+    const cookingConstraints = buildCookingConstraints(profile)
 
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
     if (!OPENAI_API_KEY) throw new Error('OpenAI API Key is missing')
@@ -68,59 +69,88 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
       weekDates.push(`${dateStr} (${weekDays[dayIndex]})`)
     }
 
+    // 超パーソナライズされたプロンプト
     const prompt = `
-      あなたはトップアスリートや経営者を支える超一流の「AI管理栄養士」です。
-      以下のユーザー情報に基づき、**必ず7日分（1週間）の献立**をJSON形式で生成してください。
+あなたはトップアスリートや経営者を支える超一流の「AI管理栄養士」です。
+以下のユーザー情報に基づき、**完全にパーソナライズされた7日分の献立**をJSON形式で生成してください。
 
-      【開始日と期間】
-      - 開始日: ${startDate}
-      - 以下の7日分の献立を生成してください:
-        ${weekDates.map((d, i) => `${i + 1}. ${d}`).join('\n        ')}
+【開始日と期間】
+- 開始日: ${startDate}
+- 以下の7日分の献立を生成してください:
+  ${weekDates.map((d, i) => `${i + 1}. ${d}`).join('\n  ')}
 
-      【ユーザー情報】
-      - 年齢: ${profile.age || '不明'}歳
-      - 職業: ${profile.occupation || '不明'}
-      - 身長: ${profile.height || '不明'}cm
-      - 体重: ${profile.weight || '不明'}kg
-      - 年代/性別: ${profile.age_group} / ${profile.gender || '不明'}
-      - 目標: ${profile.goal_text || '健康維持'}
-      - 家族人数: ${familySize}人分
-      - アレルギー（絶対除去）: ${allergies}
-      - 苦手なもの（避ける）: ${dislikes}
-      - チートデイ希望: ${cheatDay ? cheatDay + '曜日' : 'なし'}
-      
-      【直近の状況】
-      - 最近食べたもの: ${recentMenus} (被りを避ける)
-      - 今週のリクエスト: ${note || '特になし'}
-      
-      【献立スタイルの指定】
-      ${preferences.useFridgeFirst ? '- 【重要】冷蔵庫にある食材を優先的に使用してください' : ''}
-      ${preferences.quickMeals ? '- 【重要】時短メニュー中心（調理時間15-20分以内）で構成してください' : ''}
-      ${preferences.japaneseStyle ? '- 【重要】和食を中心に構成してください（洋食・中華は控えめに）' : ''}
-      ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・高タンパク・野菜多め）で構成してください' : ''}
-      
-      【生成要件 - 重要】
-      1. 献立 (days): **必ず7日分（上記の7日すべて）を生成してください**
-         - 各日に朝食(breakfast)、昼食(lunch)、夕食(dinner)を含める
-         - 一汁三菜ベース。チートデイ以外はPFCバランス重視。
-         - 各日のdateフィールドは "YYYY-MM-DD" 形式で記載
+${profileSummary}
 
-      【JSON出力スキーマ - 必ず7日分を含めること】
-      {
-        "days": [
-          {
-            "date": "YYYY-MM-DD",
-            "meals": [
-              { "mealType": "breakfast", "dishes": [{"name": "料理名", "role": "主食", "cal": 200}, {"name": "味噌汁", "role": "汁物", "cal": 50}] },
-              { "mealType": "lunch", "dishes": [{"name": "料理名", "role": "主菜", "cal": 400}] },
-              { "mealType": "dinner", "dishes": [{"name": "料理名", "role": "主菜", "cal": 500}, {"name": "副菜", "role": "副菜", "cal": 100}] }
-            ]
-          }
-        ]
-      }
-      
-      **重要: days配列には必ず7つのオブジェクト（7日分）を含めてください。各料理にはcal（カロリー）を含めてください。**
-    `
+【栄養目標（1日）】
+- カロリー: ${nutritionTarget.dailyCalories}kcal
+- タンパク質: ${nutritionTarget.protein}g
+- 脂質: ${nutritionTarget.fat}g
+- 炭水化物: ${nutritionTarget.carbs}g
+- 食物繊維: ${nutritionTarget.fiber}g以上
+${nutritionTarget.sodium < 2300 ? `- 塩分: ${nutritionTarget.sodium / 1000}g以下（減塩必須）` : ''}
+
+【健康上の配慮事項】
+${healthConstraints.length > 0 ? healthConstraints.map(c => `- ${c}`).join('\n') : '- 特になし'}
+
+【調理条件】
+${cookingConstraints.map(c => `- ${c}`).join('\n')}
+
+【今週のリクエスト】
+${note || '特になし'}
+
+【献立スタイルの指定】
+${preferences.useFridgeFirst ? '- 【重要】冷蔵庫にある食材を優先的に使用してください' : ''}
+${preferences.quickMeals ? '- 【重要】時短メニュー中心（調理時間15-20分以内）で構成してください' : ''}
+${preferences.japaneseStyle ? '- 【重要】和食を中心に構成してください（洋食・中華は控えめに）' : ''}
+${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・高タンパク・野菜多め）で構成してください' : ''}
+
+【生成要件】
+1. 献立は**必ず7日分**を生成
+2. 各日に朝食(breakfast)、昼食(lunch)、夕食(dinner)を含める
+3. 栄養目標を満たすようPFCバランスを考慮
+4. 健康状態に応じた食材選定（除外食材は絶対に使用しない）
+5. 調理時間の制約を守る
+6. 家族${familySize || profile.family_size || 1}人分の分量を考慮
+7. 食材の使い回しで効率的に
+8. 各料理に正確なカロリーを付与
+
+【JSON出力スキーマ】
+{
+  "days": [
+    {
+      "date": "YYYY-MM-DD",
+      "meals": [
+        { 
+          "mealType": "breakfast", 
+          "dishes": [
+            {"name": "料理名", "role": "主食", "cal": 200, "protein": 10, "description": "簡潔な説明"},
+            {"name": "味噌汁", "role": "汁物", "cal": 50, "protein": 3}
+          ],
+          "totalCalories": 250,
+          "cookingTime": "15分"
+        },
+        { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分" },
+        { "mealType": "dinner", "dishes": [...], "totalCalories": 600, "cookingTime": "30分" }
+      ],
+      "dailyTotalCalories": 1350,
+      "nutritionalAdvice": "この日の栄養ポイント"
+    }
+  ],
+  "weeklyAdvice": "1週間の総評とアドバイス",
+  "shoppingList": [
+    {"category": "肉類", "items": ["鶏むね肉 500g", "豚ロース 300g"]},
+    {"category": "野菜", "items": ["キャベツ 1玉", "にんじん 3本"]}
+  ]
+}
+
+**重要: 
+- days配列には必ず7つのオブジェクト（7日分）を含めてください
+- 各料理にはcal（カロリー）とrole（主菜/副菜/汁物/主食）を必ず含めてください
+- 健康状態に応じた除外食材は絶対に使用しないでください
+- 調理時間は平日${profile.weekday_cooking_minutes || 30}分、休日${profile.weekend_cooking_minutes || 60}分を目安に**
+`
+
+    console.log('Sending personalized prompt to OpenAI...')
 
     const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -131,7 +161,7 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
       body: JSON.stringify({
         model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: "You are an elite nutritionist AI. Respond only in valid JSON." },
+          { role: "system", content: "You are an elite nutritionist AI specialized in personalized meal planning. Respond only in valid JSON. Consider all health conditions and dietary restrictions carefully." },
           { role: "user", content: prompt }
         ],
         response_format: { type: "json_object" },
@@ -167,7 +197,6 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
       mealPlanId = existingPlan.id
       console.log(`Using existing meal_plan: ${mealPlanId}`)
     } else {
-      // end_dateは7日後
       const endDate = new Date(startDate)
       endDate.setDate(endDate.getDate() + 6)
       const endDateStr = endDate.toISOString().split('T')[0]
@@ -215,7 +244,8 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
           .from('meal_plan_days')
           .insert({
             meal_plan_id: mealPlanId,
-            day_date: dayDate
+            day_date: dayDate,
+            nutritional_focus: day.nutritionalAdvice || null
           })
           .select()
           .single()
@@ -228,18 +258,25 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
       for (const meal of day.meals) {
         const mealType = meal.mealType
         const dishes = meal.dishes || []
-        const mainDish = dishes.find((d: any) => d.role === '主菜' || d.role === '主食' || d.role === 'main') || dishes[0]
+        const mainDish = dishes.find((d: any) => 
+          d.role === '主菜' || d.role === '主食' || d.role === 'main' || d.role === '主'
+        ) || dishes[0]
         const dishName = mainDish?.name || '献立'
         
         // dishesをDishDetail[]形式に変換
         const dishDetails = dishes.map((d: any, index: number) => ({
           name: d.name,
-          role: d.role || (index === 0 ? 'main' : `side${index}`),
-          cal: d.cal || 0
+          role: mapRole(d.role) || (index === 0 ? 'main' : `side${index}`),
+          cal: d.cal || d.calories || 0,
+          protein: d.protein || 0,
+          ingredient: d.description || ''
         }))
         
         // 総カロリーを計算
-        const totalCalories = dishDetails.reduce((sum: number, d: any) => sum + (d.cal || 0), 0)
+        const totalCalories = meal.totalCalories || dishDetails.reduce((sum: number, d: any) => sum + (d.cal || 0), 0)
+        
+        // 総タンパク質を計算
+        const totalProtein = dishDetails.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
         
         const { error: mealError } = await supabase
           .from('planned_meals')
@@ -248,16 +285,18 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
             meal_type: mealType,
             mode: 'cook',
             dish_name: dishName,
+            description: meal.cookingTime ? `調理時間: ${meal.cookingTime}` : null,
             dishes: dishDetails,
             calories_kcal: totalCalories,
-            is_simple: false,
+            protein_g: totalProtein,
+            is_simple: dishDetails.length <= 1,
             is_completed: false
           })
         
         if (mealError) {
           console.error(`Failed to insert planned_meal for ${dayDate} ${mealType}:`, mealError)
         } else {
-          console.log(`✅ Saved: ${dayDate} ${mealType} - ${dishName} (${totalCalories}kcal)`)
+          console.log(`✅ Saved: ${dayDate} ${mealType} - ${dishName} (${totalCalories}kcal, ${totalProtein}g protein)`)
         }
       }
     }
@@ -273,18 +312,20 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
               const imageUrl = await generateMealImage(meal.dishes[0].name, userId, supabase)
               
               // 画像URLを更新
-              const { error: updateError } = await supabase
-                .from('planned_meals')
-                .update({ image_url: imageUrl })
-                .eq('meal_plan_day_id', (await supabase
-                  .from('meal_plan_days')
-                  .select('id')
-                  .eq('meal_plan_id', mealPlanId)
-                  .eq('day_date', day.date)
-                  .single()).data?.id)
-                .eq('meal_type', meal.mealType)
+              const { data: dayData } = await supabase
+                .from('meal_plan_days')
+                .select('id')
+                .eq('meal_plan_id', mealPlanId)
+                .eq('day_date', day.date)
+                .single()
               
-              if (!updateError) {
+              if (dayData) {
+                await supabase
+                  .from('planned_meals')
+                  .update({ image_url: imageUrl })
+                  .eq('meal_plan_day_id', dayData.id)
+                  .eq('meal_type', meal.mealType)
+                
                 console.log(`✅ Image added for ${day.date} ${meal.mealType}`)
               }
             } catch (e: any) {
@@ -300,6 +341,272 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`)
   }
+}
+
+// ==============================
+// ヘルパー関数
+// ==============================
+
+function buildProfileSummary(profile: any): string {
+  const allergies = profile.diet_flags?.allergies?.join(', ') || 'なし'
+  const dislikes = profile.diet_flags?.dislikes?.join(', ') || 'なし'
+  const favoriteIngredients = profile.favorite_ingredients?.join(', ') || '特になし'
+  const fitnessGoals = profile.fitness_goals?.map((g: string) => translateGoal(g)).join(', ') || '健康維持'
+  const healthConditions = profile.health_conditions?.join(', ') || 'なし'
+
+  return `
+【ユーザー基本情報】
+- 年齢: ${profile.age || '不明'}歳
+- 性別: ${profile.gender === 'male' ? '男性' : profile.gender === 'female' ? '女性' : '不明'}
+- 身長: ${profile.height || '不明'}cm / 体重: ${profile.weight || '不明'}kg
+${profile.target_weight ? `- 目標体重: ${profile.target_weight}kg` : ''}
+- 目標: ${fitnessGoals}
+
+【仕事・生活】
+- 職種: ${profile.occupation || '未設定'}
+${profile.industry ? `- 業界: ${profile.industry}` : ''}
+- 勤務形態: ${translateWorkStyle(profile.work_style)}
+- 運動: 週${profile.weekly_exercise_minutes || 0}分
+${profile.sports_activities?.length ? `- スポーツ: ${profile.sports_activities.map((s: any) => s.name).join(', ')}` : ''}
+
+【健康状態】
+${healthConditions !== 'なし' ? `- 持病・注意点: ${healthConditions}` : '- 特になし'}
+${profile.sleep_quality ? `- 睡眠の質: ${translateQuality(profile.sleep_quality)}` : ''}
+${profile.stress_level ? `- ストレスレベル: ${translateStress(profile.stress_level)}` : ''}
+${profile.cold_sensitivity ? '- 冷え性あり' : ''}
+${profile.swelling_prone ? '- むくみやすい' : ''}
+
+【食事制限（厳守）】
+- アレルギー（絶対除外）: ${allergies}
+- 苦手なもの（避ける）: ${dislikes}
+- 食事スタイル: ${translateDietStyle(profile.diet_style)}
+${profile.religious_restrictions && profile.religious_restrictions !== 'none' ? `- 宗教的制限: ${profile.religious_restrictions}` : ''}
+
+【嗜好】
+- 好きな食材: ${favoriteIngredients}
+${profile.favorite_dishes?.length ? `- 好きな料理: ${profile.favorite_dishes.join(', ')}` : ''}
+${formatCuisinePreferences(profile.cuisine_preferences)}
+`
+}
+
+function calculateNutritionTarget(profile: any): any {
+  // 基礎代謝計算（Mifflin-St Jeor式）
+  let bmr = 1800
+  if (profile.weight && profile.height && profile.age) {
+    if (profile.gender === 'male') {
+      bmr = Math.round(10 * profile.weight + 6.25 * profile.height - 5 * profile.age + 5)
+    } else {
+      bmr = Math.round(10 * profile.weight + 6.25 * profile.height - 5 * profile.age - 161)
+    }
+  }
+
+  // 活動係数
+  let activityMultiplier = 1.2
+  const weeklyExercise = profile.weekly_exercise_minutes || 0
+  if (weeklyExercise > 300) activityMultiplier = 1.7
+  else if (weeklyExercise > 150) activityMultiplier = 1.5
+  else if (weeklyExercise > 60) activityMultiplier = 1.4
+
+  let tdee = bmr * activityMultiplier
+
+  // 目標による調整
+  const goals = profile.fitness_goals || []
+  if (goals.includes('lose_weight')) {
+    tdee -= 500
+  } else if (goals.includes('gain_weight') || goals.includes('build_muscle')) {
+    tdee += 300
+  }
+
+  // PFCバランス
+  let proteinRatio = 0.20
+  let fatRatio = 0.25
+  let carbsRatio = 0.55
+
+  if (goals.includes('build_muscle')) {
+    proteinRatio = 0.30
+    carbsRatio = 0.45
+  } else if (goals.includes('lose_weight')) {
+    proteinRatio = 0.25
+    fatRatio = 0.30
+    carbsRatio = 0.45
+  }
+
+  // 健康状態による調整
+  const conditions = profile.health_conditions || []
+  if (conditions.includes('糖尿病')) {
+    carbsRatio = 0.40
+    proteinRatio = 0.25
+    fatRatio = 0.35
+  }
+
+  const dailyCalories = Math.max(Math.round(tdee), 1200)
+
+  return {
+    dailyCalories,
+    protein: Math.round((dailyCalories * proteinRatio) / 4),
+    fat: Math.round((dailyCalories * fatRatio) / 9),
+    carbs: Math.round((dailyCalories * carbsRatio) / 4),
+    fiber: profile.gender === 'male' ? 21 : 18,
+    sodium: conditions.includes('高血圧') ? 1500 : 2300
+  }
+}
+
+function buildHealthConstraints(profile: any): string[] {
+  const constraints: string[] = []
+  const conditions = profile.health_conditions || []
+  const goals = profile.fitness_goals || []
+
+  if (conditions.includes('高血圧')) {
+    constraints.push('【高血圧】塩分6g以下、カリウム豊富な食材（バナナ、ほうれん草）を積極的に。漬物・ラーメン・カップ麺は避ける')
+  }
+  if (conditions.includes('糖尿病')) {
+    constraints.push('【糖尿病】低GI食品中心、糖質控えめ。白米は玄米に、砂糖・ジュース・菓子パンは避ける')
+  }
+  if (conditions.includes('脂質異常症')) {
+    constraints.push('【脂質異常症】飽和脂肪酸を減らし、オメガ3を増やす。青魚・オリーブオイル推奨。バター・生クリーム・脂身は避ける')
+  }
+  if (conditions.includes('貧血')) {
+    constraints.push('【貧血】鉄分豊富な食材（レバー、赤身肉、ほうれん草）とビタミンCを組み合わせる')
+  }
+  if (conditions.includes('痛風')) {
+    constraints.push('【痛風】プリン体を制限。レバー・白子・あん肝・ビールは避ける')
+  }
+
+  if (goals.includes('improve_skin')) {
+    constraints.push('【美肌】ビタミンA/C/E、コラーゲン豊富な食材（にんじん、トマト、鶏手羽）を積極的に')
+  }
+  if (goals.includes('gut_health')) {
+    constraints.push('【腸活】食物繊維と発酵食品（ヨーグルト、納豆、キムチ、味噌）を毎食取り入れる')
+  }
+  if (goals.includes('build_muscle')) {
+    constraints.push('【筋肉増加】高タンパク食材（鶏むね肉、卵、豆腐）を毎食。運動後は特にタンパク質を意識')
+  }
+
+  if (profile.cold_sensitivity) {
+    constraints.push('【冷え性】体を温める食材（生姜、ねぎ、にんにく、根菜）を積極的に')
+  }
+  if (profile.swelling_prone) {
+    constraints.push('【むくみ】カリウム豊富な食材（きゅうり、バナナ、アボカド）を取り入れ、塩分控えめに')
+  }
+
+  return constraints
+}
+
+function buildCookingConstraints(profile: any): string[] {
+  const constraints: string[] = []
+  
+  constraints.push(`平日の調理時間: ${profile.weekday_cooking_minutes || 30}分以内`)
+  constraints.push(`休日の調理時間: ${profile.weekend_cooking_minutes || 60}分以内`)
+  constraints.push(`料理経験: ${translateCookingExperience(profile.cooking_experience)}`)
+  
+  if (profile.kitchen_appliances?.length) {
+    constraints.push(`使用可能な調理器具: ${profile.kitchen_appliances.join(', ')}`)
+  }
+  
+  if (profile.meal_prep_ok) {
+    constraints.push('作り置きOK（週末に作り置きして平日に活用）')
+  }
+
+  return constraints
+}
+
+function mapRole(role: string | undefined): string {
+  if (!role) return 'side'
+  const roleMap: Record<string, string> = {
+    '主菜': 'main',
+    '主食': 'main',
+    '主': 'main',
+    'main': 'main',
+    '副菜': 'side',
+    '副食': 'side',
+    'side': 'side',
+    '汁物': 'soup',
+    '味噌汁': 'soup',
+    'soup': 'soup',
+    'ご飯': 'rice',
+    '白飯': 'rice',
+    'rice': 'rice',
+    'サラダ': 'salad',
+    'salad': 'salad',
+    'デザート': 'dessert',
+    'dessert': 'dessert',
+    'フルーツ': 'fruit',
+    'fruit': 'fruit'
+  }
+  return roleMap[role] || 'side'
+}
+
+function translateGoal(goal: string): string {
+  const map: Record<string, string> = {
+    lose_weight: '減量',
+    gain_weight: '増量',
+    build_muscle: '筋肉増加',
+    improve_energy: 'エネルギーUP',
+    improve_skin: '美肌',
+    gut_health: '腸活',
+    immunity: '免疫力向上',
+    focus: '集中力向上',
+    anti_aging: 'アンチエイジング'
+  }
+  return map[goal] || goal
+}
+
+function translateWorkStyle(style: string | null): string {
+  const map: Record<string, string> = {
+    fulltime: 'フルタイム勤務',
+    parttime: 'パートタイム',
+    freelance: 'フリーランス',
+    remote: 'リモートワーク',
+    shift: 'シフト勤務',
+    student: '学生',
+    homemaker: '主婦/主夫',
+    retired: '退職者'
+  }
+  return map[style || ''] || '未設定'
+}
+
+function translateQuality(quality: string | null): string {
+  const map: Record<string, string> = { good: '良好', average: '普通', poor: '悪い' }
+  return map[quality || ''] || '未設定'
+}
+
+function translateStress(stress: string | null): string {
+  const map: Record<string, string> = { low: '低い', medium: '普通', high: '高い' }
+  return map[stress || ''] || '未設定'
+}
+
+function translateDietStyle(style: string | null): string {
+  const map: Record<string, string> = {
+    normal: '通常',
+    vegetarian: 'ベジタリアン',
+    vegan: 'ヴィーガン',
+    pescatarian: 'ペスカタリアン',
+    gluten_free: 'グルテンフリー',
+    keto: 'ケトジェニック'
+  }
+  return map[style || ''] || '通常'
+}
+
+function translateCookingExperience(exp: string | null): string {
+  const map: Record<string, string> = {
+    beginner: '初心者',
+    intermediate: '中級者',
+    advanced: '上級者'
+  }
+  return map[exp || ''] || '初心者'
+}
+
+function formatCuisinePreferences(prefs: any): string {
+  if (!prefs) return ''
+  const labels: Record<string, string> = {
+    japanese: '和食', western: '洋食', chinese: '中華',
+    italian: 'イタリアン', ethnic: 'エスニック', korean: '韓国料理'
+  }
+  const items = Object.entries(prefs)
+    .filter(([_, v]) => typeof v === 'number' && (v as number) >= 4)
+    .map(([k]) => labels[k] || k)
+  if (items.length === 0) return ''
+  return `- 好きなジャンル: ${items.join(', ')}`
 }
 
 // 画像生成関数

@@ -1,14 +1,15 @@
 import type { 
   UserProfile, Meal, MealNutritionEstimate, WeeklyMenuRequest, 
   Announcement, OrgDailyStats, Organization, DailyActivityLog, Badge,
-  MealPlan, MealPlanDay, PlannedMeal, ShoppingListItem, WeeklyMenuResult
+  MealPlan, MealPlanDay, PlannedMeal, ShoppingListItem, WeeklyMenuResult,
+  FitnessGoal, WorkStyle, CookingExperience, DietStyle, Frequency, QualityLevel, StressLevel
 } from '@/types/domain';
 import type { 
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
   DbAnnouncement, DbOrgDailyStats 
 } from '@/types/database';
 
-// User Profile
+// User Profile (Extended)
 export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   id: db.id,
   nickname: db.nickname,
@@ -27,9 +28,242 @@ export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   department: db.department,
   familySize: db.family_size || 1,
   cheatDayConfig: db.cheat_day_config,
+  
+  // === NEW: Body Info ===
+  bodyFatPercentage: db.body_fat_percentage ?? null,
+  muscleMass: db.muscle_mass ?? null,
+  basalBodyTemp: db.basal_body_temp ?? null,
+
+  // === NEW: Goals ===
+  targetWeight: db.target_weight ?? null,
+  targetBodyFat: db.target_body_fat ?? null,
+  targetDate: db.target_date ?? null,
+  fitnessGoals: (db.fitness_goals as FitnessGoal[]) || [],
+
+  // === NEW: Work & Career ===
+  industry: db.industry ?? null,
+  workStyle: (db.work_style as WorkStyle) ?? null,
+  workHours: db.work_hours ?? null,
+  overtimeFrequency: (db.overtime_frequency as Frequency) ?? null,
+  commute: db.commute ?? null,
+  businessTripFrequency: (db.business_trip_frequency as Frequency) ?? null,
+  entertainmentFrequency: (db.entertainment_frequency as Frequency) ?? null,
+  deskHoursPerDay: db.desk_hours_per_day ?? null,
+
+  // === NEW: Sports & Exercise ===
+  sportsActivities: db.sports_activities || [],
+  gymMember: db.gym_member ?? false,
+  personalTrainer: db.personal_trainer ?? false,
+  weeklyExerciseMinutes: db.weekly_exercise_minutes ?? 0,
+
+  // === NEW: Health & Medical ===
+  healthConditions: db.health_conditions || [],
+  medications: db.medications || [],
+  healthCheckupResults: db.health_checkup_results ?? null,
+  pregnancyStatus: db.pregnancy_status as any ?? null,
+  menopause: db.menopause ?? false,
+  sleepQuality: (db.sleep_quality as QualityLevel) ?? null,
+  stressLevel: (db.stress_level as StressLevel) ?? null,
+  bowelMovement: db.bowel_movement as any ?? null,
+  skinCondition: db.skin_condition as any ?? null,
+  coldSensitivity: db.cold_sensitivity ?? false,
+  swellingProne: db.swelling_prone ?? false,
+
+  // === NEW: Diet Restrictions ===
+  dietStyle: (db.diet_style as DietStyle) || 'normal',
+  religiousRestrictions: db.religious_restrictions as any ?? null,
+  dislikedCookingMethods: db.disliked_cooking_methods || [],
+
+  // === NEW: Lifestyle Rhythm ===
+  wakeTime: db.wake_time ?? null,
+  sleepTime: db.sleep_time ?? null,
+  mealTimes: db.meal_times ?? null,
+  snackingHabit: (db.snacking_habit as Frequency) ?? null,
+  alcoholFrequency: (db.alcohol_frequency as Frequency) ?? null,
+  smoking: db.smoking ?? false,
+  caffeineIntake: db.caffeine_intake as any ?? null,
+  dailyWaterMl: db.daily_water_ml ?? null,
+
+  // === NEW: Cooking Environment ===
+  cookingExperience: (db.cooking_experience as CookingExperience) || 'beginner',
+  specialtyCuisines: db.specialty_cuisines || [],
+  dislikedCooking: db.disliked_cooking || [],
+  weekdayCookingMinutes: db.weekday_cooking_minutes ?? 30,
+  weekendCookingMinutes: db.weekend_cooking_minutes ?? 60,
+  kitchenAppliances: db.kitchen_appliances || [],
+  mealPrepOk: db.meal_prep_ok ?? true,
+  freezerCapacity: db.freezer_capacity as any ?? null,
+
+  // === NEW: Budget & Shopping ===
+  weeklyFoodBudget: db.weekly_food_budget ?? null,
+  shoppingFrequency: db.shopping_frequency as any ?? null,
+  preferredStores: db.preferred_stores || [],
+  onlineGrocery: db.online_grocery ?? false,
+  costcoMember: db.costco_member ?? false,
+  organicPreference: db.organic_preference as any ?? null,
+
+  // === NEW: Taste Preferences ===
+  cuisinePreferences: db.cuisine_preferences ?? null,
+  tastePreferences: db.taste_preferences ?? null,
+  favoriteIngredients: db.favorite_ingredients || [],
+  favoriteDishes: db.favorite_dishes || [],
+  texturePreferences: db.texture_preferences || [],
+  temperaturePreference: db.temperature_preference as any ?? null,
+  presentationImportance: db.presentation_importance as any ?? null,
+
+  // === NEW: Family ===
+  householdMembers: db.household_members || [],
+  hasChildren: db.has_children ?? false,
+  childrenAges: db.children_ages || [],
+  hasElderly: db.has_elderly ?? false,
+  pets: db.pets || [],
+
+  // === NEW: Lifestyle ===
+  hobbies: db.hobbies || [],
+  weekendActivity: db.weekend_activity as any ?? null,
+  travelFrequency: (db.travel_frequency as Frequency) ?? null,
+  outdoorActivities: db.outdoor_activities || [],
+  snsFoodPosting: db.sns_food_posting ?? false,
+
+  // === NEW: Environment ===
+  region: db.region ?? null,
+  climateSensitivity: db.climate_sensitivity as any ?? null,
+
+  // === NEW: Meta ===
+  profileCompleteness: db.profile_completeness ?? 0,
+  lastProfileUpdate: db.last_profile_update ?? null,
+  aiLearningEnabled: db.ai_learning_enabled ?? true,
+
   createdAt: db.created_at,
   updatedAt: db.updated_at,
 });
+
+// Convert UserProfile (camelCase) to DB format (snake_case)
+export const fromUserProfile = (profile: Partial<UserProfile>): Record<string, any> => {
+  const result: Record<string, any> = {};
+  
+  // Basic fields
+  if (profile.nickname !== undefined) result.nickname = profile.nickname;
+  if (profile.age !== undefined) result.age = profile.age;
+  if (profile.occupation !== undefined) result.occupation = profile.occupation;
+  if (profile.height !== undefined) result.height = profile.height;
+  if (profile.weight !== undefined) result.weight = profile.weight;
+  if (profile.ageGroup !== undefined) result.age_group = profile.ageGroup;
+  if (profile.gender !== undefined) result.gender = profile.gender;
+  if (profile.goalText !== undefined) result.goal_text = profile.goalText;
+  if (profile.performanceModes !== undefined) result.perf_modes = profile.performanceModes;
+  if (profile.lifestyle !== undefined) result.lifestyle = profile.lifestyle;
+  if (profile.dietFlags !== undefined) result.diet_flags = profile.dietFlags;
+  if (profile.familySize !== undefined) result.family_size = profile.familySize;
+  if (profile.cheatDayConfig !== undefined) result.cheat_day_config = profile.cheatDayConfig;
+  
+  // Body Info
+  if (profile.bodyFatPercentage !== undefined) result.body_fat_percentage = profile.bodyFatPercentage;
+  if (profile.muscleMass !== undefined) result.muscle_mass = profile.muscleMass;
+  if (profile.basalBodyTemp !== undefined) result.basal_body_temp = profile.basalBodyTemp;
+  
+  // Goals
+  if (profile.targetWeight !== undefined) result.target_weight = profile.targetWeight;
+  if (profile.targetBodyFat !== undefined) result.target_body_fat = profile.targetBodyFat;
+  if (profile.targetDate !== undefined) result.target_date = profile.targetDate;
+  if (profile.fitnessGoals !== undefined) result.fitness_goals = profile.fitnessGoals;
+  
+  // Work & Career
+  if (profile.industry !== undefined) result.industry = profile.industry;
+  if (profile.workStyle !== undefined) result.work_style = profile.workStyle;
+  if (profile.workHours !== undefined) result.work_hours = profile.workHours;
+  if (profile.overtimeFrequency !== undefined) result.overtime_frequency = profile.overtimeFrequency;
+  if (profile.commute !== undefined) result.commute = profile.commute;
+  if (profile.businessTripFrequency !== undefined) result.business_trip_frequency = profile.businessTripFrequency;
+  if (profile.entertainmentFrequency !== undefined) result.entertainment_frequency = profile.entertainmentFrequency;
+  if (profile.deskHoursPerDay !== undefined) result.desk_hours_per_day = profile.deskHoursPerDay;
+  
+  // Sports & Exercise
+  if (profile.sportsActivities !== undefined) result.sports_activities = profile.sportsActivities;
+  if (profile.gymMember !== undefined) result.gym_member = profile.gymMember;
+  if (profile.personalTrainer !== undefined) result.personal_trainer = profile.personalTrainer;
+  if (profile.weeklyExerciseMinutes !== undefined) result.weekly_exercise_minutes = profile.weeklyExerciseMinutes;
+  
+  // Health & Medical
+  if (profile.healthConditions !== undefined) result.health_conditions = profile.healthConditions;
+  if (profile.medications !== undefined) result.medications = profile.medications;
+  if (profile.healthCheckupResults !== undefined) result.health_checkup_results = profile.healthCheckupResults;
+  if (profile.pregnancyStatus !== undefined) result.pregnancy_status = profile.pregnancyStatus;
+  if (profile.menopause !== undefined) result.menopause = profile.menopause;
+  if (profile.sleepQuality !== undefined) result.sleep_quality = profile.sleepQuality;
+  if (profile.stressLevel !== undefined) result.stress_level = profile.stressLevel;
+  if (profile.bowelMovement !== undefined) result.bowel_movement = profile.bowelMovement;
+  if (profile.skinCondition !== undefined) result.skin_condition = profile.skinCondition;
+  if (profile.coldSensitivity !== undefined) result.cold_sensitivity = profile.coldSensitivity;
+  if (profile.swellingProne !== undefined) result.swelling_prone = profile.swellingProne;
+  
+  // Diet Restrictions
+  if (profile.dietStyle !== undefined) result.diet_style = profile.dietStyle;
+  if (profile.religiousRestrictions !== undefined) result.religious_restrictions = profile.religiousRestrictions;
+  if (profile.dislikedCookingMethods !== undefined) result.disliked_cooking_methods = profile.dislikedCookingMethods;
+  
+  // Lifestyle Rhythm
+  if (profile.wakeTime !== undefined) result.wake_time = profile.wakeTime;
+  if (profile.sleepTime !== undefined) result.sleep_time = profile.sleepTime;
+  if (profile.mealTimes !== undefined) result.meal_times = profile.mealTimes;
+  if (profile.snackingHabit !== undefined) result.snacking_habit = profile.snackingHabit;
+  if (profile.alcoholFrequency !== undefined) result.alcohol_frequency = profile.alcoholFrequency;
+  if (profile.smoking !== undefined) result.smoking = profile.smoking;
+  if (profile.caffeineIntake !== undefined) result.caffeine_intake = profile.caffeineIntake;
+  if (profile.dailyWaterMl !== undefined) result.daily_water_ml = profile.dailyWaterMl;
+  
+  // Cooking Environment
+  if (profile.cookingExperience !== undefined) result.cooking_experience = profile.cookingExperience;
+  if (profile.specialtyCuisines !== undefined) result.specialty_cuisines = profile.specialtyCuisines;
+  if (profile.dislikedCooking !== undefined) result.disliked_cooking = profile.dislikedCooking;
+  if (profile.weekdayCookingMinutes !== undefined) result.weekday_cooking_minutes = profile.weekdayCookingMinutes;
+  if (profile.weekendCookingMinutes !== undefined) result.weekend_cooking_minutes = profile.weekendCookingMinutes;
+  if (profile.kitchenAppliances !== undefined) result.kitchen_appliances = profile.kitchenAppliances;
+  if (profile.mealPrepOk !== undefined) result.meal_prep_ok = profile.mealPrepOk;
+  if (profile.freezerCapacity !== undefined) result.freezer_capacity = profile.freezerCapacity;
+  
+  // Budget & Shopping
+  if (profile.weeklyFoodBudget !== undefined) result.weekly_food_budget = profile.weeklyFoodBudget;
+  if (profile.shoppingFrequency !== undefined) result.shopping_frequency = profile.shoppingFrequency;
+  if (profile.preferredStores !== undefined) result.preferred_stores = profile.preferredStores;
+  if (profile.onlineGrocery !== undefined) result.online_grocery = profile.onlineGrocery;
+  if (profile.costcoMember !== undefined) result.costco_member = profile.costcoMember;
+  if (profile.organicPreference !== undefined) result.organic_preference = profile.organicPreference;
+  
+  // Taste Preferences
+  if (profile.cuisinePreferences !== undefined) result.cuisine_preferences = profile.cuisinePreferences;
+  if (profile.tastePreferences !== undefined) result.taste_preferences = profile.tastePreferences;
+  if (profile.favoriteIngredients !== undefined) result.favorite_ingredients = profile.favoriteIngredients;
+  if (profile.favoriteDishes !== undefined) result.favorite_dishes = profile.favoriteDishes;
+  if (profile.texturePreferences !== undefined) result.texture_preferences = profile.texturePreferences;
+  if (profile.temperaturePreference !== undefined) result.temperature_preference = profile.temperaturePreference;
+  if (profile.presentationImportance !== undefined) result.presentation_importance = profile.presentationImportance;
+  
+  // Family
+  if (profile.householdMembers !== undefined) result.household_members = profile.householdMembers;
+  if (profile.hasChildren !== undefined) result.has_children = profile.hasChildren;
+  if (profile.childrenAges !== undefined) result.children_ages = profile.childrenAges;
+  if (profile.hasElderly !== undefined) result.has_elderly = profile.hasElderly;
+  if (profile.pets !== undefined) result.pets = profile.pets;
+  
+  // Lifestyle
+  if (profile.hobbies !== undefined) result.hobbies = profile.hobbies;
+  if (profile.weekendActivity !== undefined) result.weekend_activity = profile.weekendActivity;
+  if (profile.travelFrequency !== undefined) result.travel_frequency = profile.travelFrequency;
+  if (profile.outdoorActivities !== undefined) result.outdoor_activities = profile.outdoorActivities;
+  if (profile.snsFoodPosting !== undefined) result.sns_food_posting = profile.snsFoodPosting;
+  
+  // Environment
+  if (profile.region !== undefined) result.region = profile.region;
+  if (profile.climateSensitivity !== undefined) result.climate_sensitivity = profile.climateSensitivity;
+  
+  // Meta
+  if (profile.profileCompleteness !== undefined) result.profile_completeness = profile.profileCompleteness;
+  if (profile.lastProfileUpdate !== undefined) result.last_profile_update = profile.lastProfileUpdate;
+  if (profile.aiLearningEnabled !== undefined) result.ai_learning_enabled = profile.aiLearningEnabled;
+  
+  return result;
+};
 
 // Meal
 export const toMeal = (db: DbMeal): Meal => ({

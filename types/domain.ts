@@ -5,7 +5,7 @@ export type ISODateString = string;
 
 // --- Enum Types ---
 
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 
 export type AgeGroup =
   | 'under_18'
@@ -28,6 +28,36 @@ export type PerformanceMode =
 
 export type UserRole = 'user' | 'admin' | 'org_admin';
 
+// --- Fitness Goals ---
+export type FitnessGoal =
+  | 'lose_weight'
+  | 'gain_weight'
+  | 'build_muscle'
+  | 'improve_energy'
+  | 'improve_skin'
+  | 'gut_health'
+  | 'anti_aging'
+  | 'immunity'
+  | 'focus';
+
+// --- Work Style ---
+export type WorkStyle = 'fulltime' | 'parttime' | 'freelance' | 'remote' | 'shift' | 'student' | 'homemaker' | 'retired';
+
+// --- Cooking Experience ---
+export type CookingExperience = 'beginner' | 'intermediate' | 'advanced';
+
+// --- Diet Style ---
+export type DietStyle = 'normal' | 'vegetarian' | 'vegan' | 'pescatarian' | 'flexitarian' | 'gluten_free' | 'low_fodmap' | 'keto';
+
+// --- Frequency Types ---
+export type Frequency = 'never' | 'rarely' | 'sometimes' | 'often' | 'daily';
+
+// --- Quality Level ---
+export type QualityLevel = 'good' | 'average' | 'poor';
+
+// --- Stress Level ---
+export type StressLevel = 'low' | 'medium' | 'high';
+
 // --- User Profile & Settings ---
 
 export interface LifestyleInfo {
@@ -48,6 +78,70 @@ export interface CheatDayConfig {
   dayOfWeek: string; // 'Sunday', etc.
 }
 
+// --- Extended Profile Types ---
+
+export interface WorkHours {
+  start: string; // "09:00"
+  end: string;   // "18:00"
+}
+
+export interface CommuteInfo {
+  method: 'walk' | 'bike' | 'train' | 'car' | 'bus' | 'none';
+  minutes: number;
+}
+
+export interface SportActivity {
+  name: string;
+  frequency: 'daily' | 'weekly_3plus' | 'weekly_1_2' | 'monthly' | 'rarely';
+  intensity: 'light' | 'moderate' | 'intense';
+  timeOfDay: 'morning' | 'afternoon' | 'evening' | 'varies';
+  purpose: 'hobby' | 'competition' | 'health';
+}
+
+export interface HealthCheckupResults {
+  bloodPressure?: { systolic: number; diastolic: number };
+  hba1c?: number;
+  cholesterol?: { total: number; ldl: number; hdl: number };
+  triglycerides?: number;
+  uricAcid?: number;
+  gammaGtp?: number;
+  date?: ISODateString;
+}
+
+export interface MealTimes {
+  breakfast: string; // "07:30"
+  lunch: string;     // "12:00"
+  dinner: string;    // "19:00"
+}
+
+export interface CuisinePreferences {
+  japanese: number;  // 1-5
+  western: number;
+  chinese: number;
+  italian: number;
+  french: number;
+  ethnic: number;
+  korean: number;
+  mexican: number;
+}
+
+export interface TastePreferences {
+  spicy: number;   // 1-5
+  sweet: number;
+  sour: number;
+  salty: number;
+  umami: number;
+}
+
+export interface HouseholdMember {
+  relation: 'spouse' | 'child' | 'parent' | 'sibling' | 'other';
+  age: number;
+  allergies?: string[];
+  preferences?: string[];
+}
+
+// --- Main User Profile (Extended) ---
+
 export interface UserProfile {
   id: string;
   nickname: string;
@@ -62,12 +156,117 @@ export interface UserProfile {
   lifestyle: LifestyleInfo | null;
   dietFlags: DietFlags | null;
   
-  // Extended
+  // Extended Basic
   role: UserRole;
   organizationId: string | null;
   department: string | null;
   familySize: number;
   cheatDayConfig: CheatDayConfig | null;
+
+  // === NEW: Body Info ===
+  bodyFatPercentage: number | null;
+  muscleMass: number | null;
+  basalBodyTemp: number | null;
+
+  // === NEW: Goals ===
+  targetWeight: number | null;
+  targetBodyFat: number | null;
+  targetDate: ISODateString | null;
+  fitnessGoals: FitnessGoal[];
+
+  // === NEW: Work & Career ===
+  industry: string | null;
+  workStyle: WorkStyle | null;
+  workHours: WorkHours | null;
+  overtimeFrequency: Frequency | null;
+  commute: CommuteInfo | null;
+  businessTripFrequency: Frequency | null;
+  entertainmentFrequency: Frequency | null;
+  deskHoursPerDay: number | null;
+
+  // === NEW: Sports & Exercise ===
+  sportsActivities: SportActivity[];
+  gymMember: boolean;
+  personalTrainer: boolean;
+  weeklyExerciseMinutes: number;
+
+  // === NEW: Health & Medical ===
+  healthConditions: string[];
+  medications: string[];
+  healthCheckupResults: HealthCheckupResults | null;
+  pregnancyStatus: 'none' | 'pregnant' | 'nursing' | null;
+  menopause: boolean;
+  sleepQuality: QualityLevel | null;
+  stressLevel: StressLevel | null;
+  bowelMovement: 'good' | 'constipation' | 'diarrhea' | 'irregular' | null;
+  skinCondition: 'good' | 'acne' | 'dry' | 'oily' | null;
+  coldSensitivity: boolean;
+  swellingProne: boolean;
+
+  // === NEW: Diet Restrictions ===
+  dietStyle: DietStyle;
+  religiousRestrictions: 'none' | 'halal' | 'kosher' | 'buddhist' | null;
+  dislikedCookingMethods: string[];
+
+  // === NEW: Lifestyle Rhythm ===
+  wakeTime: string | null;  // "07:00"
+  sleepTime: string | null; // "23:00"
+  mealTimes: MealTimes | null;
+  snackingHabit: Frequency | null;
+  alcoholFrequency: Frequency | null;
+  smoking: boolean;
+  caffeineIntake: 'none' | 'light' | 'moderate' | 'heavy' | null;
+  dailyWaterMl: number | null;
+
+  // === NEW: Cooking Environment ===
+  cookingExperience: CookingExperience;
+  specialtyCuisines: string[];
+  dislikedCooking: string[];
+  weekdayCookingMinutes: number;
+  weekendCookingMinutes: number;
+  kitchenAppliances: string[];
+  mealPrepOk: boolean;
+  freezerCapacity: 'small' | 'medium' | 'large' | null;
+
+  // === NEW: Budget & Shopping ===
+  weeklyFoodBudget: number | null;
+  shoppingFrequency: 'daily' | '2-3_weekly' | 'weekly' | null;
+  preferredStores: string[];
+  onlineGrocery: boolean;
+  costcoMember: boolean;
+  organicPreference: 'none' | 'sometimes' | 'always' | null;
+
+  // === NEW: Taste Preferences ===
+  cuisinePreferences: CuisinePreferences | null;
+  tastePreferences: TastePreferences | null;
+  favoriteIngredients: string[];
+  favoriteDishes: string[];
+  texturePreferences: string[];
+  temperaturePreference: 'hot' | 'cold' | 'both' | null;
+  presentationImportance: 'low' | 'medium' | 'high' | null;
+
+  // === NEW: Family ===
+  householdMembers: HouseholdMember[];
+  hasChildren: boolean;
+  childrenAges: number[];
+  hasElderly: boolean;
+  pets: string[];
+
+  // === NEW: Lifestyle ===
+  hobbies: string[];
+  weekendActivity: 'active' | 'relaxed' | 'mixed' | null;
+  travelFrequency: Frequency | null;
+  outdoorActivities: string[];
+  snsFoodPosting: boolean;
+
+  // === NEW: Environment ===
+  region: string | null;
+  climateSensitivity: 'hot' | 'cold' | 'both' | null;
+
+  // === NEW: Meta ===
+  profileCompleteness: number;
+  lastProfileUpdate: ISODateTimeString | null;
+  aiLearningEnabled: boolean;
 
   createdAt: ISODateTimeString;
   updatedAt: ISODateTimeString;
@@ -365,4 +564,33 @@ export interface UserBadge {
   obtainedAt: ISODateTimeString;
   // Joined
   badge?: Badge;
+}
+
+// --- Nutrition Calculation Types ---
+
+export interface NutritionTarget {
+  dailyCalories: number;
+  protein: number;  // grams
+  fat: number;      // grams
+  carbs: number;    // grams
+  fiber: number;    // grams
+  sodium: number;   // mg
+}
+
+export interface MealConstraints {
+  excludeIngredients: string[];
+  excludeCookingMethods: string[];
+  preferredIngredients: string[];
+  maxCookingTime: { weekday: number; weekend: number };
+  healthFocus: HealthFocusItem[];
+  cuisineRatio: Record<string, number>;
+  budget: number | null;
+  familyConsiderations: string[];
+}
+
+export interface HealthFocusItem {
+  condition: string;
+  actions: string[];
+  excludeIngredients?: string[];
+  preferIngredients?: string[];
 }
