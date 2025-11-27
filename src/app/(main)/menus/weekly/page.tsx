@@ -50,16 +50,36 @@ const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
 };
 
-// 役割に応じた色設定（可変数対応）
+// 役割に応じた色設定（英語・日本語両方対応）
 const getDishConfig = (role?: string): { label: string; color: string; bg: string } => {
   switch (role) {
-    case 'main': return { label: '主菜', color: colors.accent, bg: colors.accentLight };
-    case 'side': return { label: '副菜', color: colors.success, bg: colors.successLight };
-    case 'soup': return { label: '汁物', color: colors.blue, bg: colors.blueLight };
-    case 'rice': return { label: 'ご飯', color: colors.warning, bg: colors.warningLight };
-    case 'salad': return { label: 'サラダ', color: colors.success, bg: colors.successLight };
-    case 'dessert': return { label: 'デザート', color: colors.purple, bg: colors.purpleLight };
-    default: return { label: 'おかず', color: colors.textLight, bg: colors.bg };
+    case 'main':
+    case '主菜':
+    case '主食':
+      return { label: '主菜', color: colors.accent, bg: colors.accentLight };
+    case 'side':
+    case 'side1':
+    case 'side2':
+    case '副菜':
+    case '副食':
+      return { label: '副菜', color: colors.success, bg: colors.successLight };
+    case 'soup':
+    case '汁物':
+    case '味噌汁':
+      return { label: '汁物', color: colors.blue, bg: colors.blueLight };
+    case 'rice':
+    case 'ご飯':
+    case '白飯':
+      return { label: 'ご飯', color: colors.warning, bg: colors.warningLight };
+    case 'salad':
+    case 'サラダ':
+      return { label: 'サラダ', color: colors.success, bg: colors.successLight };
+    case 'dessert':
+    case 'デザート':
+    case 'フルーツ':
+      return { label: 'デザート', color: colors.purple, bg: colors.purpleLight };
+    default:
+      return { label: role || 'おかず', color: colors.textLight, bg: colors.bg };
   }
 };
 
@@ -1094,18 +1114,16 @@ export default function WeeklyMenuPage() {
     // 一括生成中かどうか（過去でない場合）
     const isGeneratingBulk = isGenerating && !isPast;
     
-    // デバッグログ
-    if (isGenerating) {
-      console.log(`CollapsedMealCard: ${mealKey}, isGenerating=${isGenerating}, isPast=${isPast}, isGeneratingBulk=${isGeneratingBulk}`);
-    }
-    
     // dishes配列から主菜と他の品数を取得
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
       ? meal.dishes 
       : meal.dishes 
         ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
         : [];
-    const mainDish = dishesArray.find(d => d.role === 'main') || dishesArray[0];
+    // 主菜を探す（英語・日本語両方対応）
+    const mainDish = dishesArray.find(d => 
+      d.role === 'main' || d.role === '主菜' || d.role === '主食'
+    ) || dishesArray[0];
     const otherCount = dishesArray.length > 1 ? dishesArray.length - 1 : 0;
     
     // 表示名を決定（主菜名 + 他○品）
@@ -1192,11 +1210,6 @@ export default function WeeklyMenuPage() {
     
     // 一括生成中かどうか（ExpandedMealCardは過去の日付では表示されないのでシンプルに）
     const isGeneratingBulk = isGenerating;
-    
-    // デバッグログ
-    if (isGenerating) {
-      console.log(`ExpandedMealCard: ${mealKey}, isGenerating=${isGenerating}, isGeneratingBulk=${isGeneratingBulk}`);
-    }
     
     // dishes は配列形式に対応（可変数）
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
