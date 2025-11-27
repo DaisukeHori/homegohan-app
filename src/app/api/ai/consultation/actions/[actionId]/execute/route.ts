@@ -189,24 +189,53 @@ export async function POST(
 
       case 'update_meal': {
         const { mealId, updates } = action.action_params;
+        console.log('update_meal action:', { mealId, updates });
+        
+        if (!mealId) {
+          result = { error: 'mealIdが指定されていません' };
+          break;
+        }
+        
         // セキュリティ: 自分の献立のみ更新可能
-        const { data: meal } = await supabase
+        const { data: meal, error: mealFetchError } = await supabase
           .from('planned_meals')
-          .select('meal_plan_days!inner(meal_plans!inner(user_id))')
+          .select('id, dish_name, meal_plan_days!inner(meal_plans!inner(user_id))')
           .eq('id', mealId)
           .single();
+
+        if (mealFetchError) {
+          console.error('Failed to fetch meal for update:', mealFetchError);
+          result = { error: `食事の取得に失敗: ${mealFetchError.message}` };
+          break;
+        }
 
         if (!meal || (meal as any).meal_plan_days.meal_plans.user_id !== user.id) {
           result = { error: '権限がありません' };
           break;
         }
 
-        const { error: updateError } = await supabase
+        // updated_atを明示的に追加
+        const updateData = {
+          ...updates,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { data: updatedMeal, error: updateError } = await supabase
           .from('planned_meals')
-          .update(updates)
-          .eq('id', mealId);
-        success = !updateError;
-        result = { mealId, updated: success };
+          .update(updateData)
+          .eq('id', mealId)
+          .select('id, dish_name, calories_kcal')
+          .single();
+        
+        if (updateError) {
+          console.error('Failed to update meal:', updateError);
+          result = { error: `更新に失敗: ${updateError.message}` };
+          break;
+        }
+        
+        console.log('Meal updated successfully:', updatedMeal);
+        success = true;
+        result = { mealId, updated: true, newDishName: updatedMeal?.dish_name };
         break;
       }
 

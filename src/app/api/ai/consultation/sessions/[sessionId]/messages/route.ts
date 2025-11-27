@@ -810,9 +810,10 @@ JSONで回答してください：
 
     if (aiMsgError) throw aiMsgError;
 
-    // アクションがある場合はai_action_logsに記録
+    // アクションがある場合はai_action_logsに記録し、自動実行
+    let actionResult = null;
     if (proposedActions) {
-      await supabase
+      const { data: actionLog } = await supabase
         .from('ai_action_logs')
         .insert({
           session_id: params.sessionId,
@@ -820,7 +821,30 @@ JSONで回答してください：
           action_type: proposedActions.type,
           action_params: proposedActions.params || {},
           status: 'pending',
-        });
+        })
+        .select('id')
+        .single();
+
+      // アクションを自動実行
+      if (actionLog) {
+        try {
+          const executeRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/ai/consultation/actions/${savedAiMessage.id}/execute`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': request.headers.get('cookie') || '',
+            },
+          });
+          if (executeRes.ok) {
+            actionResult = await executeRes.json();
+            console.log('Action auto-executed:', actionResult);
+          } else {
+            console.error('Action auto-execution failed:', await executeRes.text());
+          }
+        } catch (e) {
+          console.error('Action auto-execution error:', e);
+        }
+      }
     }
 
     // セッションのupdated_atを更新
@@ -843,9 +867,11 @@ JSONで回答してください：
         id: savedAiMessage.id,
         role: 'assistant',
         content: savedAiMessage.content,
-        proposedActions,
+        proposedActions: actionResult?.success ? null : proposedActions, // 自動実行成功時はnull
         createdAt: savedAiMessage.created_at,
       },
+      actionExecuted: actionResult?.success || false,
+      actionResult,
     });
 
   } catch (error: any) {

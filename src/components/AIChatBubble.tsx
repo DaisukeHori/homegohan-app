@@ -291,28 +291,44 @@ export default function AIChatBubble() {
         const data = await res.json();
         
         // 一時メッセージを実際のメッセージに置き換え
+        const newMessages: Message[] = [
+          {
+            id: data.userMessage.id,
+            role: 'user',
+            content: data.userMessage.content,
+            isImportant: data.userMessage.isImportant || false,
+            createdAt: data.userMessage.createdAt,
+          },
+          {
+            id: data.aiMessage.id,
+            role: 'assistant',
+            content: data.aiMessage.content,
+            proposedActions: data.aiMessage.proposedActions ? {
+              ...data.aiMessage.proposedActions,
+              actionId: data.aiMessage.id,
+            } : null,
+            createdAt: data.aiMessage.createdAt,
+          },
+        ];
+        
+        // アクションが自動実行された場合、成功メッセージを追加
+        if (data.actionExecuted && data.actionResult) {
+          newMessages.push({
+            id: `action-result-${Date.now()}`,
+            role: 'assistant',
+            content: `✅ ${ACTION_LABELS[data.actionResult.actionType]?.label || 'アクション'}を実行しました！`,
+            createdAt: new Date().toISOString(),
+          });
+          
+          // 他のコンポーネントにデータ更新を通知
+          window.dispatchEvent(new CustomEvent('mealPlanUpdated', { 
+            detail: { actionType: data.actionResult.actionType, result: data.actionResult.result }
+          }));
+        }
+        
         setMessages(prev => {
           const filtered = prev.filter(m => m.id !== tempUserMsg.id);
-          return [
-            ...filtered,
-            {
-              id: data.userMessage.id,
-              role: 'user',
-              content: data.userMessage.content,
-              isImportant: data.userMessage.isImportant || false,
-              createdAt: data.userMessage.createdAt,
-            },
-            {
-              id: data.aiMessage.id,
-              role: 'assistant',
-              content: data.aiMessage.content,
-              proposedActions: data.aiMessage.proposedActions ? {
-                ...data.aiMessage.proposedActions,
-                actionId: data.aiMessage.id, // アクションIDとしてメッセージIDを使用
-              } : null,
-              createdAt: data.aiMessage.createdAt,
-            },
-          ];
+          return [...filtered, ...newMessages];
         });
       } else {
         // エラー時は一時メッセージを削除
@@ -354,6 +370,11 @@ export default function AIChatBubble() {
         setMessages(prev => prev.map(m => 
           m.id === messageId ? { ...m, proposedActions: null } : m
         ));
+
+        // 他のコンポーネントにデータ更新を通知（献立表ページなど）
+        window.dispatchEvent(new CustomEvent('mealPlanUpdated', { 
+          detail: { actionType: data.actionType, result: data.result }
+        }));
       } else {
         alert('アクションの実行に失敗しました');
       }
