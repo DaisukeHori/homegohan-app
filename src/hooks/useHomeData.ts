@@ -178,6 +178,7 @@ export const useHomeData = () => {
             memo: m.memo || null,
             vegScore: m.veg_score || null,
             qualityTags: m.quality_tags || null,
+            displayOrder: m.display_order ?? 0,
             createdAt: m.created_at,
             updatedAt: m.updated_at,
           }));
@@ -541,6 +542,7 @@ export const useHomeData = () => {
           memo: m.memo,
           vegScore: m.veg_score,
           qualityTags: m.quality_tags,
+          displayOrder: m.display_order ?? 0,
           createdAt: m.created_at,
           updatedAt: m.updated_at,
         });

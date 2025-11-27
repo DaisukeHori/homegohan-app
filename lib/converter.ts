@@ -385,8 +385,10 @@ export const toMealPlanDay = (data: any): MealPlanDay => ({
   isCheatDay: data.is_cheat_day,
   createdAt: data.created_at,
   updatedAt: data.updated_at,
-  // Joined data if available
-  meals: data.planned_meals?.map(toPlannedMeal),
+  // Joined data if available - sorted by display_order
+  meals: data.planned_meals
+    ?.map(toPlannedMeal)
+    ?.sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)),
 });
 
 export const toPlannedMeal = (data: any): PlannedMeal => ({
@@ -415,6 +417,7 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   memo: data.memo || null,
   vegScore: data.veg_score || null,
   qualityTags: data.quality_tags || null,
+  displayOrder: data.display_order ?? 0,
 });
 
 export const toShoppingListItem = (data: any): ShoppingListItem => ({

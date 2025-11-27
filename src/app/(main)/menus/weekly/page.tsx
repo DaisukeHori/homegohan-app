@@ -8,9 +8,9 @@ import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,
   Flame, Refrigerator, Trash2, AlertTriangle,
-  BarChart3, ShoppingCart, ChevronDown, ChevronRight, ChevronLeft,
+  BarChart3, ShoppingCart, ChevronDown, ChevronRight, ChevronLeft, ChevronUp,
   Clock, Users, BookOpen, Heart, RefreshCw, Send, Package,
-  Camera, Pencil, Image as ImageIcon
+  Camera, Pencil, Image as ImageIcon, GripVertical, ArrowUp, ArrowDown
 } from 'lucide-react';
 
 // ============================================
@@ -1137,6 +1137,89 @@ export default function WeeklyMenuPage() {
   const getMeal = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.find(m => m.mealType === type);
   // 同じタイプの食事を全て取得（複数回の食事対応）
   const getMeals = (day: MealPlanDay | undefined, type: MealType) => day?.meals?.filter(m => m.mealType === type) || [];
+  
+  // 食事の順序変更
+  const reorderMeal = async (mealId: string, direction: 'up' | 'down') => {
+    if (!currentDay) return;
+    
+    try {
+      const res = await fetch('/api/meal-plans/meals/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mealId,
+          direction,
+          dayId: currentDay.id,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (res.ok && data.success) {
+        // 献立を再取得
+        const targetDate = formatLocalDate(weekStart);
+        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        if (refreshRes.ok) {
+          const { mealPlan } = await refreshRes.json();
+          if (mealPlan) {
+            setCurrentPlan(mealPlan);
+          }
+        }
+      } else if (data.message) {
+        // 移動できない場合のメッセージ（静かに無視）
+        console.log(data.message);
+      }
+    } catch (error) {
+      console.error('Reorder error:', error);
+    }
+  };
+  
+  // 食事が上に移動可能かどうかを判定
+  const canMoveUp = (meal: PlannedMeal, allMeals: PlannedMeal[]): boolean => {
+    if (!allMeals || allMeals.length <= 1) return false;
+    
+    const currentIndex = allMeals.findIndex(m => m.id === meal.id);
+    if (currentIndex <= 0) return false;
+    
+    const isSnack = meal.mealType === 'snack';
+    
+    if (isSnack) {
+      // おやつはどこにでも移動可能
+      return true;
+    } else {
+      // 同じmeal_typeの食事が上にあるかチェック
+      const sameMealTypeMeals = allMeals.filter(m => m.mealType === meal.mealType);
+      const positionInType = sameMealTypeMeals.findIndex(m => m.id === meal.id);
+      
+      // 上の食事がおやつか、同じタイプなら移動可能
+      const prevMeal = allMeals[currentIndex - 1];
+      return positionInType > 0 || prevMeal.mealType === 'snack';
+    }
+  };
+  
+  // 食事が下に移動可能かどうかを判定
+  const canMoveDown = (meal: PlannedMeal, allMeals: PlannedMeal[]): boolean => {
+    if (!allMeals || allMeals.length <= 1) return false;
+    
+    const currentIndex = allMeals.findIndex(m => m.id === meal.id);
+    if (currentIndex < 0 || currentIndex >= allMeals.length - 1) return false;
+    
+    const isSnack = meal.mealType === 'snack';
+    
+    if (isSnack) {
+      // おやつはどこにでも移動可能
+      return true;
+    } else {
+      // 同じmeal_typeの食事が下にあるかチェック
+      const sameMealTypeMeals = allMeals.filter(m => m.mealType === meal.mealType);
+      const positionInType = sameMealTypeMeals.findIndex(m => m.id === meal.id);
+      
+      // 下の食事がおやつか、同じタイプなら移動可能
+      const nextMeal = allMeals[currentIndex + 1];
+      return positionInType < sameMealTypeMeals.length - 1 || nextMeal.mealType === 'snack';
+    }
+  };
+  
   const expiringItems = fridgeItems.filter(i => {
     const days = getDaysUntil(i.expirationDate);
     return days !== null && days <= 3;
@@ -1302,6 +1385,12 @@ export default function WeeklyMenuPage() {
       : mainDish 
         ? `${mainDish.name}${otherCount > 0 ? ` 他${otherCount}品` : ''}`
         : meal.dishName;
+    
+    // 順序変更の可否を判定
+    const allMeals = currentDay?.meals || [];
+    const showReorderButtons = allMeals.length > 1;
+    const canUp = showReorderButtons && canMoveUp(meal, allMeals);
+    const canDown = showReorderButtons && canMoveDown(meal, allMeals);
 
     // 一括生成中または個別再生成中の場合
     if (isRegeneratingThis || isGeneratingBulk) {
@@ -1326,7 +1415,37 @@ export default function WeeklyMenuPage() {
     }
 
     return (
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-1.5 mb-2">
+        {/* 順序変更ボタン（複数の食事がある場合のみ表示） */}
+        {showReorderButtons && (
+          <div className="flex flex-col gap-0.5">
+            <button
+              onClick={(e) => { e.stopPropagation(); canUp && reorderMeal(meal.id, 'up'); }}
+              className="w-5 h-5 rounded flex items-center justify-center transition-colors"
+              style={{ 
+                background: canUp ? colors.bg : 'transparent',
+                opacity: canUp ? 1 : 0.3,
+                cursor: canUp ? 'pointer' : 'default',
+              }}
+              disabled={!canUp}
+            >
+              <ArrowUp size={12} color={canUp ? colors.textLight : colors.textMuted} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); canDown && reorderMeal(meal.id, 'down'); }}
+              className="w-5 h-5 rounded flex items-center justify-center transition-colors"
+              style={{ 
+                background: canDown ? colors.bg : 'transparent',
+                opacity: canDown ? 1 : 0.3,
+                cursor: canDown ? 'pointer' : 'default',
+              }}
+              disabled={!canDown}
+            >
+              <ArrowDown size={12} color={canDown ? colors.textLight : colors.textMuted} />
+            </button>
+          </div>
+        )}
+        
         {/* 今日または過去の献立でチェックボックスを表示 */}
         {(isToday || isPast) && (
           <button
@@ -1396,6 +1515,12 @@ export default function WeeklyMenuPage() {
                    : dishesArray.length === 2 ? 'grid-cols-2'
                    : dishesArray.length === 3 ? 'grid-cols-3'
                    : 'grid-cols-2';
+    
+    // 順序変更の可否を判定
+    const allMeals = currentDay?.meals || [];
+    const showReorderButtons = allMeals.length > 1;
+    const canUp = showReorderButtons && canMoveUp(meal, allMeals);
+    const canDown = showReorderButtons && canMoveDown(meal, allMeals);
 
     // 一括生成中または個別再生成中の場合はローディング表示
     if (isRegeneratingThis || isGeneratingBulk) {
@@ -1419,6 +1544,36 @@ export default function WeeklyMenuPage() {
       <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center gap-2.5">
+            {/* 順序変更ボタン */}
+            {showReorderButtons && (
+              <div className="flex flex-col gap-0.5 mr-1">
+                <button
+                  onClick={(e) => { e.stopPropagation(); canUp && reorderMeal(meal.id, 'up'); }}
+                  className="w-5 h-5 rounded flex items-center justify-center transition-colors"
+                  style={{ 
+                    background: canUp ? colors.bg : 'transparent',
+                    opacity: canUp ? 1 : 0.3,
+                    cursor: canUp ? 'pointer' : 'default',
+                  }}
+                  disabled={!canUp}
+                >
+                  <ArrowUp size={12} color={canUp ? colors.textLight : colors.textMuted} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); canDown && reorderMeal(meal.id, 'down'); }}
+                  className="w-5 h-5 rounded flex items-center justify-center transition-colors"
+                  style={{ 
+                    background: canDown ? colors.bg : 'transparent',
+                    opacity: canDown ? 1 : 0.3,
+                    cursor: canDown ? 'pointer' : 'default',
+                  }}
+                  disabled={!canDown}
+                >
+                  <ArrowDown size={12} color={canDown ? colors.textLight : colors.textMuted} />
+                </button>
+              </div>
+            )}
+            
             {isToday && (
               <button
                 onClick={() => currentDay && toggleMealCompletion(currentDay.id, meal)}

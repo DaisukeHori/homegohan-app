@@ -458,6 +458,9 @@ export interface PlannedMeal {
   memo: string | null;
   vegScore: number | null;
   qualityTags: string[] | null;
+  
+  // Display order for reordering meals
+  displayOrder: number;
 }
 
 export interface ShoppingListItem {
