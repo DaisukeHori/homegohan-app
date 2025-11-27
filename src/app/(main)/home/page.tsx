@@ -202,11 +202,11 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="px-5 lg:px-12 max-w-5xl mx-auto -mt-2">
+      <div className="px-5 lg:px-12 max-w-5xl mx-auto mt-4">
         
         {/* ========== 今日のコンディション ========== */}
         <div className="mb-6">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">今日のコンディション</p>
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">今日のコンディション</p>
           <div className="bg-white rounded-2xl p-1 shadow-sm border border-gray-100">
             <div className="flex gap-1">
               {[

@@ -228,6 +228,7 @@ export const useHomeData = () => {
   };
 
   // 連続自炊ストリーク
+  // 注: 自炊予定がある日をカウント（完了していなくてもOK）
   const fetchCookingStreak = async (userId: string) => {
     try {
       // 過去30日分のデータを取得
@@ -247,7 +248,7 @@ export const useHomeData = () => {
         .lte('day_date', todayStr)
         .order('day_date', { ascending: false });
 
-      if (daysData) {
+      if (daysData && daysData.length > 0) {
         let streak = 0;
         const sortedDays = daysData.sort((a, b) => 
           new Date(b.day_date).getTime() - new Date(a.day_date).getTime()
@@ -255,14 +256,15 @@ export const useHomeData = () => {
 
         for (const day of sortedDays) {
           const meals = (day as any).planned_meals || [];
-          const hasCookedMeal = meals.some((m: any) => 
-            (m.mode === 'cook' || m.mode === 'quick') && m.is_completed
+          // 自炊予定がある日をカウント（mode='cook' または 'quick'）
+          const hasCookMeal = meals.some((m: any) => 
+            m.mode === 'cook' || m.mode === 'quick' || !m.mode // modeがnullの場合もcook扱い
           );
           
-          if (hasCookedMeal) {
+          if (hasCookMeal && meals.length > 0) {
             streak++;
           } else if (day.day_date < todayStr) {
-            // 今日以前で自炊がない日があったらストリーク終了
+            // 今日以前で自炊予定がない日があったらストリーク終了
             break;
           }
         }
@@ -336,6 +338,7 @@ export const useHomeData = () => {
   };
 
   // 月間統計
+  // 月間統計（自炊予定をカウント、完了していなくてもOK）
   const fetchMonthlyStats = async (userId: string) => {
     try {
       const firstOfMonth = new Date();
@@ -358,11 +361,13 @@ export const useHomeData = () => {
 
         daysData.forEach((day: any) => {
           const meals = day.planned_meals || [];
-          const completedMeals = meals.filter((m: any) => m.is_completed);
-          const cookMeals = completedMeals.filter((m: any) => m.mode === 'cook' || m.mode === 'quick');
-          
+          // 全ての食事をカウント
+          totalMeals += meals.length;
+          // 自炊予定（mode='cook', 'quick', またはnull）をカウント
+          const cookMeals = meals.filter((m: any) => 
+            m.mode === 'cook' || m.mode === 'quick' || !m.mode
+          );
           cookCount += cookMeals.length;
-          totalMeals += completedMeals.length;
         });
 
         setMonthlyStats({
