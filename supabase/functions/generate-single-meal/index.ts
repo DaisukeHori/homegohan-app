@@ -140,14 +140,24 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
   "totalCalories": ${targetMealCalories},
   "totalProtein": 30,
   "cookingTime": "20分",
-  "nutritionalAdvice": "この食事の栄養ポイント（健康状態を考慮したアドバイス）"
+  "nutritionalAdvice": "この食事の栄養ポイント（健康状態を考慮したアドバイス）",
+  "ingredients": ["鶏もも肉 200g", "玉ねぎ 1/2個", "にんじん 1/3本", "..."],
+  "recipeSteps": [
+    "1. 鶏肉を一口大に切り、塩コショウで下味をつける",
+    "2. 野菜を食べやすい大きさに切る",
+    "3. フライパンに油を熱し、鶏肉を皮目から焼く",
+    "4. 野菜を加えて炒め合わせる",
+    "5. 調味料を加えて味を調える"
+  ]
 }
 
 **重要:
 - 健康状態に応じた除外食材は絶対に使用しないでください
 - アレルギー食材は絶対に使用しないでください
 - 目標カロリー${targetMealCalories}kcal前後になるよう調整してください
-- 各料理にはcalories（カロリー）とrole（main/side/soup）を必ず含めてください**
+- 各料理にはcalories（カロリー）とrole（main/side/soup）を必ず含めてください
+- ingredientsには「食材名 分量」の形式で全ての材料を含めてください
+- recipeStepsには番号付きで具体的な調理手順を含めてください（5〜8ステップ程度）**
 `
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -282,6 +292,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
         is_completed: false,
         dishes: dishesArray.length > 0 ? dishesArray : null,
         is_simple: dishesArray.length <= 1,
+        ingredients: newMealData.ingredients || null,
+        recipe_steps: newMealData.recipeSteps || null,
       })
 
     if (mealError) throw mealError

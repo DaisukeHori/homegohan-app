@@ -400,6 +400,7 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   imageUrl: data.image_url,
   description: data.description,
   ingredients: data.ingredients || [],
+  recipeSteps: data.recipe_steps || null,
   
   // 基本栄養素
   caloriesKcal: data.calories_kcal,

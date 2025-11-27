@@ -438,6 +438,7 @@ export interface PlannedMeal {
   imageUrl: string | null;
   description: string | null;
   ingredients: string[];
+  recipeSteps: string[] | null; // レシピの作り方手順
   
   // 基本栄養素
   caloriesKcal: number | null;

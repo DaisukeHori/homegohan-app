@@ -163,10 +163,12 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
             {"name": "味噌汁", "role": "汁物", "cal": 50, "protein": 3}
           ],
           "totalCalories": 250,
-          "cookingTime": "15分"
+          "cookingTime": "15分",
+          "ingredients": ["鶏むね肉 100g", "卵 1個", "ご飯 150g", "..."],
+          "recipeSteps": ["1. 材料を準備する", "2. フライパンで炒める", "3. 調味料を加える", "4. 盛り付ける"]
         },
-        { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分" },
-        { "mealType": "dinner", "dishes": [...], "totalCalories": 600, "cookingTime": "30分" }
+        { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分", "ingredients": [...], "recipeSteps": [...] },
+        { "mealType": "dinner", "dishes": [...], "totalCalories": 600, "cookingTime": "30分", "ingredients": [...], "recipeSteps": [...] }
       ],
       "dailyTotalCalories": 1350,
       "nutritionalAdvice": "この日の栄養ポイント"
@@ -183,7 +185,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 - days配列には必ず7つのオブジェクト（7日分）を含めてください
 - 各料理にはcal（カロリー）とrole（主菜/副菜/汁物/主食）を必ず含めてください
 - 健康状態に応じた除外食材は絶対に使用しないでください
-- 調理時間は平日${profile.weekday_cooking_minutes || 30}分、休日${profile.weekend_cooking_minutes || 60}分を目安に**
+- 調理時間は平日${profile.weekday_cooking_minutes || 30}分、休日${profile.weekend_cooking_minutes || 60}分を目安に
+- 各食事にingredients（材料リスト）とrecipeSteps（調理手順）を必ず含めてください**
 `
 
     console.log('Sending personalized prompt to OpenAI...')
@@ -326,7 +329,9 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
             calories_kcal: totalCalories,
             protein_g: totalProtein,
             is_simple: dishDetails.length <= 1,
-            is_completed: false
+            is_completed: false,
+            ingredients: meal.ingredients || null,
+            recipe_steps: meal.recipeSteps || null,
           })
         
         if (mealError) {

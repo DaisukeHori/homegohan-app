@@ -165,6 +165,7 @@ export const useHomeData = () => {
             recipeUrl: m.recipe_url,
             imageUrl: m.image_url,
             ingredients: m.ingredients,
+            recipeSteps: m.recipe_steps,
             // 基本栄養素
             caloriesKcal: m.calories_kcal,
             proteinG: m.protein_g,
@@ -558,6 +559,7 @@ export const useHomeData = () => {
           recipeUrl: m.recipe_url,
           imageUrl: m.image_url,
           ingredients: m.ingredients,
+          recipeSteps: m.recipe_steps || null,
           // 基本栄養素
           caloriesKcal: m.calories_kcal,
           proteinG: m.protein_g,

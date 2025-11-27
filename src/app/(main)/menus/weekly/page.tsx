@@ -1837,12 +1837,14 @@ export default function WeeklyMenuPage() {
                 <button
                   key={idx}
                   onClick={() => {
-                    setSelectedRecipe(dish.name);
+                    setSelectedRecipe(meal.dishName);
                     setSelectedRecipeData({ 
-                      name: dish.name, 
-                      calories: dish.cal, 
-                      ingredient: dish.ingredient,
-                      ingredients: dish.ingredient ? [{ name: dish.ingredient, amount: '' }] : []
+                      name: meal.dishName, 
+                      calories: meal.caloriesKcal,
+                      cookingTime: meal.cookingTimeMinutes,
+                      dishes: dishesArray,
+                      ingredients: meal.ingredients || [],
+                      recipeSteps: meal.recipeSteps || [],
                     });
                     setActiveModal('recipe');
                   }}
@@ -2570,7 +2572,7 @@ export default function WeeklyMenuPage() {
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
                 className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '75vh' }}
+                style={{ background: colors.card, maxHeight: '80vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
@@ -2582,10 +2584,11 @@ export default function WeeklyMenuPage() {
                   </button>
                 </div>
                 <div className="flex-1 p-4 overflow-auto">
+                  {/* 基本情報 */}
                   <div className="flex gap-4 mb-4">
                     <div className="flex items-center gap-1">
                       <Clock size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>20分</span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.cookingTime || 20}分</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Users size={14} color={colors.textMuted} />
@@ -2593,17 +2596,62 @@ export default function WeeklyMenuPage() {
                     </div>
                     <div className="flex items-center gap-1">
                       <Flame size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories || 350}kcal</span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories || '-'}kcal</span>
                     </div>
                   </div>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>材料</p>
+
+                  {/* 料理一覧 */}
+                  {selectedRecipeData?.dishes && selectedRecipeData.dishes.length > 0 && (
+                    <div className="mb-4">
+                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🍽 メニュー</p>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedRecipeData.dishes.map((dish: any, idx: number) => (
+                          <span key={idx} className="px-2.5 py-1 rounded-full text-xs" style={{ background: colors.bg, color: colors.text }}>
+                            {dish.name} {dish.cal && `(${dish.cal}kcal)`}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 材料 */}
+                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
                   <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                    <p className="py-1.5" style={{ fontSize: 13, color: colors.text }}>
-                      {selectedRecipeData?.ingredient || '材料情報なし'}
-                    </p>
+                    {selectedRecipeData?.ingredients && selectedRecipeData.ingredients.length > 0 ? (
+                      <ul className="space-y-1.5">
+                        {selectedRecipeData.ingredients.map((ing: string, idx: number) => (
+                          <li key={idx} className="flex items-center gap-2" style={{ fontSize: 13, color: colors.text }}>
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.accent }}></span>
+                            {ing}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>
+                    )}
                   </div>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>作り方</p>
-                  <p style={{ fontSize: 13, color: colors.textMuted }}>レシピの詳細は準備中です</p>
+
+                  {/* 作り方 */}
+                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>👨‍🍳 作り方</p>
+                  <div className="rounded-xl p-3" style={{ background: colors.bg }}>
+                    {selectedRecipeData?.recipeSteps && selectedRecipeData.recipeSteps.length > 0 ? (
+                      <ol className="space-y-3">
+                        {selectedRecipeData.recipeSteps.map((step: string, idx: number) => (
+                          <li key={idx} className="flex gap-3" style={{ fontSize: 13, color: colors.text }}>
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: colors.accent, color: '#fff' }}>
+                              {idx + 1}
+                            </span>
+                            <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p style={{ fontSize: 13, color: colors.textMuted }}>
+                        レシピはAI献立を生成すると自動で作成されます。<br />
+                        「AIで変更」ボタンから再生成してください。
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
