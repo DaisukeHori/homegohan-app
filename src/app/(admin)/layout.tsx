@@ -51,9 +51,12 @@ export default function AdminLayout({
 
   const menuItems = [
     { label: "Dashboard", href: "/admin", icon: "📊" },
-    { label: "Moderation", href: "/admin/moderation", icon: "🛡" },
     { label: "Users", href: "/admin/users", icon: "👥" },
+    { label: "Inquiries", href: "/admin/inquiries", icon: "📩" },
     { label: "Announcements", href: "/admin/announcements", icon: "📢" },
+    { label: "Organizations", href: "/admin/organizations", icon: "🏢" },
+    { label: "Moderation", href: "/admin/moderation", icon: "🛡" },
+    { label: "Audit Logs", href: "/admin/audit-logs", icon: "📋" },
   ];
 
   return (

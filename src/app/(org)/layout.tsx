@@ -7,9 +7,12 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 
 const orgNavItems = [
-  { href: "/org/dashboard", label: "Dashboard", icon: "📊" },
-  { href: "/org/members", label: "Members", icon: "👥" },
-  { href: "/org/settings", label: "Settings", icon: "🏢" },
+  { href: "/org/dashboard", label: "ダッシュボード", icon: "📊" },
+  { href: "/org/members", label: "メンバー", icon: "👥" },
+  { href: "/org/invites", label: "招待", icon: "✉️" },
+  { href: "/org/departments", label: "部署", icon: "🏛️" },
+  { href: "/org/challenges", label: "チャレンジ", icon: "🏆" },
+  { href: "/org/settings", label: "設定", icon: "⚙️" },
 ];
 
 export default function OrgLayout({
