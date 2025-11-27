@@ -163,8 +163,36 @@ export default function WeeklyMenuPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
   
+  // ポーリングのintervalIdを保持（クリーンアップ用）
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // ポーリングをクリーンアップする関数
+  const cleanupPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current);
+      pollingTimeoutRef.current = null;
+    }
+  };
+  
+  // コンポーネントアンマウント時にクリーンアップ
+  useEffect(() => {
+    return () => {
+      cleanupPolling();
+    };
+  }, []);
+  
   // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
+    // 既にポーリング中なら何もしない
+    if (pollingIntervalRef.current) return;
+    // 既に生成中状態なら何もしない（重複防止）
+    if (isGenerating || generatingMeal) return;
+    
     const checkPendingRequests = async () => {
       const targetDate = formatLocalDate(weekStart);
       
@@ -183,6 +211,7 @@ export default function WeeklyMenuPage() {
               setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
               setSelectedDayIndex(dayIdx);
               startSingleMealPolling(latestRequest.requestId, targetDate, targetDayDate, latestRequest.targetMealType);
+              return; // DBで見つかったらlocalStorageはスキップ
             }
           }
         }
@@ -190,7 +219,7 @@ export default function WeeklyMenuPage() {
         console.error('Failed to check pending single meal requests:', e);
       }
       
-      // 2. localStorageからも復元を試みる（後方互換性のため）
+      // 2. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
       const storedSingle = localStorage.getItem('singleMealGenerating');
       if (storedSingle) {
         try {
@@ -217,11 +246,14 @@ export default function WeeklyMenuPage() {
     };
     
     checkPendingRequests();
-  }, [weekStart, weekDates]);
+  }, [weekStart, weekDates, isGenerating, generatingMeal]);
   
   // 単一食事のDBベースポーリング
   const startSingleMealPolling = (requestId: string, weekStartDate: string, targetDayDate: string, mealType: string) => {
-    const pollInterval = setInterval(async () => {
+    // 既存のポーリングをクリーンアップ
+    cleanupPolling();
+    
+    pollingIntervalRef.current = setInterval(async () => {
       try {
         const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
         if (statusRes.ok) {
@@ -237,11 +269,11 @@ export default function WeeklyMenuPage() {
             }
             setGeneratingMeal(null);
             localStorage.removeItem('singleMealGenerating');
-            clearInterval(pollInterval);
+            cleanupPolling();
           } else if (status === 'failed') {
             setGeneratingMeal(null);
             localStorage.removeItem('singleMealGenerating');
-            clearInterval(pollInterval);
+            cleanupPolling();
             alert('献立の生成に失敗しました。もう一度お試しください。');
           }
         }
@@ -251,8 +283,8 @@ export default function WeeklyMenuPage() {
     }, 3000);
     
     // 3分でタイムアウト
-    setTimeout(() => {
-      clearInterval(pollInterval);
+    pollingTimeoutRef.current = setTimeout(() => {
+      cleanupPolling();
       setGeneratingMeal(null);
       localStorage.removeItem('singleMealGenerating');
     }, 3 * 60 * 1000);
@@ -260,10 +292,13 @@ export default function WeeklyMenuPage() {
   
   // 旧方式のポーリング（後方互換性）
   const startLegacySingleMealPolling = (dayIndex: number, mealType: string, dayDate: string, initialCount: number) => {
+    // 既存のポーリングをクリーンアップ
+    cleanupPolling();
+    
     let attempts = 0;
     const maxAttempts = 40;
     
-    const pollInterval = setInterval(async () => {
+    pollingIntervalRef.current = setInterval(async () => {
       attempts++;
       try {
         const targetDate = formatLocalDate(weekStart);
@@ -278,7 +313,7 @@ export default function WeeklyMenuPage() {
               setCurrentPlan(mealPlan);
               setGeneratingMeal(null);
               localStorage.removeItem('singleMealGenerating');
-              clearInterval(pollInterval);
+              cleanupPolling();
             }
           }
         }
@@ -287,7 +322,7 @@ export default function WeeklyMenuPage() {
       }
       
       if (attempts >= maxAttempts) {
-        clearInterval(pollInterval);
+        cleanupPolling();
         setGeneratingMeal(null);
         localStorage.removeItem('singleMealGenerating');
         window.location.reload();
@@ -383,7 +418,10 @@ export default function WeeklyMenuPage() {
   
   // ポーリングで生成完了を待つ
   const startPollingForCompletion = (targetDate: string, requestId: string) => {
-    const pollInterval = setInterval(async () => {
+    // 既存のポーリングをクリーンアップ
+    cleanupPolling();
+    
+    pollingIntervalRef.current = setInterval(async () => {
       try {
         // リクエストのステータスを確認
         const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
@@ -400,11 +438,11 @@ export default function WeeklyMenuPage() {
             }
             setIsGenerating(false);
             localStorage.removeItem('weeklyMenuGenerating');
-            clearInterval(pollInterval);
+            cleanupPolling();
           } else if (status === 'failed') {
             setIsGenerating(false);
             localStorage.removeItem('weeklyMenuGenerating');
-            clearInterval(pollInterval);
+            cleanupPolling();
             alert('献立の生成に失敗しました。もう一度お試しください。');
           }
           // status === 'pending' or 'processing' の場合は継続
@@ -415,8 +453,8 @@ export default function WeeklyMenuPage() {
     }, 3000);
     
     // 5分でタイムアウト
-    setTimeout(() => {
-      clearInterval(pollInterval);
+    pollingTimeoutRef.current = setTimeout(() => {
+      cleanupPolling();
       setIsGenerating(false);
       localStorage.removeItem('weeklyMenuGenerating');
     }, 5 * 60 * 1000);
@@ -680,10 +718,13 @@ export default function WeeklyMenuPage() {
   
   // 旧方式の週間ポーリング（後方互換性）
   const startLegacyWeeklyPolling = (weekStartDate: string) => {
+    // 既存のポーリングをクリーンアップ
+    cleanupPolling();
+    
     let attempts = 0;
     const maxAttempts = 40;
     
-    const pollInterval = setInterval(async () => {
+    pollingIntervalRef.current = setInterval(async () => {
       attempts++;
       console.log(`Polling attempt ${attempts}/${maxAttempts}`);
       try {
@@ -699,7 +740,7 @@ export default function WeeklyMenuPage() {
               setShoppingList(mealPlan.shoppingList || []);
               setIsGenerating(false);
               localStorage.removeItem('weeklyMenuGenerating');
-              clearInterval(pollInterval);
+              cleanupPolling();
               console.log('✅ All meals loaded!');
             }
           }
@@ -709,7 +750,7 @@ export default function WeeklyMenuPage() {
       }
       
       if (attempts >= maxAttempts) {
-        clearInterval(pollInterval);
+        cleanupPolling();
         setIsGenerating(false);
         localStorage.removeItem('weeklyMenuGenerating');
         console.log('Polling timeout, reloading...');
@@ -907,7 +948,10 @@ export default function WeeklyMenuPage() {
   
   // 再生成のDBベースポーリング
   const startRegenerateMealPolling = (requestId: string, weekStartDate: string) => {
-    const pollInterval = setInterval(async () => {
+    // 既存のポーリングをクリーンアップ
+    cleanupPolling();
+    
+    pollingIntervalRef.current = setInterval(async () => {
       try {
         const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
         if (statusRes.ok) {
@@ -923,11 +967,11 @@ export default function WeeklyMenuPage() {
             }
             setIsRegenerating(false);
             setRegeneratingMealId(null);
-            clearInterval(pollInterval);
+            cleanupPolling();
           } else if (status === 'failed') {
             setIsRegenerating(false);
             setRegeneratingMealId(null);
-            clearInterval(pollInterval);
+            cleanupPolling();
             alert('献立の再生成に失敗しました。もう一度お試しください。');
           }
         }
@@ -937,8 +981,8 @@ export default function WeeklyMenuPage() {
     }, 2000);
     
     // 45秒でタイムアウト
-    setTimeout(() => {
-      clearInterval(pollInterval);
+    pollingTimeoutRef.current = setTimeout(() => {
+      cleanupPolling();
       setIsRegenerating(false);
       setRegeneratingMealId(null);
     }, 45 * 1000);
@@ -946,10 +990,13 @@ export default function WeeklyMenuPage() {
   
   // 旧方式の再生成ポーリング（後方互換性）
   const startLegacyRegeneratePolling = () => {
+    // 既存のポーリングをクリーンアップ
+    cleanupPolling();
+    
     let attempts = 0;
     const maxAttempts = 15;
     
-    const pollInterval = setInterval(async () => {
+    pollingIntervalRef.current = setInterval(async () => {
       attempts++;
       try {
         const targetDate = formatLocalDate(weekStart);
@@ -966,14 +1013,14 @@ export default function WeeklyMenuPage() {
       }
       
       if (attempts >= maxAttempts) {
-        clearInterval(pollInterval);
+        cleanupPolling();
         setIsRegenerating(false);
         setRegeneratingMealId(null);
       }
     }, 2000);
     
-    setTimeout(() => {
-      clearInterval(pollInterval);
+    pollingTimeoutRef.current = setTimeout(() => {
+      cleanupPolling();
       setIsRegenerating(false);
       setRegeneratingMealId(null);
     }, 30000);
@@ -1200,10 +1247,12 @@ export default function WeeklyMenuPage() {
         setPhotoFiles([]);
         setPhotoPreviews([]);
         
-        // Poll for updated data
+        // Poll for updated data（refを使用してクリーンアップ可能に）
+        cleanupPolling();
+        
         let attempts = 0;
         const maxAttempts = 15;
-        const pollInterval = setInterval(async () => {
+        pollingIntervalRef.current = setInterval(async () => {
           attempts++;
           try {
             const targetDate = formatLocalDate(weekStart);
@@ -1220,13 +1269,13 @@ export default function WeeklyMenuPage() {
           }
           
           if (attempts >= maxAttempts) {
-            clearInterval(pollInterval);
+            cleanupPolling();
             setIsAnalyzingPhoto(false);
           }
         }, 2000);
         
-        setTimeout(() => {
-          clearInterval(pollInterval);
+        pollingTimeoutRef.current = setTimeout(() => {
+          cleanupPolling();
           setIsAnalyzingPhoto(false);
         }, 30000);
       } else {
