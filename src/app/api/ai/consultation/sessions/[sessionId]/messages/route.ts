@@ -647,12 +647,12 @@ ${importantMessagesInfo}
 - update_nutrition_target: 栄養目標を更新 (params: { targets: { daily_calories?, protein_g?, fat_g?, carbs_g?, fiber_g?, sodium_g? } })
 
 ■ 健康目標関連:
-- set_health_goal: 健康目標を設定 (params: { goalType: "weight|body_fat|exercise|etc", targetValue: number, targetUnit?: string, targetDate?: "YYYY-MM-DD", description?: string })
+- set_health_goal: 健康目標を設定 (params: { goalType: "weight|body_fat|exercise|etc", targetValue: number, targetUnit?: string, targetDate?: "YYYY-MM-DD", note?: string })
 - update_health_goal: 健康目標を更新 (params: { goalId: "uuid", updates: { target_value?, target_date?, status?, current_value? } })
 - delete_health_goal: 健康目標を削除 (params: { goalId: "uuid" })
 
 ■ 健康記録関連:
-- add_health_record: 健康記録を追加 (params: { date?: "YYYY-MM-DD", weight?: number, bodyFatPercentage?: number, systolicBp?: number, diastolicBp?: number, sleepHours?: number, overallCondition?: 1-5, moodScore?: 1-5, stressLevel?: 1-5, stepCount?: number, notes?: string })
+- add_health_record: 健康記録を追加 (params: { date?: "YYYY-MM-DD", weight?: number, bodyFatPercentage?: number, systolicBp?: number, diastolicBp?: number, sleepHours?: number, overallCondition?: 1-5, moodScore?: 1-5, stressLevel?: 1-5, stepCount?: number, dailyNote?: string })
 - update_health_record: 健康記録を更新 (params: { date: "YYYY-MM-DD", updates: {...} })
 
 ■ プロフィール関連（食事の好み・生活習慣のみ）:

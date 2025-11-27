@@ -670,8 +670,9 @@ export async function POST(
       }
 
       // ==================== 健康目標関連 ====================
+      // health_goalsカラム: note (descriptionではない)
       case 'set_health_goal': {
-        const { goalType, targetValue, targetUnit, targetDate, description } = action.action_params;
+        const { goalType, targetValue, targetUnit, targetDate, note, description } = action.action_params;
         const { data: newGoal, error: insertError } = await supabase
           .from('health_goals')
           .insert({
@@ -680,13 +681,18 @@ export async function POST(
             target_value: targetValue,
             target_unit: targetUnit,
             target_date: targetDate,
-            description,
+            note: note || description, // 後方互換性のためdescriptionもサポート
             status: 'active',
           })
           .select('id')
           .single();
         success = !insertError;
-        result = { goalId: newGoal?.id, created: success };
+        if (insertError) {
+          console.error('set_health_goal error:', insertError);
+          result = { error: insertError.message };
+        } else {
+          result = { goalId: newGoal?.id, created: success };
+        }
         break;
       }
 
@@ -737,9 +743,10 @@ export async function POST(
       }
 
       // ==================== 健康記録関連 ====================
+      // health_recordsカラム: daily_note (notesではない)
       case 'add_health_record': {
         const { date, weight, bodyFatPercentage, systolicBp, diastolicBp, sleepHours, 
-                overallCondition, moodScore, stressLevel, stepCount, notes } = action.action_params;
+                overallCondition, moodScore, stressLevel, stepCount, dailyNote, notes } = action.action_params;
         
         const recordDate = date || new Date().toISOString().split('T')[0];
         
@@ -758,10 +765,15 @@ export async function POST(
             mood_score: moodScore,
             stress_level: stressLevel,
             step_count: stepCount,
-            notes,
+            daily_note: dailyNote || notes, // 後方互換性のためnotesもサポート
           }, { onConflict: 'user_id,record_date' });
         success = !upsertError;
-        result = { date: recordDate, saved: success };
+        if (upsertError) {
+          console.error('add_health_record error:', upsertError);
+          result = { error: upsertError.message };
+        } else {
+          result = { date: recordDate, saved: success };
+        }
         break;
       }
 
