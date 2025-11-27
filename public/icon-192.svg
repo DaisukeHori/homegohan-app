@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E07A5F;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF9B7A;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="96" cy="96" r="90" fill="url(#grad)"/>
+  <!-- Bowl shape -->
+  <ellipse cx="96" cy="112" rx="52" ry="30" fill="#FFFFFF"/>
+  <path d="M44 112 Q44 144 96 144 Q148 144 148 112" fill="#FFFFFF"/>
+  <!-- Steam lines -->
+  <path d="M68 75 Q75 58 68 42" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.8"/>
+  <path d="M96 65 Q103 48 96 32" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9"/>
+  <path d="M124 75 Q131 58 124 42" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.8"/>
+  <!-- Sparkle -->
+  <circle cx="142" cy="48" r="8" fill="#FFD700"/>
+</svg>
+

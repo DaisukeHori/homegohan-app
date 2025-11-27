@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E07A5F;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF9B7A;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#grad)"/>
+  <!-- Bowl shape -->
+  <ellipse cx="256" cy="300" rx="140" ry="80" fill="#FFFFFF"/>
+  <path d="M116 300 Q116 380 256 380 Q396 380 396 300" fill="#FFFFFF"/>
+  <!-- Steam lines -->
+  <path d="M180 200 Q190 170 180 140" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.8"/>
+  <path d="M256 180 Q266 150 256 120" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.9"/>
+  <path d="M332 200 Q342 170 332 140" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.8"/>
+  <!-- Sparkle/star -->
+  <circle cx="380" cy="140" r="20" fill="#FFD700"/>
+  <path d="M380 110 L380 170 M350 140 L410 140" stroke="#FFD700" stroke-width="8" stroke-linecap="round"/>
+</svg>
+
