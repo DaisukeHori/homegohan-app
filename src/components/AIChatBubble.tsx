@@ -5,7 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   MessageCircle, X, Send, Sparkles, ChevronDown, 
   Check, XCircle, Loader2, Calendar, ShoppingCart, 
-  Target, UtensilsCrossed, BookOpen, Star, Archive, MoreVertical
+  Target, UtensilsCrossed, BookOpen, Star, Archive, MoreVertical,
+  Plus, Trash2, CheckCircle, Refrigerator, Heart, FolderPlus,
+  Activity, User, Edit
 } from "lucide-react";
 
 const colors = {
@@ -49,13 +51,44 @@ interface Session {
 }
 
 const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }> = {
-  generate_day_menu: { label: '今日の献立を作成', icon: Calendar, color: colors.primary },
+  // 献立関連
+  generate_day_menu: { label: '1日の献立を作成', icon: Calendar, color: colors.primary },
   generate_week_menu: { label: '1週間の献立を作成', icon: Calendar, color: colors.primary },
-  update_meal: { label: '献立を変更', icon: UtensilsCrossed, color: colors.warning },
+  create_meal: { label: '食事を登録', icon: Plus, color: colors.success },
+  update_meal: { label: '献立を変更', icon: Edit, color: colors.warning },
+  delete_meal: { label: '献立を削除', icon: Trash2, color: '#EF4444' },
+  complete_meal: { label: '食事を完了', icon: CheckCircle, color: colors.success },
+  
+  // 買い物リスト関連
   add_to_shopping_list: { label: '買い物リストに追加', icon: ShoppingCart, color: colors.success },
+  update_shopping_item: { label: '買い物リストを更新', icon: Edit, color: colors.warning },
+  delete_shopping_item: { label: '買い物リストから削除', icon: Trash2, color: '#EF4444' },
+  check_shopping_item: { label: '買い物をチェック', icon: CheckCircle, color: colors.success },
+  
+  // 冷蔵庫/パントリー関連
+  add_pantry_item: { label: '冷蔵庫に追加', icon: Refrigerator, color: colors.secondary },
+  update_pantry_item: { label: '冷蔵庫を更新', icon: Edit, color: colors.warning },
+  delete_pantry_item: { label: '冷蔵庫から削除', icon: Trash2, color: '#EF4444' },
+  
+  // レシピ関連
   suggest_recipe: { label: 'レシピを提案', icon: BookOpen, color: colors.secondary },
+  like_recipe: { label: 'レシピにいいね', icon: Heart, color: '#EC4899' },
+  add_recipe_to_collection: { label: 'コレクションに追加', icon: FolderPlus, color: colors.purple },
+  
+  // 栄養目標関連
   update_nutrition_target: { label: '栄養目標を更新', icon: Target, color: colors.purple },
+  
+  // 健康目標関連
   set_health_goal: { label: '健康目標を設定', icon: Target, color: colors.success },
+  update_health_goal: { label: '健康目標を更新', icon: Edit, color: colors.warning },
+  delete_health_goal: { label: '健康目標を削除', icon: Trash2, color: '#EF4444' },
+  
+  // 健康記録関連
+  add_health_record: { label: '健康記録を追加', icon: Activity, color: colors.success },
+  update_health_record: { label: '健康記録を更新', icon: Edit, color: colors.warning },
+  
+  // プロフィール関連
+  update_profile_preferences: { label: '好み・習慣を更新', icon: User, color: colors.secondary },
 };
 
 export default function AIChatBubble() {

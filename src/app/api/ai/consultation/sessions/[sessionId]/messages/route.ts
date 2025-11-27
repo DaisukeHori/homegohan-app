@@ -303,14 +303,45 @@ ${insightsInfo}
 }
 \`\`\`
 
-利用可能なアクション:
-- generate_day_menu: 特定の日の献立を作成 (params: { date: "YYYY-MM-DD" })
+■ 献立関連:
+- generate_day_menu: 1日の献立を作成 (params: { date: "YYYY-MM-DD" })
 - generate_week_menu: 1週間の献立を作成 (params: { startDate: "YYYY-MM-DD" })
-- update_meal: 既存の献立を変更 (params: { mealId: "uuid", updates: {...} })
+- create_meal: 新規食事を登録 (params: { date: "YYYY-MM-DD", mealType: "breakfast|lunch|dinner|snack|midnight_snack", dishName: "料理名", mode: "cook|out|buy", calories?: number, protein?: number, fat?: number, carbs?: number, memo?: string })
+- update_meal: 献立を更新 (params: { mealId: "uuid", updates: { dish_name?, calories_kcal?, protein_g?, fat_g?, carbs_g?, memo?, mode? } })
+- delete_meal: 献立を削除 (params: { mealId: "uuid" })
+- complete_meal: 食事を完了マーク (params: { mealId: "uuid", isCompleted: true|false })
+
+■ 買い物リスト関連:
 - add_to_shopping_list: 買い物リストに追加 (params: { items: [{name, quantity, category}] })
-- suggest_recipe: レシピを提案 (params: { keywords: "検索キーワード" })
-- update_nutrition_target: 栄養目標を更新 (params: { targets: {...} })
-- set_health_goal: 健康目標を設定 (params: { goalType, targetValue, targetDate })
+- update_shopping_item: 買い物リスト更新 (params: { itemId: "uuid", updates: { item_name?, quantity?, category? } })
+- delete_shopping_item: 買い物リストから削除 (params: { itemId: "uuid" })
+- check_shopping_item: 買い物チェック (params: { itemId: "uuid", isChecked: true|false })
+
+■ 冷蔵庫/パントリー関連:
+- add_pantry_item: 冷蔵庫に食材追加 (params: { name: "食材名", quantity?: string, unit?: string, category?: string, expiryDate?: "YYYY-MM-DD" })
+- update_pantry_item: 冷蔵庫の食材更新 (params: { itemId: "uuid", updates: { item_name?, quantity?, unit?, category?, expiry_date? } })
+- delete_pantry_item: 冷蔵庫から食材削除 (params: { itemId: "uuid" })
+
+■ レシピ関連:
+- suggest_recipe: レシピを検索・提案 (params: { keywords?: "検索キーワード", cuisineType?: "和食|洋食|中華|etc" })
+- like_recipe: レシピにいいね (params: { recipeId: "uuid" })
+- add_recipe_to_collection: レシピをコレクションに追加 (params: { recipeId: "uuid", collectionName?: "コレクション名" })
+
+■ 栄養目標関連:
+- update_nutrition_target: 栄養目標を更新 (params: { targets: { daily_calories?, protein_g?, fat_g?, carbs_g?, fiber_g?, sodium_g? } })
+
+■ 健康目標関連:
+- set_health_goal: 健康目標を設定 (params: { goalType: "weight|body_fat|exercise|etc", targetValue: number, targetUnit?: string, targetDate?: "YYYY-MM-DD", description?: string })
+- update_health_goal: 健康目標を更新 (params: { goalId: "uuid", updates: { target_value?, target_date?, status?, current_value? } })
+- delete_health_goal: 健康目標を削除 (params: { goalId: "uuid" })
+
+■ 健康記録関連:
+- add_health_record: 健康記録を追加 (params: { date?: "YYYY-MM-DD", weight?: number, bodyFatPercentage?: number, systolicBp?: number, diastolicBp?: number, sleepHours?: number, overallCondition?: 1-5, moodScore?: 1-5, stressLevel?: 1-5, stepCount?: number, notes?: string })
+- update_health_record: 健康記録を更新 (params: { date: "YYYY-MM-DD", updates: {...} })
+
+■ プロフィール関連（食事の好み・生活習慣のみ）:
+- update_profile_preferences: 食事の好みや生活習慣を更新 (params: { updates: { diet_style?, cuisine_preferences?, taste_preferences?, favorite_ingredients?, favorite_dishes?, cooking_experience?, weekday_cooking_minutes?, weekend_cooking_minutes?, snacking_habit?, alcohol_frequency?, daily_water_ml?, etc } })
+  ※ email, avatar_url等のセキュリティ関連フィールドは更新不可
 
 【応答のガイドライン】
 - 親しみやすく、温かい口調で話す
