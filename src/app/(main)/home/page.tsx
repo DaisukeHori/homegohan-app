@@ -778,7 +778,7 @@ export default function HomePage() {
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="fixed bottom-0 left-0 right-0 lg:left-auto lg:right-8 lg:bottom-8 lg:w-[400px] lg:rounded-3xl bg-white rounded-t-3xl z-[61] max-h-[80vh] overflow-y-auto shadow-2xl"
             >
-              <div className="p-6 pb-10">
+              <div className="p-6 pb-28">
                 <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mb-6 lg:hidden" />
                 
                 <div className="flex justify-between items-center mb-6">

@@ -559,7 +559,7 @@ export default function HealthDashboardPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-50 flex items-end"
+            className="fixed inset-0 bg-black/50 z-[60] flex items-end"
             onClick={() => setShowQuickRecord(false)}
           >
             <motion.div
@@ -567,7 +567,7 @@ export default function HealthDashboardPage() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 25 }}
-              className="w-full rounded-t-3xl p-6 pb-10"
+              className="w-full rounded-t-3xl p-6 pb-28"
               style={{ backgroundColor: colors.card }}
               onClick={(e) => e.stopPropagation()}
             >

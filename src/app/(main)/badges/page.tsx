@@ -92,7 +92,7 @@ export default function BadgesPage() {
         {newEarned && (
           <motion.div 
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 pointer-events-none z-50 flex items-center justify-center"
+            className="fixed inset-0 pointer-events-none z-[60] flex items-center justify-center"
           >
             <div className="absolute inset-0 bg-black/20" />
             <motion.div 

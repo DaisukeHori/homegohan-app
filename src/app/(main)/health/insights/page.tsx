@@ -261,7 +261,7 @@ export default function HealthInsightsPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-50 flex items-end"
+            className="fixed inset-0 bg-black/50 z-[60] flex items-end"
             onClick={() => setSelectedInsight(null)}
           >
             <motion.div
@@ -269,7 +269,7 @@ export default function HealthInsightsPage() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 25 }}
-              className="w-full max-h-[80vh] overflow-y-auto rounded-t-3xl p-6 pb-10"
+              className="w-full max-h-[80vh] overflow-y-auto rounded-t-3xl p-6 pb-28"
               style={{ backgroundColor: colors.card }}
               onClick={(e) => e.stopPropagation()}
             >
