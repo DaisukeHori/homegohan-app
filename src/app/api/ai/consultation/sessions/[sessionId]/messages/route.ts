@@ -634,8 +634,8 @@ ${importantMessagesInfo}
 - check_shopping_item: 買い物チェック (params: { itemId: "uuid", isChecked: true|false })
 
 ■ 冷蔵庫/パントリー関連:
-- add_pantry_item: 冷蔵庫に食材追加 (params: { name: "食材名", quantity?: string, unit?: string, category?: string, expiryDate?: "YYYY-MM-DD" })
-- update_pantry_item: 冷蔵庫の食材更新 (params: { itemId: "uuid", updates: { item_name?, quantity?, unit?, category?, expiry_date? } })
+- add_pantry_item: 冷蔵庫に食材追加 (params: { name: "食材名", amount?: "量（例: 1パック, 200g）", category?: "vegetable/meat/fish/dairy/other", expirationDate?: "YYYY-MM-DD" })
+- update_pantry_item: 冷蔵庫の食材更新 (params: { itemId: "uuid", updates: { name?, amount?, category?, expirationDate? } })
 - delete_pantry_item: 冷蔵庫から食材削除 (params: { itemId: "uuid" })
 
 ■ レシピ関連:

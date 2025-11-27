@@ -455,88 +455,90 @@ export async function POST(
       }
 
       // ==================== 冷蔵庫/パントリー関連 ====================
+      // pantry_itemsはuser_idで紐づく（meal_plan_idではない）
+      // カラム: name, amount, category, expiration_date
       case 'add_pantry_item': {
-        const { name, quantity, unit, category, expiryDate } = action.action_params;
+        const { name, amount, category, expirationDate } = action.action_params;
         
-        const activePlan = await getOrCreateActivePlan(supabase, user.id);
-        if (!activePlan) {
-          result = { error: '献立プランの作成に失敗しました' };
-          break;
-        }
-
         const { data: newItem, error: insertError } = await supabase
           .from('pantry_items')
           .insert({
-            meal_plan_id: activePlan.id,
-            item_name: name,
-            quantity,
-            unit,
-            category: category || 'その他',
-            expiry_date: expiryDate,
+            user_id: user.id,
+            name,
+            amount: amount || null,
+            category: category || 'other',
+            expiration_date: expirationDate || null,
           })
           .select('id')
           .single();
         success = !insertError;
         result = { itemId: newItem?.id, created: success };
+        if (insertError) {
+          console.error('add_pantry_item error:', insertError);
+          result = { error: insertError.message };
+        }
         break;
       }
 
       case 'update_pantry_item': {
         const { itemId, updates } = action.action_params;
-        // セキュリティチェック
+        // セキュリティチェック - user_idで確認
         const { data: item } = await supabase
           .from('pantry_items')
-          .select('meal_plan_id')
+          .select('user_id')
           .eq('id', itemId)
           .single();
 
-        if (item) {
-          const { data: plan } = await supabase
-            .from('meal_plans')
-            .select('user_id')
-            .eq('id', item.meal_plan_id)
-            .single();
-          
-          if (!plan || plan.user_id !== user.id) {
-            result = { error: '権限がありません' };
-            break;
-          }
-        } else {
+        if (!item) {
           result = { error: 'アイテムが見つかりません' };
           break;
         }
+        
+        if (item.user_id !== user.id) {
+          result = { error: '権限がありません' };
+          break;
+        }
+
+        // カラム名をDBスキーマに合わせて変換
+        const dbUpdates: any = {};
+        if (updates.name !== undefined) dbUpdates.name = updates.name;
+        if (updates.amount !== undefined) dbUpdates.amount = updates.amount;
+        if (updates.category !== undefined) dbUpdates.category = updates.category;
+        if (updates.expirationDate !== undefined) dbUpdates.expiration_date = updates.expirationDate;
+        // 後方互換性のため古いパラメータ名もサポート
+        if (updates.item_name !== undefined) dbUpdates.name = updates.item_name;
+        if (updates.quantity !== undefined) dbUpdates.amount = updates.quantity;
+        if (updates.expiry_date !== undefined) dbUpdates.expiration_date = updates.expiry_date;
 
         const { error: updateError } = await supabase
           .from('pantry_items')
-          .update(updates)
+          .update(dbUpdates)
           .eq('id', itemId);
         success = !updateError;
         result = { itemId, updated: success };
+        if (updateError) {
+          console.error('update_pantry_item error:', updateError);
+          result = { error: updateError.message };
+        }
         break;
       }
 
       case 'delete_pantry_item': {
         const { itemId } = action.action_params;
-        // セキュリティチェック
+        // セキュリティチェック - user_idで確認
         const { data: item } = await supabase
           .from('pantry_items')
-          .select('meal_plan_id')
+          .select('user_id')
           .eq('id', itemId)
           .single();
 
-        if (item) {
-          const { data: plan } = await supabase
-            .from('meal_plans')
-            .select('user_id')
-            .eq('id', item.meal_plan_id)
-            .single();
-          
-          if (!plan || plan.user_id !== user.id) {
-            result = { error: '権限がありません' };
-            break;
-          }
-        } else {
+        if (!item) {
           result = { error: 'アイテムが見つかりません' };
+          break;
+        }
+        
+        if (item.user_id !== user.id) {
+          result = { error: '権限がありません' };
           break;
         }
 
@@ -546,6 +548,10 @@ export async function POST(
           .eq('id', itemId);
         success = !deleteError;
         result = { itemId, deleted: success };
+        if (deleteError) {
+          console.error('delete_pantry_item error:', deleteError);
+          result = { error: deleteError.message };
+        }
         break;
       }
 
