@@ -245,15 +245,26 @@ export async function POST(
 
       case 'update_shopping_item': {
         const { itemId, updates } = action.action_params;
-        // セキュリティチェック
+        // セキュリティチェック - meal_plan経由でuser_idを確認
         const { data: item } = await supabase
           .from('shopping_list_items')
-          .select('meal_plans!inner(user_id)')
+          .select('meal_plan_id')
           .eq('id', itemId)
           .single();
 
-        if (!item || (item as any).meal_plans.user_id !== user.id) {
-          result = { error: '権限がありません' };
+        if (item) {
+          const { data: plan } = await supabase
+            .from('meal_plans')
+            .select('user_id')
+            .eq('id', item.meal_plan_id)
+            .single();
+          
+          if (!plan || plan.user_id !== user.id) {
+            result = { error: '権限がありません' };
+            break;
+          }
+        } else {
+          result = { error: 'アイテムが見つかりません' };
           break;
         }
 
@@ -271,12 +282,23 @@ export async function POST(
         // セキュリティチェック
         const { data: item } = await supabase
           .from('shopping_list_items')
-          .select('meal_plans!inner(user_id)')
+          .select('meal_plan_id')
           .eq('id', itemId)
           .single();
 
-        if (!item || (item as any).meal_plans.user_id !== user.id) {
-          result = { error: '権限がありません' };
+        if (item) {
+          const { data: plan } = await supabase
+            .from('meal_plans')
+            .select('user_id')
+            .eq('id', item.meal_plan_id)
+            .single();
+          
+          if (!plan || plan.user_id !== user.id) {
+            result = { error: '権限がありません' };
+            break;
+          }
+        } else {
+          result = { error: 'アイテムが見つかりません' };
           break;
         }
 
@@ -294,12 +316,23 @@ export async function POST(
         // セキュリティチェック
         const { data: item } = await supabase
           .from('shopping_list_items')
-          .select('meal_plans!inner(user_id)')
+          .select('meal_plan_id')
           .eq('id', itemId)
           .single();
 
-        if (!item || (item as any).meal_plans.user_id !== user.id) {
-          result = { error: '権限がありません' };
+        if (item) {
+          const { data: plan } = await supabase
+            .from('meal_plans')
+            .select('user_id')
+            .eq('id', item.meal_plan_id)
+            .single();
+          
+          if (!plan || plan.user_id !== user.id) {
+            result = { error: '権限がありません' };
+            break;
+          }
+        } else {
+          result = { error: 'アイテムが見つかりません' };
           break;
         }
 
@@ -350,12 +383,23 @@ export async function POST(
         // セキュリティチェック
         const { data: item } = await supabase
           .from('pantry_items')
-          .select('meal_plans!inner(user_id)')
+          .select('meal_plan_id')
           .eq('id', itemId)
           .single();
 
-        if (!item || (item as any).meal_plans.user_id !== user.id) {
-          result = { error: '権限がありません' };
+        if (item) {
+          const { data: plan } = await supabase
+            .from('meal_plans')
+            .select('user_id')
+            .eq('id', item.meal_plan_id)
+            .single();
+          
+          if (!plan || plan.user_id !== user.id) {
+            result = { error: '権限がありません' };
+            break;
+          }
+        } else {
+          result = { error: 'アイテムが見つかりません' };
           break;
         }
 
@@ -373,12 +417,23 @@ export async function POST(
         // セキュリティチェック
         const { data: item } = await supabase
           .from('pantry_items')
-          .select('meal_plans!inner(user_id)')
+          .select('meal_plan_id')
           .eq('id', itemId)
           .single();
 
-        if (!item || (item as any).meal_plans.user_id !== user.id) {
-          result = { error: '権限がありません' };
+        if (item) {
+          const { data: plan } = await supabase
+            .from('meal_plans')
+            .select('user_id')
+            .eq('id', item.meal_plan_id)
+            .single();
+          
+          if (!plan || plan.user_id !== user.id) {
+            result = { error: '権限がありません' };
+            break;
+          }
+        } else {
+          result = { error: 'アイテムが見つかりません' };
           break;
         }
 

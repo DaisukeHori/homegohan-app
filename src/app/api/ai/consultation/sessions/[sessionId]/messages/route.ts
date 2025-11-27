@@ -58,68 +58,91 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .eq('id', userId)
     .single();
 
-  // 2. 今日の献立を取得（アクション実行用にIDを含める）
+  // 2. ユーザーのアクティブな献立プランを取得
   const today = new Date().toISOString().split('T')[0];
-  const { data: todayMeals } = await supabase
-    .from('planned_meals')
-    .select(`
-      id,
-      meal_type,
-      dish_name,
-      dishes,
-      calories_kcal,
-      protein_g,
-      fat_g,
-      carbs_g,
-      is_completed,
-      mode,
-      memo,
-      meal_plan_days!inner(day_date, meal_plan_id)
-    `)
-    .eq('meal_plan_days.day_date', today);
+  const { data: userActivePlan } = await supabase
+    .from('meal_plans')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .single();
 
-  // 3. 明日〜1週間の献立も取得
+  // 3. 今日の献立を取得（アクション実行用にIDを含める）
+  let todayMeals: any[] = [];
+  if (userActivePlan) {
+    const { data } = await supabase
+      .from('planned_meals')
+      .select(`
+        id,
+        meal_type,
+        dish_name,
+        dishes,
+        calories_kcal,
+        protein_g,
+        fat_g,
+        carbs_g,
+        is_completed,
+        mode,
+        memo,
+        meal_plan_days!inner(day_date, meal_plan_id)
+      `)
+      .eq('meal_plan_days.day_date', today)
+      .eq('meal_plan_days.meal_plan_id', userActivePlan.id);
+    todayMeals = data || [];
+  }
+
+  // 4. 明日〜1週間の献立も取得
   const oneWeekLater = new Date();
   oneWeekLater.setDate(oneWeekLater.getDate() + 7);
-  const { data: upcomingMeals } = await supabase
-    .from('planned_meals')
-    .select(`
-      id,
-      meal_type,
-      dish_name,
-      calories_kcal,
-      is_completed,
-      mode,
-      meal_plan_days!inner(day_date)
-    `)
-    .gt('meal_plan_days.day_date', today)
-    .lte('meal_plan_days.day_date', oneWeekLater.toISOString().split('T')[0])
-    .order('meal_plan_days(day_date)', { ascending: true })
-    .limit(30);
+  let upcomingMeals: any[] = [];
+  if (userActivePlan) {
+    const { data } = await supabase
+      .from('planned_meals')
+      .select(`
+        id,
+        meal_type,
+        dish_name,
+        calories_kcal,
+        is_completed,
+        mode,
+        meal_plan_days!inner(day_date, meal_plan_id)
+      `)
+      .eq('meal_plan_days.meal_plan_id', userActivePlan.id)
+      .gt('meal_plan_days.day_date', today)
+      .lte('meal_plan_days.day_date', oneWeekLater.toISOString().split('T')[0])
+      .order('meal_plan_days(day_date)', { ascending: true })
+      .limit(30);
+    upcomingMeals = data || [];
+  }
 
-  // 4. 最近の食事データ（過去14日分）
+  // 5. 最近の食事データ（過去14日分）
   const fourteenDaysAgo = new Date();
   fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
   
-  const { data: recentMeals } = await supabase
-    .from('planned_meals')
-    .select(`
-      id,
-      meal_type,
-      dish_name,
-      dishes,
-      calories_kcal,
-      protein_g,
-      fat_g,
-      carbs_g,
-      is_completed,
-      mode,
-      meal_plan_days!inner(day_date)
-    `)
-    .gte('meal_plan_days.day_date', fourteenDaysAgo.toISOString().split('T')[0])
-    .lt('meal_plan_days.day_date', today)
-    .order('meal_plan_days(day_date)', { ascending: false })
-    .limit(50);
+  let recentMeals: any[] = [];
+  if (userActivePlan) {
+    const { data } = await supabase
+      .from('planned_meals')
+      .select(`
+        id,
+        meal_type,
+        dish_name,
+        dishes,
+        calories_kcal,
+        protein_g,
+        fat_g,
+        carbs_g,
+        is_completed,
+        mode,
+        meal_plan_days!inner(day_date, meal_plan_id)
+      `)
+      .eq('meal_plan_days.meal_plan_id', userActivePlan.id)
+      .gte('meal_plan_days.day_date', fourteenDaysAgo.toISOString().split('T')[0])
+      .lt('meal_plan_days.day_date', today)
+      .order('meal_plan_days(day_date)', { ascending: false })
+      .limit(50);
+    recentMeals = data || [];
+  }
 
   // 3. 健康記録（過去14日分）
   const { data: healthRecords } = await supabase
@@ -163,32 +186,24 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .order('created_at', { ascending: false })
     .limit(5);
 
-  // 9. アクティブな献立プランを取得
-  const { data: activePlan } = await supabase
-    .from('meal_plans')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('is_active', true)
-    .single();
-
-  // 10. 買い物リスト（IDを含める）
+  // 9. 買い物リスト（IDを含める）- userActivePlanを使用
   let shoppingList: any[] = [];
-  if (activePlan) {
+  if (userActivePlan) {
     const { data: shoppingData } = await supabase
       .from('shopping_list_items')
       .select('id, item_name, quantity, category, is_checked')
-      .eq('meal_plan_id', activePlan.id)
+      .eq('meal_plan_id', userActivePlan.id)
       .order('category', { ascending: true });
     shoppingList = shoppingData || [];
   }
 
-  // 11. 冷蔵庫/パントリー（IDを含める）
+  // 10. 冷蔵庫/パントリー（IDを含める）
   let pantryItems: any[] = [];
-  if (activePlan) {
+  if (userActivePlan) {
     const { data: pantryData } = await supabase
       .from('pantry_items')
       .select('id, item_name, quantity, unit, category, expiry_date')
-      .eq('meal_plan_id', activePlan.id)
+      .eq('meal_plan_id', userActivePlan.id)
       .order('expiry_date', { ascending: true });
     pantryItems = pantryData || [];
   }
