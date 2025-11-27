@@ -215,16 +215,28 @@ export async function POST(
         }
 
         // updated_atを明示的に追加
-        const updateData = {
+        // dish_nameが更新される場合、dishesも更新（単品料理として設定）
+        const updateData: Record<string, any> = {
           ...updates,
           updated_at: new Date().toISOString(),
         };
+        
+        // dish_nameが含まれている場合、dishesを単品料理として再構築
+        if (updates.dish_name) {
+          updateData.dishes = [{
+            name: updates.dish_name,
+            role: 'main',
+            cal: updates.calories_kcal || null,
+            ingredient: '',
+          }];
+          updateData.is_simple = true; // 単品料理フラグ
+        }
 
         const { data: updatedMeal, error: updateError } = await supabase
           .from('planned_meals')
           .update(updateData)
           .eq('id', mealId)
-          .select('id, dish_name, calories_kcal')
+          .select('id, dish_name, calories_kcal, dishes')
           .single();
         
         if (updateError) {
