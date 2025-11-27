@@ -36,16 +36,17 @@ export default function OrgLayout({
         return;
       }
 
-      const { data: profile, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('role, organization_id, organizations(name)')
-        .eq('id', user.id)
-        .single();
+          const { data: profile, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('roles, organization_id, organizations(name)')
+            .eq('id', user.id)
+            .single();
 
-      if (profileError || profile?.role !== 'org_admin' || !profile?.organization_id) {
-        router.push("/home"); // Not an org admin
-        return;
-      }
+          const roles = profile?.roles || [];
+          if (profileError || !roles.includes('org_admin') || !profile?.organization_id) {
+            router.push("/home"); // Not an org admin
+            return;
+          }
 
       setIsOrgAdmin(true);
       // @ts-ignore: join query type inference

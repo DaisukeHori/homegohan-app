@@ -9,36 +9,41 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || profile.role !== 'super_admin') {
+  if (!profile || profile?.roles?.includes('super_admin') !== true) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   try {
-    const { data: admins, error } = await supabase
+    // 全ユーザーを取得し、管理者ロールを持つユーザーをフィルター
+    const { data: allUsers, error } = await supabase
       .from('user_profiles')
       .select(`
         id,
         nickname,
-        role,
+        roles,
         organization_id,
         last_login_at,
         created_at
-      `)
-      .in('role', ['admin', 'super_admin', 'support', 'org_admin'])
-      .order('role', { ascending: true });
+      `);
 
     if (error) throw error;
+
+    // 管理者ロールを持つユーザーをフィルター
+    const adminRoles = ['admin', 'super_admin', 'support', 'org_admin'];
+    const admins = (allUsers || []).filter((u: any) => 
+      u.roles?.some((r: string) => adminRoles.includes(r))
+    );
 
     // 最近のアクション数を取得
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     const adminsWithStats = await Promise.all(
-      (admins || []).map(async (admin: any) => {
+      admins.map(async (admin: any) => {
         const { count: actionCount } = await supabase
           .from('admin_audit_logs')
           .select('*', { count: 'exact', head: true })
@@ -48,7 +53,7 @@ export async function GET(request: Request) {
         return {
           id: admin.id,
           nickname: admin.nickname,
-          role: admin.role,
+          roles: admin.roles,
           organizationId: admin.organization_id,
           lastLoginAt: admin.last_login_at,
           createdAt: admin.created_at,

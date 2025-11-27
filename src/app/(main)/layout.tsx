@@ -30,52 +30,54 @@ export default function MainLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname();
-  const [userRole, setUserRole] = useState<string | null>(null);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
   const supabase = createClient();
 
   useEffect(() => {
-    const fetchUserRole = async () => {
+    const fetchUserRoles = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('role')
+          .select('roles')
           .eq('id', user.id)
           .single();
-        if (profile?.role && profile.role !== 'user') {
-          setUserRole(profile.role);
+        if (profile?.roles) {
+          setUserRoles(profile.roles);
         }
       }
     };
-    fetchUserRole();
+    fetchUserRoles();
   }, [supabase]);
 
-  // ロールに応じた管理メニューを取得
+  // ロールに応じた管理メニューを取得（複数ロール対応）
   const getAdminMenuItems = () => {
-    if (!userRole) return [];
+    if (!userRoles || userRoles.length === 0) return [];
     
     const items = [];
-    // super_adminは全てにアクセス可能
-    if (userRole === 'super_admin') {
+    const hasRole = (role: string) => userRoles.includes(role);
+    
+    // super_adminロールを持っている場合
+    if (hasRole('super_admin')) {
       items.push(ADMIN_MENU_ITEMS.super_admin);
+    }
+    // adminロールを持っている場合
+    if (hasRole('admin') || hasRole('super_admin')) {
       items.push(ADMIN_MENU_ITEMS.admin);
+    }
+    // supportロールを持っている場合
+    if (hasRole('support') || hasRole('admin') || hasRole('super_admin')) {
       items.push(ADMIN_MENU_ITEMS.support);
     }
-    // adminはadmin, supportにアクセス可能
-    else if (userRole === 'admin') {
-      items.push(ADMIN_MENU_ITEMS.admin);
-      items.push(ADMIN_MENU_ITEMS.support);
-    }
-    // supportはsupportのみ
-    else if (userRole === 'support') {
-      items.push(ADMIN_MENU_ITEMS.support);
-    }
-    // org_adminはorg管理のみ
-    else if (userRole === 'org_admin') {
+    // org_adminロールを持っている場合
+    if (hasRole('org_admin')) {
       items.push(ADMIN_MENU_ITEMS.org_admin);
     }
     
-    return items;
+    // 重複を除去
+    return items.filter((item, index, self) => 
+      index === self.findIndex(t => t.href === item.href)
+    );
   };
 
   const adminMenuItems = getAdminMenuItems();

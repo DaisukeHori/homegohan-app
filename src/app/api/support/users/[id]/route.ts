@@ -13,11 +13,11 @@ export async function GET(
   // サポート権限確認
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || !['admin', 'super_admin', 'support'].includes(profile.role)) {
+  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin', 'support'].includes(r))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -30,7 +30,7 @@ export async function GET(
         nickname,
         age_group,
         gender,
-        role,
+        roles,
         organization_id,
         is_banned,
         banned_at,
@@ -91,7 +91,7 @@ export async function GET(
         nickname: targetUser.nickname,
         ageGroup: targetUser.age_group,
         gender: targetUser.gender,
-        role: targetUser.role,
+        roles: targetUser.roles,
         organizationId: targetUser.organization_id,
         isBanned: targetUser.is_banned,
         bannedAt: targetUser.banned_at,

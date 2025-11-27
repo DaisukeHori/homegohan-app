@@ -23,18 +23,19 @@ export default function AdminLayout({
         return;
       }
 
-      // Adminロール確認
-      const { data: profile } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
+          // Adminロール確認（複数ロール対応）
+          const { data: profile } = await supabase
+            .from("user_profiles")
+            .select("roles")
+            .eq("id", user.id)
+            .single();
 
-      if (profile?.role !== "admin") {
-        alert("管理者権限がありません");
-        router.push("/home");
-        return;
-      }
+          const roles = profile?.roles || [];
+          if (!roles.includes("admin") && !roles.includes("super_admin")) {
+            alert("管理者権限がありません");
+            router.push("/home");
+            return;
+          }
 
       setIsLoading(false);
     };

@@ -34,11 +34,12 @@ export default function SuperAdminLayout({
 
       const { data: profile } = await supabase
         .from("user_profiles")
-        .select("role")
+        .select("roles")
         .eq("id", user.id)
         .single();
 
-      if (profile?.role !== "super_admin") {
+      const roles = profile?.roles || [];
+      if (!roles.includes("super_admin")) {
         alert("スーパー管理者権限が必要です");
         router.push("/home");
         return;

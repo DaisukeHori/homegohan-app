@@ -10,11 +10,11 @@ export async function GET(request: Request) {
   // 管理者権限確認
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || !['admin', 'super_admin'].includes(profile.role)) {
+  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin'].includes(r))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -60,11 +60,11 @@ export async function POST(request: Request) {
   // 管理者権限確認
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || !['admin', 'super_admin'].includes(profile.role)) {
+  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin'].includes(r))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

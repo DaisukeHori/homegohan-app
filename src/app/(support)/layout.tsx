@@ -33,11 +33,13 @@ export default function SupportLayout({
 
       const { data: profile } = await supabase
         .from("user_profiles")
-        .select("role, nickname")
+        .select("roles, nickname")
         .eq("id", user.id)
         .single();
 
-      if (!profile || !['admin', 'super_admin', 'support'].includes(profile.role)) {
+      const roles = profile?.roles || [];
+      const hasAccess = roles.some((r: string) => ['admin', 'super_admin', 'support'].includes(r));
+      if (!profile || !hasAccess) {
         alert("サポート権限がありません");
         router.push("/home");
         return;

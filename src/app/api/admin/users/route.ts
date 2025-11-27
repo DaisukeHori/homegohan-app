@@ -10,11 +10,11 @@ export async function GET(request: Request) {
   // 管理者権限確認
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || !['admin', 'super_admin', 'support'].includes(profile.role)) {
+  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin', 'support'].includes(r))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -35,7 +35,8 @@ export async function GET(request: Request) {
     dbQuery = dbQuery.or(`nickname.ilike.%${query}%,id.eq.${query}`);
   }
   if (role) {
-    dbQuery = dbQuery.eq('role', role);
+    // 配列にroleが含まれているかチェック
+    dbQuery = dbQuery.contains('roles', [role]);
   }
   if (status === 'banned') {
     dbQuery = dbQuery.eq('is_banned', true);
@@ -52,7 +53,7 @@ export async function GET(request: Request) {
   const users = (data || []).map((u: any) => ({
     id: u.id,
     nickname: u.nickname,
-    role: u.role,
+    roles: u.roles,
     age: u.age,
     gender: u.gender,
     organizationId: u.organization_id,

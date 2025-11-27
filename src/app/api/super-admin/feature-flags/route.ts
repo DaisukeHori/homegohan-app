@@ -21,11 +21,11 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || profile.role !== 'super_admin') {
+  if (!profile || profile?.roles?.includes('super_admin') !== true) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -54,11 +54,11 @@ export async function PUT(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || profile.role !== 'super_admin') {
+  if (!profile || profile?.roles?.includes('super_admin') !== true) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

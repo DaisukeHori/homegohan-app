@@ -13,11 +13,11 @@ export async function POST(
   // 管理者権限確認
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || !['admin', 'super_admin'].includes(profile.role)) {
+  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin'].includes(r))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -32,7 +32,7 @@ export async function POST(
     // 対象ユーザーの権限確認
     const { data: targetProfile } = await supabase
       .from('user_profiles')
-      .select('role')
+      .select('roles')
       .eq('id', params.id)
       .single();
 
@@ -41,12 +41,12 @@ export async function POST(
     }
 
     // super_adminはBANできない
-    if (targetProfile.role === 'super_admin') {
+    if (targetProfile.roles?.includes('super_admin')) {
       return NextResponse.json({ error: 'スーパー管理者はBANできません' }, { status: 403 });
     }
 
     // adminはadminをBANできない
-    if (profile.role === 'admin' && targetProfile.role === 'admin') {
+    if (profile.roles?.some((r: string) => ['admin', 'super_admin'].includes(r)) && targetProfile.roles?.some((r: string) => ['admin', 'super_admin'].includes(r))) {
       return NextResponse.json({ error: '管理者は他の管理者をBANできません' }, { status: 403 });
     }
 
@@ -93,11 +93,11 @@ export async function DELETE(
   // 管理者権限確認
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role')
+    .select('roles')
     .eq('id', user.id)
     .single();
 
-  if (!profile || !['admin', 'super_admin'].includes(profile.role)) {
+  if (!profile || !profile?.roles?.some((r: string) => ['admin', 'super_admin'].includes(r))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
