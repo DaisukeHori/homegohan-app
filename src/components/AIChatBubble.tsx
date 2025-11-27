@@ -222,6 +222,7 @@ export default function AIChatBubble() {
               id: data.userMessage.id,
               role: 'user',
               content: data.userMessage.content,
+              isImportant: data.userMessage.isImportant || false,
               createdAt: data.userMessage.createdAt,
             },
             {

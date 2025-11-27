@@ -405,6 +405,74 @@ export async function POST(
       }
     }
 
+    // ユーザーメッセージの重要度をAIに判断させる
+    const importanceCheck = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `あなたはユーザーのメッセージが「重要な情報」を含むかどうかを判断するアシスタントです。
+
+以下の情報は「重要」と判断してください：
+1. 具体的な数値データ（体重、カロリー、血圧、目標値など）
+2. 健康状態の変化（体調の変化、症状、改善など）
+3. 食事の好み・アレルギー・制限の新情報
+4. 目標の設定・変更
+5. 重要な決定事項（ダイエット開始、食事制限など）
+6. 特定の日付に関連する情報
+7. 生活習慣の変化
+
+以下は「重要でない」と判断してください：
+- 一般的な挨拶や雑談
+- 単なる質問（具体的な情報を含まない）
+- 感謝の言葉
+- 曖昧な表現
+
+JSONで回答してください：
+{
+  "isImportant": true/false,
+  "reason": "重要と判断した理由（重要な場合のみ）",
+  "category": "体重|カロリー|目標|健康状態|好み|決定事項|その他"
+}`
+        },
+        {
+          role: 'user',
+          content: userMessage
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 200,
+      response_format: { type: 'json_object' },
+    });
+
+    let userMessageImportance = { isImportant: false, reason: null as string | null, category: null as string | null };
+    try {
+      const importanceResult = JSON.parse(importanceCheck.choices[0]?.message?.content || '{}');
+      userMessageImportance = {
+        isImportant: importanceResult.isImportant || false,
+        reason: importanceResult.reason || null,
+        category: importanceResult.category || null,
+      };
+    } catch (e) {
+      console.error('Failed to parse importance check:', e);
+    }
+
+    // ユーザーメッセージが重要な場合、更新
+    if (userMessageImportance.isImportant) {
+      await supabase
+        .from('ai_consultation_messages')
+        .update({
+          is_important: true,
+          importance_reason: userMessageImportance.reason,
+          metadata: { 
+            ...savedUserMessage.metadata,
+            autoMarked: true,
+            category: userMessageImportance.category,
+          },
+        })
+        .eq('id', savedUserMessage.id);
+    }
+
     // AI応答を保存
     const { data: savedAiMessage, error: aiMsgError } = await supabase
       .from('ai_consultation_messages')
@@ -445,6 +513,8 @@ export async function POST(
         id: savedUserMessage.id,
         role: 'user',
         content: userMessage,
+        isImportant: userMessageImportance.isImportant,
+        importanceReason: userMessageImportance.reason,
         createdAt: savedUserMessage.created_at,
       },
       aiMessage: {
