@@ -394,10 +394,10 @@ export default function MealCaptureModal() {
             exit={{ opacity: 0 }}
             className="flex-1 flex flex-col items-center justify-center p-4"
           >
-            {photoPreview && (
+            {photoPreviews.length > 0 && (
               <div className="relative mb-6">
                 <img 
-                  src={photoPreview} 
+                  src={photoPreviews[0]} 
                   alt="Analyzing" 
                   className="w-64 h-64 rounded-2xl object-cover opacity-80" 
                 />
@@ -409,6 +409,11 @@ export default function MealCaptureModal() {
                   className="absolute left-0 w-full h-1 rounded-full"
                   style={{ background: `linear-gradient(90deg, transparent, ${colors.accent}, transparent)`, boxShadow: `0 0 20px ${colors.accent}` }}
                 />
+                {photoPreviews.length > 1 && (
+                  <div className="absolute bottom-2 right-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>
+                    <span style={{ fontSize: 11, color: '#fff' }}>+{photoPreviews.length - 1}枚</span>
+                  </div>
+                )}
               </div>
             )}
             <div className="w-12 h-12 border-4 rounded-full animate-spin mb-4" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
@@ -426,12 +431,19 @@ export default function MealCaptureModal() {
             exit={{ opacity: 0, y: -20 }}
             className="flex-1 p-4 overflow-auto"
           >
-            {photoPreview && (
-              <img 
-                src={photoPreview} 
-                alt="Result" 
-                className="w-full h-48 rounded-2xl object-cover mb-4" 
-              />
+            {photoPreviews.length > 0 && (
+              <div className="relative mb-4">
+                <img 
+                  src={photoPreviews[0]} 
+                  alt="Result" 
+                  className="w-full h-48 rounded-2xl object-cover" 
+                />
+                {photoPreviews.length > 1 && (
+                  <div className="absolute bottom-2 right-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>
+                    <span style={{ fontSize: 11, color: '#fff' }}>{photoPreviews.length}枚から解析</span>
+                  </div>
+                )}
+              </div>
             )}
             
             <div className="flex items-center justify-between mb-4">
