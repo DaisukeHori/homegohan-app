@@ -1091,6 +1091,10 @@ export default function WeeklyMenuPage() {
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
+    // 一括生成中かどうか（今日以降の日付の場合）
+    const dayDateStr = weekDates[selectedDayIndex]?.dateStr;
+    const isGeneratingBulk = isGenerating && dayDateStr && dayDateStr >= todayStr;
+    
     // dishes配列から主菜と他の品数を取得
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
       ? meal.dishes 
@@ -1107,8 +1111,8 @@ export default function WeeklyMenuPage() {
         ? `${mainDish.name}${otherCount > 0 ? ` 他${otherCount}品` : ''}`
         : meal.dishName;
 
-    // 再生成中の場合
-    if (isRegeneratingThis) {
+    // 一括生成中または個別再生成中の場合
+    if (isRegeneratingThis || isGeneratingBulk) {
       return (
         <div className="flex items-center gap-2 mb-2">
           <div
@@ -1182,6 +1186,10 @@ export default function WeeklyMenuPage() {
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
+    // 一括生成中かどうか（今日以降の日付の場合）
+    const dayDateStr = weekDates[selectedDayIndex]?.dateStr;
+    const isGeneratingBulk = isGenerating && dayDateStr && dayDateStr >= todayStr;
+    
     // dishes は配列形式に対応（可変数）
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
       ? meal.dishes 
@@ -1196,8 +1204,8 @@ export default function WeeklyMenuPage() {
                    : dishesArray.length === 3 ? 'grid-cols-3'
                    : 'grid-cols-2';
 
-    // 再生成中の場合はローディング表示
-    if (isRegeneratingThis) {
+    // 一括生成中または個別再生成中の場合はローディング表示
+    if (isRegeneratingThis || isGeneratingBulk) {
       return (
         <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
           <div className="flex justify-between items-center mb-3">
