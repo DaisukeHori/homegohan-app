@@ -18,7 +18,7 @@ import {
 // ============================================
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
-type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addMealSlot' | null;
+type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addMealSlot' | 'confirmDelete' | null;
 
 // 全ての食事タイプ
 const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
@@ -258,6 +258,10 @@ export default function WeeklyMenuPage() {
   const [manualEditMeal, setManualEditMeal] = useState<PlannedMeal | null>(null);
   const [manualDishes, setManualDishes] = useState<DishDetail[]>([]);
   const [manualMode, setManualMode] = useState<MealMode>('cook');
+  
+  // Delete confirmation state
+  const [deletingMeal, setDeletingMeal] = useState<PlannedMeal | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // Photo edit state（複数枚対応）
   const [photoEditMeal, setPhotoEditMeal] = useState<PlannedMeal | null>(null);
@@ -838,18 +842,27 @@ export default function WeeklyMenuPage() {
     setActiveModal('manualEdit');
   };
 
+  // Open delete confirmation modal
+  const openDeleteConfirm = (meal: PlannedMeal) => {
+    setDeletingMeal(meal);
+    setActiveModal('confirmDelete');
+  };
+
   // Delete meal
-  const handleDeleteMeal = async (mealId: string) => {
-    if (!confirm('この食事を削除しますか？')) return;
+  const confirmDeleteMeal = async () => {
+    if (!deletingMeal) return;
     
+    setIsDeleting(true);
     try {
-      const res = await fetch(`/api/meal-plans/meals/${mealId}`, {
+      const res = await fetch(`/api/meal-plans/meals/${deletingMeal.id}`, {
         method: 'DELETE',
       });
       
       if (res.ok) {
         // UIを更新
         setExpandedMealId(null);
+        setActiveModal(null);
+        setDeletingMeal(null);
         // データを再取得
         const targetDate = formatLocalDate(weekStart);
         const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
@@ -863,6 +876,8 @@ export default function WeeklyMenuPage() {
     } catch (error) {
       console.error('Delete meal error:', error);
       alert('削除に失敗しました');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -1421,7 +1436,7 @@ export default function WeeklyMenuPage() {
               </button>
               {canDelete && (
                 <button 
-                  onClick={() => handleDeleteMeal(meal.id)}
+                  onClick={() => openDeleteConfirm(meal)}
                   className="p-2.5 rounded-[10px] flex items-center justify-center"
                   style={{ background: colors.dangerLight, border: `1px solid ${colors.danger}` }}
                 >
@@ -2172,6 +2187,60 @@ export default function WeeklyMenuPage() {
                       <ChevronRight size={18} color={colors.textMuted} />
                     </button>
                   ))}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {activeModal === 'confirmDelete' && deletingMeal && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }} 
+                animate={{ opacity: 1, scale: 1 }} 
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.15 }}
+                className="fixed inset-0 z-[202] flex items-center justify-center p-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div 
+                  className="w-full max-w-sm rounded-2xl p-5"
+                  style={{ background: colors.card }}
+                >
+                  <div className="flex flex-col items-center text-center mb-5">
+                    <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ background: colors.dangerLight }}>
+                      <Trash2 size={24} color={colors.danger} />
+                    </div>
+                    <h3 style={{ fontSize: 17, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
+                      この食事を削除しますか？
+                    </h3>
+                    <p style={{ fontSize: 13, color: colors.textMuted, margin: 0 }}>
+                      「{deletingMeal.dishName || MEAL_LABELS[deletingMeal.mealType as MealType]}」を削除します。<br/>
+                      この操作は取り消せません。
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setActiveModal(null); setDeletingMeal(null); }}
+                      className="flex-1 py-3 rounded-xl"
+                      style={{ background: colors.bg }}
+                    >
+                      <span style={{ fontSize: 14, fontWeight: 500, color: colors.textLight }}>キャンセル</span>
+                    </button>
+                    <button
+                      onClick={confirmDeleteMeal}
+                      disabled={isDeleting}
+                      className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
+                      style={{ background: colors.danger }}
+                    >
+                      {isDeleting ? (
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <>
+                          <Trash2 size={14} color="#fff" />
+                          <span style={{ fontSize: 14, fontWeight: 500, color: '#fff' }}>削除する</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             )}
