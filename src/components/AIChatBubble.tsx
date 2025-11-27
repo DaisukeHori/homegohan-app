@@ -56,6 +56,7 @@ const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }>
 };
 
 export default function AIChatBubble() {
+  const [isMounted, setIsMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -69,6 +70,11 @@ export default function AIChatBubble() {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // クライアントサイドでのみレンダリング
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // スクロールを最下部に
   const scrollToBottom = () => {
@@ -281,6 +287,11 @@ export default function AIChatBubble() {
     setShowSessionList(false);
     await fetchMessages(sessionId);
   };
+
+  // サーバーサイドでは何もレンダリングしない
+  if (!isMounted) {
+    return null;
+  }
 
   return (
     <>
