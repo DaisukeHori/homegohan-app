@@ -227,8 +227,7 @@ export const useHomeData = () => {
     setLoading(false);
   };
 
-  // 連続自炊ストリーク
-  // 注: 自炊予定がある日をカウント（完了していなくてもOK）
+  // 連続自炊ストリーク（完了した自炊のみカウント）
   const fetchCookingStreak = async (userId: string) => {
     try {
       // 過去30日分のデータを取得
@@ -256,15 +255,15 @@ export const useHomeData = () => {
 
         for (const day of sortedDays) {
           const meals = (day as any).planned_meals || [];
-          // 自炊予定がある日をカウント（mode='cook' または 'quick'）
-          const hasCookMeal = meals.some((m: any) => 
-            m.mode === 'cook' || m.mode === 'quick' || !m.mode // modeがnullの場合もcook扱い
+          // 完了した自炊のみカウント
+          const hasCompletedCookMeal = meals.some((m: any) => 
+            (m.mode === 'cook' || m.mode === 'quick' || !m.mode) && m.is_completed
           );
           
-          if (hasCookMeal && meals.length > 0) {
+          if (hasCompletedCookMeal) {
             streak++;
           } else if (day.day_date < todayStr) {
-            // 今日以前で自炊予定がない日があったらストリーク終了
+            // 今日以前で完了した自炊がない日があったらストリーク終了
             break;
           }
         }
@@ -338,7 +337,7 @@ export const useHomeData = () => {
   };
 
   // 月間統計
-  // 月間統計（自炊予定をカウント、完了していなくてもOK）
+  // 月間統計（完了した自炊のみカウント）
   const fetchMonthlyStats = async (userId: string) => {
     try {
       const firstOfMonth = new Date();
@@ -361,13 +360,14 @@ export const useHomeData = () => {
 
         daysData.forEach((day: any) => {
           const meals = day.planned_meals || [];
-          // 全ての食事をカウント
-          totalMeals += meals.length;
-          // 自炊予定（mode='cook', 'quick', またはnull）をカウント
-          const cookMeals = meals.filter((m: any) => 
+          // 完了した食事のみカウント
+          const completedMeals = meals.filter((m: any) => m.is_completed);
+          totalMeals += completedMeals.length;
+          // 完了した自炊（mode='cook', 'quick', またはnull）をカウント
+          const completedCookMeals = completedMeals.filter((m: any) => 
             m.mode === 'cook' || m.mode === 'quick' || !m.mode
           );
-          cookCount += cookMeals.length;
+          cookCount += completedCookMeals.length;
         });
 
         setMonthlyStats({
