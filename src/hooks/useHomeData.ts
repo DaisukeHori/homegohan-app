@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { toAnnouncement } from "@/lib/converter";
-import type { Announcement, PlannedMeal, MealPlanDay } from "@/types/domain";
+import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -20,12 +20,33 @@ interface DailySummary {
   outCount: number;
 }
 
+// 週間統計
+interface WeeklyStats {
+  days: { date: string; dayOfWeek: string; cookRate: number; totalCalories: number; mealCount: number }[];
+  avgCookRate: number;
+  totalCookCount: number;
+  totalMealCount: number;
+}
+
+// 月間統計
+interface MonthlyStats {
+  cookCount: number;
+  totalMeals: number;
+  cookRate: number;
+}
+
 // Helper: ローカル日付文字列
 const formatLocalDate = (date: Date): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+// Helper: 曜日を取得
+const getDayOfWeek = (dateStr: string): string => {
+  const days = ['日', '月', '火', '水', '木', '金', '土'];
+  return days[new Date(dateStr).getDay()];
 };
 
 export const useHomeData = () => {
@@ -43,6 +64,25 @@ export const useHomeData = () => {
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  
+  // 新規追加
+  const [cookingStreak, setCookingStreak] = useState(0);
+  const [weeklyStats, setWeeklyStats] = useState<WeeklyStats>({
+    days: [],
+    avgCookRate: 0,
+    totalCookCount: 0,
+    totalMealCount: 0,
+  });
+  const [monthlyStats, setMonthlyStats] = useState<MonthlyStats>({
+    cookCount: 0,
+    totalMeals: 0,
+    cookRate: 0,
+  });
+  const [expiringItems, setExpiringItems] = useState<PantryItem[]>([]);
+  const [shoppingRemaining, setShoppingRemaining] = useState(0);
+  const [badgeCount, setBadgeCount] = useState(0);
+  const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
+  const [bestMealThisWeek, setBestMealThisWeek] = useState<PlannedMeal | null>(null);
 
   const supabase = createClient();
   const todayStr = formatLocalDate(new Date());
@@ -78,7 +118,6 @@ export const useHomeData = () => {
       }
 
       // 3. 今日の献立を取得（planned_mealsベース）
-      // まず今日を含むmeal_plan_dayを探す
       const { data: dayData } = await supabase
         .from('meal_plan_days')
         .select(`
@@ -92,7 +131,6 @@ export const useHomeData = () => {
         .single();
 
       if (dayData) {
-        // その日のplanned_mealsを取得
         const { data: mealsData } = await supabase
           .from('planned_meals')
           .select('*')
@@ -100,7 +138,6 @@ export const useHomeData = () => {
           .order('meal_type');
 
         if (mealsData) {
-          // snake_case -> camelCase 変換
           const meals: PlannedMeal[] = mealsData.map((m: any) => ({
             id: m.id,
             mealPlanDayId: m.meal_plan_day_id,
@@ -146,11 +183,35 @@ export const useHomeData = () => {
           setDailySummary(summary);
         }
       }
+
+      // ========== 新規: 拡張データ取得 ==========
+
+      // 4. 連続自炊ストリーク計算
+      await fetchCookingStreak(authUser.id);
+
+      // 5. 週間統計
+      await fetchWeeklyStats(authUser.id);
+
+      // 6. 月間統計
+      await fetchMonthlyStats(authUser.id);
+
+      // 7. 冷蔵庫の期限切れ間近アイテム
+      await fetchExpiringItems(authUser.id);
+
+      // 8. 買い物リスト残数
+      await fetchShoppingRemaining(authUser.id);
+
+      // 9. バッジ情報
+      await fetchBadgeInfo(authUser.id);
+
+      // 10. 今週のベスト料理
+      await fetchBestMealThisWeek(authUser.id);
+
     } else {
       setUser(null);
     }
 
-    // 4. Announcements
+    // 11. Announcements
     try {
       const annRes = await fetch('/api/announcements?mode=public');
       if (annRes.ok) {
@@ -164,6 +225,304 @@ export const useHomeData = () => {
     }
 
     setLoading(false);
+  };
+
+  // 連続自炊ストリーク
+  const fetchCookingStreak = async (userId: string) => {
+    try {
+      // 過去30日分のデータを取得
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      const { data: daysData } = await supabase
+        .from('meal_plan_days')
+        .select(`
+          day_date,
+          meal_plan_id,
+          meal_plans!inner(user_id),
+          planned_meals(mode, is_completed)
+        `)
+        .eq('meal_plans.user_id', userId)
+        .gte('day_date', formatLocalDate(thirtyDaysAgo))
+        .lte('day_date', todayStr)
+        .order('day_date', { ascending: false });
+
+      if (daysData) {
+        let streak = 0;
+        const sortedDays = daysData.sort((a, b) => 
+          new Date(b.day_date).getTime() - new Date(a.day_date).getTime()
+        );
+
+        for (const day of sortedDays) {
+          const meals = (day as any).planned_meals || [];
+          const hasCookedMeal = meals.some((m: any) => 
+            (m.mode === 'cook' || m.mode === 'quick') && m.is_completed
+          );
+          
+          if (hasCookedMeal) {
+            streak++;
+          } else if (day.day_date < todayStr) {
+            // 今日以前で自炊がない日があったらストリーク終了
+            break;
+          }
+        }
+        setCookingStreak(streak);
+      }
+    } catch (e) {
+      console.error('Streak fetch error:', e);
+    }
+  };
+
+  // 週間統計
+  const fetchWeeklyStats = async (userId: string) => {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      
+      const { data: daysData } = await supabase
+        .from('meal_plan_days')
+        .select(`
+          day_date,
+          meal_plans!inner(user_id),
+          planned_meals(mode, is_completed, calories_kcal)
+        `)
+        .eq('meal_plans.user_id', userId)
+        .gte('day_date', formatLocalDate(sevenDaysAgo))
+        .lte('day_date', todayStr)
+        .order('day_date');
+
+      if (daysData) {
+        const days: WeeklyStats['days'] = [];
+        let totalCook = 0;
+        let totalMeals = 0;
+
+        // 7日分のデータを作成（データがない日も含む）
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          const dateStr = formatLocalDate(d);
+          
+          const dayData = daysData.find((dd: any) => dd.day_date === dateStr);
+          const meals = (dayData as any)?.planned_meals || [];
+          const completedMeals = meals.filter((m: any) => m.is_completed);
+          const cookMeals = completedMeals.filter((m: any) => m.mode === 'cook' || m.mode === 'quick');
+          
+          const mealCount = completedMeals.length;
+          const cookRate = mealCount > 0 ? Math.round((cookMeals.length / mealCount) * 100) : 0;
+          const totalCalories = meals.reduce((sum: number, m: any) => sum + (m.calories_kcal || 0), 0);
+          
+          days.push({
+            date: dateStr,
+            dayOfWeek: getDayOfWeek(dateStr),
+            cookRate,
+            totalCalories,
+            mealCount,
+          });
+          
+          totalCook += cookMeals.length;
+          totalMeals += mealCount;
+        }
+
+        setWeeklyStats({
+          days,
+          avgCookRate: totalMeals > 0 ? Math.round((totalCook / totalMeals) * 100) : 0,
+          totalCookCount: totalCook,
+          totalMealCount: totalMeals,
+        });
+      }
+    } catch (e) {
+      console.error('Weekly stats fetch error:', e);
+    }
+  };
+
+  // 月間統計
+  const fetchMonthlyStats = async (userId: string) => {
+    try {
+      const firstOfMonth = new Date();
+      firstOfMonth.setDate(1);
+      
+      const { data: daysData } = await supabase
+        .from('meal_plan_days')
+        .select(`
+          day_date,
+          meal_plans!inner(user_id),
+          planned_meals(mode, is_completed)
+        `)
+        .eq('meal_plans.user_id', userId)
+        .gte('day_date', formatLocalDate(firstOfMonth))
+        .lte('day_date', todayStr);
+
+      if (daysData) {
+        let cookCount = 0;
+        let totalMeals = 0;
+
+        daysData.forEach((day: any) => {
+          const meals = day.planned_meals || [];
+          const completedMeals = meals.filter((m: any) => m.is_completed);
+          const cookMeals = completedMeals.filter((m: any) => m.mode === 'cook' || m.mode === 'quick');
+          
+          cookCount += cookMeals.length;
+          totalMeals += completedMeals.length;
+        });
+
+        setMonthlyStats({
+          cookCount,
+          totalMeals,
+          cookRate: totalMeals > 0 ? Math.round((cookCount / totalMeals) * 100) : 0,
+        });
+      }
+    } catch (e) {
+      console.error('Monthly stats fetch error:', e);
+    }
+  };
+
+  // 冷蔵庫の期限切れ間近
+  const fetchExpiringItems = async (userId: string) => {
+    try {
+      const threeDaysLater = new Date();
+      threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+      
+      const { data } = await supabase
+        .from('pantry_items')
+        .select('*')
+        .eq('user_id', userId)
+        .lte('expiration_date', formatLocalDate(threeDaysLater))
+        .gte('expiration_date', todayStr)
+        .order('expiration_date');
+
+      if (data) {
+        setExpiringItems(data.map((item: any) => ({
+          id: item.id,
+          userId: item.user_id,
+          name: item.name,
+          amount: item.amount,
+          category: item.category,
+          expirationDate: item.expiration_date,
+          addedAt: item.added_at,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at,
+        })));
+      }
+    } catch (e) {
+      console.error('Expiring items fetch error:', e);
+    }
+  };
+
+  // 買い物リスト残数
+  const fetchShoppingRemaining = async (userId: string) => {
+    try {
+      // 現在アクティブなmeal_planの買い物リストを取得
+      const { data: planData } = await supabase
+        .from('meal_plans')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .single();
+
+      if (planData) {
+        const { count } = await supabase
+          .from('shopping_list_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('meal_plan_id', planData.id)
+          .eq('is_checked', false);
+
+        setShoppingRemaining(count || 0);
+      }
+    } catch (e) {
+      console.error('Shopping remaining fetch error:', e);
+    }
+  };
+
+  // バッジ情報
+  const fetchBadgeInfo = async (userId: string) => {
+    try {
+      // バッジ総数
+      const { count } = await supabase
+        .from('user_badges')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+
+      setBadgeCount(count || 0);
+
+      // 最新バッジ
+      const { data: latestData } = await supabase
+        .from('user_badges')
+        .select(`
+          obtained_at,
+          badges(name, code)
+        `)
+        .eq('user_id', userId)
+        .order('obtained_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (latestData && (latestData as any).badges) {
+        const badge = (latestData as any).badges;
+        setLatestBadge({
+          name: badge.name,
+          code: badge.code,
+          obtainedAt: latestData.obtained_at,
+        });
+      }
+    } catch (e) {
+      console.error('Badge info fetch error:', e);
+    }
+  };
+
+  // 今週のベスト料理
+  const fetchBestMealThisWeek = async (userId: string) => {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      
+      const { data } = await supabase
+        .from('planned_meals')
+        .select(`
+          *,
+          meal_plan_days!inner(
+            day_date,
+            meal_plans!inner(user_id)
+          )
+        `)
+        .eq('meal_plan_days.meal_plans.user_id', userId)
+        .gte('meal_plan_days.day_date', formatLocalDate(sevenDaysAgo))
+        .eq('is_completed', true)
+        .not('image_url', 'is', null)
+        .order('veg_score', { ascending: false, nullsFirst: false })
+        .limit(1);
+
+      if (data && data.length > 0) {
+        const m = data[0];
+        setBestMealThisWeek({
+          id: m.id,
+          mealPlanDayId: m.meal_plan_day_id,
+          mealType: m.meal_type,
+          mode: m.mode || 'cook',
+          dishName: m.dish_name,
+          description: m.description,
+          recipeUrl: m.recipe_url,
+          imageUrl: m.image_url,
+          ingredients: m.ingredients,
+          caloriesKcal: m.calories_kcal,
+          proteinG: m.protein_g,
+          fatG: m.fat_g,
+          carbsG: m.carbs_g,
+          isCompleted: m.is_completed || false,
+          completedAt: m.completed_at,
+          actualMealId: m.actual_meal_id,
+          dishes: m.dishes,
+          isSimple: m.is_simple,
+          cookingTimeMinutes: m.cooking_time_minutes,
+          memo: m.memo,
+          vegScore: m.veg_score,
+          qualityTags: m.quality_tags,
+          createdAt: m.created_at,
+          updatedAt: m.updated_at,
+        });
+      }
+    } catch (e) {
+      console.error('Best meal fetch error:', e);
+    }
   };
 
   // 食事完了をトグル
@@ -200,7 +559,6 @@ export const useHomeData = () => {
 
     if (error) {
       console.error('Toggle completion error:', error);
-      // エラー時はロールバック
       fetchHomeData();
     }
   };
@@ -241,6 +599,16 @@ export const useHomeData = () => {
     announcement,
     activityLevel,
     suggestion,
+    // 新規追加
+    cookingStreak,
+    weeklyStats,
+    monthlyStats,
+    expiringItems,
+    shoppingRemaining,
+    badgeCount,
+    latestBadge,
+    bestMealThisWeek,
+    // 関数
     toggleMealCompletion,
     updateActivityLevel,
     setAnnouncement,
