@@ -78,6 +78,7 @@ interface Message {
   proposedActions?: ProposedAction | null;
   createdAt: string;
   isImportant?: boolean;
+  isStreaming?: boolean; // ストリーミング表示中かどうか
 }
 
 interface ProposedAction {
@@ -153,6 +154,8 @@ export default function AIChatBubble() {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const streamingRef = useRef<{ messageId: string; fullContent: string; currentIndex: number } | null>(null);
+  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // クライアントサイドでのみレンダリング
   useEffect(() => {
@@ -169,6 +172,59 @@ export default function AIChatBubble() {
       scrollToBottom();
     }
   }, [messages]);
+
+  // ストリーミング表示のクリーンアップ
+  useEffect(() => {
+    return () => {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // ストリーミング表示を開始
+  const startStreaming = (messageId: string, fullContent: string) => {
+    // 既存のストリーミングをクリア
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+    }
+
+    streamingRef.current = {
+      messageId,
+      fullContent,
+      currentIndex: 0,
+    };
+
+    // 1文字ずつではなく、チャンク単位で表示（より自然に見える）
+    const chunkSize = 3; // 一度に表示する文字数
+    const intervalMs = 20; // 更新間隔（ミリ秒）
+
+    streamingIntervalRef.current = setInterval(() => {
+      if (!streamingRef.current) {
+        clearInterval(streamingIntervalRef.current!);
+        return;
+      }
+
+      const { messageId, fullContent, currentIndex } = streamingRef.current;
+      const nextIndex = Math.min(currentIndex + chunkSize, fullContent.length);
+      const displayContent = fullContent.slice(0, nextIndex);
+
+      setMessages(prev => prev.map(m => 
+        m.id === messageId 
+          ? { ...m, content: displayContent, isStreaming: nextIndex < fullContent.length }
+          : m
+      ));
+
+      if (nextIndex >= fullContent.length) {
+        // ストリーミング完了
+        clearInterval(streamingIntervalRef.current!);
+        streamingRef.current = null;
+        scrollToBottom();
+      } else {
+        streamingRef.current.currentIndex = nextIndex;
+      }
+    }, intervalMs);
+  };
 
   // セッション一覧取得
   const fetchSessions = useCallback(async () => {
@@ -289,47 +345,56 @@ export default function AIChatBubble() {
 
       if (res.ok) {
         const data = await res.json();
+        const aiMessageContent = data.aiMessage.content;
         
-        // 一時メッセージを実際のメッセージに置き換え
-        const newMessages: Message[] = [
-          {
-            id: data.userMessage.id,
-            role: 'user',
-            content: data.userMessage.content,
-            isImportant: data.userMessage.isImportant || false,
-            createdAt: data.userMessage.createdAt,
-          },
-          {
-            id: data.aiMessage.id,
-            role: 'assistant',
-            content: data.aiMessage.content,
-            proposedActions: data.aiMessage.proposedActions ? {
-              ...data.aiMessage.proposedActions,
-              actionId: data.aiMessage.id,
-            } : null,
-            createdAt: data.aiMessage.createdAt,
-          },
-        ];
+        // 一時メッセージを実際のメッセージに置き換え（AI応答は空で開始）
+        const userMsg: Message = {
+          id: data.userMessage.id,
+          role: 'user',
+          content: data.userMessage.content,
+          isImportant: data.userMessage.isImportant || false,
+          createdAt: data.userMessage.createdAt,
+        };
         
-        // アクションが自動実行された場合、成功メッセージを追加
-        if (data.actionExecuted && data.actionResult) {
-          newMessages.push({
-            id: `action-result-${Date.now()}`,
-            role: 'assistant',
-            content: `✅ ${ACTION_LABELS[data.actionResult.actionType]?.label || 'アクション'}を実行しました！`,
-            createdAt: new Date().toISOString(),
-          });
-          
-          // 他のコンポーネントにデータ更新を通知
-          window.dispatchEvent(new CustomEvent('mealPlanUpdated', { 
-            detail: { actionType: data.actionResult.actionType, result: data.actionResult.result }
-          }));
-        }
+        const aiMsg: Message = {
+          id: data.aiMessage.id,
+          role: 'assistant',
+          content: '', // ストリーミング用に空で開始
+          proposedActions: data.aiMessage.proposedActions ? {
+            ...data.aiMessage.proposedActions,
+            actionId: data.aiMessage.id,
+          } : null,
+          createdAt: data.aiMessage.createdAt,
+          isStreaming: true,
+        };
         
         setMessages(prev => {
           const filtered = prev.filter(m => m.id !== tempUserMsg.id);
-          return [...filtered, ...newMessages];
+          return [...filtered, userMsg, aiMsg];
         });
+        
+        // ストリーミング表示を開始
+        setTimeout(() => {
+          startStreaming(data.aiMessage.id, aiMessageContent);
+        }, 100);
+        
+        // アクションが自動実行された場合、ストリーミング完了後に成功メッセージを追加
+        if (data.actionExecuted && data.actionResult) {
+          const streamDuration = Math.ceil(aiMessageContent.length / 3) * 20 + 500;
+          setTimeout(() => {
+            setMessages(prev => [...prev, {
+              id: `action-result-${Date.now()}`,
+              role: 'assistant',
+              content: `✅ ${ACTION_LABELS[data.actionResult.actionType]?.label || 'アクション'}を実行しました！`,
+              createdAt: new Date().toISOString(),
+            }]);
+            
+            // 他のコンポーネントにデータ更新を通知
+            window.dispatchEvent(new CustomEvent('mealPlanUpdated', { 
+              detail: { actionType: data.actionResult.actionType, result: data.actionResult.result }
+            }));
+          }, streamDuration);
+        }
       } else {
         // エラー時は一時メッセージを削除
         setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
@@ -684,8 +749,12 @@ export default function AIChatBubble() {
                               <div 
                                 className="markdown-body"
                                 style={{ fontSize: 14, lineHeight: 1.6 }}
-                                dangerouslySetInnerHTML={{ __html: parseMarkdown(msg.content) }}
-                              />
+                              >
+                                <span dangerouslySetInnerHTML={{ __html: parseMarkdown(msg.content) }} />
+                                {msg.isStreaming && (
+                                  <span className="streaming-cursor" />
+                                )}
+                              </div>
                             )}
                           </div>
 
@@ -918,6 +987,19 @@ export default function AIChatBubble() {
         }
         .markdown-body .md-link:hover {
           color: #2563EB;
+        }
+        .streaming-cursor {
+          display: inline-block;
+          width: 2px;
+          height: 1em;
+          background: ${colors.primary};
+          margin-left: 2px;
+          animation: blink 0.8s infinite;
+          vertical-align: text-bottom;
+        }
+        @keyframes blink {
+          0%, 50% { opacity: 1; }
+          51%, 100% { opacity: 0; }
         }
       `}</style>
     </>
