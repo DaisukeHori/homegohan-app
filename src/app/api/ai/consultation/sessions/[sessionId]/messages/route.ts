@@ -58,14 +58,26 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .eq('id', userId)
     .single();
 
-  // 2. ユーザーのアクティブな献立プランを取得
+  // 2. ユーザーの献立プランを取得（アクティブ優先、なければ最新）
   const today = new Date().toISOString().split('T')[0];
-  const { data: userActivePlan } = await supabase
+  let { data: userActivePlan } = await supabase
     .from('meal_plans')
     .select('id')
     .eq('user_id', userId)
     .eq('is_active', true)
     .single();
+
+  // アクティブなプランがない場合は最新のプランを使用
+  if (!userActivePlan) {
+    const { data: latestPlan } = await supabase
+      .from('meal_plans')
+      .select('id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    userActivePlan = latestPlan;
+  }
 
   // 3. 今日の献立を取得（アクション実行用にIDを含める）
   let todayMeals: any[] = [];

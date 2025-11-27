@@ -4,6 +4,57 @@ import { NextResponse } from 'next/server';
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
 
+// ユーザーのアクティブな献立プランを取得または作成するヘルパー関数
+async function getOrCreateActivePlan(supabase: any, userId: string, targetDate?: string): Promise<{ id: string } | null> {
+  // まずアクティブなプランを探す
+  let { data: activePlan } = await supabase
+    .from('meal_plans')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .single();
+
+  if (activePlan) return activePlan;
+
+  // アクティブなプランがない場合、既存のプランをアクティブにする
+  const { data: existingPlan } = await supabase
+    .from('meal_plans')
+    .select('id')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (existingPlan) {
+    await supabase
+      .from('meal_plans')
+      .update({ is_active: true })
+      .eq('id', existingPlan.id);
+    return existingPlan;
+  }
+
+  // 既存プランもない場合は新規作成
+  const date = targetDate || new Date().toISOString().split('T')[0];
+  const startOfWeek = new Date(date);
+  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(endOfWeek.getDate() + 6);
+
+  const { data: newPlan, error: planError } = await supabase
+    .from('meal_plans')
+    .insert({
+      user_id: userId,
+      start_date: startOfWeek.toISOString().split('T')[0],
+      end_date: endOfWeek.toISOString().split('T')[0],
+      is_active: true,
+    })
+    .select('id')
+    .single();
+
+  if (planError) return null;
+  return newPlan;
+}
+
 // アクション実行
 export async function POST(
   request: Request,
@@ -91,16 +142,10 @@ export async function POST(
         // 新規食事を登録
         const { date, mealType, dishName, mode, calories, protein, fat, carbs, memo } = action.action_params;
         
-        // meal_plan_dayを取得または作成
-        const { data: activePlan } = await supabase
-          .from('meal_plans')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('is_active', true)
-          .single();
-
+        // 献立プランを取得または作成
+        const activePlan = await getOrCreateActivePlan(supabase, user.id, date);
         if (!activePlan) {
-          result = { error: 'アクティブな献立プランがありません' };
+          result = { error: '献立プランの作成に失敗しました' };
           break;
         }
 
@@ -217,12 +262,7 @@ export async function POST(
         
         let planId = mealPlanId;
         if (!planId) {
-          const { data: activePlan } = await supabase
-            .from('meal_plans')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('is_active', true)
-            .single();
+          const activePlan = await getOrCreateActivePlan(supabase, user.id);
           planId = activePlan?.id;
         }
 
@@ -349,15 +389,9 @@ export async function POST(
       case 'add_pantry_item': {
         const { name, quantity, unit, category, expiryDate } = action.action_params;
         
-        const { data: activePlan } = await supabase
-          .from('meal_plans')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('is_active', true)
-          .single();
-
+        const activePlan = await getOrCreateActivePlan(supabase, user.id);
         if (!activePlan) {
-          result = { error: 'アクティブな献立プランがありません' };
+          result = { error: '献立プランの作成に失敗しました' };
           break;
         }
 
