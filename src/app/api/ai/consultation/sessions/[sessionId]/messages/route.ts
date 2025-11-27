@@ -340,16 +340,39 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     midnight_snack: '夜食',
   };
 
+  // 現在時刻を取得（今日の献立表示用）
+  const nowForMeals = new Date();
+  const jstOffsetForMeals = 9 * 60;
+  const jstNowForMeals = new Date(nowForMeals.getTime() + (jstOffsetForMeals + nowForMeals.getTimezoneOffset()) * 60000);
+  const currentHourForMeals = jstNowForMeals.getHours();
+  
+  // 現在時刻に基づいて「次の食事」を判定
+  const getNextMealIndicator = (mealType: string): string => {
+    if (currentHourForMeals < 10) {
+      if (mealType === 'breakfast') return '🔴 次の食事';
+      if (mealType === 'lunch') return '🟡 その次';
+    } else if (currentHourForMeals < 14) {
+      if (mealType === 'lunch') return '🔴 次の食事（今食べる）';
+      if (mealType === 'dinner') return '🟡 その次';
+    } else if (currentHourForMeals < 18) {
+      if (mealType === 'dinner') return '🔴 次の食事';
+    } else if (currentHourForMeals < 21) {
+      if (mealType === 'dinner') return '🔴 次の食事（今食べる）';
+    }
+    return '';
+  };
+
   const todayMealsInfo = todayMeals && todayMeals.length > 0 ? `
-【📅 今日（${today}）の献立】※変更時はmealIdを使用
+【⚠️⚠️⚠️ 今日（${today}）の献立 - 「昼」「朝」「夜」はここから選ぶ ⚠️⚠️⚠️】
 ${todayMeals.map((m: any) => {
   const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
   const status = m.is_completed ? '✅完了' : '⬜未完了';
   const mode = m.mode === 'cook' ? '🍳自炊' : m.mode === 'out' ? '🍽️外食' : m.mode === 'buy' ? '🛒中食' : '';
-  return `- ${mealTypeJa}: ${m.dish_name || '未設定'} (${m.calories_kcal || 0}kcal) ${mode} ${status}
-  mealId: "${m.id}"`;
+  const nextIndicator = getNextMealIndicator(m.meal_type);
+  return `- ${mealTypeJa}（${today}）: ${m.dish_name || '未設定'} (${m.calories_kcal || 0}kcal) ${mode} ${status} ${nextIndicator}
+  ★このmealIdを使う: "${m.id}"`;
 }).join('\n')}
-` : `【📅 今日（${today}）の献立なし】`;
+` : `【📅 今日（${today}）の献立なし - 新規作成が必要】`;
 
   // 今後1週間の献立を整形
   const upcomingMealsInfo = upcomingMeals && upcomingMeals.length > 0 ? `
@@ -476,7 +499,14 @@ ${importantMessages.map((m: any) => {
 }).join('\n')}
 ` : '';
 
-  // 今日の日付（表示用）
+  // 今日の日付と現在時刻（日本時間）
+  const now = new Date();
+  const jstOffset = 9 * 60; // JST is UTC+9
+  const jstNow = new Date(now.getTime() + (jstOffset + now.getTimezoneOffset()) * 60000);
+  const currentHour = jstNow.getHours();
+  const currentMinutes = jstNow.getMinutes();
+  const currentTimeStr = `${currentHour}:${currentMinutes.toString().padStart(2, '0')}`;
+  
   const todayDisplay = new Date().toLocaleDateString('ja-JP', { 
     year: 'numeric', 
     month: 'long', 
@@ -484,8 +514,63 @@ ${importantMessages.map((m: any) => {
     weekday: 'long' 
   });
 
+  // 明日の日付
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+  // 現在時刻に基づく食事の解釈ルール
+  let mealInterpretation = '';
+  let nextMealSuggestion = '';
+  
+  if (currentHour < 10) {
+    // 午前10時前: 朝食がまだ、昼食も今日
+    mealInterpretation = `
+- 「朝」「朝食」→ 今日（${today}）の朝食 ★まだ食べていない可能性が高い
+- 「昼」「昼食」「お昼」→ 今日（${today}）の昼食
+- 「夜」「夕食」「晩ご飯」→ 今日（${today}）の夕食`;
+    nextMealSuggestion = `次の食事は「朝食」または「昼食」です。`;
+  } else if (currentHour < 14) {
+    // 午前10時〜午後2時: 昼食の時間帯
+    mealInterpretation = `
+- 「朝」「朝食」→ 今日（${today}）の朝食（既に終了の可能性）
+- 「昼」「昼食」「お昼」→ 今日（${today}）の昼食 ★今食べる食事
+- 「夜」「夕食」「晩ご飯」→ 今日（${today}）の夕食`;
+    nextMealSuggestion = `次の食事は「昼食」です。「昼」と言われたら今日（${today}）の昼食を変更してください。`;
+  } else if (currentHour < 18) {
+    // 午後2時〜午後6時: 昼食は終了、夕食の準備時間
+    mealInterpretation = `
+- 「朝」「朝食」→ 明日（${tomorrowStr}）の朝食
+- 「昼」「昼食」「お昼」→ 今日（${today}）の昼食（既に終了の可能性）または明日
+- 「夜」「夕食」「晩ご飯」→ 今日（${today}）の夕食 ★次に食べる食事`;
+    nextMealSuggestion = `次の食事は「夕食」です。「夜」「夕食」と言われたら今日（${today}）の夕食を変更してください。`;
+  } else if (currentHour < 21) {
+    // 午後6時〜午後9時: 夕食の時間帯
+    mealInterpretation = `
+- 「朝」「朝食」→ 明日（${tomorrowStr}）の朝食
+- 「昼」「昼食」「お昼」→ 明日（${tomorrowStr}）の昼食
+- 「夜」「夕食」「晩ご飯」→ 今日（${today}）の夕食 ★今食べる食事`;
+    nextMealSuggestion = `次の食事は「夕食」です。「夜」と言われたら今日（${today}）の夕食を変更してください。`;
+  } else {
+    // 午後9時以降: 夕食は終了、明日の食事
+    mealInterpretation = `
+- 「朝」「朝食」→ 明日（${tomorrowStr}）の朝食 ★次に食べる食事
+- 「昼」「昼食」「お昼」→ 明日（${tomorrowStr}）の昼食
+- 「夜」「夕食」「晩ご飯」→ 明日（${tomorrowStr}）の夕食`;
+    nextMealSuggestion = `次の食事は明日の「朝食」です。`;
+  }
+
   return `あなたは「ほめゴハン」のAI栄養アドバイザーです。
+
+【⚠️⚠️⚠️ 最重要：現在の日時 ⚠️⚠️⚠️】
 今日は${todayDisplay}（${today}）です。
+現在時刻: ${currentTimeStr}（日本時間）
+${nextMealSuggestion}
+
+【日付の解釈ルール - 現在時刻（${currentTimeStr}）に基づく】
+${mealInterpretation}
+- 「明日の〇〇」→ 明日（${tomorrowStr}）の該当食事
+- 日付指定がない場合は、上記ルールに従って適切な日の食事を対象とする
 
 【あなたの役割】
 1. ユーザーの食事や健康について相談に乗り、具体的なアドバイスを提供する
@@ -495,7 +580,8 @@ ${importantMessages.map((m: any) => {
 5. 必要に応じてアクションを実行（献立変更、買い物リスト追加など）
 
 【重要】以下のユーザー情報を参考にして、パーソナライズされたアドバイスを提供してください。
-各データにはIDが含まれています。変更・削除などのアクションを実行する際は、必ずそのIDを使用してください。
+各データにはIDが含まれています。変更・削除などのアクションを実行する際は、必ず正しい日付のmealIdを使用してください。
+「昼」と言われたら、必ず【今日（${today}）の献立】セクションから昼食のmealIdを探してください。
 
 ${profileInfo}
 
