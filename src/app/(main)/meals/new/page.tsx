@@ -89,6 +89,13 @@ export default function MealCaptureModal() {
   // 解析結果
   const [analyzedDishes, setAnalyzedDishes] = useState<DishDetail[]>([]);
   const [totalCalories, setTotalCalories] = useState(0);
+  const [totalProtein, setTotalProtein] = useState(0);
+  const [totalCarbs, setTotalCarbs] = useState(0);
+  const [totalFat, setTotalFat] = useState(0);
+  const [overallScore, setOverallScore] = useState(0);
+  const [vegScore, setVegScore] = useState(0);
+  const [praiseComment, setPraiseComment] = useState('');
+  const [nutritionTip, setNutritionTip] = useState('');
   const [nutritionalAdvice, setNutritionalAdvice] = useState('');
   
   // 日付・食事タイプ選択
@@ -162,6 +169,13 @@ export default function MealCaptureModal() {
         const data = await res.json();
         setAnalyzedDishes(data.dishes || []);
         setTotalCalories(data.totalCalories || 0);
+        setTotalProtein(data.totalProtein || 0);
+        setTotalCarbs(data.totalCarbs || 0);
+        setTotalFat(data.totalFat || 0);
+        setOverallScore(data.overallScore || 75);
+        setVegScore(data.vegScore || 50);
+        setPraiseComment(data.praiseComment || '');
+        setNutritionTip(data.nutritionTip || '');
         setNutritionalAdvice(data.nutritionalAdvice || '');
         setStep('result');
       } else {
@@ -431,58 +445,106 @@ export default function MealCaptureModal() {
             exit={{ opacity: 0, y: -20 }}
             className="flex-1 p-4 overflow-auto"
           >
-            {photoPreviews.length > 0 && (
-              <div className="relative mb-4">
+            {/* スコアと写真 */}
+            <div className="relative mb-4">
+              {photoPreviews.length > 0 && (
                 <img 
                   src={photoPreviews[0]} 
                   alt="Result" 
-                  className="w-full h-48 rounded-2xl object-cover" 
+                  className="w-full h-40 rounded-2xl object-cover" 
                 />
-                {photoPreviews.length > 1 && (
-                  <div className="absolute bottom-2 right-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>
-                    <span style={{ fontSize: 11, color: '#fff' }}>{photoPreviews.length}枚から解析</span>
-                  </div>
-                )}
+              )}
+              {photoPreviews.length > 1 && (
+                <div className="absolute bottom-2 right-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>
+                  <span style={{ fontSize: 11, color: '#fff' }}>{photoPreviews.length}枚から解析</span>
+                </div>
+              )}
+            </div>
+
+            {/* スコア表示 */}
+            <div className="flex items-center gap-4 mb-4 p-4 rounded-2xl" style={{ background: colors.successLight }}>
+              <div 
+                className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold text-white"
+                style={{ background: overallScore >= 85 ? colors.success : overallScore >= 70 ? colors.warning : colors.accent }}
+              >
+                {overallScore}
               </div>
-            )}
-            
-            <div className="flex items-center justify-between mb-4">
-              <span style={{ fontSize: 15, fontWeight: 600, color: colors.text }}>検出された料理</span>
-              <div className="px-3 py-1.5 rounded-lg" style={{ background: colors.accentLight }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: colors.accent }}>{totalCalories} kcal</span>
+              <div>
+                <p style={{ fontSize: 16, fontWeight: 700, color: overallScore >= 85 ? colors.success : overallScore >= 70 ? '#B8860B' : colors.accent, margin: 0 }}>
+                  {overallScore >= 90 ? '素晴らしい！🎉' : overallScore >= 80 ? 'いいね！👍' : overallScore >= 70 ? 'グッド！😊' : '記録しました！'}
+                </p>
+                <p style={{ fontSize: 13, color: colors.textLight, margin: 0 }}>
+                  {analyzedDishes.length > 0 ? analyzedDishes[0].name : '食事'}{analyzedDishes.length > 1 ? ` 他${analyzedDishes.length - 1}品` : ''}
+                </p>
               </div>
             </div>
-            
-            <div className="space-y-2 mb-4">
-              {analyzedDishes.map((dish, idx) => (
-                <div 
-                  key={idx} 
-                  className="p-3 rounded-xl flex items-center justify-between"
-                  style={{ background: colors.card }}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: colors.successLight }}>
-                      <Utensils size={18} color={colors.success} />
-                    </div>
-                    <div>
-                      <p style={{ fontSize: 14, fontWeight: 500, color: colors.text, margin: 0 }}>{dish.name}</p>
-                      <p style={{ fontSize: 11, color: colors.textMuted, margin: 0 }}>{dish.role === 'main' ? '主菜' : dish.role === 'side' ? '副菜' : dish.role === 'soup' ? '汁物' : 'おかず'}</p>
-                    </div>
+
+            {/* AIからの褒めコメント */}
+            {praiseComment && (
+              <div className="p-4 rounded-2xl mb-4" style={{ background: colors.accentLight }}>
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: colors.accent }}>
+                    <Sparkles size={16} color="#fff" />
                   </div>
-                  <span style={{ fontSize: 13, color: colors.textLight }}>{dish.cal} kcal</span>
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: colors.accent, margin: '0 0 4px 0' }}>AIからのコメント</p>
+                    <p style={{ fontSize: 13, color: colors.text, margin: 0, lineHeight: 1.6 }}>{praiseComment}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 栄養素グリッド */}
+            <div className="grid grid-cols-5 gap-2 mb-4">
+              {[
+                { label: 'カロリー', value: totalCalories, unit: 'kcal', color: colors.accent },
+                { label: 'タンパク質', value: totalProtein, unit: 'g', color: colors.blue },
+                { label: '炭水化物', value: totalCarbs, unit: 'g', color: colors.warning },
+                { label: '脂質', value: totalFat, unit: 'g', color: colors.purple },
+                { label: '野菜', value: vegScore, unit: '点', color: colors.success },
+              ].map((n, i) => (
+                <div key={i} className="p-2 rounded-xl text-center" style={{ background: colors.bg }}>
+                  <p style={{ fontSize: 9, color: colors.textMuted, margin: '0 0 2px 0' }}>{n.label}</p>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: n.color, margin: 0 }}>{n.value}</p>
+                  <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>{n.unit}</p>
                 </div>
               ))}
             </div>
-            
-            {nutritionalAdvice && (
-              <div className="p-3 rounded-xl mb-4" style={{ background: colors.purpleLight }}>
-                <div className="flex items-center gap-1 mb-1">
-                  <Sparkles size={12} color={colors.purple} />
-                  <span style={{ fontSize: 11, fontWeight: 600, color: colors.purple }}>AIコメント</span>
-                </div>
-                <p style={{ fontSize: 12, color: colors.text, margin: 0, lineHeight: 1.5 }}>{nutritionalAdvice}</p>
+
+            {/* 豆知識 */}
+            {nutritionTip && (
+              <div className="p-3 rounded-xl mb-4 flex items-start gap-2" style={{ background: colors.warningLight }}>
+                <span style={{ fontSize: 14 }}>💡</span>
+                <p style={{ fontSize: 11, color: colors.text, margin: 0, lineHeight: 1.5 }}>
+                  <strong style={{ color: colors.warning }}>豆知識:</strong> {nutritionTip}
+                </p>
               </div>
             )}
+            
+            {/* 検出された料理 */}
+            <div className="mb-4">
+              <p style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, marginBottom: 8 }}>検出された料理</p>
+              <div className="space-y-2">
+                {analyzedDishes.map((dish, idx) => (
+                  <div 
+                    key={idx} 
+                    className="p-3 rounded-xl flex items-center justify-between"
+                    style={{ background: colors.card }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: colors.successLight }}>
+                        <Utensils size={18} color={colors.success} />
+                      </div>
+                      <div>
+                        <p style={{ fontSize: 14, fontWeight: 500, color: colors.text, margin: 0 }}>{dish.name}</p>
+                        <p style={{ fontSize: 11, color: colors.textMuted, margin: 0 }}>{dish.role === 'main' ? '主菜' : dish.role === 'side' ? '副菜' : dish.role === 'soup' ? '汁物' : dish.role === 'rice' ? 'ご飯' : dish.role === 'salad' ? 'サラダ' : 'おかず'}</p>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 13, color: colors.textLight }}>{dish.cal} kcal</span>
+                  </div>
+                ))}
+              </div>
+            </div>
             
             <button
               onClick={() => setStep('select-date')}
@@ -494,7 +556,7 @@ export default function MealCaptureModal() {
             </button>
             
             <button
-              onClick={() => { setStep('capture'); setPhotoFiles([]); setPhotoPreviews([]); setAnalyzedDishes([]); }}
+              onClick={() => { setStep('capture'); setPhotoFiles([]); setPhotoPreviews([]); setAnalyzedDishes([]); setOverallScore(0); setPraiseComment(''); setNutritionTip(''); }}
               className="w-full py-3 mt-2 rounded-xl"
               style={{ background: colors.bg }}
             >

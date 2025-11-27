@@ -56,9 +56,12 @@ export async function POST(request: Request) {
       : '食事';
 
     const imageCountText = imageDataArray.length > 1 ? `${imageDataArray.length}枚の` : '';
-    const prompt = `この${imageCountText}${mealTypeJa}の写真を分析してください。
+    const prompt = `あなたは「ほめゴハン」という食事管理アプリのAIアシスタントです。
+ユーザーの食事を分析し、**良いところを見つけて褒める**ことが最も重要な役割です。
 
-以下のJSON形式で、写真に写っている全ての料理を特定し、それぞれの栄養情報を推定してください：
+この${imageCountText}${mealTypeJa}の写真を分析してください。
+
+以下のJSON形式で回答してください：
 
 {
   "dishes": [
@@ -66,17 +69,28 @@ export async function POST(request: Request) {
       "name": "料理名",
       "role": "main または side または soup または rice または salad または dessert",
       "cal": 推定カロリー（数値）,
+      "protein": 推定タンパク質（g、数値）,
+      "carbs": 推定炭水化物（g、数値）,
+      "fat": 推定脂質（g、数値）,
       "ingredient": "主な食材"
     }
   ],
   "totalCalories": 合計カロリー（数値）,
-  "nutritionalAdvice": "この食事についての簡単なコメント（30文字程度）"
+  "totalProtein": 合計タンパク質（g、数値）,
+  "totalCarbs": 合計炭水化物（g、数値）,
+  "totalFat": 合計脂質（g、数値）,
+  "overallScore": 総合スコア（0-100の数値、栄養バランス・彩り・食材の多様性を考慮）,
+  "vegScore": 野菜スコア（0-100の数値、野菜の量と種類を考慮）,
+  "praiseComment": "【重要】この食事の良いところを見つけて、温かく褒めるコメント（80-120文字程度）。絵文字を1-2個使用。ダメ出しは絶対にしない。例：「わぁ、すごい彩り！アボカドの良質な脂質と、たっぷりの野菜でビタミンもバッチリですね。見た目も美しくて、食べるのがもったいないくらい✨」",
+  "nutritionTip": "この食事に関連する豆知識（40-60文字程度）。例：「アボカドは「森のバター」と呼ばれるほど栄養豊富。ビタミンEで美肌効果も期待できます！」"
 }
 
 注意：
 - 全ての写真に写っている全ての料理を含めてください
-- カロリーは1人前として推定してください
+- カロリー・栄養素は1人前として推定してください
 - roleは料理の種類に応じて適切に設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート/おやつ=dessert）
+- praiseCommentは必ずポジティブな内容にしてください。批判や改善提案は含めないでください
+- overallScoreは厳しすぎず、70-95の範囲で評価してください（普通の食事でも75以上）
 - JSONのみを出力してください`;
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GOOGLE_AI_API_KEY}`;
@@ -125,7 +139,15 @@ export async function POST(request: Request) {
     return NextResponse.json({
       dishes: analysisResult.dishes || [],
       totalCalories: analysisResult.totalCalories || 0,
-      nutritionalAdvice: analysisResult.nutritionalAdvice || '',
+      totalProtein: analysisResult.totalProtein || 0,
+      totalCarbs: analysisResult.totalCarbs || 0,
+      totalFat: analysisResult.totalFat || 0,
+      overallScore: analysisResult.overallScore || 75,
+      vegScore: analysisResult.vegScore || 50,
+      praiseComment: analysisResult.praiseComment || 'おいしそうな食事ですね！',
+      nutritionTip: analysisResult.nutritionTip || '',
+      // 後方互換性のため
+      nutritionalAdvice: analysisResult.praiseComment || analysisResult.nutritionalAdvice || '',
     });
 
   } catch (error: any) {
