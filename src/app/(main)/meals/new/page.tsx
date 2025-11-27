@@ -29,7 +29,7 @@ const colors = {
   border: '#E8E8E8',
 };
 
-type MealType = 'breakfast' | 'lunch' | 'dinner';
+type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 type DishDetail = { name: string; cal: number; role: string; ingredient?: string };
 type Step = 'capture' | 'analyzing' | 'result' | 'select-date';
 
@@ -37,6 +37,8 @@ const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color:
   breakfast: { icon: Coffee, label: '朝食', color: colors.warning, bg: colors.warningLight },
   lunch: { icon: Sun, label: '昼食', color: colors.accent, bg: colors.accentLight },
   dinner: { icon: Moon, label: '夕食', color: colors.purple, bg: colors.purpleLight },
+  snack: { icon: Utensils, label: 'おやつ', color: colors.success, bg: colors.successLight },
+  midnight_snack: { icon: Moon, label: '夜食', color: colors.blue, bg: colors.blueLight },
 };
 
 // Helper: ローカル日付文字列
@@ -496,8 +498,32 @@ export default function MealCaptureModal() {
             
             {/* 食事タイプ選択 */}
             <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, marginBottom: 8 }}>食事タイプ</p>
+            {/* 基本の3食 */}
+            <div className="flex gap-2 mb-2">
+              {(['breakfast', 'lunch', 'dinner'] as MealType[]).map((type) => {
+                const config = MEAL_CONFIG[type];
+                const isSelected = type === selectedMealType;
+                const Icon = config.icon;
+                return (
+                  <button
+                    key={type}
+                    onClick={() => setSelectedMealType(type)}
+                    className="flex-1 p-3 rounded-xl flex flex-col items-center gap-2 transition-all"
+                    style={{
+                      background: isSelected ? config.bg : colors.card,
+                      border: isSelected ? `2px solid ${config.color}` : `1px solid ${colors.border}`,
+                    }}
+                  >
+                    <Icon size={24} color={isSelected ? config.color : colors.textMuted} />
+                    <span style={{ fontSize: 13, fontWeight: 500, color: isSelected ? config.color : colors.textLight }}>{config.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* おやつ・夜食 */}
             <div className="flex gap-2 mb-6">
-              {(Object.entries(MEAL_CONFIG) as [MealType, typeof MEAL_CONFIG['breakfast']][]).map(([type, config]) => {
+              {(['snack', 'midnight_snack'] as MealType[]).map((type) => {
+                const config = MEAL_CONFIG[type];
                 const isSelected = type === selectedMealType;
                 const Icon = config.icon;
                 return (
