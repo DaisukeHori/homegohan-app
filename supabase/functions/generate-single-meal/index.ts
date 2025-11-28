@@ -130,14 +130,16 @@ ${preferences.healthy ? '- ヘルシー志向（低カロリー・高タンパ�
 ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 
 【出力形式】
-以下のJSON形式で出力してください。**各料理ごとに材料とレシピを含めてください**：
+以下のJSON形式で出力してください。**各料理ごとに材料とレシピと栄養素(calories, protein, fat, carbs)を含めてください**：
 {
   "dishes": [
     { 
       "name": "主菜名", 
       "role": "main", 
       "calories": 300, 
-      "protein": 25, 
+      "protein": 25,
+      "fat": 12,
+      "carbs": 10,
       "description": "簡潔な説明",
       "ingredients": ["鶏むね肉 200g", "玉ねぎ 1/2個", "塩 少々"],
       "recipeSteps": ["1. 鶏肉を一口大に切る", "2. フライパンで焼く", "3. 野菜と炒める"]
@@ -147,6 +149,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       "role": "side", 
       "calories": 80, 
       "protein": 3,
+      "fat": 4,
+      "carbs": 8,
       "ingredients": ["ブロッコリー 1/2株", "オリーブオイル 小さじ1"],
       "recipeSteps": ["1. ブロッコリーを小房に分ける", "2. 茹でる", "3. オイルをかける"]
     },
@@ -155,6 +159,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       "role": "soup", 
       "calories": 40, 
       "protein": 2,
+      "fat": 1,
+      "carbs": 5,
       "ingredients": ["豆腐 50g", "わかめ 適量", "味噌 大さじ1"],
       "recipeSteps": ["1. 出汁をとる", "2. 具材を入れる", "3. 味噌を溶く"]
     },
@@ -163,12 +169,16 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       "role": "rice", 
       "calories": 240, 
       "protein": 4,
+      "fat": 0,
+      "carbs": 55,
       "ingredients": ["白米 150g（1膳）"],
       "recipeSteps": ["1. 炊飯器で炊く"]
     }
   ],
   "totalCalories": ${targetMealCalories},
   "totalProtein": 34,
+  "totalFat": 17,
+  "totalCarbs": 78,
   "cookingTime": "20分",
   "nutritionalAdvice": "この食事の栄養ポイント（健康状態を考慮したアドバイス）"
 }
@@ -309,6 +319,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       name: d.name,
       cal: d.calories || 0,
       protein: d.protein || 0,
+      fat: d.fat || 0,
+      carbs: d.carbs || 0,
       role: mapRole(d.role) || 'side',
       ingredient: d.description || '',
       ingredients: d.ingredients || [],
@@ -317,6 +329,11 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
     
     const mainDish = aiDishes.find((d: any) => d.role === 'main') || aiDishes[0] || { name: '献立', calories: 0 }
     const allDishNames = aiDishes.map((d: any) => d.name).join('、') || mainDish.name
+    
+    // 総栄養素を計算
+    const totalProtein = newMealData.totalProtein || dishesArray.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
+    const totalFat = newMealData.totalFat || dishesArray.reduce((sum: number, d: any) => sum + (d.fat || 0), 0)
+    const totalCarbs = newMealData.totalCarbs || dishesArray.reduce((sum: number, d: any) => sum + (d.carbs || 0), 0)
     
     // 全料理の材料を統合（買い物リスト用）
     const allIngredients = aiDishes.flatMap((d: any) => d.ingredients || [])
@@ -330,7 +347,9 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
         dish_name: allDishNames,
         description: newMealData.nutritionalAdvice || `調理時間: ${newMealData.cookingTime || ''}`,
         calories_kcal: newMealData.totalCalories || null,
-        protein_g: newMealData.totalProtein || null,
+        protein_g: totalProtein || null,
+        fat_g: totalFat || null,
+        carbs_g: totalCarbs || null,
         image_url: imageUrl,
         is_completed: false,
         dishes: dishesArray.length > 0 ? dishesArray : null,

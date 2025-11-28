@@ -164,6 +164,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
               "role": "主菜", 
               "cal": 200, 
               "protein": 10, 
+              "fat": 8,
+              "carbs": 5,
               "description": "簡潔な説明",
               "ingredients": ["卵 2個", "バター 10g", "塩 少々"],
               "recipeSteps": ["1. 卵を溶く", "2. バターを熱する", "3. 焼く"]
@@ -173,6 +175,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
               "role": "汁物", 
               "cal": 50, 
               "protein": 3,
+              "fat": 1,
+              "carbs": 5,
               "ingredients": ["豆腐 50g", "わかめ 適量", "味噌 大さじ1"],
               "recipeSteps": ["1. 出汁をとる", "2. 具材を入れる", "3. 味噌を溶く"]
             },
@@ -181,11 +185,16 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
               "role": "主食", 
               "cal": 240, 
               "protein": 4,
+              "fat": 0,
+              "carbs": 55,
               "ingredients": ["白米 150g（1膳）"],
               "recipeSteps": ["1. 炊飯器で炊く"]
             }
           ],
           "totalCalories": 490,
+          "totalProtein": 17,
+          "totalFat": 9,
+          "totalCarbs": 65,
           "cookingTime": "15分"
         },
         { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分" },
@@ -346,6 +355,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
           role: mapRole(d.role) || (index === 0 ? 'main' : `side${index}`),
           cal: d.cal || d.calories || 0,
           protein: d.protein || 0,
+          fat: d.fat || 0,
+          carbs: d.carbs || 0,
           ingredient: d.description || '',
           ingredients: d.ingredients || [],
           recipeSteps: d.recipeSteps || []
@@ -354,8 +365,10 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
         // 総カロリーを計算
         const totalCalories = meal.totalCalories || dishDetails.reduce((sum: number, d: any) => sum + (d.cal || 0), 0)
         
-        // 総タンパク質を計算
-        const totalProtein = dishDetails.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
+        // 総栄養素を計算
+        const totalProtein = meal.totalProtein || dishDetails.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
+        const totalFat = meal.totalFat || dishDetails.reduce((sum: number, d: any) => sum + (d.fat || 0), 0)
+        const totalCarbs = meal.totalCarbs || dishDetails.reduce((sum: number, d: any) => sum + (d.carbs || 0), 0)
         
         // 全料理の材料を統合（買い物リスト用）
         const allIngredients = dishes.flatMap((d: any) => d.ingredients || [])
@@ -371,6 +384,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
             dishes: dishDetails,
             calories_kcal: totalCalories,
             protein_g: totalProtein,
+            fat_g: totalFat,
+            carbs_g: totalCarbs,
             is_simple: dishDetails.length <= 1,
             is_completed: false,
             ingredients: allIngredients.length > 0 ? allIngredients : null,
@@ -380,7 +395,7 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
         if (mealError) {
           console.error(`Failed to insert planned_meal for ${dayDate} ${mealType}:`, mealError)
         } else {
-          console.log(`✅ Saved: ${dayDate} ${mealType} - ${dishName} (${totalCalories}kcal, ${totalProtein}g protein)`)
+          console.log(`✅ Saved: ${dayDate} ${mealType} - ${dishName} (${totalCalories}kcal, P:${totalProtein}g F:${totalFat}g C:${totalCarbs}g)`)
         }
       }
     }

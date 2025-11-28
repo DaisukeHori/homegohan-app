@@ -147,6 +147,9 @@ export default function WeeklyMenuPage() {
   const [loading, setLoading] = useState(true);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   
+  // 完了モーダル用
+  const [successMessage, setSuccessMessage] = useState<{ title: string; message: string } | null>(null);
+  
   // Week Navigation
   const [weekStart, setWeekStart] = useState<Date>(getWeekStart(new Date()));
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
@@ -750,7 +753,7 @@ export default function WeeklyMenuPage() {
       allIngredients = [...new Set(allIngredients)];
       
       if (allIngredients.length === 0) {
-        alert('材料情報がありません。「AIで変更」で再生成してください。');
+        setSuccessMessage({ title: '材料なし', message: '材料情報がありません。「AIで変更」で再生成してください。' });
         return;
       }
       
@@ -775,8 +778,11 @@ export default function WeeklyMenuPage() {
       if (res.ok) {
         const { items } = await res.json();
         setShoppingList(prev => [...prev, ...items]);
-        alert(`${parsedIngredients.length}件の材料を買い物リストに追加しました`);
         setActiveModal(null);
+        setSuccessMessage({ 
+          title: '買い物リストに追加しました ✓', 
+          message: `${parsedIngredients.length}件の材料を追加しました` 
+        });
       } else {
         const err = await res.json();
         alert(`エラー: ${err.error || '追加に失敗しました'}`);
@@ -2739,7 +2745,12 @@ export default function WeeklyMenuPage() {
                   <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <Heart size={18} color={colors.textMuted} />
                   </button>
-                  <button onClick={addRecipeToShoppingList} className="flex-1 p-3 rounded-xl font-semibold text-[14px]" style={{ background: colors.accent, color: '#fff' }}>
+                  <button 
+                    onClick={addRecipeToShoppingList} 
+                    className="flex-1 p-3 rounded-xl font-semibold text-[14px] flex items-center justify-center gap-2 active:scale-95 transition-transform" 
+                    style={{ background: colors.accent, color: '#fff' }}
+                  >
+                    <ShoppingCart size={18} />
                     材料を買い物リストに追加
                   </button>
                 </div>
@@ -3344,6 +3355,54 @@ export default function WeeklyMenuPage() {
                 </div>
               </motion.div>
             )}
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* 完了モーダル */}
+      <AnimatePresence>
+        {successMessage && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSuccessMessage(null)}
+              className="fixed inset-0 z-[300]"
+              style={{ background: 'rgba(0,0,0,0.5)' }}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="fixed inset-0 z-[301] flex items-center justify-center p-4"
+            >
+              <div
+                className="w-full max-w-xs rounded-2xl p-6 text-center"
+                style={{ background: colors.card }}
+              >
+                <div 
+                  className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+                  style={{ background: colors.successLight || 'rgba(34, 197, 94, 0.1)' }}
+                >
+                  <Check size={32} color={colors.success} />
+                </div>
+                <h3 style={{ fontSize: 18, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
+                  {successMessage.title}
+                </h3>
+                <p style={{ fontSize: 14, color: colors.textLight, marginBottom: 20 }}>
+                  {successMessage.message}
+                </p>
+                <button
+                  onClick={() => setSuccessMessage(null)}
+                  className="w-full p-3 rounded-xl font-semibold"
+                  style={{ background: colors.accent, color: '#fff' }}
+                >
+                  OK
+                </button>
+              </div>
+            </motion.div>
           </>
         )}
       </AnimatePresence>
