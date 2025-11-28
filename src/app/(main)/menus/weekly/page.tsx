@@ -265,6 +265,22 @@ export default function WeeklyMenuPage() {
     const checkPendingRequests = async () => {
       const targetDate = formatLocalDate(weekStart);
       
+      // 0. 週間献立の生成中リクエストをDBで確認
+      try {
+        const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
+        if (weeklyRes.ok) {
+          const { hasPending, requestId, status } = await weeklyRes.json();
+          if (hasPending && requestId) {
+            console.log('📦 週間献立の生成中リクエストを復元:', requestId, status);
+            setIsGenerating(true);
+            startPollingForCompletion(targetDate, requestId);
+            return; // 週間生成中なら他はスキップ
+          }
+        }
+      } catch (e) {
+        console.error('Failed to check pending weekly requests:', e);
+      }
+      
       // 1. 単一食事の生成中リクエストをDBで確認
       try {
         const singleRes = await fetch(`/api/ai/menu/meal/pending?date=${targetDate}`);
@@ -298,6 +314,27 @@ export default function WeeklyMenuPage() {
       }
       
       // 2. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
+      const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
+      if (storedWeekly) {
+        try {
+          const { weekStartDate, timestamp, requestId } = JSON.parse(storedWeekly);
+          const elapsed = Date.now() - timestamp;
+          // 5分以内なら生成中とみなしてポーリング再開
+          if (elapsed < 5 * 60 * 1000 && weekStartDate === targetDate) {
+            console.log('📦 週間献立をlocalStorageから復元:', requestId);
+            setIsGenerating(true);
+            if (requestId) {
+              startPollingForCompletion(targetDate, requestId);
+            }
+            return;
+          } else {
+            localStorage.removeItem('weeklyMenuGenerating');
+          }
+        } catch {
+          localStorage.removeItem('weeklyMenuGenerating');
+        }
+      }
+      
       const storedSingle = localStorage.getItem('singleMealGenerating');
       if (storedSingle) {
         try {
@@ -708,6 +745,19 @@ export default function WeeklyMenuPage() {
       });
     } catch (e) { 
       setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i)); 
+    }
+  };
+
+  const deleteShoppingItem = async (id: string) => {
+    // 楽観的UI更新
+    const previousList = shoppingList;
+    setShoppingList(prev => prev.filter(i => i.id !== id));
+    try {
+      const res = await fetch(`/api/shopping-list/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+    } catch (e) { 
+      // 失敗したら元に戻す
+      setShoppingList(previousList); 
     }
   };
 
@@ -2609,24 +2659,34 @@ export default function WeeklyMenuPage() {
                     <p className="text-center py-8" style={{ color: colors.textMuted }}>買い物リストは空です</p>
                   ) : (
                     shoppingList.map(item => (
-                      <button
+                      <div
                         key={item.id}
-                        onClick={() => toggleShoppingItem(item.id, item.isChecked)}
-                        className="w-full flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5 text-left"
+                        className="flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5"
                         style={{ background: item.isChecked ? colors.bg : colors.card, border: item.isChecked ? 'none' : `1px solid ${colors.border}` }}
                       >
-                        <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center" style={{ 
-                          border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
-                          background: item.isChecked ? colors.success : 'transparent'
-                        }}>
+                        <button
+                          onClick={() => toggleShoppingItem(item.id, item.isChecked)}
+                          className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
+                          style={{ 
+                            border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
+                            background: item.isChecked ? colors.success : 'transparent'
+                          }}
+                        >
                           {item.isChecked && <Check size={12} color="#fff" />}
-                        </div>
+                        </button>
                         <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
                           {item.itemName}
                         </span>
                         <span style={{ fontSize: 12, color: colors.textMuted }}>{item.quantity}</span>
                         <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ color: colors.textMuted, background: colors.bg }}>{item.category || '食材'}</span>
-                      </button>
+                        <button
+                          onClick={() => deleteShoppingItem(item.id)}
+                          className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                          style={{ background: 'rgba(0,0,0,0.05)' }}
+                        >
+                          <Trash2 size={12} color={colors.textMuted} />
+                        </button>
+                      </div>
                     ))
                   )}
                 </div>
