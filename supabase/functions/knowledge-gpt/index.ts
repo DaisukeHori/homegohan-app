@@ -53,13 +53,37 @@ interface ChatCompletionResponse {
   };
 }
 
+// ===== Markdownコードブロックを除去するヘルパー =====
+function stripMarkdownCodeBlock(text: string): string {
+  // ```json ... ``` や ``` ... ``` を除去
+  let cleaned = text.trim();
+  
+  // ```json または ``` で始まる場合
+  if (cleaned.startsWith('```')) {
+    // 最初の行を除去
+    const firstNewline = cleaned.indexOf('\n');
+    if (firstNewline !== -1) {
+      cleaned = cleaned.substring(firstNewline + 1);
+    }
+    // 最後の ``` を除去
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.substring(0, cleaned.length - 3);
+    }
+  }
+  
+  return cleaned.trim();
+}
+
 // ===== エージェント実行 =====
 async function runAgent(systemPrompt: string, userMessage: string): Promise<string> {
   return await withTrace("knowledge_gpt", async () => {
     // エージェントを動的に作成（システムプロンプトを呼び出し元から受け取る）
+    // JSONのみを出力するよう明示的に指示を追加
+    const enhancedSystemPrompt = systemPrompt + "\n\n【重要】回答は必ず純粋なJSONのみを出力してください。```json などのMarkdownコードブロックで囲まないでください。説明文も不要です。JSONデータのみを返してください。";
+    
     const agent = new Agent({
       name: "knowledge-gpt",
-      instructions: systemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
+      instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。JSONのみを出力してください。",
       model: "gpt-4o-mini",
       tools: [fileSearch],
     });
@@ -80,6 +104,8 @@ async function runAgent(systemPrompt: string, userMessage: string): Promise<stri
 
     const result = await runner.run(agent, [...conversationHistory]);
     
+    let outputText = "";
+    
     if (!result.finalOutput) {
       // finalOutputがない場合、最後のアシスタントメッセージを探す
       const lastAssistantItem = result.newItems.find(item => 
@@ -92,19 +118,22 @@ async function runAgent(systemPrompt: string, userMessage: string): Promise<stri
           (c: any) => c.type === 'output_text' || c.type === 'text'
         );
         if (textContent && textContent.text) {
-          return textContent.text;
+          outputText = textContent.text;
+        } else {
+          throw new Error("Agent result is undefined");
         }
+      } else {
+        throw new Error("Agent result is undefined");
       }
-      
-      throw new Error("Agent result is undefined");
-    }
-
-    // finalOutputがオブジェクトならJSON文字列に変換
-    if (typeof result.finalOutput === 'object') {
+    } else if (typeof result.finalOutput === 'object') {
+      // finalOutputがオブジェクトならJSON文字列に変換
       return JSON.stringify(result.finalOutput);
+    } else {
+      outputText = String(result.finalOutput);
     }
     
-    return String(result.finalOutput);
+    // Markdownコードブロックを除去
+    return stripMarkdownCodeBlock(outputText);
   });
 }
 

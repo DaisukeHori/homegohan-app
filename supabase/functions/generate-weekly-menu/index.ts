@@ -211,7 +211,15 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
     if (!aiResponse.ok) throw new Error(await aiResponse.text())
 
     const aiData = await aiResponse.json()
-    const resultJson = JSON.parse(aiData.choices[0].message.content)
+    // Markdownコードブロックを除去してからJSONパース
+    let content = aiData.choices[0].message.content.trim()
+    if (content.startsWith('```')) {
+      const firstNewline = content.indexOf('\n')
+      if (firstNewline !== -1) content = content.substring(firstNewline + 1)
+      if (content.endsWith('```')) content = content.substring(0, content.length - 3)
+      content = content.trim()
+    }
+    const resultJson = JSON.parse(content)
 
     // 7日分の献立が生成されているか検証
     if (!resultJson.days || !Array.isArray(resultJson.days) || resultJson.days.length !== 7) {

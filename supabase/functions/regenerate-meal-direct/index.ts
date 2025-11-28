@@ -156,7 +156,15 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
     }
 
     const aiResult = await response.json()
-    const newMealData = JSON.parse(aiResult.choices[0].message.content)
+    // Markdownコードブロックを除去してからJSONパース
+    let content = aiResult.choices[0].message.content.trim()
+    if (content.startsWith('```')) {
+      const firstNewline = content.indexOf('\n')
+      if (firstNewline !== -1) content = content.substring(firstNewline + 1)
+      if (content.endsWith('```')) content = content.substring(0, content.length - 3)
+      content = content.trim()
+    }
+    const newMealData = JSON.parse(content)
 
     // 4. 画像生成（メイン料理のみ）
     let imageUrl = existingMeal.image_url // デフォルトは既存の画像
