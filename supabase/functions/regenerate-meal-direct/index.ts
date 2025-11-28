@@ -146,17 +146,27 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       "protein": 2,
       "ingredients": ["しめじ 50g", "牛乳 100ml", "コンソメ 小さじ1/2"],
       "recipeSteps": ["1. しめじをほぐす", "2. 鍋で煮る", "3. 牛乳を加える"]
+    },
+    { 
+      "name": "ご飯", 
+      "role": "rice", 
+      "calories": 240, 
+      "protein": 4,
+      "ingredients": ["白米 150g（1膳）"],
+      "recipeSteps": ["1. 炊飯器で炊く"]
     }
   ],
-  "totalCalories": 380,
-  "totalProtein": 25,
+  "totalCalories": 620,
+  "totalProtein": 29,
   "cookingTime": "20分",
   "nutritionalAdvice": "この食事のポイント"
 }
 
 **重要: 
 - 各dishに必ずingredients（「食材名 分量」形式の配列）とrecipeSteps（番号付き手順の配列）を含めてください
-- 各料理のレシピは3〜5ステップ程度で具体的に記載してください**
+- 各料理のレシピは3〜5ステップ程度で具体的に記載してください
+- roleは main（主菜）, side（副菜）, soup（汁物）, rice（主食：ご飯・パン・麺等）のいずれか
+- 和食には必ずご飯（rice）を含め、洋食にはパン、中華には麺やご飯を含めてください**
 `
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''

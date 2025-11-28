@@ -274,9 +274,18 @@ export default function WeeklyMenuPage() {
             const dayIdx = weekDates.findIndex(d => d.dateStr === targetDayDate);
             
             if (dayIdx !== -1) {
-              setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
-              setSelectedDayIndex(dayIdx);
-              startSingleMealPolling(latestRequest.requestId, targetDate, targetDayDate, latestRequest.targetMealType);
+              // mode === 'regenerate' の場合は既存食事の再生成
+              if (latestRequest.mode === 'regenerate' && latestRequest.targetMealId) {
+                setRegeneratingMealId(latestRequest.targetMealId);
+                setIsRegenerating(true);
+                setSelectedDayIndex(dayIdx);
+                startRegenerateMealPolling(latestRequest.requestId, targetDate);
+              } else {
+                // mode === 'single' の場合は新規追加
+                setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
+                setSelectedDayIndex(dayIdx);
+                startSingleMealPolling(latestRequest.requestId, targetDate, targetDayDate, latestRequest.targetMealType);
+              }
               return; // DBで見つかったらlocalStorageはスキップ
             }
           }
@@ -1845,6 +1854,20 @@ export default function WeeklyMenuPage() {
                       dishes: dishesArray,
                       ingredients: meal.ingredients || [],
                       recipeSteps: meal.recipeSteps || [],
+                      // 基本栄養素
+                      protein: meal.proteinG,
+                      fat: meal.fatG,
+                      carbs: meal.carbsG,
+                      // 詳細栄養素
+                      fiber: meal.fiberG,
+                      sodium: meal.sodiumG,
+                      sugar: meal.sugarG,
+                      calcium: meal.calciumMg,
+                      iron: meal.ironMg,
+                      potassium: meal.potassiumMg,
+                      vitaminC: meal.vitaminCMg,
+                      vitaminD: meal.vitaminDUg,
+                      cholesterol: meal.cholesterolMg,
                     });
                     setActiveModal('recipe');
                   }}
@@ -2585,20 +2608,49 @@ export default function WeeklyMenuPage() {
                 </div>
                 <div className="flex-1 p-4 overflow-auto">
                   {/* 基本情報 */}
-                  <div className="flex gap-4 mb-4">
+                  <div className="flex flex-wrap gap-3 mb-4">
                     <div className="flex items-center gap-1">
                       <Clock size={14} color={colors.textMuted} />
                       <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.cookingTime || 20}分</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <Users size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>2人前</span>
-                    </div>
-                    <div className="flex items-center gap-1">
                       <Flame size={14} color={colors.textMuted} />
                       <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories || '-'}kcal</span>
                     </div>
+                    {selectedRecipeData?.protein && (
+                      <div className="flex items-center gap-1">
+                        <span style={{ fontSize: 12, color: colors.textLight }}>P: {selectedRecipeData.protein}g</span>
+                      </div>
+                    )}
+                    {selectedRecipeData?.fat && (
+                      <div className="flex items-center gap-1">
+                        <span style={{ fontSize: 12, color: colors.textLight }}>F: {selectedRecipeData.fat}g</span>
+                      </div>
+                    )}
+                    {selectedRecipeData?.carbs && (
+                      <div className="flex items-center gap-1">
+                        <span style={{ fontSize: 12, color: colors.textLight }}>C: {selectedRecipeData.carbs}g</span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* 詳細栄養素（あれば表示） */}
+                  {(selectedRecipeData?.fiber || selectedRecipeData?.sodium || selectedRecipeData?.calcium || selectedRecipeData?.iron) && (
+                    <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, margin: '0 0 8px' }}>📊 詳細栄養素</p>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]" style={{ color: colors.text }}>
+                        {selectedRecipeData?.fiber && <div>食物繊維: {selectedRecipeData.fiber}g</div>}
+                        {selectedRecipeData?.sodium && <div>塩分: {selectedRecipeData.sodium}g</div>}
+                        {selectedRecipeData?.sugar && <div>糖質: {selectedRecipeData.sugar}g</div>}
+                        {selectedRecipeData?.calcium && <div>カルシウム: {selectedRecipeData.calcium}mg</div>}
+                        {selectedRecipeData?.iron && <div>鉄分: {selectedRecipeData.iron}mg</div>}
+                        {selectedRecipeData?.potassium && <div>カリウム: {selectedRecipeData.potassium}mg</div>}
+                        {selectedRecipeData?.vitaminC && <div>ビタミンC: {selectedRecipeData.vitaminC}mg</div>}
+                        {selectedRecipeData?.vitaminD && <div>ビタミンD: {selectedRecipeData.vitaminD}µg</div>}
+                        {selectedRecipeData?.cholesterol && <div>コレステロール: {selectedRecipeData.cholesterol}mg</div>}
+                      </div>
+                    </div>
+                  )}
 
                   {/* 各料理ごとの材料・レシピ */}
                   {selectedRecipeData?.dishes && selectedRecipeData.dishes.length > 0 ? (
@@ -2609,10 +2661,10 @@ export default function WeeklyMenuPage() {
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-2">
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ 
-                                background: dish.role === 'main' ? colors.accent : colors.blue,
+                                background: dish.role === 'main' ? colors.accent : dish.role === 'rice' ? '#8B4513' : colors.blue,
                                 color: '#fff'
                               }}>
-                                {dish.role === 'main' ? '主菜' : dish.role === 'soup' ? '汁物' : '副菜'}
+                                {dish.role === 'main' ? '主菜' : dish.role === 'soup' ? '汁物' : dish.role === 'rice' ? '主食' : '副菜'}
                               </span>
                               <span style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{dish.name}</span>
                             </div>

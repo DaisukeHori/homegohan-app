@@ -161,7 +161,7 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
           "dishes": [
             {
               "name": "料理名", 
-              "role": "主食", 
+              "role": "主菜", 
               "cal": 200, 
               "protein": 10, 
               "description": "簡潔な説明",
@@ -175,15 +175,23 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
               "protein": 3,
               "ingredients": ["豆腐 50g", "わかめ 適量", "味噌 大さじ1"],
               "recipeSteps": ["1. 出汁をとる", "2. 具材を入れる", "3. 味噌を溶く"]
+            },
+            {
+              "name": "ご飯", 
+              "role": "主食", 
+              "cal": 240, 
+              "protein": 4,
+              "ingredients": ["白米 150g（1膳）"],
+              "recipeSteps": ["1. 炊飯器で炊く"]
             }
           ],
-          "totalCalories": 250,
+          "totalCalories": 490,
           "cookingTime": "15分"
         },
         { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分" },
         { "mealType": "dinner", "dishes": [...], "totalCalories": 600, "cookingTime": "30分" }
       ],
-      "dailyTotalCalories": 1350,
+      "dailyTotalCalories": 1590,
       "nutritionalAdvice": "この日の栄養ポイント"
     }
   ],
@@ -197,6 +205,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 **重要: 
 - days配列には必ず7つのオブジェクト（7日分）を含めてください
 - **各料理（dish）にcal、role、ingredients（材料配列）、recipeSteps（手順配列）を必ず含めてください**
+- roleは 主菜, 副菜, 汁物, 主食（ご飯・パン・麺等）のいずれか
+- 和食の食事には必ずご飯（主食）を含め、洋食にはパン、中華には麺やご飯を含めてください
 - 各料理のingredientsは「食材名 分量」形式の配列にしてください
 - 各料理のrecipeStepsは番号付き手順（3〜5ステップ）の配列にしてください
 - 健康状態に応じた除外食材は絶対に使用しないでください

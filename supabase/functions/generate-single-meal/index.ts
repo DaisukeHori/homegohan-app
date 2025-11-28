@@ -157,10 +157,18 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       "protein": 2,
       "ingredients": ["豆腐 50g", "わかめ 適量", "味噌 大さじ1"],
       "recipeSteps": ["1. 出汁をとる", "2. 具材を入れる", "3. 味噌を溶く"]
+    },
+    { 
+      "name": "ご飯", 
+      "role": "rice", 
+      "calories": 240, 
+      "protein": 4,
+      "ingredients": ["白米 150g（1膳）"],
+      "recipeSteps": ["1. 炊飯器で炊く"]
     }
   ],
   "totalCalories": ${targetMealCalories},
-  "totalProtein": 30,
+  "totalProtein": 34,
   "cookingTime": "20分",
   "nutritionalAdvice": "この食事の栄養ポイント（健康状態を考慮したアドバイス）"
 }
@@ -170,6 +178,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 - アレルギー食材は絶対に使用しないでください
 - 目標カロリー${targetMealCalories}kcal前後になるよう調整してください
 - 各料理にcalories、role、ingredients、recipeStepsを必ず含めてください
+- roleは main（主菜）, side（副菜）, soup（汁物）, rice（主食：ご飯・パン・麺等）のいずれか
+- 和食には必ずご飯（rice）を含め、洋食にはパン、中華には麺やご飯を含めてください
 - 各料理のingredientsには「食材名 分量」形式で材料を含めてください
 - 各料理のrecipeStepsには番号付きで3〜5ステップの調理手順を含めてください**
 `
