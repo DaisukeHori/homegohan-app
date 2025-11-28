@@ -119,29 +119,44 @@ ${preferences.healthy ? '- ヘルシー志向（低カロリー・高タンパ�
 ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 
 【出力形式】
-以下のJSON形式で出力してください：
+以下のJSON形式で出力してください。**各料理ごとに材料とレシピを含めてください**：
 {
   "dishes": [
-    { "name": "主菜名", "role": "main", "calories": 300, "protein": 20, "description": "簡潔な説明" },
-    { "name": "副菜名", "role": "side", "calories": 50, "protein": 3 },
-    { "name": "副菜名2", "role": "side", "calories": 40, "protein": 2 },
-    { "name": "汁物名", "role": "soup", "calories": 30, "protein": 2 }
+    { 
+      "name": "主菜名", 
+      "role": "main", 
+      "calories": 300, 
+      "protein": 20, 
+      "description": "簡潔な説明",
+      "ingredients": ["鶏むね肉 200g", "玉ねぎ 1/2個", "塩 少々"],
+      "recipeSteps": ["1. 鶏肉を一口大に切る", "2. フライパンで焼く", "3. 野菜と炒める"]
+    },
+    { 
+      "name": "副菜名", 
+      "role": "side", 
+      "calories": 50, 
+      "protein": 3,
+      "ingredients": ["ブロッコリー 1/2株", "オリーブオイル 小さじ1"],
+      "recipeSteps": ["1. ブロッコリーを小房に分ける", "2. 茹でる", "3. オイルをかける"]
+    },
+    { 
+      "name": "汁物名", 
+      "role": "soup", 
+      "calories": 30, 
+      "protein": 2,
+      "ingredients": ["しめじ 50g", "牛乳 100ml", "コンソメ 小さじ1/2"],
+      "recipeSteps": ["1. しめじをほぐす", "2. 鍋で煮る", "3. 牛乳を加える"]
+    }
   ],
-  "totalCalories": 420,
-  "totalProtein": 27,
+  "totalCalories": 380,
+  "totalProtein": 25,
   "cookingTime": "20分",
-  "nutritionalAdvice": "この食事のポイント",
-  "ingredients": ["鶏むね肉 200g", "玉ねぎ 1/2個", "にんじん 1/3本", "..."],
-  "recipeSteps": [
-    "1. 鶏肉を一口大に切り、塩コショウで下味をつける",
-    "2. 野菜を食べやすい大きさに切る",
-    "3. フライパンに油を熱し、鶏肉を焼く",
-    "4. 野菜を加えて炒め合わせる",
-    "5. 調味料を加えて味を調える"
-  ]
+  "nutritionalAdvice": "この食事のポイント"
 }
 
-**重要: ingredientsには「食材名 分量」の形式で全ての材料を含めてください。recipeStepsには番号付きで具体的な調理手順を含めてください（5〜8ステップ程度）**
+**重要: 
+- 各dishに必ずingredients（「食材名 分量」形式の配列）とrecipeSteps（番号付き手順の配列）を含めてください
+- 各料理のレシピは3〜5ステップ程度で具体的に記載してください**
 `
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -189,16 +204,18 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       }
     }
 
-    // 5. dishes配列を作成（可変数対応）
+    // 5. dishes配列を作成（可変数対応・各料理にingredients/recipeSteps含む）
     const aiDishes = newMealData.dishes || []
     
-    // 配列形式でdishesを保存
+    // 配列形式でdishesを保存（各料理の材料・レシピも含む）
     const dishesArray = aiDishes.map((d: any) => ({
       name: d.name,
       cal: d.calories || 0,
       protein: d.protein || 0,
       role: d.role || 'side',
-      ingredient: d.description || ''
+      ingredient: d.description || '',
+      ingredients: d.ingredients || [],
+      recipeSteps: d.recipeSteps || []
     }))
     
     const mainDish = aiDishes.find((d: any) => d.role === 'main') || aiDishes[0] || { name: '献立', calories: 0 }
@@ -206,6 +223,9 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
     
     // 総タンパク質を計算
     const totalProtein = newMealData.totalProtein || dishesArray.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
+    
+    // 全料理の材料を統合（買い物リスト用）
+    const allIngredients = aiDishes.flatMap((d: any) => d.ingredients || [])
 
     // 6. planned_mealsを更新
     const { error: updateError } = await supabase
@@ -213,8 +233,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       .update({
         dish_name: allDishNames,
         description: newMealData.nutritionalAdvice || `調理時間: ${newMealData.cookingTime || ''}`,
-        ingredients: newMealData.ingredients || null,
-        recipe_steps: newMealData.recipeSteps || null,
+        ingredients: allIngredients.length > 0 ? allIngredients : null,
+        recipe_steps: null, // 各料理ごとのレシピはdishes内に保存
         calories_kcal: newMealData.totalCalories || mainDish.calories || null,
         protein_g: totalProtein || null,
         image_url: imageUrl,

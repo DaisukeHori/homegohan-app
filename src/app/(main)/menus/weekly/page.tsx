@@ -2600,58 +2600,109 @@ export default function WeeklyMenuPage() {
                     </div>
                   </div>
 
-                  {/* 料理一覧 */}
-                  {selectedRecipeData?.dishes && selectedRecipeData.dishes.length > 0 && (
-                    <div className="mb-4">
-                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🍽 メニュー</p>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedRecipeData.dishes.map((dish: any, idx: number) => (
-                          <span key={idx} className="px-2.5 py-1 rounded-full text-xs" style={{ background: colors.bg, color: colors.text }}>
-                            {dish.name} {dish.cal && `(${dish.cal}kcal)`}
-                          </span>
-                        ))}
+                  {/* 各料理ごとの材料・レシピ */}
+                  {selectedRecipeData?.dishes && selectedRecipeData.dishes.length > 0 ? (
+                    <div className="space-y-4">
+                      {selectedRecipeData.dishes.map((dish: any, idx: number) => (
+                        <div key={idx} className="rounded-xl p-3" style={{ background: colors.bg }}>
+                          {/* 料理名とカロリー */}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ 
+                                background: dish.role === 'main' ? colors.accent : colors.blue,
+                                color: '#fff'
+                              }}>
+                                {dish.role === 'main' ? '主菜' : dish.role === 'soup' ? '汁物' : '副菜'}
+                              </span>
+                              <span style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{dish.name}</span>
+                            </div>
+                            <span style={{ fontSize: 11, color: colors.textMuted }}>{dish.cal || '-'}kcal</span>
+                          </div>
+
+                          {/* この料理の材料 */}
+                          {dish.ingredients && dish.ingredients.length > 0 && (
+                            <div className="mb-3">
+                              <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, margin: '0 0 6px' }}>🥕 材料</p>
+                              <ul className="space-y-1">
+                                {dish.ingredients.map((ing: string, ingIdx: number) => (
+                                  <li key={ingIdx} className="flex items-center gap-2" style={{ fontSize: 12, color: colors.text }}>
+                                    <span className="w-1 h-1 rounded-full" style={{ background: colors.accent }}></span>
+                                    {ing}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* この料理のレシピ */}
+                          {dish.recipeSteps && dish.recipeSteps.length > 0 && (
+                            <div>
+                              <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, margin: '0 0 6px' }}>👨‍🍳 作り方</p>
+                              <ol className="space-y-1.5">
+                                {dish.recipeSteps.map((step: string, stepIdx: number) => (
+                                  <li key={stepIdx} className="flex gap-2" style={{ fontSize: 12, color: colors.text }}>
+                                    <span className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: colors.accent, color: '#fff' }}>
+                                      {stepIdx + 1}
+                                    </span>
+                                    <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+                          )}
+
+                          {/* 材料もレシピもない場合 */}
+                          {(!dish.ingredients || dish.ingredients.length === 0) && (!dish.recipeSteps || dish.recipeSteps.length === 0) && (
+                            <p style={{ fontSize: 11, color: colors.textMuted }}>
+                              「AIで変更」で再生成するとレシピが表示されます
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    /* 旧形式（食事全体に材料・レシピがある場合）のフォールバック */
+                    <div>
+                      {/* 材料 */}
+                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
+                      <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
+                        {selectedRecipeData?.ingredients && selectedRecipeData.ingredients.length > 0 ? (
+                          <ul className="space-y-1.5">
+                            {selectedRecipeData.ingredients.map((ing: string, idx: number) => (
+                              <li key={idx} className="flex items-center gap-2" style={{ fontSize: 13, color: colors.text }}>
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.accent }}></span>
+                                {ing}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>
+                        )}
+                      </div>
+
+                      {/* 作り方 */}
+                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>👨‍🍳 作り方</p>
+                      <div className="rounded-xl p-3" style={{ background: colors.bg }}>
+                        {selectedRecipeData?.recipeSteps && selectedRecipeData.recipeSteps.length > 0 ? (
+                          <ol className="space-y-3">
+                            {selectedRecipeData.recipeSteps.map((step: string, idx: number) => (
+                              <li key={idx} className="flex gap-3" style={{ fontSize: 13, color: colors.text }}>
+                                <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: colors.accent, color: '#fff' }}>
+                                  {idx + 1}
+                                </span>
+                                <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        ) : (
+                          <p style={{ fontSize: 13, color: colors.textMuted }}>
+                            レシピはAI献立を生成すると自動で作成されます。<br />
+                            「AIで変更」ボタンから再生成してください。
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}
-
-                  {/* 材料 */}
-                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
-                  <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                    {selectedRecipeData?.ingredients && selectedRecipeData.ingredients.length > 0 ? (
-                      <ul className="space-y-1.5">
-                        {selectedRecipeData.ingredients.map((ing: string, idx: number) => (
-                          <li key={idx} className="flex items-center gap-2" style={{ fontSize: 13, color: colors.text }}>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.accent }}></span>
-                            {ing}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>
-                    )}
-                  </div>
-
-                  {/* 作り方 */}
-                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>👨‍🍳 作り方</p>
-                  <div className="rounded-xl p-3" style={{ background: colors.bg }}>
-                    {selectedRecipeData?.recipeSteps && selectedRecipeData.recipeSteps.length > 0 ? (
-                      <ol className="space-y-3">
-                        {selectedRecipeData.recipeSteps.map((step: string, idx: number) => (
-                          <li key={idx} className="flex gap-3" style={{ fontSize: 13, color: colors.text }}>
-                            <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: colors.accent, color: '#fff' }}>
-                              {idx + 1}
-                            </span>
-                            <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p style={{ fontSize: 13, color: colors.textMuted }}>
-                        レシピはAI献立を生成すると自動で作成されます。<br />
-                        「AIで変更」ボタンから再生成してください。
-                      </p>
-                    )}
-                  </div>
                 </div>
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
