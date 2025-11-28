@@ -554,7 +554,7 @@ export default function AIChatBubble() {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
             onClick={openChat}
-            className="fixed bottom-24 right-4 z-[30] w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
+            className="fixed bottom-24 right-4 z-[40] w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
             style={{ 
               background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.warning} 100%)`,
             }}

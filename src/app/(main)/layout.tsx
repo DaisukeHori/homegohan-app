@@ -153,12 +153,11 @@ export default function MainLayout({
       </aside>
 
       {/* メインコンテンツ */}
-      <main className="flex-1 lg:ml-64 relative z-0 min-h-screen">
+      <main className="flex-1 lg:ml-64 relative min-h-screen">
         {children}
+        {/* AIチャットバブル - モーダルのオーバーレイでカバーされるようにmain内に配置 */}
+        <AIChatBubble />
       </main>
-
-      {/* AIチャットバブル */}
-      <AIChatBubble />
 
       {/* モバイル用ボトムナビゲーション (Floating) */}
       <div className="lg:hidden fixed bottom-4 left-0 right-0 z-50 flex justify-center px-4">
