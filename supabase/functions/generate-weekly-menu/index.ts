@@ -210,7 +210,13 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 - 各料理のingredientsは「食材名 分量」形式の配列にしてください
 - 各料理のrecipeStepsは番号付き手順（3〜5ステップ）の配列にしてください
 - 健康状態に応じた除外食材は絶対に使用しないでください
-- 調理時間は平日${profile.weekday_cooking_minutes || 30}分、休日${profile.weekend_cooking_minutes || 60}分を目安に**
+- 調理時間は平日${profile.weekday_cooking_minutes || 30}分、休日${profile.weekend_cooking_minutes || 60}分を目安に
+
+【各食事のバランスルール】
+- 同じ役割（role）の料理を1食に複数入れない（例：味噌汁と豚汁を両方入れない、ご飯とパンを両方入れない）
+- 似たような調理法や味付けの料理を1食に複数入れない（例：炒め物が2品、煮物が2品など）
+- 1食の中で味・食感・温度にバリエーションを持たせる
+- 例外：中華セット（ラーメン＋チャーハン）や定食スタイル（丼＋小鉢＋汁物）は食文化として自然な組み合わせ**
 `
 
     console.log('Sending personalized prompt to knowledge-gpt...')

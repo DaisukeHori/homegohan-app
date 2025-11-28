@@ -729,21 +729,62 @@ export default function WeeklyMenuPage() {
   const addRecipeToShoppingList = async () => {
     if (!selectedRecipeData || !currentPlan) return;
     try {
+      // 材料を収集：dishes内の各料理の材料 + 旧形式のingredientsを統合
+      let allIngredients: string[] = [];
+      
+      // dishes配列から材料を収集
+      if (selectedRecipeData.dishes && Array.isArray(selectedRecipeData.dishes)) {
+        selectedRecipeData.dishes.forEach((dish: any) => {
+          if (dish.ingredients && Array.isArray(dish.ingredients)) {
+            allIngredients = [...allIngredients, ...dish.ingredients];
+          }
+        });
+      }
+      
+      // 旧形式の材料も追加（フォールバック）
+      if (selectedRecipeData.ingredients && Array.isArray(selectedRecipeData.ingredients)) {
+        allIngredients = [...allIngredients, ...selectedRecipeData.ingredients];
+      }
+      
+      // 重複を除去
+      allIngredients = [...new Set(allIngredients)];
+      
+      if (allIngredients.length === 0) {
+        alert('材料情報がありません。「AIで変更」で再生成してください。');
+        return;
+      }
+      
+      // 文字列形式 "鶏むね肉 200g" を {name, amount} 形式にパース
+      const parsedIngredients = allIngredients.map((ing: string) => {
+        // 最後のスペースで分割して分量を抽出（例: "鶏むね肉 200g" → name: "鶏むね肉", amount: "200g"）
+        const match = ing.match(/^(.+?)\s+(\d+.*|少々|適量|適宜)$/);
+        if (match) {
+          return { name: match[1], amount: match[2] };
+        }
+        return { name: ing, amount: null };
+      });
+      
       const res = await fetch('/api/shopping-list/add-recipe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           mealPlanId: currentPlan.id,
-          ingredients: selectedRecipeData.ingredients 
+          ingredients: parsedIngredients 
         })
       });
       if (res.ok) {
         const { items } = await res.json();
         setShoppingList(prev => [...prev, ...items]);
-        alert('材料を買い物リストに追加しました');
+        alert(`${parsedIngredients.length}件の材料を買い物リストに追加しました`);
         setActiveModal(null);
+      } else {
+        const err = await res.json();
+        alert(`エラー: ${err.error || '追加に失敗しました'}`);
       }
-    } catch (e) { alert("追加に失敗しました"); }
+    } catch (e) { 
+      console.error('Add to shopping list error:', e);
+      alert("追加に失敗しました"); 
+    }
   };
 
   // Generate weekly menu with AI
