@@ -978,6 +978,7 @@ export async function POST(
         body: JSON.stringify({
           messages,
           mode: 'chat', // チャットモード（自然言語での応答）
+          stream: true, // 内部でストリーミング処理してタイムアウト回避
         }),
       });
 

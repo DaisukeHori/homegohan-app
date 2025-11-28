@@ -1,9 +1,6 @@
 // filename: supabase/functions/knowledge-gpt/index.ts
 // OpenAI Chat Completions API 互換のエンドポイント（ストリーミング対応）
 // 内部で OpenAI Agents SDK（ナレッジ付き）を呼び出す
-// プロンプトは呼び出し元から渡される（このFunction内には固定しない）
-// mode: 'json' = JSON出力（献立生成用）, mode: 'chat' = 自然言語（AIアシスタント用）
-// stream: true = ストリーミングレスポンス
 
 import {
   fileSearchTool,
@@ -14,7 +11,7 @@ import {
 } from "@openai/agents";
 import { corsHeaders } from '../_shared/cors.ts'
 
-console.log("Knowledge-GPT Function loaded (Streaming Support)")
+console.log("Knowledge-GPT Function loaded (Streaming v2)")
 
 // ===== Tool definitions (Vector Store) =====
 const fileSearch = fileSearchTool([
@@ -86,7 +83,7 @@ async function runAgent(systemPrompt: string, userMessage: string, mode: string 
     const agent = new Agent({
       name: "knowledge-gpt",
       instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
-      model: "gpt-5-mini",
+      model: "gpt-4.1-mini",
       tools: [fileSearch],
     });
 
@@ -141,7 +138,7 @@ async function runAgent(systemPrompt: string, userMessage: string, mode: string 
 }
 
 // ===== ストリーミングエージェント実行 =====
-async function* runAgentStreaming(systemPrompt: string, userMessage: string, mode: string = 'json'): AsyncGenerator<string, void, unknown> {
+async function runAgentStreamingCollect(systemPrompt: string, userMessage: string, mode: string = 'json'): Promise<{ content: string; chunks: string[] }> {
   let enhancedSystemPrompt = systemPrompt;
   
   if (mode === 'json') {
@@ -151,7 +148,7 @@ async function* runAgentStreaming(systemPrompt: string, userMessage: string, mod
   const agent = new Agent({
     name: "knowledge-gpt",
     instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
-    model: "gpt-5-mini",
+    model: "gpt-4.1-mini",
     tools: [fileSearch],
   });
 
@@ -173,28 +170,64 @@ async function* runAgentStreaming(systemPrompt: string, userMessage: string, mod
   const stream = runner.runStreamed(agent, [...conversationHistory]);
   
   let fullContent = "";
+  const chunks: string[] = [];
   
   for await (const event of stream) {
+    console.log("Stream event type:", event.type);
+    
     // raw_model_stream_event からテキストチャンクを取得
     if (event.type === 'raw_model_stream_event') {
       const data = event.data as any;
-      if (data?.type === 'content_block_delta' && data?.delta?.text) {
-        fullContent += data.delta.text;
-        yield data.delta.text;
-      } else if (data?.type === 'response.output_text.delta' && data?.delta) {
+      console.log("Raw event data type:", data?.type);
+      
+      // OpenAI Responses API形式
+      if (data?.type === 'response.output_text.delta' && data?.delta) {
         fullContent += data.delta;
-        yield data.delta;
+        chunks.push(data.delta);
+      }
+      // Anthropic形式
+      else if (data?.type === 'content_block_delta' && data?.delta?.text) {
+        fullContent += data.delta.text;
+        chunks.push(data.delta.text);
+      }
+    }
+    // run_item_stream_event でアシスタントの出力を取得
+    else if (event.type === 'run_item_stream_event') {
+      const item = event.item as any;
+      if (item?.type === 'message_output_item' && item?.rawItem?.content) {
+        for (const content of item.rawItem.content) {
+          if (content.type === 'output_text' && content.text) {
+            if (!fullContent.includes(content.text)) {
+              fullContent = content.text;
+              chunks.push(content.text);
+            }
+          }
+        }
       }
     }
   }
   
-  // 何も出力されなかった場合、最終結果を取得して一括で返す
-  if (!fullContent && stream.finalOutput) {
-    const output = typeof stream.finalOutput === 'object' 
-      ? JSON.stringify(stream.finalOutput) 
-      : String(stream.finalOutput);
-    yield mode === 'json' ? stripMarkdownCodeBlock(output) : output;
+  // ストリーミングが完了したら最終結果を確認
+  const finalOutput = stream.finalOutput;
+  console.log("Final output type:", typeof finalOutput);
+  
+  if (!fullContent && finalOutput) {
+    if (typeof finalOutput === 'object') {
+      fullContent = JSON.stringify(finalOutput);
+    } else {
+      fullContent = String(finalOutput);
+    }
+    chunks.push(fullContent);
   }
+  
+  // JSONモードの場合のみMarkdownコードブロックを除去
+  if (mode === 'json') {
+    fullContent = stripMarkdownCodeBlock(fullContent);
+  }
+  
+  console.log("Streaming completed, total content length:", fullContent.length, "chunks:", chunks.length);
+  
+  return { content: fullContent, chunks };
 }
 
 // ===== Edge Function HTTP ハンドラ =====
@@ -225,78 +258,26 @@ Deno.serve(async (req) => {
     const userMessages = body.messages.filter(m => m.role === "user").map(m => m.content);
     const userMessage = userMessages.join("\n\n");
     const mode = body.mode || 'json';
-    const stream = body.stream || false;
+    const useStreaming = body.stream || false;
 
     console.log("Knowledge-GPT received request");
     console.log("System prompt length:", systemMessage.length);
     console.log("User message length:", userMessage.length);
-    console.log("Mode:", mode, "Stream:", stream);
+    console.log("Mode:", mode, "Stream:", useStreaming);
 
-    // ストリーミングモード
-    if (stream) {
-      const encoder = new TextEncoder();
-      const responseId = `chatcmpl-${crypto.randomUUID()}`;
-      
-      const readableStream = new ReadableStream({
-        async start(controller) {
-          try {
-            const generator = runAgentStreaming(systemMessage, userMessage, mode);
-            
-            for await (const chunk of generator) {
-              // OpenAI SSE形式でチャンクを送信
-              const sseData = {
-                id: responseId,
-                object: "chat.completion.chunk",
-                created: Math.floor(Date.now() / 1000),
-                model: "knowledge-gpt-1",
-                choices: [{
-                  index: 0,
-                  delta: { content: chunk },
-                  finish_reason: null,
-                }],
-              };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(sseData)}\n\n`));
-            }
-            
-            // 終了メッセージ
-            const endData = {
-              id: responseId,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model: "knowledge-gpt-1",
-              choices: [{
-                index: 0,
-                delta: {},
-                finish_reason: "stop",
-              }],
-            };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(endData)}\n\n`));
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            controller.close();
-          } catch (error: any) {
-            console.error("Streaming error:", error);
-            const errorData = { error: { message: error.message, type: "internal_error" } };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorData)}\n\n`));
-            controller.close();
-          }
-        },
-      });
+    let agentOutput: string;
 
-      return new Response(readableStream, {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-        },
-      });
+    if (useStreaming) {
+      // ストリーミングモードだが、内部で収集して非ストリーミングレスポンスを返す
+      // これにより、タイムアウトを回避しつつ、呼び出し側は通常のJSONレスポンスを受け取れる
+      const { content } = await runAgentStreamingCollect(systemMessage, userMessage, mode);
+      agentOutput = content;
+    } else {
+      // 非ストリーミングモード（従来通り）
+      agentOutput = await runAgent(systemMessage, userMessage, mode);
     }
 
-    // 非ストリーミングモード（従来通り）
-    const agentOutput = await runAgent(systemMessage, userMessage, mode);
-
-    console.log("Knowledge-GPT agent completed, output length:", agentOutput.length);
+    console.log("Knowledge-GPT completed, output length:", agentOutput.length);
 
     const response: ChatCompletionResponse = {
       id: `chatcmpl-${crypto.randomUUID()}`,
