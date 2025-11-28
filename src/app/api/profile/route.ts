@@ -56,6 +56,23 @@ export async function POST(request: Request) {
     if (body.height) updates.height = parseFloat(body.height);
     if (body.weight) updates.weight = parseFloat(body.weight);
 
+    // 栄養目標・運動関連
+    if (body.nutritionGoal) updates.nutrition_goal = body.nutritionGoal;
+    if (body.weightChangeRate) updates.weight_change_rate = body.weightChangeRate;
+    if (body.exerciseTypes) updates.exercise_types = body.exerciseTypes;
+    if (body.exerciseFrequency) updates.exercise_frequency = parseInt(body.exerciseFrequency);
+    if (body.exerciseIntensity) updates.exercise_intensity = body.exerciseIntensity;
+    if (body.exerciseDurationPerSession) updates.exercise_duration_per_session = parseInt(body.exerciseDurationPerSession);
+    if (body.workStyle) updates.work_style = body.workStyle;
+    if (body.healthConditions) updates.health_conditions = body.healthConditions;
+    if (body.medications) updates.medications = body.medications;
+    if (body.fitnessGoals) updates.fitness_goals = body.fitnessGoals;
+    if (body.dietFlags) updates.diet_flags = body.dietFlags;
+    if (body.cookingExperience) updates.cooking_experience = body.cookingExperience;
+    if (body.weekdayCookingMinutes) updates.weekday_cooking_minutes = parseInt(body.weekdayCookingMinutes);
+    if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;
+    if (body.familySize) updates.family_size = parseInt(body.familySize);
+
     // デフォルト値の補完（必須カラムエラー回避）
     if (!updates.nickname) updates.nickname = 'Guest'; 
     if (!updates.age_group && !updates.age) updates.age_group = 'unspecified';

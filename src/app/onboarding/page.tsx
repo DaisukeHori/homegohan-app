@@ -6,67 +6,121 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
 
-// 質問データの定義（拡充版）
+// 質問データの定義（運動・目標・健康情報を詳細に収集）
 const QUESTIONS = [
   {
     id: 'nickname',
-    text: 'はじめまして。私はあなたの食生活をサポートするAIパートナーです。\nまずは、あなたのことを教えてください。\n\nお名前（ニックネーム）は何とお呼びしましょうか？',
+    text: 'はじめまして！🍳\n私はあなたの食生活をサポートするAI栄養士です。\n\nお名前（ニックネーム）を教えてください',
     type: 'text',
     placeholder: '例: たろう',
     required: true,
   },
   {
     id: 'gender',
-    text: '{nickname}さん、こんにちは！\nより正確な栄養分析のために、性別を教えていただけますか？',
+    text: '{nickname}さん、よろしくお願いします！\n\n正確な栄養計算のために、性別を教えてください',
     type: 'choice',
     options: [
-      { label: '男性', value: 'male' },
-      { label: '女性', value: 'female' },
-      { label: '回答しない', value: 'unspecified' },
+      { label: '👨 男性', value: 'male' },
+      { label: '👩 女性', value: 'female' },
+      { label: '🙂 回答しない', value: 'unspecified' },
     ]
   },
   {
     id: 'body_stats',
-    text: 'よりパーソナライズするために、\n年齢・職業・身長・体重を教えていただけますか？\n（正確な基礎代謝の計算に使用します）',
+    text: '基礎代謝を計算するために、\n身体情報を教えてください',
     type: 'custom_stats',
   },
   {
-    id: 'fitness_goals',
-    text: '食事で達成したい目標を教えてください。\n（複数選択可）',
+    id: 'nutrition_goal',
+    text: '一番の目標は何ですか？',
+    type: 'choice',
+    options: [
+      { label: '🏃 減量・ダイエット', value: 'lose_weight', description: '体重を落としたい' },
+      { label: '💪 筋肉増量・バルクアップ', value: 'gain_muscle', description: '筋肉をつけたい' },
+      { label: '⚖️ 現状維持・健康管理', value: 'maintain', description: '今の体型を維持したい' },
+      { label: '🏆 競技パフォーマンス', value: 'athlete_performance', description: '大会・試合に向けて' },
+    ]
+  },
+  {
+    id: 'weight_change_rate',
+    text: 'どのくらいのペースで変えたいですか？',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => 
+      answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
+    options: [
+      { label: '🐢 ゆっくり（月1-2kg）', value: 'slow', description: '無理なく長期的に' },
+      { label: '🚶 普通（月2-3kg）', value: 'moderate', description: 'バランス重視' },
+      { label: '🚀 積極的（月3kg以上）', value: 'aggressive', description: '短期集中で' },
+    ]
+  },
+  {
+    id: 'exercise_types',
+    text: '普段どんな運動をしていますか？\n（複数選択可）',
     type: 'multi_choice',
     options: [
-      { label: '🏃 減量・ダイエット', value: 'lose_weight' },
-      { label: '💪 筋肉をつけたい', value: 'build_muscle' },
-      { label: '⚡ エネルギー・集中力UP', value: 'improve_energy' },
-      { label: '✨ 美肌・美容', value: 'improve_skin' },
-      { label: '🌿 腸活・便秘改善', value: 'gut_health' },
-      { label: '🛡️ 免疫力向上', value: 'immunity' },
-      { label: '🧠 集中力・脳活性', value: 'focus' },
-      { label: '❤️ 健康維持', value: 'health' },
+      { label: '🏋️ 筋トレ・ウェイト', value: 'weight_training' },
+      { label: '🏃 ランニング・ジョギング', value: 'running' },
+      { label: '🚴 サイクリング', value: 'cycling' },
+      { label: '🏊 水泳', value: 'swimming' },
+      { label: '🧘 ヨガ・ピラティス', value: 'yoga' },
+      { label: '⚽ 球技・チームスポーツ', value: 'team_sports' },
+      { label: '🥊 格闘技・ボクシング', value: 'martial_arts' },
+      { label: '🚶 ウォーキング', value: 'walking' },
+      { label: '❌ 運動していない', value: 'none' },
+    ],
+  },
+  {
+    id: 'exercise_frequency',
+    text: '週に何日運動していますか？',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => 
+      !answers.exercise_types?.includes('none'),
+    options: [
+      { label: '1日', value: '1' },
+      { label: '2日', value: '2' },
+      { label: '3日', value: '3' },
+      { label: '4日', value: '4' },
+      { label: '5日', value: '5' },
+      { label: '6日以上', value: '6' },
+    ]
+  },
+  {
+    id: 'exercise_intensity',
+    text: '運動の強度はどのくらいですか？',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => 
+      !answers.exercise_types?.includes('none'),
+    options: [
+      { label: '🚶 軽い（息が上がらない程度）', value: 'light', description: 'ウォーキング、軽いヨガなど' },
+      { label: '🏃 普通（少し息が上がる）', value: 'moderate', description: 'ジョギング、一般的な筋トレなど' },
+      { label: '🔥 激しい（かなり息が上がる）', value: 'intense', description: 'HIIT、高重量トレーニングなど' },
+      { label: '💪 アスリートレベル', value: 'athlete', description: '毎日ハードなトレーニング' },
+    ]
+  },
+  {
+    id: 'exercise_duration',
+    text: '1回の運動時間は？',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => 
+      !answers.exercise_types?.includes('none'),
+    options: [
+      { label: '⏱️ 30分未満', value: '30' },
+      { label: '⏱️ 30分〜1時間', value: '60' },
+      { label: '⏱️ 1〜2時間', value: '90' },
+      { label: '⏱️ 2時間以上', value: '120' },
     ]
   },
   {
     id: 'work_style',
-    text: '普段の仕事スタイルに近いものはどれですか？',
+    text: '普段の仕事・活動スタイルは？',
     type: 'choice',
     options: [
-      { label: '💻 デスクワーク中心', value: 'remote' },
-      { label: '🏢 オフィス勤務', value: 'fulltime' },
-      { label: '🚶 立ち仕事・移動多め', value: 'parttime' },
-      { label: '🔨 肉体労働', value: 'shift' },
+      { label: '💻 デスクワーク（座り仕事）', value: 'sedentary' },
+      { label: '🏢 オフィス（立ち座り半々）', value: 'light_active' },
+      { label: '🚶 立ち仕事・移動多め', value: 'moderately_active' },
+      { label: '🔨 肉体労働', value: 'very_active' },
       { label: '📚 学生', value: 'student' },
       { label: '🏠 主婦/主夫', value: 'homemaker' },
-    ]
-  },
-  {
-    id: 'exercise',
-    text: '週にどのくらい運動していますか？',
-    type: 'choice',
-    options: [
-      { label: '🚶 ほとんどしない（0-30分）', value: '0' },
-      { label: '🏃 軽い運動（30-60分）', value: '45' },
-      { label: '💪 定期的に運動（1-3時間）', value: '120' },
-      { label: '🏋️ しっかり運動（3時間以上）', value: '240' },
     ]
   },
   {
@@ -75,27 +129,43 @@ const QUESTIONS = [
     type: 'multi_choice',
     options: [
       { label: '📈 高血圧', value: '高血圧' },
-      { label: '🍬 糖尿病・血糖値が気になる', value: '糖尿病' },
-      { label: '🩸 脂質異常症・コレステロール', value: '脂質異常症' },
-      { label: '😴 睡眠の質が悪い', value: '睡眠障害' },
-      { label: '😫 ストレスが多い', value: 'ストレス' },
-      { label: '🩺 貧血気味', value: '貧血' },
+      { label: '🍬 糖尿病・血糖値', value: '糖尿病' },
+      { label: '🩸 脂質異常症', value: '脂質異常症' },
+      { label: '🫀 心臓病', value: '心臓病' },
+      { label: '🫁 腎臓病', value: '腎臓病' },
       { label: '🦴 骨粗しょう症', value: '骨粗しょう症' },
+      { label: '🩺 貧血', value: '貧血' },
+      { label: '🦶 痛風', value: '痛風' },
+      { label: '✅ 特になし', value: 'none' },
+    ],
+    allowSkip: true,
+  },
+  {
+    id: 'medications',
+    text: '服用中の薬はありますか？\n（食事に影響するものを選択）',
+    type: 'multi_choice',
+    options: [
+      { label: '💊 ワーファリン（血液サラサラ）', value: 'warfarin' },
+      { label: '💊 降圧剤', value: 'antihypertensive' },
+      { label: '💊 糖尿病薬', value: 'diabetes_medication' },
+      { label: '💊 利尿剤', value: 'diuretic' },
+      { label: '💊 抗生物質', value: 'antibiotics' },
+      { label: '💊 ステロイド', value: 'steroid' },
       { label: '✅ 特になし', value: 'none' },
     ],
     allowSkip: true,
   },
   {
     id: 'allergies',
-    text: '食物アレルギーや苦手な食材はありますか？\n（なければスキップ）',
+    text: '食物アレルギーや苦手な食材は？\n（なければスキップ）',
     type: 'tags',
     placeholder: '例: 卵、エビ、ピーマン',
-    suggestions: ['卵', 'エビ', 'カニ', '小麦', '乳製品', 'そば', '落花生', 'ナッツ類', '貝類', '魚卵'],
+    suggestions: ['卵', 'エビ', 'カニ', '小麦', '乳製品', 'そば', '落花生', 'ナッツ類', '貝類', '魚卵', '大豆'],
     allowSkip: true,
   },
   {
     id: 'cooking_experience',
-    text: '料理の経験はどのくらいですか？',
+    text: '料理の経験は？',
     type: 'choice',
     options: [
       { label: '🔰 初心者（1年未満）', value: 'beginner' },
@@ -150,6 +220,17 @@ export default function OnboardingPage() {
   const [tags, setTags] = useState<string[]>([]);
   const [isTyping, setIsTyping] = useState(false);
 
+  // 条件に基づいて次の質問を取得
+  const getNextQuestion = (fromStep: number, ans: Record<string, any>) => {
+    for (let i = fromStep + 1; i < QUESTIONS.length; i++) {
+      const q = QUESTIONS[i];
+      if (!q.showIf || q.showIf(ans)) {
+        return i;
+      }
+    }
+    return -1; // 終了
+  };
+
   const currentQuestion = QUESTIONS[currentStep];
 
   // 質問文の変数置換
@@ -169,10 +250,12 @@ export default function OnboardingPage() {
     setTags([]);
     setTagInput("");
 
-    if (currentStep < QUESTIONS.length - 1) {
+    const nextStep = getNextQuestion(currentStep, newAnswers);
+
+    if (nextStep !== -1) {
       setIsTyping(true);
       setTimeout(() => {
-        setCurrentStep(prev => prev + 1);
+        setCurrentStep(nextStep);
         setIsTyping(false);
       }, 600);
     } else {
@@ -181,11 +264,19 @@ export default function OnboardingPage() {
       // APIへ送信（拡張データ含む）
       try {
         const profileData = transformAnswersToProfile(newAnswers);
-        await fetch('/api/profile', {
+        const res = await fetch('/api/profile', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(profileData),
         });
+        
+        if (res.ok) {
+          // 栄養目標を自動計算
+          await fetch('/api/nutrition-targets/calculate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
       } catch (e) {
         console.error(e);
       }
@@ -230,15 +321,40 @@ export default function OnboardingPage() {
     const profile: Record<string, any> = {
       nickname: ans.nickname,
       gender: ans.gender,
-      age: ans.age,
+      age: ans.age ? parseInt(ans.age) : null,
       occupation: ans.occupation,
-      height: ans.height,
-      weight: ans.weight,
+      height: ans.height ? parseFloat(ans.height) : null,
+      weight: ans.weight ? parseFloat(ans.weight) : null,
     };
 
-    // 目標
-    if (ans.fitness_goals?.length) {
-      profile.fitnessGoals = ans.fitness_goals.filter((g: string) => g !== 'none');
+    // 栄養目標
+    if (ans.nutrition_goal) {
+      profile.nutritionGoal = ans.nutrition_goal;
+    }
+
+    // 体重変化ペース
+    if (ans.weight_change_rate) {
+      profile.weightChangeRate = ans.weight_change_rate;
+    }
+
+    // 運動の種類
+    if (ans.exercise_types?.length && !ans.exercise_types.includes('none')) {
+      profile.exerciseTypes = ans.exercise_types;
+    }
+
+    // 運動頻度
+    if (ans.exercise_frequency) {
+      profile.exerciseFrequency = parseInt(ans.exercise_frequency);
+    }
+
+    // 運動強度
+    if (ans.exercise_intensity) {
+      profile.exerciseIntensity = ans.exercise_intensity;
+    }
+
+    // 運動時間
+    if (ans.exercise_duration) {
+      profile.exerciseDurationPerSession = parseInt(ans.exercise_duration);
     }
 
     // 仕事スタイル
@@ -246,14 +362,14 @@ export default function OnboardingPage() {
       profile.workStyle = ans.work_style;
     }
 
-    // 運動時間
-    if (ans.exercise) {
-      profile.weeklyExerciseMinutes = parseInt(ans.exercise) * 7;
+    // 健康状態
+    if (ans.health_conditions?.length && !ans.health_conditions.includes('none')) {
+      profile.healthConditions = ans.health_conditions;
     }
 
-    // 健康状態
-    if (ans.health_conditions?.length) {
-      profile.healthConditions = ans.health_conditions.filter((h: string) => h !== 'none');
+    // 服用中の薬
+    if (ans.medications?.length && !ans.medications.includes('none')) {
+      profile.medications = ans.medications;
     }
 
     // アレルギー
@@ -291,6 +407,22 @@ export default function OnboardingPage() {
     return profile;
   };
 
+  // 進捗計算（条件付き質問を考慮）
+  const calculateProgress = () => {
+    let total = 0;
+    let current = 0;
+    for (let i = 0; i < QUESTIONS.length; i++) {
+      const q = QUESTIONS[i];
+      if (!q.showIf || q.showIf(answers)) {
+        total++;
+        if (i <= currentStep) current++;
+      }
+    }
+    return { current, total };
+  };
+
+  const progress = calculateProgress();
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex flex-col items-center justify-between p-6 max-w-lg mx-auto overflow-hidden">
       
@@ -298,14 +430,14 @@ export default function OnboardingPage() {
       <div className="w-full pt-8">
         <div className="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
           <span>Setup Profile</span>
-          <span>{currentStep + 1} / {QUESTIONS.length}</span>
+          <span>{progress.current} / {progress.total}</span>
         </div>
         {/* プログレスバー */}
         <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
           <motion.div 
             className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full"
             initial={{ width: 0 }}
-            animate={{ width: `${((currentStep + 1) / QUESTIONS.length) * 100}%` }}
+            animate={{ width: `${(progress.current / progress.total) * 100}%` }}
             transition={{ duration: 0.3 }}
           />
         </div>
@@ -391,16 +523,18 @@ export default function OnboardingPage() {
 
               {/* 単一選択 */}
               {currentQuestion.type === 'choice' && (
-                <div className="flex flex-col gap-3">
-                  {currentQuestion.options?.map((option) => (
+                <div className="flex flex-col gap-3 max-h-[50vh] overflow-y-auto">
+                  {currentQuestion.options?.map((option: any) => (
                     <Button
                       key={option.value}
                       variant="outline"
                       onClick={() => handleAnswer(option.value)}
-                      className="w-full py-5 text-base rounded-2xl border-gray-200 hover:bg-orange-400 hover:text-white hover:border-orange-400 transition-all duration-300 font-bold text-gray-600 justify-between group px-6"
+                      className="w-full py-5 text-base rounded-2xl border-gray-200 hover:bg-orange-400 hover:text-white hover:border-orange-400 transition-all duration-300 font-bold text-gray-600 justify-between group px-6 flex-col items-start h-auto"
                     >
-                      {option.label}
-                      <svg className="w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4" /></svg>
+                      <span>{option.label}</span>
+                      {option.description && (
+                        <span className="text-xs font-normal text-gray-400 group-hover:text-orange-100">{option.description}</span>
+                      )}
                     </Button>
                   ))}
                 </div>
@@ -409,8 +543,8 @@ export default function OnboardingPage() {
               {/* 複数選択 */}
               {currentQuestion.type === 'multi_choice' && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-2">
-                    {currentQuestion.options?.map((option) => (
+                  <div className="grid grid-cols-2 gap-2 max-h-[40vh] overflow-y-auto">
+                    {currentQuestion.options?.map((option: any) => (
                       <Button
                         key={option.value}
                         variant="outline"
@@ -466,7 +600,7 @@ export default function OnboardingPage() {
                   
                   {/* サジェスト */}
                   <div className="flex flex-wrap gap-2">
-                    {currentQuestion.suggestions?.filter(s => !tags.includes(s)).map((suggestion) => (
+                    {currentQuestion.suggestions?.filter((s: string) => !tags.includes(s)).map((suggestion: string) => (
                       <button
                         key={suggestion}
                         onClick={() => handleAddTag(suggestion)}
