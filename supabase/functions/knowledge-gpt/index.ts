@@ -1,6 +1,7 @@
 // filename: supabase/functions/knowledge-gpt/index.ts
 // OpenAI Chat Completions API 互換のエンドポイント
 // 内部で OpenAI Agents SDK（ナレッジ付き）を呼び出す
+// プロンプトは呼び出し元から渡される（このFunction内には固定しない）
 
 import {
   fileSearchTool,
@@ -9,7 +10,6 @@ import {
   Runner,
   withTrace,
 } from "@openai/agents";
-import { z } from "zod";
 import { corsHeaders } from '../_shared/cors.ts'
 
 console.log("Knowledge-GPT Function loaded")
@@ -18,104 +18,6 @@ console.log("Knowledge-GPT Function loaded")
 const fileSearch = fileSearchTool([
   "vs_690c5840e4c48191bbe8798dc9f0a3a7",
 ]);
-
-// ===== 出力スキーマ（献立用） =====
-const KondateSchema = z.object({
-  days: z.array(
-    z.object({
-      date: z.string(),
-      meals: z.array(
-        z.object({
-          mealType: z.string(),
-          dishes: z.array(
-            z.object({
-              name: z.string(),
-              role: z.string(),
-              cal: z.any(),
-              protein: z.number(),
-              description: z.string().optional(),
-            }),
-          ),
-          totalCalories: z.any(),
-          cookingTime: z.string(),
-          ingredients: z.array(z.string()),
-          recipeSteps: z.array(z.string()),
-        }),
-      ),
-      dailyTotalCalories: z.any(),
-      nutritionalAdvice: z.string(),
-    }),
-  ),
-  weeklyAdvice: z.string(),
-  shoppingList: z.array(
-    z.object({
-      category: z.string(),
-      items: z.array(z.string()),
-    }),
-  ),
-});
-
-// ===== エージェント定義 =====
-const kondateAgent = new Agent({
-  name: "kondate",
-  instructions: `あなたは「ほめゴハン」アプリ専属のAI管理栄養士です。
-ユーザーの健康状態、目標、好み、制約に基づいて、完全にパーソナライズされた1週間分の献立を生成します。
-
-# あなたの役割
-- ユーザーを褒めながら、健康的で美味しい献立を提案
-- 栄養バランスを考慮したメニュー設計
-- 実際に作れる具体的なレシピを提供
-
-# 生成ルール
-
-## 必須要件
-1. **必ず7日分**の献立を生成（days配列に7つのオブジェクト）
-2. 各日に **朝食(breakfast)、昼食(lunch)、夕食(dinner)** を含める
-3. 各食事に **主菜(main)** を必ず1つ含める
-4. 各料理に **cal（カロリー）** と **protein（タンパク質）** を必ず付与
-5. 各食事に **ingredients（材料）** と **recipeSteps（作り方）** を必ず含める
-
-## 栄養目標（デフォルト）
-- 1日のカロリー: 1800-2200kcal
-- タンパク質: 60-80g
-- 脂質: 50-70g
-- 炭水化物: 250-300g
-
-## 料理の役割（role）
-- main: 主菜（メインディッシュ）
-- side: 副菜
-- soup: 汁物
-- rice: ご飯、パン、麺類
-- salad: サラダ
-- dessert: デザート
-
-## 材料リスト（ingredients）のフォーマット
-- 「食材名 分量」の形式で記載
-- 例: ["鶏むね肉 200g", "玉ねぎ 1/2個", "醤油 大さじ2"]
-
-## 調理手順（recipeSteps）のフォーマット
-- 番号付きで5-8ステップ程度
-
-# 禁止事項
-- アレルギー食材は**絶対に使用しない**
-- 苦手な食材は**避ける**
-
-# 出力形式
-必ず指定されたJSONスキーマに従って出力してください。
-
-献立サンプルはToolsの"Kondate"とレシピは"recipe"にいっぱい入ってます。
-適宜確認してそれを踏まえて回答してください。`,
-  model: "gpt-4.1-mini",
-  tools: [fileSearch],
-  outputType: KondateSchema,
-  modelSettings: {
-    reasoning: {
-      effort: "low",
-      summary: "auto",
-    },
-    store: true,
-  },
-});
 
 // ===== OpenAI API互換のリクエスト/レスポンス型 =====
 
@@ -152,8 +54,23 @@ interface ChatCompletionResponse {
 }
 
 // ===== エージェント実行 =====
-async function runAgent(userMessage: string): Promise<string> {
+async function runAgent(systemPrompt: string, userMessage: string): Promise<string> {
   return await withTrace("knowledge_gpt", async () => {
+    // エージェントを動的に作成（システムプロンプトを呼び出し元から受け取る）
+    const agent = new Agent({
+      name: "knowledge-gpt",
+      instructions: systemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
+      model: "gpt-4.1-mini",
+      tools: [fileSearch],
+      modelSettings: {
+        reasoning: {
+          effort: "low",
+          summary: "auto",
+        },
+        store: true,
+      },
+    });
+
     const conversationHistory: AgentInputItem[] = [
       {
         role: "user",
@@ -164,17 +81,37 @@ async function runAgent(userMessage: string): Promise<string> {
     const runner = new Runner({
       traceMetadata: {
         __trace_source__: "knowledge-gpt",
-        workflow_id: "wf_690c583127f48190bdc25d5f6070b40d04e6784c5b05232a",
+        workflow_id: "wf_knowledge_gpt_compatible",
       },
     });
 
-    const result = await runner.run(kondateAgent, [...conversationHistory]);
+    const result = await runner.run(agent, [...conversationHistory]);
     
     if (!result.finalOutput) {
+      // finalOutputがない場合、最後のアシスタントメッセージを探す
+      const lastAssistantItem = result.newItems.find(item => 
+        item.rawItem.role === 'assistant' && 
+        item.rawItem.content
+      );
+      
+      if (lastAssistantItem && Array.isArray(lastAssistantItem.rawItem.content)) {
+        const textContent = lastAssistantItem.rawItem.content.find(
+          (c: any) => c.type === 'output_text' || c.type === 'text'
+        );
+        if (textContent && textContent.text) {
+          return textContent.text;
+        }
+      }
+      
       throw new Error("Agent result is undefined");
     }
 
-    return JSON.stringify(result.finalOutput);
+    // finalOutputがオブジェクトならJSON文字列に変換
+    if (typeof result.finalOutput === 'object') {
+      return JSON.stringify(result.finalOutput);
+    }
+    
+    return String(result.finalOutput);
   });
 }
 
@@ -202,21 +139,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // messagesからユーザーの入力を抽出
-    // systemメッセージ + userメッセージを結合
+    // messagesからsystemメッセージとuserメッセージを分離
     const systemMessage = body.messages.find(m => m.role === "system")?.content || "";
     const userMessages = body.messages.filter(m => m.role === "user").map(m => m.content);
-    
-    const combinedInput = systemMessage 
-      ? `${systemMessage}\n\n${userMessages.join("\n")}`
-      : userMessages.join("\n");
+    const userMessage = userMessages.join("\n\n");
 
-    console.log("Knowledge-GPT received request, input length:", combinedInput.length);
+    console.log("Knowledge-GPT received request");
+    console.log("System prompt length:", systemMessage.length);
+    console.log("User message length:", userMessage.length);
 
-    // エージェント実行
-    const agentOutput = await runAgent(combinedInput);
+    // エージェント実行（システムプロンプトとユーザーメッセージを渡す）
+    const agentOutput = await runAgent(systemMessage, userMessage);
 
-    console.log("Knowledge-GPT agent completed");
+    console.log("Knowledge-GPT agent completed, output length:", agentOutput.length);
 
     // OpenAI API互換のレスポンスを生成
     const response: ChatCompletionResponse = {
@@ -235,7 +170,7 @@ Deno.serve(async (req) => {
         },
       ],
       usage: {
-        prompt_tokens: 0,  // エージェントSDKでは取得不可
+        prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
       },
@@ -259,4 +194,3 @@ Deno.serve(async (req) => {
     );
   }
 });
-
