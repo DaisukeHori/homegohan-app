@@ -1898,6 +1898,7 @@ export default function WeeklyMenuPage() {
                     setSelectedRecipeData({ 
                       name: dish.name,
                       role: dish.role,
+                      cal: dish.cal,
                       calories: dish.cal,
                       // この料理だけを配列に入れる（UIの互換性のため）
                       dishes: [dish],
@@ -1906,6 +1907,35 @@ export default function WeeklyMenuPage() {
                       recipeSteps: dish.recipeSteps || [],
                       // 全料理の材料（買い物リスト用）
                       allIngredients: dishesArray.flatMap(d => d.ingredients || []),
+                      // この料理の栄養素
+                      protein: dish.protein,
+                      fat: dish.fat,
+                      carbs: dish.carbs,
+                      sodium: dish.sodium,
+                      sugar: dish.sugar,
+                      fiber: dish.fiber,
+                      fiberSoluble: dish.fiberSoluble,
+                      fiberInsoluble: dish.fiberInsoluble,
+                      potassium: dish.potassium,
+                      calcium: dish.calcium,
+                      phosphorus: dish.phosphorus,
+                      iron: dish.iron,
+                      zinc: dish.zinc,
+                      iodine: dish.iodine,
+                      cholesterol: dish.cholesterol,
+                      vitaminB1: dish.vitaminB1,
+                      vitaminB2: dish.vitaminB2,
+                      vitaminC: dish.vitaminC,
+                      vitaminB6: dish.vitaminB6,
+                      vitaminB12: dish.vitaminB12,
+                      folicAcid: dish.folicAcid,
+                      vitaminA: dish.vitaminA,
+                      vitaminD: dish.vitaminD,
+                      vitaminK: dish.vitaminK,
+                      vitaminE: dish.vitaminE,
+                      saturatedFat: dish.saturatedFat,
+                      monounsaturatedFat: dish.monounsaturatedFat,
+                      polyunsaturatedFat: dish.polyunsaturatedFat,
                     });
                     setActiveModal('recipe');
                   }}
@@ -2701,9 +2731,49 @@ export default function WeeklyMenuPage() {
                     )}
                     <div className="flex items-center gap-1">
                       <Flame size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories || '-'}kcal</span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.cal || selectedRecipeData?.calories || '-'}kcal</span>
                     </div>
                   </div>
+
+                  {/* この料理の栄養素 */}
+                  {selectedRecipeData && (selectedRecipeData.protein || selectedRecipeData.fat || selectedRecipeData.carbs) && (
+                    <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>📊 この料理の栄養素</p>
+                      <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[11px]" style={{ color: colors.text }}>
+                        {/* 基本栄養素 */}
+                        {selectedRecipeData.cal && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>エネルギー</span><span className="font-medium">{selectedRecipeData.cal}kcal</span></div>}
+                        {selectedRecipeData.protein && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>タンパク質</span><span className="font-medium">{selectedRecipeData.protein}g</span></div>}
+                        {selectedRecipeData.fat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>脂質</span><span className="font-medium">{selectedRecipeData.fat}g</span></div>}
+                        {selectedRecipeData.carbs && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>炭水化物</span><span className="font-medium">{selectedRecipeData.carbs}g</span></div>}
+                        {selectedRecipeData.fiber && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>食物繊維</span><span className="font-medium">{selectedRecipeData.fiber}g</span></div>}
+                        {selectedRecipeData.sugar && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>糖質</span><span className="font-medium">{selectedRecipeData.sugar}g</span></div>}
+                        {/* ミネラル */}
+                        {selectedRecipeData.sodium && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>塩分</span><span className="font-medium">{selectedRecipeData.sodium}g</span></div>}
+                        {selectedRecipeData.potassium && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カリウム</span><span className="font-medium">{selectedRecipeData.potassium}mg</span></div>}
+                        {selectedRecipeData.calcium && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カルシウム</span><span className="font-medium">{selectedRecipeData.calcium}mg</span></div>}
+                        {selectedRecipeData.phosphorus && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>リン</span><span className="font-medium">{selectedRecipeData.phosphorus}mg</span></div>}
+                        {selectedRecipeData.iron && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>鉄分</span><span className="font-medium">{selectedRecipeData.iron}mg</span></div>}
+                        {selectedRecipeData.zinc && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>亜鉛</span><span className="font-medium">{selectedRecipeData.zinc}mg</span></div>}
+                        {selectedRecipeData.iodine && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ヨウ素</span><span className="font-medium">{selectedRecipeData.iodine}µg</span></div>}
+                        {selectedRecipeData.cholesterol && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>コレステロール</span><span className="font-medium">{selectedRecipeData.cholesterol}mg</span></div>}
+                        {/* ビタミン */}
+                        {selectedRecipeData.vitaminA && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンA</span><span className="font-medium">{selectedRecipeData.vitaminA}µg</span></div>}
+                        {selectedRecipeData.vitaminB1 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB1</span><span className="font-medium">{selectedRecipeData.vitaminB1}mg</span></div>}
+                        {selectedRecipeData.vitaminB2 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB2</span><span className="font-medium">{selectedRecipeData.vitaminB2}mg</span></div>}
+                        {selectedRecipeData.vitaminB6 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB6</span><span className="font-medium">{selectedRecipeData.vitaminB6}mg</span></div>}
+                        {selectedRecipeData.vitaminB12 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB12</span><span className="font-medium">{selectedRecipeData.vitaminB12}µg</span></div>}
+                        {selectedRecipeData.vitaminC && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンC</span><span className="font-medium">{selectedRecipeData.vitaminC}mg</span></div>}
+                        {selectedRecipeData.vitaminD && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンD</span><span className="font-medium">{selectedRecipeData.vitaminD}µg</span></div>}
+                        {selectedRecipeData.vitaminE && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンE</span><span className="font-medium">{selectedRecipeData.vitaminE}mg</span></div>}
+                        {selectedRecipeData.vitaminK && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンK</span><span className="font-medium">{selectedRecipeData.vitaminK}µg</span></div>}
+                        {selectedRecipeData.folicAcid && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>葉酸</span><span className="font-medium">{selectedRecipeData.folicAcid}µg</span></div>}
+                        {/* 脂肪酸 */}
+                        {selectedRecipeData.saturatedFat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>飽和脂肪酸</span><span className="font-medium">{selectedRecipeData.saturatedFat}g</span></div>}
+                        {selectedRecipeData.monounsaturatedFat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>一価不飽和脂肪酸</span><span className="font-medium">{selectedRecipeData.monounsaturatedFat}g</span></div>}
+                        {selectedRecipeData.polyunsaturatedFat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>多価不飽和脂肪酸</span><span className="font-medium">{selectedRecipeData.polyunsaturatedFat}g</span></div>}
+                      </div>
+                    </div>
+                  )}
 
                   {/* 材料 */}
                   <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
