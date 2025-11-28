@@ -426,6 +426,39 @@ export interface DishDetail {
   role?: string; // 'main' | 'side' | 'soup' | 'rice' | 'salad' | etc.
   ingredients?: string[]; // この料理の材料リスト
   recipeSteps?: string[]; // この料理のレシピ手順
+  // 基本栄養素
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+  // 塩分・糖質・食物繊維
+  sodium?: number;
+  sugar?: number;
+  fiber?: number;
+  fiberSoluble?: number;
+  fiberInsoluble?: number;
+  // ミネラル
+  potassium?: number;
+  calcium?: number;
+  phosphorus?: number;
+  iron?: number;
+  zinc?: number;
+  iodine?: number;
+  cholesterol?: number;
+  // ビタミン
+  vitaminB1?: number;
+  vitaminB2?: number;
+  vitaminC?: number;
+  vitaminB6?: number;
+  vitaminB12?: number;
+  folicAcid?: number;
+  vitaminA?: number;
+  vitaminD?: number;
+  vitaminK?: number;
+  vitaminE?: number;
+  // 脂肪酸
+  saturatedFat?: number;
+  monounsaturatedFat?: number;
+  polyunsaturatedFat?: number;
 }
 
 // dishes は配列形式で可変数に対応

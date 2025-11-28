@@ -1909,20 +1909,23 @@ export default function WeeklyMenuPage() {
                     });
                     setActiveModal('recipe');
                   }}
-                  className="text-left flex flex-col min-h-[75px] rounded-xl p-3"
+                  className="text-left flex flex-col min-h-[85px] rounded-xl p-3"
                   style={{ background: config.bg }}
                 >
                   <div className="flex justify-between mb-1">
                     <span style={{ fontSize: 9, fontWeight: 700, color: config.color }}>{config.label}</span>
                     <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.cal || '-'}kcal</span>
                   </div>
-                  <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, margin: 0, flex: 1 }}>{dish.name}</p>
-                  {dish.ingredient && (
-                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[9px]" style={{ color: colors.success, background: 'rgba(255,255,255,0.7)' }}>
-                      <Package size={9} /> {dish.ingredient}
-                    </span>
+                  <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, margin: 0 }}>{dish.name}</p>
+                  {/* 栄養素（P/F/C） */}
+                  {(dish.protein || dish.fat || dish.carbs) && (
+                    <div className="flex gap-2 mt-1 text-[8px]" style={{ color: colors.textMuted }}>
+                      {(dish.protein ?? 0) > 0 && <span>P:{dish.protein}g</span>}
+                      {(dish.fat ?? 0) > 0 && <span>F:{dish.fat}g</span>}
+                      {(dish.carbs ?? 0) > 0 && <span>C:{dish.carbs}g</span>}
+                    </div>
                   )}
-                  <span className="inline-flex items-center gap-1 mt-1 text-[9px]" style={{ color: colors.blue }}>
+                  <span className="inline-flex items-center gap-1 mt-auto text-[9px]" style={{ color: colors.blue }}>
                     <BookOpen size={9} /> レシピを見る
                   </span>
                 </button>

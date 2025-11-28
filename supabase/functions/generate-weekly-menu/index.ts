@@ -162,39 +162,54 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
             {
               "name": "料理名", 
               "role": "主菜", 
-              "cal": 200, 
-              "protein": 10, 
-              "fat": 8,
-              "carbs": 5,
-              "description": "簡潔な説明",
+              "nutrition": {
+                "cal": 200, "protein": 10, "fat": 8, "carbs": 5, "sodium": 0.8, "sugar": 2,
+                "fiber": 2, "fiberSoluble": 0.5, "fiberInsoluble": 1.5,
+                "potassium": 300, "calcium": 20, "phosphorus": 150, "iron": 1.5, "zinc": 2.0, "iodine": 10,
+                "cholesterol": 180, "vitaminB1": 0.1, "vitaminB2": 0.2, "vitaminC": 5, "vitaminB6": 0.2,
+                "vitaminB12": 0.5, "folicAcid": 30, "vitaminA": 100, "vitaminD": 1.0, "vitaminK": 10, "vitaminE": 1.0,
+                "saturatedFat": 2.5, "monounsaturatedFat": 3.0, "polyunsaturatedFat": 1.5
+              },
               "ingredients": ["卵 2個", "バター 10g", "塩 少々"],
               "recipeSteps": ["1. 卵を溶く", "2. バターを熱する", "3. 焼く"]
             },
             {
               "name": "味噌汁", 
               "role": "汁物", 
-              "cal": 50, 
-              "protein": 3,
-              "fat": 1,
-              "carbs": 5,
+              "nutrition": {
+                "cal": 50, "protein": 3, "fat": 1, "carbs": 5, "sodium": 1.2, "sugar": 1,
+                "fiber": 1, "fiberSoluble": 0.3, "fiberInsoluble": 0.7,
+                "potassium": 200, "calcium": 40, "phosphorus": 50, "iron": 0.5, "zinc": 0.3, "iodine": 50,
+                "cholesterol": 0, "vitaminB1": 0.05, "vitaminB2": 0.05, "vitaminC": 0, "vitaminB6": 0.05,
+                "vitaminB12": 0, "folicAcid": 10, "vitaminA": 5, "vitaminD": 0, "vitaminK": 5, "vitaminE": 0.2,
+                "saturatedFat": 0.2, "monounsaturatedFat": 0.3, "polyunsaturatedFat": 0.4
+              },
               "ingredients": ["豆腐 50g", "わかめ 適量", "味噌 大さじ1"],
               "recipeSteps": ["1. 出汁をとる", "2. 具材を入れる", "3. 味噌を溶く"]
             },
             {
               "name": "ご飯", 
               "role": "主食", 
-              "cal": 240, 
-              "protein": 4,
-              "fat": 0,
-              "carbs": 55,
+              "nutrition": {
+                "cal": 240, "protein": 4, "fat": 0, "carbs": 55, "sodium": 0, "sugar": 0,
+                "fiber": 0.5, "fiberSoluble": 0, "fiberInsoluble": 0.5,
+                "potassium": 50, "calcium": 5, "phosphorus": 50, "iron": 0.2, "zinc": 0.8, "iodine": 0,
+                "cholesterol": 0, "vitaminB1": 0.05, "vitaminB2": 0.02, "vitaminC": 0, "vitaminB6": 0.05,
+                "vitaminB12": 0, "folicAcid": 5, "vitaminA": 0, "vitaminD": 0, "vitaminK": 0, "vitaminE": 0,
+                "saturatedFat": 0, "monounsaturatedFat": 0, "polyunsaturatedFat": 0
+              },
               "ingredients": ["白米 150g（1膳）"],
               "recipeSteps": ["1. 炊飯器で炊く"]
             }
           ],
-          "totalCalories": 490,
-          "totalProtein": 17,
-          "totalFat": 9,
-          "totalCarbs": 65,
+          "totalNutrition": {
+            "cal": 490, "protein": 17, "fat": 9, "carbs": 65, "sodium": 2.0, "sugar": 3,
+            "fiber": 3.5, "fiberSoluble": 0.8, "fiberInsoluble": 2.7,
+            "potassium": 550, "calcium": 65, "phosphorus": 250, "iron": 2.2, "zinc": 3.1, "iodine": 60,
+            "cholesterol": 180, "vitaminB1": 0.2, "vitaminB2": 0.27, "vitaminC": 5, "vitaminB6": 0.3,
+            "vitaminB12": 0.5, "folicAcid": 45, "vitaminA": 105, "vitaminD": 1.0, "vitaminK": 15, "vitaminE": 1.2,
+            "saturatedFat": 2.7, "monounsaturatedFat": 3.3, "polyunsaturatedFat": 1.9
+          },
           "cookingTime": "15分"
         },
         { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分" },
@@ -349,26 +364,80 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
         ) || dishes[0]
         const dishName = mainDish?.name || '献立'
         
-        // dishesをDishDetail[]形式に変換（各料理のingredients/recipeStepsを含む）
-        const dishDetails = dishes.map((d: any, index: number) => ({
-          name: d.name,
-          role: mapRole(d.role) || (index === 0 ? 'main' : `side${index}`),
-          cal: d.cal || d.calories || 0,
-          protein: d.protein || 0,
-          fat: d.fat || 0,
-          carbs: d.carbs || 0,
-          ingredient: d.description || '',
-          ingredients: d.ingredients || [],
-          recipeSteps: d.recipeSteps || []
-        }))
+        // dishesをDishDetail[]形式に変換（各料理のingredients/recipeSteps/nutritionを含む）
+        const dishDetails = dishes.map((d: any, index: number) => {
+          const n = d.nutrition || {}
+          return {
+            name: d.name,
+            role: mapRole(d.role) || (index === 0 ? 'main' : `side${index}`),
+            cal: n.cal || d.cal || 0,
+            protein: n.protein || d.protein || 0,
+            fat: n.fat || d.fat || 0,
+            carbs: n.carbs || d.carbs || 0,
+            sodium: n.sodium || 0,
+            sugar: n.sugar || 0,
+            fiber: n.fiber || 0,
+            fiberSoluble: n.fiberSoluble || 0,
+            fiberInsoluble: n.fiberInsoluble || 0,
+            potassium: n.potassium || 0,
+            calcium: n.calcium || 0,
+            phosphorus: n.phosphorus || 0,
+            iron: n.iron || 0,
+            zinc: n.zinc || 0,
+            iodine: n.iodine || 0,
+            cholesterol: n.cholesterol || 0,
+            vitaminB1: n.vitaminB1 || 0,
+            vitaminB2: n.vitaminB2 || 0,
+            vitaminC: n.vitaminC || 0,
+            vitaminB6: n.vitaminB6 || 0,
+            vitaminB12: n.vitaminB12 || 0,
+            folicAcid: n.folicAcid || 0,
+            vitaminA: n.vitaminA || 0,
+            vitaminD: n.vitaminD || 0,
+            vitaminK: n.vitaminK || 0,
+            vitaminE: n.vitaminE || 0,
+            saturatedFat: n.saturatedFat || 0,
+            monounsaturatedFat: n.monounsaturatedFat || 0,
+            polyunsaturatedFat: n.polyunsaturatedFat || 0,
+            ingredient: d.description || '',
+            ingredients: d.ingredients || [],
+            recipeSteps: d.recipeSteps || []
+          }
+        })
         
-        // 総カロリーを計算
-        const totalCalories = meal.totalCalories || dishDetails.reduce((sum: number, d: any) => sum + (d.cal || 0), 0)
+        // totalNutritionから取得、なければ各料理から計算
+        const tn = meal.totalNutrition || {}
+        const sum = (key: string) => dishDetails.reduce((s: number, d: any) => s + (d[key] || 0), 0)
         
-        // 総栄養素を計算
-        const totalProtein = meal.totalProtein || dishDetails.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
-        const totalFat = meal.totalFat || dishDetails.reduce((sum: number, d: any) => sum + (d.fat || 0), 0)
-        const totalCarbs = meal.totalCarbs || dishDetails.reduce((sum: number, d: any) => sum + (d.carbs || 0), 0)
+        const totalCalories = tn.cal || sum('cal')
+        const totalProtein = tn.protein || sum('protein')
+        const totalFat = tn.fat || sum('fat')
+        const totalCarbs = tn.carbs || sum('carbs')
+        const totalSodium = tn.sodium || sum('sodium')
+        const totalSugar = tn.sugar || sum('sugar')
+        const totalFiber = tn.fiber || sum('fiber')
+        const totalFiberSoluble = tn.fiberSoluble || sum('fiberSoluble')
+        const totalFiberInsoluble = tn.fiberInsoluble || sum('fiberInsoluble')
+        const totalPotassium = tn.potassium || sum('potassium')
+        const totalCalcium = tn.calcium || sum('calcium')
+        const totalPhosphorus = tn.phosphorus || sum('phosphorus')
+        const totalIron = tn.iron || sum('iron')
+        const totalZinc = tn.zinc || sum('zinc')
+        const totalIodine = tn.iodine || sum('iodine')
+        const totalCholesterol = tn.cholesterol || sum('cholesterol')
+        const totalVitaminB1 = tn.vitaminB1 || sum('vitaminB1')
+        const totalVitaminB2 = tn.vitaminB2 || sum('vitaminB2')
+        const totalVitaminC = tn.vitaminC || sum('vitaminC')
+        const totalVitaminB6 = tn.vitaminB6 || sum('vitaminB6')
+        const totalVitaminB12 = tn.vitaminB12 || sum('vitaminB12')
+        const totalFolicAcid = tn.folicAcid || sum('folicAcid')
+        const totalVitaminA = tn.vitaminA || sum('vitaminA')
+        const totalVitaminD = tn.vitaminD || sum('vitaminD')
+        const totalVitaminK = tn.vitaminK || sum('vitaminK')
+        const totalVitaminE = tn.vitaminE || sum('vitaminE')
+        const totalSaturatedFat = tn.saturatedFat || sum('saturatedFat')
+        const totalMonounsaturatedFat = tn.monounsaturatedFat || sum('monounsaturatedFat')
+        const totalPolyunsaturatedFat = tn.polyunsaturatedFat || sum('polyunsaturatedFat')
         
         // 全料理の材料を統合（買い物リスト用）
         const allIngredients = dishes.flatMap((d: any) => d.ingredients || [])
@@ -382,10 +451,40 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
             dish_name: dishName,
             description: meal.cookingTime ? `調理時間: ${meal.cookingTime}` : null,
             dishes: dishDetails,
-            calories_kcal: totalCalories,
-            protein_g: totalProtein,
-            fat_g: totalFat,
-            carbs_g: totalCarbs,
+            // 基本栄養素
+            calories_kcal: totalCalories || null,
+            protein_g: totalProtein || null,
+            fat_g: totalFat || null,
+            carbs_g: totalCarbs || null,
+            // 塩分・糖質・食物繊維
+            sodium_g: totalSodium || null,
+            sugar_g: totalSugar || null,
+            fiber_g: totalFiber || null,
+            fiber_soluble_g: totalFiberSoluble || null,
+            fiber_insoluble_g: totalFiberInsoluble || null,
+            // ミネラル
+            potassium_mg: totalPotassium || null,
+            calcium_mg: totalCalcium || null,
+            phosphorus_mg: totalPhosphorus || null,
+            iron_mg: totalIron || null,
+            zinc_mg: totalZinc || null,
+            iodine_ug: totalIodine || null,
+            cholesterol_mg: totalCholesterol || null,
+            // ビタミン
+            vitamin_b1_mg: totalVitaminB1 || null,
+            vitamin_b2_mg: totalVitaminB2 || null,
+            vitamin_c_mg: totalVitaminC || null,
+            vitamin_b6_mg: totalVitaminB6 || null,
+            vitamin_b12_ug: totalVitaminB12 || null,
+            folic_acid_ug: totalFolicAcid || null,
+            vitamin_a_ug: totalVitaminA || null,
+            vitamin_d_ug: totalVitaminD || null,
+            vitamin_k_ug: totalVitaminK || null,
+            vitamin_e_mg: totalVitaminE || null,
+            // 脂肪酸
+            saturated_fat_g: totalSaturatedFat || null,
+            monounsaturated_fat_g: totalMonounsaturatedFat || null,
+            polyunsaturated_fat_g: totalPolyunsaturatedFat || null,
             is_simple: dishDetails.length <= 1,
             is_completed: false,
             ingredients: allIngredients.length > 0 ? allIngredients : null,
