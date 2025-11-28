@@ -2,6 +2,7 @@
 // OpenAI Chat Completions API 互換のエンドポイント
 // 内部で OpenAI Agents SDK（ナレッジ付き）を呼び出す
 // プロンプトは呼び出し元から渡される（このFunction内には固定しない）
+// mode: 'json' = JSON出力（献立生成用）, mode: 'chat' = 自然言語（AIアシスタント用）
 
 import {
   fileSearchTool,
@@ -31,6 +32,7 @@ interface ChatCompletionRequest {
   messages: ChatMessage[];
   temperature?: number;
   response_format?: { type: string };
+  mode?: 'json' | 'chat'; // 追加: 出力モード
 }
 
 interface ChatCompletionResponse {
@@ -75,15 +77,21 @@ function stripMarkdownCodeBlock(text: string): string {
 }
 
 // ===== エージェント実行 =====
-async function runAgent(systemPrompt: string, userMessage: string): Promise<string> {
+async function runAgent(systemPrompt: string, userMessage: string, mode: string = 'json'): Promise<string> {
   return await withTrace("knowledge_gpt", async () => {
     // エージェントを動的に作成（システムプロンプトを呼び出し元から受け取る）
-    // JSONのみを出力するよう明示的に指示を追加
-    const enhancedSystemPrompt = systemPrompt + "\n\n【重要】回答は必ず純粋なJSONのみを出力してください。```json などのMarkdownコードブロックで囲まないでください。説明文も不要です。JSONデータのみを返してください。";
+    let enhancedSystemPrompt = systemPrompt;
+    
+    // モードによって指示を追加
+    if (mode === 'json') {
+      // JSONモード: 献立生成など
+      enhancedSystemPrompt = systemPrompt + "\n\n【重要】回答は必ず純粋なJSONのみを出力してください。```json などのMarkdownコードブロックで囲まないでください。説明文も不要です。JSONデータのみを返してください。";
+    }
+    // mode === 'chat' の場合は何も追加しない（自然言語での応答を期待）
     
     const agent = new Agent({
       name: "knowledge-gpt",
-      instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。JSONのみを出力してください。",
+      instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
       model: "gpt-4o-mini",
       tools: [fileSearch],
     });
@@ -132,8 +140,12 @@ async function runAgent(systemPrompt: string, userMessage: string): Promise<stri
       outputText = String(result.finalOutput);
     }
     
-    // Markdownコードブロックを除去
-    return stripMarkdownCodeBlock(outputText);
+    // JSONモードの場合のみMarkdownコードブロックを除去
+    if (mode === 'json') {
+      return stripMarkdownCodeBlock(outputText);
+    }
+    
+    return outputText;
   });
 }
 
@@ -165,13 +177,17 @@ Deno.serve(async (req) => {
     const systemMessage = body.messages.find(m => m.role === "system")?.content || "";
     const userMessages = body.messages.filter(m => m.role === "user").map(m => m.content);
     const userMessage = userMessages.join("\n\n");
+    
+    // モードを取得（デフォルト: json）
+    const mode = body.mode || 'json';
 
     console.log("Knowledge-GPT received request");
     console.log("System prompt length:", systemMessage.length);
     console.log("User message length:", userMessage.length);
+    console.log("Mode:", mode);
 
     // エージェント実行（システムプロンプトとユーザーメッセージを渡す）
-    const agentOutput = await runAgent(systemMessage, userMessage);
+    const agentOutput = await runAgent(systemMessage, userMessage, mode);
 
     console.log("Knowledge-GPT agent completed, output length:", agentOutput.length);
 

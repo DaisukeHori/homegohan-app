@@ -962,15 +962,50 @@ export async function POST(
         })),
     ];
 
-    // OpenAI APIで応答生成
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages,
-      temperature: 0.7,
-      max_tokens: 2000,
-    });
+    // knowledge-gpt（ナレッジベース付きAI）で応答生成
+    let aiContent = 'すみません、応答を生成できませんでした。';
+    
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+      
+      const knowledgeGptRes = await fetch(`${supabaseUrl}/functions/v1/knowledge-gpt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceRoleKey}`,
+        },
+        body: JSON.stringify({
+          messages,
+          mode: 'chat', // チャットモード（自然言語での応答）
+        }),
+      });
 
-    const aiContent = completion.choices[0]?.message?.content || 'すみません、応答を生成できませんでした。';
+      if (knowledgeGptRes.ok) {
+        const result = await knowledgeGptRes.json();
+        aiContent = result.choices?.[0]?.message?.content || aiContent;
+      } else {
+        // knowledge-gptが失敗した場合、フォールバックで直接OpenAI APIを呼び出す
+        console.error('knowledge-gpt failed, falling back to OpenAI:', await knowledgeGptRes.text());
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages,
+          temperature: 0.7,
+          max_tokens: 2000,
+        });
+        aiContent = completion.choices[0]?.message?.content || aiContent;
+      }
+    } catch (kgError) {
+      // エラー時もフォールバック
+      console.error('knowledge-gpt error, falling back to OpenAI:', kgError);
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages,
+        temperature: 0.7,
+        max_tokens: 2000,
+      });
+      aiContent = completion.choices[0]?.message?.content || aiContent;
+    }
 
     // アクション提案を抽出
     const actionMatch = aiContent.match(/```action\s*([\s\S]*?)```/);
@@ -1059,7 +1094,7 @@ JSONで回答してください：
         role: 'assistant',
         content: aiContent.replace(/```action[\s\S]*?```/g, '').trim(),
         proposed_actions: proposedActions,
-        tokens_used: completion.usage?.total_tokens,
+        tokens_used: null, // knowledge-gptではトークン数が取得できないのでnull
       })
       .select()
       .single();
