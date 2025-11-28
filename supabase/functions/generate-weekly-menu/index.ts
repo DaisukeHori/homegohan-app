@@ -159,16 +159,29 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
         { 
           "mealType": "breakfast", 
           "dishes": [
-            {"name": "料理名", "role": "主食", "cal": 200, "protein": 10, "description": "簡潔な説明"},
-            {"name": "味噌汁", "role": "汁物", "cal": 50, "protein": 3}
+            {
+              "name": "料理名", 
+              "role": "主食", 
+              "cal": 200, 
+              "protein": 10, 
+              "description": "簡潔な説明",
+              "ingredients": ["卵 2個", "バター 10g", "塩 少々"],
+              "recipeSteps": ["1. 卵を溶く", "2. バターを熱する", "3. 焼く"]
+            },
+            {
+              "name": "味噌汁", 
+              "role": "汁物", 
+              "cal": 50, 
+              "protein": 3,
+              "ingredients": ["豆腐 50g", "わかめ 適量", "味噌 大さじ1"],
+              "recipeSteps": ["1. 出汁をとる", "2. 具材を入れる", "3. 味噌を溶く"]
+            }
           ],
           "totalCalories": 250,
-          "cookingTime": "15分",
-          "ingredients": ["鶏むね肉 100g", "卵 1個", "ご飯 150g", "..."],
-          "recipeSteps": ["1. 材料を準備する", "2. フライパンで炒める", "3. 調味料を加える", "4. 盛り付ける"]
+          "cookingTime": "15分"
         },
-        { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分", "ingredients": [...], "recipeSteps": [...] },
-        { "mealType": "dinner", "dishes": [...], "totalCalories": 600, "cookingTime": "30分", "ingredients": [...], "recipeSteps": [...] }
+        { "mealType": "lunch", "dishes": [...], "totalCalories": 500, "cookingTime": "20分" },
+        { "mealType": "dinner", "dishes": [...], "totalCalories": 600, "cookingTime": "30分" }
       ],
       "dailyTotalCalories": 1350,
       "nutritionalAdvice": "この日の栄養ポイント"
@@ -183,10 +196,11 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 
 **重要: 
 - days配列には必ず7つのオブジェクト（7日分）を含めてください
-- 各料理にはcal（カロリー）とrole（主菜/副菜/汁物/主食）を必ず含めてください
+- **各料理（dish）にcal、role、ingredients（材料配列）、recipeSteps（手順配列）を必ず含めてください**
+- 各料理のingredientsは「食材名 分量」形式の配列にしてください
+- 各料理のrecipeStepsは番号付き手順（3〜5ステップ）の配列にしてください
 - 健康状態に応じた除外食材は絶対に使用しないでください
-- 調理時間は平日${profile.weekday_cooking_minutes || 30}分、休日${profile.weekend_cooking_minutes || 60}分を目安に
-- 各食事にingredients（材料リスト）とrecipeSteps（調理手順）を必ず含めてください**
+- 調理時間は平日${profile.weekday_cooking_minutes || 30}分、休日${profile.weekend_cooking_minutes || 60}分を目安に**
 `
 
     console.log('Sending personalized prompt to knowledge-gpt...')
@@ -310,13 +324,15 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
         ) || dishes[0]
         const dishName = mainDish?.name || '献立'
         
-        // dishesをDishDetail[]形式に変換
+        // dishesをDishDetail[]形式に変換（各料理のingredients/recipeStepsを含む）
         const dishDetails = dishes.map((d: any, index: number) => ({
           name: d.name,
           role: mapRole(d.role) || (index === 0 ? 'main' : `side${index}`),
           cal: d.cal || d.calories || 0,
           protein: d.protein || 0,
-          ingredient: d.description || ''
+          ingredient: d.description || '',
+          ingredients: d.ingredients || [],
+          recipeSteps: d.recipeSteps || []
         }))
         
         // 総カロリーを計算
@@ -324,6 +340,9 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
         
         // 総タンパク質を計算
         const totalProtein = dishDetails.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
+        
+        // 全料理の材料を統合（買い物リスト用）
+        const allIngredients = dishes.flatMap((d: any) => d.ingredients || [])
         
         const { error: mealError } = await supabase
           .from('planned_meals')
@@ -338,8 +357,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
             protein_g: totalProtein,
             is_simple: dishDetails.length <= 1,
             is_completed: false,
-            ingredients: meal.ingredients || null,
-            recipe_steps: meal.recipeSteps || null,
+            ingredients: allIngredients.length > 0 ? allIngredients : null,
+            recipe_steps: null, // 各料理ごとのレシピはdishes内に保存
           })
         
         if (mealError) {
