@@ -161,8 +161,8 @@ export default function MainLayout({
       <AIChatBubble />
 
       {/* モバイル用ボトムナビゲーション (Floating) */}
-      <div className="lg:hidden fixed bottom-4 left-4 right-4 z-50">
-        <div className="bg-white/90 backdrop-blur-xl border border-white/20 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] p-2 flex items-center justify-between px-6">
+      <div className="lg:hidden fixed bottom-4 left-0 right-0 z-50 flex justify-center px-4">
+        <div className="w-full max-w-md bg-white/90 backdrop-blur-xl border border-white/20 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] h-16 flex items-center justify-around px-4">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
             const Icon = item.icon;
@@ -172,14 +172,14 @@ export default function MainLayout({
                 <Link 
                   key={item.href} 
                   href={item.href}
-                  className="flex flex-col items-center gap-1 p-2 transition-colors"
+                  className="flex flex-col items-center justify-center"
                 >
                   <motion.div 
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     className="w-12 h-12 rounded-full bg-foreground flex items-center justify-center text-white shadow-lg"
                   >
-                    <Icon className="w-7 h-7" />
+                    <Icon className="w-6 h-6" />
                   </motion.div>
                 </Link>
               );
@@ -189,13 +189,13 @@ export default function MainLayout({
               <Link 
                 key={item.href} 
                 href={item.href}
-                className={`flex flex-col items-center gap-1 p-2 transition-colors ${
+                className={`flex flex-col items-center justify-center w-12 h-12 transition-colors ${
                   isActive ? 'text-accent' : 'text-gray-400'
                 }`}
               >
                 <Icon className={`w-6 h-6 ${isActive ? 'fill-current' : ''}`} />
                 {isActive && (
-                   <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full bg-accent" />
+                   <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full bg-accent mt-1" />
                 )}
               </Link>
             );
