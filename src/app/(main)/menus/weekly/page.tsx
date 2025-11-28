@@ -264,17 +264,30 @@ export default function WeeklyMenuPage() {
     
     const checkPendingRequests = async () => {
       const targetDate = formatLocalDate(weekStart);
+      console.log('🔍 checkPendingRequests called with targetDate:', targetDate);
       
       // 0. 週間献立の生成中リクエストをDBで確認
       try {
         const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
+        console.log('🔍 weeklyRes status:', weeklyRes.status);
         if (weeklyRes.ok) {
-          const { hasPending, requestId, status } = await weeklyRes.json();
+          const data = await weeklyRes.json();
+          console.log('🔍 weeklyRes data:', data);
+          const { hasPending, requestId, status, startDate: pendingStartDate } = data;
           if (hasPending && requestId) {
-            console.log('📦 週間献立の生成中リクエストを復元:', requestId, status);
+            console.log('📦 週間献立の生成中リクエストを復元:', requestId, status, 'startDate:', pendingStartDate);
+            
+            // もし生成中のリクエストの週が現在表示中の週と異なる場合、その週に遷移
+            if (pendingStartDate && pendingStartDate !== targetDate) {
+              console.log('🔄 週を切り替え:', targetDate, '->', pendingStartDate);
+              setWeekStart(new Date(pendingStartDate));
+            }
+            
             setIsGenerating(true);
-            startPollingForCompletion(targetDate, requestId);
+            startPollingForCompletion(pendingStartDate || targetDate, requestId);
             return; // 週間生成中なら他はスキップ
+          } else {
+            console.log('🔍 No pending weekly request found');
           }
         }
       } catch (e) {

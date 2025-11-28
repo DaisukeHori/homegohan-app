@@ -15,40 +15,42 @@ export async function GET(request: Request) {
   }
 
   try {
-    // 週の開始日を計算（日曜日始まり）
-    const targetDate = new Date(date);
-    const dayOfWeek = targetDate.getDay();
-    const weekStart = new Date(targetDate);
-    weekStart.setDate(weekStart.getDate() - dayOfWeek);
-    const weekStartStr = weekStart.toISOString().split('T')[0];
+    console.log('🔍 Pending check - input date:', date);
+    console.log('🔍 Pending check - user_id:', user.id);
 
-    // pending または processing の週間生成リクエストを確認（mode = 'weekly' または null）
+    // ユーザーの最新の pending または processing の週間生成リクエストを確認
+    // start_date に関係なく、最新のリクエストを返す（リロード時の復元を確実にするため）
     const { data: pendingRequest, error } = await supabase
       .from('weekly_menu_requests')
-      .select('id, status, mode, created_at')
+      .select('id, status, mode, start_date, created_at')
       .eq('user_id', user.id)
-      .eq('start_date', weekStartStr)
       .or('mode.eq.weekly,mode.is.null')
       .in('status', ['pending', 'processing'])
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
 
+    console.log('🔍 Pending check - query result:', pendingRequest);
+    console.log('🔍 Pending check - query error:', error);
+    
     if (error && error.code !== 'PGRST116') {
       // PGRST116 = no rows returned
       throw error;
     }
 
     if (pendingRequest) {
+      console.log('✅ Found pending request:', pendingRequest.id, pendingRequest.status, 'for start_date:', pendingRequest.start_date);
       return NextResponse.json({
         hasPending: true,
         requestId: pendingRequest.id,
         status: pendingRequest.status,
         mode: pendingRequest.mode,
+        startDate: pendingRequest.start_date,
         createdAt: pendingRequest.created_at,
       });
     }
 
+    console.log('❌ No pending request found for user');
     return NextResponse.json({ hasPending: false });
 
   } catch (error: any) {
