@@ -122,15 +122,26 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 以下のJSON形式で出力してください：
 {
   "dishes": [
-    { "name": "主菜名", "role": "main", "calories": 300, "ingredient": "主な食材" },
-    { "name": "副菜名", "role": "side", "calories": 50, "ingredient": "主な食材" },
-    { "name": "副菜名2", "role": "side", "calories": 40, "ingredient": "主な食材" },
-    { "name": "汁物名", "role": "soup", "calories": 30, "ingredient": "主な食材" }
+    { "name": "主菜名", "role": "main", "calories": 300, "protein": 20, "description": "簡潔な説明" },
+    { "name": "副菜名", "role": "side", "calories": 50, "protein": 3 },
+    { "name": "副菜名2", "role": "side", "calories": 40, "protein": 2 },
+    { "name": "汁物名", "role": "soup", "calories": 30, "protein": 2 }
   ],
   "totalCalories": 420,
+  "totalProtein": 27,
   "cookingTime": "20分",
-  "nutritionalAdvice": "この食事のポイント"
+  "nutritionalAdvice": "この食事のポイント",
+  "ingredients": ["鶏むね肉 200g", "玉ねぎ 1/2個", "にんじん 1/3本", "..."],
+  "recipeSteps": [
+    "1. 鶏肉を一口大に切り、塩コショウで下味をつける",
+    "2. 野菜を食べやすい大きさに切る",
+    "3. フライパンに油を熱し、鶏肉を焼く",
+    "4. 野菜を加えて炒め合わせる",
+    "5. 調味料を加えて味を調える"
+  ]
 }
+
+**重要: ingredientsには「食材名 分量」の形式で全ての材料を含めてください。recipeStepsには番号付きで具体的な調理手順を含めてください（5〜8ステップ程度）**
 `
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -185,22 +196,27 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
     const dishesArray = aiDishes.map((d: any) => ({
       name: d.name,
       cal: d.calories || 0,
+      protein: d.protein || 0,
       role: d.role || 'side',
-      ingredient: d.ingredient || ''
+      ingredient: d.description || ''
     }))
     
     const mainDish = aiDishes.find((d: any) => d.role === 'main') || aiDishes[0] || { name: '献立', calories: 0 }
     const allDishNames = aiDishes.map((d: any) => d.name).join('、') || mainDish.name
-    const allIngredients = aiDishes.flatMap((d: any) => d.ingredients || []) || []
+    
+    // 総タンパク質を計算
+    const totalProtein = newMealData.totalProtein || dishesArray.reduce((sum: number, d: any) => sum + (d.protein || 0), 0)
 
     // 6. planned_mealsを更新
     const { error: updateError } = await supabase
       .from('planned_meals')
       .update({
         dish_name: allDishNames,
-        description: newMealData.nutritionalAdvice || `${newMealData.cookingTime || ''}で作れます`,
-        ingredients: allIngredients.length > 0 ? allIngredients : null,
+        description: newMealData.nutritionalAdvice || `調理時間: ${newMealData.cookingTime || ''}`,
+        ingredients: newMealData.ingredients || null,
+        recipe_steps: newMealData.recipeSteps || null,
         calories_kcal: newMealData.totalCalories || mainDish.calories || null,
+        protein_g: totalProtein || null,
         image_url: imageUrl,
         dishes: dishesArray.length > 0 ? dishesArray : null,
         is_simple: dishesArray.length <= 1,
