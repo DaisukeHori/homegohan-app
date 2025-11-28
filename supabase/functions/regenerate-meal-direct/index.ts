@@ -134,12 +134,12 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 `
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
-    const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     
     const response = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-gpt`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

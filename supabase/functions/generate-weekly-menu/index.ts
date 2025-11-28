@@ -192,13 +192,13 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
     console.log('Sending personalized prompt to knowledge-gpt...')
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
-    const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     
     const aiResponse = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-gpt`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       },
       body: JSON.stringify({
         messages: [
