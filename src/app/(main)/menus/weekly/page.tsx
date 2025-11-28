@@ -1887,28 +1887,19 @@ export default function WeeklyMenuPage() {
                 <button
                   key={idx}
                   onClick={() => {
-                    setSelectedRecipe(meal.dishName);
+                    // タップした料理だけを表示
+                    setSelectedRecipe(dish.name);
                     setSelectedRecipeData({ 
-                      name: meal.dishName, 
-                      calories: meal.caloriesKcal,
-                      cookingTime: meal.cookingTimeMinutes,
-                      dishes: dishesArray,
-                      ingredients: meal.ingredients || [],
-                      recipeSteps: meal.recipeSteps || [],
-                      // 基本栄養素
-                      protein: meal.proteinG,
-                      fat: meal.fatG,
-                      carbs: meal.carbsG,
-                      // 詳細栄養素
-                      fiber: meal.fiberG,
-                      sodium: meal.sodiumG,
-                      sugar: meal.sugarG,
-                      calcium: meal.calciumMg,
-                      iron: meal.ironMg,
-                      potassium: meal.potassiumMg,
-                      vitaminC: meal.vitaminCMg,
-                      vitaminD: meal.vitaminDUg,
-                      cholesterol: meal.cholesterolMg,
+                      name: dish.name,
+                      role: dish.role,
+                      calories: dish.cal,
+                      // この料理だけを配列に入れる（UIの互換性のため）
+                      dishes: [dish],
+                      // この料理の材料とレシピ
+                      ingredients: dish.ingredients || [],
+                      recipeSteps: dish.recipeSteps || [],
+                      // 全料理の材料（買い物リスト用）
+                      allIngredients: dishesArray.flatMap(d => d.ingredients || []),
                     });
                     setActiveModal('recipe');
                   }}
@@ -1937,6 +1928,47 @@ export default function WeeklyMenuPage() {
             <div className="text-center">
               <ModeIcon size={24} color={mode.color} className="mx-auto mb-1.5" />
               <p style={{ fontSize: 15, fontWeight: 500, color: colors.text, margin: 0 }}>{meal.dishName || '未設定'}</p>
+            </div>
+          </div>
+        )}
+
+        {/* 栄養素一覧セクション */}
+        {(meal.caloriesKcal || meal.proteinG || meal.fatG || meal.carbsG) && (
+          <div className="mt-3 rounded-xl p-3" style={{ background: colors.bg }}>
+            <div className="flex items-center gap-1.5 mb-2">
+              <BarChart3 size={12} color={colors.textMuted} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted }}>この食事の栄養素</span>
+            </div>
+            <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[10px]" style={{ color: colors.text }}>
+              {/* 基本栄養素 */}
+              {meal.caloriesKcal && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>エネルギー</span><span className="font-medium">{meal.caloriesKcal}kcal</span></div>}
+              {meal.proteinG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>タンパク質</span><span className="font-medium">{meal.proteinG}g</span></div>}
+              {meal.fatG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>脂質</span><span className="font-medium">{meal.fatG}g</span></div>}
+              {meal.carbsG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>炭水化物</span><span className="font-medium">{meal.carbsG}g</span></div>}
+              {meal.fiberG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>食物繊維</span><span className="font-medium">{meal.fiberG}g</span></div>}
+              {meal.sugarG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>糖質</span><span className="font-medium">{meal.sugarG}g</span></div>}
+              {/* ミネラル */}
+              {meal.sodiumG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>塩分</span><span className="font-medium">{meal.sodiumG}g</span></div>}
+              {meal.potassiumMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カリウム</span><span className="font-medium">{meal.potassiumMg}mg</span></div>}
+              {meal.calciumMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カルシウム</span><span className="font-medium">{meal.calciumMg}mg</span></div>}
+              {meal.phosphorusMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>リン</span><span className="font-medium">{meal.phosphorusMg}mg</span></div>}
+              {meal.ironMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>鉄分</span><span className="font-medium">{meal.ironMg}mg</span></div>}
+              {meal.zincMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>亜鉛</span><span className="font-medium">{meal.zincMg}mg</span></div>}
+              {meal.iodineUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ヨウ素</span><span className="font-medium">{meal.iodineUg}µg</span></div>}
+              {/* 脂質詳細 */}
+              {meal.saturatedFatG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>飽和脂肪酸</span><span className="font-medium">{meal.saturatedFatG}g</span></div>}
+              {meal.cholesterolMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>コレステロール</span><span className="font-medium">{meal.cholesterolMg}mg</span></div>}
+              {/* ビタミン類 */}
+              {meal.vitaminAUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンA</span><span className="font-medium">{meal.vitaminAUg}µg</span></div>}
+              {meal.vitaminB1Mg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB1</span><span className="font-medium">{meal.vitaminB1Mg}mg</span></div>}
+              {meal.vitaminB2Mg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB2</span><span className="font-medium">{meal.vitaminB2Mg}mg</span></div>}
+              {meal.vitaminB6Mg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB6</span><span className="font-medium">{meal.vitaminB6Mg}mg</span></div>}
+              {meal.vitaminB12Ug && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB12</span><span className="font-medium">{meal.vitaminB12Ug}µg</span></div>}
+              {meal.vitaminCMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンC</span><span className="font-medium">{meal.vitaminCMg}mg</span></div>}
+              {meal.vitaminDUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンD</span><span className="font-medium">{meal.vitaminDUg}µg</span></div>}
+              {meal.vitaminEMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンE</span><span className="font-medium">{meal.vitaminEMg}mg</span></div>}
+              {meal.vitaminKUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンK</span><span className="font-medium">{meal.vitaminKUg}µg</span></div>}
+              {meal.folicAcidUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>葉酸</span><span className="font-medium">{meal.folicAcidUg}µg</span></div>}
             </div>
           </div>
         )}
@@ -2650,152 +2682,58 @@ export default function WeeklyMenuPage() {
                 <div className="flex-1 p-4 overflow-auto">
                   {/* 基本情報 */}
                   <div className="flex flex-wrap gap-3 mb-4">
-                    <div className="flex items-center gap-1">
-                      <Clock size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.cookingTime || 20}分</span>
-                    </div>
+                    {selectedRecipeData?.role && (
+                      <span className="px-2 py-0.5 rounded text-[11px] font-bold" style={{ 
+                        background: selectedRecipeData.role === 'main' ? colors.accent : selectedRecipeData.role === 'rice' ? '#8B4513' : selectedRecipeData.role === 'soup' ? colors.blue : colors.success,
+                        color: '#fff'
+                      }}>
+                        {selectedRecipeData.role === 'main' ? '主菜' : selectedRecipeData.role === 'soup' ? '汁物' : selectedRecipeData.role === 'rice' ? '主食' : '副菜'}
+                      </span>
+                    )}
                     <div className="flex items-center gap-1">
                       <Flame size={14} color={colors.textMuted} />
                       <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories || '-'}kcal</span>
                     </div>
-                    {selectedRecipeData?.protein && (
-                      <div className="flex items-center gap-1">
-                        <span style={{ fontSize: 12, color: colors.textLight }}>P: {selectedRecipeData.protein}g</span>
-                      </div>
-                    )}
-                    {selectedRecipeData?.fat && (
-                      <div className="flex items-center gap-1">
-                        <span style={{ fontSize: 12, color: colors.textLight }}>F: {selectedRecipeData.fat}g</span>
-                      </div>
-                    )}
-                    {selectedRecipeData?.carbs && (
-                      <div className="flex items-center gap-1">
-                        <span style={{ fontSize: 12, color: colors.textLight }}>C: {selectedRecipeData.carbs}g</span>
-                      </div>
+                  </div>
+
+                  {/* 材料 */}
+                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
+                  <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
+                    {selectedRecipeData?.ingredients && selectedRecipeData.ingredients.length > 0 ? (
+                      <ul className="space-y-1.5">
+                        {selectedRecipeData.ingredients.map((ing: string, idx: number) => (
+                          <li key={idx} className="flex items-center gap-2" style={{ fontSize: 13, color: colors.text }}>
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.accent }}></span>
+                            {ing}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>
                     )}
                   </div>
 
-                  {/* 詳細栄養素（あれば表示） */}
-                  {(selectedRecipeData?.fiber || selectedRecipeData?.sodium || selectedRecipeData?.calcium || selectedRecipeData?.iron) && (
-                    <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                      <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, margin: '0 0 8px' }}>📊 詳細栄養素</p>
-                      <div className="grid grid-cols-2 gap-2 text-[11px]" style={{ color: colors.text }}>
-                        {selectedRecipeData?.fiber && <div>食物繊維: {selectedRecipeData.fiber}g</div>}
-                        {selectedRecipeData?.sodium && <div>塩分: {selectedRecipeData.sodium}g</div>}
-                        {selectedRecipeData?.sugar && <div>糖質: {selectedRecipeData.sugar}g</div>}
-                        {selectedRecipeData?.calcium && <div>カルシウム: {selectedRecipeData.calcium}mg</div>}
-                        {selectedRecipeData?.iron && <div>鉄分: {selectedRecipeData.iron}mg</div>}
-                        {selectedRecipeData?.potassium && <div>カリウム: {selectedRecipeData.potassium}mg</div>}
-                        {selectedRecipeData?.vitaminC && <div>ビタミンC: {selectedRecipeData.vitaminC}mg</div>}
-                        {selectedRecipeData?.vitaminD && <div>ビタミンD: {selectedRecipeData.vitaminD}µg</div>}
-                        {selectedRecipeData?.cholesterol && <div>コレステロール: {selectedRecipeData.cholesterol}mg</div>}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 各料理ごとの材料・レシピ */}
-                  {selectedRecipeData?.dishes && selectedRecipeData.dishes.length > 0 ? (
-                    <div className="space-y-4">
-                      {selectedRecipeData.dishes.map((dish: any, idx: number) => (
-                        <div key={idx} className="rounded-xl p-3" style={{ background: colors.bg }}>
-                          {/* 料理名とカロリー */}
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ 
-                                background: dish.role === 'main' ? colors.accent : dish.role === 'rice' ? '#8B4513' : colors.blue,
-                                color: '#fff'
-                              }}>
-                                {dish.role === 'main' ? '主菜' : dish.role === 'soup' ? '汁物' : dish.role === 'rice' ? '主食' : '副菜'}
-                              </span>
-                              <span style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{dish.name}</span>
-                            </div>
-                            <span style={{ fontSize: 11, color: colors.textMuted }}>{dish.cal || '-'}kcal</span>
-                          </div>
-
-                          {/* この料理の材料 */}
-                          {dish.ingredients && dish.ingredients.length > 0 && (
-                            <div className="mb-3">
-                              <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, margin: '0 0 6px' }}>🥕 材料</p>
-                              <ul className="space-y-1">
-                                {dish.ingredients.map((ing: string, ingIdx: number) => (
-                                  <li key={ingIdx} className="flex items-center gap-2" style={{ fontSize: 12, color: colors.text }}>
-                                    <span className="w-1 h-1 rounded-full" style={{ background: colors.accent }}></span>
-                                    {ing}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {/* この料理のレシピ */}
-                          {dish.recipeSteps && dish.recipeSteps.length > 0 && (
-                            <div>
-                              <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, margin: '0 0 6px' }}>👨‍🍳 作り方</p>
-                              <ol className="space-y-1.5">
-                                {dish.recipeSteps.map((step: string, stepIdx: number) => (
-                                  <li key={stepIdx} className="flex gap-2" style={{ fontSize: 12, color: colors.text }}>
-                                    <span className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: colors.accent, color: '#fff' }}>
-                                      {stepIdx + 1}
-                                    </span>
-                                    <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
-                                  </li>
-                                ))}
-                              </ol>
-                            </div>
-                          )}
-
-                          {/* 材料もレシピもない場合 */}
-                          {(!dish.ingredients || dish.ingredients.length === 0) && (!dish.recipeSteps || dish.recipeSteps.length === 0) && (
-                            <p style={{ fontSize: 11, color: colors.textMuted }}>
-                              「AIで変更」で再生成するとレシピが表示されます
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    /* 旧形式（食事全体に材料・レシピがある場合）のフォールバック */
-                    <div>
-                      {/* 材料 */}
-                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
-                      <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                        {selectedRecipeData?.ingredients && selectedRecipeData.ingredients.length > 0 ? (
-                          <ul className="space-y-1.5">
-                            {selectedRecipeData.ingredients.map((ing: string, idx: number) => (
-                              <li key={idx} className="flex items-center gap-2" style={{ fontSize: 13, color: colors.text }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.accent }}></span>
-                                {ing}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>
-                        )}
-                      </div>
-
-                      {/* 作り方 */}
-                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>👨‍🍳 作り方</p>
-                      <div className="rounded-xl p-3" style={{ background: colors.bg }}>
-                        {selectedRecipeData?.recipeSteps && selectedRecipeData.recipeSteps.length > 0 ? (
-                          <ol className="space-y-3">
-                            {selectedRecipeData.recipeSteps.map((step: string, idx: number) => (
-                              <li key={idx} className="flex gap-3" style={{ fontSize: 13, color: colors.text }}>
-                                <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: colors.accent, color: '#fff' }}>
-                                  {idx + 1}
-                                </span>
-                                <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
-                              </li>
-                            ))}
-                          </ol>
-                        ) : (
-                          <p style={{ fontSize: 13, color: colors.textMuted }}>
-                            レシピはAI献立を生成すると自動で作成されます。<br />
-                            「AIで変更」ボタンから再生成してください。
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  {/* 作り方 */}
+                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>👨‍🍳 作り方</p>
+                  <div className="rounded-xl p-3" style={{ background: colors.bg }}>
+                    {selectedRecipeData?.recipeSteps && selectedRecipeData.recipeSteps.length > 0 ? (
+                      <ol className="space-y-3">
+                        {selectedRecipeData.recipeSteps.map((step: string, idx: number) => (
+                          <li key={idx} className="flex gap-3" style={{ fontSize: 13, color: colors.text }}>
+                            <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: colors.accent, color: '#fff' }}>
+                              {idx + 1}
+                            </span>
+                            <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p style={{ fontSize: 13, color: colors.textMuted }}>
+                        レシピはAI献立を生成すると自動で作成されます。<br />
+                        「AIで変更」ボタンから再生成してください。
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>

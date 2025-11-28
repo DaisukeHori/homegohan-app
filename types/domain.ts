@@ -424,6 +424,8 @@ export interface DishDetail {
   cal: number;
   ingredient?: string;
   role?: string; // 'main' | 'side' | 'soup' | 'rice' | 'salad' | etc.
+  ingredients?: string[]; // この料理の材料リスト
+  recipeSteps?: string[]; // この料理のレシピ手順
 }
 
 // dishes は配列形式で可変数に対応
