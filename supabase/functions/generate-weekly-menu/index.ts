@@ -15,21 +15,73 @@ const fileSearch = fileSearchTool([
   "vs_690c5840e4c48191bbe8798dc9f0a3a7",
 ]);
 
-// ===== Markdownコードブロックを除去するヘルパー =====
+// ===== Markdownコードブロックを除去するヘルパー（強化版） =====
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
   
+  // パターン1: ```json ... ``` または ``` ... ```
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim();
+  }
+  
+  // パターン2: 先頭の``` ... を除去（閉じ忘れ対応）
   if (cleaned.startsWith('```')) {
     const firstNewline = cleaned.indexOf('\n');
     if (firstNewline !== -1) {
       cleaned = cleaned.substring(firstNewline + 1);
     }
+    // 末尾の```を除去
     if (cleaned.endsWith('```')) {
-      cleaned = cleaned.substring(0, cleaned.length - 3);
+      cleaned = cleaned.substring(0, cleaned.length - 3).trim();
     }
   }
   
+  // パターン3: JSONの前後にテキストがある場合、{...} または [...] を抽出
+  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+    const jsonStart = cleaned.search(/[\{\[]/);
+    if (jsonStart > 0) {
+      cleaned = cleaned.substring(jsonStart);
+    }
+  }
+  
+  // 末尾の不要なテキストを除去
+  const lastBrace = cleaned.lastIndexOf('}');
+  const lastBracket = cleaned.lastIndexOf(']');
+  const jsonEnd = Math.max(lastBrace, lastBracket);
+  if (jsonEnd > 0 && jsonEnd < cleaned.length - 1) {
+    cleaned = cleaned.substring(0, jsonEnd + 1);
+  }
+  
   return cleaned.trim();
+}
+
+// ===== JSONを安全にパースするヘルパー =====
+function safeJsonParse(text: string): any {
+  // まずMarkdownコードブロックを除去
+  let cleaned = stripMarkdownCodeBlock(text);
+  
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error('First JSON parse attempt failed:', e);
+    console.error('Cleaned text (first 500 chars):', cleaned.substring(0, 500));
+    
+    // 追加のクリーンアップを試みる
+    // 制御文字を除去
+    cleaned = cleaned.replace(/[\x00-\x1F\x7F]/g, (char) => {
+      if (char === '\n' || char === '\r' || char === '\t') return char;
+      return '';
+    });
+    
+    // 再度パース試行
+    try {
+      return JSON.parse(cleaned);
+    } catch (e2) {
+      console.error('Second JSON parse attempt also failed:', e2);
+      throw new Error(`JSON parse failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 }
 
 // ===== OpenAI Agents SDKでAI呼び出し =====
@@ -64,32 +116,54 @@ Respond only in valid JSON. Consider all health conditions and dietary restricti
 
     const result = await runner.run(agent, [...conversationHistory]);
     
+    console.log('Agent run completed. Extracting output...');
+    console.log('finalOutput type:', typeof result.finalOutput);
+    console.log('finalOutput value (first 200 chars):', 
+      result.finalOutput ? String(result.finalOutput).substring(0, 200) : 'null/undefined');
+    console.log('newItems count:', result.newItems?.length || 0);
+    
     let outputText = "";
     
     if (!result.finalOutput) {
-      const lastAssistantItem = result.newItems.find(item => 
-        item.rawItem.role === 'assistant' && 
-        item.rawItem.content
-      );
+      console.log('No finalOutput, searching newItems...');
       
-      if (lastAssistantItem && Array.isArray(lastAssistantItem.rawItem.content)) {
-        const textContent = lastAssistantItem.rawItem.content.find(
-          (c: any) => c.type === 'output_text' || c.type === 'text'
-        );
-        if (textContent && textContent.text) {
-          outputText = textContent.text;
-        } else {
-          throw new Error("Agent result is undefined");
+      // すべてのassistantメッセージを探す
+      const assistantItems = result.newItems.filter(item => 
+        item.rawItem.role === 'assistant'
+      );
+      console.log('Found assistant items:', assistantItems.length);
+      
+      for (const item of assistantItems) {
+        console.log('Assistant item content type:', typeof item.rawItem.content);
+        if (Array.isArray(item.rawItem.content)) {
+          for (const c of item.rawItem.content) {
+            console.log('Content part type:', c.type);
+            if ((c.type === 'output_text' || c.type === 'text') && c.text) {
+              outputText = c.text;
+              console.log('Found text output, length:', outputText.length);
+              break;
+            }
+          }
         }
-      } else {
-        throw new Error("Agent result is undefined");
+        if (outputText) break;
+      }
+      
+      if (!outputText) {
+        // rawItemの全構造をログ
+        for (const item of result.newItems) {
+          console.log('Item raw structure:', JSON.stringify(item.rawItem).substring(0, 500));
+        }
+        throw new Error("Agent result is undefined - no text content found");
       }
     } else if (typeof result.finalOutput === 'object') {
+      console.log('finalOutput is object, stringifying...');
       return JSON.stringify(result.finalOutput);
     } else {
       outputText = String(result.finalOutput);
+      console.log('Using finalOutput as string, length:', outputText.length);
     }
     
+    console.log('Output text before cleanup (first 300 chars):', outputText.substring(0, 300));
     return stripMarkdownCodeBlock(outputText);
   });
 }
@@ -340,8 +414,9 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
     const content = await runAgentForWeeklyMenu(prompt)
     
     console.log('AI response received, content length:', content.length)
+    console.log('AI response preview (first 200 chars):', content.substring(0, 200))
     
-    const resultJson = JSON.parse(content)
+    const resultJson = safeJsonParse(content)
 
     // 7日分の献立が生成されているか検証
     if (!resultJson.days || !Array.isArray(resultJson.days) || resultJson.days.length !== 7) {
