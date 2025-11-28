@@ -189,22 +189,22 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 - 各食事にingredients（材料リスト）とrecipeSteps（調理手順）を必ず含めてください**
 `
 
-    console.log('Sending personalized prompt to OpenAI...')
+    console.log('Sending personalized prompt to knowledge-gpt...')
 
-    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
+    const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+    
+    const aiResponse = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-gpt`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: "You are an elite nutritionist AI specialized in personalized meal planning. Respond only in valid JSON. Consider all health conditions and dietary restrictions carefully." },
+          { role: "system", content: "You are an elite nutritionist AI specialized in personalized meal planning. Respond only in valid JSON. Consider all health conditions and dietary restrictions carefully. ナレッジベースにある献立サンプルとレシピを参照して回答してください。" },
           { role: "user", content: prompt }
         ],
-        response_format: { type: "json_object" },
-        temperature: 0.7,
       }),
     })
 

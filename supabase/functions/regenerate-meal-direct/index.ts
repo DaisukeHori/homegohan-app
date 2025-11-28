@@ -133,20 +133,20 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 }
 `
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
+    const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+    
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-gpt`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: 'あなたは一流の管理栄養士です。JSONのみを出力してください。' },
+          { role: 'system', content: 'あなたは一流の管理栄養士です。JSONのみを出力してください。ナレッジベースにある献立サンプルとレシピを参照して回答してください。' },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.9,
-        response_format: { type: 'json_object' }
       }),
     })
 
