@@ -222,6 +222,7 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     
+    // ストリーミングモードでリクエスト
     const response = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-gpt`, {
       method: 'POST',
       headers: {
@@ -233,6 +234,7 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
           { role: 'system', content: 'あなたは一流の管理栄養士です。健康状態と食事制限を厳守し、パーソナライズされた献立を提案します。JSONのみを出力してください。ナレッジベースにある献立サンプルとレシピを参照して回答してください。' },
           { role: 'user', content: prompt }
         ],
+        stream: true,
       }),
     })
 
@@ -241,9 +243,41 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
       throw new Error(`OpenAI API error: ${errorText}`)
     }
 
-    const aiResult = await response.json()
+    // ストリーミングレスポンスを読み取って結合
+    let content = ""
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split('\n')
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim()
+            if (data === '[DONE]') continue
+            
+            try {
+              const parsed = JSON.parse(data)
+              const delta = parsed.choices?.[0]?.delta?.content
+              if (delta) {
+                content += delta
+              }
+            } catch {
+              // JSON解析エラーは無視
+            }
+          }
+        }
+      }
+    }
+    
+    console.log('Streaming completed, content length:', content.length)
+    
     // Markdownコードブロックを除去してからJSONパース
-    let content = aiResult.choices[0].message.content.trim()
     if (content.startsWith('```')) {
       const firstNewline = content.indexOf('\n')
       if (firstNewline !== -1) content = content.substring(firstNewline + 1)

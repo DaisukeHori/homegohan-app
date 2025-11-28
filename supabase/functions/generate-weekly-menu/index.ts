@@ -243,11 +243,12 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 - 例外：中華セット（ラーメン＋チャーハン）や定食スタイル（丼＋小鉢＋汁物）は食文化として自然な組み合わせ**
 `
 
-    console.log('Sending personalized prompt to knowledge-gpt...')
+    console.log('Sending personalized prompt to knowledge-gpt (streaming)...')
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     
+    // ストリーミングモードでリクエスト
     const aiResponse = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-gpt`, {
       method: 'POST',
       headers: {
@@ -259,14 +260,47 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
           { role: "system", content: "You are an elite nutritionist AI specialized in personalized meal planning. Respond only in valid JSON. Consider all health conditions and dietary restrictions carefully. ナレッジベースにある献立サンプルとレシピを参照して回答してください。" },
           { role: "user", content: prompt }
         ],
+        stream: true,
       }),
     })
 
     if (!aiResponse.ok) throw new Error(await aiResponse.text())
 
-    const aiData = await aiResponse.json()
+    // ストリーミングレスポンスを読み取って結合
+    let content = ""
+    const reader = aiResponse.body?.getReader()
+    const decoder = new TextDecoder()
+    
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split('\n')
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim()
+            if (data === '[DONE]') continue
+            
+            try {
+              const parsed = JSON.parse(data)
+              const delta = parsed.choices?.[0]?.delta?.content
+              if (delta) {
+                content += delta
+              }
+            } catch {
+              // JSON解析エラーは無視
+            }
+          }
+        }
+      }
+    }
+    
+    console.log('Streaming completed, content length:', content.length)
+    
     // Markdownコードブロックを除去してからJSONパース
-    let content = aiData.choices[0].message.content.trim()
     if (content.startsWith('```')) {
       const firstNewline = content.indexOf('\n')
       if (firstNewline !== -1) content = content.substring(firstNewline + 1)
