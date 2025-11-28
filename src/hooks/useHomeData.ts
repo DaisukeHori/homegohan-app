@@ -101,6 +101,23 @@ export const useHomeData = () => {
     hasAlert: false,
   });
 
+  // 栄養分析データ
+  const [nutritionAnalysis, setNutritionAnalysis] = useState<{
+    score: number;
+    issues: string[];
+    advice: string | null;
+    suggestion: any | null;
+    comparison: Record<string, { actual: number; target: number; percentage: number; status: string }>;
+    loading: boolean;
+  }>({
+    score: 0,
+    issues: [],
+    advice: null,
+    suggestion: null,
+    comparison: {},
+    loading: false,
+  });
+
   const supabase = createClient();
   const todayStr = formatLocalDate(new Date());
 
@@ -257,6 +274,9 @@ export const useHomeData = () => {
 
       // 11. 健康記録サマリー
       await fetchHealthSummary(authUser.id);
+
+      // 12. 栄養分析（AIアドバイス付き）
+      await fetchNutritionAnalysis();
 
     } else {
       setUser(null);
@@ -679,6 +699,72 @@ export const useHomeData = () => {
     }
   };
 
+  // 栄養分析（AIアドバイス付き）
+  const fetchNutritionAnalysis = async () => {
+    try {
+      setNutritionAnalysis(prev => ({ ...prev, loading: true }));
+      
+      const response = await fetch('/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true');
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.success && data.analysis) {
+          setNutritionAnalysis({
+            score: data.analysis.score || 0,
+            issues: data.analysis.issues || [],
+            advice: data.advice || null,
+            suggestion: data.suggestion || null,
+            comparison: data.analysis.comparison || {},
+            loading: false,
+          });
+          
+          // AIアドバイスをsuggestに設定
+          if (data.advice && !suggestion) {
+            setSuggestion(data.advice);
+          }
+        } else {
+          setNutritionAnalysis(prev => ({ ...prev, loading: false }));
+        }
+      } else {
+        setNutritionAnalysis(prev => ({ ...prev, loading: false }));
+      }
+    } catch (e) {
+      console.error('Nutrition analysis fetch error:', e);
+      setNutritionAnalysis(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  // AIが提案した献立変更を実行
+  const executeNutritionSuggestion = async () => {
+    if (!nutritionAnalysis.suggestion) return;
+    
+    try {
+      const { targetDate, targetMeal, suggestedDishes, currentIssue } = nutritionAnalysis.suggestion;
+      
+      // プロンプトを構築
+      const prompt = `${currentIssue}を解決するために、${suggestedDishes?.map((d: any) => d.name).join('、')}を含めた献立に変更してください。`;
+      
+      const response = await fetch('/api/ai/nutrition-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetDate: targetDate || todayStr,
+          targetMealType: targetMeal || 'dinner',
+          prompt,
+        }),
+      });
+      
+      if (response.ok) {
+        // 成功したらデータを再取得
+        await fetchHomeData();
+        setSuggestion('献立を変更しました！');
+      }
+    } catch (e) {
+      console.error('Execute nutrition suggestion error:', e);
+    }
+  };
+
   // 食事完了をトグル
   const toggleMealCompletion = async (mealId: string, currentStatus: boolean) => {
     const newStatus = !currentStatus;
@@ -763,11 +849,13 @@ export const useHomeData = () => {
     latestBadge,
     bestMealThisWeek,
     healthSummary,
+    nutritionAnalysis,
     // 関数
     toggleMealCompletion,
     updateActivityLevel,
     setAnnouncement,
     setSuggestion,
+    executeNutritionSuggestion,
     refetch: fetchHomeData,
   };
 };

@@ -148,6 +148,8 @@ export async function POST(request: Request) {
     let sodiumG = 7.0; // デフォルト（日本人の平均的な摂取量）
     let potassiumMg = 2500;
     let fiberG = 21;
+    let fiberSolubleG = 7; // 水溶性食物繊維（目標の約1/3）
+    let fiberInsolubleG = 14; // 不溶性食物繊維（目標の約2/3）
     let cholesterolMg = 300;
     let sugarG = 50;
     let calciumMg = 650;
@@ -249,6 +251,8 @@ export async function POST(request: Request) {
       fat_g: fatG,
       carbs_g: carbsG,
       fiber_g: fiberG,
+      fiber_soluble_g: fiberSolubleG,
+      fiber_insoluble_g: fiberInsolubleG,
       sodium_g: sodiumG,
       sugar_g: sugarG,
       potassium_mg: potassiumMg,

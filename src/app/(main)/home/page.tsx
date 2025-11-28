@@ -83,10 +83,12 @@ export default function HomePage() {
     latestBadge,
     bestMealThisWeek,
     healthSummary,
+    nutritionAnalysis,
     toggleMealCompletion,
     updateActivityLevel,
     setAnnouncement,
     setSuggestion,
+    executeNutritionSuggestion,
   } = useHomeData();
 
   const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
@@ -276,6 +278,69 @@ export default function HomePage() {
             </motion.div>
           </Link>
 
+          {/* 栄養スコア */}
+          {nutritionAnalysis && nutritionAnalysis.score > 0 && (
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ delay: 0.2 }}
+              className="mb-4 bg-white rounded-2xl p-4 shadow-sm border border-green-100"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp size={18} style={{ color: colors.success }} />
+                  <span className="font-semibold text-sm" style={{ color: colors.text }}>今日の栄養スコア</span>
+                </div>
+                <div 
+                  className="px-3 py-1 rounded-full text-sm font-bold"
+                  style={{ 
+                    background: nutritionAnalysis.score >= 80 ? colors.successLight : 
+                               nutritionAnalysis.score >= 60 ? colors.warningLight : '#FFEBEE',
+                    color: nutritionAnalysis.score >= 80 ? colors.success : 
+                           nutritionAnalysis.score >= 60 ? colors.warning : colors.error,
+                  }}
+                >
+                  {nutritionAnalysis.score}点
+                </div>
+              </div>
+
+              {/* 主要栄養素のバー */}
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                {[
+                  { key: 'calories', label: 'カロリー', color: colors.accent },
+                  { key: 'protein', label: 'タンパク質', color: colors.success },
+                  { key: 'fat', label: '脂質', color: colors.warning },
+                  { key: 'carbs', label: '炭水化物', color: colors.blue },
+                ].map(item => {
+                  const data = nutritionAnalysis.comparison[item.key];
+                  const percentage = data ? Math.min(data.percentage, 100) : 0;
+                  return (
+                    <div key={item.key} className="text-center">
+                      <div className="text-[10px] font-medium" style={{ color: colors.textMuted }}>{item.label}</div>
+                      <div className="h-1.5 bg-gray-100 rounded-full mt-1 overflow-hidden">
+                        <div 
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${percentage}%`, background: item.color }}
+                        />
+                      </div>
+                      <div className="text-[10px] mt-0.5" style={{ color: colors.textLight }}>{percentage}%</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 課題がある場合 */}
+              {nutritionAnalysis.issues.length > 0 && (
+                <div className="bg-amber-50 rounded-lg p-2 text-xs" style={{ color: colors.warning }}>
+                  <div className="flex items-start gap-1.5">
+                    <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+                    <span>{nutritionAnalysis.issues[0]}</span>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+
           {/* お知らせ */}
           <AnimatePresence>
             {announcement && (
@@ -341,16 +406,31 @@ export default function HomePage() {
               exit={{ opacity: 0, y: -10 }}
               className="mb-6"
             >
-              <div className="bg-gradient-to-r from-amber-500 to-orange-500 text-white p-4 rounded-2xl shadow-lg flex items-start gap-3 relative overflow-hidden">
+              <div className="bg-gradient-to-r from-amber-500 to-orange-500 text-white p-4 rounded-2xl shadow-lg relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
-                <Sparkles size={18} className="flex-shrink-0 mt-0.5" />
-                <div className="flex-1 relative z-10">
-                  <p className="text-xs font-bold text-white/80 mb-0.5">AIアドバイス</p>
-                  <p className="text-sm font-medium leading-relaxed">{suggestion}</p>
+                <div className="flex items-start gap-3">
+                  <Sparkles size={18} className="flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 relative z-10">
+                    <p className="text-xs font-bold text-white/80 mb-0.5">💡 今日のアドバイス</p>
+                    <p className="text-sm font-medium leading-relaxed">{suggestion}</p>
+                  </div>
+                  <button onClick={() => setSuggestion(null)} className="text-white/60 hover:text-white">
+                    <X size={16} />
+                  </button>
                 </div>
-                <button onClick={() => setSuggestion(null)} className="text-white/60 hover:text-white">
-                  <X size={16} />
-                </button>
+                
+                {/* AIが献立変更を提案している場合 */}
+                {nutritionAnalysis?.suggestion && (
+                  <div className="mt-3 pt-3 border-t border-white/20">
+                    <button
+                      onClick={executeNutritionSuggestion}
+                      className="w-full py-2 px-4 bg-white/20 hover:bg-white/30 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                    >
+                      <ChevronRight size={16} />
+                      おすすめ献立に変更する
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
