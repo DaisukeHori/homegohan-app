@@ -1,5 +1,5 @@
 // filename: supabase/functions/knowledge-gpt/index.ts
-// OpenAI Chat Completions API 互換のエンドポイント（ストリーミング対応）
+// OpenAI Chat Completions API 互換のエンドポイント
 // 内部で OpenAI Agents SDK（ナレッジ付き）を呼び出す
 
 import {
@@ -11,7 +11,7 @@ import {
 } from "@openai/agents";
 import { corsHeaders } from '../_shared/cors.ts'
 
-console.log("Knowledge-GPT Function loaded (Streaming v2)")
+console.log("Knowledge-GPT Function loaded")
 
 // ===== Tool definitions (Vector Store) =====
 const fileSearch = fileSearchTool([
@@ -31,7 +31,6 @@ interface ChatCompletionRequest {
   temperature?: number;
   response_format?: { type: string };
   mode?: 'json' | 'chat';
-  stream?: boolean;
 }
 
 interface ChatCompletionResponse {
@@ -71,7 +70,7 @@ function stripMarkdownCodeBlock(text: string): string {
   return cleaned.trim();
 }
 
-// ===== エージェント実行（非ストリーミング） =====
+// ===== エージェント実行 =====
 async function runAgent(systemPrompt: string, userMessage: string, mode: string = 'json'): Promise<string> {
   return await withTrace("knowledge_gpt", async () => {
     let enhancedSystemPrompt = systemPrompt;
@@ -83,7 +82,7 @@ async function runAgent(systemPrompt: string, userMessage: string, mode: string 
     const agent = new Agent({
       name: "knowledge-gpt",
       instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
-      model: "gpt-4.1-mini",
+      model: "gpt-4o-mini",
       tools: [fileSearch],
     });
 
@@ -137,99 +136,6 @@ async function runAgent(systemPrompt: string, userMessage: string, mode: string 
   });
 }
 
-// ===== ストリーミングエージェント実行 =====
-async function runAgentStreamingCollect(systemPrompt: string, userMessage: string, mode: string = 'json'): Promise<{ content: string; chunks: string[] }> {
-  let enhancedSystemPrompt = systemPrompt;
-  
-  if (mode === 'json') {
-    enhancedSystemPrompt = systemPrompt + "\n\n【重要】回答は必ず純粋なJSONのみを出力してください。```json などのMarkdownコードブロックで囲まないでください。説明文も不要です。JSONデータのみを返してください。";
-  }
-  
-  const agent = new Agent({
-    name: "knowledge-gpt",
-    instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
-    model: "gpt-4.1-mini",
-    tools: [fileSearch],
-  });
-
-  const conversationHistory: AgentInputItem[] = [
-    {
-      role: "user",
-      content: [{ type: "input_text", text: userMessage }],
-    },
-  ];
-
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "knowledge-gpt-stream",
-      workflow_id: "wf_knowledge_gpt_stream",
-    },
-  });
-
-  // ストリーミング実行
-  const stream = runner.runStreamed(agent, [...conversationHistory]);
-  
-  let fullContent = "";
-  const chunks: string[] = [];
-  
-  for await (const event of stream) {
-    console.log("Stream event type:", event.type);
-    
-    // raw_model_stream_event からテキストチャンクを取得
-    if (event.type === 'raw_model_stream_event') {
-      const data = event.data as any;
-      console.log("Raw event data type:", data?.type);
-      
-      // OpenAI Responses API形式
-      if (data?.type === 'response.output_text.delta' && data?.delta) {
-        fullContent += data.delta;
-        chunks.push(data.delta);
-      }
-      // Anthropic形式
-      else if (data?.type === 'content_block_delta' && data?.delta?.text) {
-        fullContent += data.delta.text;
-        chunks.push(data.delta.text);
-      }
-    }
-    // run_item_stream_event でアシスタントの出力を取得
-    else if (event.type === 'run_item_stream_event') {
-      const item = event.item as any;
-      if (item?.type === 'message_output_item' && item?.rawItem?.content) {
-        for (const content of item.rawItem.content) {
-          if (content.type === 'output_text' && content.text) {
-            if (!fullContent.includes(content.text)) {
-              fullContent = content.text;
-              chunks.push(content.text);
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  // ストリーミングが完了したら最終結果を確認
-  const finalOutput = stream.finalOutput;
-  console.log("Final output type:", typeof finalOutput);
-  
-  if (!fullContent && finalOutput) {
-    if (typeof finalOutput === 'object') {
-      fullContent = JSON.stringify(finalOutput);
-    } else {
-      fullContent = String(finalOutput);
-    }
-    chunks.push(fullContent);
-  }
-  
-  // JSONモードの場合のみMarkdownコードブロックを除去
-  if (mode === 'json') {
-    fullContent = stripMarkdownCodeBlock(fullContent);
-  }
-  
-  console.log("Streaming completed, total content length:", fullContent.length, "chunks:", chunks.length);
-  
-  return { content: fullContent, chunks };
-}
-
 // ===== Edge Function HTTP ハンドラ =====
 Deno.serve(async (req) => {
   // CORS preflight
@@ -258,24 +164,13 @@ Deno.serve(async (req) => {
     const userMessages = body.messages.filter(m => m.role === "user").map(m => m.content);
     const userMessage = userMessages.join("\n\n");
     const mode = body.mode || 'json';
-    const useStreaming = body.stream || false;
 
     console.log("Knowledge-GPT received request");
     console.log("System prompt length:", systemMessage.length);
     console.log("User message length:", userMessage.length);
-    console.log("Mode:", mode, "Stream:", useStreaming);
+    console.log("Mode:", mode);
 
-    let agentOutput: string;
-
-    if (useStreaming) {
-      // ストリーミングモードだが、内部で収集して非ストリーミングレスポンスを返す
-      // これにより、タイムアウトを回避しつつ、呼び出し側は通常のJSONレスポンスを受け取れる
-      const { content } = await runAgentStreamingCollect(systemMessage, userMessage, mode);
-      agentOutput = content;
-    } else {
-      // 非ストリーミングモード（従来通り）
-      agentOutput = await runAgent(systemMessage, userMessage, mode);
-    }
+    const agentOutput = await runAgent(systemMessage, userMessage, mode);
 
     console.log("Knowledge-GPT completed, output length:", agentOutput.length);
 

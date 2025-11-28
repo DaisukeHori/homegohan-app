@@ -260,7 +260,6 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
           { role: "system", content: "You are an elite nutritionist AI specialized in personalized meal planning. Respond only in valid JSON. Consider all health conditions and dietary restrictions carefully. ナレッジベースにある献立サンプルとレシピを参照して回答してください。" },
           { role: "user", content: prompt }
         ],
-        stream: true,  // 内部でストリーミング処理してタイムアウト回避
       }),
     })
 

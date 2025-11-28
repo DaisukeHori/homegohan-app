@@ -219,7 +219,6 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
           { role: 'system', content: 'あなたは一流の管理栄養士です。JSONのみを出力してください。ナレッジベースにある献立サンプルとレシピを参照して回答してください。' },
           { role: 'user', content: prompt }
         ],
-        stream: true,  // 内部でストリーミング処理してタイムアウト回避
       }),
     })
 
