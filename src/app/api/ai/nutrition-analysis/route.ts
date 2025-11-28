@@ -353,16 +353,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // 該当の食事を取得
-    const { data: activePlan } = await supabase
+    // 該当の食事を取得（is_active=trueか、なければ最新のプラン）
+    let activePlan = null;
+    const { data: activePlanData } = await supabase
       .from('meal_plans')
       .select('id')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .single();
 
+    if (activePlanData) {
+      activePlan = activePlanData;
+    } else {
+      // is_active=trueがなければ最新のプランを使用
+      const { data: latestPlan } = await supabase
+        .from('meal_plans')
+        .select('id')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      activePlan = latestPlan;
+    }
+
     if (!activePlan) {
-      return NextResponse.json({ error: 'No active meal plan' }, { status: 404 });
+      return NextResponse.json({ error: 'No meal plan found' }, { status: 404 });
     }
 
     // meal_plan_dayを取得

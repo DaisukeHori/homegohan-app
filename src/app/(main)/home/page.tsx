@@ -419,8 +419,8 @@ export default function HomePage() {
                   </button>
                 </div>
                 
-                {/* AIが献立変更を提案している場合 */}
-                {nutritionAnalysis?.suggestion && (
+                {/* AIが献立変更を提案している場合（suggestionまたはissuesがある） */}
+                {(nutritionAnalysis?.suggestion || (nutritionAnalysis?.issues && nutritionAnalysis.issues.length > 0)) && (
                   <div className="mt-3 pt-3 border-t border-white/20">
                     <button
                       onClick={executeNutritionSuggestion}

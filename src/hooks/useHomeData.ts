@@ -249,34 +249,20 @@ export const useHomeData = () => {
         }
       }
 
-      // ========== 新規: 拡張データ取得 ==========
+      // ========== 拡張データを並列取得（高速化） ==========
+      await Promise.all([
+        fetchCookingStreak(authUser.id),
+        fetchWeeklyStats(authUser.id),
+        fetchMonthlyStats(authUser.id),
+        fetchExpiringItems(authUser.id),
+        fetchShoppingRemaining(authUser.id),
+        fetchBadgeInfo(authUser.id),
+        fetchBestMealThisWeek(authUser.id),
+        fetchHealthSummary(authUser.id),
+      ]);
 
-      // 4. 連続自炊ストリーク計算
-      await fetchCookingStreak(authUser.id);
-
-      // 5. 週間統計
-      await fetchWeeklyStats(authUser.id);
-
-      // 6. 月間統計
-      await fetchMonthlyStats(authUser.id);
-
-      // 7. 冷蔵庫の期限切れ間近アイテム
-      await fetchExpiringItems(authUser.id);
-
-      // 8. 買い物リスト残数
-      await fetchShoppingRemaining(authUser.id);
-
-      // 9. バッジ情報
-      await fetchBadgeInfo(authUser.id);
-
-      // 10. 今週のベスト料理
-      await fetchBestMealThisWeek(authUser.id);
-
-      // 11. 健康記録サマリー
-      await fetchHealthSummary(authUser.id);
-
-      // 12. 栄養分析（AIアドバイス付き）
-      await fetchNutritionAnalysis();
+      // 栄養分析は重いので非同期で後から取得（UIはloadingなしで先に表示）
+      fetchNutritionAnalysis();
 
     } else {
       setUser(null);
@@ -737,20 +723,42 @@ export const useHomeData = () => {
 
   // AIが提案した献立変更を実行
   const executeNutritionSuggestion = async () => {
-    if (!nutritionAnalysis.suggestion) return;
+    // suggestionがなくても、issuesがあれば献立変更を提案
+    const suggestion = nutritionAnalysis.suggestion;
+    const issues = nutritionAnalysis.issues || [];
+    
+    if (!suggestion && issues.length === 0) {
+      setSuggestion('現在提案できる献立変更はありません。');
+      return;
+    }
     
     try {
-      const { targetDate, targetMeal, suggestedDishes, currentIssue } = nutritionAnalysis.suggestion;
+      // suggestionがある場合はそれを使用、なければissuesから生成
+      let targetDate = todayStr;
+      let targetMealType = 'dinner';
+      let prompt = '';
       
-      // プロンプトを構築
-      const prompt = `${currentIssue}を解決するために、${suggestedDishes?.map((d: any) => d.name).join('、')}を含めた献立に変更してください。`;
+      if (suggestion) {
+        targetDate = suggestion.targetDate || todayStr;
+        targetMealType = suggestion.targetMeal || 'dinner';
+        const dishes = suggestion.suggestedDishes || [];
+        const dishNames = dishes.map((d: any) => d.name).join('、');
+        prompt = suggestion.currentIssue 
+          ? `${suggestion.currentIssue}を解決するために${dishNames ? `、${dishNames}を含めた` : ''}バランスの良い献立に変更してください。`
+          : `栄養バランスを改善する献立に変更してください。`;
+      } else {
+        // issuesから自動生成
+        prompt = `${issues[0]}。この問題を解決するバランスの良い献立に変更してください。`;
+      }
+      
+      setSuggestion('献立を変更中...');
       
       const response = await fetch('/api/ai/nutrition-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          targetDate: targetDate || todayStr,
-          targetMealType: targetMeal || 'dinner',
+          targetDate,
+          targetMealType,
           prompt,
         }),
       });
@@ -758,10 +766,14 @@ export const useHomeData = () => {
       if (response.ok) {
         // 成功したらデータを再取得
         await fetchHomeData();
-        setSuggestion('献立を変更しました！');
+        setSuggestion('🎉 献立を変更しました！');
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        setSuggestion(`変更に失敗しました: ${errorData.error || 'エラーが発生しました'}`);
       }
     } catch (e) {
       console.error('Execute nutrition suggestion error:', e);
+      setSuggestion('変更に失敗しました。もう一度お試しください。');
     }
   };
 
