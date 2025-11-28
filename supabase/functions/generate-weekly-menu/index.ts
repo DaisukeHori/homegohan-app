@@ -1,7 +1,98 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  fileSearchTool,
+  Agent,
+  type AgentInputItem,
+  Runner,
+  withTrace,
+} from "@openai/agents";
 
-console.log("Generate Weekly Menu Function loaded (Personalized)")
+console.log("Generate Weekly Menu Function loaded (with integrated OpenAI Agents SDK)")
+
+// ===== Tool definitions (Vector Store) =====
+const fileSearch = fileSearchTool([
+  "vs_690c5840e4c48191bbe8798dc9f0a3a7",
+]);
+
+// ===== Markdownコードブロックを除去するヘルパー =====
+function stripMarkdownCodeBlock(text: string): string {
+  let cleaned = text.trim();
+  
+  if (cleaned.startsWith('```')) {
+    const firstNewline = cleaned.indexOf('\n');
+    if (firstNewline !== -1) {
+      cleaned = cleaned.substring(firstNewline + 1);
+    }
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.substring(0, cleaned.length - 3);
+    }
+  }
+  
+  return cleaned.trim();
+}
+
+// ===== OpenAI Agents SDKでAI呼び出し =====
+async function runAgentForWeeklyMenu(prompt: string): Promise<string> {
+  return await withTrace("generate_weekly_menu", async () => {
+    const systemPrompt = `You are an elite nutritionist AI specialized in personalized meal planning. 
+Respond only in valid JSON. Consider all health conditions and dietary restrictions carefully.
+ナレッジベースにある献立サンプルとレシピを参照して回答してください。
+
+【重要】回答は必ず純粋なJSONのみを出力してください。\`\`\`json などのMarkdownコードブロックで囲まないでください。説明文も不要です。JSONデータのみを返してください。`;
+
+    const agent = new Agent({
+      name: "weekly-menu-generator",
+      instructions: systemPrompt,
+      model: "gpt-4o-mini",
+      tools: [fileSearch],
+    });
+
+    const conversationHistory: AgentInputItem[] = [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: prompt }],
+      },
+    ];
+
+    const runner = new Runner({
+      traceMetadata: {
+        __trace_source__: "generate-weekly-menu",
+        workflow_id: "wf_weekly_menu_generation",
+      },
+    });
+
+    const result = await runner.run(agent, [...conversationHistory]);
+    
+    let outputText = "";
+    
+    if (!result.finalOutput) {
+      const lastAssistantItem = result.newItems.find(item => 
+        item.rawItem.role === 'assistant' && 
+        item.rawItem.content
+      );
+      
+      if (lastAssistantItem && Array.isArray(lastAssistantItem.rawItem.content)) {
+        const textContent = lastAssistantItem.rawItem.content.find(
+          (c: any) => c.type === 'output_text' || c.type === 'text'
+        );
+        if (textContent && textContent.text) {
+          outputText = textContent.text;
+        } else {
+          throw new Error("Agent result is undefined");
+        }
+      } else {
+        throw new Error("Agent result is undefined");
+      }
+    } else if (typeof result.finalOutput === 'object') {
+      return JSON.stringify(result.finalOutput);
+    } else {
+      outputText = String(result.finalOutput);
+    }
+    
+    return stripMarkdownCodeBlock(outputText);
+  });
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -243,37 +334,13 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 - 例外：中華セット（ラーメン＋チャーハン）や定食スタイル（丼＋小鉢＋汁物）は食文化として自然な組み合わせ**
 `
 
-    console.log('Sending personalized prompt to knowledge-gpt (streaming mode)...')
+    console.log('Calling OpenAI Agents SDK directly (integrated)...')
 
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    // OpenAI Agents SDKを直接使用（knowledge-gptを経由しない）
+    const content = await runAgentForWeeklyMenu(prompt)
     
-    // ストリーミングモードでリクエスト（内部でストリーミング処理、レスポンスはJSON）
-    const aiResponse = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-gpt`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: "system", content: "You are an elite nutritionist AI specialized in personalized meal planning. Respond only in valid JSON. Consider all health conditions and dietary restrictions carefully. ナレッジベースにある献立サンプルとレシピを参照して回答してください。" },
-          { role: "user", content: prompt }
-        ],
-      }),
-    })
-
-    if (!aiResponse.ok) throw new Error(await aiResponse.text())
-
-    const aiData = await aiResponse.json()
-    // Markdownコードブロックを除去してからJSONパース
-    let content = aiData.choices[0].message.content.trim()
-    if (content.startsWith('```')) {
-      const firstNewline = content.indexOf('\n')
-      if (firstNewline !== -1) content = content.substring(firstNewline + 1)
-      if (content.endsWith('```')) content = content.substring(0, content.length - 3)
-      content = content.trim()
-    }
+    console.log('AI response received, content length:', content.length)
+    
     const resultJson = JSON.parse(content)
 
     // 7日分の献立が生成されているか検証
