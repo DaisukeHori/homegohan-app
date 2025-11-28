@@ -422,13 +422,12 @@ export default function HomePage() {
                 {/* AIが献立変更を提案している場合（suggestionまたはissuesがある） */}
                 {(nutritionAnalysis?.suggestion || (nutritionAnalysis?.issues && nutritionAnalysis.issues.length > 0)) && (
                   <div className="mt-3 pt-3 border-t border-white/20">
-                    <button
-                      onClick={executeNutritionSuggestion}
-                      className="w-full py-2 px-4 bg-white/20 hover:bg-white/30 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
-                    >
-                      <ChevronRight size={16} />
-                      おすすめ献立に変更する
-                    </button>
+                    <Link href="/menus/weekly">
+                      <div className="w-full py-2 px-4 bg-white/20 hover:bg-white/30 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer">
+                        <ChevronRight size={16} />
+                        献立表でAI変更する
+                      </div>
+                    </Link>
                   </div>
                 )}
               </div>
