@@ -60,15 +60,8 @@ async function runAgent(systemPrompt: string, userMessage: string): Promise<stri
     const agent = new Agent({
       name: "knowledge-gpt",
       instructions: systemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
-      model: "gpt-4.1-mini",
+      model: "gpt-4o-mini",
       tools: [fileSearch],
-      modelSettings: {
-        reasoning: {
-          effort: "low",
-          summary: "auto",
-        },
-        store: true,
-      },
     });
 
     const conversationHistory: AgentInputItem[] = [
