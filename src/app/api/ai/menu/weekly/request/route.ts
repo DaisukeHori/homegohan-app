@@ -1,6 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+// Vercel Proプランでは最大300秒まで延長可能
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   const supabase = await createClient();
 
@@ -32,44 +35,48 @@ export async function POST(request: Request) {
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 
-    // 3. Edge Function の呼び出し（fire-and-forget）
-    // Edge Function は完了まで時間がかかるため、レスポンスを待たずにrequestIdを返す
-    // AbortControllerは使用しない（リクエスト自体がキャンセルされる可能性があるため）
+    // 3. Edge Function の呼び出し（awaitで完了を待つ）
+    // maxDuration=300で設定しているので、長時間処理でもタイムアウトしない
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     
     console.log('🚀 Calling Edge Function generate-weekly-menu...');
     
-    // fetchでEdge Functionを呼び出す（レスポンスは無視）
-    fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-      },
-      body: JSON.stringify({
-        userId: user.id,
-        startDate,
-        note,
-        familySize,
-        cheatDay,
-        preferences,
-        requestId: requestData.id,
-      }),
-    })
-    .then(res => {
-      console.log('✅ Edge Function response received, status:', res.status);
-    })
-    .catch(err => {
+    try {
+      // fetchでEdge Functionを呼び出す（完了を待つ）
+      const edgeRes = await fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          startDate,
+          note,
+          familySize,
+          cheatDay,
+          preferences,
+          requestId: requestData.id,
+        }),
+      });
+      
+      console.log('✅ Edge Function response received, status:', edgeRes.status);
+      
+      if (!edgeRes.ok) {
+        const errorText = await edgeRes.text();
+        console.error('❌ Edge Function error:', errorText);
+        // Edge Functionがエラーでも、requestIdは返す（DB側でステータス管理）
+      }
+    } catch (err: any) {
       console.error('❌ Edge Function call error:', err.message);
-      // エラーが発生してもrequestIdは既に返しているので、ここでは何もしない
-      // DBのステータスはEdge Function側で更新される
-    });
+      // エラーが発生しても、DBのステータスはEdge Function側で更新される
+    }
 
-    // requestIdを即座に返す（Edge Functionの完了を待たない）
+    // 処理完了後にレスポンスを返す
     return NextResponse.json({ 
-      status: 'processing',
-      message: 'Generation started',
+      status: 'completed',
+      message: 'Generation completed',
       requestId: requestData.id,
     });
 
