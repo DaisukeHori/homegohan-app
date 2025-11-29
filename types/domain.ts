@@ -528,6 +528,9 @@ export interface PlannedMeal {
   
   // Display order for reordering meals
   displayOrder: number;
+  
+  // 生成中フラグ
+  isGenerating: boolean;
 }
 
 // 栄養素の詳細型

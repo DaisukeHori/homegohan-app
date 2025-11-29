@@ -230,6 +230,8 @@ export default function WeeklyMenuPage() {
   const [addMealDayIndex, setAddMealDayIndex] = useState<number>(0);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  // 生成中の食事ID（DBのplanned_meals.id）を管理
+  const [generatingMealIds, setGeneratingMealIds] = useState<Set<string>>(new Set());
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
   
   // ポーリングのintervalIdを保持（クリーンアップ用）
@@ -569,10 +571,12 @@ export default function WeeklyMenuPage() {
               if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
             }
             setIsGenerating(false);
+            setGeneratingMealIds(new Set());
             localStorage.removeItem('weeklyMenuGenerating');
             cleanupPolling();
           } else if (status === 'failed') {
             setIsGenerating(false);
+            setGeneratingMealIds(new Set());
             localStorage.removeItem('weeklyMenuGenerating');
             cleanupPolling();
             alert('献立の生成に失敗しました。もう一度お試しください。');
@@ -588,6 +592,7 @@ export default function WeeklyMenuPage() {
     pollingTimeoutRef.current = setTimeout(() => {
       cleanupPolling();
       setIsGenerating(false);
+      setGeneratingMealIds(new Set());
       localStorage.removeItem('weeklyMenuGenerating');
     }, 5 * 60 * 1000);
   };
@@ -858,10 +863,9 @@ export default function WeeklyMenuPage() {
 
   // Generate weekly menu with AI
   const handleGenerateWeekly = async () => {
+    const weekStartDate = formatLocalDate(weekStart);
     setIsGenerating(true);
     setActiveModal(null); // モーダルを閉じて一覧画面に戻る
-    
-    const weekStartDate = formatLocalDate(weekStart);
     
     try {
       const preferences = {
@@ -882,13 +886,19 @@ export default function WeeklyMenuPage() {
       });
       if (!response.ok) throw new Error("生成リクエストに失敗しました");
       
-      const { requestId } = await response.json();
+      const { requestId, generatingMealIds: mealIds } = await response.json();
+      
+      // 生成中の食事IDをセットに保存
+      if (mealIds && Array.isArray(mealIds)) {
+        setGeneratingMealIds(new Set(mealIds));
+      }
       
       // localStorageに生成中状態を保存（画面遷移しても維持するため）
       localStorage.setItem('weeklyMenuGenerating', JSON.stringify({
         weekStartDate,
         timestamp: Date.now(),
-        requestId
+        requestId,
+        generatingMealIds: mealIds || [],
       }));
       
       setSelectedConditions([]);
@@ -905,6 +915,7 @@ export default function WeeklyMenuPage() {
     } catch (error: any) {
       alert(error.message || "エラーが発生しました");
       setIsGenerating(false);
+      setGeneratingMealIds(new Set());
       localStorage.removeItem('weeklyMenuGenerating');
     }
   };
@@ -932,6 +943,7 @@ export default function WeeklyMenuPage() {
               setCurrentPlan(mealPlan);
               setShoppingList(mealPlan.shoppingList || []);
               setIsGenerating(false);
+              setGeneratingMealIds(new Set());
               localStorage.removeItem('weeklyMenuGenerating');
               cleanupPolling();
               console.log('✅ All meals loaded!');
@@ -945,6 +957,7 @@ export default function WeeklyMenuPage() {
       if (attempts >= maxAttempts) {
         cleanupPolling();
         setIsGenerating(false);
+        setGeneratingMealIds(new Set());
         localStorage.removeItem('weeklyMenuGenerating');
         console.log('Polling timeout, reloading...');
         window.location.reload();
@@ -1666,13 +1679,10 @@ export default function WeeklyMenuPage() {
   // ============================================
 
   const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => {
+    // 単一食事の追加生成中かどうか
     const isGeneratingThis = generatingMeal?.dayIndex === dayIndex && generatingMeal?.mealType === mealKey;
     
-    // 一括生成中かつ今日以降の日付の場合も「作成中」表示
-    const dayDateStr = weekDates[dayIndex]?.dateStr;
-    const isGeneratingBulk = isGenerating && dayDateStr && dayDateStr >= todayStr;
-    
-    if (isGeneratingThis || isGeneratingBulk) {
+    if (isGeneratingThis) {
       return (
         <div
           className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
@@ -1714,8 +1724,8 @@ export default function WeeklyMenuPage() {
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
-    // 一括生成中かどうか（過去でない場合）
-    const isGeneratingBulk = isGenerating && !isPast;
+    // この食事が生成中かどうか（DBのis_generatingフラグまたはフロントエンドの状態で判断）
+    const isGeneratingThisMeal = meal.isGenerating || generatingMealIds.has(meal.id);
     
     // dishes配列から主菜と他の品数を取得
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
@@ -1745,8 +1755,8 @@ export default function WeeklyMenuPage() {
     const canUp = showReorderButtons && canMoveUp(meal, allMeals);
     const canDown = showReorderButtons && canMoveDown(meal, allMeals);
 
-    // 一括生成中または個別再生成中の場合
-    if (isRegeneratingThis || isGeneratingBulk) {
+    // この食事が生成中または個別再生成中の場合
+    if (isRegeneratingThis || isGeneratingThisMeal) {
       return (
         <div className="flex items-center gap-2 mb-2">
           <div
@@ -1852,8 +1862,8 @@ export default function WeeklyMenuPage() {
     const mealLabel = mealIndex > 0 ? `${MEAL_LABELS[mealKey]}${mealIndex + 1}` : MEAL_LABELS[mealKey];
     const isRegeneratingThis = regeneratingMealId === meal.id;
     
-    // 一括生成中かどうか（過去でない場合のみ）
-    const isGeneratingBulk = isGenerating && !isPast;
+    // この食事が生成中かどうか（DBのis_generatingフラグまたはフロントエンドの状態で判断）
+    const isGeneratingThisMeal = meal.isGenerating || generatingMealIds.has(meal.id);
     
     // dishes は配列形式に対応（可変数）
     const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
@@ -1875,8 +1885,8 @@ export default function WeeklyMenuPage() {
     const canUp = showReorderButtons && canMoveUp(meal, allMeals);
     const canDown = showReorderButtons && canMoveDown(meal, allMeals);
 
-    // 一括生成中または個別再生成中の場合はローディング表示
-    if (isRegeneratingThis || isGeneratingBulk) {
+    // この食事が生成中または個別再生成中の場合はローディング表示
+    if (isRegeneratingThis || isGeneratingThisMeal) {
       return (
         <div className="rounded-[20px] p-4 mb-2 flex flex-col" style={{ background: colors.card }}>
           <div className="flex justify-between items-center mb-3">

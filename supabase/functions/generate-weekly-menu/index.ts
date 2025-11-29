@@ -174,14 +174,15 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { userId, startDate, note, familySize, cheatDay, preferences, requestId = null } = await req.json()
+    const { userId, startDate, note, familySize, cheatDay, preferences, requestId = null, mealPlanId = null, generatingMealIds = [] } = await req.json()
 
     console.log('🚀 Starting menu generation for user:', userId, 'startDate:', startDate, 'requestId:', requestId);
+    console.log('📝 Placeholder meal IDs to update:', generatingMealIds?.length || 0);
 
     // バックグラウンドタスクを待つ（Proプランなら400秒のタイムアウトがある）
     // Note: fire-and-forgetは Supabase Edge Functions では動作しないため、await する
     try {
-      await generateMenuBackgroundTask({ userId, startDate, note, familySize, cheatDay, preferences, requestId });
+      await generateMenuBackgroundTask({ userId, startDate, note, familySize, cheatDay, preferences, requestId, mealPlanId, generatingMealIds });
       console.log('✅ Menu generation completed successfully');
       
       return new Response(
@@ -205,8 +206,9 @@ Deno.serve(async (req) => {
   }
 })
 
-async function generateMenuBackgroundTask({ userId, startDate, note, familySize = 1, cheatDay, preferences = {}, requestId = null }: any) {
+async function generateMenuBackgroundTask({ userId, startDate, note, familySize = 1, cheatDay, preferences = {}, requestId = null, mealPlanId = null, generatingMealIds = [] }: any) {
   console.log(`Starting personalized generation for user: ${userId}, startDate: ${startDate}, requestId: ${requestId}`)
+  console.log(`Using mealPlanId: ${mealPlanId}, placeholder count: ${generatingMealIds?.length || 0}`)
   
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -488,12 +490,8 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
       
       if (existingDay) {
         mealPlanDayId = existingDay.id
-        // 既存の献立を削除
-        await supabase
-          .from('planned_meals')
-          .delete()
-          .eq('meal_plan_day_id', mealPlanDayId)
-        console.log(`Cleared existing meals for ${dayDate}`)
+        // 既存の献立があるが削除しない（プレースホルダーを更新するため）
+        console.log(`Using existing meal_plan_day for ${dayDate}`)
       } else {
         const { data: newDay, error: dayError } = await supabase
           .from('meal_plan_days')
@@ -596,54 +594,77 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
         // 全料理の材料を統合（買い物リスト用）
         const allIngredients = dishes.flatMap((d: any) => d.ingredients || [])
         
-        const { error: mealError } = await supabase
+        // 既存のプレースホルダー（is_generating=true）を更新、なければ挿入
+        const { data: existingMeal } = await supabase
           .from('planned_meals')
-          .insert({
-            meal_plan_day_id: mealPlanDayId,
-            meal_type: mealType,
-            mode: 'cook',
-            dish_name: dishName,
-            description: meal.cookingTime ? `調理時間: ${meal.cookingTime}` : null,
-            dishes: dishDetails,
-            // 基本栄養素
-            calories_kcal: totalCalories || null,
-            protein_g: totalProtein || null,
-            fat_g: totalFat || null,
-            carbs_g: totalCarbs || null,
-            // 塩分・糖質・食物繊維
-            sodium_g: totalSodium || null,
-            sugar_g: totalSugar || null,
-            fiber_g: totalFiber || null,
-            fiber_soluble_g: totalFiberSoluble || null,
-            fiber_insoluble_g: totalFiberInsoluble || null,
-            // ミネラル
-            potassium_mg: totalPotassium || null,
-            calcium_mg: totalCalcium || null,
-            phosphorus_mg: totalPhosphorus || null,
-            iron_mg: totalIron || null,
-            zinc_mg: totalZinc || null,
-            iodine_ug: totalIodine || null,
-            cholesterol_mg: totalCholesterol || null,
-            // ビタミン
-            vitamin_b1_mg: totalVitaminB1 || null,
-            vitamin_b2_mg: totalVitaminB2 || null,
-            vitamin_c_mg: totalVitaminC || null,
-            vitamin_b6_mg: totalVitaminB6 || null,
-            vitamin_b12_ug: totalVitaminB12 || null,
-            folic_acid_ug: totalFolicAcid || null,
-            vitamin_a_ug: totalVitaminA || null,
-            vitamin_d_ug: totalVitaminD || null,
-            vitamin_k_ug: totalVitaminK || null,
-            vitamin_e_mg: totalVitaminE || null,
-            // 脂肪酸
-            saturated_fat_g: totalSaturatedFat || null,
-            monounsaturated_fat_g: totalMonounsaturatedFat || null,
-            polyunsaturated_fat_g: totalPolyunsaturatedFat || null,
-            is_simple: dishDetails.length <= 1,
-            is_completed: false,
-            ingredients: allIngredients.length > 0 ? allIngredients : null,
-            recipe_steps: null, // 各料理ごとのレシピはdishes内に保存
-          })
+          .select('id')
+          .eq('meal_plan_day_id', mealPlanDayId)
+          .eq('meal_type', mealType)
+          .single()
+        
+        const mealData = {
+          meal_plan_day_id: mealPlanDayId,
+          meal_type: mealType,
+          mode: 'cook',
+          dish_name: dishName,
+          description: meal.cookingTime ? `調理時間: ${meal.cookingTime}` : null,
+          dishes: dishDetails,
+          // 基本栄養素
+          calories_kcal: totalCalories || null,
+          protein_g: totalProtein || null,
+          fat_g: totalFat || null,
+          carbs_g: totalCarbs || null,
+          // 塩分・糖質・食物繊維
+          sodium_g: totalSodium || null,
+          sugar_g: totalSugar || null,
+          fiber_g: totalFiber || null,
+          fiber_soluble_g: totalFiberSoluble || null,
+          fiber_insoluble_g: totalFiberInsoluble || null,
+          // ミネラル
+          potassium_mg: totalPotassium || null,
+          calcium_mg: totalCalcium || null,
+          phosphorus_mg: totalPhosphorus || null,
+          iron_mg: totalIron || null,
+          zinc_mg: totalZinc || null,
+          iodine_ug: totalIodine || null,
+          cholesterol_mg: totalCholesterol || null,
+          // ビタミン
+          vitamin_b1_mg: totalVitaminB1 || null,
+          vitamin_b2_mg: totalVitaminB2 || null,
+          vitamin_c_mg: totalVitaminC || null,
+          vitamin_b6_mg: totalVitaminB6 || null,
+          vitamin_b12_ug: totalVitaminB12 || null,
+          folic_acid_ug: totalFolicAcid || null,
+          vitamin_a_ug: totalVitaminA || null,
+          vitamin_d_ug: totalVitaminD || null,
+          vitamin_k_ug: totalVitaminK || null,
+          vitamin_e_mg: totalVitaminE || null,
+          // 脂肪酸
+          saturated_fat_g: totalSaturatedFat || null,
+          monounsaturated_fat_g: totalMonounsaturatedFat || null,
+          polyunsaturated_fat_g: totalPolyunsaturatedFat || null,
+          is_simple: dishDetails.length <= 1,
+          is_completed: false,
+          is_generating: false, // 生成完了
+          ingredients: allIngredients.length > 0 ? allIngredients : null,
+          recipe_steps: null, // 各料理ごとのレシピはdishes内に保存
+        }
+        
+        let mealError: any = null
+        if (existingMeal) {
+          // 既存のプレースホルダーを更新
+          const { error } = await supabase
+            .from('planned_meals')
+            .update(mealData)
+            .eq('id', existingMeal.id)
+          mealError = error
+        } else {
+          // 新規挿入
+          const { error } = await supabase
+            .from('planned_meals')
+            .insert(mealData)
+          mealError = error
+        }
         
         if (mealError) {
           console.error(`Failed to insert planned_meal for ${dayDate} ${mealType}:`, mealError)
