@@ -450,6 +450,7 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   vegScore: data.veg_score || null,
   qualityTags: data.quality_tags || null,
   displayOrder: data.display_order ?? 0,
+  isGenerating: data.is_generating ?? false,
 });
 
 export const toShoppingListItem = (data: any): ShoppingListItem => ({
