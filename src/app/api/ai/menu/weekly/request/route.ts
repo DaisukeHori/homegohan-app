@@ -32,18 +32,15 @@ export async function POST(request: Request) {
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 
-    // 3. Edge Function の呼び出し（fire-and-forget with short timeout）
-    // Edge Function は完了まで時間がかかるため、短いタイムアウトで呼び出し、
-    // レスポンスを待たずにrequestIdを返す
+    // 3. Edge Function の呼び出し（fire-and-forget）
+    // Edge Function は完了まで時間がかかるため、レスポンスを待たずにrequestIdを返す
+    // AbortControllerは使用しない（リクエスト自体がキャンセルされる可能性があるため）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     
-    // fetchでEdge Functionを呼び出す（タイムアウト: 5秒）
-    // Edge Functionが受け取れば処理を開始するので、レスポンスを待つ必要はない
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    console.log('🚀 Calling Edge Function generate-weekly-menu...');
     
+    // fetchでEdge Functionを呼び出す（レスポンスは無視）
     fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu`, {
       method: 'POST',
       headers: {
@@ -59,20 +56,14 @@ export async function POST(request: Request) {
         preferences,
         requestId: requestData.id,
       }),
-      signal: controller.signal,
     })
     .then(res => {
-      clearTimeout(timeoutId);
-      console.log('Edge Function response status:', res.status);
+      console.log('✅ Edge Function response received, status:', res.status);
     })
     .catch(err => {
-      clearTimeout(timeoutId);
-      // タイムアウトやネットワークエラーは無視（Edge Functionは既に処理を開始している）
-      if (err.name === 'AbortError') {
-        console.log('Edge Function call timed out (expected - running in background)');
-      } else {
-        console.error('Edge Function call error:', err.message);
-      }
+      console.error('❌ Edge Function call error:', err.message);
+      // エラーが発生してもrequestIdは既に返しているので、ここでは何もしない
+      // DBのステータスはEdge Function側で更新される
     });
 
     // requestIdを即座に返す（Edge Functionの完了を待たない）
