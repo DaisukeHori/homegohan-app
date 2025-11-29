@@ -226,6 +226,7 @@ export const useHomeData = () => {
             vegScore: m.veg_score || null,
             qualityTags: m.quality_tags || null,
             displayOrder: m.display_order ?? 0,
+            isGenerating: m.is_generating ?? false,
             createdAt: m.created_at,
             updatedAt: m.updated_at,
           }));
