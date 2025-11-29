@@ -176,17 +176,28 @@ Deno.serve(async (req) => {
   try {
     const { userId, startDate, note, familySize, cheatDay, preferences, requestId = null } = await req.json()
 
-    // 非同期でバックグラウンドタスクを実行（レスポンスをブロックしない）
-    generateMenuBackgroundTask({ userId, startDate, note, familySize, cheatDay, preferences, requestId }).catch((error) => {
-      console.error('Background task error:', error)
-    })
+    console.log('🚀 Starting menu generation for user:', userId, 'startDate:', startDate, 'requestId:', requestId);
 
-    return new Response(
-      JSON.stringify({ message: 'Menu generation started in background' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    // バックグラウンドタスクを待つ（Proプランなら400秒のタイムアウトがある）
+    // Note: fire-and-forgetは Supabase Edge Functions では動作しないため、await する
+    try {
+      await generateMenuBackgroundTask({ userId, startDate, note, familySize, cheatDay, preferences, requestId });
+      console.log('✅ Menu generation completed successfully');
+      
+      return new Response(
+        JSON.stringify({ message: 'Menu generation completed', success: true }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    } catch (taskError: any) {
+      console.error('❌ Menu generation task failed:', taskError);
+      return new Response(
+        JSON.stringify({ message: 'Menu generation failed', error: taskError.message, success: false }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+      );
+    }
 
   } catch (error: any) {
+    console.error('❌ Request parsing error:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,

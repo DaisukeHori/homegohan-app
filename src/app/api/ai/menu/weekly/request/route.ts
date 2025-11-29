@@ -13,14 +13,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. リクエストをDBに保存（ステータス追跡用）
+    // 2. リクエストをDBに保存（ステータス追跡用）- 最初から processing に設定
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
         start_date: startDate,
         mode: 'weekly',
-        status: 'pending',
+        status: 'processing', // 最初から processing に設定
         prompt: note || '',
         constraints: preferences || {},
       })
@@ -29,44 +29,57 @@ export async function POST(request: Request) {
 
     if (insertError) {
       console.error('Failed to create request record:', insertError);
+      throw new Error(`Failed to create request: ${insertError.message}`);
     }
 
-    // 3. Edge Function の呼び出し（非同期バックグラウンド処理）
-    const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu', {
-      body: {
+    // 3. Edge Function の呼び出し（fire-and-forget with short timeout）
+    // Edge Function は完了まで時間がかかるため、短いタイムアウトで呼び出し、
+    // レスポンスを待たずにrequestIdを返す
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
+    
+    // fetchでEdge Functionを呼び出す（タイムアウト: 5秒）
+    // Edge Functionが受け取れば処理を開始するので、レスポンスを待つ必要はない
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
         userId: user.id,
         startDate,
         note,
         familySize,
         cheatDay,
         preferences,
-        requestId: requestData?.id,
-      },
+        requestId: requestData.id,
+      }),
+      signal: controller.signal,
+    })
+    .then(res => {
+      clearTimeout(timeoutId);
+      console.log('Edge Function response status:', res.status);
+    })
+    .catch(err => {
+      clearTimeout(timeoutId);
+      // タイムアウトやネットワークエラーは無視（Edge Functionは既に処理を開始している）
+      if (err.name === 'AbortError') {
+        console.log('Edge Function call timed out (expected - running in background)');
+      } else {
+        console.error('Edge Function call error:', err.message);
+      }
     });
 
-    if (invokeError) {
-      // エラー時はリクエストステータスを更新
-      if (requestData?.id) {
-        await supabase
-          .from('weekly_menu_requests')
-          .update({ status: 'failed', error_message: invokeError.message })
-          .eq('id', requestData.id);
-      }
-      throw new Error(`Edge Function invoke failed: ${invokeError.message}`);
-    }
-
-    // ステータスを processing に更新
-    if (requestData?.id) {
-      await supabase
-        .from('weekly_menu_requests')
-        .update({ status: 'processing' })
-        .eq('id', requestData.id);
-    }
-
+    // requestIdを即座に返す（Edge Functionの完了を待たない）
     return NextResponse.json({ 
-      status: 'pending',
-      message: 'Generation started in background',
-      requestId: requestData?.id,
+      status: 'processing',
+      message: 'Generation started',
+      requestId: requestData.id,
     });
 
   } catch (error: any) {
