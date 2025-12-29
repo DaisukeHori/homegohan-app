@@ -1252,3 +1252,41 @@ app/
 * 詳細設計（DB／ドメインモデル／API I/F／AI処理／ワーカー／クライアント構成）
 
 まで一通りつながった形になっています。
+
+---
+
+# 追記（2025-12-24）モバイルアプリ（React Native / Expo）設計
+
+## 1. 方針（Store公開前提）
+- iOS/Android を **Expo + EAS** で配布（App Store / Google Play）
+- **モノレポ**で Web と Mobile を同一リポジトリで管理
+- 秘密情報（`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `GOOGLE_*_API_KEY`）は **端末に置かない**
+
+## 2. モノレポ構成（段階移行）
+当面は既存Webをルートのまま維持しつつ、`apps/mobile` と `packages/core` を追加して動かします。
+最終的には `apps/web` に移動して完全な `apps/*` 構成へ。
+
+```txt
+homegohan-app/
+├── apps/
+│   └── mobile/                 # Expo（iOS/Android）
+├── packages/
+│   └── core/                   # 共有: 型/バリデーション/APIクライアント/共通ロジック
+├── src/                        # 既存Web（最終的に apps/web へ移動）
+└── supabase/                   # Edge Functions / migrations
+```
+
+## 3. 共有方針（`packages/core`）
+- 型（ドメイン/DB）、Zodスキーマ、APIクライアント、共通ユーティリティを段階的に移管
+- 「まずモバイルで必要になった箇所から」移行し、Web側も随時 `packages/core` に寄せる
+
+## 4. 認証/データアクセス
+- モバイルは **Supabase Auth** を使用し、端末にセッションを永続化
+- 通常CRUDは **Supabase（RLS）を直接利用**（端末は anon key + user JWT）
+- AI処理は **Edge Functions / Next.js API（BFF）** を利用（秘密鍵はサーバ側のみ）
+
+> 注意: 現状の Next.js API は `@supabase/ssr` により Cookie セッション前提が多いため、モバイルから同APIを叩く場合は Bearer(JWT) 対応が必要。移行期間は「モバイルは Supabase直 + Edge Functions（JWT必須）」を基本とする。
+
+## 5. 配布（EAS）
+- `development / preview / production` のビルドプロファイルで運用
+- Secrets は EAS Secrets と `EXPO_PUBLIC_*` を使い分け、リポジトリに秘密情報を残さない

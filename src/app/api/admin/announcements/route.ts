@@ -98,8 +98,7 @@ export async function POST(request: Request) {
       .from('admin_audit_logs')
       .insert({
         admin_id: user.id,
-        action: 'create_announcement',
-        target_type: 'announcement',
+        action_type: 'create_announcement',
         target_id: data.id,
         details: { title: body.title },
         severity: 'info',

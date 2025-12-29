@@ -96,7 +96,7 @@ Respond only in valid JSON. Consider all health conditions and dietary restricti
     const agent = new Agent({
       name: "weekly-menu-generator",
       instructions: systemPrompt,
-      model: "gpt-4o-mini",
+      model: "gpt-5-mini",
       tools: [fileSearch],
     });
 
@@ -174,7 +174,53 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { userId, startDate, note, familySize, cheatDay, preferences, requestId = null, mealPlanId = null, generatingMealIds = [] } = await req.json()
+    // 認証: service role または user JWT を許可（verify_jwt=false を補完）
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Authorization header required' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      })
+    }
+
+    const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+
+    const body = await req.json()
+    const { startDate, note, familySize, cheatDay, preferences, requestId = null, mealPlanId = null, generatingMealIds = [], userId: bodyUserId } = body
+
+    let userId: string
+    if (token === serviceRoleKey) {
+      // 内部呼び出し（サーバー側想定）
+      if (!bodyUserId) {
+        return new Response(JSON.stringify({ error: 'userId is required for service role calls' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400,
+        })
+      }
+      userId = bodyUserId
+    } else {
+      // ユーザーJWTで検証
+      const supabaseAuth = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: authHeader } } }
+      )
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 401,
+        })
+      }
+      if (bodyUserId && bodyUserId !== user.id) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 403,
+        })
+      }
+      userId = user.id
+    }
 
     console.log('🚀 Starting menu generation for user:', userId, 'startDate:', startDate, 'requestId:', requestId);
     console.log('📝 Placeholder meal IDs to update:', generatingMealIds?.length || 0);
@@ -221,6 +267,7 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
       .from('weekly_menu_requests')
       .update({ status: 'processing', updated_at: new Date().toISOString() })
       .eq('id', requestId)
+      .eq('user_id', userId)
   }
 
   try {
@@ -718,6 +765,7 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
           updated_at: new Date().toISOString()
         })
         .eq('id', requestId)
+        .eq('user_id', userId)
     }
     
     console.log('✅ All meals saved to planned_meals table')
@@ -735,6 +783,7 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
           updated_at: new Date().toISOString()
         })
         .eq('id', requestId)
+        .eq('user_id', userId)
     }
   }
 }
@@ -1084,7 +1133,9 @@ function formatCuisinePreferences(prefs: any): string {
 // 画像生成関数
 async function generateMealImage(dishName: string, userId: string, supabase: any): Promise<string> {
   const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
-  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.0-flash-exp'
+  // 画像生成モデル（Nano Banana / Nano Banana Pro）
+  // デフォルトは Nano Banana Pro（高品質）
+  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-3-pro-image-preview'
   
   if (!GOOGLE_AI_API_KEY) throw new Error('Google AI API Key is missing')
 

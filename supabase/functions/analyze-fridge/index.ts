@@ -23,7 +23,7 @@ serve(async (req) => {
 
     // OpenAI Vision API
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o', // Vision対応モデル
+      model: 'gpt-5-mini', // Vision対応モデル
       messages: [
         {
           role: 'user',

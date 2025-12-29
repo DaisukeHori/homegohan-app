@@ -2,9 +2,13 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAI(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing OPENAI_API_KEY');
+  }
+  return new OpenAI({ apiKey });
+}
 
 // セッション要約を生成
 export async function POST(
@@ -83,8 +87,9 @@ ${importantMessages.length > 0 ? `
 ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n')}
 ` : ''}`;
 
+    const openai = getOpenAI();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: [
         { role: 'system', content: 'あなたは会話を正確に要約するアシスタントです。JSONのみを出力してください。' },
         { role: 'user', content: summaryPrompt },

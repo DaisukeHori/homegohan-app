@@ -2,11 +2,18 @@
   "name": "homegohan",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "mobile:start": "npm --workspace apps/mobile run start",
+    "mobile:ios": "npm --workspace apps/mobile run ios",
+    "mobile:android": "npm --workspace apps/mobile run android"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

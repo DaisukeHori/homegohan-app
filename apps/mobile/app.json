@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "ほめゴハン",
+    "slug": "homegohan",
+    "scheme": "homegohan",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["ios", "android", "web"],
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFF7ED"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "bundleIdentifier": "com.homegohan.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "食事写真を撮影するためにカメラを使用します。",
+        "NSPhotoLibraryUsageDescription": "食事写真を選択するために写真ライブラリを使用します。",
+        "NSPhotoLibraryAddUsageDescription": "解析結果の保存のために写真ライブラリへ追加する場合があります。"
+      }
+    },
+    "android": {
+      "package": "com.homegohan.app",
+      "permissions": ["CAMERA", "READ_MEDIA_IMAGES", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "POST_NOTIFICATIONS"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#E07A5F"
+      }
+    },
+    "plugins": ["expo-router", "expo-image-picker", "expo-notifications"]
+  }
+}
+
+

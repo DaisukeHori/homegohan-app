@@ -13,15 +13,68 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // 認証: service role または user JWT を許可（verify_jwt=false を補完）
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Authorization header required' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      })
+    }
+
+    const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+
+    const body = await req.json()
     const { 
       mealId,
       dayDate,
       mealType, 
-      userId,
+      userId: bodyUserId,
       preferences = {},
       note = '',
       requestId = null
-    } = await req.json()
+    } = body
+
+    if (!mealId) {
+      return new Response(JSON.stringify({ error: 'mealId is required' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+
+    let userId: string
+    if (token === serviceRoleKey) {
+      // 内部呼び出し（サーバー側想定）
+      if (!bodyUserId) {
+        return new Response(JSON.stringify({ error: 'userId is required for service role calls' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400,
+        })
+      }
+      userId = bodyUserId
+    } else {
+      // ユーザーJWTで検証
+      const supabaseAuth = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: authHeader } } }
+      )
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 401,
+        })
+      }
+      if (bodyUserId && bodyUserId !== user.id) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 403,
+        })
+      }
+      userId = user.id
+    }
 
     // 非同期でバックグラウンドタスクを実行
     regenerateMealBackgroundTask({ 
@@ -71,18 +124,33 @@ async function regenerateMealBackgroundTask({
       .from('weekly_menu_requests')
       .update({ status: 'processing', updated_at: new Date().toISOString() })
       .eq('id', requestId)
+      .eq('user_id', userId)
   }
 
   try {
     // 1. 既存の食事データを取得
     const { data: existingMeal, error: mealFetchError } = await supabase
       .from('planned_meals')
-      .select('*')
+      .select('*, meal_plan_days!inner(meal_plans!inner(user_id))')
       .eq('id', mealId)
       .single()
 
     if (mealFetchError || !existingMeal) {
       throw new Error('Meal not found')
+    }
+
+    // 所有権チェック（service roleでRLSをバイパスするため必須）
+    const ownerId =
+      (existingMeal as any)?.meal_plan_days?.meal_plans?.user_id ??
+      (Array.isArray((existingMeal as any)?.meal_plan_days)
+        ? (existingMeal as any).meal_plan_days?.[0]?.meal_plans?.user_id
+        : null)
+
+    if (!ownerId) {
+      throw new Error('Meal owner not found')
+    }
+    if (ownerId !== userId) {
+      throw new Error('Forbidden')
     }
 
     // 2. ユーザープロファイルを取得
@@ -396,6 +464,7 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
           result_json: newMealData
         })
         .eq('id', requestId)
+        .eq('user_id', userId)
     }
 
     console.log(`✅ Meal regeneration completed for ${mealTypeJa}`)
@@ -413,6 +482,7 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
           updated_at: new Date().toISOString()
         })
         .eq('id', requestId)
+        .eq('user_id', userId)
     }
   }
 }
@@ -420,7 +490,8 @@ ${preferences.useFridgeFirst ? '- 冷蔵庫の食材を優先' : ''}
 // 画像生成関数（Gemini API）
 async function generateMealImage(dishName: string, userId: string, supabase: any): Promise<string> {
   const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
-  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-2.5-flash-preview-image'
+  // デフォルトは Nano Banana Pro（高品質）
+  const GEMINI_IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-3-pro-image-preview'
   
   console.log(`[Image Gen] Starting generation for: ${dishName}`)
   

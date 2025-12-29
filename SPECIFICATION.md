@@ -11,6 +11,7 @@
 8. [アルゴリズム詳細](#8-アルゴリズム詳細)
 9. [認証・認可](#9-認証認可)
 10. [環境変数](#10-環境変数)
+11. [モバイルアプリ（React Native / Expo）](#11-モバイルアプリreact-native--expo)
 
 ---
 
@@ -41,6 +42,15 @@
 | Lucide React | 0.554.0 | アイコン |
 | Zod | 4.1.13 | バリデーション |
 
+### モバイル（React Native / Expo）
+| 技術 | バージョン | 用途 |
+|------|-----------|------|
+| React Native | Expo SDKに準拠 | iOS/Android ネイティブアプリ |
+| Expo | SDK（EAS前提） | ビルド/配布、カメラ、通知、Deep Link |
+| Expo Router | Expo SDKに準拠 | ルーティング（WebのApp Routerに近い構造） |
+| TypeScript | Webと同等 | 型安全な開発（`packages/core` で共有） |
+| Supabase JS | 2.x | Auth / DB / Storage（クライアント側） |
+
 ### バックエンド
 | 技術 | 用途 |
 |------|------|
@@ -58,7 +68,7 @@
 
 ## 3. AIモデルと使用用途
 
-### 3.1 OpenAI GPT-4o-mini
+### 3.1 OpenAI GPT-5-mini
 
 **使用箇所:**
 - `generate-weekly-menu` Edge Function
@@ -73,7 +83,7 @@
 ```
 
 **パラメータ:**
-- `model`: gpt-4o-mini
+- `model`: gpt-5-mini
 - `temperature`: 0.7-0.8
 - `response_format`: { type: "json_object" }
 
@@ -102,7 +112,7 @@
 - `temperature`: 0.4
 - `maxOutputTokens`: 2048-4096
 
-### 3.3 Google Gemini 2.5 Flash Preview (画像生成)
+### 3.3 Google Gemini 3 Pro Image Preview (画像生成 / Nano Banana Pro)
 
 **使用箇所:**
 - `generate-weekly-menu` Edge Function
@@ -115,7 +125,7 @@ Natural lighting, high resolution, minimalist plating, Japanese cuisine style.
 ```
 
 **パラメータ:**
-- `model`: gemini-2.5-flash-preview-image
+- `model`: gemini-3-pro-image-preview
 - `responseModalities`: ['IMAGE']
 - `imageConfig`: { aspectRatio: '1:1' }
 
@@ -1097,12 +1107,160 @@ GOOGLE_GEN_AI_API_KEY=xxx
 
 ### オプション
 ```env
-# 画像生成モデル（デフォルト: gemini-2.5-flash-preview-image）
-GEMINI_IMAGE_MODEL=gemini-2.5-flash-preview-image
+# 画像生成モデル（デフォルト: gemini-3-pro-image-preview）
+GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
 
 # 分析モデル（デフォルト: gemini-2.0-flash-exp）
 GEMINI_ANALYSIS_MODEL=gemini-2.0-flash-exp
 ```
+
+---
+
+## 11. モバイルアプリ（React Native / Expo）
+
+### 11.1 方針（Store公開前提）
+- **iOS/Android を Expo + EAS で配布**する（App Store / Google Play）
+- **モノレポ**で Web と Mobile を同一リポジトリで管理し、型や共通ロジックを段階的に共有する
+- クライアント（モバイル）に **秘密鍵（`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `GOOGLE_*_API_KEY`）は絶対に置かない**
+
+### 11.2 モノレポ構成（段階移行）
+当面は既存Webをルートのまま維持しつつ、`apps/mobile` と `packages/core` を追加する。
+最終的には `apps/web` へ移動する。
+
+```txt
+homegohan-app/
+├── apps/
+│   └── mobile/                 # Expo（iOS/Android）
+├── packages/
+│   └── core/                   # 共有: 型/バリデーション/APIクライアント/共通ロジック
+├── src/                        # 既存Web（最終的に apps/web へ移動）
+├── supabase/                   # Edge Functions / migrations
+└── types/                      # 段階的に packages/core へ移行予定
+```
+
+### 11.3 共有パッケージ（`packages/core`）の責務
+- **ドメイン型**（例: `UserProfile`, `MealPlan`, `PlannedMeal` など）
+- **バリデーション**（Zod schemas）
+- **APIクライアント**（Web/モバイル共通の呼び出し規約）
+- **共通ロジック**（日付処理、栄養計算の一部、フォーマット等）
+
+> 移行は「まずモバイル側で必要になったものから切り出す」方式で進める。
+
+### 11.4 認証（Supabase Auth）
+- モバイルは **Supabase Auth（email/password → Google/Appleは後追い）**
+- セッションは端末に永続化し、API呼び出しでは **Supabase Access Token（JWT）** を利用する
+
+### 11.5 データアクセス方針（Webとモバイルの共存）
+#### 原則
+- **通常CRUD**（献立/健康記録/買い物/冷蔵庫等）は、モバイルから **Supabase（RLS）を直接利用**してもよい
+- **AI処理（OpenAI/Geminiの秘密鍵が必要）**は、以下のいずれかで実行する:
+  - **Supabase Edge Functions**（推奨）
+  - **Next.js API（BFF）**（移行期間の互換/集約用）
+
+#### 重要：現状のWeb APIの認証方式との差
+現行の Next.js API は `@supabase/ssr` により **Cookieセッション前提**の箇所が多い。
+モバイルから同APIを叩く場合は **Bearer(JWT)対応**が必要になるため、移行期間は以下を採用する:
+- **モバイル → Supabase（RLS）直アクセス + Edge Functions（JWT必須）**
+- もしくは **モバイル → Next.js API（Bearer対応を追加）**（段階的に対応）
+
+### 11.6 Push通知（Expo Notifications）
+- Expo Push Token を取得し、サーバ側に保存して配信に利用する
+- 保存先は以下いずれか（実装で決定）:
+  - `user_push_tokens`（新設・推奨）
+  - `notification_preferences` に token を追加（単一端末前提なら可）
+- 将来的に、健康記録リマインドや献立通知へ拡張する
+
+### 11.7 Deep Link / Universal Link
+- `homegohan://` スキームを基本に、iOS/Android のユニバーサルリンクにも対応
+- OAuth（Google/Apple）導入時はコールバックURLの設計が必須
+
+### 11.8 EAS Build / EAS Submit（CI/CD）
+- `apps/mobile` で EAS を使用し、以下のプロファイルを運用する:
+  - **development**: 開発端末向け
+  - **preview**: QA/社内配布
+  - **production**: ストア公開用
+- Secrets（API URL等）は `eas.json` と EAS Secrets を利用し、**リポジトリに秘密情報を残さない**
+
+### 11.9 モバイル用の環境変数（例）
+Expoでは `EXPO_PUBLIC_` を付けるとクライアントから参照可能になる。
+
+```env
+# Supabase（公開情報）
+EXPO_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=xxx
+
+# API（Next.js BFFを使う場合）
+EXPO_PUBLIC_API_BASE_URL=https://your-web-domain.example
+
+# ビルド環境
+EXPO_PUBLIC_APP_ENV=development|preview|production
+```
+
+### 11.10 最終ゴール（機能完全移植）
+Webにある **全機能**（メイン機能/組織/管理者/サポート/スーパー管理を含む）を、
+段階的にモバイルへ実装する。移行の基準は以下:
+- Phase A: **日常利用のメイン導線**（認証/オンボ/ホーム/献立/食事記録/AI相談）
+- Phase B: **生活・健康の拡張**（健康/買い物/冷蔵庫/レシピ/バッジ/比較/家族）
+- Phase C: **管理系の完全移植**（組織/管理者/サポート/スーパー管理）
+
+### 11.11 機能・画面一覧（Web → Mobile）
+#### Webページ一覧（`src/app/**/page.tsx`）
+モバイルは以下のWebルートと同等の画面を提供する（ロール/権限により表示制御）。
+
+- **公開ページ（未ログインでも閲覧可）**
+  - `/`（LP）
+  - `/about`, `/company`, `/contact`, `/faq`, `/guide`, `/legal`, `/news`, `/pricing`
+- **認証**
+  - `/login`, `/signup`
+  - `/auth/forgot-password`, `/auth/reset-password`, `/auth/verify`
+- **オンボーディング**
+  - `/onboarding`, `/onboarding/complete`
+- **メイン（ログイン後）**
+  - `/home`
+  - `/meals/new`, `/meals/[id]`
+  - `/menus/weekly`, `/menus/weekly/request`
+  - `/health`
+    - `/health/record`, `/health/record/quick`
+    - `/health/graphs`, `/health/insights`, `/health/goals`, `/health/challenges`, `/health/settings`
+  - `/badges`, `/comparison`
+  - `/profile`, `/settings`
+  - `/terms`, `/privacy`
+- **組織（org）**
+  - `/org/dashboard`, `/org/challenges`, `/org/departments`, `/org/invites`, `/org/members`, `/org/settings`
+- **管理者（admin）**
+  - `/admin`
+  - `/admin/announcements`, `/admin/audit-logs`, `/admin/inquiries`, `/admin/moderation`, `/admin/organizations`, `/admin/users`
+- **スーパー管理（super-admin）**
+  - `/super-admin`
+  - `/super-admin/admins`, `/super-admin/database`, `/super-admin/feature-flags`, `/super-admin/settings`
+- **サポート（support）**
+  - `/support`
+  - `/support/inquiries`, `/support/users`
+
+#### モバイルのルーティング方針（Expo Router）
+- `apps/mobile/app/(public)`：公開ページ（必要に応じて簡略UI）
+- `apps/mobile/app/(auth)`：ログイン/登録/パスワード再設定/メール確認
+- `apps/mobile/app/(tabs)`：日常導線（ホーム/献立/食事/健康/設定）
+- `apps/mobile/app/(org)` / `(admin)` / `(super-admin)` / `(support)`：ロールに応じた管理画面（設定画面から遷移）
+
+#### バックエンドAPIの対応（モバイル）
+- **基本CRUD**: Supabase（RLS）をモバイルから直接利用（anon key + user JWT）
+- **AI/秘密鍵が必要**: Supabase Edge Functions（推奨）または Next.js API（BFF）
+- **管理系**: 原則は Next.js API を経由（監査/権限/複雑な集計が多いため）
+
+### 11.12 品質保証（仕様↔実装の10パス検証）
+全機能実装が完了したら、以下を **最低10周（10パス）** 実施し、都度差分を修正してから次パスへ進む。
+
+- **Pass 1: 画面網羅性**（上記のWebページ一覧がモバイルで全て到達可能か）
+- **Pass 2: API網羅性**（各画面のデータ取得/更新が仕様通りか、未使用API/未実装APIの棚卸し）
+- **Pass 3: 認証/セッション**（ログイン/ログアウト/復元/期限切れ/メール確認/パスリセット）
+- **Pass 4: RLS/権限**（他ユーザー/他ロールのデータにアクセスできないこと、管理画面の表示制御）
+- **Pass 5: AI機能**（Edge Functions呼び出し、ユーザーID検証、長時間処理、失敗時のリトライ/表示）
+- **Pass 6: 画像/アップロード**（カメラ/フォトライブラリ/Storage/サイズ/失敗時の復帰）
+- **Pass 7: データ整合性**（献立/食事/健康/買い物/冷蔵庫の参照整合・削除整合）
+- **Pass 8: UX**（ローディング/エラー/空状態/戻る動作/多重送信防止/オフライン時）
+- **Pass 9: パフォーマンス**（初回起動、一覧スクロール、画像表示、キャッシュ、メモリ）
+- **Pass 10: ストア要件**（権限文言、プライバシー、退会/データ削除導線、審査NG項目）
 
 ---
 
@@ -1148,6 +1306,6 @@ homegohan/
 
 ---
 
-**更新日:** 2025年11月27日
+**更新日:** 2025年12月24日
 **バージョン:** 0.1.0
 

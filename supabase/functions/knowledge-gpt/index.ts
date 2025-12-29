@@ -2,6 +2,7 @@
 // OpenAI Chat Completions API 互換のエンドポイント
 // 内部で OpenAI Agents SDK（ナレッジ付き）を呼び出す
 
+import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   fileSearchTool,
   Agent,
@@ -82,7 +83,7 @@ async function runAgent(systemPrompt: string, userMessage: string, mode: string 
     const agent = new Agent({
       name: "knowledge-gpt",
       instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
-      model: "gpt-4o-mini",
+      model: "gpt-5-mini",
       tools: [fileSearch],
     });
 
@@ -149,6 +150,33 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: { message: "Method not allowed", type: "invalid_request_error" } }),
         { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    }
+
+    // 認証（verify_jwt=false を補完）
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: { message: "Authorization header required", type: "invalid_request_error" } }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+    if (token !== serviceRoleKey) {
+      const supabaseAuth = createClient(
+        Deno.env.get("SUPABASE_URL") ?? "",
+        Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+        { global: { headers: { Authorization: authHeader } } },
+      );
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+      if (authError || !user) {
+        return new Response(
+          JSON.stringify({ error: { message: "Unauthorized", type: "invalid_request_error" } }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
 
     const body: ChatCompletionRequest = await req.json().catch(() => ({ messages: [] }));

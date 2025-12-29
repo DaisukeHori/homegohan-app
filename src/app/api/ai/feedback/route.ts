@@ -50,7 +50,7 @@ export async function POST(request: Request) {
         plannedMealId,
         feedbackText,
         adviceText,
-        modelName: "gpt-4o-mini",
+        modelName: "gpt-5-mini",
       }
     })
   } catch (error: any) {

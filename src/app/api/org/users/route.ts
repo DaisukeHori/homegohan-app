@@ -5,32 +5,36 @@ import { NextResponse } from 'next/server';
 
 // Note: admin機能用には supabase-js のクライアントを直接使う（service_roleキーが必要）
 // 環境変数 SUPABASE_SERVICE_ROLE_KEY が設定されている前提
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
+  }
+  return createClient(url, serviceKey, {
     auth: {
       autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
+      persistSession: false,
+    },
+  });
+}
 
 export async function POST(request: Request) {
   const supabase = createServerClient(cookies());
 
   try {
+    const supabaseAdmin = getSupabaseAdmin();
     // 1. リクエスト実行者の権限チェック
     const { data: { user: actor } } = await supabase.auth.getUser();
     if (!actor) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { data: adminProfile } = await supabase
       .from('user_profiles')
-      .select('organization_id, role')
+      .select('organization_id, roles')
       .eq('id', actor.id)
       .single();
 
-    if (adminProfile?.role !== 'org_admin' || !adminProfile?.organization_id) {
+    if (!adminProfile?.roles?.includes('org_admin') || !adminProfile?.organization_id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -69,7 +73,7 @@ export async function POST(request: Request) {
         id: newUser.user.id,
         nickname: nickname,
         organization_id: adminProfile.organization_id,
-        role: 'user', // 一般ユーザー
+        roles: ['user'], // 一般ユーザー
         updated_at: new Date().toISOString()
       });
 
@@ -96,11 +100,11 @@ export async function GET(request: Request) {
 
     const { data: adminProfile } = await supabase
       .from('user_profiles')
-      .select('organization_id, role')
+      .select('organization_id, roles')
       .eq('id', user.id)
       .single();
 
-    if (adminProfile?.role !== 'org_admin' || !adminProfile?.organization_id) {
+    if (!adminProfile?.roles?.includes('org_admin') || !adminProfile?.organization_id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

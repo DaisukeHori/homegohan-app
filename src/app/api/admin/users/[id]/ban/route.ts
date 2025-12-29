@@ -66,8 +66,7 @@ export async function POST(
       .from('admin_audit_logs')
       .insert({
         admin_id: user.id,
-        action: 'ban_user',
-        target_type: 'user',
+        action_type: 'ban_user',
         target_id: params.id,
         details: { reason: body.reason },
         severity: 'warning',
@@ -118,8 +117,7 @@ export async function DELETE(
       .from('admin_audit_logs')
       .insert({
         admin_id: user.id,
-        action: 'unban_user',
-        target_type: 'user',
+        action_type: 'unban_user',
         target_id: params.id,
         details: {},
         severity: 'info',

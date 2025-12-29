@@ -2,9 +2,13 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAI(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing OPENAI_API_KEY');
+  }
+  return new OpenAI({ apiKey });
+}
 
 // メッセージ一覧取得
 export async function GET(
@@ -909,6 +913,7 @@ export async function POST(
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
+    const openai = getOpenAI();
     // セッション所有者確認
     const { data: session } = await supabase
       .from('ai_consultation_sessions')
@@ -988,7 +993,7 @@ export async function POST(
         // knowledge-gptが失敗した場合、フォールバックで直接OpenAI APIを呼び出す
         console.error('knowledge-gpt failed, falling back to OpenAI:', await knowledgeGptRes.text());
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-mini',
           messages,
           temperature: 0.7,
           max_tokens: 2000,
@@ -999,7 +1004,7 @@ export async function POST(
       // エラー時もフォールバック
       console.error('knowledge-gpt error, falling back to OpenAI:', kgError);
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5-mini',
         messages,
         temperature: 0.7,
         max_tokens: 2000,
@@ -1020,7 +1025,7 @@ export async function POST(
 
     // ユーザーメッセージの重要度をAIに判断させる
     const importanceCheck = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: [
         {
           role: 'system',

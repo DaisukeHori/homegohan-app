@@ -22,6 +22,9 @@ export async function POST(request: Request) {
 
   try {
     const { startDate, note, familySize, cheatDay, preferences } = await request.json();
+    if (!startDate) {
+      return NextResponse.json({ error: 'startDate is required' }, { status: 400 });
+    }
 
     // 1. ユーザー確認
     const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -30,29 +33,57 @@ export async function POST(request: Request) {
     }
 
     // 2. meal_planを取得または作成
+    const endDate = addDays(startDate, 6);
+
     let { data: mealPlan, error: planError } = await supabase
       .from('meal_plans')
       .select('id')
       .eq('user_id', user.id)
-      .eq('is_active', true)
-      .single();
+      .eq('start_date', startDate)
+      .maybeSingle();
 
-    if (planError || !mealPlan) {
-      // meal_planが存在しない場合は作成
+    if (planError) throw new Error(`Failed to fetch meal_plan: ${planError.message}`);
+
+    if (!mealPlan) {
+      // 指定週のmeal_planが存在しない場合は作成（start_date/end_dateは必須）
+      const ws = new Date(startDate);
+      const title = `${ws.getMonth() + 1}月${ws.getDate()}日〜の献立`;
       const { data: newPlan, error: createError } = await supabase
         .from('meal_plans')
-        .insert({ user_id: user.id, is_active: true })
+        .insert({
+          user_id: user.id,
+          title,
+          start_date: startDate,
+          end_date: endDate,
+          status: 'active',
+          is_active: true,
+        })
         .select('id')
         .single();
-      
+
       if (createError) throw new Error(`Failed to create meal_plan: ${createError.message}`);
       mealPlan = newPlan;
+    } else {
+      // 既存プランを最新化（念のため）
+      await supabase
+        .from('meal_plans')
+        .update({ end_date: endDate, status: 'active', is_active: true, updated_at: new Date().toISOString() })
+        .eq('id', mealPlan.id)
+        .eq('user_id', user.id);
     }
+
+    // 他のプランを非アクティブ化（アクティブは1つに揃える）
+    await supabase
+      .from('meal_plans')
+      .update({ is_active: false })
+      .eq('user_id', user.id)
+      .neq('id', mealPlan.id);
 
     // 3. 7日×3食のプレースホルダーレコードを作成（is_generating=true）
     const todayStr = getTodayStr();
     const mealTypes = ['breakfast', 'lunch', 'dinner'];
     const generatingMealIds: string[] = [];
+    const displayOrderMap: Record<string, number> = { breakfast: 10, lunch: 20, dinner: 30, snack: 40, midnight_snack: 50 };
 
     for (let i = 0; i < 7; i++) {
       const dateStr = addDays(startDate, i);
@@ -98,6 +129,7 @@ export async function POST(request: Request) {
               dish_name: '生成中...',
               is_generating: true,
               mode: 'cook',
+              display_order: displayOrderMap[mealType] ?? 0,
             })
             .select('id')
             .single();

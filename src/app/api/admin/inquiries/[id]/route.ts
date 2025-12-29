@@ -101,8 +101,7 @@ export async function PATCH(
       .from('admin_audit_logs')
       .insert({
         admin_id: user.id,
-        action: 'update_inquiry',
-        target_type: 'inquiry',
+        action_type: 'update_inquiry',
         target_id: params.id,
         details: { status: body.status },
         severity: 'info',

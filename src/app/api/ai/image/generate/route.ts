@@ -30,10 +30,13 @@ export async function POST(request: Request) {
     
     // 環境変数でモデルを切り替え可能
     // 注意: 無料プランでは画像生成モデルのクォータが0の場合があります
-    // 有料プランが必要な場合: gemini-2.5-flash-preview-image または gemini-3-pro-image-preview
+    // 有料プランが必要な場合:
+    // - Nano Banana: gemini-2.5-flash-image-preview
+    // - Nano Banana Pro: gemini-3-pro-image-preview
     // 無料で利用可能なモデル: gemini-2.0-flash-exp (テキスト生成のみ、画像生成は未対応)
     // 画像生成には有料プランが必要です
-    const modelName = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-preview-image';
+    // デフォルトは Nano Banana Pro（高品質）
+    const modelName = process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview';
     
     // プロンプトの構築（料理写真用に最適化）
     const enhancedPrompt = `A delicious, appetizing, professional food photography shot of ${prompt}. Natural lighting, high resolution, minimalist plating, Japanese cuisine style.`;

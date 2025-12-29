@@ -1,0 +1,385 @@
+import { Link, router } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+
+import { getApi } from "../../../src/lib/api";
+import { supabase } from "../../../src/lib/supabase";
+
+type PlannedMealRow = {
+  id: string;
+  meal_type: string;
+  dish_name: string;
+  mode: string | null;
+  calories_kcal: number | null;
+  is_completed: boolean | null;
+  is_generating: boolean | null;
+  display_order?: number | null;
+};
+
+type DayRow = {
+  id: string;
+  day_date: string;
+  planned_meals: PlannedMealRow[];
+};
+
+type MealPlanRow = {
+  id: string;
+  start_date: string;
+  end_date: string;
+  title: string;
+};
+
+const formatLocalDate = (date: Date): string => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+function getWeekStart(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+export default function WeeklyMenuPage() {
+  const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date()));
+  const weekStartStr = useMemo(() => formatLocalDate(weekStart), [weekStart]);
+  const weekEndStr = useMemo(() => {
+    const end = new Date(weekStart);
+    end.setDate(end.getDate() + 6);
+    return formatLocalDate(end);
+  }, [weekStart]);
+
+  const [plan, setPlan] = useState<MealPlanRow | null>(null);
+  const [days, setDays] = useState<DayRow[]>([]);
+  const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [regeneratingMealId, setRegeneratingMealId] = useState<string | null>(null);
+  const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+
+  async function loadData() {
+    setIsLoading(true);
+    setError(null);
+
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) {
+      setError("Unauthorized");
+      setPlan(null);
+      setDays([]);
+      setIsLoading(false);
+      return;
+    }
+
+    // 1) 今週のmeal_planを取得（start_date = weekStart を優先）
+    const { data: planData, error: planError } = await supabase
+      .from("meal_plans")
+      .select("id,start_date,end_date,title")
+      .eq("user_id", auth.user.id)
+      .eq("start_date", weekStartStr)
+      .maybeSingle();
+
+    if (planError) {
+      setError(planError.message);
+      setPlan(null);
+      setDays([]);
+      setIsLoading(false);
+      return;
+    }
+    if (!planData) {
+      setPlan(null);
+      setDays([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setPlan(planData as any);
+
+    // 2) 週のdays + meals
+    const { data: daysData, error: daysError } = await supabase
+      .from("meal_plan_days")
+      .select(
+        `
+        id,
+        day_date,
+        planned_meals (
+          id,
+          meal_type,
+          dish_name,
+          mode,
+          calories_kcal,
+          is_completed,
+          is_generating,
+          display_order
+        )
+      `
+      )
+      .eq("meal_plan_id", (planData as any).id)
+      .gte("day_date", weekStartStr)
+      .lte("day_date", weekEndStr)
+      .order("day_date", { ascending: true });
+
+    if (daysError) {
+      setError(daysError.message);
+      setDays([]);
+    } else {
+      setDays((daysData as any) ?? []);
+    }
+    setIsLoading(false);
+  }
+
+  useEffect(() => {
+    loadData();
+  }, [weekStartStr, weekEndStr]);
+
+  const selectedDay = useMemo(() => days.find((d) => d.day_date === selectedDate) ?? null, [days, selectedDate]);
+
+  function shiftWeek(delta: number) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + delta * 7);
+    setWeekStart(getWeekStart(d));
+    setSelectedDate(formatLocalDate(d));
+  }
+
+  const mealTypeLabel = useMemo(() => {
+    const map: Record<string, string> = {
+      breakfast: "朝食",
+      lunch: "昼食",
+      dinner: "夕食",
+      snack: "おやつ",
+      midnight_snack: "夜食",
+    };
+    return map;
+  }, []);
+
+  async function checkPending() {
+    try {
+      const api = getApi();
+      const res = await api.get<{ hasPending: boolean; requestId?: string; status?: string; startDate?: string }>(
+        `/api/ai/menu/weekly/pending?date=${weekStartStr}`
+      );
+      if (res.hasPending && res.requestId && res.startDate === weekStartStr) {
+        setPendingRequestId(res.requestId);
+        setPendingStatus(res.status ?? "processing");
+        return;
+      }
+      setPendingRequestId(null);
+      setPendingStatus(null);
+    } catch {
+      setPendingRequestId(null);
+      setPendingStatus(null);
+    }
+  }
+
+  useEffect(() => {
+    checkPending();
+  }, [weekStartStr]);
+
+  useEffect(() => {
+    if (!pendingRequestId) return;
+    let stopped = false;
+    const t = setInterval(async () => {
+      if (stopped) return;
+      try {
+        const api = getApi();
+        const s = await api.get<{ status: string; errorMessage?: string | null }>(
+          `/api/ai/menu/weekly/status?requestId=${pendingRequestId}`
+        );
+        setPendingStatus(s.status);
+        await loadData();
+        if (s.status === "completed") {
+          stopped = true;
+          setPendingRequestId(null);
+          setPendingStatus(null);
+          Alert.alert("完了", "週間献立の生成が完了しました。");
+        }
+        if (s.status === "failed") {
+          stopped = true;
+          setPendingRequestId(null);
+          setPendingStatus(null);
+          setError(s.errorMessage ?? "週間献立の生成に失敗しました。");
+        }
+      } catch {
+        // ignore
+      }
+    }, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [pendingRequestId]);
+
+  useEffect(() => {
+    if (pendingRequestId) return;
+    const hasGenerating = days.some((d) => d.planned_meals?.some((m) => m.is_generating));
+    if (!hasGenerating) return;
+    const t = setInterval(() => {
+      loadData();
+    }, 5000);
+    return () => clearInterval(t);
+  }, [days, pendingRequestId, weekStartStr, weekEndStr]);
+
+  async function reorderMeal(mealId: string, direction: "up" | "down") {
+    if (!selectedDay) return;
+    try {
+      const api = getApi();
+      await api.post("/api/meal-plans/meals/reorder", { mealId, direction, dayId: selectedDay.id });
+      await loadData();
+    } catch (e: any) {
+      setError(e?.message ?? "順序変更に失敗しました。");
+    }
+  }
+
+  async function regenerateMeal(mealId: string, mealType: string) {
+    if (regeneratingMealId) return;
+    setRegeneratingMealId(mealId);
+    try {
+      const { error: invokeError } = await supabase.functions.invoke("regenerate-meal-direct", {
+        body: {
+          mealId,
+          dayDate: selectedDate,
+          mealType,
+        },
+      });
+      if (invokeError) throw invokeError;
+    } catch (e: any) {
+      setError(e?.message ?? "再生成に失敗しました。");
+    } finally {
+      setRegeneratingMealId(null);
+    }
+  }
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <Text style={{ fontSize: 20, fontWeight: "900" }}>週間献立</Text>
+        <Link href="/menus/weekly/request">AIで生成</Link>
+      </View>
+
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <Pressable onPress={() => shiftWeek(-1)} style={{ padding: 10, borderRadius: 10, backgroundColor: "#eee" }}>
+          <Text style={{ fontWeight: "900" }}>←</Text>
+        </Pressable>
+        <Text style={{ color: "#666" }}>
+          {weekStartStr} 〜 {weekEndStr}
+        </Text>
+        <Pressable onPress={() => shiftWeek(1)} style={{ padding: 10, borderRadius: 10, backgroundColor: "#eee" }}>
+          <Text style={{ fontWeight: "900" }}>→</Text>
+        </Pressable>
+      </View>
+
+      {isLoading ? (
+        <View style={{ paddingTop: 12 }}>
+          <ActivityIndicator />
+        </View>
+      ) : error ? (
+        <Text style={{ color: "#c00" }}>{error}</Text>
+      ) : !plan ? (
+        <View style={{ gap: 8 }}>
+          <Text style={{ color: "#666" }}>今週の献立がありません。</Text>
+          <Link href="/menus/weekly/request">AIで週間献立を作成</Link>
+        </View>
+      ) : (
+        <>
+          <Text style={{ color: "#999" }}>{plan.title}</Text>
+          {pendingRequestId ? (
+            <View style={{ padding: 12, borderRadius: 12, backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#fed7aa", gap: 4 }}>
+              <Text style={{ fontWeight: "900" }}>生成中…</Text>
+              <Text style={{ color: "#666" }}>status: {pendingStatus ?? "processing"}</Text>
+              <Text style={{ color: "#999" }}>完了まで自動更新します</Text>
+            </View>
+          ) : null}
+
+          {/* 日付セレクタ */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {days.map((d) => {
+              const selected = d.day_date === selectedDate;
+              return (
+                <Pressable
+                  key={d.id}
+                  onPress={() => setSelectedDate(d.day_date)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    borderRadius: 999,
+                    backgroundColor: selected ? "#E07A5F" : "#eee",
+                  }}
+                >
+                  <Text style={{ color: selected ? "white" : "#333", fontWeight: "900" }}>{d.day_date.slice(5)}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={{ gap: 10, marginTop: 6 }}>
+            <Text style={{ fontWeight: "900" }}>{selectedDate} の献立</Text>
+
+            {selectedDay?.planned_meals?.length ? (
+              <View style={{ gap: 10 }}>
+                {selectedDay.planned_meals
+                  .slice()
+                  .sort((a, b) => {
+                    const ao = a.display_order ?? 0;
+                    const bo = b.display_order ?? 0;
+                    if (ao !== bo) return ao - bo;
+                    return a.meal_type.localeCompare(b.meal_type);
+                  })
+                  .map((m) => (
+                    <Pressable
+                      key={m.id}
+                      onPress={() => router.push(`/meals/${m.id}`)}
+                      style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}
+                    >
+                      <Text style={{ fontWeight: "900" }}>
+                        {mealTypeLabel[m.meal_type] ?? m.meal_type} · {m.dish_name}
+                        {m.is_generating ? "（生成中）" : ""}
+                      </Text>
+                      <Text style={{ color: "#666" }}>{m.calories_kcal ? `${m.calories_kcal}kcal` : "kcal未設定"} / {m.mode || "cook"}</Text>
+                      <Text style={{ color: "#999" }}>{m.is_completed ? "完了" : "未完了"}</Text>
+                      <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
+                        <Pressable
+                          onPress={() => router.push(`/meals/${m.id}/edit`)}
+                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eee" }}
+                        >
+                          <Text style={{ fontWeight: "900" }}>編集</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => reorderMeal(m.id, "up")}
+                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eee" }}
+                        >
+                          <Text style={{ fontWeight: "900" }}>↑</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => reorderMeal(m.id, "down")}
+                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eee" }}
+                        >
+                          <Text style={{ fontWeight: "900" }}>↓</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => regenerateMeal(m.id, m.meal_type)}
+                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}
+                        >
+                          <Text style={{ color: "white", fontWeight: "900" }}>
+                            {regeneratingMealId === m.id ? "再生成中..." : "再生成"}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </Pressable>
+                  ))}
+              </View>
+            ) : (
+              <Text style={{ color: "#666" }}>この日の食事がありません。</Text>
+            )}
+          </View>
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+

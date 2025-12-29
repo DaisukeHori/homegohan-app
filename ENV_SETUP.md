@@ -17,12 +17,28 @@
 3. **OpenAI関連**（既存機能用）
    - `OPENAI_API_KEY` - OpenAI APIキー
 
+---
+
+## 📱 モバイル（Expo）での環境変数
+
+Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込まれます（=秘密情報は入れない）。
+
+### 必須（モバイル）
+- `EXPO_PUBLIC_SUPABASE_URL`
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+
+### オプション（モバイル）
+- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）を叩く場合（例: `https://homegohan.com`）
+- `EXPO_PUBLIC_APP_ENV` - `development | preview | production`
+
+サンプルは `apps/mobile/env.example` を参照してください。
+
 ### オプションの環境変数
 
-- `GEMINI_IMAGE_MODEL` - 画像生成モデル（デフォルト: `gemini-2.5-flash-image`）
+- `GEMINI_IMAGE_MODEL` - 画像生成モデル（デフォルト: `gemini-3-pro-image-preview`）
   - 使用可能な値:
-    - `gemini-2.5-flash-image` (Nano Banana - デフォルト)
-    - `gemini-3-pro-image-preview` (Nano Banana Pro)
+    - `gemini-2.5-flash-image-preview` (Nano Banana)
+    - `gemini-3-pro-image-preview` (Nano Banana Pro - デフォルト)
 
 ---
 
@@ -55,8 +71,8 @@ GOOGLE_GEN_AI_API_KEY=your_google_ai_api_key
 # OpenAI
 OPENAI_API_KEY=your_openai_api_key
 
-# オプション: 画像生成モデル（デフォルト: gemini-2.5-flash-image）
-GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+# オプション: 画像生成モデル（デフォルト: gemini-3-pro-image-preview）
+GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
 ```
 
 ### 3. 実際の値を取得

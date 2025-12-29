@@ -1,13 +1,15 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 
 export function createClient(cookieStore?: ReturnType<typeof cookies>) {
   const store = cookieStore || cookies()
+  const authHeader = headers().get('authorization')
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
       cookies: {
         get(name: string) {
           return store.get(name)?.value

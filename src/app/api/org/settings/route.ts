@@ -9,11 +9,11 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('organization_id, role')
+    .select('organization_id, roles')
     .eq('id', user.id)
     .single();
 
-  if (profile?.role !== 'org_admin' || !profile?.organization_id) {
+  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -56,11 +56,11 @@ export async function PUT(request: Request) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('organization_id, role')
+    .select('organization_id, roles')
     .eq('id', user.id)
     .single();
 
-  if (profile?.role !== 'org_admin' || !profile?.organization_id) {
+  if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

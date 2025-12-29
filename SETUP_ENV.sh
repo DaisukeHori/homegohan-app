@@ -54,11 +54,11 @@ OPENAI_API_KEY=your_openai_api_key
 # ==========================================
 # オプション設定
 # ==========================================
-# 画像生成モデルの選択（デフォルト: gemini-2.5-flash-image）
+# 画像生成モデルの選択（デフォルト: gemini-3-pro-image-preview）
 # 使用可能な値:
-#   - gemini-2.5-flash-image (Nano Banana - デフォルト)
-#   - gemini-3-pro-image-preview (Nano Banana Pro)
-# GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+#   - gemini-2.5-flash-image-preview (Nano Banana)
+#   - gemini-3-pro-image-preview (Nano Banana Pro - デフォルト)
+# GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
 ENVFILE
 
 echo "✅ .env.local テンプレートを作成しました！"

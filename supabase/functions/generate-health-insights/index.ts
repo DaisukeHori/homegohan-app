@@ -462,7 +462,7 @@ ${JSON.stringify(summarizeRecords(records), null, 2)}
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-5-mini",
         messages: [
           { role: "system", content: "あなたは優しく励ましながらも的確なアドバイスをする健康コーチです。" },
           { role: "user", content: prompt },
