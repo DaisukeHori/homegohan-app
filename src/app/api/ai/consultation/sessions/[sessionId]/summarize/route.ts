@@ -10,6 +10,78 @@ function getOpenAI(): OpenAI {
   return new OpenAI({ apiKey });
 }
 
+function stripMarkdownCodeBlock(text: string): string {
+  let cleaned = text.trim();
+
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim();
+  }
+
+  if (cleaned.startsWith('```')) {
+    const firstNewline = cleaned.indexOf('\n');
+    if (firstNewline !== -1) {
+      cleaned = cleaned.substring(firstNewline + 1);
+    }
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.substring(0, cleaned.length - 3).trim();
+    }
+  }
+
+  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+    const jsonStart = cleaned.search(/[\{\[]/);
+    if (jsonStart > 0) {
+      cleaned = cleaned.substring(jsonStart);
+    }
+  }
+
+  const lastBrace = cleaned.lastIndexOf('}');
+  const lastBracket = cleaned.lastIndexOf(']');
+  const jsonEnd = Math.max(lastBrace, lastBracket);
+  if (jsonEnd > 0 && jsonEnd < cleaned.length - 1) {
+    cleaned = cleaned.substring(0, jsonEnd + 1);
+  }
+
+  return cleaned.trim();
+}
+
+function safeJsonParse(text: string): any {
+  let cleaned = stripMarkdownCodeBlock(text);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    cleaned = cleaned.replace(/[\x00-\x1F\x7F]/g, (char) => {
+      if (char === '\n' || char === '\r' || char === '\t') return char;
+      return '';
+    });
+    return JSON.parse(cleaned);
+  }
+}
+
+function buildExistingSummary(session: any): any | null {
+  if (!session || typeof session !== 'object') return null;
+  if (!session.summary) return null;
+
+  const cs = session.context_snapshot && typeof session.context_snapshot === 'object' ? session.context_snapshot : {};
+  const keyFacts = Array.isArray((cs as any).key_facts) ? (cs as any).key_facts : [];
+  const userInsights = Array.isArray((cs as any).user_insights) ? (cs as any).user_insights : [];
+  const keyTopics = Array.isArray(session.key_topics) ? session.key_topics : [];
+  const actionsTaken = Array.isArray(session.action_history)
+    ? session.action_history
+        .map((x: any) => (typeof x === 'string' ? x : x?.action))
+        .filter((x: any) => typeof x === 'string')
+    : [];
+
+  return {
+    title: session.title ?? null,
+    summary: session.summary ?? null,
+    key_facts: keyFacts,
+    key_topics: keyTopics,
+    actions_taken: actionsTaken,
+    user_insights: userInsights,
+  };
+}
+
 // セッション要約を生成
 export async function POST(
   request: Request,
@@ -18,6 +90,8 @@ export async function POST(
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  let existingSummary: any | null = null;
 
   try {
     // セッション所有者確認
@@ -31,6 +105,8 @@ export async function POST(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
+    existingSummary = buildExistingSummary(session);
+
     // セッションの全メッセージを取得
     const { data: messages } = await supabase
       .from('ai_consultation_messages')
@@ -39,7 +115,8 @@ export async function POST(
       .order('created_at', { ascending: true });
 
     if (!messages || messages.length === 0) {
-      return NextResponse.json({ error: 'メッセージがありません' }, { status: 400 });
+      // UI側で「失敗」扱いにしないため、2xxで返す
+      return NextResponse.json({ success: true, summary: existingSummary }, { status: 200 });
     }
 
     // 重要マークされたメッセージを抽出
@@ -88,34 +165,57 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
 ` : ''}`;
 
     const openai = getOpenAI();
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-5-mini',
-      messages: [
-        { role: 'system', content: 'あなたは会話を正確に要約するアシスタントです。JSONのみを出力してください。' },
-        { role: 'user', content: summaryPrompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 1500,
-      response_format: { type: 'json_object' },
-    });
+    const MAX_ATTEMPTS = 3;
+    let summaryData: any | null = null;
 
-    const summaryContent = completion.choices[0]?.message?.content;
-    if (!summaryContent) {
-      throw new Error('要約の生成に失敗しました');
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const retryNote =
+          attempt === 1
+            ? ''
+            : '\n\n【再生成指示】前回の出力がJSONとして解析できませんでした。必ずパース可能な純粋なJSONのみを返してください。';
+
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-5-mini',
+          messages: [
+            { role: 'system', content: 'あなたは会話を正確に要約するアシスタントです。JSONのみを出力してください。' },
+            { role: 'user', content: summaryPrompt + retryNote },
+          ],
+          temperature: 0.3,
+          max_tokens: 1500,
+          response_format: { type: 'json_object' },
+        });
+
+        const summaryContent = completion.choices[0]?.message?.content;
+        if (!summaryContent) throw new Error('要約の生成に失敗しました');
+
+        const parsed = safeJsonParse(summaryContent);
+        if (!parsed || typeof parsed !== 'object' || typeof (parsed as any).summary !== 'string') {
+          throw new Error('Invalid summary JSON');
+        }
+
+        summaryData = parsed;
+        break;
+      } catch (e) {
+        console.error(`Summary generation attempt ${attempt} failed:`, e);
+      }
     }
 
-    const summaryData = JSON.parse(summaryContent);
+    if (!summaryData) {
+      // 生成に失敗してもUI側で「失敗」扱いにしない
+      return NextResponse.json({ success: true, summary: existingSummary }, { status: 200 });
+    }
 
     // セッションを更新
     const { error: updateError } = await supabase
       .from('ai_consultation_sessions')
       .update({
-        title: summaryData.title || session.title,
+        title: typeof summaryData.title === 'string' ? summaryData.title : session.title,
         summary: summaryData.summary,
-        key_topics: summaryData.key_topics || [],
+        key_topics: Array.isArray(summaryData.key_topics) ? summaryData.key_topics : [],
         action_history: [
           ...(session.action_history || []),
-          ...(summaryData.actions_taken || []).map((action: string) => ({
+          ...(Array.isArray(summaryData.actions_taken) ? summaryData.actions_taken : []).map((action: string) => ({
             action,
             date: new Date().toISOString(),
           })),
@@ -124,13 +224,16 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
         // key_factsはsummaryに含めて保存（後で参照しやすいように）
         context_snapshot: {
           ...session.context_snapshot,
-          key_facts: summaryData.key_facts,
-          user_insights: summaryData.user_insights,
+          key_facts: Array.isArray(summaryData.key_facts) ? summaryData.key_facts : [],
+          user_insights: Array.isArray(summaryData.user_insights) ? summaryData.user_insights : [],
         },
       })
       .eq('id', params.sessionId);
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      // 保存に失敗しても、生成結果は返す（ユーザー体験を優先）
+      console.error('Summary session update failed:', updateError);
+    }
 
     return NextResponse.json({
       success: true,
@@ -139,7 +242,8 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
 
   } catch (error: any) {
     console.error('Summary generation error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // UI側で「失敗」扱いにしない
+    return NextResponse.json({ success: true, summary: existingSummary }, { status: 200 });
   }
 }
 

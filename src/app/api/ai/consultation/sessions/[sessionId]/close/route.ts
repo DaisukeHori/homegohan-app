@@ -10,6 +10,54 @@ function getOpenAI(): OpenAI {
   return new OpenAI({ apiKey });
 }
 
+function stripMarkdownCodeBlock(text: string): string {
+  let cleaned = text.trim();
+
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim();
+  }
+
+  if (cleaned.startsWith('```')) {
+    const firstNewline = cleaned.indexOf('\n');
+    if (firstNewline !== -1) {
+      cleaned = cleaned.substring(firstNewline + 1);
+    }
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.substring(0, cleaned.length - 3).trim();
+    }
+  }
+
+  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+    const jsonStart = cleaned.search(/[\{\[]/);
+    if (jsonStart > 0) {
+      cleaned = cleaned.substring(jsonStart);
+    }
+  }
+
+  const lastBrace = cleaned.lastIndexOf('}');
+  const lastBracket = cleaned.lastIndexOf(']');
+  const jsonEnd = Math.max(lastBrace, lastBracket);
+  if (jsonEnd > 0 && jsonEnd < cleaned.length - 1) {
+    cleaned = cleaned.substring(0, jsonEnd + 1);
+  }
+
+  return cleaned.trim();
+}
+
+function safeJsonParse(text: string): any {
+  let cleaned = stripMarkdownCodeBlock(text);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    cleaned = cleaned.replace(/[\x00-\x1F\x7F]/g, (char) => {
+      if (char === '\n' || char === '\r' || char === '\t') return char;
+      return '';
+    });
+    return JSON.parse(cleaned);
+  }
+}
+
 // セッションを終了（要約を自動生成）
 export async function POST(
   request: Request,
@@ -89,20 +137,39 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
 
       try {
         const openai = getOpenAI();
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-5-mini',
-          messages: [
-            { role: 'system', content: 'あなたは会話を正確に要約するアシスタントです。JSONのみを出力してください。' },
-            { role: 'user', content: summaryPrompt },
-          ],
-          temperature: 0.3,
-          max_tokens: 1500,
-          response_format: { type: 'json_object' },
-        });
+        const MAX_ATTEMPTS = 2;
 
-        const summaryContent = completion.choices[0]?.message?.content;
-        if (summaryContent) {
-          summaryData = JSON.parse(summaryContent);
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          try {
+            const retryNote =
+              attempt === 1
+                ? ''
+                : '\n\n【再生成指示】前回の出力がJSONとして解析できませんでした。必ずパース可能な純粋なJSONのみを返してください。';
+
+            const completion = await openai.chat.completions.create({
+              model: 'gpt-5-mini',
+              messages: [
+                { role: 'system', content: 'あなたは会話を正確に要約するアシスタントです。JSONのみを出力してください。' },
+                { role: 'user', content: summaryPrompt + retryNote },
+              ],
+              temperature: 0.3,
+              max_tokens: 1500,
+              response_format: { type: 'json_object' },
+            });
+
+            const summaryContent = completion.choices[0]?.message?.content;
+            if (!summaryContent) throw new Error('要約の生成に失敗しました');
+
+            const parsed = safeJsonParse(summaryContent);
+            if (!parsed || typeof parsed !== 'object' || typeof (parsed as any).summary !== 'string') {
+              throw new Error('Invalid summary JSON');
+            }
+
+            summaryData = parsed;
+            break;
+          } catch (e) {
+            console.error(`Summary generation attempt ${attempt} failed:`, e);
+          }
         }
       } catch (e) {
         console.error('Summary generation failed:', e);

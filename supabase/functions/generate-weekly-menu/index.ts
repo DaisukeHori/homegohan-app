@@ -84,6 +84,71 @@ function safeJsonParse(text: string): any {
   }
 }
 
+// ===== 生成結果のスキーマ検証（欠損時は再生成する） =====
+const REQUIRED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner'] as const
+
+function validateWeeklyMenuResult(result: any): string[] {
+  const errors: string[] = []
+
+  if (!result || typeof result !== 'object') {
+    errors.push('root is not an object')
+    return errors
+  }
+
+  const days = (result as any).days
+  if (!Array.isArray(days)) {
+    errors.push(`days is missing or not an array (type=${typeof days})`)
+    return errors
+  }
+
+  if (days.length !== 7) {
+    errors.push(`days must have length 7 (got ${days.length})`)
+  }
+
+  days.forEach((day: any, dayIndex: number) => {
+    if (!day || typeof day !== 'object') {
+      errors.push(`days[${dayIndex}] is not an object`)
+      return
+    }
+
+    if (typeof day.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day.date)) {
+      errors.push(`days[${dayIndex}].date is missing or invalid`)
+    }
+
+    if (!Array.isArray(day.meals)) {
+      errors.push(`days[${dayIndex}].meals is missing or not an array`)
+      return
+    }
+
+    const mealTypes = day.meals
+      .map((m: any) => m?.mealType)
+      .filter((x: any) => typeof x === 'string')
+
+    for (const t of REQUIRED_MEAL_TYPES) {
+      if (!mealTypes.includes(t)) {
+        errors.push(`days[${dayIndex}].meals missing mealType "${t}"`)
+      }
+    }
+
+    day.meals.forEach((meal: any, mealIndex: number) => {
+      if (!meal || typeof meal !== 'object') {
+        errors.push(`days[${dayIndex}].meals[${mealIndex}] is not an object`)
+        return
+      }
+
+      if (typeof meal.mealType !== 'string') {
+        errors.push(`days[${dayIndex}].meals[${mealIndex}].mealType is missing or invalid`)
+      }
+
+      if (!Array.isArray(meal.dishes)) {
+        errors.push(`days[${dayIndex}].meals[${mealIndex}].dishes is missing or not an array`)
+      }
+    })
+  })
+
+  return errors
+}
+
 // ===== OpenAI Agents SDKでAI呼び出し =====
 async function runAgentForWeeklyMenu(prompt: string): Promise<string> {
   return await withTrace("generate_weekly_menu", async () => {
@@ -331,7 +396,7 @@ async function generateMenuBackgroundTask({ userId, startDate, note, familySize 
     }
 
     // 超パーソナライズされたプロンプト
-    const prompt = `
+    const basePrompt = `
 あなたはトップアスリートや経営者を支える超一流の「AI管理栄養士」です。
 以下のユーザー情報に基づき、**完全にパーソナライズされた7日分の献立**をJSON形式で生成してください。
 
@@ -468,19 +533,52 @@ ${preferences.healthy ? '- 【重要】ヘルシー志向（低カロリー・�
 - 例外：中華セット（ラーメン＋チャーハン）や定食スタイル（丼＋小鉢＋汁物）は食文化として自然な組み合わせ**
 `
 
-    console.log('Calling OpenAI Agents SDK directly (integrated)...')
+    const MAX_GENERATION_ATTEMPTS = 3
+    let promptForAgent = basePrompt
+    let resultJson: any = null
+    let lastErrors: string[] = []
 
-    // OpenAI Agents SDKを直接使用（knowledge-gptを経由しない）
-    const content = await runAgentForWeeklyMenu(prompt)
-    
-    console.log('AI response received, content length:', content.length)
-    console.log('AI response preview (first 200 chars):', content.substring(0, 200))
-    
-    const resultJson = safeJsonParse(content)
+    for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
+      console.log(`Calling OpenAI Agents SDK directly (integrated)... attempt ${attempt}/${MAX_GENERATION_ATTEMPTS}`)
 
-    // 7日分の献立が生成されているか検証
-    if (!resultJson.days || !Array.isArray(resultJson.days) || resultJson.days.length !== 7) {
-      throw new Error(`Invalid response: Expected 7 days, but got ${resultJson.days?.length || 0} days.`)
+      // OpenAI Agents SDKを直接使用（knowledge-gptを経由しない）
+      const content = await runAgentForWeeklyMenu(promptForAgent)
+      
+      console.log('AI response received, content length:', content.length)
+      console.log('AI response preview (first 200 chars):', content.substring(0, 200))
+
+      let parsed: any = null
+      try {
+        parsed = safeJsonParse(content)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        lastErrors = [`JSON parse failed: ${msg}`]
+        console.error(`JSON parse failed (attempt ${attempt}):`, msg)
+      }
+
+      if (parsed) {
+        const schemaErrors = validateWeeklyMenuResult(parsed)
+        if (schemaErrors.length === 0) {
+          resultJson = parsed
+          break
+        }
+        lastErrors = schemaErrors
+        console.error(`Weekly menu schema validation failed (attempt ${attempt}):`, schemaErrors)
+      }
+
+      if (attempt < MAX_GENERATION_ATTEMPTS) {
+        const feedback = lastErrors.slice(0, 20).map(e => `- ${e}`).join('\n')
+        promptForAgent = `${basePrompt}
+
+【再生成指示】
+前回の出力に以下の問題がありました。必ず修正し、**同じJSONスキーマで7日分を最初から完全に**再生成してください。
+${feedback}
+`
+      }
+    }
+
+    if (!resultJson) {
+      throw new Error(`Invalid AI response after ${MAX_GENERATION_ATTEMPTS} attempts: ${lastErrors.join(' | ')}`)
     }
 
     console.log('AI response validated. Saving to planned_meals table...')
