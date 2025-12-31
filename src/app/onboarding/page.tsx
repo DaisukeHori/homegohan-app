@@ -424,69 +424,72 @@ export default function OnboardingPage() {
   const progress = calculateProgress();
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex flex-col items-center justify-between p-6 max-w-lg mx-auto overflow-hidden">
-      
-      {/* ヘッダー：進捗 */}
-      <div className="w-full pt-8">
-        <div className="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
-          <span>Setup Profile</span>
-          <span>{progress.current} / {progress.total}</span>
-        </div>
-        {/* プログレスバー */}
-        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-          <motion.div 
-            className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full"
-            initial={{ width: 0 }}
-            animate={{ width: `${(progress.current / progress.total) * 100}%` }}
-            transition={{ duration: 0.3 }}
-          />
-        </div>
-      </div>
+    <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex flex-col items-center justify-between overflow-hidden">
 
-      {/* メインエリア：チャット */}
-      <div className="flex-1 w-full flex flex-col justify-center items-center gap-8 py-10">
-        
-        {/* AIアバター */}
-        <motion.div 
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          className="relative w-20 h-20"
-        >
-          <div className="absolute inset-0 bg-orange-400/20 rounded-full animate-pulse" />
-          <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-orange-400 to-orange-500 flex items-center justify-center text-white text-2xl font-bold shadow-lg border-4 border-white">
-            🍳
+      {/* コンテンツラッパー - 画面サイズに応じて幅を調整 */}
+      <div className="w-full max-w-lg lg:max-w-xl xl:max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col flex-1">
+
+        {/* ヘッダー：進捗 */}
+        <div className="w-full pt-6 sm:pt-8 lg:pt-12">
+          <div className="flex items-center justify-between text-xs sm:text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 sm:mb-4">
+            <span>Setup Profile</span>
+            <span>{progress.current} / {progress.total}</span>
           </div>
-          {isTyping && (
-             <div className="absolute -bottom-2 -right-2 bg-white px-3 py-1 rounded-full text-xs font-bold text-gray-500 shadow-md flex gap-1">
-               <span className="animate-bounce">.</span>
-               <span className="animate-bounce" style={{ animationDelay: '0.1s' }}>.</span>
-               <span className="animate-bounce" style={{ animationDelay: '0.2s' }}>.</span>
-             </div>
-          )}
-        </motion.div>
-
-        {/* 質問バブル */}
-        <AnimatePresence mode="wait">
-          {!isTyping && (
+          {/* プログレスバー */}
+          <div className="w-full h-2 sm:h-2.5 bg-gray-200 rounded-full overflow-hidden">
             <motion.div
-              key={currentStep}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="text-center space-y-4 px-4"
-            >
-              {getQuestionText().split('\n').map((line, i) => (
-                <p key={i} className="text-lg md:text-xl font-bold text-gray-800 leading-relaxed">
-                  {line}
-                </p>
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+              className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full"
+              initial={{ width: 0 }}
+              animate={{ width: `${(progress.current / progress.total) * 100}%` }}
+              transition={{ duration: 0.3 }}
+            />
+          </div>
+        </div>
 
-      {/* 入力エリア */}
-      <div className="w-full pb-8">
+        {/* メインエリア：チャット */}
+        <div className="flex-1 w-full flex flex-col justify-center items-center gap-6 sm:gap-8 lg:gap-10 py-6 sm:py-10 lg:py-12">
+
+          {/* AIアバター */}
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            className="relative w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24"
+          >
+            <div className="absolute inset-0 bg-orange-400/20 rounded-full animate-pulse" />
+            <div className="relative w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24 rounded-full bg-gradient-to-br from-orange-400 to-orange-500 flex items-center justify-center text-white text-xl sm:text-2xl lg:text-3xl font-bold shadow-lg border-4 border-white">
+              🍳
+            </div>
+            {isTyping && (
+               <div className="absolute -bottom-2 -right-2 bg-white px-2 sm:px-3 py-1 rounded-full text-xs font-bold text-gray-500 shadow-md flex gap-1">
+                 <span className="animate-bounce">.</span>
+                 <span className="animate-bounce" style={{ animationDelay: '0.1s' }}>.</span>
+                 <span className="animate-bounce" style={{ animationDelay: '0.2s' }}>.</span>
+               </div>
+            )}
+          </motion.div>
+
+          {/* 質問バブル */}
+          <AnimatePresence mode="wait">
+            {!isTyping && (
+              <motion.div
+                key={currentStep}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="text-center space-y-3 sm:space-y-4 px-2 sm:px-4"
+              >
+                {getQuestionText().split('\n').map((line, i) => (
+                  <p key={i} className="text-base sm:text-lg md:text-xl lg:text-2xl font-bold text-gray-800 leading-relaxed">
+                    {line}
+                  </p>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* 入力エリア */}
+        <div className="w-full pb-6 sm:pb-8 lg:pb-12">
         <AnimatePresence mode="wait">
           {!isTyping && (
             <motion.div
@@ -497,39 +500,39 @@ export default function OnboardingPage() {
             >
               {/* テキスト入力 */}
               {currentQuestion.type === 'text' && (
-                <form 
+                <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     if(inputValue.trim()) handleAnswer(inputValue);
                   }}
-                  className="flex gap-2"
+                  className="flex gap-2 sm:gap-3"
                 >
-                  <Input 
+                  <Input
                     autoFocus
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     placeholder={currentQuestion.placeholder}
-                    className="py-6 text-lg rounded-2xl border-gray-200 focus:border-orange-400 focus:ring-orange-400/20"
+                    className="py-5 sm:py-6 text-base sm:text-lg rounded-xl sm:rounded-2xl border-gray-200 focus:border-orange-400 focus:ring-orange-400/20"
                   />
-                  <Button 
-                    type="submit" 
+                  <Button
+                    type="submit"
                     disabled={!inputValue.trim()}
-                    className="h-14 w-14 rounded-2xl bg-gray-900 hover:bg-black text-white shrink-0"
+                    className="h-12 w-12 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white shrink-0"
                   >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
                   </Button>
                 </form>
               )}
 
               {/* 単一選択 */}
               {currentQuestion.type === 'choice' && (
-                <div className="flex flex-col gap-3 max-h-[50vh] overflow-y-auto">
+                <div className="flex flex-col gap-2 sm:gap-3 max-h-[45vh] sm:max-h-[50vh] overflow-y-auto">
                   {currentQuestion.options?.map((option: any) => (
                     <Button
                       key={option.value}
                       variant="outline"
                       onClick={() => handleAnswer(option.value)}
-                      className="w-full py-5 text-base rounded-2xl border-gray-200 hover:bg-orange-400 hover:text-white hover:border-orange-400 transition-all duration-300 font-bold text-gray-600 justify-between group px-6 flex-col items-start h-auto"
+                      className="w-full py-4 sm:py-5 text-sm sm:text-base rounded-xl sm:rounded-2xl border-gray-200 hover:bg-orange-400 hover:text-white hover:border-orange-400 transition-all duration-300 font-bold text-gray-600 justify-between group px-4 sm:px-6 flex-col items-start h-auto"
                     >
                       <span>{option.label}</span>
                       {option.description && (
@@ -542,14 +545,14 @@ export default function OnboardingPage() {
 
               {/* 複数選択 */}
               {currentQuestion.type === 'multi_choice' && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-2 max-h-[40vh] overflow-y-auto">
+                <div className="space-y-3 sm:space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-2 sm:gap-3 max-h-[35vh] sm:max-h-[40vh] overflow-y-auto">
                     {currentQuestion.options?.map((option: any) => (
                       <Button
                         key={option.value}
                         variant="outline"
                         onClick={() => handleMultiSelect(option.value)}
-                        className={`py-4 text-sm rounded-xl border-2 transition-all duration-200 font-bold ${
+                        className={`py-3 sm:py-4 text-xs sm:text-sm rounded-lg sm:rounded-xl border-2 transition-all duration-200 font-bold ${
                           selectedMulti.includes(option.value)
                             ? 'bg-orange-400 text-white border-orange-400'
                             : 'border-gray-200 text-gray-600 hover:border-orange-300'
@@ -559,12 +562,12 @@ export default function OnboardingPage() {
                       </Button>
                     ))}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 sm:gap-3">
                     {currentQuestion.allowSkip && (
                       <Button
                         variant="ghost"
                         onClick={handleSkip}
-                        className="flex-1 py-5 rounded-2xl text-gray-400 hover:text-gray-600"
+                        className="flex-1 py-4 sm:py-5 rounded-xl sm:rounded-2xl text-gray-400 hover:text-gray-600 text-sm sm:text-base"
                       >
                         スキップ
                       </Button>
@@ -572,7 +575,7 @@ export default function OnboardingPage() {
                     <Button
                       onClick={() => handleAnswer(selectedMulti)}
                       disabled={selectedMulti.length === 0}
-                      className="flex-1 py-5 rounded-2xl bg-gray-900 hover:bg-black text-white font-bold"
+                      className="flex-1 py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold text-sm sm:text-base"
                     >
                       次へ
                     </Button>
@@ -582,14 +585,14 @@ export default function OnboardingPage() {
 
               {/* タグ入力 */}
               {currentQuestion.type === 'tags' && (
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                   {/* 選択済みタグ */}
                   {tags.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
                       {tags.map((tag) => (
                         <span
                           key={tag}
-                          className="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold flex items-center gap-1"
+                          className="px-2.5 sm:px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs sm:text-sm font-bold flex items-center gap-1"
                         >
                           {tag}
                           <button onClick={() => handleRemoveTag(tag)} className="hover:text-orange-800">×</button>
@@ -597,104 +600,104 @@ export default function OnboardingPage() {
                       ))}
                     </div>
                   )}
-                  
+
                   {/* サジェスト */}
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5 sm:gap-2">
                     {currentQuestion.suggestions?.filter((s: string) => !tags.includes(s)).map((suggestion: string) => (
                       <button
                         key={suggestion}
                         onClick={() => handleAddTag(suggestion)}
-                        className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-sm font-bold hover:bg-gray-200 transition-colors"
+                        className="px-2.5 sm:px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs sm:text-sm font-bold hover:bg-gray-200 transition-colors"
                       >
                         + {suggestion}
                       </button>
                     ))}
                   </div>
-                  
+
                   {/* 入力フィールド */}
-                  <form 
+                  <form
                     onSubmit={(e) => {
                       e.preventDefault();
                       handleAddTag(tagInput);
                     }}
                     className="flex gap-2"
                   >
-                    <Input 
+                    <Input
                       value={tagInput}
                       onChange={(e) => setTagInput(e.target.value)}
                       placeholder={currentQuestion.placeholder}
-                      className="py-5 rounded-xl border-gray-200"
+                      className="py-4 sm:py-5 rounded-lg sm:rounded-xl border-gray-200 text-sm sm:text-base"
                     />
-                    <Button type="submit" variant="outline" className="px-4 rounded-xl">
+                    <Button type="submit" variant="outline" className="px-3 sm:px-4 rounded-lg sm:rounded-xl text-sm sm:text-base">
                       追加
                     </Button>
                   </form>
-                  
-                  <div className="flex gap-2">
+
+                  <div className="flex gap-2 sm:gap-3">
                     <Button
                       variant="ghost"
                       onClick={handleSkip}
-                      className="flex-1 py-5 rounded-2xl text-gray-400 hover:text-gray-600"
+                      className="flex-1 py-4 sm:py-5 rounded-xl sm:rounded-2xl text-gray-400 hover:text-gray-600 text-sm sm:text-base"
                     >
                       スキップ
                     </Button>
                     <Button
                       onClick={() => handleAnswer(tags)}
-                      className="flex-1 py-5 rounded-2xl bg-gray-900 hover:bg-black text-white font-bold"
+                      className="flex-1 py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold text-sm sm:text-base"
                     >
                       次へ
                     </Button>
                   </div>
                 </div>
               )}
-              
+
               {/* カスタム身体情報入力 */}
               {currentQuestion.type === 'custom_stats' && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-3 sm:space-y-4">
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4">
                     <div>
-                      <label className="text-sm font-bold text-gray-500 block mb-1">年齢</label>
-                      <Input 
-                        type="number" 
-                        placeholder="25" 
-                        className="py-5 rounded-xl text-center text-lg"
+                      <label className="text-xs sm:text-sm font-bold text-gray-500 block mb-1">年齢</label>
+                      <Input
+                        type="number"
+                        placeholder="25"
+                        className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, age: e.target.value})}
                       />
                     </div>
                     <div>
-                      <label className="text-sm font-bold text-gray-500 block mb-1">職業</label>
-                      <Input 
-                        type="text" 
-                        placeholder="会社員" 
-                        className="py-5 rounded-xl text-center text-lg"
+                      <label className="text-xs sm:text-sm font-bold text-gray-500 block mb-1">職業</label>
+                      <Input
+                        type="text"
+                        placeholder="会社員"
+                        className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, occupation: e.target.value})}
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4">
                     <div>
-                      <label className="text-sm font-bold text-gray-500 block mb-1">身長 (cm)</label>
-                      <Input 
-                        type="number" 
-                        placeholder="170" 
-                        className="py-5 rounded-xl text-center text-lg"
+                      <label className="text-xs sm:text-sm font-bold text-gray-500 block mb-1">身長 (cm)</label>
+                      <Input
+                        type="number"
+                        placeholder="170"
+                        className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, height: e.target.value})}
                       />
                     </div>
                     <div>
-                      <label className="text-sm font-bold text-gray-500 block mb-1">体重 (kg)</label>
-                      <Input 
-                        type="number" 
-                        placeholder="60" 
-                        className="py-5 rounded-xl text-center text-lg"
+                      <label className="text-xs sm:text-sm font-bold text-gray-500 block mb-1">体重 (kg)</label>
+                      <Input
+                        type="number"
+                        placeholder="60"
+                        className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, weight: e.target.value})}
                       />
                     </div>
                   </div>
-                  <Button 
+                  <Button
                     onClick={() => handleAnswer("completed")}
                     disabled={!answers.age || !answers.height || !answers.weight}
-                    className="w-full py-5 rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-4"
+                    className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-3 sm:mt-4 text-sm sm:text-base"
                   >
                     次へ
                   </Button>
@@ -703,6 +706,7 @@ export default function OnboardingPage() {
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
       </div>
     </div>
   );
