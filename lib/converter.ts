@@ -417,6 +417,7 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   fiberInsolubleG: data.fiber_insoluble_g ?? null,
   potassiumMg: data.potassium_mg ?? null,
   calciumMg: data.calcium_mg ?? null,
+  magnesiumMg: data.magnesium_mg ?? null,
   phosphorusMg: data.phosphorus_mg ?? null,
   ironMg: data.iron_mg ?? null,
   zincMg: data.zinc_mg ?? null,
