@@ -409,21 +409,42 @@ function buildProfileSummary(profile: any, nutritionTargets?: any | null): strin
   const allergies = profile?.diet_flags?.allergies?.join(", ") || "なし";
   const dislikes = profile?.diet_flags?.dislikes?.join(", ") || "なし";
   const healthConditions = profile?.health_conditions?.join(", ") || "なし";
+  const medications = Array.isArray(profile?.medications) ? profile.medications.join(", ") : (profile?.medications ? String(profile.medications) : null);
+  const nutritionGoal = profile?.nutrition_goal ?? null;
+  const weightChangeRate = profile?.weight_change_rate ?? null;
+  const workStyle = profile?.work_style ?? null;
+  const exerciseTypes = Array.isArray(profile?.exercise_types) ? profile.exercise_types.join(", ") : null;
+  const exerciseFrequency = profile?.exercise_frequency ?? null;
+  const exerciseIntensity = profile?.exercise_intensity ?? null;
+  const exerciseDuration = profile?.exercise_duration_per_session ?? null;
   const familySize = profile?.family_size ?? null;
   const cookingExperience = profile?.cooking_experience ?? null;
   const weekdayCookingMinutes = profile?.weekday_cooking_minutes ?? null;
   const weekendCookingMinutes = profile?.weekend_cooking_minutes ?? null;
   const cuisinePrefs = formatCuisinePreferences(profile?.cuisine_preferences);
   const lines = [
+    `- ニックネーム: ${profile?.nickname ?? "未設定"}`,
     `- 年齢: ${profile?.age ?? "不明"}歳`,
     `- 性別: ${profile?.gender ?? "不明"}`,
     `- 身長: ${profile?.height ?? "不明"}cm / 体重: ${profile?.weight ?? "不明"}kg`,
     `- 持病・注意点: ${healthConditions}`,
+    `- 服薬: ${medications ?? "なし"}`,
     `- アレルギー（絶対除外）: ${allergies}`,
     `- 苦手なもの（避ける）: ${dislikes}`,
     `- 食事スタイル: ${profile?.diet_style ?? "未設定"}`,
     `- 好みの料理ジャンル: ${cuisinePrefs}`,
   ];
+
+  if (nutritionGoal) lines.push(`- 栄養目標: ${nutritionGoal}${weightChangeRate ? `（ペース: ${weightChangeRate}）` : ""}`);
+  if (workStyle || exerciseTypes || exerciseFrequency || exerciseIntensity || exerciseDuration != null) {
+    const parts: string[] = [];
+    if (workStyle) parts.push(`仕事スタイル: ${workStyle}`);
+    if (exerciseTypes) parts.push(`運動種別: ${exerciseTypes}`);
+    if (exerciseFrequency != null) parts.push(`運動頻度: 週${exerciseFrequency}回`);
+    if (exerciseIntensity) parts.push(`運動強度: ${exerciseIntensity}`);
+    if (exerciseDuration != null) parts.push(`運動時間: ${exerciseDuration}分/回`);
+    if (parts.length) lines.push(`- 活動量: ${parts.join(" / ")}`);
+  }
 
   if (familySize != null) lines.push(`- 家族人数: ${familySize}人分`);
   if (cookingExperience) lines.push(`- 料理経験: ${cookingExperience}`);
