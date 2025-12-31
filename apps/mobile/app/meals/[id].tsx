@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 
+import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 
 type PlannedMealDetail = {
@@ -38,29 +39,28 @@ export default function MealDetailPage() {
       setIsLoading(true);
       setError(null);
 
-      const { data, error: fetchError } = await supabase
-        .from("planned_meals")
-        .select(
-          `
-          *,
-          meal_plan_days!inner(day_date)
-        `
-        )
-        .eq("id", id)
-        .maybeSingle();
+      try {
+        const api = getApi();
+        const data = await api.get<any>(`/api/meals/${id}`);
+        if (cancelled) return;
 
-      if (cancelled) return;
-
-      if (fetchError || !data) {
-        setError(fetchError?.message ?? "食事データが見つかりませんでした。");
-        setMeal(null);
-      } else {
-        setMeal({
-          ...(data as any),
-          day_date: (data as any).meal_plan_days?.day_date ?? null,
-        });
+        if (!data) {
+          setError("食事データが見つかりませんでした。");
+          setMeal(null);
+        } else {
+          setMeal({
+            ...(data as any),
+            day_date: (data as any).meal_plan_days?.day_date ?? null,
+          });
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(e?.message ?? "取得に失敗しました。");
+          setMeal(null);
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-      setIsLoading(false);
     }
 
     run();
@@ -74,10 +74,16 @@ export default function MealDetailPage() {
     const next = !meal.is_completed;
     setMeal((prev) => (prev ? { ...prev, is_completed: next, completed_at: next ? new Date().toISOString() : null } : prev));
 
-    await supabase
-      .from("planned_meals")
-      .update({ is_completed: next, completed_at: next ? new Date().toISOString() : null })
-      .eq("id", meal.id);
+    try {
+      const api = getApi();
+      await api.patch(`/api/meals/${meal.id}`, {
+        is_completed: next,
+        completed_at: next ? new Date().toISOString() : null,
+      });
+    } catch (e: any) {
+      Alert.alert("更新失敗", e?.message ?? "更新に失敗しました。");
+      setMeal((prev) => (prev ? { ...prev, is_completed: !next, completed_at: !next ? null : prev.completed_at } : prev));
+    }
   }
 
   async function deleteMeal() {
@@ -88,12 +94,13 @@ export default function MealDetailPage() {
         text: "削除",
         style: "destructive",
         onPress: async () => {
-          const { error: delError } = await supabase.from("planned_meals").delete().eq("id", meal.id);
-          if (delError) {
-            Alert.alert("削除失敗", delError.message);
-            return;
+          try {
+            const api = getApi();
+            await api.del(`/api/meals/${meal.id}`);
+            router.replace("/menus");
+          } catch (e: any) {
+            Alert.alert("削除失敗", e?.message ?? "削除に失敗しました。");
           }
-          router.replace("/menus");
         },
       },
     ]);

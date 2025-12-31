@@ -181,10 +181,9 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
             { role: 'system', content: 'あなたは会話を正確に要約するアシスタントです。JSONのみを出力してください。' },
             { role: 'user', content: summaryPrompt + retryNote },
           ],
-          temperature: 0.3,
-          max_tokens: 1500,
+          max_completion_tokens: 1500,
           response_format: { type: 'json_object' },
-        });
+        } as any);
 
         const summaryContent = completion.choices[0]?.message?.content;
         if (!summaryContent) throw new Error('要約の生成に失敗しました');

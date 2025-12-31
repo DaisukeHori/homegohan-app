@@ -67,70 +67,49 @@ export default function WeeklyMenuPage() {
     setIsLoading(true);
     setError(null);
 
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth.user) {
-      setError("Unauthorized");
+    try {
+      const api = getApi();
+      const res = await api.get<{ mealPlan: any }>(`/api/meal-plans?date=${weekStartStr}`);
+      const mealPlan = res.mealPlan;
+
+      if (!mealPlan) {
+        setPlan(null);
+        setDays([]);
+        return;
+      }
+
+      setPlan({
+        id: mealPlan.id,
+        start_date: mealPlan.startDate,
+        end_date: mealPlan.endDate,
+        title: mealPlan.title ?? "週間献立",
+      });
+
+      const mappedDays: DayRow[] =
+        (mealPlan.days ?? []).map((d: any) => ({
+          id: d.id,
+          day_date: d.dayDate,
+          planned_meals:
+            (d.meals ?? []).map((m: any) => ({
+              id: m.id,
+              meal_type: m.mealType,
+              dish_name: m.dishName,
+              mode: m.mode,
+              calories_kcal: m.caloriesKcal,
+              is_completed: m.isCompleted,
+              is_generating: m.isGenerating,
+              display_order: m.displayOrder,
+            })) ?? [],
+        })) ?? [];
+
+      setDays(mappedDays);
+    } catch (e: any) {
+      setError(e?.message ?? "取得に失敗しました。");
       setPlan(null);
       setDays([]);
+    } finally {
       setIsLoading(false);
-      return;
     }
-
-    // 1) 今週のmeal_planを取得（start_date = weekStart を優先）
-    const { data: planData, error: planError } = await supabase
-      .from("meal_plans")
-      .select("id,start_date,end_date,title")
-      .eq("user_id", auth.user.id)
-      .eq("start_date", weekStartStr)
-      .maybeSingle();
-
-    if (planError) {
-      setError(planError.message);
-      setPlan(null);
-      setDays([]);
-      setIsLoading(false);
-      return;
-    }
-    if (!planData) {
-      setPlan(null);
-      setDays([]);
-      setIsLoading(false);
-      return;
-    }
-
-    setPlan(planData as any);
-
-    // 2) 週のdays + meals
-    const { data: daysData, error: daysError } = await supabase
-      .from("meal_plan_days")
-      .select(
-        `
-        id,
-        day_date,
-        planned_meals (
-          id,
-          meal_type,
-          dish_name,
-          mode,
-          calories_kcal,
-          is_completed,
-          is_generating,
-          display_order
-        )
-      `
-      )
-      .eq("meal_plan_id", (planData as any).id)
-      .gte("day_date", weekStartStr)
-      .lte("day_date", weekEndStr)
-      .order("day_date", { ascending: true });
-
-    if (daysError) {
-      setError(daysError.message);
-      setDays([]);
-    } else {
-      setDays((daysData as any) ?? []);
-    }
-    setIsLoading(false);
   }
 
   useEffect(() => {
@@ -239,14 +218,12 @@ export default function WeeklyMenuPage() {
     if (regeneratingMealId) return;
     setRegeneratingMealId(mealId);
     try {
-      const { error: invokeError } = await supabase.functions.invoke("regenerate-meal-direct", {
-        body: {
-          mealId,
-          dayDate: selectedDate,
-          mealType,
-        },
+      const api = getApi();
+      await api.post("/api/ai/menu/meal/regenerate", {
+        mealId,
+        dayDate: selectedDate,
+        mealType,
       });
-      if (invokeError) throw invokeError;
     } catch (e: any) {
       setError(e?.message ?? "再生成に失敗しました。");
     } finally {

@@ -2,6 +2,7 @@ import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
+import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
@@ -113,20 +114,16 @@ export default function HomeScreen() {
 
   async function toggleCompletion(meal: PlannedMealLite) {
     const next = !meal.is_completed;
-    const { error: updateError } = await supabase
-      .from("planned_meals")
-      .update({
+    try {
+      const api = getApi();
+      await api.patch(`/api/meals/${meal.id}`, {
         is_completed: next,
         completed_at: next ? new Date().toISOString() : null,
-      })
-      .eq("id", meal.id);
-
-    if (updateError) {
-      setError(updateError.message);
-      return;
+      });
+      setTodayMeals((prev) => prev.map((m) => (m.id === meal.id ? { ...m, is_completed: next } : m)));
+    } catch (e: any) {
+      setError(e?.message ?? "更新に失敗しました。");
     }
-
-    setTodayMeals((prev) => prev.map((m) => (m.id === meal.id ? { ...m, is_completed: next } : m)));
   }
 
   return (

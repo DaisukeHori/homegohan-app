@@ -974,6 +974,9 @@ export async function POST(
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
       const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
       
+      // NOTE:
+      // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンです。
+      //   これは献立生成ロジックの v1/v2（legacy/dataset）とは別の概念です。
       const knowledgeGptRes = await fetch(`${supabaseUrl}/functions/v1/knowledge-gpt`, {
         method: 'POST',
         headers: {
@@ -995,9 +998,8 @@ export async function POST(
         const completion = await openai.chat.completions.create({
           model: 'gpt-5-mini',
           messages,
-          temperature: 0.7,
-          max_tokens: 2000,
-        });
+          max_completion_tokens: 2000,
+        } as any);
         aiContent = completion.choices[0]?.message?.content || aiContent;
       }
     } catch (kgError) {
@@ -1006,9 +1008,8 @@ export async function POST(
       const completion = await openai.chat.completions.create({
         model: 'gpt-5-mini',
         messages,
-        temperature: 0.7,
-        max_tokens: 2000,
-      });
+        max_completion_tokens: 2000,
+      } as any);
       aiContent = completion.choices[0]?.message?.content || aiContent;
     }
 
@@ -1058,10 +1059,9 @@ JSONで回答してください：
           content: userMessage
         }
       ],
-      temperature: 0.1,
-      max_tokens: 200,
+      max_completion_tokens: 200,
       response_format: { type: 'json_object' },
-    });
+    } as any);
 
     let userMessageImportance = { isImportant: false, reason: null as string | null, category: null as string | null };
     try {

@@ -55,6 +55,61 @@ async function getOrCreateActivePlan(supabase: any, userId: string, targetDate?:
   return newPlan;
 }
 
+// 週次生成で「このstartDateの週」をアクティブに揃える（UIが is_active=true を前提に読む箇所があるため）
+function addDays(dateStr: string, days: number): string {
+  const date = new Date(dateStr);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0];
+}
+
+async function ensureWeeklyPlanActive(supabase: any, userId: string, startDate: string): Promise<string> {
+  const endDate = addDays(startDate, 6);
+
+  let { data: mealPlan, error: planError } = await supabase
+    .from('meal_plans')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('start_date', startDate)
+    .maybeSingle();
+
+  if (planError) throw planError;
+
+  if (!mealPlan) {
+    const ws = new Date(startDate);
+    const title = `${ws.getMonth() + 1}月${ws.getDate()}日〜の献立`;
+    const { data: newPlan, error: createError } = await supabase
+      .from('meal_plans')
+      .insert({
+        user_id: userId,
+        title,
+        start_date: startDate,
+        end_date: endDate,
+        status: 'active',
+        is_active: true,
+      })
+      .select('id')
+      .single();
+
+    if (createError) throw createError;
+    mealPlan = newPlan;
+  } else {
+    await supabase
+      .from('meal_plans')
+      .update({ end_date: endDate, status: 'active', is_active: true, updated_at: new Date().toISOString() })
+      .eq('id', mealPlan.id)
+      .eq('user_id', userId);
+  }
+
+  // 他のプランを非アクティブ化（アクティブは1つに揃える）
+  await supabase
+    .from('meal_plans')
+    .update({ is_active: false })
+    .eq('user_id', userId)
+    .neq('id', mealPlan.id);
+
+  return mealPlan.id;
+}
+
 // アクション実行
 export async function POST(
   request: Request,
@@ -113,7 +168,10 @@ export async function POST(
       // ==================== 献立関連 ====================
       case 'generate_day_menu': {
         const { date } = action.action_params;
-        const { error: invokeError } = await supabase.functions.invoke('generate-single-meal', {
+        // NOTE:
+        // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
+        // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
+        const { error: invokeError } = await supabase.functions.invoke('generate-single-meal-v2', {
           body: {
             date,
             userId: user.id,
@@ -127,10 +185,16 @@ export async function POST(
 
       case 'generate_week_menu': {
         const { startDate } = action.action_params;
-        const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu', {
+        // 週次生成の結果がUIに確実に出るよう、この週をアクティブに揃えてから生成を開始
+        const mealPlanId = await ensureWeeklyPlanActive(supabase, user.id, startDate);
+        // NOTE:
+        // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
+        // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
+        const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu-v2', {
           body: {
             startDate,
             userId: user.id,
+            mealPlanId,
           },
         });
         success = !invokeError;

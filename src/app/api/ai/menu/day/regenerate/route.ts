@@ -56,9 +56,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: mealsError.message }, { status: 500 });
     }
 
+    // NOTE:
+    // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
+    // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
+    //
     // 4. 各食事を個別に再生成
     const regenerationPromises = (meals || []).map(async (meal) => {
-      const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct', {
+      const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct-v2', {
         body: {
           mealId: meal.id,
           dayDate: (meal.meal_plan_days as any)?.day_date,

@@ -490,6 +490,7 @@ export interface PlannedMeal {
   fiberInsolubleG: number | null;
   potassiumMg: number | null;
   calciumMg: number | null;
+  magnesiumMg: number | null;
   phosphorusMg: number | null;
   ironMg: number | null;
   zincMg: number | null;
@@ -547,6 +548,7 @@ export interface NutritionDetails {
   fiberInsolubleG: number;
   potassiumMg: number;
   calciumMg: number;
+  magnesiumMg: number;
   phosphorusMg: number;
   ironMg: number;
   zincMg: number;

@@ -467,8 +467,7 @@ ${JSON.stringify(summarizeRecords(records), null, 2)}
           { role: "system", content: "あなたは優しく励ましながらも的確なアドバイスをする健康コーチです。" },
           { role: "user", content: prompt },
         ],
-        temperature: 0.7,
-        max_tokens: 500,
+        max_completion_tokens: 500,
       }),
     });
 

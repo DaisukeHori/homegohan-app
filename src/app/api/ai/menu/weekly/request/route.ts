@@ -168,10 +168,14 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     
-    console.log('🚀 Calling Edge Function generate-weekly-menu...');
+    console.log('🚀 Calling Edge Function generate-weekly-menu-v2...');
     
+    // NOTE:
+    // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンであり、
+    //   献立生成ロジックの v1/v2（legacy/dataset）とは無関係です。
+    // - 当アプリの献立生成は `generate-weekly-menu-v2`（dataset駆動）を使用します。
     // Edge Functionを非同期で呼び出し（完了を待たない）
-    fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu`, {
+    fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu-v2`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -39,8 +39,12 @@ export async function POST(request: Request) {
       console.error('Failed to create request record:', insertError);
     }
 
+    // NOTE:
+    // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
+    // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
+    //
     // 4. Edge Function を非同期で呼び出し（直接planned_mealsを更新）
-    const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct', {
+    const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct-v2', {
       body: {
         mealId,
         dayDate,

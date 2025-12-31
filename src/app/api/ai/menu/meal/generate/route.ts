@@ -39,8 +39,12 @@ export async function POST(request: Request) {
       // エラーでも続行（後方互換性のため）
     }
 
+    // NOTE:
+    // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
+    // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
+    //
     // 3. Edge Function を非同期で呼び出し
-    const { error: invokeError } = await supabase.functions.invoke('generate-single-meal', {
+    const { error: invokeError } = await supabase.functions.invoke('generate-single-meal-v2', {
       body: {
         dayDate,
         mealType,

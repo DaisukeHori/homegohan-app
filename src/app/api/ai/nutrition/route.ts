@@ -102,7 +102,7 @@ export async function POST(request: Request) {
                 ]
               }
             ],
-            max_tokens: 1000,
+            max_completion_tokens: 1000,
           }),
         });
 

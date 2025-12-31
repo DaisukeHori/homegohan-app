@@ -49,3 +49,5 @@ apps/mobile/dist
 apps/mobile/web-build
 apps/mobile/.eas*
 
+# データセット（CSVは大きいのでGitに含めない）
+data/raw/

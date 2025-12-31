@@ -289,9 +289,8 @@ JSON形式で出力してください：
       const completion = await openai.chat.completions.create({
         model: 'gpt-5-mini',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
-        max_tokens: 1000,
-      });
+        max_completion_tokens: 1000,
+      } as any);
 
       const response = completion.choices[0]?.message?.content || '';
 
@@ -413,7 +412,11 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    const regenerateRes = await fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct`, {
+    // NOTE:
+    // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンであり、
+    //   献立生成ロジックの v1/v2（legacy/dataset）とは無関係です。
+    // - 当アプリの献立再生成は `regenerate-meal-direct-v2`（dataset駆動）を使用します。
+    const regenerateRes = await fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v2`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

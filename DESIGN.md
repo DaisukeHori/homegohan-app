@@ -3,6 +3,21 @@
 
 ---
 
+## 用語メモ（v1/v2 と `/functions/v1` の違い）
+
+本ドキュメント内で「v1/v2」という表現が **2種類** 登場するため、混同防止のために定義します。
+
+- **`/functions/v1/...`**: Supabase Edge Functions の **HTTPパスのバージョン**（プラットフォーム側の仕様）。  
+  これは **献立生成アルゴリズムの v1/v2 とは無関係**です。
+- **献立生成ロジックの v1 / v2**:
+  - **v1（legacy/旧方式）**: 既存の献立生成（RAG/LLM中心。`knowledge-gpt` 経由など）
+  - **v2（dataset/データセット駆動）**: pgvector＋データセットDBを根拠に **ID選定→DB確定値を `planned_meals` に反映**する方式
+
+**互換方針（重要）**
+- `generate-weekly-menu` は互換入口として残し、内部で v2 を実行して旧呼び出しも壊さない（詳細は実装コメント参照）
+
+---
+
 # 第一部　企画書
 
 ## 1. サービス概要
@@ -1290,3 +1305,1301 @@ homegohan-app/
 ## 5. 配布（EAS）
 - `development / preview / production` のビルドプロファイルで運用
 - Secrets は EAS Secrets と `EXPO_PUBLIC_*` を使い分け、リポジトリに秘密情報を残さない
+
+---
+
+# 追記（2025-12-30）データセット駆動の献立生成（v2：全ユーザーにデフォルト適用）
+
+## 1. 目的・背景
+
+現状の献立生成は「LLMに“巨大JSON＋ミクロ栄養まで”を生成させる」比重が大きく、以下が課題になる：
+
+- **数値の欠損/取り違え**：週次（7日×3食×複数品×多栄養項目）で出力が破綻しやすい
+- **根拠の曖昧さ**：ミクロ栄養の数値が“推定/発明”になりやすい
+
+そこで、スクレイプ済みの **献立セット（1行=1食）** と **レシピ（1行=1品）** を **DBに取り込み**、栄養値は“データが真実”として扱う。
+LLM（GPT）は **管理栄養士としての味付け（ID選定/差し替え/文章）**に専念させる。
+
+また、OpenAIの File Search（Vector Store / `file_search`）は便利だが、公式ドキュメント上 **構造化データ（CSV/JSONL等）の厳密なretrieval** や **カスタムmetadataによる決定的フィルタ** が既知の制約として挙げられている。
+このため v2 のクリティカルパス（IDで1行を確実に引く、栄養カラムで厳密フィルタ等）を RAG に依存しない。
+（参照：[`Assistants File Search` ドキュメント](https://platform.openai.com/docs/assistants/tools/file-search)）
+
+## 2. 用語・前提
+
+- **献立セット（Menu Set）**：1行=1食。最大5品（主菜/副菜/主食/汁物等）と、**合計栄養（ミクロ栄養含む）**を持つ
+- **レシピ（Recipe）**：1行=1品。材料・作り方・**料理単位の栄養（ミクロ栄養含む）**を持つ
+- **データセット**：外部ソース（例：oishi-kenko）由来の献立セット/レシピの集合。DBへ取り込み、バージョニングする
+- **食材栄養（Ingredient / Food composition）**：1行=1食材（原則100gあたりの栄養）。`dataset_ingredients` に保持し、表記揺れに強い検索（`pg_trgm`/`pgvector`）を提供する
+- **派生レシピ（Derived Recipe）**：既存レシピ（DB原型）をベースに「材料/手順」を編集して作るレシピ。`derived_recipes` に永続化し、栄養は `dataset_ingredients` を参照して合算する（根拠DB）
+- **v2の原則**：
+  - 栄養値（ミクロ栄養含む）は **AIに生成させない**。DBの確定値を `planned_meals` に写す
+  - **相性（組み合わせの自然さ）はRDBで決め打ちしない**。献立例（RAG）を参照し、LLMが文脈判断する
+  - **料理名はDBに存在しなくてもよい**（レパートリー拡張）。ただし“未登録”は必ず **DB根拠**を持たせる
+    - **proxy**：近傍の既存レシピへ紐づけ（`base_recipe_id`）し、材料/作り方/栄養を確定（最短で確実）
+    - **derived（推奨）**：DB原型（`base_dataset_recipe_id`）をベースに材料/手順を生成し、栄養は `dataset_ingredients` を参照して合算し `derived_recipes` に永続化
+  - Vector Store（RAG）は **献立例の取得（相性判断の根拠）** と **近い料理/近い献立の探索** に積極利用する
+  - 構造化データ（栄養表・材料・手順）は **DBが真実**。RAGから“数値”を確定しない
+
+## 3. 追加/変更要件（要件定義の追記）
+
+### FR-06-v2 一汁三菜 × 1週間献立生成（データセット駆動）
+- 7日×3食 = **21枠**に対して、各枠の **料理リスト（複数品）**を生成する
+- ユーザー制約（アレルギー/嗜好/健康状態/調理条件/家族人数）を満たす
+- **相性の自然さ**は、献立例（RAG）を根拠にLLMが判断する
+- 週生成時点で、各枠の **料理詳細（材料/作り方/料理単位ミクロ栄養）**を `planned_meals.dishes` にキャッシュする
+- 料理名が未登録でも許容するが、各料理は **proxy（base_recipe_id）** に必ず紐づけて数値を確定する
+
+### FR-06-v2a 単発生成/再生成（差し替え）
+- **単発生成**：指定日×食事タイプ1枠に対して料理リストを生成し、詳細までキャッシュ
+- **再生成（差し替え）**：既存枠の料理リストを差し替え（「最小差分で自然に」「栄養課題を改善」など）
+
+### FR-06-v2b 派生レシピ生成（DB原型＋食材栄養DB）
+- ユーザー要望や献立の味付けのために、**データセットに存在しない料理名**（例：麻婆豆腐→麻婆茄子）を提案できる
+- ただし派生レシピは必ず **DB原型** を持つ（`derived_recipes.base_dataset_recipe_id`）
+- LLM出力は **材料をg単位**で返す（`ingredients[].amount_g`）。`ingredients[].name` は「食材名のみ」にし、切り方/用途/補足は `ingredients[].note` に入れる
+- 食材名は `dataset_ingredients` に対して **(1)正規化一致 → (2)pg_trgm → (3)pgvector** の順に解決し、**100gあたり栄養 × amount_g/100** で合算する
+- 派生レシピは `derived_recipes` に保存し、後日 **再利用/品質評価/帳票**に利用できる
+- 食材の名前解決率（`mapping_rate`）が閾値未満の場合は `warnings` を付与し、（プロダクト方針に応じて）ハード制約判定から除外/ユーザー承認/代理レシピ（proxy）へフォールバックできる
+
+### NFR-06-v2 性能/信頼性
+- 週生成は **数十秒〜数分**を許容（非同期）
+- ジョブは `weekly_menu_requests` により **状態管理（pending/processing/completed/failed）**し、**再試行**できる
+- 生成が途中で失敗しても、**プレースホルダー（is_generating=true）**の整合性を壊さない（部分更新/ロールバック方針を定義）
+
+## 4. 基本設計（インフラ・全体アーキテクチャ）
+
+### 4-1. 構成（v2）
+- **Supabase Postgres**：データセット（献立セット/レシピ）を保持（真実）
+- **Supabase Storage**：データセットCSV/TSVの置き場（非公開）
+- **データセットインポーター**：CSV→DBのETL（管理者実行、またはCI/定期）
+- **食材栄養インポーター**：`食材栄養.csv` → `dataset_ingredients`（表記揺れ対策のため `name_embedding vector(384)` を保持）
+- **派生レシピ永続化**：`derived_recipes`（DB原型 + 差分（材料/手順）+ 食材DB合算栄養）
+- **類似検索（ベクトル/RAG）**：
+  - 献立例（1食の例文書）検索：OpenAI Vector Store（`file_search`）を利用（相性判断の根拠）
+  - 料理（レシピ）近傍検索：`pgvector`（またはRAG）で近い既存レシピを取得し、proxyの `base_recipe_id` を確定
+- 食材（Ingredient）近傍検索：`pg_trgm` + `pgvector` で `dataset_ingredients` を検索し、派生レシピの栄養計算の根拠にする
+- **献立生成ワーカー（Edge Function）**：
+  - `generate-weekly-menu`：21枠の料理リスト生成→proxy解決→検証/修復→保存
+  - `generate-single-meal`：1枠の料理リスト生成→proxy解決→検証/修復→保存
+  - `regenerate-meal-direct`：既存1枠を（最小差分で）差し替え
+  - `create-derived-recipe`：派生レシピ（材料/手順）生成 → 食材名解決 → 栄養合算 → `derived_recipes` 永続化
+  - `backfill-ingredient-embeddings`：`dataset_ingredients.name_embedding` のバックフィル（管理者/運用）
+- **LLM（OpenAI）**：献立例を参照した相性判断、提案、差し替え、説明文
+
+> 補足：OpenAI Vector Store（RAG）は「補助」（文章・発想・説明）として残してもよいが、v2の数値/レコード確定はDBが担う。
+> 更新（2025-12-30）：v2ではRAGを「補助」に限定せず、**献立例の取得（相性判断の根拠）**として積極利用する。ただし **数値の確定はDB** を維持する。
+
+### 4-2. データフロー（週次）
+1. クライアント → `/api/ai/menu/weekly/request`：リクエスト作成、プレースホルダー作成
+2. `weekly_menu_requests` にジョブ登録（status）
+3. Edge Function（ワーカー）がジョブを処理
+4. `meal_plans` / `meal_plan_days` / `planned_meals` を更新し、詳細をキャッシュ
+5. クライアントは `weekly_menu_requests` をポーリングし、完了を表示
+
+> 補足：v2では「非同期＝待ち時間の解決」に加え、**データセット参照＝数値の完全性/再現性**を担保する。
+
+## 5. 詳細設計（インフラ/DB/処理）
+
+### 5-1. DBスキーマ（追加）
+
+#### 5-1-1. `dataset_menu_sets`（献立セット：1行=1食）
+- **用途**：週21枠の選定母集団
+- **主な列（例）**
+  - `id`（text, PK）：`web-scraper-order`（例：`1748237765-1`）
+  - `dataset_key`（text）：例 `oishi-kenko`
+  - `source_url`（text）
+  - `target_tags`（text[]）：例 `脂質異常症` 等（フィルタ/重み付けに利用）
+  - `dish_summary`（jsonb）：最大5品の `{name, category, kcal, sodium_g}` 等
+  - `calories_kcal`, `protein_g`, `fat_g`, `carbs_g`, `sodium_g`, `sugar_g`, `fiber_g`, ...（`planned_meals` と同等の栄養列）
+  - `raw_row`（jsonb）：取り込み元の生データ（監査/再取り込み用）
+  - `dataset_version`（text）
+  - `created_at`, `updated_at`
+
+#### 5-1-2. `dataset_recipes`（レシピ：1行=1品）
+- **用途**：料理詳細（材料/作り方/料理単位ミクロ栄養）の参照元
+- **主な列（例）**
+  - `id`（uuid, PK）
+  - `dataset_key`（text）
+  - `source_url`（text, UNIQUE）
+  - `name`（text）
+  - `name_norm`（text）：検索用の正規化名（空白/記号/表記ゆれの簡易正規化）
+  - `tags`（text[]）：例 `塩分カット` 等
+  - `nutrition`（jsonb）：料理単位の栄養（ミクロ含む、正規化済みキー）
+  - `ingredients`（jsonb）：`[{name, amount, unit?, grams?}, ...]`（可能な範囲で構造化）
+  - `steps`（text[]）
+  - `raw_ingredients_text`（text）, `raw_steps_text`（text）：抽出前テキスト（再解析用）
+  - `name_embedding`（vector(1536), NULL可）：類似検索用（`text-embedding-3-small` 想定。必要なら次元を別途定義）
+  - `dataset_version`（text）
+  - `created_at`, `updated_at`
+
+#### 5-1-3. `dataset_menu_set_items`（献立セット内の料理明細）
+- **用途**：献立セット（最大5品）→レシピへの安定参照（名前衝突対策/正規化）
+- **主な列（例）**
+  - `menu_set_id`（text, FK → dataset_menu_sets.id）
+  - `dish_index`（int：1〜5）
+  - `dish_name`（text）
+  - `dish_name_norm`（text）：検索用の正規化名
+  - `dish_category`（text：主菜/副菜/主食/汁物 等）
+  - `dish_kcal`（int）, `dish_sodium_g`（numeric）
+  - `recipe_id`（uuid, FK → dataset_recipes.id, NULL許容）
+  - `recipe_match_method`（text, NULL可）：`url|exact|trgm|vector|llm_pick|manual` 等
+  - `recipe_match_confidence`（numeric, NULL可）：0〜1 の目安（運用/監視用）
+  - `role`（text：`main/side/soup/rice` 等）
+  - `created_at`, `updated_at`
+
+#### 5-1-4. `dataset_import_runs`（取り込み実行ログ）
+- **用途**：運用（いつ・どの版を・何件取り込んだか、エラーは何か）
+- **主な列（例）**
+  - `id`（uuid, PK）
+  - `dataset_key`（text）, `dataset_version`（text）
+  - `status`（text：running/succeeded/failed）
+  - `stats`（jsonb：件数/マッピング率/重複/スキップ数）
+  - `error_message`（text）
+  - `started_at`, `finished_at`
+
+#### 5-1-5. `dataset_ingredients`（食材栄養：1行=1食材）
+- **用途**：派生レシピの栄養を「DB根拠」で算出するための食材組成（原則100gあたり）
+- **主な列（例）**
+  - `id`（uuid, PK）
+  - `name`（text）, `name_norm`（text）
+  - `calories_kcal`, `protein_g`, `fat_g`, `carbs_g`, `fiber_g`, `salt_eq_g`, `potassium_mg`, ...（多数）
+  - `name_embedding`（vector(384)）：食材名の近傍検索（表記揺れ対策）
+  - `created_at`, `updated_at`
+- **索引**
+  - `name_norm` btree
+  - `name_norm` gin(trgm)
+  - `name_embedding` hnsw(cosine)
+- **アクセス**
+  - RLS有効。原則 **service role のみ**が参照/更新（クライアント直参照は不可）
+- **検索補助RPC**
+  - `search_similar_dataset_ingredients`（pg_trgm）
+  - `search_dataset_ingredients_by_embedding`（pgvector）
+
+#### 5-1-6. `derived_recipes`（派生レシピ永続化）
+- **用途**：AIが生成した派生レシピを保存し、後で再利用/評価/改善できるようにする
+- **主な列（例）**
+  - `id`（uuid, PK）
+  - `name`, `name_norm`
+  - `base_dataset_recipe_id`（uuid, FK → `dataset_recipes.id`）：必須（DB原型）
+  - `created_by_user_id`（uuid, NULL可）
+  - `ingredients`（jsonb）：`[{name, amount_g, note, matched_ingredient_id, similarity, method, skip?}, ...]`
+  - `instructions`（text[]）
+  - 推定/計算栄養（`calories_kcal`, `protein_g`, `fat_g`, `carbs_g`, `sodium_g`, `vitamin_*` など。食材DBに存在しない項目は NULL になり得る）
+  - `generation_metadata`（jsonb）：`mapping_rate`, `warnings`, `elapsed_ms` など
+  - `name_embedding`（vector(384)）
+- **アクセス**
+  - RLS有効。v2初期は **service role のみ**（ユーザーへの表示は `planned_meals` 側のキャッシュで行う）
+
+> 注：`planned_meals` はすでにミクロ栄養列（`iodine_ug` 等）を保持できる。v2ではこの列群へ **データセットの確定値をコピー**する。
+
+### 5-2. 既存テーブルの拡張（推奨）
+
+#### `planned_meals`（トレーサビリティ）
+差し替え・監査・再生成の安定化のため、以下を追加する（v2推奨）：
+- `source_dataset_key`（text）
+- `source_menu_set_id`（text）
+- `source_menu_set_url`（text）
+- `source_recipe_urls`（text[]）または `dishes` 内に `sourceUrl` を付与
+- `source_dataset_version`（text）
+
+※ 追加が難しい場合の暫定：`weekly_menu_requests.prediction_result` に選定IDを保持し、必要に応じて逆引きする。
+
+### 5-3. データ取り込み（ETL）
+
+#### 入力
+- 献立セットCSV/TSV（1行=1食、合計栄養＋料理名/分類/カロリー/塩分）
+- レシピCSV/TSV（1行=1品、材料/作り方＋料理栄養＋タグ）
+- 食材栄養CSV（`食材栄養.csv`：1行=1食材、原則100gあたりの栄養）
+
+#### 取り込み手順（推奨）
+0. **初回取り込み（数十MB規模）はCLI/psqlでの一括投入を推奨**
+   - 理由：Edge Function単体での“巨大CSVを一気に”はタイムアウト/メモリのリスクがあるため
+   - 例：管理者PCから `COPY`（またはバッチUPSERT）で投入 → 取り込み後に正規化/索引/マッピングを回す
+1. Storage（非公開）へ `datasets/{dataset_key}/{version}/...` として配置（運用/再取り込みのソース）
+2. インポーターを実行し、以下を実施
+   - 単位正規化（例：`µg`/`ug`/`μg`、`全カルシウム` 等の表記揺れ）
+   - 列名正規化（DBの栄養キーへマッピング）
+   - `dataset_menu_set_items` の生成（最大5品の分解）
+   - レシピの重複排除（`source_url` を主キー）
+   - **献立セットの料理名→レシピのマッピング（品質がv2成否を決める）**
+     - 可能なら `source_url` 等の **決定的キー**で紐づけ（最優先）
+     - 次に **完全一致**（`dish_name_norm = name_norm`）
+     - 次に **類似一致（DB内）**：
+       - `pg_trgm`（文字列類似）で上位候補抽出
+       - `pgvector`（埋め込み）で上位候補抽出（任意）
+     - 同名衝突/曖昧な場合は **上位候補リストをLLMに提示して選ばせる（llm_pick）**
+     - それでも解決できない場合は未解決として残し、手動辞書（manual）で補完
+   - 食材栄養の取り込み（`dataset_ingredients`）
+     - `name_norm` を正規化して保存（表記揺れ対策）
+     - `name_embedding` を生成（CLIで一括生成 or `backfill-ingredient-embeddings` で後追いバックフィル）
+3. `dataset_import_runs` に統計（マッピング率、未解決数）を保存
+4. `system_settings` に「有効データセット版」を設定（例：`menu_dataset_active_version`）
+
+### 5-4. 生成アルゴリズム（週次/単発/再生成）
+
+#### 共通方針
+- **候補抽出はDBで行う**（数値・タグ）
+- GPTは **候補の中から選ぶ/差し替える**（理由づけ・バリエーション調整）。候補外IDを出したら失敗として再試行
+- 生成後に **検証**し、違反があれば **部分的に差し替え**（全文作り直しは最終手段）
+
+#### ユーザー要望（自然文）を「DB検索ができる形」に落とす
+ユーザーの要望（例：「今週は和食多めで、夜は時短。高血圧なので塩分控えめ。鶏むね肉を使いたい」）は、DBに“完全一致で存在する”とは限らない。
+v2では「ドンピシャ検索」ではなく、**要望をクエリ/制約に変換して“近い候補を十分数集める”**設計とする。
+
+- **Step A: 要望の構造化（Query Planner）**
+  - LLM（またはルール）で以下へ変換：
+    - ハード制約：アレルギー/宗教/禁忌食材、絶対NG
+    - 数値制約：カロリー/PFC/塩分上限（`nutrition_targets` 由来）
+    - ソフト制約：和食/辛め/さっぱり、時短、作り置き、季節、冷蔵庫食材優先 等
+    - クエリ語：料理名/食材/調理法のキーワード、同義語（例：鶏むね=胸肉/チキン）
+- **Step B: DBで候補抽出（Hybrid retrieval）**
+  - `dataset_menu_sets` を対象に、以下を組み合わせてスコアリング：
+    - **栄養スコア**：目標への近さ、上限超過の強いペナルティ
+    - **テキスト類似**：献立名・料理名（`dish_summary` 等）と要望キーワードの一致/類似（`pg_trgm`）
+    - （任意）**ベクトル類似**：献立セットの要約埋め込み（`pgvector`）
+  - 上位K（例：50〜200）を候補として返す（「1件当てる」ではなく「選べるだけ集める」）
+- **Step C: 段階的緩和（Progressive relaxation）**
+  - 候補が少ない/ゼロの場合は、**ソフト制約の重みを落として再検索**する
+  - ハード制約（アレルギー等）と法令/安全性は緩和しない
+  - それでもゼロなら「データセット内に該当がない」ことを明示し、ユーザーに条件緩和を促す（無理に捏造しない）
+
+#### 3層防御：組み合わせの「相性」を制御する
+
+料理を自由に組み合わせると「おでん＋カレー＋チャーハン」のような不自然な献立が生成されるリスクがある。
+v2では **3層の防御** で組み合わせの相性を制御する。
+
+```
+┌──────────────────────────────────────────────────┐
+│  第1層：構造テンプレート選択                         │
+│  → 既存の献立セットから「構造」を借りる               │
+│     例：[メイン:カレー系] + [副菜:サラダ系] + [小鉢:漬物系] │
+└──────────────────────────────────────────────────┘
+                    ↓
+┌──────────────────────────────────────────────────┐
+│  第2層：スロット内で料理を入れ替え                   │
+│  → 同じ「役割×近傍（類似）」内で入れ替え               │
+│     例：チキンカレー → 近い料理（埋め込み/文字列類似の上位N）│
+│  ※ 栄養制約・在庫・好みでフィルタ                    │
+└──────────────────────────────────────────────────┘
+                    ↓
+┌──────────────────────────────────────────────────┐
+│  第3層：LLM相性チェック                             │
+│  → 「この組み合わせは日本の食卓として自然か？」        │
+│  → 不自然なら却下し、代案を提示                      │
+└──────────────────────────────────────────────────┘
+```
+
+##### 第1層：構造テンプレート（献立セットの構造を借りる）
+
+既存の献立セットは **栄養士が作った「正しい組み合わせ」** である。
+この「構造」（どの役割にどんな料理を配置するか）をテンプレートとして使う。
+
+- 献立セットの構造例：
+  - カレーセット = `[メイン:カレー系] + [副菜:サラダ系] + [小鉢:漬物系]`
+  - 和定食 = `[メイン:焼き魚系] + [副菜:煮物系] + [汁物:味噌汁系] + [主食:ご飯]`
+  - 中華セット = `[メイン:炒め物系] + [主食:チャーハン系] or [麺:ラーメン系]`
+
+##### 第2層：スロット内入れ替え（柔軟性の確保）
+
+レシピ単体に固定の「役割（slot_type）」を持たせると例外が多すぎて破綻するため、**役割はテンプレート（献立セット）が持つスロットで決める**。
+具体的には、`dataset_menu_set_items.role` / `dish_category`（主菜/副菜/主食/汁物/小鉢 等）を「その献立内での役割」として扱い、**そのスロットに入れる料理候補を入れ替える**。
+これにより **組み合わせの構造は保証しつつ、個別料理は自由に選べる**。
+
+- 入れ替え例（カレーセットの場合）：
+  - メインスロット（元料理：チキンカレー）→ **類似検索の近傍**：ビーフカレー / キーマカレー / スープカレー
+  - 副菜スロット（元料理：サラダ）→ **類似検索の近傍**：グリーンサラダ / コールスロー / ポテトサラダ
+  - 小鉢スロット（元料理：らっきょう）→ **類似検索の近傍**：福神漬け / ピクルス
+
+##### 第3層：LLM相性チェック（常識フィルタ）
+
+完全に自由な組み合わせを許可する場合、または第2層で判断が曖昧な場合に適用。
+LLMに「この組み合わせは日本の食卓として自然か？」を判定させる。
+
+- 判定基準（厳しめ）：
+  - 「少しでも違和感があれば不自然と判定」
+  - 「粉物＋粉物（たこ焼き＋お好み焼き）→ 炭水化物過多、不自然」
+  - 「カレー＋おでん（大）→ メイン競合、不自然」
+  - 「カレー＋おでん（小鉢）→ 許容」
+
+##### レシピ側に持たせる属性（固定の役割ではなく「性質」）
+
+「ラーメン＋チャーハンはOK」「ご飯＋たこ焼き＋お好み焼きはNG」など、**役割/ジャンルだけでは裁けない例外**が多い。
+v2では「役割」をレシピに固定せず、レシピ側は **不変に近い“性質”**（料理タイプ/ボリューム/ジャンル/調理法など）を持たせ、相性は後述のスコアで判断する。
+
+| 属性 | 例 | 用途 |
+|---|---|---|
+| `name_norm` | 正規化名（空白/記号/表記ゆれの簡易正規化） | 文字列類似（`pg_trgm`）による候補抽出 |
+| `name_embedding` | 埋め込みベクトル（例：vector(1536)） | **類似検索**による候補抽出（「近傍」を取る） |
+| `size` | large/medium/small | 量の制御（小鉢ならジャンル混在OK等） |
+| `cuisine` | japanese/western/chinese/other | 参考情報 |
+| `kind_tags`（推奨） | carb_heavy / protein_heavy / vegetable_heavy / spicy / fried / flour ... | 相性スコア・ソフト制約の特徴量（厳密ルールではなくスコア） |
+
+> 注：`kind_tags` は「完全に正しい分類」を求めない。誤り/例外を前提に、後述の **献立例（RAG）** と **LLMチェック** で吸収する。
+
+##### 相性をどう判定するか（献立例を参照してLLMが判断する）
+
+相性（「AとCを一緒に出して自然か」）は例外が多く、少数のルールや固定カテゴリだけで網羅するのは難しい。
+このため v2 では、**献立例（過去/データセットの献立）を検索して提示し、LLMに“常識判断”をさせる**方針とする。
+
+- **献立例の取得（RAG）**
+  - 献立セット（1食）を「料理名一覧＋役割＋簡単な説明」などのテキストに整形し、OpenAI Vector Store（`file_search`）に格納する
+  - 生成時に「ユーザー要望」「候補の料理名」「現在の組み合わせ」をクエリとして、近い献立例を複数取得する
+- **LLMの相性判定**
+  - 取得した献立例を根拠として、現在の組み合わせを評価（自然/不自然/グレー）
+  - 不自然なら **最小差分の差し替え案**（置換対象スロットと理由）を返す
+  - 境界条件（例：おでんは“主菜”だとNGだが“小鉢”ならOK）のような文脈判断を許容する
+- **実装上の安全策**
+  - 「DBに存在しない料理名」を **許容するかどうか**はプロダクト方針で切り替え可能にする（創造性 vs 数値の確実性）
+    - **確定モード（推奨デフォルト）**：栄養・制約（ミクロ栄養、塩分上限、アレルギー等）を確実に満たすため、各料理はDB検索（文字列類似/埋め込み）で候補を出し、**候補内から選ばせる**（未登録料理は採用しない）
+    - **創作モード（任意）**：未登録料理名の提案を許容し、レパートリーを増やす。ただし「未登録」をそのまま採用するのではなく、可能な限り **“似た実例”をプロキシとして紐づける**（数値と詳細の一貫性を保つ）。以下を必須とする：
+      - `planned_meals.dishes` に `source: "dataset" | "proxy" | "derived" | "generated"` を付与して区別する
+      - **derived（推奨）**：
+        - 未登録料理名（表示名）は許容するが、必ず **DB原型**（`base_dataset_recipe_id`）を確定する
+        - `create-derived-recipe` で **材料/手順（g単位）**を生成し、`dataset_ingredients` で食材名を解決して **合算栄養**を算出する
+        - 結果は `derived_recipes` に永続化し、`mapping_rate` / `warnings` を保存する
+        - `mapping_rate` が閾値未満なら UI で明示し、再生成・食材名修正・proxyへのフォールバック等を選べる
+      - **proxy（フォールバック）**：
+        - ベクトル検索等で **近い既存レシピ（recipe_id）** を見つけ、`base_recipe_id` として保持する
+        - 材料/作り方/栄養は **base_recipe_id の確定データ**を使う（最短で確実）
+      - **generated（最終手段）**：
+        - DB原型（`base_dataset_recipe_id`）すら確定できない場合のみ許容する
+        - **栄養の扱い（推定/未計算）を明示**し、健康系のハード制約判定から除外 or ユーザー承認を必須にする
+      - 後日、管理者/運用で「辞書登録/新規レシピ追加/食材名の正規化改善」を行う **育成フロー**に繋げる
+  - 相性判定は“最後の味付け”とし、栄養制約（塩分等）やアレルギー等のハード制約はコード/DBで必ず検証する
+
+##### 生成フローへの適用
+
+1. ユーザー要望を解析（例：「カレーが食べたい」）
+2. **第1層**：要望に合う構造テンプレートを選択（例：カレーセットの構造）
+3. **第2層**：各スロット内で候補を抽出（栄養制約・在庫・好みでフィルタ）
+4. 候補からLLMがID選定（被り回避・バランス調整）
+5. **第3層**：献立例（RAG）を参照してLLMが常識チェック（不自然なら候補内で差し替え）
+6. 栄養はDBから取得して `planned_meals` に保存
+
+#### 制約最適化（"献立作り"の中核はコード側）
+ユーザー要望は「前日と被らない」「昼と夜も被らない」「朝は軽め」「冷蔵庫優先」「嗜好も反映」など複雑になりやすい。
+v2では、LLMが"いい感じの献立知識を内蔵している"ことを前提にせず、**データセット（DB）にある献立/レシピを材料に、コード側で制約最適化**を行う。
+
+- **ハード制約（必ず守る）**
+  - アレルギー/宗教/禁忌食材
+  - 塩分など上限（健康状態/目標により）
+  - 同一枠の成立要件（朝昼晩が揃う等）
+- **ソフト制約（できるだけ守る＝スコア化）**
+  - 主菜タンパクの多様性（前日・同日昼夜・週内の被りペナルティ）
+  - 朝は軽め（カロリー帯/脂質量などでペナルティ）
+  - 時短/作り置き/和食多め等の嗜好
+  - 冷蔵庫・パントリー優先（使いたい食材の一致スコア）
+- **手法（現実的で実装しやすい）**
+  1. 各スロット（21枠）に対して候補K（例：50〜200）を用意（DB抽出）
+  2. まずは栄養/制約を満たしやすい順で **greedy に割当**（直前/同日の被りを避ける）
+  3. 週全体のスコア（栄養目標への近さ＋多様性＋嗜好＋在庫消費）を評価し、**局所探索（swap/replace）**で改善
+  4. 収束 or 反復回数上限で確定
+- **修復（作り直しではなく“部分差し替え”）**
+  - 例：塩分が超過 → 上位の“塩分寄与が大きい枠”を特定 → その枠だけ低塩候補へ差し替え → 再評価
+  - 例：タンパク被り → 被り枠だけ別タンパク候補へ差し替え → 再評価
+
+この設計だと「RAG検索を何回も回して骨子を固める」必要はなく、**DB候補＋最適化＋部分修復**で安定して解ける。
+
+#### 重要：RAG（File Search）に期待しないこと
+- 「IDで1行を確実に引く」「CSVの特定列を厳密に読む」「栄養カラムでSQLのように絞り込む」等は **RAGの責務にしない**
+- v2では、これらは **DB取り込み＋索引＋クエリ**で解決し、LLMは“選択・調整・説明”に集中させる
+
+#### 週次（21枠）
+1. スロットごとに目標（カロリー、塩分上限、タグ優先度）を決める
+2. `dataset_menu_sets` から各スロットの候補集合（上位K）を抽出
+3. GPTへ「候補一覧（ID固定）＋制約＋被り情報」を渡し、21枠のIDを選定（**候補外ID禁止**）
+4. 選定IDを展開し、`dataset_menu_set_items`→`dataset_recipes` で詳細取得
+5. `planned_meals.dishes` を構築（材料/手順/料理栄養）し、食事合計栄養を列にコピー
+6. 検証（アレルギー/禁忌食材、塩分、栄養課題、被り）→問題枠だけ差し替え再実行
+
+#### 単発
+- 週次の1スロット版（同様にID選定→展開→検証→保存）
+
+#### 再生成（差し替え）
+- 現在の `source_menu_set_id` を除外し、栄養課題/ユーザー要望を反映して別IDを選定→更新
+
+### 5-5. 監視・ログ・コスト
+- `weekly_menu_requests.prediction_result`：
+  - 選定ID一覧、差し替え履歴、検証結果、所要時間、データセット版
+- `ai_content_logs`：
+  - GPTの入力/出力（要約）、モデル名、概算コスト（運用監視）
+- アラート基準：
+  - `failed` 率、平均所要時間、データセット未マッピング率の上昇
+
+### 5-6. セキュリティ（RLS/アクセス）
+- `dataset_*` テーブルは **クライアントから直接参照させない**（service role のみ）
+- 生成結果は `planned_meals` に完全にキャッシュするため、UIは既存のRLSで完結する
+
+## 6. 移行手順（全ユーザーにデフォルト適用）
+1. DBへデータセットを取り込み（ETL＋マッピング率確認）
+2. `system_settings` に有効データセット版を設定
+3. `generate-weekly-menu` / `generate-single-meal` / `regenerate-meal-direct` を v2ロジックへ切替
+4. 監視（失敗率/所要時間/未マッピング率）を見ながら改善
+
+## 7. リスク・未決定事項
+- **料理名マッピングの衝突**：同名料理が複数ある場合の優先順位（URL優先/タグ一致/手動辞書）
+- **マッピング品質が低い場合のUX**：材料/手順が欠ける（週生成時点で"全埋め"できない）
+  - 対策：マッピング率の品質ゲート（例：>=95%）を設け、未達なら旧方式へフォールバック可能なスイッチを残す
+- **ライセンス/出典表記**：外部データセットの利用条件に応じたUI表記（source_urlの保持）
+- **データセット更新**：新版取り込み時の差分反映、過去の献立との整合
+
+---
+
+## 8. 詳細スキーマ定義（実装仕様）
+
+### 8-1. `planned_meals.dishes` JSONスキーマ
+
+`dishes` カラムはJSONB型で、1食に含まれる料理の配列を保持する。
+各料理には **source（データ元）** と **base_recipe_id（proxy時の参照先）** を持たせ、トレーサビリティを確保する。
+
+```typescript
+// Zodスキーマ
+import { z } from 'zod';
+
+export const DishSchema = z.object({
+  // 基本情報
+  name: z.string(),                          // 表示名（LLMが出した名前、または既存レシピ名）
+  role: z.enum(['main', 'side', 'soup', 'rice', 'small_dish', 'dessert', 'other']),
+  
+  // データ元（トレーサビリティ）
+  source: z.enum(['dataset', 'proxy', 'generated']),
+  // - dataset: DBの既存レシピに完全一致
+  // - proxy: DBの近傍レシピをベースに採用（名前は異なる可能性あり）
+  // - generated: DB内に近傍が見つからず、LLM生成データを使用（非推奨、最終手段）
+  
+  base_recipe_id: z.string().uuid().nullable(),  // dataset/proxy時に参照したレシピのID
+  base_recipe_name: z.string().nullable(),       // 参照レシピの正式名（UI表示「ベース: ◯◯」用）
+  source_url: z.string().url().nullable(),       // レシピのソースURL（出典表記用）
+  
+  // 栄養（DBから取得した確定値）
+  calories_kcal: z.number().int().nullable(),
+  protein_g: z.number().nullable(),
+  fat_g: z.number().nullable(),
+  carbs_g: z.number().nullable(),
+  sodium_g: z.number().nullable(),
+  fiber_g: z.number().nullable(),
+  // ミクロ栄養（必要に応じて拡張）
+  // calcium_mg, iron_mg, vitamin_a_ug, ...
+  
+  // 料理詳細（DBから取得）
+  ingredients: z.array(z.object({
+    name: z.string(),
+    amount: z.string().nullable(),      // "100g", "1/2個" など
+    category: z.string().nullable(),    // "肉類", "野菜" など
+  })).nullable(),
+  
+  steps: z.array(z.string()).nullable(),  // 調理手順
+  
+  // メタ情報
+  cooking_time_minutes: z.number().int().nullable(),
+  servings: z.number().int().nullable(),
+  
+  // proxy解決時の類似度（監視/デバッグ用）
+  similarity_score: z.number().min(0).max(1).nullable(),
+});
+
+export const PlannedMealDishesSchema = z.array(DishSchema);
+
+// 型定義
+export type Dish = z.infer<typeof DishSchema>;
+export type PlannedMealDishes = z.infer<typeof PlannedMealDishesSchema>;
+```
+
+#### 例：通常の献立（source: dataset）
+```json
+{
+  "dishes": [
+    {
+      "name": "チキンカレー",
+      "role": "main",
+      "source": "dataset",
+      "base_recipe_id": "550e8400-e29b-41d4-a716-446655440000",
+      "base_recipe_name": "チキンカレー",
+      "source_url": "https://example.com/recipe/chicken-curry",
+      "calories_kcal": 650,
+      "protein_g": 25,
+      "fat_g": 18,
+      "carbs_g": 85,
+      "sodium_g": 2.5,
+      "fiber_g": 3,
+      "ingredients": [
+        {"name": "鶏もも肉", "amount": "300g", "category": "肉類"},
+        {"name": "玉ねぎ", "amount": "1個", "category": "野菜"},
+        {"name": "カレールー", "amount": "4皿分", "category": "調味料"}
+      ],
+      "steps": ["鶏肉を一口大に切る", "玉ねぎを炒める", "水を加えて煮込む", "ルーを入れる"],
+      "cooking_time_minutes": 40,
+      "servings": 4,
+      "similarity_score": 1.0
+    }
+  ]
+}
+```
+
+#### 例：未登録料理名（source: proxy）
+```json
+{
+  "dishes": [
+    {
+      "name": "スパイシーチキンカレー",
+      "role": "main",
+      "source": "proxy",
+      "base_recipe_id": "550e8400-e29b-41d4-a716-446655440000",
+      "base_recipe_name": "チキンカレー",
+      "source_url": "https://example.com/recipe/chicken-curry",
+      "calories_kcal": 650,
+      "protein_g": 25,
+      "fat_g": 18,
+      "carbs_g": 85,
+      "sodium_g": 2.5,
+      "fiber_g": 3,
+      "ingredients": [...],
+      "steps": [...],
+      "cooking_time_minutes": 40,
+      "servings": 4,
+      "similarity_score": 0.92
+    }
+  ]
+}
+```
+
+### 8-2. `planned_meals` テーブル拡張（マイグレーション）
+
+```sql
+-- v2トレーサビリティ用カラム追加
+ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'legacy';
+-- 'legacy': v1で生成された献立
+-- 'dataset': v2でデータセットから生成
+-- 'mixed': 一部proxyを含む
+
+ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS source_dataset_version TEXT;
+-- 生成時点のデータセット版（例：'2025-01-01'）
+
+ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS generation_metadata JSONB;
+-- {
+--   "model": "gpt-5-mini",
+--   "generated_at": "2025-01-01T12:00:00Z",
+--   "adjustments": [...],  -- LLMが行った調整の説明
+--   "validation_passed": true,
+--   "retry_count": 0
+-- }
+
+-- インデックス（任意）
+CREATE INDEX IF NOT EXISTS idx_planned_meals_source_type ON planned_meals(source_type);
+```
+
+### 8-3. LLMレスポンス JSON出力スキーマ
+
+#### 週次献立生成（generate-weekly-menu）
+
+```typescript
+// LLMに要求するJSON出力のZodスキーマ
+export const WeeklyMenuResponseSchema = z.object({
+  meals: z.array(z.object({
+    day: z.number().int().min(1).max(7),        // 1=月曜, 7=日曜
+    meal_type: z.enum(['breakfast', 'lunch', 'dinner']),
+    dishes: z.array(z.object({
+      name: z.string(),                          // 料理名（DB存在は問わない）
+      role: z.enum(['main', 'side', 'soup', 'rice', 'small_dish', 'other']),
+    })),
+    theme: z.string().nullable(),                // 「和食」「時短」など（任意）
+  })),
+  
+  adjustments: z.array(z.object({
+    day: z.number().int().nullable(),
+    meal_type: z.string().nullable(),
+    original_request: z.string(),               // ユーザーの元要望
+    changed_to: z.string(),                     // 実際の提案
+    reason: z.string(),                         // 変更理由
+  })).nullable(),
+  
+  weekly_advice: z.string().nullable(),         // 週全体へのアドバイス
+});
+
+export type WeeklyMenuResponse = z.infer<typeof WeeklyMenuResponseSchema>;
+```
+
+#### 単発生成（generate-single-meal）
+
+```typescript
+export const SingleMealResponseSchema = z.object({
+  dishes: z.array(z.object({
+    name: z.string(),
+    role: z.enum(['main', 'side', 'soup', 'rice', 'small_dish', 'other']),
+  })),
+  
+  adjustments: z.array(z.object({
+    original_request: z.string(),
+    changed_to: z.string(),
+    reason: z.string(),
+  })).nullable(),
+  
+  advice: z.string().nullable(),
+});
+
+export type SingleMealResponse = z.infer<typeof SingleMealResponseSchema>;
+```
+
+#### 差し替え（regenerate-meal-direct）
+
+```typescript
+export const RegenerateMealResponseSchema = z.object({
+  dishes: z.array(z.object({
+    name: z.string(),
+    role: z.enum(['main', 'side', 'soup', 'rice', 'small_dish', 'other']),
+    is_changed: z.boolean(),                    // 変更されたかどうか
+  })),
+  
+  change_summary: z.string(),                   // 何を変えたかの要約
+  reason: z.string(),                           // 変更理由
+});
+
+export type RegenerateMealResponse = z.infer<typeof RegenerateMealResponseSchema>;
+```
+
+### 8-4. エラー時のリトライ仕様
+
+#### リトライ対象
+
+| エラー種別 | リトライ | 最大回数 | 待機時間 |
+|-----------|---------|---------|---------|
+| LLM API タイムアウト | ✅ | 3回 | 指数バックオフ（1s, 2s, 4s） |
+| LLM API レート制限 | ✅ | 5回 | 指数バックオフ（5s, 10s, 20s, 40s, 80s） |
+| JSON パースエラー | ✅ | 2回 | 即時（プロンプト修正なし） |
+| Zodバリデーションエラー | ✅ | 2回 | 即時（エラー内容をプロンプトに追加） |
+| proxy解決失敗（近傍なし） | ❌ | - | source: generated にフォールバック |
+| ハード制約違反（検証失敗） | ✅ | 3回 | 即時（違反箇所を指定して部分差し替え） |
+| DB接続エラー | ✅ | 3回 | 指数バックオフ（1s, 2s, 4s） |
+
+#### リトライフロー
+
+```
+LLM呼び出し
+    │
+    ├─ 成功 → JSON パース
+    │              │
+    │              ├─ 成功 → Zod バリデーション
+    │              │              │
+    │              │              ├─ 成功 → proxy解決 → 検証
+    │              │              │                        │
+    │              │              │                        ├─ 成功 → 保存 → 完了
+    │              │              │                        │
+    │              │              │                        └─ 失敗（ハード制約違反）
+    │              │              │                                 │
+    │              │              │                                 └─ 違反枠だけ差し替え依頼（最大3回）
+    │              │              │
+    │              │              └─ 失敗（バリデーションエラー）
+    │              │                       │
+    │              │                       └─ エラー内容をプロンプトに追加してリトライ（最大2回）
+    │              │
+    │              └─ 失敗（パースエラー）
+    │                       │
+    │                       └─ そのままリトライ（最大2回）
+    │
+    └─ 失敗（API エラー）
+             │
+             └─ 指数バックオフでリトライ（最大3〜5回）
+```
+
+#### 最終失敗時の処理
+
+- `weekly_menu_requests.status` を `failed` に更新
+- `weekly_menu_requests.error_message` にエラー詳細を保存
+- UIには「献立生成に失敗しました。再度お試しください。」を表示
+- 部分的に成功した枠がある場合は `is_generating = true` のままにし、ユーザーに再生成を促す
+
+### 8-5. Vector Store（献立例RAG）登録形式
+
+#### 1献立セット = 1ドキュメント
+
+```
+ファイル名: menu_set_{id}.txt
+
+---
+献立ID: 1748237765-1
+カテゴリ: 夕食
+対象: 脂質異常症
+カロリー: 650kcal
+塩分: 2.5g
+
+【料理構成】
+- 主菜: チキンカレー（鶏肉、玉ねぎ、じゃがいも）
+- 副菜: コールスロー（キャベツ、にんじん）
+- 小鉢: らっきょう
+
+【特徴】
+- タンパク質がしっかり取れる
+- 野菜も摂取できるバランス献立
+- 調理時間: 約40分
+---
+```
+
+#### Vector Store構成
+
+| 項目 | 設定 |
+|------|------|
+| ファイル形式 | テキスト（.txt） |
+| 1ファイル | 1献立セット |
+| チャンクサイズ | デフォルト（OpenAI管理） |
+| 総ファイル数 | 献立セット数に依存（例：数千〜数万件） |
+| 更新頻度 | データセット更新時（手動/CI） |
+
+#### 検索クエリ例
+
+```
+「夕食 カレー 塩分控えめ 時短」
+→ カレー系の夕食献立で、塩分が低めのものが上位に
+```
+
+### 8-6. 料理近傍検索（proxy解決）の閾値・フォールバック
+
+#### 検索方式
+
+1. **完全一致**（`name_norm` で照合）
+2. **文字列類似**（`pg_trgm` で照合、`similarity >= 0.6`）
+3. **ベクトル類似**（`pgvector` で照合、`cosine_similarity >= 0.85`）
+
+#### 閾値と採用基準
+
+| 検索結果 | similarity | 採用 | source |
+|---------|------------|------|--------|
+| 完全一致 | 1.0 | ✅ | `dataset` |
+| 高類似度 | >= 0.85 | ✅ | `proxy` |
+| 中類似度 | 0.70 - 0.84 | ⚠️ 警告付きで採用 | `proxy` |
+| 低類似度 | 0.50 - 0.69 | ⚠️ ログに記録、LLMに確認 | `proxy` |
+| 類似なし | < 0.50 | ❌ フォールバック | `generated` |
+
+#### フォールバック（source: generated）
+
+近傍が見つからない場合、以下の手順でフォールバック：
+
+1. **LLMに栄養推定を依頼**（一般的な栄養値を返す）
+2. **材料/作り方は空配列**（「詳細はありません」と表示）
+3. **`generation_metadata.has_generated_dish = true`** をセット
+4. **監視ダッシュボードでアラート**（generated率が高いと品質低下）
+
+#### 許容 generated 率
+
+| 週次献立（21食 × 平均3品 = 63品） | 基準 |
+|-----------------------------------|------|
+| 正常 | generated 0件 |
+| 許容 | generated 1-3件（<5%） |
+| 警告 | generated 4-6件（<10%） |
+| 異常 | generated 7件以上（>=10%）→ 品質ゲート発動 |
+
+### 8-7. マイグレーション手順（v1 → v2）
+
+#### 前提
+
+- v1の既存データ（`planned_meals`）は保持する
+- v2は新規生成から適用し、既存データは触らない
+- フラグで切り替え可能にする（ロールバック対応）
+
+#### 手順
+
+```
+Phase 1: 準備（〜1日）
+├─ 1. dataset_* テーブルをマイグレーションで作成
+├─ 2. planned_meals に v2カラム追加（source_type, source_dataset_version, generation_metadata）
+├─ 3. デフォルト値を設定（既存データは source_type = 'legacy'）
+└─ 4. インデックス作成
+
+Phase 2: データ取り込み（〜1日）
+├─ 1. 献立セットCSV → dataset_menu_sets へ COPY/UPSERT
+├─ 2. レシピCSV → dataset_recipes へ COPY/UPSERT
+├─ 3. dataset_menu_set_items の生成（料理明細の分解）
+├─ 4. レシピマッピング実行（URL優先 → 完全一致 → 類似 → LLM pick）
+├─ 5. マッピング率確認（品質ゲート: >= 95%）
+└─ 6. Vector Store に献立例をアップロード
+
+Phase 3: 切り替え（〜1日）
+├─ 1. system_settings に v2_enabled = true, dataset_version = 'YYYY-MM-DD' を設定
+├─ 2. Edge Functions を v2ロジックにデプロイ
+├─ 3. 新規生成は v2、既存データは触らない
+└─ 4. 監視開始（失敗率、generated率、所要時間）
+
+Phase 4: 安定化（〜1週間）
+├─ 1. 監視データを確認し、閾値調整
+├─ 2. 問題があれば v2_enabled = false でロールバック
+├─ 3. 安定したら v1コードを削除（任意）
+└─ 4. ドキュメント更新
+```
+
+#### ロールバック手順
+
+```sql
+-- v2を無効化
+UPDATE system_settings SET value = 'false' WHERE key = 'v2_enabled';
+
+-- Edge Functions は v1ロジックにフォールバック（コード内で分岐）
+```
+
+#### 既存データとの整合
+
+- **v1で生成済みの献立**：`source_type = 'legacy'` のまま保持。v2のスキーマ（dishes内のsource等）は `null` 許容
+- **v2で生成した献立**：`source_type = 'dataset' or 'mixed'`。完全なスキーマ
+- **UIでの表示**：`source_type` によらず同じUIで表示（互換性維持）
+
+---
+
+## 9. アーキテクチャ図・フロー図
+
+### 9-1. システム全体アーキテクチャ（v2）
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                               クライアント                                    │
+│  ┌──────────────┐      ┌──────────────┐      ┌──────────────┐              │
+│  │   Web App    │      │  Mobile App  │      │   Admin CLI  │              │
+│  │  (Next.js)   │      │    (Expo)    │      │  (バッチ)     │              │
+│  └──────┬───────┘      └──────┬───────┘      └──────┬───────┘              │
+└─────────┼───────────────────────┼────────────────────┼─────────────────────┘
+          │                       │                    │
+          │ REST API / RPC        │                    │ COPY / UPSERT
+          ▼                       ▼                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            Supabase                                          │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                      Edge Functions                                    │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐       │  │
+│  │  │ generate-weekly │  │ generate-single │  │   regenerate-   │       │  │
+│  │  │     -menu       │  │     -meal       │  │   meal-direct   │       │  │
+│  │  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘       │  │
+│  │           │                    │                    │                 │  │
+│  │           └────────────────────┴────────────────────┘                 │  │
+│  │                               │                                        │  │
+│  │           ┌───────────────────┴───────────────────┐                   │  │
+│  │           │                                       │                   │  │
+│  │           ▼                                       ▼                   │  │
+│  │  ┌────────────────────────────────┐    ┌──────────────────┐          │  │
+│  │  │     OpenAI Agents SDK          │    │   Supabase DB    │          │  │
+│  │  │  ┌────────────────────────┐    │    │  ┌────────────┐  │          │  │
+│  │  │  │ fileSearchTool (RAG)   │    │    │  │ proxy解決  │  │          │  │
+│  │  │  │ + GPT-5-mini           │    │    │  │ (類似検索) │  │          │  │
+│  │  │  │ ※一体化・分離不可     │    │    │  │ [栄養確定] │  │          │  │
+│  │  │  └────────────────────────┘    │    │  └────────────┘  │          │  │
+│  │  └────────────────────────────────┘    └──────────────────┘          │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                      PostgreSQL (RLS)                                  │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐ │  │
+│  │  │ user_       │  │ meal_plans  │  │ planned_    │  │ health_      │ │  │
+│  │  │ profiles    │  │             │  │ meals       │  │ records      │ │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └──────────────┘ │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐ │  │
+│  │  │ dataset_    │  │ dataset_    │  │ dataset_    │  │ system_      │ │  │
+│  │  │ menu_sets   │  │ recipes     │  │ menu_set_   │  │ settings     │ │  │
+│  │  │ (献立セット)│  │ (レシピ)    │  │ items       │  │              │ │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └──────────────┘ │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                      OpenAI Vector Store                               │  │
+│  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  献立例ドキュメント（.txt）                                       │  │  │
+│  │  │  - 1献立セット = 1ファイル                                       │  │  │
+│  │  │  - 献立ID / カテゴリ / 対象 / 栄養 / 料理構成 / 特徴             │  │  │
+│  │  └─────────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 9-2. 週次献立生成フロー（v2）
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 1: 入力収集【Edge Function】                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Supabase DB から取得:                                                       │
+│  - user_profiles（アレルギー、嗜好、調理条件）                                │
+│  - health_records（最近の健康データ）                                        │
+│  - nutrition_targets（栄養目標）                                             │
+│  - pantry_items（冷蔵庫の食材）                                              │
+│                                                                              │
+│  + ユーザー要望（自然文）                                                    │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 2: プロンプト構築【Edge Function】                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ハード制約: アレルギー卵 → 卵除外                                           │
+│             高血圧 → 塩分 <= 2.5g/食                                         │
+│  ソフト制約: 時短希望 → 調理30分以内優先                                     │
+│             和食多め → 和食タグ優先                                          │
+│             昨日の主菜 → 被り回避                                            │
+│                                                                              │
+│  → これらをプロンプト文字列として構築                                        │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 3: OpenAI Agents SDK 呼び出し【OpenAI API】                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │ const agent = new Agent({                                           │    │
+│  │   model: "gpt-5-mini",                                              │    │
+│  │   tools: [fileSearchTool(["vs_..."])],  // ← RAGはここで自動実行    │    │
+│  │ });                                                                  │    │
+│  │ const result = await runner.run(agent, prompt);                      │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│  SDK内部で自動的に:                                                          │
+│  1. fileSearchTool が Vector Store を検索（献立例を取得）                   │
+│  2. 検索結果 + プロンプト を GPT-5-mini に渡す                              │
+│  3. LLM が 21食分の献立JSONを生成                                           │
+│                                                                              │
+│  ※ RAG検索とLLM呼び出しは分離できない（SDK内部で一体化）                    │
+│  ※ 所要時間: ~60-90秒                                                       │
+│                                                                              │
+│  出力: { meals: [...21食分...], adjustments: [...], weekly_advice: "..." }  │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 4: Zodバリデーション【Edge Function】                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  WeeklyMenuResponseSchema.safeParse(llmOutput)                               │
+│  → 成功: 続行                                                                │
+│  → 失敗: エラー内容をプロンプトに追加してStep 3を再実行（最大2回）           │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 5: 料理解決（proxy）【Edge Function → Supabase DB】                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  LLMが出した料理名（63品）を Supabase DB で検索:                            │
+│                                                                              │
+│  1. dataset_recipes から完全一致検索（name_norm）                            │
+│  2. 一致なし → pg_trgm + pgvector でハイブリッド類似検索                     │
+│  3. similarity >= 0.85 → source: proxy                                       │
+│  4. similarity >= 0.50 → source: proxy（警告付き）                           │
+│  5. similarity < 0.50 → source: generated（フォールバック）                  │
+│                                                                              │
+│  ※ バッチ化: 63品を1回のSQLで検索（~1秒）                                   │
+│  結果: base_recipe_id, base_recipe_name, 栄養値, 材料, 作り方 を確定         │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 6: 検証（Validation）【Edge Function】                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  proxy解決で取得した材料・栄養をチェック:                                    │
+│  □ アレルギー食材が含まれていないか（材料チェック）                          │
+│  □ 禁忌食材が含まれていないか                                               │
+│  □ 塩分/カロリーがハード制約内か                                            │
+│  □ 主菜のタンパク源が連続で被っていないか                                   │
+│                                                                              │
+│  → 違反あり: 違反枠だけLLMに差し替え依頼（Step 3〜5をその枠だけ再実行）     │
+│  → 違反なし: 続行                                                            │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 7: 保存【Edge Function → Supabase DB】                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  meal_plans → meal_plan_days → planned_meals                                │
+│                                                                              │
+│  planned_meals:                                                              │
+│   - dishes: [{ name, role, source, base_recipe_id, 栄養, 材料, 作り方 }]    │
+│   - calories_kcal, protein_g, ... : 合計栄養（DBから計算）                   │
+│   - source_type: 'dataset' or 'mixed'                                       │
+│   - source_dataset_version: '2025-01-01'                                    │
+│   - generation_metadata: { model, adjustments, validation_passed, ... }     │
+│                                                                              │
+│  weekly_menu_requests.status = 'completed'                                  │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Step 8: 画像生成（オプション）【Edge Function → Gemini API】                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Promise.allSettled で 21枚を全並列生成（~5-10秒）                          │
+│  planned_meals.image_url を更新                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 9-3. 責務分担表
+
+| 責務 | 担当 | 実行場所 | 説明 |
+|------|------|---------|------|
+| ユーザー情報取得 | **DB** | Edge Function | Supabase DBから取得 |
+| プロンプト構築 | **Code** | Edge Function | 制約をプロンプト文字列に変換 |
+| RAG検索 + LLM呼び出し | **OpenAI Agents SDK** | OpenAI API | 一体化（分離不可） |
+| └─ 献立例の検索 | （SDK内部） | （Vector Store） | fileSearchToolが自動実行 |
+| └─ 料理の選定・組み合わせ | （SDK内部） | （GPT-5-mini） | 献立例を参考に判断 |
+| Zodバリデーション | **Code** | Edge Function | JSON構造の検証 |
+| proxy解決 | **DB** | Edge Function | Supabase DBで類似検索 |
+| 栄養値の確定 | **DB** | Edge Function | dataset_recipesの確定値 |
+| 材料・作り方の確定 | **DB** | Edge Function | dataset_recipesの確定値 |
+| ハード制約の検証 | **Code** | Edge Function | アレルギー/塩分等をチェック |
+| 部分修復（差し替え） | **SDK + Code** | 両方 | 違反枠だけ再生成 |
+| DB保存 | **DB** | Edge Function | planned_mealsに保存 |
+| 画像生成 | **Gemini API** | Edge Function | 全並列で呼び出し |
+
+### 9-4. 「たこ焼き+お好み焼き」問題の解決
+
+**問題**: 「ご飯のおかずにたこ焼きとお好み焼き」は不自然だが、ルールで固定すると例外が多すぎる
+
+**解決策（3層防御）**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Layer 1: 構造テンプレート                                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  献立例（RAG）から「良い組み合わせ」の構造を参照                              │
+│  例: 「主菜1 + 副菜1〜2 + 汁物1 + 主食1」という構成が多い                   │
+│  → LLMがこのパターンを自然に踏襲                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Layer 2: LLM常識判断                                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  プロンプトに「献立として自然な組み合わせにしてください」を含める             │
+│  RAGで取得した献立例を「良い組み合わせの参考」として提示                      │
+│  → LLMが「たこ焼き+お好み焼きは粉もの被りで不自然」と判断                    │
+│                                                                              │
+│  ただし「たこ焼きパーティー」のような文脈なら許容される（柔軟性）            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Layer 3: 後検証（監視）                                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  生成された献立を監視ダッシュボードで確認                                     │
+│  不自然な組み合わせが多発 → プロンプト/RAGデータを改善                       │
+│  （ルールで弾くのではなく、品質改善のフィードバックループ）                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**ポイント**:
+- 固定ルール（`slot_type`, `category` 等）に頼らない
+- LLMの「常識」と「献立例の参照」で柔軟に判断
+- 例外（パーティー、特別な日）も自然に対応可能
+- 問題が多発すれば監視で検知し、RAG/プロンプトを改善
+
+### 9-5. コード配置（packages/core）
+
+```
+packages/core/src/
+├── schemas/
+│   ├── index.ts                    # エクスポート
+│   ├── dish.ts                     # Dish スキーマ（planned_meals.dishes[]）
+│   ├── menu-response.ts            # LLMレスポンススキーマ
+│   └── generation-config.ts        # リトライ設定、閾値、メタデータスキーマ
+├── types/
+│   └── userProfile.ts              # 既存
+├── converters/
+│   └── userProfile.ts              # 既存
+├── api/
+│   └── httpClient.ts               # 既存
+└── index.ts                        # 全エクスポート
+```
+
+### 9-6. タイムアウト対策
+
+#### Supabase Edge Functions のタイムアウト制限
+
+| プラン | 最大実行時間 |
+|--------|------------|
+| 無料 | 150秒 |
+| 有料（Pro） | 400秒 |
+
+#### v2の処理時間見積もり
+
+| 処理 | 実行場所 | 時間 | 最適化後 |
+|------|---------|------|---------|
+| ユーザー情報取得 | **Edge Function** (Supabase DB) | ~0.5秒 | ~0.5秒 |
+| **OpenAI Agents SDK** | **OpenAI API** | **~60-90秒** | ~60-90秒 |
+| └─ RAG検索（fileSearchTool） | （SDK内部で自動実行） | 含む | 含む |
+| └─ LLM呼び出し（GPT-5-mini） | （SDK内部で自動実行） | 含む | 含む |
+| Zodバリデーション | **Edge Function** (コード) | ~0.1秒 | ~0.1秒 |
+| proxy解決（63品） | **Edge Function** (Supabase DB) | ~3-5秒 | **~1秒** |
+| 検証・部分修復 | **Edge Function** (コード + 再LLM) | ~0-30秒 | ~0-30秒 |
+| DB保存 | **Edge Function** (Supabase DB) | ~1-2秒 | ~1-2秒 |
+| 画像生成（21枚） | **Edge Function** (Gemini API) | ~60-120秒 | **~5-10秒** |
+| **合計** | | **~130-250秒** | **~70-135秒** |
+
+#### 最適化ポイント
+
+##### 1. proxy解決のバッチ化
+
+```typescript
+// ❌ 悪い例: 1品ずつクエリ
+for (const dish of dishes) {
+  const recipe = await findSimilarRecipe(dish.name);
+}
+
+// ✅ 良い例: バッチでクエリ
+const dishNames = dishes.map(d => d.name);
+const recipes = await findSimilarRecipesBatch(dishNames);
+```
+
+```sql
+-- 1回のクエリで複数料理を検索
+SELECT DISTINCT ON (query_name) 
+  query_name, r.*,
+  similarity(r.name_norm, query_name) AS score
+FROM unnest($1::text[]) AS query_name
+CROSS JOIN LATERAL (
+  SELECT * FROM dataset_recipes
+  WHERE similarity(name_norm, query_name) > 0.3
+  ORDER BY similarity(name_norm, query_name) DESC
+  LIMIT 1
+) r;
+```
+
+##### 2. 画像生成の全並列化
+
+```typescript
+// ❌ 現在: 順次処理（21枚 × 3-6秒 = 63-126秒）
+for (const meal of meals) {
+  await generateImage(meal);
+}
+
+// ✅ 改善: 全並列処理（21枚同時）
+const imageResults = await Promise.allSettled(
+  meals.map(meal => generateImageWithRetry(meal))
+);
+// → 21枚同時 × 1回の往復 = 約5-10秒
+
+// レート制限対策付きの画像生成
+async function generateImageWithRetry(meal: Meal, maxRetries = 3): Promise<string | null> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await generateMealImage(meal.dishName, meal.userId, supabase);
+    } catch (error: any) {
+      if (error.message?.includes('429') || error.message?.includes('RATE_LIMIT')) {
+        // レート制限の場合は指数バックオフで待機
+        const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+        console.warn(`Rate limited, retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        console.error(`Image generation failed for ${meal.dishName}:`, error);
+        return null; // 他のエラーは諦める
+      }
+    }
+  }
+  return null;
+}
+
+// Promise.allSettled で部分失敗を許容
+for (const [i, result] of imageResults.entries()) {
+  if (result.status === 'fulfilled' && result.value) {
+    await updateImageUrl(meals[i].id, result.value);
+  }
+  // 失敗した画像は null のまま（後で再生成可能）
+}
+```
+
+**全並列のメリット:**
+- 21枚 × 3-6秒 → **約5-10秒**（ネットワーク往復1回分）
+- Gemini APIが429を返しても、リトライで対応
+
+**注意点:**
+- Gemini API無料枠は15 RPM程度の制限あり → 有料枠推奨
+- `Promise.allSettled` で部分失敗を許容（失敗した画像は後から再生成可能）
+
+##### 3. 画像生成の完全分離（オプション）
+
+画像生成を別のEdge Functionに切り出し、非同期で実行：
+
+```
+generate-weekly-menu
+  │
+  ├─ 献立生成・保存（~30-60秒で完了）
+  │
+  └─ 完了後に generate-meal-images を invoke（fire-and-forget風）
+       │
+       └─ 21枚の画像を生成してDB更新（別途実行）
+```
+
+**注意**: Supabase Edge Functionsはfire-and-forgetが動作しないため、
+画像生成は「献立完了後にクライアントから別途呼び出し」または
+「pg_cron + pg_netで非同期トリガー」が必要。
+
+##### 4. 段階的なレスポンス
+
+ユーザー体験を優先する場合：
+
+1. **Phase 1**: 献立生成完了 → UIに表示（画像なし）
+2. **Phase 2**: 画像生成 → 逐次UIに画像を表示
+
+```typescript
+// 献立生成完了時点で即座にレスポンス
+await saveMenuToDb(menu);
+await updateRequestStatus('completed');
+
+// 画像生成は別途（クライアントがポーリング or WebSocket）
+// または planned_meals.image_url が null のものを
+// クライアント側で遅延ロード時に生成
+```
+
+#### 結論
+
+| 状況 | 対応 |
+|------|------|
+| **有料プラン（400秒）** | ✅ 余裕あり（最適化後 ~70-135秒） |
+| 無料プラン（150秒） | ⚠️ ギリギリ or 超える可能性あり |
+
+**有料プランなら問題なし** 👍
+
+### 9-7. データベースER図（v2追加分）
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           データセット系（service role のみ）                 │
+│                                                                              │
+│  ┌──────────────────┐     ┌──────────────────────┐     ┌─────────────────┐ │
+│  │ dataset_menu_sets│     │ dataset_menu_set_items│     │ dataset_recipes │ │
+│  ├──────────────────┤     ├──────────────────────┤     ├─────────────────┤ │
+│  │ id (PK)          │────<│ menu_set_id (FK)     │     │ id (PK)         │ │
+│  │ external_id (UQ) │     │ dish_name            │     │ external_id     │ │
+│  │ meal_type        │     │ slot_index           │     │ name            │ │
+│  │ target_condition │     │ role                 │     │ name_norm       │ │
+│  │ calories_kcal    │     │ recipe_id (FK)       │>────│                 │ │
+│  │ protein_g        │     │ mapping_status       │     │ calories_kcal   │ │
+│  │ fat_g            │     │ similarity_score     │     │ protein_g       │ │
+│  │ carbs_g          │     └──────────────────────┘     │ fat_g           │ │
+│  │ sodium_g         │                                   │ carbs_g         │ │
+│  │ fiber_g          │                                   │ sodium_g        │ │
+│  │ source_url       │                                   │ ingredients     │ │
+│  │ tags[]           │                                   │ steps[]         │ │
+│  └──────────────────┘                                   │ source_url      │ │
+│                                                          │ cuisine         │ │
+│  ┌──────────────────┐                                   │ size            │ │
+│  │dataset_import_runs│                                   │ kind_tags[]     │ │
+│  ├──────────────────┤                                   └─────────────────┘ │
+│  │ id (PK)          │                                                        │
+│  │ version          │                                                        │
+│  │ status           │     ┌──────────────────┐                              │
+│  │ menu_sets_count  │     │ system_settings  │                              │
+│  │ recipes_count    │     ├──────────────────┤                              │
+│  │ mapping_rate     │     │ key (PK)         │                              │
+│  └──────────────────┘     │ value            │                              │
+│                            │ description      │                              │
+│                            └──────────────────┘                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           既存テーブル（拡張）                                │
+│                                                                              │
+│  ┌──────────────────┐                                                        │
+│  │ planned_meals    │                                                        │
+│  ├──────────────────┤                                                        │
+│  │ id (PK)          │                                                        │
+│  │ meal_plan_day_id │                                                        │
+│  │ meal_type        │                                                        │
+│  │ dish_name        │                                                        │
+│  │ dishes (JSONB)   │  ← v2: source, base_recipe_id, similarity_score 追加 │
+│  │ ...              │                                                        │
+│  │ source_type      │  ← v2: 'legacy' | 'dataset' | 'mixed'                 │
+│  │ source_dataset_  │  ← v2: データセット版                                 │
+│  │   version        │                                                        │
+│  │ generation_      │  ← v2: { model, adjustments, validation_passed, ... } │
+│  │   metadata (JSON)│                                                        │
+│  └──────────────────┘                                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+```

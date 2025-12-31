@@ -48,9 +48,10 @@ serve(async (req) => {
           ],
         },
       ],
-      max_tokens: 500,
+      // gpt-5-mini は max_tokens 非対応のため max_completion_tokens を使用
+      max_completion_tokens: 500,
       response_format: { type: "json_object" },
-    });
+    } as any);
 
     const result = JSON.parse(response.choices[0].message.content || '{}');
 
