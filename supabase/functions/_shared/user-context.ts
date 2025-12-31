@@ -1,5 +1,13 @@
 type AnyRecord = Record<string, any>;
 
+function isPlainObject(value: unknown): value is AnyRecord {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeConstraints(value: unknown): AnyRecord {
+  return isPlainObject(value) ? value : {};
+}
+
 const CUISINE_LABELS: Record<string, string> = {
   japanese: "和食",
   western: "洋食",
@@ -104,15 +112,37 @@ export function buildUserContextForPrompt(input: {
   profile: any;
   nutritionTargets?: any | null;
   note?: string | null;
+  constraints?: unknown;
 }) {
   const p = input.profile ?? {};
   const t = input.nutritionTargets ?? null;
+  const c = normalizeConstraints(input.constraints);
 
   const allergies = toStringArray(p?.diet_flags?.allergies);
   const dislikes = toStringArray(p?.diet_flags?.dislikes);
   const healthConditions = toStringArray(p?.health_conditions);
   const medicationsRaw = toStringArray(p?.medications);
   const medications = mapCodesToLabels(medicationsRaw, MEDICATION_LABELS);
+
+  // request-level (weekly/action) constraints
+  const weeklyIngredients = toStringArray(c?.ingredients);
+  const weeklyThemes = toStringArray(c?.themes);
+  const weeklyCheatDay = toOptionalString(c?.cheatDay ?? c?.cheat_day);
+  const weeklyFamilySize = toOptionalNumber(c?.familySize ?? c?.family_size);
+  const cookingTimeObj = normalizeConstraints(c?.cookingTime ?? c?.cooking_time);
+  const weeklyWeekdayCookingMinutes = toOptionalNumber(
+    cookingTimeObj?.weekday ?? c?.weekdayCookingMinutes ?? c?.weekday_cooking_minutes,
+  );
+  const weeklyWeekendCookingMinutes = toOptionalNumber(
+    cookingTimeObj?.weekend ?? c?.weekendCookingMinutes ?? c?.weekend_cooking_minutes,
+  );
+
+  const weeklyFlags = {
+    useFridgeFirst: Boolean(c?.useFridgeFirst ?? c?.use_fridge_first),
+    quickMeals: Boolean(c?.quickMeals ?? c?.quick_meals),
+    japaneseStyle: Boolean(c?.japaneseStyle ?? c?.japanese_style),
+    healthy: Boolean(c?.healthy),
+  };
 
   const nutritionGoalCode = toOptionalString(p?.nutrition_goal);
   const weightChangeRateCode = toOptionalString(p?.weight_change_rate);
@@ -132,9 +162,14 @@ export function buildUserContextForPrompt(input: {
 
   const cookingExperienceCode = toOptionalString(p?.cooking_experience);
   const cookingExperience = cookingExperienceCode ? (COOKING_EXPERIENCE_LABELS[cookingExperienceCode] ?? cookingExperienceCode) : null;
-  const weekdayCookingMinutes = toOptionalNumber(p?.weekday_cooking_minutes);
-  const weekendCookingMinutes = toOptionalNumber(p?.weekend_cooking_minutes);
-  const familySize = toOptionalNumber(p?.family_size);
+  const profileWeekdayCookingMinutes = toOptionalNumber(p?.weekday_cooking_minutes);
+  const profileWeekendCookingMinutes = toOptionalNumber(p?.weekend_cooking_minutes);
+  const profileFamilySize = toOptionalNumber(p?.family_size);
+
+  // request constraints override profile where relevant
+  const effectiveFamilySize = weeklyFamilySize ?? profileFamilySize;
+  const effectiveWeekdayCookingMinutes = weeklyWeekdayCookingMinutes ?? profileWeekdayCookingMinutes;
+  const effectiveWeekendCookingMinutes = weeklyWeekendCookingMinutes ?? profileWeekendCookingMinutes;
 
   const ctx = {
     hard: {
@@ -153,9 +188,9 @@ export function buildUserContextForPrompt(input: {
     },
     feasibility: {
       cooking_experience: cookingExperience,
-      weekday_cooking_minutes: weekdayCookingMinutes,
-      weekend_cooking_minutes: weekendCookingMinutes,
-      family_size: familySize,
+      weekday_cooking_minutes: effectiveWeekdayCookingMinutes,
+      weekend_cooking_minutes: effectiveWeekendCookingMinutes,
+      family_size: effectiveFamilySize,
     },
     preferences: {
       cuisine_preferences: cuisinePrefsText,
@@ -182,14 +217,30 @@ export function buildUserContextForPrompt(input: {
     },
     weekly: {
       note: input.note ?? null,
+      constraints: {
+        ...weeklyFlags,
+        ingredients: weeklyIngredients,
+        themes: weeklyThemes,
+        cookingTime: {
+          weekday: weeklyWeekdayCookingMinutes,
+          weekend: weeklyWeekendCookingMinutes,
+        },
+        familySize: weeklyFamilySize,
+        cheatDay: weeklyCheatDay,
+      },
     },
   };
 
   return ctx;
 }
 
-export function buildUserSummary(profile: any, nutritionTargets?: any | null, note?: string | null): string {
-  const ctx = buildUserContextForPrompt({ profile, nutritionTargets, note });
+export function buildUserSummary(
+  profile: any,
+  nutritionTargets?: any | null,
+  note?: string | null,
+  constraints?: unknown,
+): string {
+  const ctx = buildUserContextForPrompt({ profile, nutritionTargets, note, constraints });
 
   const lines: string[] = [];
   lines.push(`- ニックネーム: ${ctx.profile.nickname ?? "未設定"}`);
@@ -234,10 +285,32 @@ export function buildUserSummary(profile: any, nutritionTargets?: any | null, no
     if (goalLines.length) lines.push(`- 栄養目標（目安）:\n  ${goalLines.join("\n  ")}`);
   }
 
+  const w = ctx.weekly?.constraints ?? null;
+  if (w) {
+    const wLines: string[] = [];
+    if (w.useFridgeFirst) wLines.push("冷蔵庫の食材を優先");
+    if (w.quickMeals) wLines.push("時短メニュー中心");
+    if (w.japaneseStyle) wLines.push("和食多め");
+    if (w.healthy) wLines.push("ヘルシーに");
+    if ((w.themes ?? []).length) wLines.push(`テーマ: ${(w.themes ?? []).join("、")}`);
+    if ((w.ingredients ?? []).length) wLines.push(`使いたい食材: ${(w.ingredients ?? []).slice(0, 20).join("、")}`);
+    if (w.cookingTime?.weekday != null || w.cookingTime?.weekend != null) {
+      wLines.push(`調理時間（今回）: 平日${w.cookingTime?.weekday ?? "未設定"}分 / 休日${w.cookingTime?.weekend ?? "未設定"}分`);
+    }
+    if (w.familySize != null) wLines.push(`家族人数（今回）: ${w.familySize}人分`);
+    if (w.cheatDay) wLines.push(`チートデイ: ${w.cheatDay}`);
+    if (wLines.length) lines.push(`- 今回の条件:\n  ${wLines.map((x) => `- ${x}`).join("\n  ")}`);
+  }
+
   return lines.join("\n");
 }
 
-export function deriveSearchKeywords(input: { profile: any; nutritionTargets?: any | null; note?: string | null }): string[] {
+export function deriveSearchKeywords(input: {
+  profile: any;
+  nutritionTargets?: any | null;
+  note?: string | null;
+  constraints?: unknown;
+}): string[] {
   const ctx = buildUserContextForPrompt(input);
 
   const kws: string[] = [];
@@ -284,6 +357,17 @@ export function deriveSearchKeywords(input: { profile: any; nutritionTargets?: a
     kws.push(ctx.preferences.cuisine_preferences);
   }
 
+  // weekly/action constraints (explicit)
+  const w = ctx.weekly?.constraints ?? null;
+  if (w) {
+    if (w.quickMeals) kws.push("時短");
+    if (w.japaneseStyle) kws.push("和食");
+    if (w.healthy) kws.push("ヘルシー");
+    if (w.useFridgeFirst) kws.push("冷蔵庫", "食材活用");
+    for (const th of (w.themes ?? []).slice(0, 6)) kws.push(th);
+    for (const ing of (w.ingredients ?? []).slice(0, 12)) kws.push(ing);
+  }
+
   // constraints (allergy/dislikes)
   if ((ctx.hard.allergies ?? []).length) kws.push("アレルギー除外");
 
@@ -304,7 +388,12 @@ export function deriveSearchKeywords(input: { profile: any; nutritionTargets?: a
   return out.slice(0, 40);
 }
 
-export function buildSearchQueryBase(input: { profile: any; nutritionTargets?: any | null; note?: string | null }): string {
+export function buildSearchQueryBase(input: {
+  profile: any;
+  nutritionTargets?: any | null;
+  note?: string | null;
+  constraints?: unknown;
+}): string {
   const keywords = deriveSearchKeywords(input);
   const note = toOptionalString(input.note);
   const lines: string[] = [];
