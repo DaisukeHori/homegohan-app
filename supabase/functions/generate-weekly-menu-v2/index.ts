@@ -1,6 +1,8 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { Agent, type AgentInputItem, Runner } from "@openai/agents";
 import { z } from "zod";
+import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
+import { detectAllergenHits, summarizeAllergenHits } from "../_shared/allergy.ts";
 
 console.log("Generate Weekly Menu v2 Function loaded (pgvector + dataset driven)");
 
@@ -284,6 +286,7 @@ function formatCandidateForPrompt(c: MenuSetCandidate) {
 
 async function runAgentToSelectWeeklyMenuIds(input: {
   userSummary: string;
+  userContext: unknown;
   note: string | null;
   dates: string[];
   candidatesByMealType: Record<MealType, MenuSetCandidate[]>;
@@ -299,6 +302,9 @@ async function runAgentToSelectWeeklyMenuIds(input: {
     `- アレルギー（絶対除外）/禁忌/宗教・食事スタイルを厳守。該当しそうな候補は選ばない\n` +
     `\n` +
     `【品質（管理栄養士としての判断基準）】\n` +
+    `- ユーザーの「料理経験」や「調理時間目安」がある場合、**現実的に作れる献立**を優先（初心者/時短=工程が少ない・重すぎない）\n` +
+    `- ユーザーの「好みの料理ジャンル」がある場合、嗜好を尊重しつつ週のバリエーションも確保\n` +
+    `- 服薬情報がある場合は、一般的な食事上の注意点を尊重（例: ワーファリンはビタミンK摂取が極端に偏らないよう配慮）\n` +
     `- 週全体で同じ external_id の重複を極力避ける（ただし候補が足りない場合は無理に破綻させない）\n` +
     `- 朝は軽め、昼は活動を支える、夜は満足感＋過剰にならない（候補の calories_kcal/sodium_g を参考にする）\n` +
     `- 塩分配慮が必要（高血圧/減塩指示など）な場合は、**sodium_g が低い候補を優先**し、週を通して平準化する\n` +
@@ -323,6 +329,7 @@ async function runAgentToSelectWeeklyMenuIds(input: {
 
   const userPrompt =
     `【ユーザー情報】\n${input.userSummary}\n\n` +
+    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
     `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
     `【対象日付】\n${input.dates.join("\n")}\n\n` +
     `【候補（朝食）】\n${JSON.stringify(compactCandidates.breakfast)}\n\n` +
@@ -429,39 +436,12 @@ function repairSelectionToCandidates(input: {
 // Main background task (DB write)
 // =========================================================
 
-function buildProfileSummary(profile: any, nutritionTargets?: any | null): string {
-  const allergies = profile?.diet_flags?.allergies?.join(", ") || "なし";
-  const dislikes = profile?.diet_flags?.dislikes?.join(", ") || "なし";
-  const healthConditions = profile?.health_conditions?.join(", ") || "なし";
-  const lines = [
-    `- 年齢: ${profile?.age ?? "不明"}歳`,
-    `- 性別: ${profile?.gender ?? "不明"}`,
-    `- 身長: ${profile?.height ?? "不明"}cm / 体重: ${profile?.weight ?? "不明"}kg`,
-    `- 持病・注意点: ${healthConditions}`,
-    `- アレルギー（絶対除外）: ${allergies}`,
-    `- 苦手なもの（避ける）: ${dislikes}`,
-    `- 食事スタイル: ${profile?.diet_style ?? "未設定"}`,
-  ];
-
-  if (nutritionTargets) {
-    const t = nutritionTargets;
-    const goalLines: string[] = [];
-    if (t.daily_calories != null) goalLines.push(`- 目標（1日）カロリー: ${t.daily_calories}kcal`);
-    if (t.protein_g != null) goalLines.push(`- 目標（1日）タンパク質: ${t.protein_g}g`);
-    if (t.sodium_g != null) goalLines.push(`- 目標（1日）塩分（食塩相当量）: ${t.sodium_g}g`);
-    if (goalLines.length > 0) {
-      lines.push(`- 栄養目標（目安）:\n  ${goalLines.join("\n  ")}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
 async function generateMenuV2BackgroundTask(args: {
   userId: string;
   startDate: string;
   note?: string | null;
   requestId?: string | null;
+  constraints?: unknown;
 }): Promise<{ selection: WeeklyMenuV2Selection; datasetVersion: string }> {
   // NOTE:
   // Supabase CLI は `SUPABASE_*` プレフィックスの secrets 設定を禁止するため、
@@ -473,7 +453,7 @@ async function generateMenuV2BackgroundTask(args: {
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceRoleKey);
 
-  const { userId, startDate, note, requestId } = args;
+  const { userId, startDate, note, requestId, constraints } = args;
 
   if (requestId) {
     await supabase
@@ -500,19 +480,63 @@ async function generateMenuV2BackgroundTask(args: {
     const datasetVersion = await getActiveDatasetVersion(supabase);
 
     const dates = getWeekDates(startDate);
-    const userSummary = buildProfileSummary(profile, nutritionTargets ?? null);
+    const userContext = buildUserContextForPrompt({
+      profile,
+      nutritionTargets: nutritionTargets ?? null,
+      note: note ?? null,
+      constraints,
+    });
+    const userSummary = buildUserSummary(profile, nutritionTargets ?? null, note ?? null, constraints);
+    const userContextForLog = {
+      ...(userContext as any),
+      weekly: {
+        ...(((userContext as any)?.weekly ?? {}) as any),
+        note: typeof note === "string" ? note.slice(0, 800) : null,
+      },
+    };
 
     // 1) pgvectorで候補抽出（mealTypeごとに一度）
-    const baseQuery = `${userSummary}\n目的: 健康的で現実的な献立。\n`;
+    const searchQueryBase = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
     // NOTE: まずは多めに取得し、meal_type_hint で振り分ける
-    const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${baseQuery}`, 600);
-    const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${baseQuery}`, 800);
-    const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${baseQuery}`, 1200);
+    const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${searchQueryBase}`, 600);
+    const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${searchQueryBase}`, 800);
+    const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${searchQueryBase}`, 1200);
 
     const candidatesByMealType: Record<MealType, MenuSetCandidate[]> = {
       breakfast: pickCandidatesForMealType("breakfast", breakfastRaw, { min: 10, max: 60 }),
       lunch: pickCandidatesForMealType("lunch", lunchRaw, { min: 10, max: 80 }),
       dinner: pickCandidatesForMealType("dinner", dinnerRaw, { min: 10, max: 80 }),
+    };
+
+    const allergyTokens: string[] = Array.isArray((userContext as any)?.hard?.allergies) ? (userContext as any).hard.allergies : [];
+
+    function candidateText(c: MenuSetCandidate): string[] {
+      const dishes = Array.isArray(c?.dishes) ? c.dishes : [];
+      const dishNames = dishes.map((d: any) => String(d?.name ?? "").trim()).filter(Boolean);
+      return [String(c?.title ?? "").trim(), ...dishNames].filter(Boolean);
+    }
+
+    function candidateSeemsAllergySafe(c: MenuSetCandidate): boolean {
+      if (allergyTokens.length === 0) return true;
+      const hits = detectAllergenHits(allergyTokens, candidateText(c));
+      return hits.length === 0;
+    }
+
+    // 絶対制約（最低: アレルギー）: 候補段階で「明らかなもの」は落とす（候補不足になる場合は落としすぎない）
+    if (allergyTokens.length > 0) {
+      for (const mt of REQUIRED_MEAL_TYPES) {
+        const original = candidatesByMealType[mt] ?? [];
+        const filtered = original.filter(candidateSeemsAllergySafe);
+        if (filtered.length >= 10) {
+          candidatesByMealType[mt] = filtered;
+        }
+      }
+    }
+
+    const candidateByExternalId: Record<MealType, Map<string, MenuSetCandidate>> = {
+      breakfast: new Map((candidatesByMealType.breakfast ?? []).map((c) => [c.external_id, c] as const)),
+      lunch: new Map((candidatesByMealType.lunch ?? []).map((c) => [c.external_id, c] as const)),
+      dinner: new Map((candidatesByMealType.dinner ?? []).map((c) => [c.external_id, c] as const)),
     };
 
     for (const mt of REQUIRED_MEAL_TYPES) {
@@ -524,11 +548,13 @@ async function generateMenuV2BackgroundTask(args: {
     // 2) LLMで「候補からID選択」だけ実施（設計通り）
     const rawSelection = await runAgentToSelectWeeklyMenuIds({
       userSummary,
+      userContext,
       note: note ?? null,
       dates,
       candidatesByMealType,
     });
     const selection = repairSelectionToCandidates({ dates, selection: rawSelection, candidatesByMealType });
+    const replacementLog: Array<{ date: string; mealType: MealType; from: string; to: string; reason: string }> = [];
 
     // 3) 選ばれたmenu_setをDBから取得
     const selectedExternalIds = Array.from(
@@ -542,6 +568,18 @@ async function generateMenuV2BackgroundTask(args: {
     if (menuErr) throw new Error(`Failed to fetch dataset_menu_sets: ${menuErr.message}`);
 
     const menuSetByExternalId = new Map<string, any>((menuSets ?? []).map((m: any) => [m.external_id, m]));
+    const reservedExternalIds = new Set<string>(selectedExternalIds);
+
+    async function getMenuSetByExternalIdSafe(externalId: string): Promise<any | null> {
+      const id = String(externalId ?? "").trim();
+      if (!id) return null;
+      const cached = menuSetByExternalId.get(id);
+      if (cached) return cached;
+      const { data, error } = await supabase.from("dataset_menu_sets").select("*").eq("external_id", id).maybeSingle();
+      if (error) throw new Error(`Failed to fetch dataset_menu_sets(${id}): ${error.message}`);
+      if (data?.external_id) menuSetByExternalId.set(String(data.external_id), data);
+      return data ?? null;
+    }
 
     // 4) dish名→recipeを引く（まず正規化一致をまとめて取得）
     const allDishNames: string[] = [];
@@ -589,6 +627,59 @@ async function generateMenuV2BackgroundTask(args: {
       if (r2Err) return null;
       if (r2?.name_norm) recipeByNorm.set(r2.name_norm, r2);
       return r2 ?? null;
+    }
+
+    async function buildMealFromMenuSet(ms: any): Promise<{
+      dishDetails: any[];
+      aggregatedIngredients: string[];
+      dishName: string;
+      allergyHits: ReturnType<typeof detectAllergenHits>;
+    }> {
+      const dishes = Array.isArray(ms?.dishes) ? ms.dishes : [];
+      const dishDetails: any[] = [];
+      const aggregatedIngredients: string[] = [];
+
+      const allergyTexts: string[] = [];
+      allergyTexts.push(String(ms?.title ?? ""));
+
+      for (const d of dishes) {
+        const dishName = String(d?.name ?? "").trim();
+        if (!dishName) continue;
+        allergyTexts.push(dishName);
+
+        const recipe = await resolveRecipeForDishName(dishName);
+        allergyTexts.push(String(recipe?.name ?? ""));
+        allergyTexts.push(String(recipe?.ingredients_text ?? ""));
+
+        const ingredients = parseLinesToArray(recipe?.ingredients_text ?? null);
+        const recipeSteps = parseLinesToArray(recipe?.instructions_text ?? null);
+        aggregatedIngredients.push(...ingredients);
+
+        dishDetails.push({
+          name: dishName,
+          role: String(d?.role ?? "other"),
+          // UI互換: dish.cal を使うので cal を必ず入れる
+          cal: Number(d?.calories_kcal ?? recipe?.calories_kcal ?? 0) || 0,
+          protein: Number(recipe?.protein_g ?? 0) || 0,
+          fat: Number(recipe?.fat_g ?? 0) || 0,
+          carbs: Number(recipe?.carbs_g ?? 0) || 0,
+          sodium: Number(d?.sodium_g ?? recipe?.sodium_g ?? 0) || 0,
+          sugar: Number(recipe?.sugar_g ?? 0) || 0,
+          fiber: Number(recipe?.fiber_g ?? 0) || 0,
+          ingredient: ingredients.slice(0, 3).join("、"),
+          ingredients,
+          recipeSteps,
+          base_recipe_id: recipe?.id ?? null,
+          is_generated_name: false,
+        });
+      }
+
+      const mainDish = dishDetails.find((x) => x.role === "main") ?? dishDetails[0];
+      const dishName = mainDish?.name ?? ms?.title ?? "献立";
+
+      const allergyHits = allergyTokens.length > 0 ? detectAllergenHits(allergyTokens, allergyTexts) : [];
+
+      return { dishDetails, aggregatedIngredients, dishName, allergyHits };
     }
 
     // 5) meal_plans / meal_plan_days / planned_meals 保存
@@ -664,45 +755,63 @@ async function generateMenuV2BackgroundTask(args: {
       }
 
       for (const meal of day.meals) {
-        const ms = menuSetByExternalId.get(meal.source_menu_set_external_id);
-        if (!ms) {
-          throw new Error(`Selected menu set not found: ${meal.source_menu_set_external_id}`);
+        const mealType = meal.mealType;
+        const originalExternalId = String(meal.source_menu_set_external_id ?? "").trim();
+        if (!originalExternalId) throw new Error(`Missing source_menu_set_external_id for ${dayDate} ${mealType}`);
+
+        let ms = await getMenuSetByExternalIdSafe(originalExternalId);
+        if (!ms) throw new Error(`Selected menu set not found: ${originalExternalId}`);
+
+        let built = await buildMealFromMenuSet(ms);
+        let allergyViolationSummary: string | null = null;
+
+        // 絶対制約: アレルギーを機械検証し、必要なら候補内で差し替える
+        if (allergyTokens.length > 0 && built.allergyHits.length > 0) {
+          allergyViolationSummary = summarizeAllergenHits(built.allergyHits);
+          reservedExternalIds.delete(originalExternalId);
+
+          const candidatePool = candidatesByMealType[mealType] ?? [];
+          let replaced = false;
+          for (const cand of candidatePool) {
+            const candId = String(cand?.external_id ?? "").trim();
+            if (!candId || candId === originalExternalId) continue;
+            if (reservedExternalIds.has(candId)) continue; // 週内の重複を抑制
+
+            // まずはタイトル/料理名ベースで「明らかなもの」を除外
+            if (!candidateSeemsAllergySafe(cand)) continue;
+
+            const ms2 = await getMenuSetByExternalIdSafe(candId);
+            if (!ms2) continue;
+            const built2 = await buildMealFromMenuSet(ms2);
+            if (built2.allergyHits.length === 0) {
+              ms = ms2;
+              built = built2;
+              meal.source_menu_set_external_id = candId; // selectionにも反映（後続の保存/結果JSONに反映される）
+              reservedExternalIds.add(candId);
+              replacementLog.push({
+                date: dayDate,
+                mealType,
+                from: originalExternalId,
+                to: candId,
+                reason: allergyViolationSummary ?? "allergy",
+              });
+              replaced = true;
+              break;
+            }
+          }
+
+          if (!replaced) {
+            reservedExternalIds.add(originalExternalId);
+            throw new Error(
+              `Allergy constraint violated for ${dayDate} ${mealType}: ${allergyViolationSummary ?? summarizeAllergenHits(built.allergyHits)}`,
+            );
+          }
         }
 
-        const dishes = Array.isArray(ms.dishes) ? ms.dishes : [];
-        const dishDetails: any[] = [];
-        const aggregatedIngredients: string[] = [];
-
-        for (const d of dishes) {
-          const dishName = String(d?.name ?? "").trim();
-          if (!dishName) continue;
-
-          const recipe = await resolveRecipeForDishName(dishName);
-          const ingredients = parseLinesToArray(recipe?.ingredients_text ?? null);
-          const recipeSteps = parseLinesToArray(recipe?.instructions_text ?? null);
-          aggregatedIngredients.push(...ingredients);
-
-          dishDetails.push({
-            name: dishName,
-            role: String(d?.role ?? "other"),
-            // UI互換: dish.cal を使うので cal を必ず入れる
-            cal: Number(d?.calories_kcal ?? recipe?.calories_kcal ?? 0) || 0,
-            protein: Number(recipe?.protein_g ?? 0) || 0,
-            fat: Number(recipe?.fat_g ?? 0) || 0,
-            carbs: Number(recipe?.carbs_g ?? 0) || 0,
-            sodium: Number(d?.sodium_g ?? recipe?.sodium_g ?? 0) || 0,
-            sugar: Number(recipe?.sugar_g ?? 0) || 0,
-            fiber: Number(recipe?.fiber_g ?? 0) || 0,
-            ingredient: ingredients.slice(0, 3).join("、"),
-            ingredients,
-            recipeSteps,
-            base_recipe_id: recipe?.id ?? null,
-            is_generated_name: false,
-          });
-        }
-
-        const mainDish = dishDetails.find((x) => x.role === "main") ?? dishDetails[0];
-        const dishName = mainDish?.name ?? ms.title ?? "献立";
+        const dishDetails = built.dishDetails;
+        const aggregatedIngredients = built.aggregatedIngredients;
+        const dishName = built.dishName;
+        const finalExternalId = String(meal.source_menu_set_external_id ?? originalExternalId).trim() || originalExternalId;
 
         // 既存が複数あるケースでも安全に「先頭1件」を更新する（重複増殖を防ぐ）
         const { data: existingMeal } = await supabase
@@ -736,6 +845,17 @@ async function generateMenuV2BackgroundTask(args: {
             generator: "generate-weekly-menu-v2",
             llm_model: "gpt-5-mini",
             embeddings_model: "text-embedding-3-small",
+            search_query_base: String(searchQueryBase).slice(0, 1200),
+            user_context: userContextForLog,
+            constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
+            allergy_validation: {
+              checked: allergyTokens.length > 0,
+              allergy_tokens: allergyTokens.slice(0, 30),
+              original_external_id: originalExternalId,
+              final_external_id: finalExternalId,
+              replaced: finalExternalId !== originalExternalId,
+              violation: allergyViolationSummary,
+            },
             candidate_counts: {
               breakfast: candidatesByMealType.breakfast.length,
               lunch: candidatesByMealType.lunch.length,
@@ -791,12 +911,24 @@ async function generateMenuV2BackgroundTask(args: {
     }
 
     if (requestId) {
+      const resultJson = {
+        ...selection,
+        _meta: {
+          generator: "generate-weekly-menu-v2",
+          dataset_version: datasetVersion,
+          search_query_base: String(searchQueryBase).slice(0, 1200),
+          user_context: userContextForLog,
+          constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
+          allergy_tokens: allergyTokens.slice(0, 30),
+          replacements: replacementLog,
+        },
+      };
       await supabase
         .from("weekly_menu_requests")
         .update({
           status: "completed",
           updated_at: new Date().toISOString(),
-          result_json: selection,
+          result_json: resultJson,
         })
         .eq("id", requestId)
         .eq("user_id", userId);
@@ -839,8 +971,16 @@ export async function handleGenerateWeeklyMenuV2(req: Request): Promise<Response
     const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader;
     const serviceRoleKey = Deno.env.get("DATASET_SERVICE_ROLE_KEY") ?? "";
 
-    const body = await req.json();
-    const { startDate, note, requestId = null, userId: bodyUserId } = body ?? {};
+    const body = await req.json().catch(() => ({}));
+    const startDate = (body as any)?.startDate;
+    // 互換: note / prompt どちらでも受け取る（single/regenerate-v2と揃える）
+    const note = typeof (body as any)?.note === "string"
+      ? (body as any).note
+      : (typeof (body as any)?.prompt === "string" ? (body as any).prompt : null);
+    // 互換: constraints / preferences の揺れを吸収
+    const constraints = (body as any)?.constraints ?? (body as any)?.preferences ?? null;
+    const requestId = (body as any)?.requestId ?? null;
+    const bodyUserId = (body as any)?.userId ?? null;
 
     let userId: string;
     if (serviceRoleKey && token === serviceRoleKey) {
@@ -885,6 +1025,7 @@ export async function handleGenerateWeeklyMenuV2(req: Request): Promise<Response
       startDate,
       note: typeof note === "string" ? note : null,
       requestId,
+      constraints,
     });
 
     return new Response(

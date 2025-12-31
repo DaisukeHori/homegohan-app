@@ -1,6 +1,8 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { Agent, type AgentInputItem, Runner } from "@openai/agents";
 import { z } from "zod";
+import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
+import { detectAllergenHits, summarizeAllergenHits } from "../_shared/allergy.ts";
 
 console.log("Generate Single Meal v2 Function loaded (pgvector + dataset driven)");
 
@@ -281,6 +283,7 @@ async function getActiveDatasetVersion(supabase: any): Promise<string> {
 
 async function runAgentToSelectDailyMenuIds(input: {
   userSummary: string;
+  userContext: unknown;
   note: string | null;
   date: string;
   requestedMealTypes: MealType[];
@@ -297,6 +300,9 @@ async function runAgentToSelectDailyMenuIds(input: {
     `- アレルギー（絶対除外）/禁忌/宗教・食事スタイルを厳守。該当しそうな候補は選ばない\n` +
     `\n` +
     `【品質】\n` +
+    `- ユーザーの「料理経験」や「調理時間目安」がある場合、**現実的に作れる献立**を優先（初心者/時短=工程が少ない・重すぎない）\n` +
+    `- ユーザーの「好みの料理ジャンル」がある場合、嗜好を尊重\n` +
+    `- 服薬情報がある場合は、一般的な食事上の注意点を尊重（例: ワーファリンはビタミンK摂取が極端に偏らないよう配慮）\n` +
     `- なるべく「日本の食卓として自然」な構成にする（重すぎる朝食、同系統の揚げ物連発等は避ける）\n` +
     `- 塩分配慮が必要なら sodium_g が低い候補を優先\n` +
     `- requestedMealTypes 内で external_id が重複しないようにする\n` +
@@ -318,6 +324,7 @@ async function runAgentToSelectDailyMenuIds(input: {
 
   const userPrompt =
     `【ユーザー情報】\n${input.userSummary}\n\n` +
+    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
     `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
     `【対象日付】\n${input.date}\n\n` +
     `【対象の食事タイプ】\n${input.requestedMealTypes.join(", ")}\n\n` +
@@ -386,32 +393,6 @@ function repairSelectionToCandidates(input: {
 // Main background task (DB write)
 // =========================================================
 
-function buildProfileSummary(profile: any, nutritionTargets?: any | null): string {
-  const allergies = profile?.diet_flags?.allergies?.join(", ") || "なし";
-  const dislikes = profile?.diet_flags?.dislikes?.join(", ") || "なし";
-  const healthConditions = profile?.health_conditions?.join(", ") || "なし";
-  const lines = [
-    `- 年齢: ${profile?.age ?? "不明"}歳`,
-    `- 性別: ${profile?.gender ?? "不明"}`,
-    `- 身長: ${profile?.height ?? "不明"}cm / 体重: ${profile?.weight ?? "不明"}kg`,
-    `- 持病・注意点: ${healthConditions}`,
-    `- アレルギー（絶対除外）: ${allergies}`,
-    `- 苦手なもの（避ける）: ${dislikes}`,
-    `- 食事スタイル: ${profile?.diet_style ?? "未設定"}`,
-  ];
-
-  if (nutritionTargets) {
-    const t = nutritionTargets;
-    const goalLines: string[] = [];
-    if (t.daily_calories != null) goalLines.push(`- 目標（1日）カロリー: ${t.daily_calories}kcal`);
-    if (t.protein_g != null) goalLines.push(`- 目標（1日）タンパク質: ${t.protein_g}g`);
-    if (t.sodium_g != null) goalLines.push(`- 目標（1日）塩分（食塩相当量）: ${t.sodium_g}g`);
-    if (goalLines.length > 0) lines.push(`- 栄養目標（目安）:\n  ${goalLines.join("\n  ")}`);
-  }
-
-  return lines.join("\n");
-}
-
 async function generateSingleMealV2BackgroundTask(args: {
   userId: string;
   dayDate: string;
@@ -419,13 +400,14 @@ async function generateSingleMealV2BackgroundTask(args: {
   note?: string | null;
   requestId?: string | null;
   targetMealId?: string | null;
+  constraints?: unknown;
 }): Promise<{ selection: DailyMenuV2Selection; datasetVersion: string }> {
   const serviceRoleKey = Deno.env.get("DATASET_SERVICE_ROLE_KEY") ?? "";
   if (!serviceRoleKey) throw new Error("Missing DATASET_SERVICE_ROLE_KEY");
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceRoleKey);
 
-  const { userId, dayDate, note, requestId } = args;
+  const { userId, dayDate, note, requestId, constraints } = args;
   const mealTypes = (args.mealTypes ?? []).filter(Boolean);
 
   if (requestId) {
@@ -441,7 +423,28 @@ async function generateSingleMealV2BackgroundTask(args: {
     if (profileError) throw new Error(`Profile not found: ${profileError.message}`);
 
     const { data: nutritionTargets } = await supabase.from("nutrition_targets").select("*").eq("user_id", userId).maybeSingle();
-    const userSummary = buildProfileSummary(profile, nutritionTargets ?? null);
+    const userContext = buildUserContextForPrompt({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
+    const userSummary = buildUserSummary(profile, nutritionTargets ?? null, note ?? null, constraints);
+    const allergyTokens: string[] = Array.isArray((userContext as any)?.hard?.allergies) ? (userContext as any).hard.allergies : [];
+    const userContextForLog = {
+      ...(userContext as any),
+      weekly: {
+        ...(((userContext as any)?.weekly ?? {}) as any),
+        note: typeof note === "string" ? note.slice(0, 800) : null,
+      },
+    };
+
+    function candidateText(c: MenuSetCandidate): string[] {
+      const dishes = Array.isArray(c?.dishes) ? c.dishes : [];
+      const dishNames = dishes.map((d: any) => String(d?.name ?? "").trim()).filter(Boolean);
+      return [String(c?.title ?? "").trim(), ...dishNames].filter(Boolean);
+    }
+
+    function candidateSeemsAllergySafe(c: MenuSetCandidate): boolean {
+      if (allergyTokens.length === 0) return true;
+      const hits = detectAllergenHits(allergyTokens, candidateText(c));
+      return hits.length === 0;
+    }
 
     const datasetVersion = await getActiveDatasetVersion(supabase);
 
@@ -529,18 +532,24 @@ async function generateSingleMealV2BackgroundTask(args: {
     const requestedMealTypes = Array.from(new Set(mealTypes)).slice(0, 5);
     if (requestedMealTypes.length === 0) throw new Error("mealTypes is required");
 
-    const baseQuery = `${userSummary}\n目的: 健康的で現実的な献立。\n${note ? `要望: ${note}\n` : ""}`;
+    const baseQuery = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
     const candidatesByMealType = {} as Record<MealType, MenuSetCandidate[]>;
 
     for (const mt of requestedMealTypes) {
       const ja = mt === "breakfast" ? "朝食" : mt === "lunch" ? "昼食" : mt === "dinner" ? "夕食" : mt === "snack" ? "間食" : "夜食";
       const raw = await searchMenuCandidates(supabase, `${ja}\n${baseQuery}`, mt === "dinner" ? 1200 : mt === "lunch" ? 800 : 600);
-      candidatesByMealType[mt] = pickCandidatesForMealType(mt, raw, { min: 10, max: 80 });
+      let candidates = pickCandidatesForMealType(mt, raw, { min: 10, max: 80 });
+      if (allergyTokens.length > 0) {
+        const filtered = candidates.filter(candidateSeemsAllergySafe);
+        if (filtered.length >= 10) candidates = filtered;
+      }
+      candidatesByMealType[mt] = candidates;
     }
 
     // LLM choose ids
     const rawSelection = await runAgentToSelectDailyMenuIds({
       userSummary,
+      userContext,
       note: note ?? null,
       date: dayDate,
       requestedMealTypes,
@@ -552,12 +561,25 @@ async function generateSingleMealV2BackgroundTask(args: {
       requestedMealTypes,
       candidatesByMealType,
     });
+    const replacementLog: Array<{ date: string; mealType: MealType; from: string; to: string; reason: string }> = [];
 
     // fetch selected menu_sets
     const selectedExternalIds = Array.from(new Set(selection.meals.map((m) => m.source_menu_set_external_id))).filter(Boolean);
     const { data: menuSets, error: menuErr } = await supabase.from("dataset_menu_sets").select("*").in("external_id", selectedExternalIds);
     if (menuErr) throw new Error(`Failed to fetch dataset_menu_sets: ${menuErr.message}`);
     const menuSetByExternalId = new Map<string, any>((menuSets ?? []).map((m: any) => [m.external_id, m]));
+    const reservedExternalIds = new Set<string>(selectedExternalIds);
+
+    async function getMenuSetByExternalIdSafe(externalId: string): Promise<any | null> {
+      const id = String(externalId ?? "").trim();
+      if (!id) return null;
+      const cached = menuSetByExternalId.get(id);
+      if (cached) return cached;
+      const { data, error } = await supabase.from("dataset_menu_sets").select("*").eq("external_id", id).maybeSingle();
+      if (error) throw new Error(`Failed to fetch dataset_menu_sets(${id}): ${error.message}`);
+      if (data?.external_id) menuSetByExternalId.set(String(data.external_id), data);
+      return data ?? null;
+    }
 
     // recipe resolver (normalize match -> trgm -> embedding)
     const allDishNames: string[] = [];
@@ -601,19 +623,28 @@ async function generateSingleMealV2BackgroundTask(args: {
       return null;
     }
 
-    // write planned_meals
-    for (const meal of selection.meals) {
-      const ms = menuSetByExternalId.get(meal.source_menu_set_external_id);
-      if (!ms) throw new Error(`Selected menu set not found: ${meal.source_menu_set_external_id}`);
-
-      const dishes = Array.isArray(ms.dishes) ? ms.dishes : [];
+    async function buildMealFromMenuSet(ms: any): Promise<{
+      dishDetails: any[];
+      aggregatedIngredients: string[];
+      dishName: string;
+      allergyHits: ReturnType<typeof detectAllergenHits>;
+    }> {
+      const dishes = Array.isArray(ms?.dishes) ? ms.dishes : [];
       const dishDetails: any[] = [];
       const aggregatedIngredients: string[] = [];
+
+      const allergyTexts: string[] = [];
+      allergyTexts.push(String(ms?.title ?? ""));
 
       for (const d of dishes) {
         const dishName = String(d?.name ?? "").trim();
         if (!dishName) continue;
+        allergyTexts.push(dishName);
+
         const recipe = await resolveRecipeForDishName(dishName);
+        allergyTexts.push(String(recipe?.name ?? ""));
+        allergyTexts.push(String(recipe?.ingredients_text ?? ""));
+
         const ingredients = parseLinesToArray(recipe?.ingredients_text ?? null);
         const recipeSteps = parseLinesToArray(recipe?.instructions_text ?? null);
         aggregatedIngredients.push(...ingredients);
@@ -637,7 +668,69 @@ async function generateSingleMealV2BackgroundTask(args: {
       }
 
       const mainDish = dishDetails.find((x) => x.role === "main") ?? dishDetails[0];
-      const dishName = mainDish?.name ?? ms.title ?? "献立";
+      const dishName = mainDish?.name ?? ms?.title ?? "献立";
+
+      const allergyHits = allergyTokens.length > 0 ? detectAllergenHits(allergyTokens, allergyTexts) : [];
+
+      return { dishDetails, aggregatedIngredients, dishName, allergyHits };
+    }
+
+    // write planned_meals
+    for (const meal of selection.meals) {
+      const mealType = meal.mealType;
+      const originalExternalId = String(meal.source_menu_set_external_id ?? "").trim();
+      if (!originalExternalId) throw new Error(`Missing source_menu_set_external_id for ${dayDate} ${mealType}`);
+
+      let ms = await getMenuSetByExternalIdSafe(originalExternalId);
+      if (!ms) throw new Error(`Selected menu set not found: ${originalExternalId}`);
+
+      let built = await buildMealFromMenuSet(ms);
+      let allergyViolationSummary: string | null = null;
+
+      if (allergyTokens.length > 0 && built.allergyHits.length > 0) {
+        allergyViolationSummary = summarizeAllergenHits(built.allergyHits);
+        reservedExternalIds.delete(originalExternalId);
+
+        const candidatePool = candidatesByMealType[mealType] ?? [];
+        let replaced = false;
+        for (const cand of candidatePool) {
+          const candId = String(cand?.external_id ?? "").trim();
+          if (!candId || candId === originalExternalId) continue;
+          if (reservedExternalIds.has(candId)) continue;
+          if (!candidateSeemsAllergySafe(cand)) continue;
+
+          const ms2 = await getMenuSetByExternalIdSafe(candId);
+          if (!ms2) continue;
+          const built2 = await buildMealFromMenuSet(ms2);
+          if (built2.allergyHits.length === 0) {
+            ms = ms2;
+            built = built2;
+            meal.source_menu_set_external_id = candId;
+            reservedExternalIds.add(candId);
+            replacementLog.push({
+              date: dayDate,
+              mealType,
+              from: originalExternalId,
+              to: candId,
+              reason: allergyViolationSummary ?? "allergy",
+            });
+            replaced = true;
+            break;
+          }
+        }
+
+        if (!replaced) {
+          reservedExternalIds.add(originalExternalId);
+          throw new Error(
+            `Allergy constraint violated for ${dayDate} ${mealType}: ${allergyViolationSummary ?? summarizeAllergenHits(built.allergyHits)}`,
+          );
+        }
+      }
+
+      const dishDetails = built.dishDetails;
+      const aggregatedIngredients = built.aggregatedIngredients;
+      const dishName = built.dishName;
+      const finalExternalId = String(meal.source_menu_set_external_id ?? originalExternalId).trim() || originalExternalId;
 
       // if targetMealId provided, update that row (regardless of meal_type)
       const targetMealId = args.targetMealId ?? null;
@@ -677,6 +770,17 @@ async function generateSingleMealV2BackgroundTask(args: {
           generator: "generate-single-meal-v2",
           llm_model: "gpt-5-mini",
           embeddings_model: "text-embedding-3-small",
+          search_query_base: String(baseQuery).slice(0, 1200),
+          user_context: userContextForLog,
+          constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
+          allergy_validation: {
+            checked: allergyTokens.length > 0,
+            allergy_tokens: allergyTokens.slice(0, 30),
+            original_external_id: originalExternalId,
+            final_external_id: finalExternalId,
+            replaced: finalExternalId !== originalExternalId,
+            violation: allergyViolationSummary,
+          },
         },
 
         // 栄養（セット全体＝確定値）
@@ -729,12 +833,24 @@ async function generateSingleMealV2BackgroundTask(args: {
     }
 
     if (requestId) {
+      const resultJson = {
+        ...selection,
+        _meta: {
+          generator: "generate-single-meal-v2",
+          dataset_version: datasetVersion,
+          search_query_base: String(baseQuery).slice(0, 1200),
+          user_context: userContextForLog,
+          constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
+          allergy_tokens: allergyTokens.slice(0, 30),
+          replacements: replacementLog,
+        },
+      };
       await supabase
         .from("weekly_menu_requests")
         .update({
           status: "completed",
           updated_at: new Date().toISOString(),
-          result_json: selection,
+          result_json: resultJson,
         })
         .eq("id", requestId)
         .eq("user_id", userId);
@@ -780,6 +896,7 @@ Deno.serve(async (req) => {
 
     const dayDate = String(body?.dayDate ?? body?.date ?? body?.startDate ?? "").trim();
     const note = typeof body?.note === "string" ? body.note : (typeof body?.prompt === "string" ? body.prompt : null);
+    const constraints = body?.constraints ?? body?.preferences ?? null;
     const requestId = body?.requestId ?? null;
     const targetMealId = body?.mealId ?? body?.targetMealId ?? null;
     const bodyUserId = body?.userId ?? null;
@@ -858,6 +975,7 @@ Deno.serve(async (req) => {
       note,
       requestId,
       targetMealId: typeof targetMealId === "string" ? targetMealId : null,
+      constraints,
     });
 
     return new Response(
