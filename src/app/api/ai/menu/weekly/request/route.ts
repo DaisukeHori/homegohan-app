@@ -17,11 +17,102 @@ function getTodayStr(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toStringArray(value: unknown, opts: { max?: number } = {}): string[] {
+  const max = opts.max ?? 40;
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((v) => String(v ?? '').trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+
+function toOptionalString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function toOptionalInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return Math.trunc(n);
+  }
+  return null;
+}
+
+function buildNoteForAi(input: {
+  note: unknown;
+  constraints: Record<string, any>;
+  familySize: number | null;
+  cheatDay: string | null;
+  detectedIngredients: string[];
+}): string | null {
+  const base = toOptionalString(input.note) ?? '';
+
+  const constraintLines: string[] = [];
+
+  const themes = toStringArray(input.constraints?.themes);
+  if (themes.length) constraintLines.push(`テーマ: ${themes.join('、')}`);
+
+  const ingredients = toStringArray(input.constraints?.ingredients);
+  const detected = input.detectedIngredients ?? [];
+  const mergedIngredients = Array.from(new Set([...ingredients, ...detected])).slice(0, 40);
+  if (mergedIngredients.length) constraintLines.push(`使いたい食材: ${mergedIngredients.join('、')}`);
+
+  const cookingTime = input.constraints?.cookingTime;
+  const weekday = toOptionalInt(cookingTime?.weekday);
+  const weekend = toOptionalInt(cookingTime?.weekend);
+  if (weekday != null || weekend != null) {
+    constraintLines.push(`調理時間: 平日${weekday ?? '-'}分 / 休日${weekend ?? '-'}分`);
+  }
+
+  if (input.familySize != null) constraintLines.push(`家族人数: ${input.familySize}人分`);
+  if (input.cheatDay) constraintLines.push(`チートデイ: ${input.cheatDay}`);
+
+  // 既存UI（menus/weekly）互換: boolean系の希望条件も文に落とす
+  const flags: string[] = [];
+  if (input.constraints?.useFridgeFirst) flags.push('冷蔵庫の食材を優先');
+  if (input.constraints?.quickMeals) flags.push('時短メニュー中心');
+  if (input.constraints?.japaneseStyle) flags.push('和食多め');
+  if (input.constraints?.healthy) flags.push('ヘルシーに');
+  if (flags.length) constraintLines.push(`希望: ${flags.join('、')}`);
+
+  const parts: string[] = [];
+  if (base) parts.push(base);
+  if (constraintLines.length) parts.push(`【条件】\n- ${constraintLines.join('\n- ')}`);
+
+  const final = parts.join('\n').trim();
+  return final ? final : null;
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const { startDate, note, familySize, cheatDay, preferences } = await request.json();
+    const body = await request.json().catch(() => ({}));
+    const startDate = body?.startDate;
+
+    // preferences / constraints は呼び出し元によって名称が揺れるため両対応
+    const rawConstraints = (body?.preferences ?? body?.constraints) as unknown;
+    const constraints = isPlainObject(rawConstraints) ? rawConstraints : {};
+
+    const familySize = toOptionalInt(body?.familySize ?? constraints?.familySize);
+    const cheatDay = toOptionalString(body?.cheatDay ?? constraints?.cheatDay);
+    const detectedIngredients = toStringArray(body?.detectedIngredients, { max: 40 });
+
+    const noteForAi = buildNoteForAi({
+      note: body?.note,
+      constraints,
+      familySize,
+      cheatDay,
+      detectedIngredients,
+    });
+
     if (!startDate) {
       return NextResponse.json({ error: 'startDate is required' }, { status: 400 });
     }
@@ -153,8 +244,8 @@ export async function POST(request: Request) {
         start_date: startDate,
         mode: 'weekly',
         status: 'processing',
-        prompt: note || '',
-        constraints: preferences || {},
+        prompt: noteForAi || '',
+        constraints,
       })
       .select('id')
       .single();
@@ -184,10 +275,11 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         userId: user.id,
         startDate,
-        note,
+        note: noteForAi,
         familySize,
         cheatDay,
-        preferences,
+        preferences: constraints,
+        constraints, // 将来の呼び出し元互換のため残す
         requestId: requestData.id,
         mealPlanId: mealPlan.id,
         generatingMealIds, // プレースホルダーのIDを渡す

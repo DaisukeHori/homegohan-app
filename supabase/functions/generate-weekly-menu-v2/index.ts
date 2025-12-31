@@ -429,10 +429,35 @@ function repairSelectionToCandidates(input: {
 // Main background task (DB write)
 // =========================================================
 
+const CUISINE_LABELS: Record<string, string> = {
+  japanese: "和食",
+  western: "洋食",
+  chinese: "中華",
+  italian: "イタリアン",
+  ethnic: "エスニック",
+  korean: "韓国料理",
+};
+
+function formatCuisinePreferences(value: any): string {
+  if (!value || typeof value !== "object") return "未設定";
+  const entries = Object.entries(value as Record<string, any>)
+    .map(([k, v]) => [String(k), Number(v)] as const)
+    .filter(([, v]) => Number.isFinite(v))
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => CUISINE_LABELS[k] ?? k);
+  return entries.slice(0, 6).join("、") || "未設定";
+}
+
 function buildProfileSummary(profile: any, nutritionTargets?: any | null): string {
   const allergies = profile?.diet_flags?.allergies?.join(", ") || "なし";
   const dislikes = profile?.diet_flags?.dislikes?.join(", ") || "なし";
   const healthConditions = profile?.health_conditions?.join(", ") || "なし";
+  const familySize = profile?.family_size ?? null;
+  const cookingExperience = profile?.cooking_experience ?? null;
+  const weekdayCookingMinutes = profile?.weekday_cooking_minutes ?? null;
+  const weekendCookingMinutes = profile?.weekend_cooking_minutes ?? null;
+  const cuisinePrefs = formatCuisinePreferences(profile?.cuisine_preferences);
+
   const lines = [
     `- 年齢: ${profile?.age ?? "不明"}歳`,
     `- 性別: ${profile?.gender ?? "不明"}`,
@@ -441,7 +466,14 @@ function buildProfileSummary(profile: any, nutritionTargets?: any | null): strin
     `- アレルギー（絶対除外）: ${allergies}`,
     `- 苦手なもの（避ける）: ${dislikes}`,
     `- 食事スタイル: ${profile?.diet_style ?? "未設定"}`,
+    `- 好みの料理ジャンル: ${cuisinePrefs}`,
   ];
+
+  if (familySize != null) lines.push(`- 家族人数: ${familySize}人分`);
+  if (cookingExperience) lines.push(`- 料理経験: ${cookingExperience}`);
+  if (weekdayCookingMinutes != null || weekendCookingMinutes != null) {
+    lines.push(`- 調理時間目安: 平日${weekdayCookingMinutes ?? "未設定"}分 / 休日${weekendCookingMinutes ?? "未設定"}分`);
+  }
 
   if (nutritionTargets) {
     const t = nutritionTargets;
@@ -503,7 +535,11 @@ async function generateMenuV2BackgroundTask(args: {
     const userSummary = buildProfileSummary(profile, nutritionTargets ?? null);
 
     // 1) pgvectorで候補抽出（mealTypeごとに一度）
-    const baseQuery = `${userSummary}\n目的: 健康的で現実的な献立。\n`;
+    const noteForSearch = typeof note === "string" && note.trim() ? note.trim().slice(0, 800) : "";
+    const baseQuery =
+      `${userSummary}\n` +
+      `${noteForSearch ? `要望: ${noteForSearch}\n` : ""}` +
+      `目的: 健康的で現実的な献立。\n`;
     // NOTE: まずは多めに取得し、meal_type_hint で振り分ける
     const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${baseQuery}`, 600);
     const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${baseQuery}`, 800);
@@ -839,8 +875,14 @@ export async function handleGenerateWeeklyMenuV2(req: Request): Promise<Response
     const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader;
     const serviceRoleKey = Deno.env.get("DATASET_SERVICE_ROLE_KEY") ?? "";
 
-    const body = await req.json();
-    const { startDate, note, requestId = null, userId: bodyUserId } = body ?? {};
+    const body = await req.json().catch(() => ({}));
+    const startDate = (body as any)?.startDate;
+    // 互換: note / prompt どちらでも受け取る（single/regenerate-v2と揃える）
+    const note = typeof (body as any)?.note === "string"
+      ? (body as any).note
+      : (typeof (body as any)?.prompt === "string" ? (body as any).prompt : null);
+    const requestId = (body as any)?.requestId ?? null;
+    const bodyUserId = (body as any)?.userId ?? null;
 
     let userId: string;
     if (serviceRoleKey && token === serviceRoleKey) {

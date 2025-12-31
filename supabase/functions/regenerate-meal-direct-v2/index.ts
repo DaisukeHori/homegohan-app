@@ -314,10 +314,34 @@ function repairSelection(input: {
 // Main background task
 // =========================================================
 
+const CUISINE_LABELS: Record<string, string> = {
+  japanese: "和食",
+  western: "洋食",
+  chinese: "中華",
+  italian: "イタリアン",
+  ethnic: "エスニック",
+  korean: "韓国料理",
+};
+
+function formatCuisinePreferences(value: any): string {
+  if (!value || typeof value !== "object") return "未設定";
+  const entries = Object.entries(value as Record<string, any>)
+    .map(([k, v]) => [String(k), Number(v)] as const)
+    .filter(([, v]) => Number.isFinite(v))
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => CUISINE_LABELS[k] ?? k);
+  return entries.slice(0, 6).join("、") || "未設定";
+}
+
 function buildProfileSummary(profile: any, nutritionTargets?: any | null): string {
   const allergies = profile?.diet_flags?.allergies?.join(", ") || "なし";
   const dislikes = profile?.diet_flags?.dislikes?.join(", ") || "なし";
   const healthConditions = profile?.health_conditions?.join(", ") || "なし";
+  const familySize = profile?.family_size ?? null;
+  const cookingExperience = profile?.cooking_experience ?? null;
+  const weekdayCookingMinutes = profile?.weekday_cooking_minutes ?? null;
+  const weekendCookingMinutes = profile?.weekend_cooking_minutes ?? null;
+  const cuisinePrefs = formatCuisinePreferences(profile?.cuisine_preferences);
   const lines = [
     `- 年齢: ${profile?.age ?? "不明"}歳`,
     `- 性別: ${profile?.gender ?? "不明"}`,
@@ -326,7 +350,15 @@ function buildProfileSummary(profile: any, nutritionTargets?: any | null): strin
     `- アレルギー（絶対除外）: ${allergies}`,
     `- 苦手なもの（避ける）: ${dislikes}`,
     `- 食事スタイル: ${profile?.diet_style ?? "未設定"}`,
+    `- 好みの料理ジャンル: ${cuisinePrefs}`,
   ];
+
+  if (familySize != null) lines.push(`- 家族人数: ${familySize}人分`);
+  if (cookingExperience) lines.push(`- 料理経験: ${cookingExperience}`);
+  if (weekdayCookingMinutes != null || weekendCookingMinutes != null) {
+    lines.push(`- 調理時間目安: 平日${weekdayCookingMinutes ?? "未設定"}分 / 休日${weekendCookingMinutes ?? "未設定"}分`);
+  }
+
   if (nutritionTargets) {
     const t = nutritionTargets;
     const goalLines: string[] = [];
