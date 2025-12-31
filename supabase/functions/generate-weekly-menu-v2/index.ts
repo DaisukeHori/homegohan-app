@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { Agent, type AgentInputItem, Runner } from "@openai/agents";
 import { z } from "zod";
+import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
 
 console.log("Generate Weekly Menu v2 Function loaded (pgvector + dataset driven)");
 
@@ -284,6 +285,7 @@ function formatCandidateForPrompt(c: MenuSetCandidate) {
 
 async function runAgentToSelectWeeklyMenuIds(input: {
   userSummary: string;
+  userContext: unknown;
   note: string | null;
   dates: string[];
   candidatesByMealType: Record<MealType, MenuSetCandidate[]>;
@@ -326,6 +328,7 @@ async function runAgentToSelectWeeklyMenuIds(input: {
 
   const userPrompt =
     `【ユーザー情報】\n${input.userSummary}\n\n` +
+    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
     `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
     `【対象日付】\n${input.dates.join("\n")}\n\n` +
     `【候補（朝食）】\n${JSON.stringify(compactCandidates.breakfast)}\n\n` +
@@ -432,87 +435,6 @@ function repairSelectionToCandidates(input: {
 // Main background task (DB write)
 // =========================================================
 
-const CUISINE_LABELS: Record<string, string> = {
-  japanese: "和食",
-  western: "洋食",
-  chinese: "中華",
-  italian: "イタリアン",
-  ethnic: "エスニック",
-  korean: "韓国料理",
-};
-
-function formatCuisinePreferences(value: any): string {
-  if (!value || typeof value !== "object") return "未設定";
-  const entries = Object.entries(value as Record<string, any>)
-    .map(([k, v]) => [String(k), Number(v)] as const)
-    .filter(([, v]) => Number.isFinite(v))
-    .sort((a, b) => b[1] - a[1])
-    .map(([k]) => CUISINE_LABELS[k] ?? k);
-  return entries.slice(0, 6).join("、") || "未設定";
-}
-
-function buildProfileSummary(profile: any, nutritionTargets?: any | null): string {
-  const allergies = profile?.diet_flags?.allergies?.join(", ") || "なし";
-  const dislikes = profile?.diet_flags?.dislikes?.join(", ") || "なし";
-  const healthConditions = profile?.health_conditions?.join(", ") || "なし";
-  const medications = Array.isArray(profile?.medications) ? profile.medications.join(", ") : (profile?.medications ? String(profile.medications) : null);
-  const nutritionGoal = profile?.nutrition_goal ?? null;
-  const weightChangeRate = profile?.weight_change_rate ?? null;
-  const workStyle = profile?.work_style ?? null;
-  const exerciseTypes = Array.isArray(profile?.exercise_types) ? profile.exercise_types.join(", ") : null;
-  const exerciseFrequency = profile?.exercise_frequency ?? null;
-  const exerciseIntensity = profile?.exercise_intensity ?? null;
-  const exerciseDuration = profile?.exercise_duration_per_session ?? null;
-  const familySize = profile?.family_size ?? null;
-  const cookingExperience = profile?.cooking_experience ?? null;
-  const weekdayCookingMinutes = profile?.weekday_cooking_minutes ?? null;
-  const weekendCookingMinutes = profile?.weekend_cooking_minutes ?? null;
-  const cuisinePrefs = formatCuisinePreferences(profile?.cuisine_preferences);
-
-  const lines = [
-    `- ニックネーム: ${profile?.nickname ?? "未設定"}`,
-    `- 年齢: ${profile?.age ?? "不明"}歳`,
-    `- 性別: ${profile?.gender ?? "不明"}`,
-    `- 身長: ${profile?.height ?? "不明"}cm / 体重: ${profile?.weight ?? "不明"}kg`,
-    `- 持病・注意点: ${healthConditions}`,
-    `- 服薬: ${medications ?? "なし"}`,
-    `- アレルギー（絶対除外）: ${allergies}`,
-    `- 苦手なもの（避ける）: ${dislikes}`,
-    `- 食事スタイル: ${profile?.diet_style ?? "未設定"}`,
-    `- 好みの料理ジャンル: ${cuisinePrefs}`,
-  ];
-
-  if (nutritionGoal) lines.push(`- 栄養目標: ${nutritionGoal}${weightChangeRate ? `（ペース: ${weightChangeRate}）` : ""}`);
-  if (workStyle || exerciseTypes || exerciseFrequency || exerciseIntensity || exerciseDuration != null) {
-    const parts: string[] = [];
-    if (workStyle) parts.push(`仕事スタイル: ${workStyle}`);
-    if (exerciseTypes) parts.push(`運動種別: ${exerciseTypes}`);
-    if (exerciseFrequency != null) parts.push(`運動頻度: 週${exerciseFrequency}回`);
-    if (exerciseIntensity) parts.push(`運動強度: ${exerciseIntensity}`);
-    if (exerciseDuration != null) parts.push(`運動時間: ${exerciseDuration}分/回`);
-    if (parts.length) lines.push(`- 活動量: ${parts.join(" / ")}`);
-  }
-
-  if (familySize != null) lines.push(`- 家族人数: ${familySize}人分`);
-  if (cookingExperience) lines.push(`- 料理経験: ${cookingExperience}`);
-  if (weekdayCookingMinutes != null || weekendCookingMinutes != null) {
-    lines.push(`- 調理時間目安: 平日${weekdayCookingMinutes ?? "未設定"}分 / 休日${weekendCookingMinutes ?? "未設定"}分`);
-  }
-
-  if (nutritionTargets) {
-    const t = nutritionTargets;
-    const goalLines: string[] = [];
-    if (t.daily_calories != null) goalLines.push(`- 目標（1日）カロリー: ${t.daily_calories}kcal`);
-    if (t.protein_g != null) goalLines.push(`- 目標（1日）タンパク質: ${t.protein_g}g`);
-    if (t.sodium_g != null) goalLines.push(`- 目標（1日）塩分（食塩相当量）: ${t.sodium_g}g`);
-    if (goalLines.length > 0) {
-      lines.push(`- 栄養目標（目安）:\n  ${goalLines.join("\n  ")}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
 async function generateMenuV2BackgroundTask(args: {
   userId: string;
   startDate: string;
@@ -556,18 +478,15 @@ async function generateMenuV2BackgroundTask(args: {
     const datasetVersion = await getActiveDatasetVersion(supabase);
 
     const dates = getWeekDates(startDate);
-    const userSummary = buildProfileSummary(profile, nutritionTargets ?? null);
+    const userContext = buildUserContextForPrompt({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null });
+    const userSummary = buildUserSummary(profile, nutritionTargets ?? null, note ?? null);
 
     // 1) pgvectorで候補抽出（mealTypeごとに一度）
-    const noteForSearch = typeof note === "string" && note.trim() ? note.trim().slice(0, 800) : "";
-    const baseQuery =
-      `${userSummary}\n` +
-      `${noteForSearch ? `要望: ${noteForSearch}\n` : ""}` +
-      `目的: 健康的で現実的な献立。\n`;
+    const searchQueryBase = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null });
     // NOTE: まずは多めに取得し、meal_type_hint で振り分ける
-    const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${baseQuery}`, 600);
-    const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${baseQuery}`, 800);
-    const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${baseQuery}`, 1200);
+    const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${searchQueryBase}`, 600);
+    const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${searchQueryBase}`, 800);
+    const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${searchQueryBase}`, 1200);
 
     const candidatesByMealType: Record<MealType, MenuSetCandidate[]> = {
       breakfast: pickCandidatesForMealType("breakfast", breakfastRaw, { min: 10, max: 60 }),
@@ -584,6 +503,7 @@ async function generateMenuV2BackgroundTask(args: {
     // 2) LLMで「候補からID選択」だけ実施（設計通り）
     const rawSelection = await runAgentToSelectWeeklyMenuIds({
       userSummary,
+      userContext,
       note: note ?? null,
       dates,
       candidatesByMealType,
