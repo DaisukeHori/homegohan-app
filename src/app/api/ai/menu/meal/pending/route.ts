@@ -10,6 +10,9 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const weekStartDate = searchParams.get('date'); // 週の開始日
   const mealType = searchParams.get('mealType');
+  const now = new Date();
+  const staleMinutes = 20;
+  const staleBefore = new Date(now.getTime() - staleMinutes * 60 * 1000);
 
   try {
     // 週の日付範囲を計算
@@ -31,7 +34,7 @@ export async function GET(request: Request) {
     // pending または processing の単一食事リクエストを確認
     let query = supabase
       .from('weekly_menu_requests')
-      .select('id, status, target_date, target_meal_type, target_meal_id, mode, created_at')
+      .select('id, status, target_date, target_meal_type, target_meal_id, mode, created_at, updated_at')
       .eq('user_id', user.id)
       .in('mode', ['single', 'regenerate'])
       .in('status', ['pending', 'processing'])
@@ -50,9 +53,61 @@ export async function GET(request: Request) {
     if (error) throw error;
 
     if (pendingRequests && pendingRequests.length > 0) {
+      const staleIds: string[] = [];
+      const active = pendingRequests.filter((r) => {
+        const updatedAt = r.updated_at ? new Date(r.updated_at) : null;
+        const createdAt = r.created_at ? new Date(r.created_at) : null;
+        const lastTouched = updatedAt ?? createdAt ?? null;
+        const isStale = lastTouched ? lastTouched < staleBefore : true;
+        if (isStale && r.id) staleIds.push(r.id);
+        return !isStale;
+      });
+
+      if (staleIds.length > 0) {
+        // stale リクエストを failed に更新
+        const { error: staleError } = await supabase
+          .from('weekly_menu_requests')
+          .update({
+            status: 'failed',
+            error_message: 'stale_request_timeout',
+            updated_at: new Date().toISOString(),
+          })
+          .in('id', staleIds)
+          .eq('user_id', user.id);
+        if (staleError) {
+          console.error('Failed to mark stale meal requests as failed:', staleError);
+        }
+        
+        // 関連する planned_meals の is_generating もクリア
+        const staleMealIds = pendingRequests
+          .filter(r => staleIds.includes(r.id) && r.target_meal_id)
+          .map(r => r.target_meal_id);
+        
+        if (staleMealIds.length > 0) {
+          const { error: mealUpdateError } = await supabase
+            .from('planned_meals')
+            .update({
+              is_generating: false,
+              dish_name: '生成に失敗しました',
+              updated_at: new Date().toISOString(),
+            })
+            .in('id', staleMealIds);
+          
+          if (mealUpdateError) {
+            console.error('Failed to clear is_generating for stale meals:', mealUpdateError);
+          } else {
+            console.log('✅ Cleared is_generating for stale meal requests:', staleMealIds.length);
+          }
+        }
+      }
+
+      if (active.length === 0) {
+        return NextResponse.json({ hasPending: false, requests: [] });
+      }
+
       return NextResponse.json({
         hasPending: true,
-        requests: pendingRequests.map(r => ({
+        requests: active.map(r => ({
           requestId: r.id,
           status: r.status,
           targetDate: r.target_date,

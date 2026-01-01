@@ -9,6 +9,9 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date');
+  const now = new Date();
+  const staleMinutes = 20;
+  const staleBefore = new Date(now.getTime() - staleMinutes * 60 * 1000);
 
   if (!date) {
     return NextResponse.json({ error: 'date is required' }, { status: 400 });
@@ -22,7 +25,7 @@ export async function GET(request: Request) {
     // start_date に関係なく、最新のリクエストを返す（リロード時の復元を確実にするため）
     const { data: pendingRequest, error } = await supabase
       .from('weekly_menu_requests')
-      .select('id, status, mode, start_date, created_at')
+      .select('id, status, mode, start_date, created_at, updated_at')
       .eq('user_id', user.id)
       .or('mode.eq.weekly,mode.is.null')
       .in('status', ['pending', 'processing'])
@@ -39,6 +42,71 @@ export async function GET(request: Request) {
     }
 
     if (pendingRequest) {
+      const updatedAt = pendingRequest.updated_at ? new Date(pendingRequest.updated_at) : null;
+      const createdAt = pendingRequest.created_at ? new Date(pendingRequest.created_at) : null;
+      const lastTouched = updatedAt ?? createdAt ?? null;
+      const isStale = lastTouched ? lastTouched < staleBefore : true;
+
+      if (isStale) {
+        // stale リクエストを failed に更新
+        const { error: staleError } = await supabase
+          .from('weekly_menu_requests')
+          .update({
+            status: 'failed',
+            error_message: 'stale_request_timeout',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', pendingRequest.id)
+          .eq('user_id', user.id);
+        if (staleError) {
+          console.error('Failed to mark stale weekly request as failed:', staleError);
+        }
+        
+        // 関連する planned_meals の is_generating もクリア
+        // 週間献立の場合は start_date から meal_plan を特定してクリア
+        if (pendingRequest.start_date) {
+          const { data: mealPlan } = await supabase
+            .from('meal_plans')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('start_date', pendingRequest.start_date)
+            .maybeSingle();
+          
+          if (mealPlan?.id) {
+            const { data: days } = await supabase
+              .from('meal_plan_days')
+              .select('id')
+              .eq('meal_plan_id', mealPlan.id);
+            
+            if (days && days.length > 0) {
+              const dayIds = days.map(d => d.id);
+              const { error: mealUpdateError } = await supabase
+                .from('planned_meals')
+                .update({
+                  is_generating: false,
+                  dish_name: '生成に失敗しました',
+                  updated_at: new Date().toISOString(),
+                })
+                .in('meal_plan_day_id', dayIds)
+                .eq('is_generating', true);
+              
+              if (mealUpdateError) {
+                console.error('Failed to clear is_generating for stale weekly meals:', mealUpdateError);
+              } else {
+                console.log('✅ Cleared is_generating for stale weekly request');
+              }
+            }
+          }
+        }
+        
+        return NextResponse.json({ hasPending: false });
+      }
+
+      if (pendingRequest.start_date && pendingRequest.start_date !== date) {
+        // 他週の生成中は復元しない（自動で週が切り替わるのを防ぐ）
+        return NextResponse.json({ hasPending: false });
+      }
+
       console.log('✅ Found pending request:', pendingRequest.id, pendingRequest.status, 'for start_date:', pendingRequest.start_date);
       return NextResponse.json({
         hasPending: true,
