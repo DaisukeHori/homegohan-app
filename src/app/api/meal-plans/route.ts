@@ -31,19 +31,29 @@ export async function GET(request: Request) {
     query = query
       .lte('start_date', today)
       .gte('end_date', today)
+      .order('is_active', { ascending: false }) // is_active: true を優先
+      .order('updated_at', { ascending: false }) // 次に更新日時が新しいもの
       .limit(1);
   } else if (mode === 'latest') {
     // 最新のもの
-    query = query.order('start_date', { ascending: false }).limit(1);
+    query = query
+      .order('is_active', { ascending: false }) // is_active: true を優先
+      .order('start_date', { ascending: false })
+      .limit(1);
   } else if (date) {
-    // 指定した日付を含む献立
+    // 指定した日付を含む献立（is_active: true を優先）
     query = query
       .lte('start_date', date)
       .gte('end_date', date)
+      .order('is_active', { ascending: false }) // is_active: true を優先
+      .order('updated_at', { ascending: false }) // 次に更新日時が新しいもの
       .limit(1);
   } else {
-    // デフォルト: 最新
-    query = query.order('start_date', { ascending: false }).limit(1);
+    // デフォルト: 最新かつアクティブなもの
+    query = query
+      .order('is_active', { ascending: false }) // is_active: true を優先
+      .order('start_date', { ascending: false })
+      .limit(1);
   }
 
   const { data, error } = await query;

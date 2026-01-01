@@ -45,18 +45,43 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. meal_planを取得または作成
+    // 2. meal_planを取得または作成（is_active: true を優先）
     const weekStart = getWeekStart(dayDate);
     const weekEnd = addDays(weekStart, 6);
 
+    // まず is_active: true のプランを探す
     let { data: mealPlan, error: planError } = await supabase
       .from('meal_plans')
       .select('id')
       .eq('user_id', user.id)
       .eq('start_date', weekStart)
+      .eq('is_active', true)
       .maybeSingle();
 
     if (planError) throw new Error(`Failed to fetch meal_plan: ${planError.message}`);
+
+    // is_active: true がなければ、任意のプランを探す
+    if (!mealPlan) {
+      const { data: anyPlan, error: anyPlanError } = await supabase
+        .from('meal_plans')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('start_date', weekStart)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (anyPlanError) throw new Error(`Failed to fetch any meal_plan: ${anyPlanError.message}`);
+      
+      if (anyPlan) {
+        // 既存プランをアクティブ化
+        await supabase
+          .from('meal_plans')
+          .update({ is_active: true, updated_at: new Date().toISOString() })
+          .eq('id', anyPlan.id);
+        mealPlan = anyPlan;
+      }
+    }
 
     if (!mealPlan) {
       const ws = new Date(weekStart);
@@ -76,6 +101,13 @@ export async function POST(request: Request) {
 
       if (createError) throw new Error(`Failed to create meal_plan: ${createError.message}`);
       mealPlan = newPlan;
+
+      // 他のプランを非アクティブ化
+      await supabase
+        .from('meal_plans')
+        .update({ is_active: false })
+        .eq('user_id', user.id)
+        .neq('id', mealPlan.id);
     }
 
     // 3. meal_plan_dayを取得または作成
