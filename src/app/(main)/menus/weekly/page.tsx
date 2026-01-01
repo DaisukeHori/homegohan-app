@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail } from "@/types/domain";
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
@@ -239,33 +241,29 @@ export default function WeeklyMenuPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
   
-  // ポーリングのintervalIdを保持（クリーンアップ用）
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Supabase Realtime チャンネルを保持（クリーンアップ用）
+  const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  const supabaseRef = useRef(createClient());
   
-  // ポーリングをクリーンアップする関数
-  const cleanupPolling = () => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
+  // Realtime サブスクリプションをクリーンアップする関数
+  const cleanupRealtime = useCallback(() => {
+    if (realtimeChannelRef.current) {
+      supabaseRef.current.removeChannel(realtimeChannelRef.current);
+      realtimeChannelRef.current = null;
     }
-    if (pollingTimeoutRef.current) {
-      clearTimeout(pollingTimeoutRef.current);
-      pollingTimeoutRef.current = null;
-    }
-  };
+  }, []);
   
   // コンポーネントアンマウント時にクリーンアップ
   useEffect(() => {
     return () => {
-      cleanupPolling();
+      cleanupRealtime();
     };
-  }, []);
+  }, [cleanupRealtime]);
   
   // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
     // 既にポーリング中なら何もしない
-    if (pollingIntervalRef.current) return;
+    if (realtimeChannelRef.current) return;
     // 既に生成中状態なら何もしない（重複防止）
     if (isGenerating || generatingMeal) return;
     
@@ -291,7 +289,7 @@ export default function WeeklyMenuPage() {
             }
             
             setIsGenerating(true);
-            startPollingForCompletion(pendingStartDate || targetDate, requestId);
+            subscribeToRequestStatus(pendingStartDate || targetDate, requestId);
             return; // 週間生成中なら他はスキップ
           } else {
             console.log('🔍 No pending weekly request found');
@@ -318,12 +316,12 @@ export default function WeeklyMenuPage() {
                 setRegeneratingMealId(latestRequest.targetMealId);
                 setIsRegenerating(true);
                 setSelectedDayIndex(dayIdx);
-                startRegenerateMealPolling(latestRequest.requestId, targetDate);
+                subscribeToRegenerateStatus(latestRequest.requestId, targetDate);
               } else {
                 // mode === 'single' の場合は新規追加
                 setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
                 setSelectedDayIndex(dayIdx);
-                startSingleMealPolling(latestRequest.requestId, targetDate, targetDayDate, latestRequest.targetMealType);
+                subscribeToRequestStatus(targetDate, latestRequest.requestId);
               }
               return; // DBで見つかったらlocalStorageはスキップ
             }
@@ -350,7 +348,7 @@ export default function WeeklyMenuPage() {
                 if (status === 'pending' || status === 'processing') {
                   console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
                   setIsGenerating(true);
-                  startPollingForCompletion(targetDate, requestId);
+                  subscribeToRequestStatus(targetDate, requestId);
                   return;
                 } else {
                   // completed または failed の場合はlocalStorageをクリア
@@ -387,7 +385,7 @@ export default function WeeklyMenuPage() {
                   console.log('📦 単一食事をlocalStorageから復元:', requestId, 'status:', status);
                   setGeneratingMeal({ dayIndex, mealType });
                   setSelectedDayIndex(dayIndex);
-                  startSingleMealPolling(requestId, targetDate, dayDate, mealType);
+                  subscribeToRequestStatus(targetDate, requestId);
                 } else {
                   // completed または failed の場合はlocalStorageをクリア
                   console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
@@ -400,7 +398,8 @@ export default function WeeklyMenuPage() {
               // requestIdがない場合は旧方式でポーリング（古いコードの互換性）
               setGeneratingMeal({ dayIndex, mealType });
               setSelectedDayIndex(dayIndex);
-              startLegacySingleMealPolling(dayIndex, mealType, dayDate, initialCount);
+              // レガシーポーリングは廃止（requestIdがある場合のみRealtime監視）
+              console.warn('No requestId found in localStorage, skipping...');
             }
           } else {
             localStorage.removeItem('singleMealGenerating');
@@ -414,87 +413,6 @@ export default function WeeklyMenuPage() {
     checkPendingRequests();
   }, [weekStart, weekDates, isGenerating, generatingMeal]);
   
-  // 単一食事のDBベースポーリング
-  const startSingleMealPolling = (requestId: string, weekStartDate: string, targetDayDate: string, mealType: string) => {
-    // 既存のポーリングをクリーンアップ
-    cleanupPolling();
-    
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
-        if (statusRes.ok) {
-          const { status } = await statusRes.json();
-          
-          if (status === 'completed') {
-            // 完了したら献立を再取得
-            const planRes = await fetch(`/api/meal-plans?date=${weekStartDate}`);
-            if (planRes.ok) {
-              const { mealPlan } = await planRes.json();
-              setCurrentPlan(mealPlan);
-              if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
-            }
-            setGeneratingMeal(null);
-            localStorage.removeItem('singleMealGenerating');
-            cleanupPolling();
-          } else if (status === 'failed') {
-            setGeneratingMeal(null);
-            localStorage.removeItem('singleMealGenerating');
-            cleanupPolling();
-            alert('献立の生成に失敗しました。もう一度お試しください。');
-          }
-        }
-      } catch (e) {
-        console.error('Polling error:', e);
-      }
-    }, 3000);
-    
-    // 3分でタイムアウト
-    pollingTimeoutRef.current = setTimeout(() => {
-      cleanupPolling();
-      setGeneratingMeal(null);
-      localStorage.removeItem('singleMealGenerating');
-    }, 3 * 60 * 1000);
-  };
-  
-  // 旧方式のポーリング（後方互換性）
-  const startLegacySingleMealPolling = (dayIndex: number, mealType: string, dayDate: string, initialCount: number) => {
-    // 既存のポーリングをクリーンアップ
-    cleanupPolling();
-    
-    let attempts = 0;
-    const maxAttempts = 40;
-    
-    pollingIntervalRef.current = setInterval(async () => {
-      attempts++;
-      try {
-        const targetDate = formatLocalDate(weekStart);
-        const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-        if (pollRes.ok) {
-          const { mealPlan } = await pollRes.json();
-          if (mealPlan) {
-            const targetDay = mealPlan.days?.find((d: any) => d.dayDate === dayDate);
-            const currentMealCount = targetDay?.meals?.filter((m: any) => m.mealType === mealType).length || 0;
-            
-            if (currentMealCount > initialCount) {
-              setCurrentPlan(mealPlan);
-              setGeneratingMeal(null);
-              localStorage.removeItem('singleMealGenerating');
-              cleanupPolling();
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Polling error:', e);
-      }
-      
-      if (attempts >= maxAttempts) {
-        cleanupPolling();
-        setGeneratingMeal(null);
-        localStorage.removeItem('singleMealGenerating');
-        window.location.reload();
-      }
-    }, 3000);
-  };
   
   // Edit meal state
   const [editingMeal, setEditingMeal] = useState<PlannedMeal | null>(null);
@@ -573,7 +491,7 @@ export default function WeeklyMenuPage() {
           if (hasPending && requestId) {
             // 生成中状態を復元してポーリング開始
             setIsGenerating(true);
-            startPollingForCompletion(targetDate, requestId);
+            subscribeToRequestStatus(targetDate, requestId);
           }
         }
       } catch (e) {
@@ -586,20 +504,30 @@ export default function WeeklyMenuPage() {
     fetchPlan();
   }, [weekStart]);
   
-  // ポーリングで生成完了を待つ
-  const startPollingForCompletion = (targetDate: string, requestId: string) => {
-    // 既存のポーリングをクリーンアップ
-    cleanupPolling();
+  // Realtime で生成完了を監視
+  const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string) => {
+    // 既存のサブスクリプションをクリーンアップ
+    cleanupRealtime();
     
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        // リクエストのステータスを確認
-        const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
-        if (statusRes.ok) {
-          const { status } = await statusRes.json();
+    console.log('📡 Subscribing to Realtime for requestId:', requestId);
+    
+    const channel = supabaseRef.current
+      .channel(`menu-request-${requestId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'weekly_menu_requests',
+          filter: `id=eq.${requestId}`,
+        },
+        async (payload) => {
+          console.log('📡 Realtime update received:', payload.new);
+          const newStatus = (payload.new as { status: string }).status;
           
-          if (status === 'completed') {
+          if (newStatus === 'completed') {
             // 完了したら献立を再取得
+            console.log('✅ Generation completed, fetching meal plan...');
             const planRes = await fetch(`/api/meal-plans?date=${targetDate}`);
             if (planRes.ok) {
               const { mealPlan } = await planRes.json();
@@ -607,28 +535,28 @@ export default function WeeklyMenuPage() {
               if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
             }
             setIsGenerating(false);
+            setGeneratingMeal(null);
             localStorage.removeItem('weeklyMenuGenerating');
-            cleanupPolling();
-          } else if (status === 'failed') {
+            localStorage.removeItem('singleMealGenerating');
+            cleanupRealtime();
+          } else if (newStatus === 'failed') {
+            console.log('❌ Generation failed');
             setIsGenerating(false);
+            setGeneratingMeal(null);
             localStorage.removeItem('weeklyMenuGenerating');
-            cleanupPolling();
+            localStorage.removeItem('singleMealGenerating');
+            cleanupRealtime();
             alert('献立の生成に失敗しました。もう一度お試しください。');
           }
-          // status === 'pending' or 'processing' の場合は継続
+          // status === 'pending' or 'processing' の場合は継続して監視
         }
-      } catch (e) {
-        console.error('Polling error:', e);
-      }
-    }, 3000);
+      )
+      .subscribe((status) => {
+        console.log('📡 Realtime subscription status:', status);
+      });
     
-    // 5分でタイムアウト
-    pollingTimeoutRef.current = setTimeout(() => {
-      cleanupPolling();
-      setIsGenerating(false);
-      localStorage.removeItem('weeklyMenuGenerating');
-    }, 5 * 60 * 1000);
-  };
+    realtimeChannelRef.current = channel;
+  }, [cleanupRealtime]);
   
   // Fetch Pantry
   useEffect(() => {
@@ -933,10 +861,11 @@ export default function WeeklyMenuPage() {
       
       // DBベースのポーリングを開始
       if (requestId) {
-        startPollingForCompletion(weekStartDate, requestId);
+        subscribeToRequestStatus(weekStartDate, requestId);
       } else {
         // requestIdがない場合は旧方式でポーリング
-        startLegacyWeeklyPolling(weekStartDate);
+        // レガシーポーリングは廃止（requestIdがある場合のみRealtime監視）
+        console.warn('No requestId returned, cannot subscribe to Realtime');
       }
       
     } catch (error: any) {
@@ -946,48 +875,6 @@ export default function WeeklyMenuPage() {
     }
   };
   
-  // 旧方式の週間ポーリング（後方互換性）
-  const startLegacyWeeklyPolling = (weekStartDate: string) => {
-    // 既存のポーリングをクリーンアップ
-    cleanupPolling();
-    
-    let attempts = 0;
-    const maxAttempts = 40;
-    
-    pollingIntervalRef.current = setInterval(async () => {
-      attempts++;
-      console.log(`Polling attempt ${attempts}/${maxAttempts}`);
-      try {
-        const pollRes = await fetch(`/api/meal-plans?date=${weekStartDate}`);
-        if (pollRes.ok) {
-          const { mealPlan } = await pollRes.json();
-          console.log('Poll response:', mealPlan?.days?.length, 'days');
-          if (mealPlan && mealPlan.days && mealPlan.days.length >= 7) {
-            const mealCount = mealPlan.days.reduce((sum: number, d: any) => sum + (d.meals?.length || 0), 0);
-            console.log('Total meals:', mealCount);
-            if (mealCount >= 21) {
-              setCurrentPlan(mealPlan);
-              setShoppingList(mealPlan.shoppingList || []);
-              setIsGenerating(false);
-              localStorage.removeItem('weeklyMenuGenerating');
-              cleanupPolling();
-              console.log('✅ All meals loaded!');
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Polling error:', e);
-      }
-      
-      if (attempts >= maxAttempts) {
-        cleanupPolling();
-        setIsGenerating(false);
-        localStorage.removeItem('weeklyMenuGenerating');
-        console.log('Polling timeout, reloading...');
-        window.location.reload();
-      }
-    }, 3000);
-  };
 
   // Generate single meal with AI
   const handleGenerateSingleMeal = async () => {
@@ -1041,10 +928,10 @@ export default function WeeklyMenuPage() {
         
         // DBベースのポーリングを開始
         if (requestId) {
-          startSingleMealPolling(requestId, formatLocalDate(weekStart), dayDate, addMealKey);
+          subscribeToRequestStatus(formatLocalDate(weekStart), requestId);
         } else {
-          // requestIdがない場合は旧方式でポーリング
-          startLegacySingleMealPolling(addMealDayIndex, addMealKey, dayDate, initialMealCount);
+          // requestIdがない場合はRealtime監視できない
+          console.warn('No requestId returned, cannot subscribe to Realtime');
         }
       } else {
         const err = await res.json();
@@ -1157,10 +1044,10 @@ export default function WeeklyMenuPage() {
         
         // DBベースのポーリングを開始
         if (requestId) {
-          startRegenerateMealPolling(requestId, formatLocalDate(weekStart));
+          subscribeToRegenerateStatus(requestId, formatLocalDate(weekStart));
         } else {
-          // requestIdがない場合は旧方式でポーリング
-          startLegacyRegeneratePolling();
+          // requestIdがない場合はRealtime監視できない
+          console.warn('No requestId returned for regeneration');
         }
       } else {
         const err = await res.json();
@@ -1176,19 +1063,30 @@ export default function WeeklyMenuPage() {
     }
   };
   
-  // 再生成のDBベースポーリング
-  const startRegenerateMealPolling = (requestId: string, weekStartDate: string) => {
-    // 既存のポーリングをクリーンアップ
-    cleanupPolling();
+  // 再生成のRealtime監視
+  const subscribeToRegenerateStatus = useCallback((requestId: string, weekStartDate: string) => {
+    // 既存のサブスクリプションをクリーンアップ
+    cleanupRealtime();
     
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
-        if (statusRes.ok) {
-          const { status } = await statusRes.json();
+    console.log('📡 Subscribing to Realtime for regenerate requestId:', requestId);
+    
+    const channel = supabaseRef.current
+      .channel(`regenerate-request-${requestId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'weekly_menu_requests',
+          filter: `id=eq.${requestId}`,
+        },
+        async (payload) => {
+          console.log('📡 Realtime regenerate update received:', payload.new);
+          const newStatus = (payload.new as { status: string }).status;
           
-          if (status === 'completed') {
+          if (newStatus === 'completed') {
             // 完了したら献立を再取得
+            console.log('✅ Regeneration completed, fetching meal plan...');
             const planRes = await fetch(`/api/meal-plans?date=${weekStartDate}`);
             if (planRes.ok) {
               const { mealPlan } = await planRes.json();
@@ -1197,64 +1095,22 @@ export default function WeeklyMenuPage() {
             }
             setIsRegenerating(false);
             setRegeneratingMealId(null);
-            cleanupPolling();
-          } else if (status === 'failed') {
+            cleanupRealtime();
+          } else if (newStatus === 'failed') {
+            console.log('❌ Regeneration failed');
             setIsRegenerating(false);
             setRegeneratingMealId(null);
-            cleanupPolling();
+            cleanupRealtime();
             alert('献立の再生成に失敗しました。もう一度お試しください。');
           }
         }
-      } catch (e) {
-        console.error('Polling error:', e);
-      }
-    }, 2000);
+      )
+      .subscribe((status) => {
+        console.log('📡 Realtime regenerate subscription status:', status);
+      });
     
-    // 45秒でタイムアウト
-    pollingTimeoutRef.current = setTimeout(() => {
-      cleanupPolling();
-      setIsRegenerating(false);
-      setRegeneratingMealId(null);
-    }, 45 * 1000);
-  };
-  
-  // 旧方式の再生成ポーリング（後方互換性）
-  const startLegacyRegeneratePolling = () => {
-    // 既存のポーリングをクリーンアップ
-    cleanupPolling();
-    
-    let attempts = 0;
-    const maxAttempts = 15;
-    
-    pollingIntervalRef.current = setInterval(async () => {
-      attempts++;
-      try {
-        const targetDate = formatLocalDate(weekStart);
-        const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-        if (pollRes.ok) {
-          const { mealPlan } = await pollRes.json();
-          if (mealPlan) {
-            setCurrentPlan(mealPlan);
-            setShoppingList(mealPlan.shoppingList || []);
-          }
-        }
-      } catch (e) {
-        console.error('Polling error:', e);
-      }
-      
-      if (attempts >= maxAttempts) {
-        cleanupPolling();
-        setIsRegenerating(false);
-        setRegeneratingMealId(null);
-      }
-    }, 2000);
-    
-    pollingTimeoutRef.current = setTimeout(() => {
-      cleanupPolling();
-      setIsRegenerating(false);
-      setRegeneratingMealId(null);
-    }, 30000);
-  };
+    realtimeChannelRef.current = channel;
+  }, [cleanupRealtime]);
   
   // Edit meal (legacy - keep for simple edits)
   const openEditMeal = (meal: PlannedMeal) => {
@@ -1477,37 +1333,17 @@ export default function WeeklyMenuPage() {
         setPhotoFiles([]);
         setPhotoPreviews([]);
         
-        // Poll for updated data（refを使用してクリーンアップ可能に）
-        cleanupPolling();
-        
-        let attempts = 0;
-        const maxAttempts = 15;
-        pollingIntervalRef.current = setInterval(async () => {
-          attempts++;
-          try {
-            const targetDate = formatLocalDate(weekStart);
-            const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-            if (pollRes.ok) {
-              const { mealPlan } = await pollRes.json();
-              if (mealPlan) {
-                setCurrentPlan(mealPlan);
-                setShoppingList(mealPlan.shoppingList || []);
-              }
-            }
-          } catch (e) {
-            console.error('Polling error:', e);
+        // 写真解析は同期的に行われるので、すぐにデータを再取得
+        const targetDate = formatLocalDate(weekStart);
+        const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        if (pollRes.ok) {
+          const { mealPlan } = await pollRes.json();
+          if (mealPlan) {
+            setCurrentPlan(mealPlan);
+            setShoppingList(mealPlan.shoppingList || []);
           }
-          
-          if (attempts >= maxAttempts) {
-            cleanupPolling();
-            setIsAnalyzingPhoto(false);
-          }
-        }, 2000);
-        
-        pollingTimeoutRef.current = setTimeout(() => {
-          cleanupPolling();
-          setIsAnalyzingPhoto(false);
-        }, 30000);
+        }
+        setIsAnalyzingPhoto(false);
       } else {
         const err = await res.json();
         alert(`エラー: ${err.error || '解析に失敗しました'}`);
