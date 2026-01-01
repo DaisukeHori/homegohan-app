@@ -106,8 +106,14 @@ const EXTRA_MEAL_TYPES: MealType[] = ['snack', 'midnight_snack'];
 // 栄養素の値をフォーマット（浮動小数点誤差を修正）
 const formatNutrition = (value: number | null | undefined, decimals = 1): string => {
   if (value === null || value === undefined) return '';
-  const rounded = Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
-  return rounded.toString();
+  // 数値でない場合は空文字を返す
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  // 極端に小さい値（0.0001未満）は0として扱う
+  if (Math.abs(num) < 0.0001) return '0';
+  // 丸め処理
+  const rounded = Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
+  return rounded.toFixed(decimals).replace(/\.?0+$/, ''); // 末尾の0を削除
 };
 
 // 材料テキストをパースして配列に変換
