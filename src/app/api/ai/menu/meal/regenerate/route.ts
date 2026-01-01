@@ -1,6 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+// Vercel Proプランでは最大300秒まで延長可能
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   const supabase = await createClient();
 
@@ -18,7 +21,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'mealId is required' }, { status: 400 });
     }
 
-    // 3. リクエストをDBに保存（ステータス追跡用）
+    // 3. 既存の食事レコードの is_generating を true に更新（生成中表示のため）
+    const { error: updateMealError } = await supabase
+      .from('planned_meals')
+      .update({
+        is_generating: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', mealId);
+
+    if (updateMealError) {
+      console.error('Failed to update is_generating flag:', updateMealError);
+    }
+
+    console.log(`📝 Set is_generating=true for meal: ${mealId}`);
+
+    // 4. リクエストをDBに保存（ステータス追跡用）
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({
@@ -28,7 +46,7 @@ export async function POST(request: Request) {
         target_meal_type: mealType,
         target_meal_id: mealId,
         mode: 'regenerate',
-        status: 'pending',
+        status: 'processing',
         prompt: note || '',
         constraints: preferences || {},
       })
@@ -43,9 +61,19 @@ export async function POST(request: Request) {
     // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
     // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
     //
-    // 4. Edge Function を非同期で呼び出し（直接planned_mealsを更新）
-    const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct-v2', {
-      body: {
+    // 5. Edge Function を非同期で呼び出し（完了を待たない）
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+    console.log('🚀 Calling Edge Function regenerate-meal-direct-v2...');
+
+    fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v2`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
         mealId,
         dayDate,
         mealType,
@@ -53,32 +81,17 @@ export async function POST(request: Request) {
         preferences: preferences || {},
         note: note || '',
         requestId: requestData?.id,
-      },
+      }),
+    }).catch(err => {
+      console.error('❌ Edge Function call error:', err.message);
     });
-
-    if (invokeError) {
-      if (requestData?.id) {
-        await supabase
-          .from('weekly_menu_requests')
-          .update({ status: 'failed', error_message: invokeError.message })
-          .eq('id', requestData.id);
-      }
-      throw new Error(`Edge Function invoke failed: ${invokeError.message}`);
-    }
-
-    // ステータスを processing に更新
-    if (requestData?.id) {
-      await supabase
-        .from('weekly_menu_requests')
-        .update({ status: 'processing' })
-        .eq('id', requestData.id);
-    }
 
     return NextResponse.json({ 
       success: true,
       message: 'Meal regeneration started in background',
       status: 'processing',
       requestId: requestData?.id,
+      regeneratingMealId: mealId,
     });
 
   } catch (error: any) {

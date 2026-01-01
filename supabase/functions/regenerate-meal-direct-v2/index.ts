@@ -64,6 +64,11 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
+function toNullableNumber(value: unknown): number | null {
+  const n = Number(value);
+  return n ? n : null;
+}
+
 async function sleep(ms: number) {
   await new Promise((r) => setTimeout(r, ms));
 }
@@ -500,6 +505,28 @@ async function regenerateMealV2BackgroundTask(args: {
           sodium: Number(d?.sodium_g ?? recipe?.sodium_g ?? 0) || 0,
           sugar: Number(recipe?.sugar_g ?? 0) || 0,
           fiber: Number(recipe?.fiber_g ?? 0) || 0,
+          fiberSoluble: 0,
+          fiberInsoluble: 0,
+          potassium: 0,
+          calcium: 0,
+          phosphorus: 0,
+          iron: 0,
+          zinc: 0,
+          iodine: 0,
+          cholesterol: 0,
+          vitaminB1: 0,
+          vitaminB2: 0,
+          vitaminC: 0,
+          vitaminB6: 0,
+          vitaminB12: 0,
+          folicAcid: 0,
+          vitaminA: 0,
+          vitaminD: 0,
+          vitaminK: 0,
+          vitaminE: 0,
+          saturatedFat: 0,
+          monounsaturatedFat: 0,
+          polyunsaturatedFat: 0,
           ingredient: ingredients.slice(0, 3).join("、"),
           ingredients,
           recipeSteps,
@@ -509,7 +536,8 @@ async function regenerateMealV2BackgroundTask(args: {
       }
 
       const mainDish = dishDetails.find((x) => x.role === "main") ?? dishDetails[0];
-      const dishName = mainDish?.name ?? (ms as any).title ?? "献立";
+      const allDishNames = dishDetails.map((d: any) => String(d?.name ?? "").trim()).filter(Boolean).join("、");
+      const dishName = allDishNames || mainDish?.name || (ms as any).title || "献立";
 
       const allergyHits = allergyTokens.length > 0 ? detectAllergenHits(allergyTokens, allergyTexts) : [];
 
@@ -589,36 +617,36 @@ async function regenerateMealV2BackgroundTask(args: {
       },
 
       // 栄養（セット全体＝確定値）
-      calories_kcal: (ms as any).calories_kcal ?? null,
-      protein_g: (ms as any).protein_g ?? null,
-      fat_g: (ms as any).fat_g ?? null,
-      carbs_g: (ms as any).carbs_g ?? null,
-      sodium_g: (ms as any).sodium_g ?? null,
-      sugar_g: (ms as any).sugar_g ?? null,
-      fiber_g: (ms as any).fiber_g ?? null,
-      fiber_soluble_g: (ms as any).fiber_soluble_g ?? null,
-      fiber_insoluble_g: (ms as any).fiber_insoluble_g ?? null,
-      potassium_mg: (ms as any).potassium_mg ?? null,
-      calcium_mg: (ms as any).calcium_mg ?? null,
-      magnesium_mg: (ms as any).magnesium_mg ?? null,
-      phosphorus_mg: (ms as any).phosphorus_mg ?? null,
-      iron_mg: (ms as any).iron_mg ?? null,
-      zinc_mg: (ms as any).zinc_mg ?? null,
-      iodine_ug: (ms as any).iodine_ug ?? null,
-      cholesterol_mg: (ms as any).cholesterol_mg ?? null,
-      vitamin_b1_mg: (ms as any).vitamin_b1_mg ?? null,
-      vitamin_b2_mg: (ms as any).vitamin_b2_mg ?? null,
-      vitamin_c_mg: (ms as any).vitamin_c_mg ?? null,
-      vitamin_b6_mg: (ms as any).vitamin_b6_mg ?? null,
-      vitamin_b12_ug: (ms as any).vitamin_b12_ug ?? null,
-      folic_acid_ug: (ms as any).folic_acid_ug ?? null,
-      vitamin_a_ug: (ms as any).vitamin_a_ug ?? null,
-      vitamin_d_ug: (ms as any).vitamin_d_ug ?? null,
-      vitamin_k_ug: (ms as any).vitamin_k_ug ?? null,
-      vitamin_e_mg: (ms as any).vitamin_e_mg ?? null,
-      saturated_fat_g: (ms as any).saturated_fat_g ?? null,
-      monounsaturated_fat_g: (ms as any).monounsaturated_fat_g ?? null,
-      polyunsaturated_fat_g: (ms as any).polyunsaturated_fat_g ?? null,
+      calories_kcal: toNullableNumber((ms as any).calories_kcal),
+      protein_g: toNullableNumber((ms as any).protein_g),
+      fat_g: toNullableNumber((ms as any).fat_g),
+      carbs_g: toNullableNumber((ms as any).carbs_g),
+      sodium_g: toNullableNumber((ms as any).sodium_g),
+      sugar_g: toNullableNumber((ms as any).sugar_g),
+      fiber_g: toNullableNumber((ms as any).fiber_g),
+      fiber_soluble_g: toNullableNumber((ms as any).fiber_soluble_g),
+      fiber_insoluble_g: toNullableNumber((ms as any).fiber_insoluble_g),
+      potassium_mg: toNullableNumber((ms as any).potassium_mg),
+      calcium_mg: toNullableNumber((ms as any).calcium_mg),
+      magnesium_mg: toNullableNumber((ms as any).magnesium_mg),
+      phosphorus_mg: toNullableNumber((ms as any).phosphorus_mg),
+      iron_mg: toNullableNumber((ms as any).iron_mg),
+      zinc_mg: toNullableNumber((ms as any).zinc_mg),
+      iodine_ug: toNullableNumber((ms as any).iodine_ug),
+      cholesterol_mg: toNullableNumber((ms as any).cholesterol_mg),
+      vitamin_b1_mg: toNullableNumber((ms as any).vitamin_b1_mg),
+      vitamin_b2_mg: toNullableNumber((ms as any).vitamin_b2_mg),
+      vitamin_c_mg: toNullableNumber((ms as any).vitamin_c_mg),
+      vitamin_b6_mg: toNullableNumber((ms as any).vitamin_b6_mg),
+      vitamin_b12_ug: toNullableNumber((ms as any).vitamin_b12_ug),
+      folic_acid_ug: toNullableNumber((ms as any).folic_acid_ug),
+      vitamin_a_ug: toNullableNumber((ms as any).vitamin_a_ug),
+      vitamin_d_ug: toNullableNumber((ms as any).vitamin_d_ug),
+      vitamin_k_ug: toNullableNumber((ms as any).vitamin_k_ug),
+      vitamin_e_mg: toNullableNumber((ms as any).vitamin_e_mg),
+      saturated_fat_g: toNullableNumber((ms as any).saturated_fat_g),
+      monounsaturated_fat_g: toNullableNumber((ms as any).monounsaturated_fat_g),
+      polyunsaturated_fat_g: toNullableNumber((ms as any).polyunsaturated_fat_g),
     };
 
     const { error: updErr } = await supabase.from("planned_meals").update(mealData).eq("id", mealId);
@@ -654,6 +682,26 @@ async function regenerateMealV2BackgroundTask(args: {
 
     return { selection, datasetVersion, plannedMealId: mealId };
   } catch (error: any) {
+    console.error("❌ regenerateMealV2BackgroundTask failed:", error?.message ?? error);
+
+    // 失敗時: mealIdが指定されている場合はそのレコードのis_generatingをクリア
+    if (mealId) {
+      const { error: updateErr } = await supabase
+        .from("planned_meals")
+        .update({
+          is_generating: false,
+          // 既存の料理名は維持（dish_nameは上書きしない）
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", mealId);
+
+      if (updateErr) {
+        console.error("Failed to clear is_generating flag for mealId:", updateErr);
+      } else {
+        console.log("✅ Cleared is_generating flag for mealId:", mealId);
+      }
+    }
+
     if (requestId) {
       await supabase
         .from("weekly_menu_requests")
@@ -757,5 +805,3 @@ Deno.serve(async (req) => {
     });
   }
 });
-
-
