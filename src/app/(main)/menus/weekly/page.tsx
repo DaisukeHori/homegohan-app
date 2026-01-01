@@ -2123,7 +2123,7 @@ export default function WeeklyMenuPage() {
           </div>
         )}
 
-        {/* 変更ボタン群（過去の場合はAIボタンを非表示） */}
+        {/* 変更ボタン群 */}
         {(() => {
           // 基本の3食（朝・昼・夕）は最低1つ残す
           const isBaseMealType = BASE_MEAL_TYPES.includes(mealKey);
@@ -2132,16 +2132,14 @@ export default function WeeklyMenuPage() {
           
           return (
             <div className="flex gap-2 mt-3">
-              {!isPast && (
-                <button 
-                  onClick={() => openRegenerateMeal(meal)}
-                  className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
-                  style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
-                >
-                  <Sparkles size={13} color={colors.accent} />
-                  <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
-                </button>
-              )}
+              <button 
+                onClick={() => openRegenerateMeal(meal)}
+                className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+                style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
+              >
+                <Sparkles size={13} color={colors.accent} />
+                <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
+              </button>
               <button 
                 onClick={() => openManualEdit(meal)}
                 className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5"
