@@ -441,15 +441,21 @@ async function calculateNutritionFromIngredients(
 ): Promise<NutritionTotals> {
   const totals = emptyNutrition();
   
-  if (!ingredients || ingredients.length === 0) return totals;
+  if (!ingredients || ingredients.length === 0) {
+    console.log("[nutrition] No ingredients provided");
+    return totals;
+  }
 
   // 水系食材を除外した材料リスト
   const validIngredients = ingredients.filter(i => !isWaterishIngredient(i.name) && i.amount_g > 0);
+  console.log(`[nutrition] Valid ingredients: ${validIngredients.length}/${ingredients.length}`, validIngredients.map(i => `${i.name}(${i.amount_g}g)`).join(", "));
+  
   if (validIngredients.length === 0) return totals;
 
   // 正規化した食材名のリストを作成
   const normalizedNames = validIngredients.map(i => normalizeIngredientNameJs(i.name));
   const uniqueNorms = Array.from(new Set(normalizedNames)).filter(Boolean);
+  console.log(`[nutrition] Normalized names: ${uniqueNorms.join(", ")}`);
 
   // 完全一致検索
   const { data: exactRows, error: exactErr } = await supabase
@@ -458,8 +464,13 @@ async function calculateNutritionFromIngredients(
     .in("name_norm", uniqueNorms);
 
   if (exactErr) {
-    console.error("Failed to fetch ingredients:", exactErr.message);
+    console.error("[nutrition] Failed to fetch ingredients:", exactErr.message);
     return totals;
+  }
+  
+  console.log(`[nutrition] Exact match count: ${exactRows?.length ?? 0}`);
+  if (exactRows && exactRows.length > 0) {
+    console.log(`[nutrition] Exact matches: ${exactRows.map((r: any) => `${r.name}(${r.calories_kcal}kcal/100g)`).join(", ")}`);
   }
 
   // name_norm をキーにしたマップを作成
@@ -469,9 +480,11 @@ async function calculateNutritionFromIngredients(
   }
 
   // 未マッチの食材は類似検索を試みる
+  const matchResults: string[] = [];
   for (const ing of validIngredients) {
     const norm = normalizeIngredientNameJs(ing.name);
     let matched = ingredientMap.get(norm);
+    let matchMethod = matched ? "exact" : "none";
 
     // 完全一致がない場合、類似検索
     if (!matched) {
@@ -488,12 +501,20 @@ async function calculateNutritionFromIngredients(
             .select("id, name, name_norm, calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_eq_g, potassium_mg, calcium_mg, phosphorus_mg, iron_mg, zinc_mg, iodine_ug, cholesterol_mg, vitamin_b1_mg, vitamin_b2_mg, vitamin_b6_mg, vitamin_b12_ug, folic_acid_ug, vitamin_c_mg, vitamin_a_ug, vitamin_d_ug, vitamin_k_ug, vitamin_e_alpha_mg")
             .eq("id", best.id)
             .maybeSingle();
-          if (row) matched = row;
+          if (row) {
+            matched = row;
+            matchMethod = `similar(${best.similarity?.toFixed(2) ?? "?"})`;
+          }
         }
       }
     }
 
-    if (!matched) continue;
+    if (!matched) {
+      matchResults.push(`${ing.name}(${ing.amount_g}g) → UNMATCHED`);
+      continue;
+    }
+    
+    matchResults.push(`${ing.name}(${ing.amount_g}g) → ${matched.name}[${matchMethod}](${matched.calories_kcal}kcal/100g)`);
 
     // 栄養値を加算（100gあたりの値を amount_g に応じてスケール）
     const factor = ing.amount_g / 100.0;
@@ -527,6 +548,10 @@ async function calculateNutritionFromIngredients(
     add("vitamin_k_ug", matched.vitamin_k_ug);
     add("vitamin_e_mg", matched.vitamin_e_alpha_mg);
   }
+
+  // ログ出力
+  console.log(`[nutrition] Match results:\n  ${matchResults.join("\n  ")}`);
+  console.log(`[nutrition] Total: ${Math.round(totals.calories_kcal)}kcal, P:${totals.protein_g.toFixed(1)}g, F:${totals.fat_g.toFixed(1)}g, C:${totals.carbs_g.toFixed(1)}g`);
 
   return totals;
 }
