@@ -62,42 +62,7 @@ export async function GET(request: Request) {
           console.error('Failed to mark stale weekly request as failed:', staleError);
         }
         
-        // 関連する planned_meals の is_generating もクリア
-        // 週間献立の場合は start_date から meal_plan を特定してクリア
-        if (pendingRequest.start_date) {
-          const { data: mealPlan } = await supabase
-            .from('meal_plans')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('start_date', pendingRequest.start_date)
-            .maybeSingle();
-          
-          if (mealPlan?.id) {
-            const { data: days } = await supabase
-              .from('meal_plan_days')
-              .select('id')
-              .eq('meal_plan_id', mealPlan.id);
-            
-            if (days && days.length > 0) {
-              const dayIds = days.map(d => d.id);
-              const { error: mealUpdateError } = await supabase
-                .from('planned_meals')
-                .update({
-                  is_generating: false,
-                  dish_name: '生成に失敗しました',
-                  updated_at: new Date().toISOString(),
-                })
-                .in('meal_plan_day_id', dayIds)
-                .eq('is_generating', true);
-              
-              if (mealUpdateError) {
-                console.error('Failed to clear is_generating for stale weekly meals:', mealUpdateError);
-              } else {
-                console.log('✅ Cleared is_generating for stale weekly request');
-              }
-            }
-          }
-        }
+        // プレースホルダーは使用しないので、is_generating のクリアは不要
         
         return NextResponse.json({ hasPending: false });
       }

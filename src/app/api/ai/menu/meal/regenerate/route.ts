@@ -21,22 +21,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'mealId is required' }, { status: 400 });
     }
 
-    // 3. 既存の食事レコードの is_generating を true に更新（生成中表示のため）
-    const { error: updateMealError } = await supabase
-      .from('planned_meals')
-      .update({
-        is_generating: true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', mealId);
+    console.log(`📝 Regenerating meal: ${mealId}`);
 
-    if (updateMealError) {
-      console.error('Failed to update is_generating flag:', updateMealError);
-    }
-
-    console.log(`📝 Set is_generating=true for meal: ${mealId}`);
-
-    // 4. リクエストをDBに保存（ステータス追跡用）
+    // 3. リクエストをDBに保存（ステータス追跡用）
+    // is_generating フラグは使用しない（ポーリングで状態を監視）
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({

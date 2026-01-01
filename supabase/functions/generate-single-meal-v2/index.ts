@@ -809,7 +809,6 @@ async function generateSingleMealV2BackgroundTask(args: {
         ingredients: aggregatedIngredients.length > 0 ? aggregatedIngredients : null,
         recipe_steps: null,
         is_simple: dishDetails.length <= 1,
-        is_generating: false,
         updated_at: new Date().toISOString(),
 
         // v2 traceability
@@ -910,63 +909,8 @@ async function generateSingleMealV2BackgroundTask(args: {
   } catch (error: any) {
     console.error("❌ generateSingleMealV2BackgroundTask failed:", error?.message ?? error);
 
-    // 失敗時: targetMealIdが指定されている場合はそのレコードを更新
-    // そうでなければ、該当日の is_generating=true のレコードを更新
-    if (args.targetMealId) {
-      const { error: updateErr } = await supabase
-        .from("planned_meals")
-        .update({
-          is_generating: false,
-          dish_name: "生成に失敗しました",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", args.targetMealId);
-
-      if (updateErr) {
-        console.error("Failed to clear is_generating flag for targetMealId:", updateErr);
-      } else {
-        console.log("✅ Cleared is_generating flag for targetMealId:", args.targetMealId);
-      }
-    } else {
-      // meal_plan_day_id を取得してis_generatingをクリア
-      const { data: mealPlan } = await supabase
-        .from("meal_plans")
-        .select("id")
-        .eq("user_id", userId)
-        .lte("start_date", dayDate)
-        .gte("end_date", dayDate)
-        .order("is_active", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (mealPlan?.id) {
-        const { data: day } = await supabase
-          .from("meal_plan_days")
-          .select("id")
-          .eq("meal_plan_id", mealPlan.id)
-          .eq("day_date", dayDate)
-          .maybeSingle();
-
-        if (day?.id) {
-          const { error: updateErr } = await supabase
-            .from("planned_meals")
-            .update({
-              is_generating: false,
-              dish_name: "生成に失敗しました",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("meal_plan_day_id", day.id)
-            .eq("is_generating", true);
-
-          if (updateErr) {
-            console.error("Failed to clear is_generating flags:", updateErr);
-          } else {
-            console.log("✅ Cleared is_generating flags for failed request");
-          }
-        }
-      }
-    }
-
+    // 失敗時: weekly_menu_requests を failed に更新
+    // プレースホルダーは作成していないので、is_generating のクリアは不要
     if (requestId) {
       await supabase
         .from("weekly_menu_requests")

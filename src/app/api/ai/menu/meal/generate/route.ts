@@ -134,28 +134,8 @@ export async function POST(request: Request) {
       mealPlanDay = newDay;
     }
 
-    // 4. プレースホルダーレコードを作成（is_generating=true）
-    const { data: newMeal, error: mealError } = await supabase
-      .from('planned_meals')
-      .insert({
-        meal_plan_day_id: mealPlanDay.id,
-        meal_type: mealType,
-        dish_name: '生成中...',
-        is_generating: true,
-        mode: 'cook',
-        display_order: DISPLAY_ORDER_MAP[mealType] ?? 0,
-      })
-      .select('id')
-      .single();
-
-    if (mealError) {
-      console.error(`Failed to create placeholder for ${dayDate} ${mealType}:`, mealError);
-      throw new Error(`Failed to create placeholder: ${mealError.message}`);
-    }
-
-    console.log(`📝 Created placeholder meal: ${newMeal.id} for ${dayDate} ${mealType}`);
-
-    // 5. リクエストをDBに保存（ステータス追跡用）
+    // 4. リクエストをDBに保存（ステータス追跡用）
+    // プレースホルダーは作成しない（Edge Functionが直接INSERTする）
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({
@@ -163,7 +143,6 @@ export async function POST(request: Request) {
         start_date: dayDate,
         target_date: dayDate,
         target_meal_type: mealType,
-        target_meal_id: newMeal.id,
         mode: 'single',
         status: 'processing',
         prompt: note || '',
@@ -176,11 +155,13 @@ export async function POST(request: Request) {
       console.error('Failed to create request record:', insertError);
     }
 
+    console.log(`📝 Request created for ${dayDate} ${mealType}, requestId: ${requestData?.id}`);
+
     // NOTE:
     // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
     // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
     //
-    // 6. Edge Function を非同期で呼び出し（完了を待たない）
+    // 5. Edge Function を非同期で呼び出し（完了を待たない）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
@@ -200,7 +181,7 @@ export async function POST(request: Request) {
         preferences: preferences || {},
         note: note || '',
         requestId: requestData?.id,
-        targetMealId: newMeal.id, // プレースホルダーのIDを渡す
+        // targetMealId は渡さない（Edge FunctionがINSERTする）
       }),
     }).catch(err => {
       console.error('❌ Edge Function call error:', err.message);
@@ -211,7 +192,6 @@ export async function POST(request: Request) {
       message: 'Meal generation started in background',
       status: 'processing',
       requestId: requestData?.id,
-      generatingMealId: newMeal.id, // 生成中のmeal IDを返す
     });
 
   } catch (error: any) {

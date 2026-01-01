@@ -170,71 +170,31 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .neq('id', mealPlan.id);
 
-    // 3. 7日×3食のプレースホルダーレコードを作成（is_generating=true）
+    // 3. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = getTodayStr();
-    const mealTypes = ['breakfast', 'lunch', 'dinner'];
-    const generatingMealIds: string[] = [];
-    const displayOrderMap: Record<string, number> = { breakfast: 10, lunch: 20, dinner: 30, snack: 40, midnight_snack: 50 };
 
     for (let i = 0; i < 7; i++) {
       const dateStr = addDays(startDate, i);
-      // 今日以降の日付のみ生成対象
+      // 今日以降の日付のみ対象
       if (dateStr >= todayStr) {
-        // meal_plan_dayを作成または取得
-        let mealPlanDayId: string;
         const { data: existingDay } = await supabase
           .from('meal_plan_days')
           .select('id')
           .eq('meal_plan_id', mealPlan.id)
           .eq('day_date', dateStr)
-          .single();
+          .maybeSingle();
 
         if (existingDay) {
-          mealPlanDayId = existingDay.id;
           // 既存の食事を削除
           await supabase
             .from('planned_meals')
             .delete()
-            .eq('meal_plan_day_id', mealPlanDayId);
-        } else {
-          const { data: newDay, error: dayError } = await supabase
-            .from('meal_plan_days')
-            .insert({
-              meal_plan_id: mealPlan.id,
-              day_date: dateStr,
-            })
-            .select('id')
-            .single();
-          
-          if (dayError) throw new Error(`Failed to create meal_plan_day: ${dayError.message}`);
-          mealPlanDayId = newDay.id;
-        }
-
-        // 各食事タイプのプレースホルダーを作成
-        for (const mealType of mealTypes) {
-          const { data: newMeal, error: mealError } = await supabase
-            .from('planned_meals')
-            .insert({
-              meal_plan_day_id: mealPlanDayId,
-              meal_type: mealType,
-              dish_name: '生成中...',
-              is_generating: true,
-              mode: 'cook',
-              display_order: displayOrderMap[mealType] ?? 0,
-            })
-            .select('id')
-            .single();
-          
-          if (mealError) {
-            console.error(`Failed to create placeholder for ${dateStr} ${mealType}:`, mealError);
-          } else if (newMeal) {
-            generatingMealIds.push(newMeal.id);
-          }
+            .eq('meal_plan_day_id', existingDay.id);
         }
       }
     }
     
-    console.log(`📝 Created ${generatingMealIds.length} placeholder meals`);
+    console.log(`📝 Cleared existing meals for week starting ${startDate}`);
 
     // 4. リクエストをDBに保存（ステータス追跡用）
     const { data: requestData, error: insertError } = await supabase
@@ -282,18 +242,16 @@ export async function POST(request: Request) {
         constraints, // 将来の呼び出し元互換のため残す
         requestId: requestData.id,
         mealPlanId: mealPlan.id,
-        generatingMealIds, // プレースホルダーのIDを渡す
       }),
     }).catch(err => {
       console.error('❌ Edge Function call error:', err.message);
     });
 
-    // プレースホルダーのIDを即座に返す
+    // 生成開始を即座に返す（プレースホルダーは作成しない、ポーリングで状態を監視）
     return NextResponse.json({ 
       status: 'processing',
       message: 'Generation started',
       requestId: requestData.id,
-      generatingMealIds, // 生成中のmeal IDを返す
     });
 
   } catch (error: any) {

@@ -78,27 +78,7 @@ export async function GET(request: Request) {
           console.error('Failed to mark stale meal requests as failed:', staleError);
         }
         
-        // 関連する planned_meals の is_generating もクリア
-        const staleMealIds = pendingRequests
-          .filter(r => staleIds.includes(r.id) && r.target_meal_id)
-          .map(r => r.target_meal_id);
-        
-        if (staleMealIds.length > 0) {
-          const { error: mealUpdateError } = await supabase
-            .from('planned_meals')
-            .update({
-              is_generating: false,
-              dish_name: '生成に失敗しました',
-              updated_at: new Date().toISOString(),
-            })
-            .in('id', staleMealIds);
-          
-          if (mealUpdateError) {
-            console.error('Failed to clear is_generating for stale meals:', mealUpdateError);
-          } else {
-            console.log('✅ Cleared is_generating for stale meal requests:', staleMealIds.length);
-          }
-        }
+        // プレースホルダーは使用しないので、is_generating のクリアは不要
       }
 
       if (active.length === 0) {

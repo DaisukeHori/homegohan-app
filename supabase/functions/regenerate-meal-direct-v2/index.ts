@@ -610,7 +610,6 @@ async function regenerateMealV2BackgroundTask(args: {
       ingredients: aggregatedIngredients.length > 0 ? aggregatedIngredients : null,
       recipe_steps: null,
       is_simple: dishDetails.length <= 1,
-      is_generating: false,
       updated_at: new Date().toISOString(),
 
       // v2 traceability
@@ -706,24 +705,8 @@ async function regenerateMealV2BackgroundTask(args: {
   } catch (error: any) {
     console.error("❌ regenerateMealV2BackgroundTask failed:", error?.message ?? error);
 
-    // 失敗時: mealIdが指定されている場合はそのレコードのis_generatingをクリア
-    if (mealId) {
-      const { error: updateErr } = await supabase
-        .from("planned_meals")
-        .update({
-          is_generating: false,
-          // 既存の料理名は維持（dish_nameは上書きしない）
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", mealId);
-
-      if (updateErr) {
-        console.error("Failed to clear is_generating flag for mealId:", updateErr);
-      } else {
-        console.log("✅ Cleared is_generating flag for mealId:", mealId);
-      }
-    }
-
+    // 失敗時: weekly_menu_requests を failed に更新
+    // is_generating フラグは使用しないので、クリアは不要
     if (requestId) {
       await supabase
         .from("weekly_menu_requests")

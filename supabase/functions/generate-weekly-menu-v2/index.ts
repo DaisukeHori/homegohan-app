@@ -884,7 +884,6 @@ async function generateMenuV2BackgroundTask(args: {
           recipe_steps: null,
           is_simple: dishDetails.length <= 1,
           is_completed: false,
-          is_generating: false,
           updated_at: new Date().toISOString(),
 
           // v2 traceability
@@ -989,43 +988,8 @@ async function generateMenuV2BackgroundTask(args: {
   } catch (error: any) {
     console.error("❌ generateMenuV2BackgroundTask failed:", error?.message ?? error);
 
-    // 失敗時: この週のプレースホルダー（is_generating=true）を全て更新
-    // まず meal_plan を取得
-    const { data: mealPlan } = await supabase
-      .from("meal_plans")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("start_date", startDate)
-      .maybeSingle();
-
-    if (mealPlan?.id) {
-      // meal_plan_days のIDを取得
-      const { data: days } = await supabase
-        .from("meal_plan_days")
-        .select("id")
-        .eq("meal_plan_id", mealPlan.id);
-
-      if (days && days.length > 0) {
-        const dayIds = days.map((d) => d.id);
-        // is_generating=true のプレースホルダーを失敗状態に更新
-        const { error: updateErr } = await supabase
-          .from("planned_meals")
-          .update({
-            is_generating: false,
-            dish_name: "生成に失敗しました",
-            updated_at: new Date().toISOString(),
-          })
-          .in("meal_plan_day_id", dayIds)
-          .eq("is_generating", true);
-
-        if (updateErr) {
-          console.error("Failed to clear is_generating flags:", updateErr);
-        } else {
-          console.log("✅ Cleared is_generating flags for failed request");
-        }
-      }
-    }
-
+    // 失敗時: weekly_menu_requests を failed に更新
+    // プレースホルダーは作成していないので、is_generating のクリアは不要
     if (requestId) {
       await supabase
         .from("weekly_menu_requests")
