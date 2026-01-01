@@ -46,9 +46,82 @@ const GeneratedMealSchema = z.object({
 type GeneratedMeal = z.infer<typeof GeneratedMealSchema>;
 type GeneratedDish = z.infer<typeof GeneratedDishSchema>;
 
+// 栄養計算用の型
+type NutritionTotals = {
+  calories_kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carbs_g: number;
+  fiber_g: number;
+  sodium_g: number;
+  potassium_mg: number;
+  calcium_mg: number;
+  phosphorus_mg: number;
+  iron_mg: number;
+  zinc_mg: number;
+  iodine_ug: number;
+  cholesterol_mg: number;
+  vitamin_b1_mg: number;
+  vitamin_b2_mg: number;
+  vitamin_b6_mg: number;
+  vitamin_b12_ug: number;
+  folic_acid_ug: number;
+  vitamin_c_mg: number;
+  vitamin_a_ug: number;
+  vitamin_d_ug: number;
+  vitamin_k_ug: number;
+  vitamin_e_mg: number;
+};
+
+function emptyNutrition(): NutritionTotals {
+  return {
+    calories_kcal: 0,
+    protein_g: 0,
+    fat_g: 0,
+    carbs_g: 0,
+    fiber_g: 0,
+    sodium_g: 0,
+    potassium_mg: 0,
+    calcium_mg: 0,
+    phosphorus_mg: 0,
+    iron_mg: 0,
+    zinc_mg: 0,
+    iodine_ug: 0,
+    cholesterol_mg: 0,
+    vitamin_b1_mg: 0,
+    vitamin_b2_mg: 0,
+    vitamin_b6_mg: 0,
+    vitamin_b12_ug: 0,
+    folic_acid_ug: 0,
+    vitamin_c_mg: 0,
+    vitamin_a_ug: 0,
+    vitamin_d_ug: 0,
+    vitamin_k_ug: 0,
+    vitamin_e_mg: 0,
+  };
+}
+
 // =========================================================
 // Helpers
 // =========================================================
+
+// 食材名の正規化（dataset_ingredients 側の正規化に合わせる）
+function normalizeIngredientNameJs(name: string): string {
+  return String(name ?? "")
+    .replace(/[\s　]+/g, "")
+    .replace(/[（）()]/g, "")
+    .replace(/[・･]/g, "")
+    .toLowerCase();
+}
+
+// 水系食材は栄養計算をスキップ
+function isWaterishIngredient(raw: string): boolean {
+  const n = normalizeIngredientNameJs(raw);
+  if (!n) return false;
+  if (n === "水" || n === "お湯" || n === "湯" || n === "熱湯") return true;
+  if (n.startsWith("水")) return true;
+  return false;
+}
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -359,6 +432,106 @@ async function getActiveDatasetVersion(supabase: any): Promise<string> {
 }
 
 // =========================================================
+// 栄養計算: dataset_ingredients からマッチング
+// =========================================================
+
+async function calculateNutritionFromIngredients(
+  supabase: any,
+  ingredients: Array<{ name: string; amount_g: number; note?: string }>
+): Promise<NutritionTotals> {
+  const totals = emptyNutrition();
+  
+  if (!ingredients || ingredients.length === 0) return totals;
+
+  // 水系食材を除外した材料リスト
+  const validIngredients = ingredients.filter(i => !isWaterishIngredient(i.name) && i.amount_g > 0);
+  if (validIngredients.length === 0) return totals;
+
+  // 正規化した食材名のリストを作成
+  const normalizedNames = validIngredients.map(i => normalizeIngredientNameJs(i.name));
+  const uniqueNorms = Array.from(new Set(normalizedNames)).filter(Boolean);
+
+  // 完全一致検索
+  const { data: exactRows, error: exactErr } = await supabase
+    .from("dataset_ingredients")
+    .select("id, name, name_norm, calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_eq_g, potassium_mg, calcium_mg, phosphorus_mg, iron_mg, zinc_mg, iodine_ug, cholesterol_mg, vitamin_b1_mg, vitamin_b2_mg, vitamin_b6_mg, vitamin_b12_ug, folic_acid_ug, vitamin_c_mg, vitamin_a_ug, vitamin_d_ug, vitamin_k_ug, vitamin_e_alpha_mg")
+    .in("name_norm", uniqueNorms);
+
+  if (exactErr) {
+    console.error("Failed to fetch ingredients:", exactErr.message);
+    return totals;
+  }
+
+  // name_norm をキーにしたマップを作成
+  const ingredientMap = new Map<string, any>();
+  for (const row of exactRows ?? []) {
+    if (row?.name_norm) ingredientMap.set(String(row.name_norm), row);
+  }
+
+  // 未マッチの食材は類似検索を試みる
+  for (const ing of validIngredients) {
+    const norm = normalizeIngredientNameJs(ing.name);
+    let matched = ingredientMap.get(norm);
+
+    // 完全一致がない場合、類似検索
+    if (!matched) {
+      const { data: sims, error: simErr } = await supabase.rpc("search_similar_dataset_ingredients", {
+        query_name: ing.name,
+        similarity_threshold: 0.3,
+        result_limit: 1,
+      });
+      if (!simErr && Array.isArray(sims) && sims.length > 0) {
+        const best = sims[0];
+        if (best?.id) {
+          const { data: row } = await supabase
+            .from("dataset_ingredients")
+            .select("id, name, name_norm, calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_eq_g, potassium_mg, calcium_mg, phosphorus_mg, iron_mg, zinc_mg, iodine_ug, cholesterol_mg, vitamin_b1_mg, vitamin_b2_mg, vitamin_b6_mg, vitamin_b12_ug, folic_acid_ug, vitamin_c_mg, vitamin_a_ug, vitamin_d_ug, vitamin_k_ug, vitamin_e_alpha_mg")
+            .eq("id", best.id)
+            .maybeSingle();
+          if (row) matched = row;
+        }
+      }
+    }
+
+    if (!matched) continue;
+
+    // 栄養値を加算（100gあたりの値を amount_g に応じてスケール）
+    const factor = ing.amount_g / 100.0;
+    const add = (key: keyof NutritionTotals, v: number | null | undefined) => {
+      if (v != null && Number.isFinite(v)) {
+        totals[key] += v * factor;
+      }
+    };
+
+    add("calories_kcal", matched.calories_kcal);
+    add("protein_g", matched.protein_g);
+    add("fat_g", matched.fat_g);
+    add("carbs_g", matched.carbs_g);
+    add("fiber_g", matched.fiber_g);
+    add("sodium_g", matched.salt_eq_g);
+    add("potassium_mg", matched.potassium_mg);
+    add("calcium_mg", matched.calcium_mg);
+    add("phosphorus_mg", matched.phosphorus_mg);
+    add("iron_mg", matched.iron_mg);
+    add("zinc_mg", matched.zinc_mg);
+    add("iodine_ug", matched.iodine_ug);
+    add("cholesterol_mg", matched.cholesterol_mg);
+    add("vitamin_b1_mg", matched.vitamin_b1_mg);
+    add("vitamin_b2_mg", matched.vitamin_b2_mg);
+    add("vitamin_b6_mg", matched.vitamin_b6_mg);
+    add("vitamin_b12_ug", matched.vitamin_b12_ug);
+    add("folic_acid_ug", matched.folic_acid_ug);
+    add("vitamin_c_mg", matched.vitamin_c_mg);
+    add("vitamin_a_ug", matched.vitamin_a_ug);
+    add("vitamin_d_ug", matched.vitamin_d_ug);
+    add("vitamin_k_ug", matched.vitamin_k_ug);
+    add("vitamin_e_mg", matched.vitamin_e_alpha_mg);
+  }
+
+  return totals;
+}
+
+// =========================================================
 // LLM: 料理を「創造」する（derived方式）
 // =========================================================
 
@@ -656,6 +829,9 @@ async function regenerateMealV2BackgroundTask(args: {
     const dishDetails: any[] = [];
     const aggregatedIngredients: string[] = [];
     
+    // 全体の栄養を合算するための変数
+    const mealNutrition = emptyNutrition();
+    
     for (const dish of generatedMeal.dishes) {
       // 材料をマークダウンテーブル形式に
       let ingredientsMd = "| 材料 | 分量 |\n|------|------|\n";
@@ -667,39 +843,43 @@ async function regenerateMealV2BackgroundTask(args: {
       // 作り方をマークダウン番号リスト形式に
       const recipeStepsMd = dish.instructions.map((step, i) => `${i + 1}. ${step}`).join("\n\n");
       
-      // TODO: dataset_ingredients で栄養計算（Phase 2）
-      // 現在は暫定値
-      const estimatedCal = dish.ingredients.reduce((sum, ing) => sum + ing.amount_g * 1.5, 0); // 暫定
+      // dataset_ingredients から栄養計算
+      const nutrition = await calculateNutritionFromIngredients(supabase, dish.ingredients);
+      
+      // 全体の栄養に加算
+      for (const key of Object.keys(mealNutrition) as (keyof NutritionTotals)[]) {
+        mealNutrition[key] += nutrition[key];
+      }
       
       dishDetails.push({
         name: dish.name,
         role: dish.role,
-        cal: Math.round(estimatedCal),
-        protein: 0,
-        fat: 0,
-        carbs: 0,
-        sodium: 0,
-        sugar: 0,
-        fiber: 0,
+        cal: Math.round(nutrition.calories_kcal),
+        protein: Math.round(nutrition.protein_g * 10) / 10,
+        fat: Math.round(nutrition.fat_g * 10) / 10,
+        carbs: Math.round(nutrition.carbs_g * 10) / 10,
+        sodium: Math.round(nutrition.sodium_g * 10) / 10,
+        sugar: 0, // dataset_ingredients に糖質がないため
+        fiber: Math.round(nutrition.fiber_g * 10) / 10,
         fiberSoluble: 0,
         fiberInsoluble: 0,
-        potassium: 0,
-        calcium: 0,
-        phosphorus: 0,
-        iron: 0,
-        zinc: 0,
-        iodine: 0,
-        cholesterol: 0,
-        vitaminB1: 0,
-        vitaminB2: 0,
-        vitaminC: 0,
-        vitaminB6: 0,
-        vitaminB12: 0,
-        folicAcid: 0,
-        vitaminA: 0,
-        vitaminD: 0,
-        vitaminK: 0,
-        vitaminE: 0,
+        potassium: Math.round(nutrition.potassium_mg),
+        calcium: Math.round(nutrition.calcium_mg),
+        phosphorus: Math.round(nutrition.phosphorus_mg),
+        iron: Math.round(nutrition.iron_mg * 10) / 10,
+        zinc: Math.round(nutrition.zinc_mg * 10) / 10,
+        iodine: Math.round(nutrition.iodine_ug),
+        cholesterol: Math.round(nutrition.cholesterol_mg),
+        vitaminB1: Math.round(nutrition.vitamin_b1_mg * 100) / 100,
+        vitaminB2: Math.round(nutrition.vitamin_b2_mg * 100) / 100,
+        vitaminC: Math.round(nutrition.vitamin_c_mg),
+        vitaminB6: Math.round(nutrition.vitamin_b6_mg * 100) / 100,
+        vitaminB12: Math.round(nutrition.vitamin_b12_ug * 10) / 10,
+        folicAcid: Math.round(nutrition.folic_acid_ug),
+        vitaminA: Math.round(nutrition.vitamin_a_ug),
+        vitaminD: Math.round(nutrition.vitamin_d_ug * 10) / 10,
+        vitaminK: Math.round(nutrition.vitamin_k_ug),
+        vitaminE: Math.round(nutrition.vitamin_e_mg * 10) / 10,
         saturatedFat: 0,
         monounsaturatedFat: 0,
         polyunsaturatedFat: 0,
@@ -713,6 +893,8 @@ async function regenerateMealV2BackgroundTask(args: {
         is_generated_name: true,
       });
     }
+    
+    phaseStart = logPhase("5.5_nutrition_calc", phaseStart, { totalKcal: Math.round(mealNutrition.calories_kcal) });
     
     const mainDish = dishDetails.find((d) => d.role === "main") ?? dishDetails[0];
     const allDishNames = dishDetails.map((d) => d.name).join("、");
@@ -749,35 +931,34 @@ async function regenerateMealV2BackgroundTask(args: {
         reference_menu_count: candidates.length,
       },
 
-      // 栄養（TODO: Phase 2で dataset_ingredients から計算）
-      // 現在は暫定値
-      calories_kcal: dishDetails.reduce((sum, d) => sum + (d.cal || 0), 0),
-      protein_g: null,
-      fat_g: null,
-      carbs_g: null,
-      sodium_g: null,
-      sugar_g: null,
-      fiber_g: null,
+      // 栄養（dataset_ingredients から計算）
+      calories_kcal: Math.round(mealNutrition.calories_kcal),
+      protein_g: Math.round(mealNutrition.protein_g * 10) / 10,
+      fat_g: Math.round(mealNutrition.fat_g * 10) / 10,
+      carbs_g: Math.round(mealNutrition.carbs_g * 10) / 10,
+      sodium_g: Math.round(mealNutrition.sodium_g * 10) / 10,
+      sugar_g: null, // dataset_ingredients に糖質がないため
+      fiber_g: Math.round(mealNutrition.fiber_g * 10) / 10,
       fiber_soluble_g: null,
       fiber_insoluble_g: null,
-      potassium_mg: null,
-      calcium_mg: null,
+      potassium_mg: Math.round(mealNutrition.potassium_mg),
+      calcium_mg: Math.round(mealNutrition.calcium_mg),
       magnesium_mg: null,
-      phosphorus_mg: null,
-      iron_mg: null,
-      zinc_mg: null,
-      iodine_ug: null,
-      cholesterol_mg: null,
-      vitamin_b1_mg: null,
-      vitamin_b2_mg: null,
-      vitamin_c_mg: null,
-      vitamin_b6_mg: null,
-      vitamin_b12_ug: null,
-      folic_acid_ug: null,
-      vitamin_a_ug: null,
-      vitamin_d_ug: null,
-      vitamin_k_ug: null,
-      vitamin_e_mg: null,
+      phosphorus_mg: Math.round(mealNutrition.phosphorus_mg),
+      iron_mg: Math.round(mealNutrition.iron_mg * 10) / 10,
+      zinc_mg: Math.round(mealNutrition.zinc_mg * 10) / 10,
+      iodine_ug: Math.round(mealNutrition.iodine_ug),
+      cholesterol_mg: Math.round(mealNutrition.cholesterol_mg),
+      vitamin_b1_mg: Math.round(mealNutrition.vitamin_b1_mg * 100) / 100,
+      vitamin_b2_mg: Math.round(mealNutrition.vitamin_b2_mg * 100) / 100,
+      vitamin_c_mg: Math.round(mealNutrition.vitamin_c_mg),
+      vitamin_b6_mg: Math.round(mealNutrition.vitamin_b6_mg * 100) / 100,
+      vitamin_b12_ug: Math.round(mealNutrition.vitamin_b12_ug * 10) / 10,
+      folic_acid_ug: Math.round(mealNutrition.folic_acid_ug),
+      vitamin_a_ug: Math.round(mealNutrition.vitamin_a_ug),
+      vitamin_d_ug: Math.round(mealNutrition.vitamin_d_ug * 10) / 10,
+      vitamin_k_ug: Math.round(mealNutrition.vitamin_k_ug),
+      vitamin_e_mg: Math.round(mealNutrition.vitamin_e_mg * 10) / 10,
       saturated_fat_g: null,
       monounsaturated_fat_g: null,
       polyunsaturated_fat_g: null,
