@@ -329,19 +329,35 @@ export default function WeeklyMenuPage() {
       }
       
       // 2. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
+      // ただし、requestIdがある場合はまずステータスを確認してから復元する
       const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
       if (storedWeekly) {
         try {
           const { weekStartDate, timestamp, requestId } = JSON.parse(storedWeekly);
           const elapsed = Date.now() - timestamp;
-          // 5分以内なら生成中とみなしてポーリング再開
+          // 5分以内かつ同じ週の場合のみ
           if (elapsed < 5 * 60 * 1000 && weekStartDate === targetDate) {
-            console.log('📦 週間献立をlocalStorageから復元:', requestId);
-            setIsGenerating(true);
             if (requestId) {
-              startPollingForCompletion(targetDate, requestId);
+              // ステータスAPIで確認してから復元
+              const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+              if (statusRes.ok) {
+                const { status } = await statusRes.json();
+                if (status === 'pending' || status === 'processing') {
+                  console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
+                  setIsGenerating(true);
+                  startPollingForCompletion(targetDate, requestId);
+                  return;
+                } else {
+                  // completed または failed の場合はlocalStorageをクリア
+                  console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
+                  localStorage.removeItem('weeklyMenuGenerating');
+                }
+              } else {
+                localStorage.removeItem('weeklyMenuGenerating');
+              }
+            } else {
+              localStorage.removeItem('weeklyMenuGenerating');
             }
-            return;
           } else {
             localStorage.removeItem('weeklyMenuGenerating');
           }
@@ -355,15 +371,30 @@ export default function WeeklyMenuPage() {
         try {
           const { dayIndex, mealType, dayDate, initialCount, timestamp, requestId } = JSON.parse(storedSingle);
           const elapsed = Date.now() - timestamp;
-          // 2分以内なら生成中とみなしてポーリング再開
+          // 2分以内なら確認
           if (elapsed < 2 * 60 * 1000) {
-            setGeneratingMeal({ dayIndex, mealType });
-            setSelectedDayIndex(dayIndex);
-            
             if (requestId) {
-              startSingleMealPolling(requestId, targetDate, dayDate, mealType);
+              // ステータスAPIで確認してから復元
+              const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+              if (statusRes.ok) {
+                const { status } = await statusRes.json();
+                if (status === 'pending' || status === 'processing') {
+                  console.log('📦 単一食事をlocalStorageから復元:', requestId, 'status:', status);
+                  setGeneratingMeal({ dayIndex, mealType });
+                  setSelectedDayIndex(dayIndex);
+                  startSingleMealPolling(requestId, targetDate, dayDate, mealType);
+                } else {
+                  // completed または failed の場合はlocalStorageをクリア
+                  console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
+                  localStorage.removeItem('singleMealGenerating');
+                }
+              } else {
+                localStorage.removeItem('singleMealGenerating');
+              }
             } else {
-              // requestIdがない場合は旧方式でポーリング
+              // requestIdがない場合は旧方式でポーリング（古いコードの互換性）
+              setGeneratingMeal({ dayIndex, mealType });
+              setSelectedDayIndex(dayIndex);
               startLegacySingleMealPolling(dayIndex, mealType, dayDate, initialCount);
             }
           } else {
