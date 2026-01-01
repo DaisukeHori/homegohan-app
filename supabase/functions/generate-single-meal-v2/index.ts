@@ -571,7 +571,8 @@ async function generateSingleMealV2BackgroundTask(args: {
 
     for (const mt of requestedMealTypes) {
       const ja = mt === "breakfast" ? "朝食" : mt === "lunch" ? "昼食" : mt === "dinner" ? "夕食" : mt === "snack" ? "間食" : "夜食";
-      const raw = await searchMenuCandidates(supabase, `${ja}\n${baseQuery}`, mt === "dinner" ? 1200 : mt === "lunch" ? 800 : 600);
+      // パフォーマンス改善: 候補数を削減（single mealなので少なくてOK）
+      const raw = await searchMenuCandidates(supabase, `${ja}\n${baseQuery}`, mt === "dinner" ? 300 : mt === "lunch" ? 200 : 150);
       let candidates = pickCandidatesForMealType(mt, raw, { min: 10, max: 80 });
       if (allergyTokens.length > 0) {
         const filtered = candidates.filter(candidateSeemsAllergySafe);

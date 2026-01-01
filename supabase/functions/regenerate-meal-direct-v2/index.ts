@@ -425,7 +425,8 @@ async function regenerateMealV2BackgroundTask(args: {
     // candidates
     const ja = mealType === "breakfast" ? "朝食" : mealType === "lunch" ? "昼食" : mealType === "dinner" ? "夕食" : mealType === "snack" ? "間食" : "夜食";
     const baseQuery = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
-    const raw = await searchMenuCandidates(supabase, `${ja}\n${baseQuery}`, mealType === "dinner" ? 1200 : mealType === "lunch" ? 800 : 600);
+    // パフォーマンス改善: 候補数を削減（regenerateは1食分なので少なくてOK）
+    const raw = await searchMenuCandidates(supabase, `${ja}\n${baseQuery}`, mealType === "dinner" ? 300 : mealType === "lunch" ? 200 : 150);
     let candidates = pickCandidatesForMealType(mealType, raw, { min: 10, max: 80 });
 
     // exclude current id
