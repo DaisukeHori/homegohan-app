@@ -18,12 +18,33 @@ const corsHeaders = {
 const ALLOWED_MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack", "midnight_snack"] as const;
 type MealType = (typeof ALLOWED_MEAL_TYPES)[number];
 
+// 旧: ID選択用（後方互換用に残す）
 const RegenerateV2SelectionSchema = z.object({
   mealType: z.enum(ALLOWED_MEAL_TYPES),
   source_menu_set_external_id: z.string().min(1),
   advice: z.string().optional(),
 });
 type RegenerateV2Selection = z.infer<typeof RegenerateV2SelectionSchema>;
+
+// 新: LLMが料理を「創造」するためのスキーマ
+const GeneratedDishSchema = z.object({
+  name: z.string().min(1),
+  role: z.enum(["main", "side", "soup", "rice", "other"]),
+  ingredients: z.array(z.object({
+    name: z.string().min(1),
+    amount_g: z.number(),
+    note: z.string().optional(),
+  })),
+  instructions: z.array(z.string()),
+});
+
+const GeneratedMealSchema = z.object({
+  mealType: z.enum(ALLOWED_MEAL_TYPES),
+  dishes: z.array(GeneratedDishSchema),
+  advice: z.string().optional(),
+});
+type GeneratedMeal = z.infer<typeof GeneratedMealSchema>;
+type GeneratedDish = z.infer<typeof GeneratedDishSchema>;
 
 // =========================================================
 // Helpers
@@ -118,6 +139,78 @@ function mapMealTypeForDataset(mealType: MealType): "breakfast" | "lunch" | "din
   if (mealType === "midnight_snack") return "snack";
   if (mealType === "breakfast" || mealType === "lunch" || mealType === "dinner" || mealType === "snack") return mealType;
   return "lunch";
+}
+
+// =========================================================
+// 材料・作り方をマークダウンに整形するLLM関数
+// =========================================================
+
+async function formatRecipeToMarkdown(ingredientsText: string | null, instructionsText: string | null): Promise<{ ingredientsMd: string; recipeStepsMd: string }> {
+  if (!ingredientsText && !instructionsText) {
+    return { ingredientsMd: '', recipeStepsMd: '' };
+  }
+
+  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!apiKey) {
+    console.warn("Missing OPENAI_API_KEY for markdown formatting");
+    return { ingredientsMd: ingredientsText ?? '', recipeStepsMd: instructionsText ?? '' };
+  }
+
+  const prompt = `以下のレシピデータをマークダウン形式に整形してください。
+
+【材料テキスト】
+${ingredientsText ?? '(なし)'}
+
+【作り方テキスト】
+${instructionsText ?? '(なし)'}
+
+【出力形式】JSONで出力してください：
+{
+  "ingredientsMd": "マークダウンテーブル形式の材料リスト",
+  "recipeStepsMd": "マークダウン番号リスト形式の作り方"
+}
+
+【ルール】
+- 材料は「| 材料 | 分量 |」の2列テーブルにする
+- 同じ材料が複数回出てくる場合は1回だけ記載（使用量を優先）
+- 「材料1人分使用量買い物量」などのヘッダーや「※」の注釈は除外
+- 作り方は番号付きリスト（1. 2. 3. ...）にする
+- 各ステップは改行で区切る
+- JSONのみを出力し、説明は不要`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
+        max_tokens: 2000,
+      }),
+    });
+
+    if (!res.ok) {
+      console.error("Markdown formatting API error:", await res.text());
+      return { ingredientsMd: ingredientsText ?? '', recipeStepsMd: instructionsText ?? '' };
+    }
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content ?? '';
+    const cleaned = stripMarkdownCodeBlock(content);
+    const parsed = JSON.parse(cleaned);
+    
+    return {
+      ingredientsMd: parsed.ingredientsMd ?? '',
+      recipeStepsMd: parsed.recipeStepsMd ?? '',
+    };
+  } catch (error) {
+    console.error("Markdown formatting error:", error);
+    return { ingredientsMd: ingredientsText ?? '', recipeStepsMd: instructionsText ?? '' };
+  }
 }
 
 // =========================================================
@@ -266,7 +359,96 @@ async function getActiveDatasetVersion(supabase: any): Promise<string> {
 }
 
 // =========================================================
-// LLM selection
+// LLM: 料理を「創造」する（derived方式）
+// =========================================================
+
+async function runAgentToGenerateMeal(input: {
+  userSummary: string;
+  userContext: unknown;
+  note: string | null;
+  mealType: MealType;
+  currentDishName: string | null;
+  referenceMenus: MenuSetCandidate[]; // 参考例として
+}): Promise<GeneratedMeal> {
+  const mealTypeJa = input.mealType === "breakfast" ? "朝食" : input.mealType === "lunch" ? "昼食" : input.mealType === "dinner" ? "夕食" : input.mealType === "snack" ? "間食" : "夜食";
+  
+  const systemPrompt =
+    `あなたは日本の国家資格「管理栄養士」兼 料理研究家です。\n` +
+    `このタスクは「${mealTypeJa}の献立を創造する」ことです。\n` +
+    `\n` +
+    `【絶対ルール】\n` +
+    `- 出力は **厳密なJSONのみ**（Markdown/説明文/コードブロック禁止）\n` +
+    `- ingredients[].amount_g は必ず g 単位（大さじ/小さじ/個/本などは料理として自然なgに換算）\n` +
+    `- ingredients[].name は **食材名のみ**（括弧・分量・用途・状態は入れない）\n` +
+    `  - 例: 「キャベツ」「卵」「豚ひき肉」「ごま油」「醤油」\n` +
+    `- instructions は手順ごとに分割し、番号なしで配列に入れる\n` +
+    `- アレルギー/禁忌食材は絶対に使わない\n` +
+    `\n` +
+    `【献立の構成】\n` +
+    `- 昼食・夕食は「1汁3菜」を基本（主菜 + 副菜 + 汁物 + ご飯など、3〜4品）\n` +
+    `- 朝食は2品以上（主食 + 汁物 or おかず）\n` +
+    `- 間食/夜食は1〜2品\n` +
+    `\n` +
+    `【品質（管理栄養士としての配慮）】\n` +
+    `- ユーザーの料理経験/調理時間を考慮し、現実的に作れる献立を\n` +
+    `- 減塩指示がある場合は、塩・醤油・味噌を控えめに、香味野菜/酢/だしで補う\n` +
+    `- 野菜・たんぱく質のバランスを意識\n` +
+    `- 日本の家庭料理として自然な組み合わせ\n` +
+    `\n` +
+    `出力JSONスキーマ:\n` +
+    `{\n` +
+    `  "mealType": "${input.mealType}",\n` +
+    `  "dishes": [\n` +
+    `    {\n` +
+    `      "name": "料理名",\n` +
+    `      "role": "main" | "side" | "soup" | "rice" | "other",\n` +
+    `      "ingredients": [{ "name": "食材名", "amount_g": 数値, "note": "任意" }],\n` +
+    `      "instructions": ["手順1", "手順2", ...]\n` +
+    `    }\n` +
+    `  ],\n` +
+    `  "advice": "栄養士としてのワンポイントアドバイス（任意）"\n` +
+    `}\n`;
+
+  // 参考例を3つまで抜粋
+  const referenceText = input.referenceMenus.slice(0, 3).map((m, i) => {
+    const dishes = Array.isArray(m.dishes) ? m.dishes : [];
+    const dishNames = dishes.map((d: any) => `${d.name}(${d.role || d.class_raw})`).join(", ");
+    return `例${i + 1}: ${m.title} → ${dishNames}`;
+  }).join("\n");
+
+  const userPrompt =
+    `【ユーザー情報】\n${input.userSummary}\n\n` +
+    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
+    `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
+    `【食事タイプ】\n${mealTypeJa}\n\n` +
+    `${input.currentDishName ? `【現在の献立（これとは異なるものを）】\n${input.currentDishName}\n\n` : ""}` +
+    `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
+    `上記を参考に、${mealTypeJa}の献立を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
+
+  const agent = new Agent({
+    name: "meal-creator-v2",
+    instructions: systemPrompt,
+    model: "gpt-5-mini",
+    tools: [],
+  });
+
+  const conversationHistory: AgentInputItem[] = [{ role: "user", content: [{ type: "input_text", text: userPrompt }] }];
+  const runner = new Runner({
+    traceMetadata: {
+      __trace_source__: "regenerate-meal-direct-v2",
+      workflow_id: "wf_regenerate_meal_create_v2",
+    },
+  });
+
+  const result = await runner.run(agent, conversationHistory);
+  const out = result.finalOutput ? String(result.finalOutput) : "";
+  if (!out) throw new Error("LLM output is empty");
+  const parsed = safeJsonParse(out);
+  return GeneratedMealSchema.parse(parsed);
+}
+
+// =========================================================
+// LLM selection (旧: 後方互換用)
 // =========================================================
 
 async function runAgentToSelectReplacement(input: {
@@ -458,245 +640,147 @@ async function regenerateMealV2BackgroundTask(args: {
     }
     phaseStart = logPhase("4_filtering", phaseStart, { candidateCount: candidates.length });
 
-    const rawSel = await runAgentToSelectReplacement({
+    // 新方式: LLMが料理を「創造」する
+    const currentDishName = (existingMeal as any).dish_name ?? null;
+    const generatedMeal = await runAgentToGenerateMeal({
       userSummary,
       userContext,
       note: note ?? null,
       mealType,
-      currentMenuSetExternalId,
-      candidates,
+      currentDishName,
+      referenceMenus: candidates, // 参考例として渡す
     });
-    const selection = repairSelection({ mealType, selection: rawSel, candidates, currentMenuSetExternalId });
-    phaseStart = logPhase("5_llm_selection", phaseStart, { selectedId: selection.source_menu_set_external_id });
+    phaseStart = logPhase("5_llm_generation", phaseStart, { dishCount: generatedMeal.dishes.length });
 
-    async function buildMealForExternalId(externalId: string): Promise<{
-      ms: any;
-      dishDetails: any[];
-      aggregatedIngredients: string[];
-      dishName: string;
-      allergyHits: ReturnType<typeof detectAllergenHits>;
-    }> {
-      const id = String(externalId ?? "").trim();
-      if (!id) throw new Error("externalId is required");
-
-      const { data: ms, error: msErr } = await supabase.from("dataset_menu_sets").select("*").eq("external_id", id).maybeSingle();
-      if (msErr || !ms?.external_id) throw new Error(`Selected menu set not found: ${id}`);
-
-      const dishes = Array.isArray((ms as any).dishes) ? (ms as any).dishes : [];
-      const uniqNorms = Array.from(new Set(dishes.map((d: any) => normalizeDishNameJs(String(d?.name ?? ""))).filter(Boolean)));
-
-      const recipeByNorm = new Map<string, any>();
-      if (uniqNorms.length > 0) {
-        const { data: exactRecipes, error: recipeErr } = await supabase
-          .from("dataset_recipes")
-          .select(
-            "id, external_id, name, name_norm, source_url, ingredients_text, instructions_text, calories_kcal, sodium_g, protein_g, fat_g, carbs_g, sugar_g, fiber_g",
-          )
-          .in("name_norm", uniqNorms);
-        if (recipeErr) throw new Error(`Failed to fetch dataset_recipes: ${recipeErr.message}`);
-        for (const r of exactRecipes ?? []) {
-          if (r?.name_norm) recipeByNorm.set(String(r.name_norm), r);
-        }
+    // 生成された料理からdishDetailsを構築
+    const dishDetails: any[] = [];
+    const aggregatedIngredients: string[] = [];
+    
+    for (const dish of generatedMeal.dishes) {
+      // 材料をマークダウンテーブル形式に
+      let ingredientsMd = "| 材料 | 分量 |\n|------|------|\n";
+      for (const ing of dish.ingredients) {
+        ingredientsMd += `| ${ing.name} | ${ing.amount_g}g${ing.note ? ` (${ing.note})` : ""} |\n`;
+        aggregatedIngredients.push(`${ing.name} ${ing.amount_g}g`);
       }
-
-      async function resolveRecipeForDishName(dishName: string): Promise<any | null> {
-        const norm = normalizeDishNameJs(dishName);
-        if (!norm) return null;
-        const exact = recipeByNorm.get(norm);
-        if (exact) return exact;
-        const { data: sims, error: simErr } = await supabase.rpc("search_similar_dataset_recipes", {
-          query_name: dishName,
-          similarity_threshold: 0.3,
-          result_limit: 1,
-        });
-        if (simErr) return null;
-        const best = Array.isArray(sims) ? sims[0] : null;
-        if (!best?.id) return null;
-        const { data: r2, error: r2Err } = await supabase
-          .from("dataset_recipes")
-          .select(
-            "id, external_id, name, name_norm, source_url, ingredients_text, instructions_text, calories_kcal, sodium_g, protein_g, fat_g, carbs_g, sugar_g, fiber_g",
-          )
-          .eq("id", best.id)
-          .maybeSingle();
-        if (r2Err) return null;
-        if (r2?.name_norm) recipeByNorm.set(String(r2.name_norm), r2);
-        return r2 ?? null;
-      }
-
-      const allergyTexts: string[] = [];
-      allergyTexts.push(String((ms as any).title ?? ""));
-
-      const dishDetails: any[] = [];
-      const aggregatedIngredients: string[] = [];
-      for (const d of dishes) {
-        const dishName = String(d?.name ?? "").trim();
-        if (!dishName) continue;
-        allergyTexts.push(dishName);
-
-        const recipe = await resolveRecipeForDishName(dishName);
-        allergyTexts.push(String(recipe?.name ?? ""));
-        allergyTexts.push(String(recipe?.ingredients_text ?? ""));
-
-        const ingredients = parseLinesToArray(recipe?.ingredients_text ?? null);
-        const recipeSteps = parseLinesToArray(recipe?.instructions_text ?? null);
-        aggregatedIngredients.push(...ingredients);
-
-        dishDetails.push({
-          name: dishName,
-          role: String(d?.role ?? "other"),
-          cal: Number(d?.calories_kcal ?? recipe?.calories_kcal ?? 0) || 0,
-          protein: Number(recipe?.protein_g ?? 0) || 0,
-          fat: Number(recipe?.fat_g ?? 0) || 0,
-          carbs: Number(recipe?.carbs_g ?? 0) || 0,
-          sodium: Number(d?.sodium_g ?? recipe?.sodium_g ?? 0) || 0,
-          sugar: Number(recipe?.sugar_g ?? 0) || 0,
-          fiber: Number(recipe?.fiber_g ?? 0) || 0,
-          fiberSoluble: 0,
-          fiberInsoluble: 0,
-          potassium: 0,
-          calcium: 0,
-          phosphorus: 0,
-          iron: 0,
-          zinc: 0,
-          iodine: 0,
-          cholesterol: 0,
-          vitaminB1: 0,
-          vitaminB2: 0,
-          vitaminC: 0,
-          vitaminB6: 0,
-          vitaminB12: 0,
-          folicAcid: 0,
-          vitaminA: 0,
-          vitaminD: 0,
-          vitaminK: 0,
-          vitaminE: 0,
-          saturatedFat: 0,
-          monounsaturatedFat: 0,
-          polyunsaturatedFat: 0,
-          ingredient: ingredients.slice(0, 3).join("、"),
-          ingredients,
-          recipeSteps,
-          // 元のテキストも保存（マークダウン表示用）
-          ingredientsText: recipe?.ingredients_text ?? null,
-          recipeStepsText: recipe?.instructions_text ?? null,
-          base_recipe_id: recipe?.id ?? null,
-          is_generated_name: false,
-        });
-      }
-
-      const mainDish = dishDetails.find((x) => x.role === "main") ?? dishDetails[0];
-      const allDishNames = dishDetails.map((d: any) => String(d?.name ?? "").trim()).filter(Boolean).join("、");
-      const dishName = allDishNames || mainDish?.name || (ms as any).title || "献立";
-
-      const allergyHits = allergyTokens.length > 0 ? detectAllergenHits(allergyTokens, allergyTexts) : [];
-
-      return { ms, dishDetails, aggregatedIngredients, dishName, allergyHits };
+      
+      // 作り方をマークダウン番号リスト形式に
+      const recipeStepsMd = dish.instructions.map((step, i) => `${i + 1}. ${step}`).join("\n\n");
+      
+      // TODO: dataset_ingredients で栄養計算（Phase 2）
+      // 現在は暫定値
+      const estimatedCal = dish.ingredients.reduce((sum, ing) => sum + ing.amount_g * 1.5, 0); // 暫定
+      
+      dishDetails.push({
+        name: dish.name,
+        role: dish.role,
+        cal: Math.round(estimatedCal),
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        sodium: 0,
+        sugar: 0,
+        fiber: 0,
+        fiberSoluble: 0,
+        fiberInsoluble: 0,
+        potassium: 0,
+        calcium: 0,
+        phosphorus: 0,
+        iron: 0,
+        zinc: 0,
+        iodine: 0,
+        cholesterol: 0,
+        vitaminB1: 0,
+        vitaminB2: 0,
+        vitaminC: 0,
+        vitaminB6: 0,
+        vitaminB12: 0,
+        folicAcid: 0,
+        vitaminA: 0,
+        vitaminD: 0,
+        vitaminK: 0,
+        vitaminE: 0,
+        saturatedFat: 0,
+        monounsaturatedFat: 0,
+        polyunsaturatedFat: 0,
+        ingredient: dish.ingredients.slice(0, 3).map(i => i.name).join("、"),
+        ingredients: dish.ingredients.map(i => `${i.name} ${i.amount_g}g`),
+        recipeSteps: dish.instructions,
+        // マークダウン整形済み
+        ingredientsMd,
+        recipeStepsMd,
+        base_recipe_id: null,
+        is_generated_name: true,
+      });
     }
+    
+    const mainDish = dishDetails.find((d) => d.role === "main") ?? dishDetails[0];
+    const allDishNames = dishDetails.map((d) => d.name).join("、");
+    const dishName = allDishNames || mainDish?.name || "献立";
+    
+    phaseStart = logPhase("6_build_details", phaseStart, { dishCount: dishDetails.length });
 
-    const tryExternalIds = Array.from(
-      new Set([selection.source_menu_set_external_id, ...candidates.map((c) => c.external_id)].filter(Boolean)),
-    ).slice(0, 60);
-
-    const llmChosenExternalId = String(selection.source_menu_set_external_id ?? "").trim();
-    let builtMeal: Awaited<ReturnType<typeof buildMealForExternalId>> | null = null;
-    let lastHits: ReturnType<typeof detectAllergenHits> = [];
-    let allergyViolationSummary: string | null = null;
-    for (const externalId of tryExternalIds) {
-      const id = String(externalId ?? "").trim();
-      if (!id) continue;
-      if (currentMenuSetExternalId && id === currentMenuSetExternalId) continue;
-
-      const candObj = candidates.find((c) => c.external_id === id) ?? null;
-      if (candObj && !candidateSeemsAllergySafe(candObj)) continue;
-
-      const bm = await buildMealForExternalId(id);
-      lastHits = bm.allergyHits;
-      if (bm.allergyHits.length > 0 && !allergyViolationSummary) {
-        allergyViolationSummary = summarizeAllergenHits(bm.allergyHits);
-      }
-      if (allergyTokens.length === 0 || bm.allergyHits.length === 0) {
-        builtMeal = bm;
-        if (id !== selection.source_menu_set_external_id) selection.source_menu_set_external_id = id;
-        break;
-      }
-    }
-    if (!builtMeal) {
-      throw new Error(`Allergy constraint violated for ${mealType}: ${summarizeAllergenHits(lastHits)}`);
-    }
-    phaseStart = logPhase("6_recipe_resolve", phaseStart, { dishCount: builtMeal.dishDetails.length });
-
-    const ms = builtMeal.ms;
-    const dishDetails = builtMeal.dishDetails;
-    const aggregatedIngredients = builtMeal.aggregatedIngredients;
-    const dishName = builtMeal.dishName;
-    const finalExternalId = String((ms as any).external_id ?? selection.source_menu_set_external_id ?? "").trim();
-
+    // DB保存用データを構築
     const mealData: Record<string, any> = {
       dish_name: dishName,
-      description: null,
+      description: generatedMeal.advice ?? null,
       dishes: dishDetails,
       ingredients: aggregatedIngredients.length > 0 ? aggregatedIngredients : null,
       recipe_steps: null,
       is_simple: dishDetails.length <= 1,
       updated_at: new Date().toISOString(),
 
-      // v2 traceability
-      source_type: "dataset",
+      // v2 traceability - 新方式では source_type を "generated" に
+      source_type: "generated",
       source_dataset_version: datasetVersion,
-      source_menu_set_external_id: (ms as any).external_id,
+      source_menu_set_external_id: null, // LLMが創造したのでデータセットIDなし
       generation_metadata: {
         ...(typeof (existingMeal as any).generation_metadata === "object" ? (existingMeal as any).generation_metadata : {}),
         generator: "regenerate-meal-direct-v2",
+        generation_mode: "derived", // 新方式
         llm_model: "gpt-5-mini",
         embeddings_model: "text-embedding-3-small",
         search_query_base: String(baseQuery).slice(0, 1200),
         user_context: userContextForLog,
         constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
-        allergy_validation: {
-          checked: allergyTokens.length > 0,
-          allergy_tokens: allergyTokens.slice(0, 30),
-          llm_chosen_external_id: llmChosenExternalId,
-          final_external_id: finalExternalId,
-          replaced: Boolean(llmChosenExternalId && finalExternalId && llmChosenExternalId !== finalExternalId),
-          violation: allergyViolationSummary,
-        },
-        previous_menu_set_external_id: currentMenuSetExternalId,
-        advice: selection.advice ?? null,
+        previous_dish_name: currentDishName,
+        advice: generatedMeal.advice ?? null,
         note: note ?? null,
+        reference_menu_count: candidates.length,
       },
 
-      // 栄養（セット全体＝確定値）
-      calories_kcal: toNullableNumber((ms as any).calories_kcal),
-      protein_g: toNullableNumber((ms as any).protein_g),
-      fat_g: toNullableNumber((ms as any).fat_g),
-      carbs_g: toNullableNumber((ms as any).carbs_g),
-      sodium_g: toNullableNumber((ms as any).sodium_g),
-      sugar_g: toNullableNumber((ms as any).sugar_g),
-      fiber_g: toNullableNumber((ms as any).fiber_g),
-      fiber_soluble_g: toNullableNumber((ms as any).fiber_soluble_g),
-      fiber_insoluble_g: toNullableNumber((ms as any).fiber_insoluble_g),
-      potassium_mg: toNullableNumber((ms as any).potassium_mg),
-      calcium_mg: toNullableNumber((ms as any).calcium_mg),
-      magnesium_mg: toNullableNumber((ms as any).magnesium_mg),
-      phosphorus_mg: toNullableNumber((ms as any).phosphorus_mg),
-      iron_mg: toNullableNumber((ms as any).iron_mg),
-      zinc_mg: toNullableNumber((ms as any).zinc_mg),
-      iodine_ug: toNullableNumber((ms as any).iodine_ug),
-      cholesterol_mg: toNullableNumber((ms as any).cholesterol_mg),
-      vitamin_b1_mg: toNullableNumber((ms as any).vitamin_b1_mg),
-      vitamin_b2_mg: toNullableNumber((ms as any).vitamin_b2_mg),
-      vitamin_c_mg: toNullableNumber((ms as any).vitamin_c_mg),
-      vitamin_b6_mg: toNullableNumber((ms as any).vitamin_b6_mg),
-      vitamin_b12_ug: toNullableNumber((ms as any).vitamin_b12_ug),
-      folic_acid_ug: toNullableNumber((ms as any).folic_acid_ug),
-      vitamin_a_ug: toNullableNumber((ms as any).vitamin_a_ug),
-      vitamin_d_ug: toNullableNumber((ms as any).vitamin_d_ug),
-      vitamin_k_ug: toNullableNumber((ms as any).vitamin_k_ug),
-      vitamin_e_mg: toNullableNumber((ms as any).vitamin_e_mg),
-      saturated_fat_g: toNullableNumber((ms as any).saturated_fat_g),
-      monounsaturated_fat_g: toNullableNumber((ms as any).monounsaturated_fat_g),
-      polyunsaturated_fat_g: toNullableNumber((ms as any).polyunsaturated_fat_g),
+      // 栄養（TODO: Phase 2で dataset_ingredients から計算）
+      // 現在は暫定値
+      calories_kcal: dishDetails.reduce((sum, d) => sum + (d.cal || 0), 0),
+      protein_g: null,
+      fat_g: null,
+      carbs_g: null,
+      sodium_g: null,
+      sugar_g: null,
+      fiber_g: null,
+      fiber_soluble_g: null,
+      fiber_insoluble_g: null,
+      potassium_mg: null,
+      calcium_mg: null,
+      magnesium_mg: null,
+      phosphorus_mg: null,
+      iron_mg: null,
+      zinc_mg: null,
+      iodine_ug: null,
+      cholesterol_mg: null,
+      vitamin_b1_mg: null,
+      vitamin_b2_mg: null,
+      vitamin_c_mg: null,
+      vitamin_b6_mg: null,
+      vitamin_b12_ug: null,
+      folic_acid_ug: null,
+      vitamin_a_ug: null,
+      vitamin_d_ug: null,
+      vitamin_k_ug: null,
+      vitamin_e_mg: null,
+      saturated_fat_g: null,
+      monounsaturated_fat_g: null,
+      polyunsaturated_fat_g: null,
     };
 
     const { error: updErr } = await supabase.from("planned_meals").update(mealData).eq("id", mealId);
@@ -705,19 +789,19 @@ async function regenerateMealV2BackgroundTask(args: {
 
     if (requestId) {
       const resultJson = {
-        ...selection,
+        mealType,
+        generated_dishes: generatedMeal.dishes.map(d => d.name),
+        advice: generatedMeal.advice,
         _meta: {
           generator: "regenerate-meal-direct-v2",
+          generation_mode: "derived",
           dataset_version: datasetVersion,
           search_query_base: String(baseQuery).slice(0, 1200),
           user_context: userContextForLog,
           constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
           allergy_tokens: allergyTokens.slice(0, 30),
-          llm_chosen_external_id: llmChosenExternalId,
-          final_external_id: finalExternalId,
-          replaced: Boolean(llmChosenExternalId && finalExternalId && llmChosenExternalId !== finalExternalId),
-          violation: allergyViolationSummary,
-          previous_menu_set_external_id: currentMenuSetExternalId,
+          previous_dish_name: currentDishName,
+          reference_menu_count: candidates.length,
         },
       };
       await supabase
@@ -733,7 +817,13 @@ async function regenerateMealV2BackgroundTask(args: {
     logPhase("8_complete_update", phaseStart);
     console.log(`[END] regenerate-meal-direct-v2 total=${Date.now() - totalStart}ms`);
 
-    return { selection, datasetVersion, plannedMealId: mealId };
+    // 新方式の戻り値
+    const dummySelection: RegenerateV2Selection = {
+      mealType,
+      source_menu_set_external_id: "generated",
+      advice: generatedMeal.advice,
+    };
+    return { selection: dummySelection, datasetVersion, plannedMealId: mealId };
   } catch (error: any) {
     console.error("❌ regenerateMealV2BackgroundTask failed:", error?.message ?? error);
 

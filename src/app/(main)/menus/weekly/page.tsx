@@ -110,28 +110,62 @@ const formatNutrition = (value: number | null | undefined, decimals = 1): string
   return rounded.toString();
 };
 
+// 材料テキストをパースして配列に変換
+const parseIngredientsText = (text: string): { name: string; amount: string }[] => {
+  const results: { name: string; amount: string }[] = [];
+  
+  // ヘッダー部分を除去 (「材料1人分使用量買い物量 (目安)」など)
+  let cleaned = text.replace(/^材料\d*人分使用量買い物量\s*\(目安\)/g, '');
+  // 注釈を除去
+  cleaned = cleaned.replace(/※.+$/g, '');
+  
+  // パターン: 材料名 + 分量 (例: "キャベツ80 g" or "卵（Mサイズ）50 g" or "小さじ1/2 (2 g)")
+  // 分量の後で区切る
+  const regex = /([ぁ-んァ-ヶー一-龯a-zA-ZＡ-Ｚａ-ｚ（）\(\)・]+)(\d+\.?\d*\s*[gGmlMLm㎖㎗ℓ]|\d*[小大]さじ[\d\/]+[強弱]?\s*(?:\([^)]+\))?|少々|適量|\d+個|\d+枚|\d+本|\d+束|\d+袋|\d+缶|\d+丁|\d+片|\d+切れ|\d+合)/g;
+  
+  let match;
+  while ((match = regex.exec(cleaned)) !== null) {
+    const name = match[1].trim();
+    const amount = match[2].trim();
+    // 「A」「調味料」などの見出しをスキップ
+    if (name.length > 0 && !['A', '調味料', '合わせ調味料'].includes(name)) {
+      results.push({ name, amount });
+    }
+  }
+  
+  return results;
+};
+
 // 材料をマークダウンテーブルに変換
 const formatIngredientsToMarkdown = (ingredientsText: string | null | undefined, ingredients: string[] | null | undefined): string => {
-  // 配列がある場合は優先して使う（Edge Functionでパース済み）
+  // 配列の最初の要素が長いテキストの場合、パースを試みる
   if (ingredients && ingredients.length > 0) {
-    // 各材料を「材料名 + 分量」のペアに分割を試みる
-    const parsed: { name: string; amount: string }[] = [];
+    const firstItem = ingredients[0];
     
-    for (const ing of ingredients) {
-      // パターン: "キャベツ 80g" or "卵（Mサイズ） 50 g" or "小さじ1/2 (2 g)"
-      const match = ing.match(/^(.+?)\s*(\d+\.?\d*\s*[gGmlML杯個枚本束袋缶丁片切れ合]+.*|小さじ.+|大さじ.+|少々|適量|.+[gG]$)$/);
-      if (match) {
-        parsed.push({ name: match[1].trim(), amount: match[2].trim() });
-      } else {
-        // 分割できない場合はそのまま
-        parsed.push({ name: ing, amount: '' });
+    // 長いテキスト（100文字以上）の場合はパースが必要
+    if (firstItem.length > 100) {
+      const parsed = parseIngredientsText(firstItem);
+      if (parsed.length > 0) {
+        let md = "| 材料 | 分量 |\n|------|------|\n";
+        // 重複を除去（使用量と買い物量で同じ材料が2回出る）
+        const seen = new Set<string>();
+        for (const p of parsed) {
+          const key = `${p.name}-${p.amount}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            md += `| ${p.name} | ${p.amount} |\n`;
+          }
+        }
+        return md;
       }
     }
     
-    // テーブル形式で出力
+    // 既にパースされた配列の場合
     let md = "| 材料 | 分量 |\n|------|------|\n";
-    for (const p of parsed) {
-      md += `| ${p.name} | ${p.amount} |\n`;
+    for (const ing of ingredients) {
+      if (ing.length < 100) {
+        md += `| ${ing} |  |\n`;
+      }
     }
     return md;
   }
@@ -2762,13 +2796,14 @@ export default function WeeklyMenuPage() {
                   <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
                     {(() => {
                       const dish = selectedRecipeData?.dishes?.[0];
-                      const ingredientsMd = formatIngredientsToMarkdown(
+                      // 新方式: ingredientsMd を優先（LLMが生成したマークダウン）
+                      const ingredientsMd = dish?.ingredientsMd || formatIngredientsToMarkdown(
                         dish?.ingredientsText,
                         selectedRecipeData?.ingredients
                       );
                       if (ingredientsMd) {
                         return (
-                          <div className="prose prose-sm max-w-none" style={{ fontSize: 13, color: colors.text }}>
+                          <div className="prose prose-sm max-w-none [&_table]:w-full [&_th]:text-left [&_th]:p-2 [&_td]:p-2 [&_tr]:border-b" style={{ fontSize: 13, color: colors.text }}>
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{ingredientsMd}</ReactMarkdown>
                           </div>
                         );
@@ -2782,13 +2817,14 @@ export default function WeeklyMenuPage() {
                   <div className="rounded-xl p-3" style={{ background: colors.bg }}>
                     {(() => {
                       const dish = selectedRecipeData?.dishes?.[0];
-                      const recipeStepsMd = formatRecipeStepsToMarkdown(
+                      // 新方式: recipeStepsMd を優先（LLMが生成したマークダウン）
+                      const recipeStepsMd = dish?.recipeStepsMd || formatRecipeStepsToMarkdown(
                         dish?.recipeStepsText,
                         selectedRecipeData?.recipeSteps
                       );
                       if (recipeStepsMd) {
                         return (
-                          <div className="prose prose-sm max-w-none" style={{ fontSize: 13, color: colors.text }}>
+                          <div className="prose prose-sm max-w-none [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:mb-2" style={{ fontSize: 13, color: colors.text }}>
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{recipeStepsMd}</ReactMarkdown>
                           </div>
                         );
