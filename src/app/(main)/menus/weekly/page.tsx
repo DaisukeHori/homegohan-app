@@ -109,11 +109,39 @@ const formatNutrition = (value: number | null | undefined, decimals = 1): string
   // 数値でない場合は空文字を返す
   const num = Number(value);
   if (!Number.isFinite(num)) return '';
-  // 極端に小さい値（0.0001未満）は0として扱う
-  if (Math.abs(num) < 0.0001) return '0';
+  // 極端に小さい値（0.5未満）は表示しない（空文字を返す）
+  // これにより条件付きレンダリングで非表示になる
+  const threshold = decimals === 0 ? 0.5 : Math.pow(10, -decimals) * 0.5;
+  if (Math.abs(num) < threshold) return '';
   // 丸め処理
   const rounded = Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
   return rounded.toFixed(decimals).replace(/\.?0+$/, ''); // 末尾の0を削除
+};
+
+// 栄養素を表示すべきかどうか（値が有効かつ表示に意味がある場合のみ true）
+const shouldShowNutrition = (value: number | null | undefined, decimals = 1): boolean => {
+  if (value === null || value === undefined) return false;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return false;
+  const threshold = decimals === 0 ? 0.5 : Math.pow(10, -decimals) * 0.5;
+  return Math.abs(num) >= threshold;
+};
+
+// 栄養素表示コンポーネント（値が有効な場合のみ表示）
+const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: { 
+  label: string; 
+  value: number | null | undefined; 
+  unit: string; 
+  decimals?: number;
+  textColor?: string;
+}) => {
+  if (!shouldShowNutrition(value, decimals)) return null;
+  return (
+    <div className="flex justify-between">
+      <span style={{ color: textColor }}>{label}</span>
+      <span className="font-medium">{formatNutrition(value, decimals)}{unit}</span>
+    </div>
+  );
 };
 
 // 材料テキストをパースして配列に変換
@@ -1994,34 +2022,34 @@ export default function WeeklyMenuPage() {
             </div>
             <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[10px]" style={{ color: colors.text }}>
               {/* 基本栄養素 */}
-              {meal.caloriesKcal && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>エネルギー</span><span className="font-medium">{formatNutrition(meal.caloriesKcal, 0)}kcal</span></div>}
-              {meal.proteinG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>タンパク質</span><span className="font-medium">{formatNutrition(meal.proteinG)}g</span></div>}
-              {meal.fatG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>脂質</span><span className="font-medium">{formatNutrition(meal.fatG)}g</span></div>}
-              {meal.carbsG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>炭水化物</span><span className="font-medium">{formatNutrition(meal.carbsG)}g</span></div>}
-              {meal.fiberG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>食物繊維</span><span className="font-medium">{formatNutrition(meal.fiberG)}g</span></div>}
-              {meal.sugarG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>糖質</span><span className="font-medium">{formatNutrition(meal.sugarG)}g</span></div>}
+              <NutritionItem label="エネルギー" value={meal.caloriesKcal} unit="kcal" decimals={0} textColor={colors.textMuted} />
+              <NutritionItem label="タンパク質" value={meal.proteinG} unit="g" textColor={colors.textMuted} />
+              <NutritionItem label="脂質" value={meal.fatG} unit="g" textColor={colors.textMuted} />
+              <NutritionItem label="炭水化物" value={meal.carbsG} unit="g" textColor={colors.textMuted} />
+              <NutritionItem label="食物繊維" value={meal.fiberG} unit="g" textColor={colors.textMuted} />
+              <NutritionItem label="糖質" value={meal.sugarG} unit="g" textColor={colors.textMuted} />
               {/* ミネラル */}
-              {meal.sodiumG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>塩分</span><span className="font-medium">{formatNutrition(meal.sodiumG)}g</span></div>}
-              {meal.potassiumMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カリウム</span><span className="font-medium">{formatNutrition(meal.potassiumMg, 0)}mg</span></div>}
-              {meal.calciumMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カルシウム</span><span className="font-medium">{formatNutrition(meal.calciumMg, 0)}mg</span></div>}
-              {meal.phosphorusMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>リン</span><span className="font-medium">{formatNutrition(meal.phosphorusMg, 0)}mg</span></div>}
-              {meal.ironMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>鉄分</span><span className="font-medium">{formatNutrition(meal.ironMg)}mg</span></div>}
-              {meal.zincMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>亜鉛</span><span className="font-medium">{formatNutrition(meal.zincMg)}mg</span></div>}
-              {meal.iodineUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ヨウ素</span><span className="font-medium">{formatNutrition(meal.iodineUg, 0)}µg</span></div>}
+              <NutritionItem label="塩分" value={meal.sodiumG} unit="g" textColor={colors.textMuted} />
+              <NutritionItem label="カリウム" value={meal.potassiumMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+              <NutritionItem label="カルシウム" value={meal.calciumMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+              <NutritionItem label="リン" value={meal.phosphorusMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+              <NutritionItem label="鉄分" value={meal.ironMg} unit="mg" textColor={colors.textMuted} />
+              <NutritionItem label="亜鉛" value={meal.zincMg} unit="mg" textColor={colors.textMuted} />
+              <NutritionItem label="ヨウ素" value={meal.iodineUg} unit="µg" decimals={0} textColor={colors.textMuted} />
               {/* 脂質詳細 */}
-              {meal.saturatedFatG && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>飽和脂肪酸</span><span className="font-medium">{formatNutrition(meal.saturatedFatG)}g</span></div>}
-              {meal.cholesterolMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>コレステロール</span><span className="font-medium">{formatNutrition(meal.cholesterolMg, 0)}mg</span></div>}
+              <NutritionItem label="飽和脂肪酸" value={meal.saturatedFatG} unit="g" textColor={colors.textMuted} />
+              <NutritionItem label="コレステロール" value={meal.cholesterolMg} unit="mg" decimals={0} textColor={colors.textMuted} />
               {/* ビタミン類 */}
-              {meal.vitaminAUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンA</span><span className="font-medium">{formatNutrition(meal.vitaminAUg, 0)}µg</span></div>}
-              {meal.vitaminB1Mg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB1</span><span className="font-medium">{formatNutrition(meal.vitaminB1Mg, 2)}mg</span></div>}
-              {meal.vitaminB2Mg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB2</span><span className="font-medium">{formatNutrition(meal.vitaminB2Mg, 2)}mg</span></div>}
-              {meal.vitaminB6Mg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB6</span><span className="font-medium">{formatNutrition(meal.vitaminB6Mg, 2)}mg</span></div>}
-              {meal.vitaminB12Ug && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB12</span><span className="font-medium">{formatNutrition(meal.vitaminB12Ug)}µg</span></div>}
-              {meal.vitaminCMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンC</span><span className="font-medium">{formatNutrition(meal.vitaminCMg, 0)}mg</span></div>}
-              {meal.vitaminDUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンD</span><span className="font-medium">{formatNutrition(meal.vitaminDUg)}µg</span></div>}
-              {meal.vitaminEMg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンE</span><span className="font-medium">{formatNutrition(meal.vitaminEMg)}mg</span></div>}
-              {meal.vitaminKUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンK</span><span className="font-medium">{formatNutrition(meal.vitaminKUg, 0)}µg</span></div>}
-              {meal.folicAcidUg && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>葉酸</span><span className="font-medium">{formatNutrition(meal.folicAcidUg, 0)}µg</span></div>}
+              <NutritionItem label="ビタミンA" value={meal.vitaminAUg} unit="µg" decimals={0} textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンB1" value={meal.vitaminB1Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンB2" value={meal.vitaminB2Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンB6" value={meal.vitaminB6Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンB12" value={meal.vitaminB12Ug} unit="µg" textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンC" value={meal.vitaminCMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンD" value={meal.vitaminDUg} unit="µg" textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンE" value={meal.vitaminEMg} unit="mg" textColor={colors.textMuted} />
+              <NutritionItem label="ビタミンK" value={meal.vitaminKUg} unit="µg" decimals={0} textColor={colors.textMuted} />
+              <NutritionItem label="葉酸" value={meal.folicAcidUg} unit="µg" decimals={0} textColor={colors.textMuted} />
             </div>
           </div>
         )}
@@ -2763,36 +2791,36 @@ export default function WeeklyMenuPage() {
                       <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>📊 この料理の栄養素</p>
                       <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[11px]" style={{ color: colors.text }}>
                         {/* 基本栄養素 */}
-                        {selectedRecipeData.cal && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>エネルギー</span><span className="font-medium">{formatNutrition(selectedRecipeData.cal, 0)}kcal</span></div>}
-                        {selectedRecipeData.protein && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>タンパク質</span><span className="font-medium">{formatNutrition(selectedRecipeData.protein)}g</span></div>}
-                        {selectedRecipeData.fat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>脂質</span><span className="font-medium">{formatNutrition(selectedRecipeData.fat)}g</span></div>}
-                        {selectedRecipeData.carbs && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>炭水化物</span><span className="font-medium">{formatNutrition(selectedRecipeData.carbs)}g</span></div>}
-                        {selectedRecipeData.fiber && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>食物繊維</span><span className="font-medium">{formatNutrition(selectedRecipeData.fiber)}g</span></div>}
-                        {selectedRecipeData.sugar && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>糖質</span><span className="font-medium">{formatNutrition(selectedRecipeData.sugar)}g</span></div>}
+                        <NutritionItem label="エネルギー" value={selectedRecipeData.cal} unit="kcal" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="タンパク質" value={selectedRecipeData.protein} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="脂質" value={selectedRecipeData.fat} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="炭水化物" value={selectedRecipeData.carbs} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="食物繊維" value={selectedRecipeData.fiber} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="糖質" value={selectedRecipeData.sugar} unit="g" textColor={colors.textMuted} />
                         {/* ミネラル */}
-                        {selectedRecipeData.sodium && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>塩分</span><span className="font-medium">{formatNutrition(selectedRecipeData.sodium)}g</span></div>}
-                        {selectedRecipeData.potassium && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カリウム</span><span className="font-medium">{formatNutrition(selectedRecipeData.potassium, 0)}mg</span></div>}
-                        {selectedRecipeData.calcium && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>カルシウム</span><span className="font-medium">{formatNutrition(selectedRecipeData.calcium, 0)}mg</span></div>}
-                        {selectedRecipeData.phosphorus && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>リン</span><span className="font-medium">{formatNutrition(selectedRecipeData.phosphorus, 0)}mg</span></div>}
-                        {selectedRecipeData.iron && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>鉄分</span><span className="font-medium">{formatNutrition(selectedRecipeData.iron)}mg</span></div>}
-                        {selectedRecipeData.zinc && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>亜鉛</span><span className="font-medium">{formatNutrition(selectedRecipeData.zinc)}mg</span></div>}
-                        {selectedRecipeData.iodine && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ヨウ素</span><span className="font-medium">{formatNutrition(selectedRecipeData.iodine, 0)}µg</span></div>}
-                        {selectedRecipeData.cholesterol && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>コレステロール</span><span className="font-medium">{formatNutrition(selectedRecipeData.cholesterol, 0)}mg</span></div>}
+                        <NutritionItem label="塩分" value={selectedRecipeData.sodium} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="カリウム" value={selectedRecipeData.potassium} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="カルシウム" value={selectedRecipeData.calcium} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="リン" value={selectedRecipeData.phosphorus} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="鉄分" value={selectedRecipeData.iron} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="亜鉛" value={selectedRecipeData.zinc} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="ヨウ素" value={selectedRecipeData.iodine} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="コレステロール" value={selectedRecipeData.cholesterol} unit="mg" decimals={0} textColor={colors.textMuted} />
                         {/* ビタミン */}
-                        {selectedRecipeData.vitaminA && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンA</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminA, 0)}µg</span></div>}
-                        {selectedRecipeData.vitaminB1 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB1</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminB1, 2)}mg</span></div>}
-                        {selectedRecipeData.vitaminB2 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB2</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminB2, 2)}mg</span></div>}
-                        {selectedRecipeData.vitaminB6 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB6</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminB6, 2)}mg</span></div>}
-                        {selectedRecipeData.vitaminB12 && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンB12</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminB12)}µg</span></div>}
-                        {selectedRecipeData.vitaminC && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンC</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminC, 0)}mg</span></div>}
-                        {selectedRecipeData.vitaminD && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンD</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminD)}µg</span></div>}
-                        {selectedRecipeData.vitaminE && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンE</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminE)}mg</span></div>}
-                        {selectedRecipeData.vitaminK && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>ビタミンK</span><span className="font-medium">{formatNutrition(selectedRecipeData.vitaminK, 0)}µg</span></div>}
-                        {selectedRecipeData.folicAcid && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>葉酸</span><span className="font-medium">{formatNutrition(selectedRecipeData.folicAcid, 0)}µg</span></div>}
+                        <NutritionItem label="ビタミンA" value={selectedRecipeData.vitaminA} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB1" value={selectedRecipeData.vitaminB1} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB2" value={selectedRecipeData.vitaminB2} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB6" value={selectedRecipeData.vitaminB6} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB12" value={selectedRecipeData.vitaminB12} unit="µg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンC" value={selectedRecipeData.vitaminC} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンD" value={selectedRecipeData.vitaminD} unit="µg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンE" value={selectedRecipeData.vitaminE} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンK" value={selectedRecipeData.vitaminK} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="葉酸" value={selectedRecipeData.folicAcid} unit="µg" decimals={0} textColor={colors.textMuted} />
                         {/* 脂肪酸 */}
-                        {selectedRecipeData.saturatedFat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>飽和脂肪酸</span><span className="font-medium">{formatNutrition(selectedRecipeData.saturatedFat)}g</span></div>}
-                        {selectedRecipeData.monounsaturatedFat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>一価不飽和脂肪酸</span><span className="font-medium">{formatNutrition(selectedRecipeData.monounsaturatedFat)}g</span></div>}
-                        {selectedRecipeData.polyunsaturatedFat && <div className="flex justify-between"><span style={{ color: colors.textMuted }}>多価不飽和脂肪酸</span><span className="font-medium">{formatNutrition(selectedRecipeData.polyunsaturatedFat)}g</span></div>}
+                        <NutritionItem label="飽和脂肪酸" value={selectedRecipeData.saturatedFat} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="一価不飽和脂肪酸" value={selectedRecipeData.monounsaturatedFat} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="多価不飽和脂肪酸" value={selectedRecipeData.polyunsaturatedFat} unit="g" textColor={colors.textMuted} />
                       </div>
                     </div>
                   )}
