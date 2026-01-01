@@ -2316,24 +2316,31 @@ export default function WeeklyMenuPage() {
           const hasAnyMeal = meals.length > 0;
           // この食事タイプでAI生成中かどうか
           const isGeneratingThisType = generatingMeal?.dayIndex === selectedDayIndex && generatingMeal?.mealType === type;
+          // プレースホルダー（is_generating=true）が既にあるかどうか
+          const hasGeneratingPlaceholder = meals.some(m => m.isGenerating);
+          // 実際の食事数（プレースホルダーを除く）
+          const realMealsCount = meals.filter(m => !m.isGenerating).length;
 
           return (
             <div key={type}>
-              {/* 空欄の場合 */}
+              {/* 空欄の場合（プレースホルダーもない場合のみ） */}
               {!hasAnyMeal && !isGeneratingThisType && <EmptySlot mealKey={type} dayIndex={selectedDayIndex} />}
               
-              {/* 登録済みの食事（複数可） */}
+              {/* 登録済みの食事（複数可） - プレースホルダーも含む */}
               {meals.map((meal, idx) => {
                 const isExpanded = expandedMealId === meal.id;
+                // プレースホルダーでない実際の食事のインデックスを計算
+                const realIndex = meals.slice(0, idx).filter(m => !m.isGenerating).length;
+                const displayIndex = meal.isGenerating ? realMealsCount : realIndex;
                 return isExpanded ? (
-                  <ExpandedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                  <ExpandedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={displayIndex} />
                 ) : (
-                  <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                  <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={displayIndex} />
                 );
               })}
               
-              {/* AI生成中の追加カード（既存の食事がある場合に表示） */}
-              {isGeneratingThisType && (
+              {/* AI生成中の追加カード（generatingMealステートがあり、かつプレースホルダーがない場合のみ） */}
+              {isGeneratingThisType && !hasGeneratingPlaceholder && (
                 <div
                   className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
                   style={{ background: `linear-gradient(135deg, ${colors.accentLight} 0%, ${colors.card} 100%)`, border: `2px solid ${colors.accent}` }}
@@ -2344,7 +2351,7 @@ export default function WeeklyMenuPage() {
                     </div>
                     <div className="flex-1">
                       <p style={{ fontSize: 14, fontWeight: 600, color: colors.accent }}>
-                        {hasAnyMeal ? `${MEAL_LABELS[type]}${meals.length + 1}` : MEAL_LABELS[type]} AIが考え中...
+                        {realMealsCount > 0 ? `${MEAL_LABELS[type]}${realMealsCount + 1}` : MEAL_LABELS[type]} AIが考え中...
                       </p>
                       <p style={{ fontSize: 11, color: colors.textMuted }}>
                         数秒〜数十秒かかります
@@ -2364,6 +2371,10 @@ export default function WeeklyMenuPage() {
           const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
           // この食事タイプでAI生成中かどうか
           const isGeneratingThisType = generatingMeal?.dayIndex === selectedDayIndex && generatingMeal?.mealType === type;
+          // プレースホルダー（is_generating=true）が既にあるかどうか
+          const hasGeneratingPlaceholder = meals.some(m => m.isGenerating);
+          // 実際の食事数（プレースホルダーを除く）
+          const realMealsCount = meals.filter(m => !m.isGenerating).length;
 
           if (meals.length === 0 && !isGeneratingThisType) return null;
 
@@ -2371,15 +2382,18 @@ export default function WeeklyMenuPage() {
             <div key={type}>
               {meals.map((meal, idx) => {
                 const isExpanded = expandedMealId === meal.id;
+                // プレースホルダーでない実際の食事のインデックスを計算
+                const realIndex = meals.slice(0, idx).filter(m => !m.isGenerating).length;
+                const displayIndex = meal.isGenerating ? realMealsCount : realIndex;
                 return isExpanded ? (
-                  <ExpandedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                  <ExpandedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={displayIndex} />
                 ) : (
-                  <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
+                  <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={displayIndex} />
                 );
               })}
               
-              {/* AI生成中の追加カード */}
-              {isGeneratingThisType && (
+              {/* AI生成中の追加カード（generatingMealステートがあり、かつプレースホルダーがない場合のみ） */}
+              {isGeneratingThisType && !hasGeneratingPlaceholder && (
                 <div
                   className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
                   style={{ background: `linear-gradient(135deg, ${colors.accentLight} 0%, ${colors.card} 100%)`, border: `2px solid ${colors.accent}` }}
@@ -2390,7 +2404,7 @@ export default function WeeklyMenuPage() {
                     </div>
                     <div className="flex-1">
                       <p style={{ fontSize: 14, fontWeight: 600, color: colors.accent }}>
-                        {meals.length > 0 ? `${MEAL_LABELS[type]}${meals.length + 1}` : MEAL_LABELS[type]} AIが考え中...
+                        {realMealsCount > 0 ? `${MEAL_LABELS[type]}${realMealsCount + 1}` : MEAL_LABELS[type]} AIが考え中...
                       </p>
                       <p style={{ fontSize: 11, color: colors.textMuted }}>
                         数秒〜数十秒かかります
