@@ -355,6 +355,13 @@ function repairSelection(input: {
 // Main background task
 // =========================================================
 
+// ログ用ヘルパー: フェーズ時間計測
+function logPhase(phase: string, startTime: number, extra?: Record<string, unknown>) {
+  const elapsed = Date.now() - startTime;
+  console.log(`[PHASE] ${phase}: ${elapsed}ms`, extra ? JSON.stringify(extra) : "");
+  return Date.now();
+}
+
 async function regenerateMealV2BackgroundTask(args: {
   userId: string;
   mealId: string;
@@ -362,6 +369,10 @@ async function regenerateMealV2BackgroundTask(args: {
   requestId?: string | null;
   constraints?: unknown;
 }): Promise<{ selection: RegenerateV2Selection; datasetVersion: string; plannedMealId: string }> {
+  const totalStart = Date.now();
+  let phaseStart = Date.now();
+  console.log(`[START] regenerate-meal-direct-v2 requestId=${args.requestId} mealId=${args.mealId}`);
+
   const serviceRoleKey = Deno.env.get("DATASET_SERVICE_ROLE_KEY") ?? "";
   if (!serviceRoleKey) throw new Error("Missing DATASET_SERVICE_ROLE_KEY");
   const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceRoleKey);
@@ -375,6 +386,7 @@ async function regenerateMealV2BackgroundTask(args: {
       .eq("id", requestId)
       .eq("user_id", userId);
   }
+  phaseStart = logPhase("1_init", phaseStart);
 
   try {
     // planned_meal ownership check + context
@@ -397,6 +409,7 @@ async function regenerateMealV2BackgroundTask(args: {
     const { data: profile, error: profileError } = await supabase.from("user_profiles").select("*").eq("id", userId).single();
     if (profileError) throw new Error(`Profile not found: ${profileError.message}`);
     const { data: nutritionTargets } = await supabase.from("nutrition_targets").select("*").eq("user_id", userId).maybeSingle();
+    phaseStart = logPhase("2_user_info", phaseStart);
     const userContext = buildUserContextForPrompt({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
     const userSummary = buildUserSummary(profile, nutritionTargets ?? null, note ?? null, constraints);
     const allergyTokens: string[] = Array.isArray((userContext as any)?.hard?.allergies) ? (userContext as any).hard.allergies : [];
@@ -427,6 +440,8 @@ async function regenerateMealV2BackgroundTask(args: {
     const baseQuery = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
     // パフォーマンス改善: 候補数を削減（regenerateは1食分なので少なくてOK）
     const raw = await searchMenuCandidates(supabase, `${ja}\n${baseQuery}`, mealType === "dinner" ? 300 : mealType === "lunch" ? 200 : 150);
+    phaseStart = logPhase("3_vector_search", phaseStart, { rawCount: raw.length });
+
     let candidates = pickCandidatesForMealType(mealType, raw, { min: 10, max: 80 });
 
     // exclude current id
@@ -441,6 +456,7 @@ async function regenerateMealV2BackgroundTask(args: {
       const filtered = candidates.filter(candidateSeemsAllergySafe);
       if (filtered.length >= 5) candidates = filtered;
     }
+    phaseStart = logPhase("4_filtering", phaseStart, { candidateCount: candidates.length });
 
     const rawSel = await runAgentToSelectReplacement({
       userSummary,
@@ -451,6 +467,7 @@ async function regenerateMealV2BackgroundTask(args: {
       candidates,
     });
     const selection = repairSelection({ mealType, selection: rawSel, candidates, currentMenuSetExternalId });
+    phaseStart = logPhase("5_llm_selection", phaseStart, { selectedId: selection.source_menu_set_external_id });
 
     async function buildMealForExternalId(externalId: string): Promise<{
       ms: any;
@@ -607,6 +624,7 @@ async function regenerateMealV2BackgroundTask(args: {
     if (!builtMeal) {
       throw new Error(`Allergy constraint violated for ${mealType}: ${summarizeAllergenHits(lastHits)}`);
     }
+    phaseStart = logPhase("6_recipe_resolve", phaseStart, { dishCount: builtMeal.dishDetails.length });
 
     const ms = builtMeal.ms;
     const dishDetails = builtMeal.dishDetails;
@@ -683,6 +701,7 @@ async function regenerateMealV2BackgroundTask(args: {
 
     const { error: updErr } = await supabase.from("planned_meals").update(mealData).eq("id", mealId);
     if (updErr) throw new Error(`Failed to update planned_meal: ${updErr.message}`);
+    phaseStart = logPhase("7_db_save", phaseStart);
 
     if (requestId) {
       const resultJson = {
@@ -711,6 +730,8 @@ async function regenerateMealV2BackgroundTask(args: {
         .eq("id", requestId)
         .eq("user_id", userId);
     }
+    logPhase("8_complete_update", phaseStart);
+    console.log(`[END] regenerate-meal-direct-v2 total=${Date.now() - totalStart}ms`);
 
     return { selection, datasetVersion, plannedMealId: mealId };
   } catch (error: any) {
