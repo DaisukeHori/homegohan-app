@@ -186,19 +186,22 @@ function getDishCount(c: MenuSetCandidate): number {
   return Array.isArray(c.dishes) ? c.dishes.length : 0;
 }
 
-function pickCandidatesForMealType(mealType: MealType, all: MenuSetCandidate[], opts: { min?: number; max?: number; preferMultipleDishes?: boolean } = {}): MenuSetCandidate[] {
+function pickCandidatesForMealType(mealType: MealType, all: MenuSetCandidate[], opts: { min?: number; max?: number; preferMultipleDishes?: boolean; minDishCount?: number } = {}): MenuSetCandidate[] {
   const min = opts.min ?? 10;
   const max = opts.max ?? 80;
-  // 朝食・間食でも複数品のセットを優先する（デフォルトtrue）
+  // 複数品のセットを優先する（デフォルトtrue）
   const preferMultipleDishes = opts.preferMultipleDishes ?? true;
+  // 昼食・夕食は3品以上を優先（1汁3菜の実現のため）
+  const minDishCount = opts.minDishCount ?? (mealType === "lunch" || mealType === "dinner" ? 3 : 2);
   const mapped = mapMealTypeForDataset(mealType);
   let typed = all.filter((c) => c.meal_type_hint === mapped);
 
-  // 複数品優先モード: 2品以上のセットを先に、1品以下を後に並べ替え
+  // 複数品優先モード: minDishCount品以上のセットを先に並べ替え
   if (preferMultipleDishes && typed.length > 0) {
-    const multiDish = typed.filter((c) => getDishCount(c) >= 2);
+    const richDish = typed.filter((c) => getDishCount(c) >= minDishCount);
+    const mediumDish = typed.filter((c) => getDishCount(c) >= 2 && getDishCount(c) < minDishCount);
     const singleDish = typed.filter((c) => getDishCount(c) < 2);
-    typed = [...multiDish, ...singleDish];
+    typed = [...richDish, ...mediumDish, ...singleDish];
   }
 
   if (typed.length >= min) return typed.slice(0, max);
@@ -207,9 +210,10 @@ function pickCandidatesForMealType(mealType: MealType, all: MenuSetCandidate[], 
 
   // フォールバックでも複数品優先
   if (preferMultipleDishes && fallback.length > 0) {
-    const multiDish = fallback.filter((c) => getDishCount(c) >= 2);
+    const richDish = fallback.filter((c) => getDishCount(c) >= minDishCount);
+    const mediumDish = fallback.filter((c) => getDishCount(c) >= 2 && getDishCount(c) < minDishCount);
     const singleDish = fallback.filter((c) => getDishCount(c) < 2);
-    fallback = [...multiDish, ...singleDish];
+    fallback = [...richDish, ...mediumDish, ...singleDish];
   }
 
   return typed.concat(fallback).slice(0, Math.max(min, Math.min(max, typed.length + fallback.length)));
@@ -284,6 +288,9 @@ async function runAgentToSelectReplacement(input: {
     `- アレルギー（絶対除外）/禁忌/健康上の制約を厳守\n` +
     `\n` +
     `【品質】\n` +
+    `- **昼食・夕食は「1汁3菜」（主菜+副菜+汁物+ご飯/主食）を基本とし、3品以上含む献立セットを優先して選ぶ**\n` +
+    `- 候補の dishes 配列の品数（length）を確認し、昼食・夕食は3品以上の候補を優先的に選択する\n` +
+    `- 朝食は2品以上（主食+汁物orおかず）を基本とする\n` +
     `- ユーザーの「料理経験」や「調理時間目安」がある場合、**現実的に作れる差し替え**を優先（初心者/時短=工程が少ない・重すぎない）\n` +
     `- ユーザーの「好みの料理ジャンル」がある場合、嗜好を尊重\n` +
     `- 服薬情報がある場合は、一般的な食事上の注意点を尊重（例: ワーファリンはビタミンK摂取が極端に偏らないよう配慮）\n` +
@@ -552,6 +559,9 @@ async function regenerateMealV2BackgroundTask(args: {
           ingredient: ingredients.slice(0, 3).join("、"),
           ingredients,
           recipeSteps,
+          // 元のテキストも保存（マークダウン表示用）
+          ingredientsText: recipe?.ingredients_text ?? null,
+          recipeStepsText: recipe?.instructions_text ?? null,
           base_recipe_id: recipe?.id ?? null,
           is_generated_name: false,
         });

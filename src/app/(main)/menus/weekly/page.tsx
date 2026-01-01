@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail } from "@/types/domain";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,
@@ -106,6 +108,64 @@ const formatNutrition = (value: number | null | undefined, decimals = 1): string
   if (value === null || value === undefined) return '';
   const rounded = Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
   return rounded.toString();
+};
+
+// 材料テキストをマークダウンテーブルに変換
+const formatIngredientsToMarkdown = (ingredientsText: string | null | undefined, ingredients: string[] | null | undefined): string => {
+  // 元テキストがある場合、パースしてテーブル形式に変換を試みる
+  if (ingredientsText && ingredientsText.length > 0) {
+    // パターン: 材料名 + 数量 (例: "キャベツ80 g" or "卵（Mサイズ）50 g")
+    const parsed: { name: string; amount: string }[] = [];
+    // 改行がない場合、材料名と数量を抽出
+    const regex = /([ぁ-んァ-ヶー一-龯a-zA-Z（）\(\)]+[ぁ-んァ-ヶー一-龯a-zA-Z（）\(\)]*?)(\d+\.?\d*\s*[gGmlML杯個枚本束袋缶丁]*|\d*小さじ[^　\s]+|\d*大さじ[^　\s]+|少々|適量)/g;
+    let match;
+    while ((match = regex.exec(ingredientsText)) !== null) {
+      parsed.push({ name: match[1].trim(), amount: match[2].trim() });
+    }
+    
+    if (parsed.length > 0) {
+      let md = "| 材料 | 分量 |\n|------|------|\n";
+      for (const p of parsed) {
+        md += `| ${p.name} | ${p.amount} |\n`;
+      }
+      return md;
+    }
+  }
+  
+  // フォールバック: 配列をリストとして表示
+  if (ingredients && ingredients.length > 0) {
+    return ingredients.map(ing => `- ${ing}`).join('\n');
+  }
+  return '';
+};
+
+// 作り方テキストをマークダウンに変換
+const formatRecipeStepsToMarkdown = (recipeStepsText: string | null | undefined, recipeSteps: string[] | null | undefined): string => {
+  // 元テキストがある場合、番号付きステップを抽出
+  if (recipeStepsText && recipeStepsText.length > 0) {
+    // パターン: 番号 + 手順 (例: "1キャベツは..." or "1. キャベツは...")
+    const steps: string[] = [];
+    const regex = /(\d+)[.．]?\s*(.+?)(?=\d+[.．]?\s*|$)/g;
+    let match;
+    while ((match = regex.exec(recipeStepsText)) !== null) {
+      const step = match[2].trim();
+      if (step.length > 0) {
+        steps.push(step);
+      }
+    }
+    
+    if (steps.length > 0) {
+      return steps.map((step, i) => `${i + 1}. ${step}`).join('\n\n');
+    }
+    // パースできなかった場合は元テキストをそのまま返す
+    return recipeStepsText;
+  }
+  
+  // フォールバック: 配列をリストとして表示
+  if (recipeSteps && recipeSteps.length > 0) {
+    return recipeSteps.map((step, i) => `${i + 1}. ${step.replace(/^\d+\.\s*/, '')}`).join('\n\n');
+  }
+  return '';
 };
 const AI_CONDITIONS = ['冷蔵庫の食材を優先', '時短メニュー中心', '和食多め', 'ヘルシーに'];
 
@@ -2720,40 +2780,46 @@ export default function WeeklyMenuPage() {
                   {/* 材料 */}
                   <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
                   <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                    {selectedRecipeData?.ingredients && selectedRecipeData.ingredients.length > 0 ? (
-                      <ul className="space-y-1.5">
-                        {selectedRecipeData.ingredients.map((ing: string, idx: number) => (
-                          <li key={idx} className="flex items-center gap-2" style={{ fontSize: 13, color: colors.text }}>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: colors.accent }}></span>
-                            {ing}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>
-                    )}
+                    {(() => {
+                      const dish = selectedRecipeData?.dishes?.[0];
+                      const ingredientsMd = formatIngredientsToMarkdown(
+                        dish?.ingredientsText,
+                        selectedRecipeData?.ingredients
+                      );
+                      if (ingredientsMd) {
+                        return (
+                          <div className="prose prose-sm max-w-none" style={{ fontSize: 13, color: colors.text }}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{ingredientsMd}</ReactMarkdown>
+                          </div>
+                        );
+                      }
+                      return <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>;
+                    })()}
                   </div>
 
                   {/* 作り方 */}
                   <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>👨‍🍳 作り方</p>
                   <div className="rounded-xl p-3" style={{ background: colors.bg }}>
-                    {selectedRecipeData?.recipeSteps && selectedRecipeData.recipeSteps.length > 0 ? (
-                      <ol className="space-y-3">
-                        {selectedRecipeData.recipeSteps.map((step: string, idx: number) => (
-                          <li key={idx} className="flex gap-3" style={{ fontSize: 13, color: colors.text }}>
-                            <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: colors.accent, color: '#fff' }}>
-                              {idx + 1}
-                            </span>
-                            <span className="pt-0.5">{step.replace(/^\d+\.\s*/, '')}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p style={{ fontSize: 13, color: colors.textMuted }}>
-                        レシピはAI献立を生成すると自動で作成されます。<br />
-                        「AIで変更」ボタンから再生成してください。
-                      </p>
-                    )}
+                    {(() => {
+                      const dish = selectedRecipeData?.dishes?.[0];
+                      const recipeStepsMd = formatRecipeStepsToMarkdown(
+                        dish?.recipeStepsText,
+                        selectedRecipeData?.recipeSteps
+                      );
+                      if (recipeStepsMd) {
+                        return (
+                          <div className="prose prose-sm max-w-none" style={{ fontSize: 13, color: colors.text }}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{recipeStepsMd}</ReactMarkdown>
+                          </div>
+                        );
+                      }
+                      return (
+                        <p style={{ fontSize: 13, color: colors.textMuted }}>
+                          レシピはAI献立を生成すると自動で作成されます。<br />
+                          「AIで変更」ボタンから再生成してください。
+                        </p>
+                      );
+                    })()}
                   </div>
                 </div>
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
