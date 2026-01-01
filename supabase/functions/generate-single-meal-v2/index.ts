@@ -3,6 +3,7 @@ import { Agent, type AgentInputItem, Runner } from "@openai/agents";
 import { z } from "zod";
 import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
 import { detectAllergenHits, summarizeAllergenHits } from "../_shared/allergy.ts";
+import { calculateNutritionFromIngredients, emptyNutrition, type NutritionTotals } from "../_shared/nutrition-calculator.ts";
 
 console.log("Generate Single Meal v2 Function loaded (pgvector + dataset driven)");
 
