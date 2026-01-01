@@ -136,13 +136,12 @@ const QUESTIONS = [
       { label: '🦴 骨粗しょう症', value: '骨粗しょう症' },
       { label: '🩺 貧血', value: '貧血' },
       { label: '🦶 痛風', value: '痛風' },
-      { label: '✅ 特になし', value: 'none' },
     ],
     allowSkip: true,
   },
   {
     id: 'medications',
-    text: '服用中の薬はありますか？\n（食事に影響するものを選択）',
+    text: '服用中の薬はありますか？\n（食事に影響するものを選択、なければスキップ）',
     type: 'multi_choice',
     options: [
       { label: '💊 ワーファリン（血液サラサラ）', value: 'warfarin' },
@@ -151,7 +150,6 @@ const QUESTIONS = [
       { label: '💊 利尿剤', value: 'diuretic' },
       { label: '💊 抗生物質', value: 'antibiotics' },
       { label: '💊 ステロイド', value: 'steroid' },
-      { label: '✅ 特になし', value: 'none' },
     ],
     allowSkip: true,
   },
@@ -199,14 +197,11 @@ const QUESTIONS = [
   },
   {
     id: 'family_size',
-    text: '何人分の食事を作りますか？',
-    type: 'choice',
-    options: [
-      { label: '👤 1人', value: '1' },
-      { label: '👥 2人', value: '2' },
-      { label: '👨‍👩‍👧 3人', value: '3' },
-      { label: '👨‍👩‍👧‍👦 4人以上', value: '4' },
-    ]
+    text: '何人分の食事を作りますか？\n（1〜10人）',
+    type: 'number',
+    placeholder: '例: 4',
+    min: 1,
+    max: 10,
   },
 ];
 
@@ -232,6 +227,12 @@ export default function OnboardingPage() {
   };
 
   const currentQuestion = QUESTIONS[currentStep];
+  const isNumberQuestion = currentQuestion.type === 'number';
+  const numberMin = isNumberQuestion && typeof (currentQuestion as any).min === 'number' ? (currentQuestion as any).min : 1;
+  const numberMax = isNumberQuestion && typeof (currentQuestion as any).max === 'number' ? (currentQuestion as any).max : 10;
+  const numberValue = isNumberQuestion ? Number.parseInt(inputValue, 10) : NaN;
+  const isNumberValid = isNumberQuestion && Number.isFinite(numberValue) && numberValue >= numberMin && numberValue <= numberMax;
+  const hasTags = tags.length > 0;
 
   // 質問文の変数置換
   const getQuestionText = () => {
@@ -524,6 +525,34 @@ export default function OnboardingPage() {
                 </form>
               )}
 
+              {currentQuestion.type === 'number' && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (isNumberValid) handleAnswer(numberValue);
+                  }}
+                  className="flex gap-2 sm:gap-3"
+                >
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={numberMin}
+                    max={numberMax}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value.replace(/\D/g, ""))}
+                    placeholder={currentQuestion.placeholder}
+                    className="py-5 sm:py-6 text-base sm:text-lg rounded-xl sm:rounded-2xl border-gray-200 focus:border-orange-400 focus:ring-orange-400/20"
+                  />
+                  <Button
+                    type="submit"
+                    disabled={!isNumberValid}
+                    className="h-12 w-12 sm:h-14 sm:w-14 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white shrink-0"
+                  >
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
+                  </Button>
+                </form>
+              )}
+
               {/* 単一選択 */}
               {currentQuestion.type === 'choice' && (
                 <div className="flex flex-col gap-2 sm:gap-3 max-h-[45vh] sm:max-h-[50vh] overflow-y-auto">
@@ -643,6 +672,7 @@ export default function OnboardingPage() {
                     </Button>
                     <Button
                       onClick={() => handleAnswer(tags)}
+                      disabled={!hasTags}
                       className="flex-1 py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold text-sm sm:text-base"
                     >
                       次へ

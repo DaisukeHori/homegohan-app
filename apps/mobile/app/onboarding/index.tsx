@@ -173,7 +173,6 @@ const QUESTIONS: Question[] = [
       { label: "骨粗しょう症", value: "骨粗しょう症" },
       { label: "貧血", value: "貧血" },
       { label: "痛風", value: "痛風" },
-      { label: "特になし", value: "none" },
     ],
   },
   {
@@ -188,7 +187,6 @@ const QUESTIONS: Question[] = [
       { label: "利尿剤", value: "diuretic" },
       { label: "抗生物質", value: "antibiotics" },
       { label: "ステロイド", value: "steroid" },
-      { label: "特になし", value: "none" },
     ],
   },
   {
@@ -235,14 +233,11 @@ const QUESTIONS: Question[] = [
   },
   {
     id: "family_size",
-    text: "何人分の食事を作りますか？",
-    type: "choice",
-    options: [
-      { label: "1人", value: "1" },
-      { label: "2人", value: "2" },
-      { label: "3人", value: "3" },
-      { label: "4人以上", value: "4" },
-    ],
+    text: "何人分の食事を作りますか？（1〜10人）",
+    type: "number",
+    placeholder: "例: 4",
+    min: 1,
+    max: 10,
   },
 ];
 
@@ -347,6 +342,13 @@ export default function OnboardingIndex() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const currentQuestion = QUESTIONS[currentStep];
+  const isNumberQuestion = currentQuestion.type === "number";
+  const numberMin = isNumberQuestion && typeof (currentQuestion as any).min === "number" ? (currentQuestion as any).min : 1;
+  const numberMax = isNumberQuestion && typeof (currentQuestion as any).max === "number" ? (currentQuestion as any).max : 10;
+  const numberValue = isNumberQuestion ? Number.parseInt(inputValue, 10) : NaN;
+  const isNumberValid = isNumberQuestion && Number.isFinite(numberValue) && numberValue >= numberMin && numberValue <= numberMax;
+  const isMultiReady = selectedMulti.length > 0;
+  const hasTags = tags.length > 0;
 
   const progress = useMemo(() => {
     let total = 0;
@@ -504,6 +506,34 @@ export default function OnboardingIndex() {
         </View>
       ) : null}
 
+      {currentQuestion.type === "number" ? (
+        <View style={{ gap: 10 }}>
+          <TextInput
+            autoFocus
+            keyboardType="number-pad"
+            placeholder={currentQuestion.placeholder}
+            value={inputValue}
+            onChangeText={(v) => setInputValue(v.replace(/[^0-9]/g, ""))}
+            style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
+          />
+          <Pressable
+            onPress={() => {
+              if (!isNumberValid) return;
+              handleAnswer(numberValue);
+            }}
+            disabled={!isNumberValid}
+            style={{
+              backgroundColor: isNumberValid ? "#333" : "#999",
+              padding: 14,
+              borderRadius: 12,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "white", fontWeight: "700" }}>{isSubmitting ? "保存中..." : "次へ"}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {currentQuestion.type === "choice" ? (
         <View style={{ gap: 10 }}>
           {(currentQuestion.options || []).map((opt) => (
@@ -567,13 +597,17 @@ export default function OnboardingIndex() {
               </Pressable>
             ) : null}
             <Pressable
-              onPress={() => handleAnswer(selectedMulti)}
+              onPress={() => {
+                if (!isMultiReady) return;
+                handleAnswer(selectedMulti);
+              }}
+              disabled={!isMultiReady}
               style={{
                 flex: 1,
                 padding: 14,
                 borderRadius: 12,
                 alignItems: "center",
-                backgroundColor: selectedMulti.length ? "#333" : "#999",
+                backgroundColor: isMultiReady ? "#333" : "#999",
               }}
             >
               <Text style={{ color: "white", fontWeight: "700" }}>{isSubmitting ? "保存中..." : "次へ"}</Text>
@@ -643,13 +677,17 @@ export default function OnboardingIndex() {
               </Pressable>
             ) : null}
             <Pressable
-              onPress={() => handleAnswer(tags)}
+              onPress={() => {
+                if (!hasTags) return;
+                handleAnswer(tags);
+              }}
+              disabled={!hasTags}
               style={{
                 flex: 1,
                 padding: 14,
                 borderRadius: 12,
                 alignItems: "center",
-                backgroundColor: "#333",
+                backgroundColor: hasTags ? "#333" : "#999",
               }}
             >
               <Text style={{ color: "white", fontWeight: "700" }}>{isSubmitting ? "保存中..." : "次へ"}</Text>
@@ -733,6 +771,5 @@ export default function OnboardingIndex() {
     </ScrollView>
   );
 }
-
 
 

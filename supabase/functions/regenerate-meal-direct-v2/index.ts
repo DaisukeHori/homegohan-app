@@ -182,14 +182,36 @@ async function searchMenuCandidates(supabase: any, queryText: string, matchCount
   return (data ?? []) as MenuSetCandidate[];
 }
 
-function pickCandidatesForMealType(mealType: MealType, all: MenuSetCandidate[], opts: { min?: number; max?: number } = {}): MenuSetCandidate[] {
+function getDishCount(c: MenuSetCandidate): number {
+  return Array.isArray(c.dishes) ? c.dishes.length : 0;
+}
+
+function pickCandidatesForMealType(mealType: MealType, all: MenuSetCandidate[], opts: { min?: number; max?: number; preferMultipleDishes?: boolean } = {}): MenuSetCandidate[] {
   const min = opts.min ?? 10;
   const max = opts.max ?? 80;
+  // 朝食・間食でも複数品のセットを優先する（デフォルトtrue）
+  const preferMultipleDishes = opts.preferMultipleDishes ?? true;
   const mapped = mapMealTypeForDataset(mealType);
-  const typed = all.filter((c) => c.meal_type_hint === mapped);
+  let typed = all.filter((c) => c.meal_type_hint === mapped);
+
+  // 複数品優先モード: 2品以上のセットを先に、1品以下を後に並べ替え
+  if (preferMultipleDishes && typed.length > 0) {
+    const multiDish = typed.filter((c) => getDishCount(c) >= 2);
+    const singleDish = typed.filter((c) => getDishCount(c) < 2);
+    typed = [...multiDish, ...singleDish];
+  }
+
   if (typed.length >= min) return typed.slice(0, max);
   const seen = new Set(typed.map((c) => c.external_id));
-  const fallback = all.filter((c) => !seen.has(c.external_id));
+  let fallback = all.filter((c) => !seen.has(c.external_id));
+
+  // フォールバックでも複数品優先
+  if (preferMultipleDishes && fallback.length > 0) {
+    const multiDish = fallback.filter((c) => getDishCount(c) >= 2);
+    const singleDish = fallback.filter((c) => getDishCount(c) < 2);
+    fallback = [...multiDish, ...singleDish];
+  }
+
   return typed.concat(fallback).slice(0, Math.max(min, Math.min(max, typed.length + fallback.length)));
 }
 
