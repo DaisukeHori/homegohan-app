@@ -106,25 +106,23 @@ const EXTRA_MEAL_TYPES: MealType[] = ['snack', 'midnight_snack'];
 // 栄養素の値をフォーマット（浮動小数点誤差を修正）
 const formatNutrition = (value: number | null | undefined, decimals = 1): string => {
   if (value === null || value === undefined) return '';
-  // 数値でない場合は空文字を返す
   const num = Number(value);
   if (!Number.isFinite(num)) return '';
-  // 極端に小さい値（0.5未満）は表示しない（空文字を返す）
-  // これにより条件付きレンダリングで非表示になる
-  const threshold = decimals === 0 ? 0.5 : Math.pow(10, -decimals) * 0.5;
-  if (Math.abs(num) < threshold) return '';
   // 丸め処理
   const rounded = Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
-  return rounded.toFixed(decimals).replace(/\.?0+$/, ''); // 末尾の0を削除
+  // 丸めた結果が0なら空文字を返す（表示しない）
+  if (rounded === 0) return '';
+  return rounded.toFixed(decimals).replace(/\.?0+$/, '');
 };
 
-// 栄養素を表示すべきかどうか（値が有効かつ表示に意味がある場合のみ true）
+// 栄養素を表示すべきかどうか（丸めた結果が0より大きい場合のみ true）
 const shouldShowNutrition = (value: number | null | undefined, decimals = 1): boolean => {
   if (value === null || value === undefined) return false;
   const num = Number(value);
   if (!Number.isFinite(num)) return false;
-  const threshold = decimals === 0 ? 0.5 : Math.pow(10, -decimals) * 0.5;
-  return Math.abs(num) >= threshold;
+  // 丸めた結果が0より大きいかチェック
+  const rounded = Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
+  return rounded !== 0;
 };
 
 // 栄養素表示コンポーネント（値が有効な場合のみ表示）
@@ -136,10 +134,12 @@ const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: {
   textColor?: string;
 }) => {
   if (!shouldShowNutrition(value, decimals)) return null;
+  const formatted = formatNutrition(value, decimals);
+  if (!formatted) return null; // 追加の安全チェック
   return (
     <div className="flex justify-between">
       <span style={{ color: textColor }}>{label}</span>
-      <span className="font-medium">{formatNutrition(value, decimals)}{unit}</span>
+      <span className="font-medium">{formatted}{unit}</span>
     </div>
   );
 };
