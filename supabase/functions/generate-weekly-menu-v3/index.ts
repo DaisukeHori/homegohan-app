@@ -886,12 +886,13 @@ function sumNutrition(dishes: any[]) {
   for (const d of dishes) {
     const n = d.nutrition;
     if (!n) continue;
-    calories += n.calories ?? 0;
-    protein += n.protein ?? 0;
-    fat += n.fat ?? 0;
-    carbs += n.carbs ?? 0;
-    fiber += n.fiber ?? 0;
-    sodium += n.sodium ?? 0;
+    // 栄養計算関数は calories_kcal, protein_g などを返す
+    calories += n.calories_kcal ?? n.calories ?? 0;
+    protein += n.protein_g ?? n.protein ?? 0;
+    fat += n.fat_g ?? n.fat ?? 0;
+    carbs += n.carbs_g ?? n.carbs ?? 0;
+    fiber += n.fiber_g ?? n.fiber ?? 0;
+    sodium += n.sodium_mg ?? n.sodium ?? 0;
   }
   return { calories, protein, fat, carbs, fiber, sodium };
 }
