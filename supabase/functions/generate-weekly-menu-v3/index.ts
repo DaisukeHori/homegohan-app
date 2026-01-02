@@ -905,20 +905,29 @@ async function executeStep3_Complete(
 // =========================================================
 
 function buildDishDetails(meal: GeneratedMeal) {
-  const dishes = meal.dishes.map((d, idx) => ({
-    name: d.name,
-    role: d.role ?? "other",
-    ingredients: d.ingredients,
-    ingredientsMd: d.ingredients.map(ing => `- ${ing.name}: ${ing.amount}`).join("\n"),
-    recipeStepsMd: d.instructions?.map((step, i) => `${i + 1}. ${step}`).join("\n") ?? "",
-    displayOrder: idx,
-    calories_kcal: (d as any).nutrition?.calories ?? null,
-    protein_g: (d as any).nutrition?.protein ?? null,
-    fat_g: (d as any).nutrition?.fat ?? null,
-    carbs_g: (d as any).nutrition?.carbs ?? null,
-    fiber_g: (d as any).nutrition?.fiber ?? null,
-    sodium_mg: (d as any).nutrition?.sodium ?? null,
-  }));
+  const dishes = meal.dishes.map((d, idx) => {
+    // 栄養値を取得（Step 3 で計算されて dish.nutrition に設定される）
+    const n = (d as any).nutrition;
+    const round1 = (v: number | null | undefined) => v != null ? Math.round(v * 10) / 10 : null;
+    
+    return {
+      name: d.name,
+      role: d.role ?? "other",
+      ingredients: d.ingredients,
+      // 材料表示: テーブル形式で統一
+      ingredientsMd: "| 材料 | 分量 |\n|------|------|\n" + 
+        d.ingredients.map(ing => `| ${ing.name} | ${ing.amount_g}g |`).join("\n"),
+      recipeStepsMd: d.instructions?.map((step, i) => `${i + 1}. ${step}`).join("\n") ?? "",
+      displayOrder: idx,
+      // NutritionTotals 形式の栄養値
+      calories_kcal: n?.calories_kcal != null ? Math.round(n.calories_kcal) : null,
+      protein_g: round1(n?.protein_g),
+      fat_g: round1(n?.fat_g),
+      carbs_g: round1(n?.carbs_g),
+      fiber_g: round1(n?.fiber_g),
+      sodium_g: round1(n?.sodium_g),
+    };
+  });
 
   const dishName = dishes.length === 1 
     ? dishes[0].name 
