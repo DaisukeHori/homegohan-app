@@ -171,7 +171,7 @@ export async function POST(
         // NOTE:
         // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
         // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
-        const { error: invokeError } = await supabase.functions.invoke('generate-single-meal-v2', {
+        const { error: invokeError } = await supabase.functions.invoke('generate-single-meal-v3', {
           body: {
             date,
             userId: user.id,
@@ -190,7 +190,7 @@ export async function POST(
         // NOTE:
         // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
         // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
-        const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu-v2', {
+        const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu-v3', {
           body: {
             startDate,
             userId: user.id,

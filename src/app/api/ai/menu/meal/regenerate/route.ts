@@ -53,9 +53,9 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    console.log('🚀 Calling Edge Function regenerate-meal-direct-v2...');
+    console.log('🚀 Calling Edge Function regenerate-meal-direct-v3...');
 
-    fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v2`, {
+    fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v3`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -165,9 +165,9 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    console.log('🚀 Calling Edge Function generate-single-meal-v2...');
+    console.log('🚀 Calling Edge Function generate-single-meal-v3...');
 
-    fetch(`${supabaseUrl}/functions/v1/generate-single-meal-v2`, {
+    fetch(`${supabaseUrl}/functions/v1/generate-single-meal-v3`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     //
     // 4. 各食事を個別に再生成
     const regenerationPromises = (meals || []).map(async (meal) => {
-      const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct-v2', {
+      const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct-v3', {
         body: {
           mealId: meal.id,
           dayDate: (meal.meal_plan_days as any)?.day_date,

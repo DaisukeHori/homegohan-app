@@ -415,8 +415,8 @@ export async function POST(request: Request) {
     // NOTE:
     // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンであり、
     //   献立生成ロジックの v1/v2（legacy/dataset）とは無関係です。
-    // - 当アプリの献立再生成は `regenerate-meal-direct-v2`（dataset駆動）を使用します。
-    const regenerateRes = await fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v2`, {
+    // - 当アプリの献立再生成は `regenerate-meal-direct-v3`（LLM Creative）を使用します。
+    const regenerateRes = await fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v3`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
