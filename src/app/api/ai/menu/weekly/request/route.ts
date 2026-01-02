@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -225,8 +226,8 @@ export async function POST(request: Request) {
     // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンであり、
     //   献立生成ロジックの v1/v2（legacy/dataset）とは無関係です。
     // - 当アプリの献立生成は `generate-weekly-menu-v2`（dataset駆動）を使用します。
-    // Edge Functionを非同期で呼び出し（完了を待たない）
-    fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu-v2`, {
+    // Edge Functionをバックグラウンドで呼び出し（waitUntilで接続を維持）
+    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu-v2`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -243,9 +244,29 @@ export async function POST(request: Request) {
         requestId: requestData.id,
         mealPlanId: mealPlan.id,
       }),
-    }).catch(err => {
+    }).then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text().catch(() => 'Unknown error');
+        console.error('❌ Edge Function error:', res.status, text);
+        // 失敗時はステータスを更新
+        await supabase
+          .from('weekly_menu_requests')
+          .update({ status: 'failed', updated_at: new Date().toISOString() })
+          .eq('id', requestData.id);
+      } else {
+        console.log('✅ Edge Function completed successfully');
+      }
+    }).catch(async (err) => {
       console.error('❌ Edge Function call error:', err.message);
+      // 失敗時はステータスを更新
+      await supabase
+        .from('weekly_menu_requests')
+        .update({ status: 'failed', updated_at: new Date().toISOString() })
+        .eq('id', requestData.id);
     });
+    
+    // waitUntilでバックグラウンド処理を維持（Vercel Functionsの終了後も実行を継続）
+    waitUntil(edgeFunctionPromise);
 
     // 生成開始を即座に返す（プレースホルダーは作成しない、ポーリングで状態を監視）
     return NextResponse.json({ 
