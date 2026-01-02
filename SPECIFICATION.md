@@ -1452,12 +1452,163 @@ CREATE INDEX IF NOT EXISTS idx_planned_meals_source_type ON planned_meals(source
 **Supabase Edge Functions の制限:**
 - 無料プラン: 150秒
 - 有料プラン: 400秒
+- `EdgeRuntime.waitUntil()` バックグラウンドタスク: 最大約5分
 
 **v2処理時間見積もり:**
-- 現状: ~130-250秒（LLM呼び出しが60-90秒）
-- **最適化後: ~70-135秒** ✅（有料プラン400秒で余裕あり）
+- 全フェーズ（生成+レビュー+修正+栄養計算+保存）: 8-10分
+- これは `EdgeRuntime.waitUntil()` の制限を超えるため、**3ステップ分割方式**を採用
 
-**最適化（必須）:**
+#### 8.5.9 3ステップ分割アーキテクチャ（タイムアウト回避）
+
+週間献立生成は処理時間が長い（LLM呼び出し多数）ため、単一のバックグラウンドタスクでは`EdgeRuntime.waitUntil()`のタイムアウトを超過する。
+これを回避するため、処理を**3つの独立したステップ**に分割し、各ステップ完了時に次のステップを自動トリガーする設計を採用。
+
+**ステップ構成:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Step 1: 生成 (約2-3分)                                      │
+│  ├── Phase 1: ユーザー情報取得                               │
+│  ├── Phase 2: 参考レシピ検索（RAG）                          │
+│  └── Phase 3: 7日分の献立を並列生成（LLM）                   │
+│       ↓ generated_data に保存 → current_step = 2            │
+│       ↓ 自動トリガー（self-invoke）                          │
+├─────────────────────────────────────────────────────────────┤
+│  Step 2: レビュー・修正 (約1-2分)                            │
+│  ├── Phase 4: 全体俯瞰レビュー（LLM）                        │
+│  │    - 重複検出（昼夜被り、連日同メニュー）                 │
+│  │    - 1汁3菜チェック                                       │
+│  │    - スワップ提案（昼↔夜入れ替え等）                     │
+│  └── Phase 5: 問題修正（最大2件、LLM再生成）                 │
+│       ↓ generated_data を更新 → current_step = 3            │
+│       ↓ 自動トリガー（self-invoke）                          │
+├─────────────────────────────────────────────────────────────┤
+│  Step 3: 完了処理 (約1分)                                    │
+│  ├── Phase 6: 栄養価計算（dataset_ingredients ベクトル検索） │
+│  ├── Phase 7: DB保存（meal_plans, meal_plan_days,            │
+│  │            planned_meals）                                │
+│  └── Phase 8: ステータス更新 → status = 'completed'         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**DBスキーマ拡張:**
+
+```sql
+ALTER TABLE weekly_menu_requests 
+ADD COLUMN generated_data JSONB DEFAULT NULL,
+ADD COLUMN current_step INTEGER DEFAULT 1;
+
+-- generated_data 構造:
+-- {
+--   "dailyResults": [...],     // 7日分の生成済み献立
+--   "userContext": {...},      // ユーザー情報
+--   "userSummary": "...",      // ユーザーサマリ文
+--   "references": [...],       // 参考レシピ
+--   "dates": ["2026-01-01", ...], // 対象日付
+--   "reviewResult": {...}      // レビュー結果（Step 2完了後）
+-- }
+```
+
+**自動トリガー方式:**
+
+各ステップ完了時に、同一Edge Functionを再度呼び出す（self-invoke）:
+
+```typescript
+async function triggerNextStep(
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  requestId: string,
+  userId: string,
+  startDate: string,
+  note: string | null,
+) {
+  fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu-v2`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${supabaseServiceKey}`,
+    },
+    body: JSON.stringify({
+      request_id: requestId,
+      start_date: startDate,
+      userId: userId,
+      note: note,
+      _continue: true, // 継続フラグ
+    }),
+  }).catch(e => console.error("Failed to trigger next step:", e));
+}
+```
+
+**進捗通知（Realtime）:**
+
+各フェーズ開始時に `progress` カラムを更新し、クライアントにリアルタイム通知:
+
+```typescript
+interface ProgressInfo {
+  phase: string;      // "user_context" | "generating" | "reviewing" | "fixing" | "calculating" | "saving" | "completed"
+  message: string;    // "AIが7日分の献立を作成中..."
+  percentage: number; // 0-100
+}
+
+// 例: Step 1
+await updateProgress(supabase, requestId, {
+  phase: "generating",
+  message: "AIが7日分の献立を作成中... (約2分)",
+  percentage: 15,
+});
+```
+
+**進捗パーセンテージ配分:**
+
+| ステップ | フェーズ | パーセンテージ | メッセージ例 |
+|---------|---------|---------------|-------------|
+| Step 1 | user_context | 5% | ユーザー情報を取得中... |
+| Step 1 | search_references | 10% | 参考レシピを検索中... |
+| Step 1 | generating | 15% | AIが7日分の献立を作成中... |
+| Step 1 | step1_complete | 40% | 献立生成完了。レビュー開始... |
+| Step 2 | reviewing | 50% | 献立のバランスをチェック中... |
+| Step 2 | fixing | 65% | X件の改善点を修正中... |
+| Step 2 | step2_complete | 75% | レビュー完了。栄養計算開始... |
+| Step 3 | calculating | 80% | 栄養価を計算中... |
+| Step 3 | saving | 90% | 献立を保存中... |
+| Step 3 | completed | 100% | 献立が完成しました！ |
+
+**クライアント実装（Web / Mobile）:**
+
+```typescript
+// Web: Supabase Realtime でリアルタイム受信
+supabase
+  .channel(`weekly-menu-${requestId}`)
+  .on('postgres_changes', {
+    event: 'UPDATE',
+    schema: 'public',
+    table: 'weekly_menu_requests',
+    filter: `id=eq.${requestId}`,
+  }, (payload) => {
+    if (payload.new.progress) {
+      setGenerationProgress(payload.new.progress);
+    }
+  })
+  .subscribe();
+
+// Mobile: ポーリングで進捗取得
+const pollStatus = async () => {
+  const res = await fetch(`/api/ai/menu/weekly/status?targetDate=${date}`);
+  const data = await res.json();
+  if (data.progress) {
+    setPendingProgress(data.progress);
+  }
+};
+```
+
+**メリット:**
+
+1. **タイムアウト回避**: 各ステップは2-3分で完了し、5分制限を超えない
+2. **耐障害性**: 途中で失敗しても、`generated_data`から再開可能
+3. **リアルタイム進捗**: ユーザーに詳細な進捗を表示でき、UX向上
+4. **レビュー・修正の維持**: 重要なレビュー・修正フェーズをスキップせずに実行可能
+
+**最適化（追加）:**
 
 1. **proxy解決のバッチ化**: 63品を1回のSQLで検索（3-5秒 → 1秒）
 
@@ -1783,6 +1934,6 @@ homegohan/
 
 ---
 
-**更新日:** 2025年12月24日
-**バージョン:** 0.1.0
+**更新日:** 2026年1月2日
+**バージョン:** 0.2.0
 
