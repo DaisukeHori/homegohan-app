@@ -814,13 +814,16 @@ export default function WeeklyMenuPage() {
     pollingIntervalRef.current = setInterval(poll, 3000);
   }, [cleanupPolling, cleanupRealtime]);
 
-  // Realtime で生成完了を監視（フォールバックポーリング付き）
+  // Realtime で生成完了を監視（常にポーリングも並行実行）
   const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string) => {
     // 既存のサブスクリプションをクリーンアップ
     cleanupRealtime();
     cleanupPolling();
     
     console.log('📡 Subscribing to Realtime for requestId:', requestId);
+    
+    // 常にポーリングも開始（Realtimeの信頼性が低いため）
+    startPolling(targetDate, requestId);
     
     let realtimeConnected = false;
     
