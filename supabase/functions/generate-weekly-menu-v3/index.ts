@@ -675,34 +675,43 @@ async function executeStep3_Complete(
 
   await updateProgress(supabase, requestId, {
     phase: "calculating",
-    message: "1日目の栄養を計算中...",
+    message: "全料理の栄養を同時計算中...",
     percentage: 75,
   }, 3);
 
-  // 栄養計算（日ごとに進捗更新）
+  // 全ての料理を収集して並列計算
+  const allDishes: { dayIdx: number; mealIdx: number; dishIdx: number; dish: any }[] = [];
   for (let dayIdx = 0; dayIdx < dailyResults.length; dayIdx++) {
     const day = dailyResults[dayIdx];
-    const dayNum = dayIdx + 1;
-    const percentage = 75 + Math.round((dayIdx / 7) * 10); // 75% → 85%
-    
-    await updateProgress(supabase, requestId, {
-      phase: "calculating",
-      message: `${dayNum}日目の栄養を計算中...`,
-      percentage,
-    });
-    
-    for (const meal of day.meals) {
-      for (const dish of meal.dishes) {
-        try {
-          const nutrition = await calculateNutritionFromIngredients(supabase, dish.ingredients);
-          dish.nutrition = nutrition;
-        } catch (e) {
-          console.warn(`Nutrition calc failed for ${dish.name}:`, e);
-          dish.nutrition = emptyNutrition();
-        }
+    for (let mealIdx = 0; mealIdx < day.meals.length; mealIdx++) {
+      const meal = day.meals[mealIdx];
+      for (let dishIdx = 0; dishIdx < meal.dishes.length; dishIdx++) {
+        allDishes.push({ dayIdx, mealIdx, dishIdx, dish: meal.dishes[dishIdx] });
       }
     }
   }
+  
+  console.log(`📊 Calculating nutrition for ${allDishes.length} dishes in parallel...`);
+  
+  // 並列で栄養計算
+  const nutritionResults = await Promise.all(
+    allDishes.map(async ({ dish }) => {
+      try {
+        return await calculateNutritionFromIngredients(supabase, dish.ingredients);
+      } catch (e) {
+        console.warn(`Nutrition calc failed for ${dish.name}:`, e);
+        return emptyNutrition();
+      }
+    })
+  );
+  
+  // 結果を反映
+  for (let i = 0; i < allDishes.length; i++) {
+    const { dayIdx, mealIdx, dishIdx } = allDishes[i];
+    dailyResults[dayIdx].meals[mealIdx].dishes[dishIdx].nutrition = nutritionResults[i];
+  }
+  
+  console.log(`✅ Nutrition calculation completed for ${allDishes.length} dishes`);
 
   await updateProgress(supabase, requestId, {
     phase: "saving",
