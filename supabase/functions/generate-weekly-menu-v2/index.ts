@@ -431,13 +431,19 @@ async function generateWeeklyMenuBackground(
     
     if (reviewResult.hasIssues && reviewResult.issues.length > 0) {
       phaseStart("5_fix_issues");
+      const fixCount = Math.min(reviewResult.issues.length, 2);
       await updateProgress(supabase, requestId, {
         phase: "fixing",
-        message: `${reviewResult.issues.length}件の改善点を修正中...`,
+        message: `${fixCount}件の改善点を修正中...`,
         percentage: 65,
       });
       
-      for (const issue of reviewResult.issues) {
+      // 時間制約のため、修正は最大2件まで
+      const maxFixes = 2;
+      const issuesToFix = reviewResult.issues.slice(0, maxFixes);
+      console.log(`Fixing ${issuesToFix.length} of ${reviewResult.issues.length} issues (limited to ${maxFixes})`);
+      
+      for (const issue of issuesToFix) {
         const dayIndex = dates.indexOf(issue.date);
         if (dayIndex === -1) continue;
         

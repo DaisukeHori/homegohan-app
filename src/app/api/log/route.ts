@@ -3,8 +3,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { createServerClient } from '@/lib/supabase/server';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/server';
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     // ユーザーIDを取得（認証済みの場合）
     let userId: string | undefined;
     try {
-      const supabase = await createServerClient();
+      const supabase = await createClient();
       const { data: { user } } = await supabase.auth.getUser();
       userId = user?.id;
     } catch {
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createSupabaseClient(supabaseUrl, supabaseServiceKey);
 
     const { error } = await supabase.from('app_logs').insert({
       level,
