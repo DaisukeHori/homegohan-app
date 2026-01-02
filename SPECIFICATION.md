@@ -34,11 +34,12 @@
 - `generate-weekly-menu`: 互換入口（現在は **v3の処理に委譲**して旧クライアントも動かす）
 - `generate-weekly-menu-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）← 現在の推奨
 - `generate-single-meal`: v1（legacy/旧方式）
-- `generate-single-meal-v3`: v3（LLMクリエイティブ）
+- `generate-single-meal-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）
 - `regenerate-meal-direct`: v1（legacy/旧方式）
-- `regenerate-meal-direct-v3`: v3（LLMクリエイティブ）
+- `regenerate-meal-direct-v3`: **v3**（LLMクリエイティブ + 3ステップ分割）
 
 > **注**: v2関数は互換性のため残していますが、新規開発はv3を使用してください。
+> **全てのv3関数は3ステップ分割アーキテクチャを採用しています。**
 
 ### 主要機能
 - 📸 **食事写真分析**: 写真からAIが料理を認識し、栄養素を推定
