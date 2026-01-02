@@ -416,39 +416,29 @@ async function executeStep1_Generate(
 
   await updateProgress(supabase, requestId, {
     phase: "generating",
-    message: "1日目の献立を作成中...",
+    message: "7日分の献立をAIが同時作成中...",
     percentage: 15,
   });
 
-  // 7日分を順次生成（進捗を細かく更新するため）
-  const dailyResults: any[] = [];
-  for (let i = 0; i < dates.length; i++) {
-    const date = dates[i];
-    const dayNum = i + 1;
-    const percentage = 15 + Math.round((i / 7) * 20); // 15% → 35%
-    
-    await updateProgress(supabase, requestId, {
-      phase: "generating",
-      message: `${dayNum}日目の献立を作成中...`,
-      percentage,
-    });
-    
-    try {
-      const result = await generateDayMealsWithLLM({
-        userSummary,
-        userContext,
-        note,
-        date,
-        mealTypes: REQUIRED_MEAL_TYPES,
-        referenceMenus: references,
-      });
-      dailyResults.push(result);
-      console.log(`✅ Day ${dayNum} (${date}) generated`);
-    } catch (err) {
+  // 7日分を並列生成（高速化）
+  const generationPromises = dates.map((date, i) =>
+    generateDayMealsWithLLM({
+      userSummary,
+      userContext,
+      note,
+      date,
+      mealTypes: REQUIRED_MEAL_TYPES,
+      referenceMenus: references,
+    }).then(result => {
+      console.log(`✅ Day ${i + 1} (${date}) generated`);
+      return result;
+    }).catch(err => {
       console.error(`Failed to generate meals for ${date}:`, err);
-      dailyResults.push(null);
-    }
-  }
+      return null;
+    })
+  );
+  
+  const dailyResults = await Promise.all(generationPromises);
   
   // 失敗した日がないか確認
   const failedDays = dates.filter((_, i) => !dailyResults[i]);
