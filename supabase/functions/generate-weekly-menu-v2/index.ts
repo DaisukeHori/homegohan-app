@@ -533,15 +533,15 @@ async function generateMenuV2BackgroundTask(args: {
 
     // 1) pgvectorで候補抽出（mealTypeごとに一度）
     const searchQueryBase = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
-    // NOTE: まずは多めに取得し、meal_type_hint で振り分ける
-    const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${searchQueryBase}`, 600);
-    const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${searchQueryBase}`, 800);
-    const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${searchQueryBase}`, 1200);
+    // パフォーマンス改善: 候補数を大幅に削減（600-1200→150-200、max 60-80→20-25）
+    const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${searchQueryBase}`, 150);
+    const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${searchQueryBase}`, 200);
+    const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${searchQueryBase}`, 200);
 
     const candidatesByMealType: Record<MealType, MenuSetCandidate[]> = {
-      breakfast: pickCandidatesForMealType("breakfast", breakfastRaw, { min: 10, max: 60 }),
-      lunch: pickCandidatesForMealType("lunch", lunchRaw, { min: 10, max: 80 }),
-      dinner: pickCandidatesForMealType("dinner", dinnerRaw, { min: 10, max: 80 }),
+      breakfast: pickCandidatesForMealType("breakfast", breakfastRaw, { min: 7, max: 20 }),
+      lunch: pickCandidatesForMealType("lunch", lunchRaw, { min: 7, max: 25 }),
+      dinner: pickCandidatesForMealType("dinner", dinnerRaw, { min: 7, max: 25 }),
     };
 
     const allergyTokens: string[] = Array.isArray((userContext as any)?.hard?.allergies) ? (userContext as any).hard.allergies : [];
