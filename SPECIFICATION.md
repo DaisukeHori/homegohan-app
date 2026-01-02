@@ -19,23 +19,26 @@
 
 **ほめゴハン**は、AIを活用した食事管理・献立提案アプリケーションです。
 
-### 1.1 用語（v1/v2 と `/functions/v1` の違い）
+### 1.1 用語（v1/v2/v3 と `/functions/v1` の違い）
 
-本リポジトリでは「v1/v2」という表記が **2種類** 登場し、混同すると事故りやすいのでここで定義します。
+本リポジトリでは「v1/v2/v3」という表記が **2種類** 登場し、混同すると事故りやすいのでここで定義します。
 
 - **Supabaseの `/functions/v1/...`**: Supabase Edge Functions の **HTTPパスのバージョン**です（プラットフォーム側の仕様）。  
-  これは **献立生成アルゴリズムのv1/v2とは無関係**です。
-- **献立生成ロジックの v1 / v2**: アプリ側の献立生成方式の世代を表します。  
+  これは **献立生成アルゴリズムのv1/v2/v3とは無関係**です。
+- **献立生成ロジックの v1 / v2 / v3**: アプリ側の献立生成方式の世代を表します。  
   - **v1（legacy/旧方式）**: 既存の献立生成（RAG/LLM中心。`knowledge-gpt` 経由など）
   - **v2（dataset/データセット駆動）**: pgvector＋データセットDBを根拠に **ID選定→DB確定値を `planned_meals` に反映**する方式
+  - **v3（LLMクリエイティブ + 3ステップ分割）**: LLMが料理名・材料・手順を直接生成し、栄養は `dataset_ingredients` のベクトル検索で計算。**3ステップ分割アーキテクチャ**（生成→レビュー・修正→完了処理）でタイムアウトを回避。全体俯瞰レビュー・修正フェーズを含む。
 
 **対応表（主要Edge Function）**
-- `generate-weekly-menu`: 互換入口（現在は **v2の処理に委譲**して旧クライアントも動かす）
-- `generate-weekly-menu-v2`: v2（dataset/データセット駆動）
+- `generate-weekly-menu`: 互換入口（現在は **v3の処理に委譲**して旧クライアントも動かす）
+- `generate-weekly-menu-v2`: **v3**（LLMクリエイティブ + 3ステップ分割）← 現在の推奨
 - `generate-single-meal`: v1（legacy/旧方式）
-- `generate-single-meal-v2`: v2（dataset/データセット駆動）
+- `generate-single-meal-v2`: v3（LLMクリエイティブ）
 - `regenerate-meal-direct`: v1（legacy/旧方式）
-- `regenerate-meal-direct-v2`: v2（dataset/データセット駆動）
+- `regenerate-meal-direct-v2`: v3（LLMクリエイティブ）
+
+> **注**: Edge Function名は `-v2` のままですが、内部アルゴリズムはv3に移行済み。将来的にリネームを検討。
 
 ### 主要機能
 - 📸 **食事写真分析**: 写真からAIが料理を認識し、栄養素を推定
@@ -1458,9 +1461,10 @@ CREATE INDEX IF NOT EXISTS idx_planned_meals_source_type ON planned_meals(source
 - 全フェーズ（生成+レビュー+修正+栄養計算+保存）: 8-10分
 - これは `EdgeRuntime.waitUntil()` の制限を超えるため、**3ステップ分割方式**を採用
 
-#### 8.5.9 3ステップ分割アーキテクチャ（タイムアウト回避）
+#### 8.5.9 v3: 3ステップ分割アーキテクチャ（タイムアウト回避）
 
 週間献立生成は処理時間が長い（LLM呼び出し多数）ため、単一のバックグラウンドタスクでは`EdgeRuntime.waitUntil()`のタイムアウトを超過する。
+v3ではこの問題を解決するため、以下の設計を採用。
 これを回避するため、処理を**3つの独立したステップ**に分割し、各ステップ完了時に次のステップを自動トリガーする設計を採用。
 
 **ステップ構成:**
