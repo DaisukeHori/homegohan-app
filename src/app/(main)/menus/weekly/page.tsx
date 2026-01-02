@@ -2202,21 +2202,36 @@ export default function WeeklyMenuPage() {
       </div>
 
       {/* === AI Banner === */}
-      <button
-        onClick={() => setActiveModal('ai')}
-        className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
-        style={{ background: colors.accent }}
-      >
-        <div className="flex items-center gap-2">
-          <Sparkles size={16} color="#fff" />
-          <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-            {emptySlotCount > 0 
-              ? `空欄${emptySlotCount}件 → AIに埋めてもらう` 
-              : `これからの${futureMealCount}件 → AIで作り直す`}
-          </span>
+      {isGenerating ? (
+        <div
+          className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
+          style={{ background: `linear-gradient(135deg, ${colors.accent} 0%, ${colors.purple} 100%)` }}
+        >
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
+              AIが献立を生成中...
+            </span>
+          </div>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>しばらくお待ちください</span>
         </div>
-        <ChevronRight size={16} color="rgba(255,255,255,0.7)" />
-      </button>
+      ) : (
+        <button
+          onClick={() => setActiveModal('ai')}
+          className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
+          style={{ background: colors.accent }}
+        >
+          <div className="flex items-center gap-2">
+            <Sparkles size={16} color="#fff" />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
+              {emptySlotCount > 0 
+                ? `空欄${emptySlotCount}件 → AIに埋めてもらう` 
+                : `これからの${futureMealCount}件 → AIで作り直す`}
+            </span>
+          </div>
+          <ChevronRight size={16} color="rgba(255,255,255,0.7)" />
+        </button>
+      )}
 
       {/* Expiring Items Alert */}
       {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).length > 0 && (
