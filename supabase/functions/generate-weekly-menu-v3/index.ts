@@ -803,8 +803,7 @@ async function executeStep3_Complete(
         fat_g: totalNutrition.fat,
         carbs_g: totalNutrition.carbs,
         fiber_g: totalNutrition.fiber,
-        sodium_mg: totalNutrition.sodium,
-        nutrition_source: "calculated",
+        sodium_g: (totalNutrition.sodium ?? 0) / 1000, // mg → g 変換
         dishes: dishDetails.dishes,
       };
 
@@ -816,12 +815,21 @@ async function executeStep3_Complete(
         .maybeSingle();
 
       if (existingMeal?.id) {
-        await supabase
+        const { error: updateErr } = await supabase
           .from("planned_meals")
           .update({ ...mealData, updated_at: new Date().toISOString() })
           .eq("id", existingMeal.id);
+        if (updateErr) {
+          console.error(`Failed to update planned_meal ${existingMeal.id}:`, updateErr.message);
+          throw new Error(`Failed to update planned_meal: ${updateErr.message}`);
+        }
       } else {
-        await supabase.from("planned_meals").insert(mealData);
+        const { error: insertErr } = await supabase.from("planned_meals").insert(mealData);
+        if (insertErr) {
+          console.error(`Failed to insert planned_meal for ${dateStr} ${mealType}:`, insertErr.message);
+          console.error("mealData:", JSON.stringify(mealData, null, 2));
+          throw new Error(`Failed to insert planned_meal: ${insertErr.message}`);
+        }
       }
     }
   }

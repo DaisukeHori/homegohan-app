@@ -749,7 +749,7 @@ async function executeStep3_Save(
     fat_g: Math.round(mealNutrition.fat_g * 10) / 10,
     carbs_g: Math.round(mealNutrition.carbs_g * 10) / 10,
     fiber_g: Math.round(mealNutrition.fiber_g * 10) / 10,
-    sodium_mg: Math.round(mealNutrition.sodium_mg),
+    sodium_g: Math.round((mealNutrition.sodium_mg ?? 0) / 1000 * 10) / 10,
     updated_at: new Date().toISOString(),
   };
 

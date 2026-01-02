@@ -633,8 +633,7 @@ async function executeStep3_Save(
     fat_g: Math.round(totalNutrition.fat_g * 10) / 10 || null,
     carbs_g: Math.round(totalNutrition.carbs_g * 10) / 10 || null,
     fiber_g: Math.round(totalNutrition.fiber_g * 10) / 10 || null,
-    sodium_mg: Math.round(totalNutrition.sodium_mg) || null,
-    salt_equivalent_g: Math.round((totalNutrition.sodium_mg / 400) * 10) / 10 || null,
+    sodium_g: Math.round((totalNutrition.sodium_mg ?? 0) / 1000 * 10) / 10 || null,
     iron_mg: Math.round(totalNutrition.iron_mg * 10) / 10 || null,
     calcium_mg: Math.round(totalNutrition.calcium_mg) || null,
     zinc_mg: Math.round(totalNutrition.zinc_mg * 10) / 10 || null,
@@ -649,7 +648,6 @@ async function executeStep3_Save(
       generator: "generate-single-meal-v3",
       mode: "creative",
       generated_at: new Date().toISOString(),
-      nutrition_source: "calculated",
     },
   };
 
