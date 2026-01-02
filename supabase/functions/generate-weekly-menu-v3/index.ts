@@ -735,12 +735,25 @@ async function executeStep3_Complete(
     mealPlanId = existingPlan.id;
     await supabase
       .from("meal_plans")
-      .update({ end_date: endDate, status: "active", is_active: true, updated_at: new Date().toISOString() })
+      .update({ 
+        end_date: endDate, 
+        status: "active", 
+        is_active: true, 
+        source_request_id: requestId,
+        updated_at: new Date().toISOString() 
+      })
       .eq("id", mealPlanId);
   } else {
     const { data: newPlan, error: planErr } = await supabase
       .from("meal_plans")
-      .insert({ user_id: userId, start_date: startDate, end_date: endDate, status: "active", is_active: true })
+      .insert({ 
+        user_id: userId, 
+        start_date: startDate, 
+        end_date: endDate, 
+        status: "active", 
+        is_active: true,
+        source_request_id: requestId
+      })
       .select("id")
       .single();
     if (planErr || !newPlan?.id) throw new Error(`Failed to create meal_plan: ${planErr?.message}`);
@@ -791,6 +804,9 @@ async function executeStep3_Complete(
       const dishDetails = buildDishDetails(meal);
       const totalNutrition = sumNutrition(meal.dishes);
 
+      // 小数点1桁に丸めるヘルパー
+      const round1 = (v: number) => Math.round((v ?? 0) * 10) / 10;
+      
       const mealData = {
         meal_plan_day_id: mealPlanDayId,
         meal_type: mealType,
@@ -798,13 +814,43 @@ async function executeStep3_Complete(
         mode: "ai_creative",
         display_order: displayOrder,
         is_completed: false,
-        calories_kcal: totalNutrition.calories,
-        protein_g: totalNutrition.protein,
-        fat_g: totalNutrition.fat,
-        carbs_g: totalNutrition.carbs,
-        fiber_g: totalNutrition.fiber,
-        sodium_g: (totalNutrition.sodium ?? 0) / 1000, // mg → g 変換
         dishes: dishDetails.dishes,
+        
+        // 基本栄養素
+        calories_kcal: Math.round(totalNutrition.calories_kcal),
+        protein_g: round1(totalNutrition.protein_g),
+        fat_g: round1(totalNutrition.fat_g),
+        carbs_g: round1(totalNutrition.carbs_g),
+        fiber_g: round1(totalNutrition.fiber_g),
+        sugar_g: round1(totalNutrition.sugar_g),
+        sodium_g: round1(totalNutrition.sodium_g),
+        
+        // ミネラル
+        potassium_mg: round1(totalNutrition.potassium_mg),
+        calcium_mg: round1(totalNutrition.calcium_mg),
+        phosphorus_mg: round1(totalNutrition.phosphorus_mg),
+        magnesium_mg: round1(totalNutrition.magnesium_mg),
+        iron_mg: round1(totalNutrition.iron_mg),
+        zinc_mg: round1(totalNutrition.zinc_mg),
+        iodine_ug: round1(totalNutrition.iodine_ug),
+        
+        // 脂質詳細
+        saturated_fat_g: round1(totalNutrition.saturated_fat_g),
+        monounsaturated_fat_g: round1(totalNutrition.monounsaturated_fat_g),
+        polyunsaturated_fat_g: round1(totalNutrition.polyunsaturated_fat_g),
+        cholesterol_mg: round1(totalNutrition.cholesterol_mg),
+        
+        // ビタミン
+        vitamin_a_ug: round1(totalNutrition.vitamin_a_ug),
+        vitamin_b1_mg: round1(totalNutrition.vitamin_b1_mg),
+        vitamin_b2_mg: round1(totalNutrition.vitamin_b2_mg),
+        vitamin_b6_mg: round1(totalNutrition.vitamin_b6_mg),
+        vitamin_b12_ug: round1(totalNutrition.vitamin_b12_ug),
+        vitamin_c_mg: round1(totalNutrition.vitamin_c_mg),
+        vitamin_d_ug: round1(totalNutrition.vitamin_d_ug),
+        vitamin_e_mg: round1(totalNutrition.vitamin_e_mg),
+        vitamin_k_ug: round1(totalNutrition.vitamin_k_ug),
+        folic_acid_ug: round1(totalNutrition.folic_acid_ug),
       };
 
       const { data: existingMeal } = await supabase
@@ -882,17 +928,44 @@ function buildDishDetails(meal: GeneratedMeal) {
 }
 
 function sumNutrition(dishes: any[]) {
-  let calories = 0, protein = 0, fat = 0, carbs = 0, fiber = 0, sodium = 0;
+  // NutritionTotals の全プロパティを集計
+  const totals = {
+    calories_kcal: 0,
+    protein_g: 0,
+    fat_g: 0,
+    carbs_g: 0,
+    fiber_g: 0,
+    sugar_g: 0,
+    sodium_g: 0,
+    potassium_mg: 0,
+    calcium_mg: 0,
+    phosphorus_mg: 0,
+    magnesium_mg: 0,
+    iron_mg: 0,
+    zinc_mg: 0,
+    iodine_ug: 0,
+    saturated_fat_g: 0,
+    monounsaturated_fat_g: 0,
+    polyunsaturated_fat_g: 0,
+    cholesterol_mg: 0,
+    vitamin_a_ug: 0,
+    vitamin_b1_mg: 0,
+    vitamin_b2_mg: 0,
+    vitamin_b6_mg: 0,
+    vitamin_b12_ug: 0,
+    vitamin_c_mg: 0,
+    vitamin_d_ug: 0,
+    vitamin_e_mg: 0,
+    vitamin_k_ug: 0,
+    folic_acid_ug: 0,
+  };
+  
   for (const d of dishes) {
     const n = d.nutrition;
     if (!n) continue;
-    // 栄養計算関数は calories_kcal, protein_g などを返す
-    calories += n.calories_kcal ?? n.calories ?? 0;
-    protein += n.protein_g ?? n.protein ?? 0;
-    fat += n.fat_g ?? n.fat ?? 0;
-    carbs += n.carbs_g ?? n.carbs ?? 0;
-    fiber += n.fiber_g ?? n.fiber ?? 0;
-    sodium += n.sodium_mg ?? n.sodium ?? 0;
+    for (const key of Object.keys(totals) as (keyof typeof totals)[]) {
+      totals[key] += n[key] ?? 0;
+    }
   }
-  return { calories, protein, fat, carbs, fiber, sodium };
+  return totals;
 }

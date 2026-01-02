@@ -1,57 +1,82 @@
 // 栄養計算の共通ロジック
 
 // 栄養計算用の型
+// UIで表示される全栄養素に対応した型
 export type NutritionTotals = {
+  // 基本栄養素
   calories_kcal: number;
   protein_g: number;
   fat_g: number;
   carbs_g: number;
   fiber_g: number;
-  sodium_g: number;
-  potassium_mg: number;
-  calcium_mg: number;
-  phosphorus_mg: number;
-  iron_mg: number;
-  zinc_mg: number;
-  iodine_ug: number;
-  cholesterol_mg: number;
+  sugar_g: number;           // 糖質
+  sodium_g: number;          // 塩分相当量 (g単位)
+  
+  // ミネラル
+  potassium_mg: number;      // カリウム
+  calcium_mg: number;        // カルシウム
+  phosphorus_mg: number;     // リン
+  magnesium_mg: number;      // マグネシウム
+  iron_mg: number;           // 鉄分
+  zinc_mg: number;           // 亜鉛
+  iodine_ug: number;         // ヨウ素
+  
+  // 脂質詳細
+  saturated_fat_g: number;   // 飽和脂肪酸
+  monounsaturated_fat_g: number;   // 一価不飽和脂肪酸
+  polyunsaturated_fat_g: number;   // 多価不飽和脂肪酸
+  cholesterol_mg: number;    // コレステロール
+  
+  // ビタミン
+  vitamin_a_ug: number;
   vitamin_b1_mg: number;
   vitamin_b2_mg: number;
   vitamin_b6_mg: number;
   vitamin_b12_ug: number;
-  folic_acid_ug: number;
   vitamin_c_mg: number;
-  vitamin_a_ug: number;
   vitamin_d_ug: number;
-  vitamin_k_ug: number;
   vitamin_e_mg: number;
+  vitamin_k_ug: number;
+  folic_acid_ug: number;     // 葉酸
 };
 
 export function emptyNutrition(): NutritionTotals {
   return {
+    // 基本栄養素
     calories_kcal: 0,
     protein_g: 0,
     fat_g: 0,
     carbs_g: 0,
     fiber_g: 0,
+    sugar_g: 0,
     sodium_g: 0,
+    
+    // ミネラル
     potassium_mg: 0,
     calcium_mg: 0,
     phosphorus_mg: 0,
+    magnesium_mg: 0,
     iron_mg: 0,
     zinc_mg: 0,
     iodine_ug: 0,
+    
+    // 脂質詳細
+    saturated_fat_g: 0,
+    monounsaturated_fat_g: 0,
+    polyunsaturated_fat_g: 0,
     cholesterol_mg: 0,
+    
+    // ビタミン
+    vitamin_a_ug: 0,
     vitamin_b1_mg: 0,
     vitamin_b2_mg: 0,
     vitamin_b6_mg: 0,
     vitamin_b12_ug: 0,
-    folic_acid_ug: 0,
     vitamin_c_mg: 0,
-    vitamin_a_ug: 0,
     vitamin_d_ug: 0,
-    vitamin_k_ug: 0,
     vitamin_e_mg: 0,
+    vitamin_k_ug: 0,
+    folic_acid_ug: 0,
   };
 }
 
@@ -121,29 +146,41 @@ export function addNutritionFromMatch(totals: NutritionTotals, matched: any, amo
     }
   };
 
+  // 基本栄養素
   add("calories_kcal", matched.calories_kcal);
   add("protein_g", matched.protein_g);
   add("fat_g", matched.fat_g);
   add("carbs_g", matched.carbs_g);
   add("fiber_g", matched.fiber_g);
-  add("sodium_g", matched.salt_eq_g);
+  add("sugar_g", matched.sugar_g);           // 糖質
+  add("sodium_g", matched.salt_eq_g);        // 塩分相当量
+  
+  // ミネラル
   add("potassium_mg", matched.potassium_mg);
   add("calcium_mg", matched.calcium_mg);
   add("phosphorus_mg", matched.phosphorus_mg);
+  add("magnesium_mg", matched.magnesium_mg);
   add("iron_mg", matched.iron_mg);
   add("zinc_mg", matched.zinc_mg);
   add("iodine_ug", matched.iodine_ug);
+  
+  // 脂質詳細
+  add("saturated_fat_g", matched.saturated_fat_g);
+  add("monounsaturated_fat_g", matched.monounsaturated_fat_g);
+  add("polyunsaturated_fat_g", matched.polyunsaturated_fat_g);
   add("cholesterol_mg", matched.cholesterol_mg);
+  
+  // ビタミン
+  add("vitamin_a_ug", matched.vitamin_a_ug);
   add("vitamin_b1_mg", matched.vitamin_b1_mg);
   add("vitamin_b2_mg", matched.vitamin_b2_mg);
   add("vitamin_b6_mg", matched.vitamin_b6_mg);
   add("vitamin_b12_ug", matched.vitamin_b12_ug);
-  add("folic_acid_ug", matched.folic_acid_ug);
   add("vitamin_c_mg", matched.vitamin_c_mg);
-  add("vitamin_a_ug", matched.vitamin_a_ug);
   add("vitamin_d_ug", matched.vitamin_d_ug);
-  add("vitamin_k_ug", matched.vitamin_k_ug);
   add("vitamin_e_mg", matched.vitamin_e_alpha_mg);
+  add("vitamin_k_ug", matched.vitamin_k_ug);
+  add("folic_acid_ug", matched.folic_acid_ug);
 }
 
 // Embedding API を呼び出す

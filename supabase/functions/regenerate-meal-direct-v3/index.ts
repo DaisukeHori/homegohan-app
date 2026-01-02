@@ -744,13 +744,43 @@ async function executeStep3_Save(
       generated_at: new Date().toISOString(),
       advice: generatedMeal.advice ?? null,
     },
+    updated_at: new Date().toISOString(),
+    
+    // 基本栄養素
     calories_kcal: Math.round(mealNutrition.calories_kcal),
     protein_g: Math.round(mealNutrition.protein_g * 10) / 10,
     fat_g: Math.round(mealNutrition.fat_g * 10) / 10,
     carbs_g: Math.round(mealNutrition.carbs_g * 10) / 10,
     fiber_g: Math.round(mealNutrition.fiber_g * 10) / 10,
-    sodium_g: Math.round((mealNutrition.sodium_mg ?? 0) / 1000 * 10) / 10,
-    updated_at: new Date().toISOString(),
+    sugar_g: Math.round(mealNutrition.sugar_g * 10) / 10,
+    sodium_g: Math.round(mealNutrition.sodium_g * 10) / 10,
+    
+    // ミネラル
+    potassium_mg: Math.round(mealNutrition.potassium_mg),
+    calcium_mg: Math.round(mealNutrition.calcium_mg),
+    phosphorus_mg: Math.round(mealNutrition.phosphorus_mg),
+    magnesium_mg: Math.round(mealNutrition.magnesium_mg),
+    iron_mg: Math.round(mealNutrition.iron_mg * 10) / 10,
+    zinc_mg: Math.round(mealNutrition.zinc_mg * 10) / 10,
+    iodine_ug: Math.round(mealNutrition.iodine_ug),
+    
+    // 脂質詳細
+    saturated_fat_g: Math.round(mealNutrition.saturated_fat_g * 10) / 10,
+    monounsaturated_fat_g: Math.round(mealNutrition.monounsaturated_fat_g * 10) / 10,
+    polyunsaturated_fat_g: Math.round(mealNutrition.polyunsaturated_fat_g * 10) / 10,
+    cholesterol_mg: Math.round(mealNutrition.cholesterol_mg),
+    
+    // ビタミン
+    vitamin_a_ug: Math.round(mealNutrition.vitamin_a_ug),
+    vitamin_b1_mg: Math.round(mealNutrition.vitamin_b1_mg * 100) / 100,
+    vitamin_b2_mg: Math.round(mealNutrition.vitamin_b2_mg * 100) / 100,
+    vitamin_b6_mg: Math.round(mealNutrition.vitamin_b6_mg * 100) / 100,
+    vitamin_b12_ug: Math.round(mealNutrition.vitamin_b12_ug * 10) / 10,
+    vitamin_c_mg: Math.round(mealNutrition.vitamin_c_mg),
+    vitamin_d_ug: Math.round(mealNutrition.vitamin_d_ug * 10) / 10,
+    vitamin_e_mg: Math.round(mealNutrition.vitamin_e_mg * 10) / 10,
+    vitamin_k_ug: Math.round(mealNutrition.vitamin_k_ug),
+    folic_acid_ug: Math.round(mealNutrition.folic_acid_ug),
   };
 
   const { error: updErr } = await supabase.from("planned_meals").update(mealData).eq("id", mealId);

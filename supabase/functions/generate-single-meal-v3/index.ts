@@ -628,20 +628,6 @@ async function executeStep3_Save(
     dish_name: dishName,
     dishes: dishDetails,
     ingredients: aggregatedIngredients,
-    calories_kcal: Math.round(totalNutrition.calories_kcal) || null,
-    protein_g: Math.round(totalNutrition.protein_g * 10) / 10 || null,
-    fat_g: Math.round(totalNutrition.fat_g * 10) / 10 || null,
-    carbs_g: Math.round(totalNutrition.carbs_g * 10) / 10 || null,
-    fiber_g: Math.round(totalNutrition.fiber_g * 10) / 10 || null,
-    sodium_g: Math.round((totalNutrition.sodium_mg ?? 0) / 1000 * 10) / 10 || null,
-    iron_mg: Math.round(totalNutrition.iron_mg * 10) / 10 || null,
-    calcium_mg: Math.round(totalNutrition.calcium_mg) || null,
-    zinc_mg: Math.round(totalNutrition.zinc_mg * 10) / 10 || null,
-    vitamin_a_ug: Math.round(totalNutrition.vitamin_a_ug) || null,
-    vitamin_c_mg: Math.round(totalNutrition.vitamin_c_mg) || null,
-    vitamin_d_ug: Math.round(totalNutrition.vitamin_d_ug * 10) / 10 || null,
-    magnesium_mg: Math.round(totalNutrition.magnesium_mg) || null,
-    folic_acid_ug: Math.round(totalNutrition.folic_acid_ug) || null,
     is_eaten: false,
     is_skipped: false,
     generation_metadata: {
@@ -649,6 +635,42 @@ async function executeStep3_Save(
       mode: "creative",
       generated_at: new Date().toISOString(),
     },
+    
+    // 基本栄養素
+    calories_kcal: Math.round(totalNutrition.calories_kcal) || null,
+    protein_g: Math.round(totalNutrition.protein_g * 10) / 10 || null,
+    fat_g: Math.round(totalNutrition.fat_g * 10) / 10 || null,
+    carbs_g: Math.round(totalNutrition.carbs_g * 10) / 10 || null,
+    fiber_g: Math.round(totalNutrition.fiber_g * 10) / 10 || null,
+    sugar_g: Math.round(totalNutrition.sugar_g * 10) / 10 || null,
+    sodium_g: Math.round(totalNutrition.sodium_g * 10) / 10 || null,
+    
+    // ミネラル
+    potassium_mg: Math.round(totalNutrition.potassium_mg) || null,
+    calcium_mg: Math.round(totalNutrition.calcium_mg) || null,
+    phosphorus_mg: Math.round(totalNutrition.phosphorus_mg) || null,
+    magnesium_mg: Math.round(totalNutrition.magnesium_mg) || null,
+    iron_mg: Math.round(totalNutrition.iron_mg * 10) / 10 || null,
+    zinc_mg: Math.round(totalNutrition.zinc_mg * 10) / 10 || null,
+    iodine_ug: Math.round(totalNutrition.iodine_ug) || null,
+    
+    // 脂質詳細
+    saturated_fat_g: Math.round(totalNutrition.saturated_fat_g * 10) / 10 || null,
+    monounsaturated_fat_g: Math.round(totalNutrition.monounsaturated_fat_g * 10) / 10 || null,
+    polyunsaturated_fat_g: Math.round(totalNutrition.polyunsaturated_fat_g * 10) / 10 || null,
+    cholesterol_mg: Math.round(totalNutrition.cholesterol_mg) || null,
+    
+    // ビタミン
+    vitamin_a_ug: Math.round(totalNutrition.vitamin_a_ug) || null,
+    vitamin_b1_mg: Math.round(totalNutrition.vitamin_b1_mg * 100) / 100 || null,
+    vitamin_b2_mg: Math.round(totalNutrition.vitamin_b2_mg * 100) / 100 || null,
+    vitamin_b6_mg: Math.round(totalNutrition.vitamin_b6_mg * 100) / 100 || null,
+    vitamin_b12_ug: Math.round(totalNutrition.vitamin_b12_ug * 10) / 10 || null,
+    vitamin_c_mg: Math.round(totalNutrition.vitamin_c_mg) || null,
+    vitamin_d_ug: Math.round(totalNutrition.vitamin_d_ug * 10) / 10 || null,
+    vitamin_e_mg: Math.round(totalNutrition.vitamin_e_mg * 10) / 10 || null,
+    vitamin_k_ug: Math.round(totalNutrition.vitamin_k_ug) || null,
+    folic_acid_ug: Math.round(totalNutrition.folic_acid_ug) || null,
   };
 
   // 既存レコードがあれば更新、なければ挿入

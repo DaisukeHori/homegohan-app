@@ -49,13 +49,17 @@ const colors = {
   dangerLight: '#FDECEC',
 };
 
-const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
+const MODE_CONFIG: Record<string, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
   cook: { icon: ChefHat, label: '自炊', color: colors.success, bg: colors.successLight },
   quick: { icon: Zap, label: '時短', color: colors.blue, bg: colors.blueLight },
   buy: { icon: Store, label: '買う', color: colors.purple, bg: colors.purpleLight },
   out: { icon: UtensilsCrossed, label: '外食', color: colors.warning, bg: colors.warningLight },
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
+  ai_creative: { icon: Sparkles, label: 'AI献立', color: colors.accent, bg: colors.accentLight },
 };
+
+// モード設定を安全に取得するヘルパー（未知のモードでもエラーにならない）
+const getModeConfig = (mode?: string) => MODE_CONFIG[mode || 'cook'] || MODE_CONFIG.cook;
 
 // 役割に応じた色設定（英語・日本語両方対応）
 const getDishConfig = (role?: string): { label: string; color: string; bg: string } => {
@@ -838,45 +842,53 @@ export default function WeeklyMenuPage() {
           filter: `id=eq.${requestId}`,
         },
         async (payload) => {
-          console.log('📡 Realtime update received:', payload.new);
-          // Realtimeが動作しているのでポーリングを停止
-          cleanupPolling();
-          
-          const newData = payload.new as { status: string; progress?: { phase: string; message: string; percentage: number } };
-          const newStatus = newData.status;
-          
-          // 進捗情報を更新
-          if (newData.progress) {
-            console.log('📊 Progress update:', newData.progress);
-            setGenerationProgress(newData.progress);
-          }
-          
-          if (newStatus === 'completed') {
-            // 完了したら献立を再取得
-            console.log('✅ Generation completed, fetching meal plan...');
-            const planRes = await fetch(`/api/meal-plans?date=${targetDate}`);
-            if (planRes.ok) {
-              const { mealPlan } = await planRes.json();
-              setCurrentPlan(mealPlan);
-              if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+          try {
+            console.log('📡 Realtime update received:', payload.new);
+            // Realtimeが動作しているのでポーリングを停止
+            cleanupPolling();
+            
+            const newData = payload.new as { status: string; progress?: { phase: string; message: string; percentage: number } };
+            const newStatus = newData?.status;
+            
+            // 進捗情報を更新
+            if (newData?.progress) {
+              console.log('📊 Progress update:', newData.progress);
+              setGenerationProgress(newData.progress);
             }
-            setIsGenerating(false);
-            setGeneratingMeal(null);
-            setGenerationProgress(null);
-            localStorage.removeItem('weeklyMenuGenerating');
-            localStorage.removeItem('singleMealGenerating');
-            cleanupRealtime();
-          } else if (newStatus === 'failed') {
-            console.log('❌ Generation failed');
-            setIsGenerating(false);
-            setGeneratingMeal(null);
-            setGenerationProgress(null);
-            localStorage.removeItem('weeklyMenuGenerating');
-            localStorage.removeItem('singleMealGenerating');
-            cleanupRealtime();
-            alert('献立の生成に失敗しました。もう一度お試しください。');
+            
+            if (newStatus === 'completed') {
+              // 完了したら献立を再取得
+              console.log('✅ Generation completed, fetching meal plan...');
+              try {
+                const planRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+                if (planRes.ok) {
+                  const { mealPlan } = await planRes.json();
+                  setCurrentPlan(mealPlan);
+                  if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+                }
+              } catch (fetchErr) {
+                console.error('❌ Failed to fetch meal plan:', fetchErr);
+              }
+              setIsGenerating(false);
+              setGeneratingMeal(null);
+              setGenerationProgress(null);
+              localStorage.removeItem('weeklyMenuGenerating');
+              localStorage.removeItem('singleMealGenerating');
+              cleanupRealtime();
+            } else if (newStatus === 'failed') {
+              console.log('❌ Generation failed');
+              setIsGenerating(false);
+              setGeneratingMeal(null);
+              setGenerationProgress(null);
+              localStorage.removeItem('weeklyMenuGenerating');
+              localStorage.removeItem('singleMealGenerating');
+              cleanupRealtime();
+              alert('献立の生成に失敗しました。もう一度お試しください。');
+            }
+            // status === 'pending' or 'processing' の場合は継続して監視
+          } catch (err) {
+            console.error('❌ Realtime handler error:', err);
           }
-          // status === 'pending' or 'processing' の場合は継続して監視
         }
       )
       .subscribe((status) => {
@@ -1936,7 +1948,7 @@ export default function WeeklyMenuPage() {
   };
 
   const CollapsedMealCard = ({ mealKey, meal, isPast, mealIndex = 0 }: { mealKey: MealType; meal: PlannedMeal; isPast: boolean; mealIndex?: number }) => {
-    const mode = MODE_CONFIG[meal.mode || 'cook'];
+    const mode = getModeConfig(meal.mode);
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const isRegeneratingThis = regeneratingMealId === meal.id;
@@ -2074,7 +2086,7 @@ export default function WeeklyMenuPage() {
   };
 
   const ExpandedMealCard = ({ mealKey, meal, isPast = false, mealIndex = 0 }: { mealKey: MealType; meal: PlannedMeal; isPast?: boolean; mealIndex?: number }) => {
-    const mode = MODE_CONFIG[meal.mode || 'cook'];
+    const mode = getModeConfig(meal.mode);
     const ModeIcon = mode.icon;
     const isToday = weekDates[selectedDayIndex]?.dateStr === todayStr;
     const mealLabel = mealIndex > 0 ? `${MEAL_LABELS[mealKey]}${mealIndex + 1}` : MEAL_LABELS[mealKey];
