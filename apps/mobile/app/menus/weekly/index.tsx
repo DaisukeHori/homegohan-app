@@ -160,46 +160,58 @@ export default function WeeklyMenuPage() {
     checkPending();
   }, [weekStartStr]);
 
+  // Supabase Realtime で進捗をリアルタイム監視
   useEffect(() => {
     if (!pendingRequestId) return;
-    let stopped = false;
-    const t = setInterval(async () => {
-      if (stopped) return;
-      try {
-        const api = getApi();
-        const s = await api.get<{ 
-          status: string; 
-          errorMessage?: string | null;
-          progress?: { phase: string; message: string; percentage: number } | null;
-        }>(
-          `/api/ai/menu/weekly/status?requestId=${pendingRequestId}`
-        );
-        setPendingStatus(s.status);
-        if (s.progress) {
-          setPendingProgress(s.progress);
+    
+    console.log("📡 Subscribing to Realtime for request:", pendingRequestId);
+    
+    const channel = supabase
+      .channel(`weekly-menu-progress-${pendingRequestId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "weekly_menu_requests",
+          filter: `id=eq.${pendingRequestId}`,
+        },
+        async (payload) => {
+          const newRecord = payload.new as {
+            status: string;
+            error_message?: string | null;
+            progress?: { phase: string; message: string; percentage: number } | null;
+          };
+          
+          console.log("📡 Realtime update:", newRecord.status, newRecord.progress?.message);
+          
+          setPendingStatus(newRecord.status);
+          if (newRecord.progress) {
+            setPendingProgress(newRecord.progress);
+          }
+          
+          if (newRecord.status === "completed") {
+            await loadData();
+            setPendingRequestId(null);
+            setPendingStatus(null);
+            setPendingProgress(null);
+            Alert.alert("完了", "週間献立の生成が完了しました。");
+          }
+          if (newRecord.status === "failed") {
+            setPendingRequestId(null);
+            setPendingStatus(null);
+            setPendingProgress(null);
+            setError(newRecord.error_message ?? "週間献立の生成に失敗しました。");
+          }
         }
-        await loadData();
-        if (s.status === "completed") {
-          stopped = true;
-          setPendingRequestId(null);
-          setPendingStatus(null);
-          setPendingProgress(null);
-          Alert.alert("完了", "週間献立の生成が完了しました。");
-        }
-        if (s.status === "failed") {
-          stopped = true;
-          setPendingRequestId(null);
-          setPendingStatus(null);
-          setPendingProgress(null);
-          setError(s.errorMessage ?? "週間献立の生成に失敗しました。");
-        }
-      } catch {
-        // ignore
-      }
-    }, 3000);
+      )
+      .subscribe((status) => {
+        console.log("📡 Realtime subscription status:", status);
+      });
+    
     return () => {
-      stopped = true;
-      clearInterval(t);
+      console.log("📡 Unsubscribing from Realtime");
+      supabase.removeChannel(channel);
     };
   }, [pendingRequestId]);
 

@@ -86,6 +86,17 @@
 | Gemini 2.0 Flash | Google | 画像分析（食事・冷蔵庫・健康機器） |
 | Gemini 2.5 Flash Preview | Google | 料理画像生成 |
 
+### 設計原則（必ず遵守）
+
+以下は本プロジェクトの重要な設計原則です。新機能追加・リファクタリング時は必ず遵守してください。
+
+| 原則 | 説明 |
+|------|------|
+| **進捗監視は Supabase Realtime を使用** | ポーリング（setInterval）は禁止。`weekly_menu_requests.progress` を Realtime でサブスクライブして進捗を取得する。Web/Mobile 両方で統一。 |
+| **Edge Functions の非同期処理は await する** | `triggerNextStep` や自己呼び出し時の `fetch` は必ず `await` する。fire-and-forget は禁止（シャットダウン前にリクエストが送信されない）。 |
+| **v3 関数は3ステップ分割** | タイムアウト回避のため、すべての v3 Edge Functions は3ステップ分割アーキテクチャを採用。各ステップで自己呼び出しして継続。 |
+| **栄養計算は dataset_ingredients を使用** | LLM が出力した材料名を `dataset_ingredients` テーブルでベクトル検索し、栄養価を計算する。 |
+
 ---
 
 ## 3. AIモデルと使用用途
@@ -1596,15 +1607,30 @@ supabase
   })
   .subscribe();
 
-// Mobile: ポーリングで進捗取得
-const pollStatus = async () => {
-  const res = await fetch(`/api/ai/menu/weekly/status?targetDate=${date}`);
-  const data = await res.json();
-  if (data.progress) {
-    setPendingProgress(data.progress);
-  }
-};
+// Mobile: Supabase Realtime でリアルタイム受信（Web と同じ）
+const channel = supabase
+  .channel(`weekly-menu-progress-${requestId}`)
+  .on('postgres_changes', {
+    event: 'UPDATE',
+    schema: 'public',
+    table: 'weekly_menu_requests',
+    filter: `id=eq.${requestId}`,
+  }, (payload) => {
+    if (payload.new.progress) {
+      setPendingProgress(payload.new.progress);
+    }
+  })
+  .subscribe();
 ```
+
+> ⚠️ **重要: 進捗監視は必ず Supabase Realtime を使用すること**
+> 
+> ポーリング（setInterval）は禁止です。以下の理由から Realtime がデフォルトです：
+> - リアルタイムで進捗が反映される（ポーリングは3-5秒遅延）
+> - サーバー負荷が低い（ポーリングは定期的にAPIを叩く）
+> - ユーザー体験が向上（細かい進捗更新がすぐに表示される）
+>
+> `weekly_menu_requests` テーブルの `progress` カラムを監視してください。
 
 **メリット:**
 
