@@ -413,26 +413,39 @@ async function executeStep1_Generate(
 
   await updateProgress(supabase, requestId, {
     phase: "generating",
-    message: "AIが7日分の献立を作成中... (約2分)",
+    message: "1日目の献立を作成中...",
     percentage: 15,
   });
 
-  // 7日分を並列生成
-  const generationPromises = dates.map((date) =>
-    generateDayMealsWithLLM({
-      userSummary,
-      userContext,
-      note,
-      date,
-      mealTypes: REQUIRED_MEAL_TYPES,
-      referenceMenus: references,
-    }).catch(err => {
+  // 7日分を順次生成（進捗を細かく更新するため）
+  const dailyResults: any[] = [];
+  for (let i = 0; i < dates.length; i++) {
+    const date = dates[i];
+    const dayNum = i + 1;
+    const percentage = 15 + Math.round((i / 7) * 20); // 15% → 35%
+    
+    await updateProgress(supabase, requestId, {
+      phase: "generating",
+      message: `${dayNum}日目の献立を作成中...`,
+      percentage,
+    });
+    
+    try {
+      const result = await generateDayMealsWithLLM({
+        userSummary,
+        userContext,
+        note,
+        date,
+        mealTypes: REQUIRED_MEAL_TYPES,
+        referenceMenus: references,
+      });
+      dailyResults.push(result);
+      console.log(`✅ Day ${dayNum} (${date}) generated`);
+    } catch (err) {
       console.error(`Failed to generate meals for ${date}:`, err);
-      return null;
-    })
-  );
-  
-  const dailyResults = await Promise.all(generationPromises);
+      dailyResults.push(null);
+    }
+  }
   
   // 失敗した日がないか確認
   const failedDays = dates.filter((_, i) => !dailyResults[i]);
@@ -441,6 +454,12 @@ async function executeStep1_Generate(
   }
   
   console.log("✅ Step 1: All 7 days generated");
+
+  await updateProgress(supabase, requestId, {
+    phase: "step1_complete",
+    message: "7日分の献立が完成！レビュー準備中...",
+    percentage: 40,
+  });
 
   // 生成データを保存
   const generatedData = {
@@ -458,8 +477,8 @@ async function executeStep1_Generate(
       current_step: 2,
       progress: {
         phase: "step1_complete",
-        message: "献立生成完了。レビュー開始...",
-        percentage: 40,
+        message: "レビュー開始...",
+        percentage: 42,
       },
       updated_at: new Date().toISOString(),
     })
@@ -500,8 +519,8 @@ async function executeStep2_Review(
 
   await updateProgress(supabase, requestId, {
     phase: "reviewing",
-    message: "献立のバランスをチェック中... (約1分)",
-    percentage: 50,
+    message: "献立のバランスをチェック中...",
+    percentage: 45,
   }, 2);
 
   // 全体俯瞰レビュー
@@ -512,6 +531,12 @@ async function executeStep2_Review(
       dishNames: m.dishes.map((d: any) => d.name),
     })),
   }));
+
+  await updateProgress(supabase, requestId, {
+    phase: "reviewing",
+    message: "重複・バランスをAIがチェック中...",
+    percentage: 50,
+  });
   
   const reviewResult = await reviewWeeklyMenus({
     weeklyMeals: weeklyMealsSummary,
@@ -520,23 +545,31 @@ async function executeStep2_Review(
   
   console.log(`Review result: ${reviewResult.issues.length} issues, ${reviewResult.swaps.length} swaps`);
 
+  await updateProgress(supabase, requestId, {
+    phase: "review_done",
+    message: `${reviewResult.issues.length}件の改善点を発見`,
+    percentage: 55,
+  });
+
   // 修正フェーズ
   let finalDailyResults = dailyResults.map((d: any) => d);
   
   if (reviewResult.hasIssues && reviewResult.issues.length > 0) {
-    // 時間制約のため、修正は最大2件まで
-    const maxFixes = 2;
+    const maxFixes = 3;
     const issuesToFix = reviewResult.issues.slice(0, maxFixes);
-    
-    await updateProgress(supabase, requestId, {
-      phase: "fixing",
-      message: `${issuesToFix.length}件の改善点を修正中...`,
-      percentage: 65,
-    });
     
     console.log(`Fixing ${issuesToFix.length} of ${reviewResult.issues.length} issues (limited to ${maxFixes})`);
     
-    for (const issue of issuesToFix) {
+    for (let fixIdx = 0; fixIdx < issuesToFix.length; fixIdx++) {
+      const issue = issuesToFix[fixIdx];
+      const percentage = 55 + Math.round(((fixIdx + 1) / issuesToFix.length) * 15); // 55% → 70%
+      
+      await updateProgress(supabase, requestId, {
+        phase: "fixing",
+        message: `改善点${fixIdx + 1}/${issuesToFix.length}を修正中...`,
+        percentage,
+      });
+      
       const dayIndex = dates.indexOf(issue.date);
       if (dayIndex === -1) continue;
       
@@ -559,13 +592,18 @@ async function executeStep2_Review(
           referenceMenus: references,
         });
         
-        // 修正した食事で置き換え
         dayMeals.meals[mealIndex] = fixedMeal;
         console.log(`Fixed ${issue.date} ${issue.mealType}: ${issue.issue}`);
       } catch (e) {
         console.error(`Failed to fix ${issue.date} ${issue.mealType}:`, e);
       }
     }
+  } else {
+    await updateProgress(supabase, requestId, {
+      phase: "no_issues",
+      message: "問題なし！次のステップへ...",
+      percentage: 70,
+    });
   }
 
   // スワップ適用
@@ -644,12 +682,22 @@ async function executeStep3_Complete(
 
   await updateProgress(supabase, requestId, {
     phase: "calculating",
-    message: "栄養価を計算中...",
-    percentage: 80,
+    message: "1日目の栄養を計算中...",
+    percentage: 75,
   }, 3);
 
-  // 栄養計算
-  for (const day of dailyResults) {
+  // 栄養計算（日ごとに進捗更新）
+  for (let dayIdx = 0; dayIdx < dailyResults.length; dayIdx++) {
+    const day = dailyResults[dayIdx];
+    const dayNum = dayIdx + 1;
+    const percentage = 75 + Math.round((dayIdx / 7) * 10); // 75% → 85%
+    
+    await updateProgress(supabase, requestId, {
+      phase: "calculating",
+      message: `${dayNum}日目の栄養を計算中...`,
+      percentage,
+    });
+    
     for (const meal of day.meals) {
       for (const dish of meal.dishes) {
         try {
@@ -665,8 +713,8 @@ async function executeStep3_Complete(
 
   await updateProgress(supabase, requestId, {
     phase: "saving",
-    message: "献立を保存中...",
-    percentage: 90,
+    message: "献立をデータベースに保存中...",
+    percentage: 88,
   });
 
   // DB保存
@@ -702,6 +750,15 @@ async function executeStep3_Complete(
     const dateStr = dates[dayIdx];
     const dayData = dailyResults[dayIdx];
     if (!dayData) continue;
+    
+    const dayNum = dayIdx + 1;
+    const percentage = 88 + Math.round((dayIdx / 7) * 10); // 88% → 98%
+    
+    await updateProgress(supabase, requestId, {
+      phase: "saving",
+      message: `${dayNum}日目を保存中...`,
+      percentage,
+    });
 
     // meal_plan_days
     const { data: existingDay } = await supabase
