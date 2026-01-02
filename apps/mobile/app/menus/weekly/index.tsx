@@ -62,6 +62,7 @@ export default function WeeklyMenuPage() {
   const [regeneratingMealId, setRegeneratingMealId] = useState<string | null>(null);
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+  const [pendingProgress, setPendingProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
 
   async function loadData() {
     setIsLoading(true);
@@ -166,21 +167,30 @@ export default function WeeklyMenuPage() {
       if (stopped) return;
       try {
         const api = getApi();
-        const s = await api.get<{ status: string; errorMessage?: string | null }>(
+        const s = await api.get<{ 
+          status: string; 
+          errorMessage?: string | null;
+          progress?: { phase: string; message: string; percentage: number } | null;
+        }>(
           `/api/ai/menu/weekly/status?requestId=${pendingRequestId}`
         );
         setPendingStatus(s.status);
+        if (s.progress) {
+          setPendingProgress(s.progress);
+        }
         await loadData();
         if (s.status === "completed") {
           stopped = true;
           setPendingRequestId(null);
           setPendingStatus(null);
+          setPendingProgress(null);
           Alert.alert("完了", "週間献立の生成が完了しました。");
         }
         if (s.status === "failed") {
           stopped = true;
           setPendingRequestId(null);
           setPendingStatus(null);
+          setPendingProgress(null);
           setError(s.errorMessage ?? "週間献立の生成に失敗しました。");
         }
       } catch {
@@ -265,10 +275,30 @@ export default function WeeklyMenuPage() {
         <>
           <Text style={{ color: "#999" }}>{plan.title}</Text>
           {pendingRequestId ? (
-            <View style={{ padding: 12, borderRadius: 12, backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#fed7aa", gap: 4 }}>
-              <Text style={{ fontWeight: "900" }}>生成中…</Text>
-              <Text style={{ color: "#666" }}>status: {pendingStatus ?? "processing"}</Text>
-              <Text style={{ color: "#999" }}>完了まで自動更新します</Text>
+            <View style={{ padding: 12, borderRadius: 12, backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#fed7aa", gap: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <ActivityIndicator size="small" color="#E07A5F" />
+                <Text style={{ fontWeight: "700", color: "#333", flex: 1 }}>
+                  {pendingProgress?.message ?? "AIが献立を生成中..."}
+                </Text>
+                {pendingProgress?.percentage ? (
+                  <Text style={{ color: "#E07A5F", fontWeight: "600" }}>
+                    {pendingProgress.percentage}%
+                  </Text>
+                ) : null}
+              </View>
+              {pendingProgress?.percentage ? (
+                <View style={{ height: 6, backgroundColor: "#fed7aa", borderRadius: 3, overflow: "hidden" }}>
+                  <View 
+                    style={{ 
+                      height: "100%", 
+                      width: `${pendingProgress.percentage}%`, 
+                      backgroundColor: "#E07A5F", 
+                      borderRadius: 3 
+                    }} 
+                  />
+                </View>
+              ) : null}
             </View>
           ) : null}
 

@@ -1,11 +1,20 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { Agent, type AgentInputItem, Runner } from "@openai/agents";
-import { z } from "zod";
 import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
 import { detectAllergenHits, summarizeAllergenHits } from "../_shared/allergy.ts";
 import { calculateNutritionFromIngredients, emptyNutrition, type NutritionTotals } from "../_shared/nutrition-calculator.ts";
+import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
+import {
+  generateDayMealsWithLLM,
+  reviewWeeklyMenus,
+  regenerateMealForIssue,
+  type GeneratedMeal,
+  type GeneratedDish,
+  type MealType,
+  type MenuReference,
+  type WeeklyMealsSummary,
+} from "../_shared/meal-generator.ts";
 
-console.log("Generate Weekly Menu v2 Function loaded (pgvector + dataset driven)");
+console.log("Generate Weekly Menu v2 Function loaded (Creative Mode + Parallel)");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,74 +29,15 @@ const DISPLAY_ORDER_MAP: Record<string, number> = {
   midnight_snack: 50,
 };
 
-// =========================================================
-// Types / Schemas
-// =========================================================
-
-const REQUIRED_MEAL_TYPES = ["breakfast", "lunch", "dinner"] as const;
-type MealType = (typeof REQUIRED_MEAL_TYPES)[number];
-
-const WeeklyMenuV2SelectionSchema = z.object({
-  days: z
-    .array(
-      z.object({
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        meals: z.array(
-          z.object({
-            mealType: z.enum(REQUIRED_MEAL_TYPES),
-            source_menu_set_external_id: z.string().min(1),
-          }),
-        ),
-      }),
-    )
-    .length(7),
-  overall_advice: z.string().optional(),
-});
-
-type WeeklyMenuV2Selection = z.infer<typeof WeeklyMenuV2SelectionSchema>;
+const REQUIRED_MEAL_TYPES: MealType[] = ["breakfast", "lunch", "dinner"];
 
 // =========================================================
-// Helpers (JSON / Retry / Normalization)
+// Helpers
 // =========================================================
-
-function stripMarkdownCodeBlock(text: string): string {
-  let cleaned = text.trim();
-  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlockMatch) cleaned = codeBlockMatch[1].trim();
-
-  if (cleaned.startsWith("```")) {
-    const firstNewline = cleaned.indexOf("\n");
-    if (firstNewline !== -1) cleaned = cleaned.substring(firstNewline + 1);
-    if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length - 3).trim();
-  }
-
-  if (!cleaned.startsWith("{") && !cleaned.startsWith("[")) {
-    const jsonStart = cleaned.search(/[\{\[]/);
-    if (jsonStart > 0) cleaned = cleaned.substring(jsonStart);
-  }
-
-  const lastBrace = cleaned.lastIndexOf("}");
-  const lastBracket = cleaned.lastIndexOf("]");
-  const jsonEnd = Math.max(lastBrace, lastBracket);
-  if (jsonEnd > 0 && jsonEnd < cleaned.length - 1) cleaned = cleaned.substring(0, jsonEnd + 1);
-
-  return cleaned.trim();
-}
-
-function safeJsonParse(text: string): unknown {
-  let cleaned = stripMarkdownCodeBlock(text);
-  try {
-    return JSON.parse(cleaned);
-  } catch (e) {
-    console.error("JSON parse failed (first attempt):", e);
-    cleaned = cleaned.replace(/[\x00-\x1F\x7F]/g, (char) => (char === "\n" || char === "\r" || char === "\t" ? char : ""));
-    return JSON.parse(cleaned);
-  }
-}
 
 function toNullableNumber(value: unknown): number | null {
   const n = Number(value);
-  return n ? n : null;
+  return isNaN(n) || n === 0 ? null : n;
 }
 
 async function sleep(ms: number) {
@@ -119,42 +69,13 @@ async function withRetry<T>(
   throw lastErr;
 }
 
-function normalizeDishNameJs(name: string): string {
-  return String(name ?? "")
-    .replace(/[\s　]+/g, "")
-    .replace(/（[^）]*）/g, "")
-    .replace(/\([^)]*\)/g, "")
-    .replace(/[・･]/g, "")
-    .toLowerCase();
-}
-
-function parseLinesToArray(text: string | null): string[] {
-  if (!text) return [];
-  return String(text)
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function getWeekDates(startDate: string): string[] {
-  // startDate は YYYY-MM-DD 前提
-  const base = new Date(`${startDate}T00:00:00.000Z`);
-  const dates: string[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(base);
-    d.setUTCDate(d.getUTCDate() + i);
-    dates.push(d.toISOString().slice(0, 10));
-  }
-  return dates;
-}
-
 // =========================================================
-// Embeddings / Candidate search
+// Embeddings / Search (参考候補取得用)
 // =========================================================
 
 async function embedText(text: string, dimensions = 384): Promise<number[]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OpenAI API Key is missing (OPENAI_API_KEY)");
+  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
   const res = await withRetry(
     async () => {
@@ -165,25 +86,23 @@ async function embedText(text: string, dimensions = 384): Promise<number[]> {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "text-embedding-3-small",
           input: text,
+          model: "text-embedding-3-small",
           dimensions,
         }),
       });
       if (!r.ok) {
-        const t = await r.text();
-        const err: any = new Error(`Embeddings API error: ${t}`);
+        const err = new Error(`Embedding failed: ${r.statusText}`) as any;
         err.status = r.status;
         throw err;
       }
-      return await r.json();
+      return r;
     },
-    { label: "embeddings" },
+    { retries: 3, label: "embedText" },
   );
 
-  const embedding = res?.data?.[0]?.embedding;
-  if (!Array.isArray(embedding)) throw new Error("Embeddings API returned invalid embedding");
-  return embedding;
+  const json = await res.json();
+  return json.data?.[0]?.embedding ?? [];
 }
 
 type MenuSetCandidate = {
@@ -191,11 +110,9 @@ type MenuSetCandidate = {
   title: string;
   meal_type_hint: string | null;
   theme_tags: string[] | null;
-  dishes: any;
+  dishes: unknown[];
   calories_kcal: number | null;
   sodium_g: number | null;
-  // NOTE: search_menu_examples の返却に含まれる範囲で拡張してよい（現状は kcal/sodium のみ）
-  similarity: number | null;
 };
 
 async function searchMenuCandidates(
@@ -207,10 +124,6 @@ async function searchMenuCandidates(
   const { data, error } = await supabase.rpc("search_menu_examples", {
     query_embedding: emb,
     match_count: matchCount,
-    // NOTE:
-    // HNSW/ANN index は WHERE 句の追加フィルタを「後段で適用」するため、
-    // filter_meal_type_hint を使うと LIMIT 件数を満たさず少件数になることがある。
-    // そのためまずはフィルタ無しで多めに取得し、JS側で meal_type_hint を振り分ける。
     filter_meal_type_hint: null,
     filter_max_sodium: null,
     filter_theme_tags: null,
@@ -219,593 +132,425 @@ async function searchMenuCandidates(
   return (data ?? []) as MenuSetCandidate[];
 }
 
-function getDishCount(c: MenuSetCandidate): number {
-  return Array.isArray(c.dishes) ? c.dishes.length : 0;
-}
-
-function pickCandidatesForMealType(
-  mealType: MealType,
-  all: MenuSetCandidate[],
-  opts: { min?: number; max?: number; preferMultipleDishes?: boolean; minDishCount?: number } = {},
-): MenuSetCandidate[] {
-  const min = opts.min ?? 10;
-  const max = opts.max ?? 60;
-  // 複数品のセットを優先する（デフォルトtrue）
-  const preferMultipleDishes = opts.preferMultipleDishes ?? true;
-  // 昼食・夕食は3品以上を優先（1汁3菜の実現のため）
-  const minDishCount = opts.minDishCount ?? (mealType === "lunch" || mealType === "dinner" ? 3 : 2);
-
-  let typed = all.filter((c) => c.meal_type_hint === mealType);
-
-  // 複数品優先モード: minDishCount品以上のセットを先に並べ替え
-  if (preferMultipleDishes && typed.length > 0) {
-    const richDish = typed.filter((c) => getDishCount(c) >= minDishCount);
-    const mediumDish = typed.filter((c) => getDishCount(c) >= 2 && getDishCount(c) < minDishCount);
-    const singleDish = typed.filter((c) => getDishCount(c) < 2);
-    typed = [...richDish, ...mediumDish, ...singleDish];
-  }
-
-  if (typed.length >= min) return typed.slice(0, max);
-
-  // meal_type_hint の推定が弱い/検索の上位が偏る場合に備えて、
-  // どうしても足りない分は「型不一致でも」補充する（生成を止めない）
-  const seen = new Set(typed.map((c) => c.external_id));
-  let fallback = all.filter((c) => !seen.has(c.external_id));
-
-  // フォールバックでも複数品優先
-  if (preferMultipleDishes && fallback.length > 0) {
-    const richDish = fallback.filter((c) => getDishCount(c) >= minDishCount);
-    const mediumDish = fallback.filter((c) => getDishCount(c) >= 2 && getDishCount(c) < minDishCount);
-    const singleDish = fallback.filter((c) => getDishCount(c) < 2);
-    fallback = [...richDish, ...mediumDish, ...singleDish];
-  }
-
-  return typed.concat(fallback).slice(0, Math.max(min, Math.min(max, typed.length + fallback.length)));
-}
-
-// =========================================================
-// Dataset version
-// =========================================================
-
-async function getActiveDatasetVersion(supabase: any): Promise<string> {
-  // 1) system_settings.menu_dataset_active_version があれば優先
-  const { data: setting, error: sErr } = await supabase
-    .from("system_settings")
-    .select("value")
-    .eq("key", "menu_dataset_active_version")
-    .maybeSingle();
-  if (!sErr) {
-    const v = setting?.value;
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-
-  // 2) なければ最新の completed import_run
-  const { data: run, error: rErr } = await supabase
-    .from("dataset_import_runs")
-    .select("dataset_version")
-    .eq("status", "completed")
-    .order("completed_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (rErr) throw new Error(`Failed to load dataset_import_runs: ${rErr.message}`);
-  if (!run?.dataset_version) throw new Error("No completed dataset_import_runs found");
-  return run.dataset_version;
-}
-
-// =========================================================
-// LLM: select menu set IDs from candidate pools
-// =========================================================
-
-function formatCandidateForPrompt(c: MenuSetCandidate) {
-  const dishes = Array.isArray(c.dishes) ? c.dishes : [];
-  const dishText = dishes
-    .slice(0, 6)
-    .map((d: any) => `${d?.name ?? ""}(${d?.class_raw ?? d?.role ?? ""})`)
-    .filter(Boolean)
-    .join(" / ");
-  const theme = (c.theme_tags ?? []).join(" ");
-  const kcal = c.calories_kcal ?? "";
-  const salt = c.sodium_g ?? "";
-  return {
-    external_id: c.external_id,
+function candidatesToReferences(candidates: MenuSetCandidate[]): MenuReference[] {
+  return candidates.map(c => ({
     title: c.title,
-    theme,
-    calories_kcal: kcal,
-    sodium_g: salt,
-    dishes: dishText,
-  };
-}
-
-async function runAgentToSelectWeeklyMenuIds(input: {
-  userSummary: string;
-  userContext: unknown;
-  note: string | null;
-  dates: string[];
-  candidatesByMealType: Record<MealType, MenuSetCandidate[]>;
-}): Promise<WeeklyMenuV2Selection> {
-  const systemPrompt =
-    `あなたは日本の国家資格「管理栄養士」として行動する、献立作成の専門家です。\n` +
-    `このタスクは「7日×3食（朝/昼/夕）の献立セットIDを候補から選ぶ」ことです。料理の新規作成や、候補にないIDの捏造はしません。\n` +
-    `\n` +
-    `【最優先（破ったら失格）】\n` +
-    `- 出力は **厳密なJSONのみ**（Markdown/説明文/コードブロック禁止）\n` +
-    `- days は **ちょうど7日**。各 day.meals は **breakfast/lunch/dinner の3件ちょうど**\n` +
-    `- source_menu_set_external_id は、**該当mealTypeの候補一覧に含まれる external_id からのみ選ぶ**（候補外ID禁止）\n` +
-    `- アレルギー（絶対除外）/禁忌/宗教・食事スタイルを厳守。該当しそうな候補は選ばない\n` +
-    `\n` +
-    `【品質（管理栄養士としての判断基準）】\n` +
-    `- **昼食・夕食は「1汁3菜」（主菜+副菜+汁物+ご飯/主食）を基本とし、3品以上含む献立セットを優先して選ぶ**\n` +
-    `- 候補の dishes 配列の品数（length）を確認し、昼食・夕食は3品以上の候補を優先的に選択する\n` +
-    `- 朝食は2品以上（主食+汁物orおかず）を基本とする\n` +
-    `- ユーザーの「料理経験」や「調理時間目安」がある場合、**現実的に作れる献立**を優先（初心者/時短=工程が少ない・重すぎない）\n` +
-    `- ユーザーの「好みの料理ジャンル」がある場合でも、特定ジャンル（中華/洋食/エスニック等）は**週の21食のうち最大5〜7食程度**に抑える\n` +
-    `- **中華・洋食・エスニックなど特定ジャンルが3食連続することは避ける**（和食・家庭料理の連続は日本の食卓として自然なのでOK）\n` +
-    `- 服薬情報がある場合は、一般的な食事上の注意点を尊重（例: ワーファリンはビタミンK摂取が極端に偏らないよう配慮）\n` +
-    `- 週全体で同じ external_id の重複を極力避ける（ただし候補が足りない場合は無理に破綻させない）\n` +
-    `- 朝は軽め、昼は活動を支える、夜は満足感＋過剰にならない（候補の calories_kcal/sodium_g を参考にする）\n` +
-    `- 塩分配慮が必要（高血圧/減塩指示など）な場合は、**sodium_g が低い候補を優先**し、週を通して平準化する\n` +
-    `- 味付け・調理法・主材料（肉/魚/卵/大豆）・料理ジャンルのバリエーションを確保し、連続で似すぎない\n` +
-    `- 「日本の食卓として自然」であること（重たい朝食の連発、同系統の揚げ物続き等は避ける）\n` +
-    `\n` +
-    `【overall_advice（任意）】\n` +
-    `- 1〜3文で具体的に（例：減塩の工夫、野菜/タンパク質の取り方、作り置きのコツ）。抽象論だけは避ける。\n`;
-
-  const agent = new Agent({
-    name: "weekly-menu-selector-v2",
-    instructions: systemPrompt,
-    model: "gpt-5-mini",
-    tools: [],
-  });
-
-  const compactCandidates = {
-    breakfast: input.candidatesByMealType.breakfast.map(formatCandidateForPrompt),
-    lunch: input.candidatesByMealType.lunch.map(formatCandidateForPrompt),
-    dinner: input.candidatesByMealType.dinner.map(formatCandidateForPrompt),
-  };
-
-  const userPrompt =
-    `【ユーザー情報】\n${input.userSummary}\n\n` +
-    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
-    `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
-    `【対象日付】\n${input.dates.join("\n")}\n\n` +
-    `【候補（朝食）】\n${JSON.stringify(compactCandidates.breakfast)}\n\n` +
-    `【候補（昼食）】\n${JSON.stringify(compactCandidates.lunch)}\n\n` +
-    `【候補（夕食）】\n${JSON.stringify(compactCandidates.dinner)}\n\n` +
-    `出力JSONスキーマ:\n` +
-    `{\n` +
-    `  "days": [\n` +
-    `    { "date": "YYYY-MM-DD", "meals": [\n` +
-    `      { "mealType": "breakfast", "source_menu_set_external_id": "..." },\n` +
-    `      { "mealType": "lunch", "source_menu_set_external_id": "..." },\n` +
-    `      { "mealType": "dinner", "source_menu_set_external_id": "..." }\n` +
-    `    ] }\n` +
-    `  ],\n` +
-    `  "overall_advice": "..." (optional)\n` +
-    `}\n`;
-
-  const conversationHistory: AgentInputItem[] = [
-    { role: "user", content: [{ type: "input_text", text: userPrompt }] },
-  ];
-
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "generate-weekly-menu-v2",
-      workflow_id: "wf_weekly_menu_generation_v2",
-    },
-  });
-
-  const result = await runner.run(agent, conversationHistory);
-  const out = result.finalOutput ? String(result.finalOutput) : "";
-  if (!out) throw new Error("LLM output is empty");
-
-  const parsed = safeJsonParse(out);
-  const validated = WeeklyMenuV2SelectionSchema.parse(parsed);
-
-  // mealTypeの重複/欠損を補正する（LLMが順序を乱してもOK）
-  for (const day of validated.days) {
-    const map = new Map(day.meals.map((m) => [m.mealType, m.source_menu_set_external_id] as const));
-    day.meals = REQUIRED_MEAL_TYPES.map((t) => ({
-      mealType: t,
-      source_menu_set_external_id: map.get(t) ?? day.meals[0]?.source_menu_set_external_id ?? "",
-    }));
-  }
-
-  return validated;
-}
-
-function repairSelectionToCandidates(input: {
-  dates: string[];
-  selection: WeeklyMenuV2Selection;
-  candidatesByMealType: Record<MealType, MenuSetCandidate[]>;
-}): WeeklyMenuV2Selection {
-  const candidateIdSets: Record<MealType, Set<string>> = {
-    breakfast: new Set(input.candidatesByMealType.breakfast.map((c) => c.external_id)),
-    lunch: new Set(input.candidatesByMealType.lunch.map((c) => c.external_id)),
-    dinner: new Set(input.candidatesByMealType.dinner.map((c) => c.external_id)),
-  };
-
-  const rankedIds: Record<MealType, string[]> = {
-    breakfast: input.candidatesByMealType.breakfast.map((c) => c.external_id),
-    lunch: input.candidatesByMealType.lunch.map((c) => c.external_id),
-    dinner: input.candidatesByMealType.dinner.map((c) => c.external_id),
-  };
-
-  const dayByDate = new Map<string, WeeklyMenuV2Selection["days"][number]>();
-  for (const d of input.selection.days) dayByDate.set(d.date, d);
-
-  const used = new Set<string>();
-
-  const repairedDays = input.dates.map((date) => {
-    const srcDay = dayByDate.get(date) ?? input.selection.days[0];
-    const srcMap = new Map(srcDay.meals.map((m) => [m.mealType, m.source_menu_set_external_id] as const));
-
-    const meals = REQUIRED_MEAL_TYPES.map((mealType) => {
-      const requested = srcMap.get(mealType) ?? "";
-      const allowedSet = candidateIdSets[mealType];
-      const candidates = rankedIds[mealType];
-
-      let chosen = "";
-      const requestedOk = requested && allowedSet.has(requested) && !used.has(requested);
-      if (requestedOk) {
-        chosen = requested;
-      } else {
-        chosen = candidates.find((id) => id && !used.has(id)) ?? candidates[0] ?? "";
-      }
-
-      if (!chosen) {
-        throw new Error(`No candidate available for ${mealType} on ${date}`);
-      }
-      used.add(chosen);
-      return { mealType, source_menu_set_external_id: chosen };
-    });
-
-    return { date, meals };
-  });
-
-  return {
-    days: repairedDays,
-    overall_advice: input.selection.overall_advice,
-  };
+    dishes: Array.isArray(c.dishes) 
+      ? c.dishes.map((d: any) => ({ 
+          name: String(d?.name ?? ""), 
+          role: String(d?.role ?? d?.class_raw ?? "other") 
+        }))
+      : [],
+  }));
 }
 
 // =========================================================
-// Main background task (DB write)
+// タイミング計測
 // =========================================================
 
-async function generateMenuV2BackgroundTask(args: {
-  userId: string;
-  startDate: string;
-  note?: string | null;
-  requestId?: string | null;
-  constraints?: unknown;
-}): Promise<{ selection: WeeklyMenuV2Selection; datasetVersion: string }> {
-  // NOTE:
-  // Supabase CLI は `SUPABASE_*` プレフィックスの secrets 設定を禁止するため、
-  // service role key は `DATASET_SERVICE_ROLE_KEY` に格納して利用する。
-  const serviceRoleKey = Deno.env.get("DATASET_SERVICE_ROLE_KEY") ?? "";
-  if (!serviceRoleKey) {
-    throw new Error("Missing DATASET_SERVICE_ROLE_KEY (required for dataset access under RLS)");
-  }
+const timings: Record<string, number> = {};
+let phaseStartTime = Date.now();
 
-  const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceRoleKey);
+function phaseStart(name: string) {
+  phaseStartTime = Date.now();
+  console.log(`[PHASE] ${name} started`);
+}
 
-  const { userId, startDate, note, requestId, constraints } = args;
+function phaseEnd(name: string, extra?: Record<string, unknown>) {
+  const elapsed = Date.now() - phaseStartTime;
+  timings[name] = elapsed;
+  console.log(`[PHASE] ${name} completed in ${elapsed}ms`, extra ? JSON.stringify(extra) : "");
+}
 
-  // タイミング計測用
-  const timings: Record<string, number> = {};
-  const phaseStart = (name: string) => {
-    timings[`${name}_start`] = Date.now();
-    console.log(`[PHASE] ${name} 開始`);
-  };
-  const phaseEnd = (name: string) => {
-    const start = timings[`${name}_start`] ?? Date.now();
-    const duration = Date.now() - start;
-    timings[`${name}_ms`] = duration;
-    console.log(`[PHASE] ${name} 完了: ${duration}ms`);
-  };
-  const totalStart = Date.now();
+// =========================================================
+// 進捗更新（Realtime配信用）
+// =========================================================
 
-  // ========== Phase 1: 初期化 ==========
-  phaseStart("1_init");
+interface ProgressInfo {
+  phase: string;
+  message: string;
+  percentage: number;
+}
 
-  if (requestId) {
+async function updateProgress(
+  supabase: any,
+  requestId: string | null,
+  progress: ProgressInfo,
+) {
+  if (!requestId) return;
+  try {
     await supabase
       .from("weekly_menu_requests")
-      .update({ status: "processing", updated_at: new Date().toISOString() })
-      .eq("id", requestId)
-      .eq("user_id", userId);
+      .update({
+        progress,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+  } catch (e) {
+    console.error("Failed to update progress:", e);
   }
-  phaseEnd("1_init");
+}
+
+// =========================================================
+// Main Handler
+// =========================================================
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  let requestId: string | null = null;
+  let userId: string | null = null;
 
   try {
-    // ========== Phase 2: ユーザー情報取得 ==========
-    phaseStart("2_user_info");
-    const { data: profile, error: profileError } = await supabase
-      .from("user_profiles")
+    const body = await req.json();
+    requestId = body.request_id ?? body.requestId ?? null;
+    const startDateRaw = body.start_date ?? body.startDate;
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+    if (!accessToken) throw new Error("Missing access token");
+
+    // フロントエンドからuserIdが渡される場合はそれを使用（サービスロールキーでの呼び出し時）
+    // そうでない場合はトークンからユーザーを取得
+    if (body.userId) {
+      userId = body.userId;
+    } else {
+      const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
+      if (userErr || !userData?.user) throw new Error(`Auth failed: ${userErr?.message ?? "no user"}`);
+      userId = userData.user.id;
+    }
+
+    const startDate = String(startDateRaw).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new Error("Invalid start_date format");
+
+    // 7日分の日付を生成
+    const dates: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(`${startDate}T00:00:00.000Z`);
+      d.setUTCDate(d.getUTCDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+
+    // バックグラウンドタスクをラップしてエラーをキャッチ
+    const wrappedBackgroundTask = async () => {
+      console.log("🚀 Background task starting...");
+      try {
+        await generateWeeklyMenuBackground(supabase, userId, requestId, startDate, dates, body.note ?? null);
+        console.log("✅ Background task completed successfully");
+      } catch (bgErr: any) {
+        console.error("❌ Background task error:", bgErr?.message ?? String(bgErr), bgErr);
+        // DBにエラーを保存
+        if (requestId) {
+          await supabase
+            .from("weekly_menu_requests")
+            .update({
+              status: "failed",
+              error_message: bgErr?.message ?? String(bgErr) ?? "Background task error",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", requestId);
+        }
+      }
+    };
+
+    // @ts-ignore EdgeRuntime
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      console.log("📤 Using EdgeRuntime.waitUntil for background processing");
+      // @ts-ignore EdgeRuntime
+      EdgeRuntime.waitUntil(wrappedBackgroundTask());
+      return new Response(
+        JSON.stringify({ status: "processing", request_id: requestId, message: "週間献立を生成中..." }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    } else {
+      // EdgeRuntime.waitUntilがない場合は同期的に実行
+      console.log("⚠️ EdgeRuntime.waitUntil not available, running synchronously");
+      await wrappedBackgroundTask();
+      return new Response(
+        JSON.stringify({ status: "completed", request_id: requestId, message: "週間献立を生成しました" }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+  } catch (err: any) {
+    const errorMessage = err?.message ?? String(err) ?? "Unknown error";
+    console.error("Request error:", errorMessage, err);
+    if (requestId) {
+      await supabase
+        .from("weekly_menu_requests")
+        .update({ status: "failed", error_message: errorMessage, updated_at: new Date().toISOString() })
+        .eq("id", requestId);
+    }
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});
+
+// =========================================================
+// Background Task
+// =========================================================
+
+async function generateWeeklyMenuBackground(
+  supabase: any,
+  userId: string,
+  requestId: string | null,
+  startDate: string,
+  dates: string[],
+  note: string | null,
+) {
+  console.log("🔵 generateWeeklyMenuBackground called", { userId, requestId, startDate, datesCount: dates.length });
+  
+  const logRequestId = generateRequestId();
+  console.log("🔵 Logger created", { logRequestId });
+  
+  const logger = createLogger(supabase, "generate-weekly-menu-v2", userId, logRequestId);
+
+  try {
+    console.log("🔵 About to log background_task_start to DB...");
+    await logger.info("background_task_start", { requestId, startDate });
+    console.log("🔵 Logged background_task_start successfully");
+
+    // ========== Phase 1: ユーザー情報取得 ==========
+    phaseStart("1_user_context");
+    await updateProgress(supabase, requestId, {
+      phase: "user_context",
+      message: "ユーザー情報を取得中...",
+      percentage: 5,
+    });
+    
+    const { data: profile } = await supabase
+      .from("profiles")
       .select("*")
       .eq("id", userId)
-      .single();
-    if (profileError) throw new Error(`Profile not found: ${profileError.message}`);
-
-    const { data: nutritionTargets } = await supabase
-      .from("nutrition_targets")
+      .maybeSingle();
+    
+    const { data: allergies } = await supabase
+      .from("user_allergies")
+      .select("*")
+      .eq("user_id", userId);
+    
+    const { data: nutritionGoals } = await supabase
+      .from("nutrition_goals")
       .select("*")
       .eq("user_id", userId)
       .maybeSingle();
 
-    const datasetVersion = await getActiveDatasetVersion(supabase);
-    phaseEnd("2_user_info");
-
-    const dates = getWeekDates(startDate);
     const userContext = buildUserContextForPrompt({
-      profile,
-      nutritionTargets: nutritionTargets ?? null,
-      note: note ?? null,
-      constraints,
+      profile: profile ?? null,
+      allergies: allergies ?? [],
+      nutritionGoals: nutritionGoals ?? null,
+      healthRecords: [],
+      medications: [],
+      pregnancyInfo: null,
     });
-    const userSummary = buildUserSummary(profile, nutritionTargets ?? null, note ?? null, constraints);
-    const userContextForLog = {
-      ...(userContext as any),
-      weekly: {
-        ...(((userContext as any)?.weekly ?? {}) as any),
-        note: typeof note === "string" ? note.slice(0, 800) : null,
-      },
-    };
+    const userSummary = buildUserSummary(userContext);
+    
+    phaseEnd("1_user_context");
+    console.log("🔵 Phase 1 complete - user context loaded");
 
-    // ========== Phase 3: ベクトル検索 ==========
-    phaseStart("3_vector_search");
-    const searchQueryBase = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
-    // パフォーマンス改善: 候補数を大幅に削減（600-1200→150-200、max 60-80→20-25）
-    const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${searchQueryBase}`, 150);
-    const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${searchQueryBase}`, 200);
-    const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${searchQueryBase}`, 200);
-    phaseEnd("3_vector_search");
+    // ========== Phase 2: 参考候補検索 ==========
+    phaseStart("2_search_references");
+    await updateProgress(supabase, requestId, {
+      phase: "search_references",
+      message: "参考レシピを検索中...",
+      percentage: 10,
+    });
+    
+    const searchQuery = buildSearchQueryBase(userContext);
+    const candidates = await searchMenuCandidates(supabase, searchQuery, 30);
+    const references = candidatesToReferences(candidates);
+    
+    phaseEnd("2_search_references", { candidateCount: candidates.length });
+    console.log("🔵 Phase 2 complete - found", candidates.length, "reference candidates");
 
-    // ========== Phase 4: 候補フィルタリング ==========
-    phaseStart("4_filter_candidates");
-    const candidatesByMealType: Record<MealType, MenuSetCandidate[]> = {
-      breakfast: pickCandidatesForMealType("breakfast", breakfastRaw, { min: 7, max: 20 }),
-      lunch: pickCandidatesForMealType("lunch", lunchRaw, { min: 7, max: 25 }),
-      dinner: pickCandidatesForMealType("dinner", dinnerRaw, { min: 7, max: 25 }),
-    };
+    // ========== Phase 3: 7日分を並列生成 ==========
+    phaseStart("3_parallel_generation");
+    await updateProgress(supabase, requestId, {
+      phase: "generating",
+      message: "AIが7日分の献立を作成中... (約2分)",
+      percentage: 15,
+    });
+    
+    const generationPromises = dates.map((date) =>
+      generateDayMealsWithLLM({
+        userSummary,
+        userContext,
+        note,
+        date,
+        mealTypes: REQUIRED_MEAL_TYPES,
+        referenceMenus: references,
+      }).catch(err => {
+        console.error(`Failed to generate meals for ${date}:`, err);
+        return null;
+      })
+    );
+    
+    const dailyResults = await Promise.all(generationPromises);
+    
+    // 失敗した日がないか確認
+    const failedDays = dates.filter((_, i) => !dailyResults[i]);
+    if (failedDays.length > 0) {
+      throw new Error(`Failed to generate meals for: ${failedDays.join(", ")}`);
+    }
+    
+    phaseEnd("3_parallel_generation", { successDays: 7 - failedDays.length });
+    console.log("🔵 Phase 3 complete - generated meals for", 7 - failedDays.length, "days");
 
-    const allergyTokens: string[] = Array.isArray((userContext as any)?.hard?.allergies) ? (userContext as any).hard.allergies : [];
+    // ========== Phase 4: 全体俯瞰レビュー ==========
+    phaseStart("4_review");
+    await updateProgress(supabase, requestId, {
+      phase: "reviewing",
+      message: "献立のバランスをチェック中... (約1分)",
+      percentage: 50,
+    });
+    
+    const weeklyMealsSummary: WeeklyMealsSummary[] = dailyResults.map((day, i) => ({
+      date: dates[i],
+      meals: day!.meals.map(m => ({
+        mealType: m.mealType as MealType,
+        dishNames: m.dishes.map(d => d.name),
+      })),
+    }));
+    
+    const reviewResult = await reviewWeeklyMenus({
+      weeklyMeals: weeklyMealsSummary,
+      userSummary,
+    });
+    
+    phaseEnd("4_review", { hasIssues: reviewResult.hasIssues, issueCount: reviewResult.issues.length, swapCount: reviewResult.swaps.length });
 
-    function candidateText(c: MenuSetCandidate): string[] {
-      const dishes = Array.isArray(c?.dishes) ? c.dishes : [];
-      const dishNames = dishes.map((d: any) => String(d?.name ?? "").trim()).filter(Boolean);
-      return [String(c?.title ?? "").trim(), ...dishNames].filter(Boolean);
+    // ========== Phase 5: 問題があれば修正 ==========
+    let finalDailyResults = dailyResults.map(d => d!);
+    
+    if (reviewResult.hasIssues && reviewResult.issues.length > 0) {
+      phaseStart("5_fix_issues");
+      await updateProgress(supabase, requestId, {
+        phase: "fixing",
+        message: `${reviewResult.issues.length}件の改善点を修正中...`,
+        percentage: 65,
+      });
+      
+      for (const issue of reviewResult.issues) {
+        const dayIndex = dates.indexOf(issue.date);
+        if (dayIndex === -1) continue;
+        
+        const dayMeals = finalDailyResults[dayIndex];
+        const mealIndex = dayMeals.meals.findIndex(m => m.mealType === issue.mealType);
+        if (mealIndex === -1) continue;
+        
+        const currentDishes = dayMeals.meals[mealIndex].dishes.map(d => d.name);
+        
+        try {
+          const fixedMeal = await regenerateMealForIssue({
+            userSummary,
+            userContext,
+            note,
+            date: issue.date,
+            mealType: issue.mealType as MealType,
+            currentDishes,
+            issue: issue.issue,
+            suggestion: issue.suggestion,
+            referenceMenus: references,
+          });
+          
+          // 修正した食事で置き換え
+          dayMeals.meals[mealIndex] = fixedMeal;
+          console.log(`Fixed ${issue.date} ${issue.mealType}: ${issue.issue}`);
+        } catch (e) {
+          console.error(`Failed to fix ${issue.date} ${issue.mealType}:`, e);
+        }
+      }
+      
+      phaseEnd("5_fix_issues", { fixedCount: reviewResult.issues.length });
     }
 
-    function candidateSeemsAllergySafe(c: MenuSetCandidate): boolean {
-      if (allergyTokens.length === 0) return true;
-      const hits = detectAllergenHits(allergyTokens, candidateText(c));
-      return hits.length === 0;
+    // ========== Phase 5.5: 昼夜入れ替え ==========
+    if (reviewResult.swaps.length > 0) {
+      phaseStart("5.5_apply_swaps");
+      
+      for (const swap of reviewResult.swaps) {
+        // 同じ日の昼夜入れ替えのみサポート
+        if (swap.date1 !== swap.date2) continue;
+        
+        const dayIndex = dates.indexOf(swap.date1);
+        if (dayIndex === -1) continue;
+        
+        const dayMeals = finalDailyResults[dayIndex];
+        const meal1Index = dayMeals.meals.findIndex(m => m.mealType === swap.mealType1);
+        const meal2Index = dayMeals.meals.findIndex(m => m.mealType === swap.mealType2);
+        
+        if (meal1Index !== -1 && meal2Index !== -1) {
+          const temp = dayMeals.meals[meal1Index];
+          dayMeals.meals[meal1Index] = { ...dayMeals.meals[meal2Index], mealType: swap.mealType1 as any };
+          dayMeals.meals[meal2Index] = { ...temp, mealType: swap.mealType2 as any };
+          console.log(`Swapped ${swap.date1} ${swap.mealType1} <-> ${swap.mealType2}: ${swap.reason}`);
+        }
+      }
+      
+      phaseEnd("5.5_apply_swaps", { swapCount: reviewResult.swaps.length });
     }
 
-    // 絶対制約（最低: アレルギー）: 候補段階で「明らかなもの」は落とす（候補不足になる場合は落としすぎない）
-    if (allergyTokens.length > 0) {
-      for (const mt of REQUIRED_MEAL_TYPES) {
-        const original = candidatesByMealType[mt] ?? [];
-        const filtered = original.filter(candidateSeemsAllergySafe);
-        if (filtered.length >= 10) {
-          candidatesByMealType[mt] = filtered;
+    // ========== Phase 6: 栄養計算 ==========
+    phaseStart("6_nutrition_calc");
+    await updateProgress(supabase, requestId, {
+      phase: "calculating",
+      message: "栄養価を計算中...",
+      percentage: 80,
+    });
+    
+    // 全食事の栄養を計算
+    for (const day of finalDailyResults) {
+      for (const meal of day.meals) {
+        for (const dish of meal.dishes) {
+          try {
+            const nutrition = await calculateNutritionFromIngredients(supabase, dish.ingredients);
+            (dish as any).nutrition = nutrition;
+          } catch (e) {
+            console.warn(`Nutrition calc failed for ${dish.name}:`, e);
+            (dish as any).nutrition = emptyNutrition();
+          }
         }
       }
     }
+    
+    phaseEnd("6_nutrition_calc");
 
-    const candidateByExternalId: Record<MealType, Map<string, MenuSetCandidate>> = {
-      breakfast: new Map((candidatesByMealType.breakfast ?? []).map((c) => [c.external_id, c] as const)),
-      lunch: new Map((candidatesByMealType.lunch ?? []).map((c) => [c.external_id, c] as const)),
-      dinner: new Map((candidatesByMealType.dinner ?? []).map((c) => [c.external_id, c] as const)),
-    };
-
-    for (const mt of REQUIRED_MEAL_TYPES) {
-      if ((candidatesByMealType[mt] ?? []).length < 10) {
-        throw new Error(`Not enough candidates for ${mt}: ${candidatesByMealType[mt]?.length ?? 0}`);
-      }
-    }
-    console.log(`[PHASE] 候補数: breakfast=${candidatesByMealType.breakfast.length}, lunch=${candidatesByMealType.lunch.length}, dinner=${candidatesByMealType.dinner.length}`);
-    phaseEnd("4_filter_candidates");
-
-    // ========== Phase 5: LLM選択 ==========
-    phaseStart("5_llm_selection");
-    const rawSelection = await runAgentToSelectWeeklyMenuIds({
-      userSummary,
-      userContext,
-      note: note ?? null,
-      dates,
-      candidatesByMealType,
+    // ========== Phase 7: DB保存 ==========
+    phaseStart("7_save_to_db");
+    await updateProgress(supabase, requestId, {
+      phase: "saving",
+      message: "献立を保存中...",
+      percentage: 90,
     });
-    const selection = repairSelectionToCandidates({ dates, selection: rawSelection, candidatesByMealType });
-    const replacementLog: Array<{ date: string; mealType: MealType; from: string; to: string; reason: string }> = [];
-    phaseEnd("5_llm_selection");
-
-    // ========== Phase 6: メニューセット取得 ==========
-    phaseStart("6_fetch_menu_sets");
-    const selectedExternalIds = Array.from(
-      new Set(selection.days.flatMap((d) => d.meals.map((m) => m.source_menu_set_external_id))),
-    ).filter(Boolean);
-
-    const { data: menuSets, error: menuErr } = await supabase
-      .from("dataset_menu_sets")
-      .select("*")
-      .in("external_id", selectedExternalIds);
-    if (menuErr) throw new Error(`Failed to fetch dataset_menu_sets: ${menuErr.message}`);
-
-    const menuSetByExternalId = new Map<string, any>((menuSets ?? []).map((m: any) => [m.external_id, m]));
-    const reservedExternalIds = new Set<string>(selectedExternalIds);
-    console.log(`[PHASE] 選択されたメニューセット: ${selectedExternalIds.length}件`);
-    phaseEnd("6_fetch_menu_sets");
-
-    async function getMenuSetByExternalIdSafe(externalId: string): Promise<any | null> {
-      const id = String(externalId ?? "").trim();
-      if (!id) return null;
-      const cached = menuSetByExternalId.get(id);
-      if (cached) return cached;
-      const { data, error } = await supabase.from("dataset_menu_sets").select("*").eq("external_id", id).maybeSingle();
-      if (error) throw new Error(`Failed to fetch dataset_menu_sets(${id}): ${error.message}`);
-      if (data?.external_id) menuSetByExternalId.set(String(data.external_id), data);
-      return data ?? null;
-    }
-
-    // ========== Phase 7: レシピ解決 ==========
-    phaseStart("7_resolve_recipes");
-    const allDishNames: string[] = [];
-    for (const ms of menuSets ?? []) {
-      const dishes = Array.isArray(ms.dishes) ? ms.dishes : [];
-      for (const d of dishes) {
-        if (d?.name) allDishNames.push(String(d.name));
-      }
-    }
-    const uniqNorms = Array.from(new Set(allDishNames.map((n) => normalizeDishNameJs(n)))).filter(Boolean);
-    console.log(`[PHASE] 解決するレシピ: ${allDishNames.length}件 (ユニーク: ${uniqNorms.length}件)`);
-
-    const { data: exactRecipes, error: recipeErr } = await supabase
-      .from("dataset_recipes")
-      .select(
-        "id, external_id, name, name_norm, source_url, ingredients_text, instructions_text, calories_kcal, sodium_g, protein_g, fat_g, carbs_g, sugar_g, fiber_g",
-      )
-      .in("name_norm", uniqNorms);
-    if (recipeErr) throw new Error(`Failed to fetch dataset_recipes: ${recipeErr.message}`);
-
-    const recipeByNorm = new Map<string, any>((exactRecipes ?? []).map((r: any) => [r.name_norm, r]));
-    console.log(`[PHASE] 完全一致レシピ: ${exactRecipes?.length ?? 0}件`);
-    phaseEnd("7_resolve_recipes");
-
-    async function resolveRecipeForDishName(dishName: string): Promise<any | null> {
-      const norm = normalizeDishNameJs(dishName);
-      if (!norm) return null;
-      const exact = recipeByNorm.get(norm);
-      if (exact) return exact;
-
-      // fallback: pg_trgm
-      const { data: sims, error: simErr } = await supabase.rpc("search_similar_dataset_recipes", {
-        query_name: dishName,
-        similarity_threshold: 0.3,
-        result_limit: 1,
-      });
-      if (simErr) return null;
-      const best = Array.isArray(sims) ? sims[0] : null;
-      if (!best?.id) return null;
-
-      const { data: r2, error: r2Err } = await supabase
-        .from("dataset_recipes")
-        .select(
-          "id, external_id, name, name_norm, source_url, ingredients_text, instructions_text, calories_kcal, sodium_g, protein_g, fat_g, carbs_g, sugar_g, fiber_g",
-        )
-        .eq("id", best.id)
-        .maybeSingle();
-      if (r2Err) return null;
-      if (r2?.name_norm) recipeByNorm.set(r2.name_norm, r2);
-      return r2 ?? null;
-    }
-
-    async function buildMealFromMenuSet(ms: any): Promise<{
-      dishDetails: any[];
-      aggregatedIngredients: string[];
-      dishName: string;
-      allergyHits: ReturnType<typeof detectAllergenHits>;
-    }> {
-      const dishes = Array.isArray(ms?.dishes) ? ms.dishes : [];
-      const dishDetails: any[] = [];
-      const aggregatedIngredients: string[] = [];
-
-      const allergyTexts: string[] = [];
-      allergyTexts.push(String(ms?.title ?? ""));
-
-      for (const d of dishes) {
-        const dishName = String(d?.name ?? "").trim();
-        if (!dishName) continue;
-        allergyTexts.push(dishName);
-
-        const recipe = await resolveRecipeForDishName(dishName);
-        allergyTexts.push(String(recipe?.name ?? ""));
-        allergyTexts.push(String(recipe?.ingredients_text ?? ""));
-
-        const ingredients = parseLinesToArray(recipe?.ingredients_text ?? null);
-        const recipeSteps = parseLinesToArray(recipe?.instructions_text ?? null);
-        aggregatedIngredients.push(...ingredients);
-
-        dishDetails.push({
-          name: dishName,
-          role: String(d?.role ?? "other"),
-          // UI互換: dish.cal を使うので cal を必ず入れる
-          cal: Number(d?.calories_kcal ?? recipe?.calories_kcal ?? 0) || 0,
-          protein: Number(recipe?.protein_g ?? 0) || 0,
-          fat: Number(recipe?.fat_g ?? 0) || 0,
-          carbs: Number(recipe?.carbs_g ?? 0) || 0,
-          sodium: Number(d?.sodium_g ?? recipe?.sodium_g ?? 0) || 0,
-          sugar: Number(recipe?.sugar_g ?? 0) || 0,
-          fiber: Number(recipe?.fiber_g ?? 0) || 0,
-          fiberSoluble: 0,
-          fiberInsoluble: 0,
-          potassium: 0,
-          calcium: 0,
-          phosphorus: 0,
-          iron: 0,
-          zinc: 0,
-          iodine: 0,
-          cholesterol: 0,
-          vitaminB1: 0,
-          vitaminB2: 0,
-          vitaminC: 0,
-          vitaminB6: 0,
-          vitaminB12: 0,
-          folicAcid: 0,
-          vitaminA: 0,
-          vitaminD: 0,
-          vitaminK: 0,
-          vitaminE: 0,
-          saturatedFat: 0,
-          monounsaturatedFat: 0,
-          polyunsaturatedFat: 0,
-          ingredient: ingredients.slice(0, 3).join("、"),
-          ingredients,
-          recipeSteps,
-          // 元のテキストも保存（マークダウン表示用）
-          ingredientsText: recipe?.ingredients_text ?? null,
-          recipeStepsText: recipe?.instructions_text ?? null,
-          base_recipe_id: recipe?.id ?? null,
-          is_generated_name: false,
-        });
-      }
-
-      const mainDish = dishDetails.find((x) => x.role === "main") ?? dishDetails[0];
-      const allDishNames = dishDetails.map((d: any) => String(d?.name ?? "").trim()).filter(Boolean).join("、");
-      const dishName = allDishNames || mainDish?.name || ms?.title || "献立";
-
-      const allergyHits = allergyTokens.length > 0 ? detectAllergenHits(allergyTokens, allergyTexts) : [];
-
-      return { dishDetails, aggregatedIngredients, dishName, allergyHits };
-    }
-
-    // ========== Phase 8: DB保存 ==========
-    phaseStart("8_save_to_db");
+    
     const endDate = dates[6];
-
+    
     // meal_plan: 既存があれば再利用（無ければ作成）
-    const { data: existingPlan, error: planFetchErr } = await supabase
+    const { data: existingPlan } = await supabase
       .from("meal_plans")
       .select("id")
       .eq("user_id", userId)
       .eq("start_date", startDate)
       .maybeSingle();
-    if (planFetchErr) throw new Error(`Failed to fetch meal_plan: ${planFetchErr.message}`);
 
     let mealPlanId: string;
     if (existingPlan?.id) {
       mealPlanId = existingPlan.id;
-      // UI互換: is_active を正として扱う箇所があるため、この週をアクティブに寄せる
       await supabase
         .from("meal_plans")
         .update({ end_date: endDate, status: "active", is_active: true, updated_at: new Date().toISOString() })
         .eq("id", mealPlanId)
         .eq("user_id", userId);
     } else {
-      // 他のプランを非アクティブ化（アクティブは1つに揃える）
       await supabase.from("meal_plans").update({ is_active: false }).eq("user_id", userId);
-
+      
       const { data: newPlan, error: planErr } = await supabase
         .from("meal_plans")
         .insert({
@@ -823,11 +568,13 @@ async function generateMenuV2BackgroundTask(args: {
       mealPlanId = newPlan.id;
     }
 
-    // 他のプランを非アクティブ化（アクティブは1つに揃える）
+    // 他のプランを非アクティブ化
     await supabase.from("meal_plans").update({ is_active: false }).eq("user_id", userId).neq("id", mealPlanId);
 
-    for (const day of selection.days) {
-      const dayDate = day.date;
+    // 各日・各食事を保存
+    for (let dayIndex = 0; dayIndex < dates.length; dayIndex++) {
+      const dayDate = dates[dayIndex];
+      const dayMeals = finalDailyResults[dayIndex];
 
       const { data: existingDay } = await supabase
         .from("meal_plan_days")
@@ -842,349 +589,183 @@ async function generateMenuV2BackgroundTask(args: {
       } else {
         const { data: newDay, error: dayErr } = await supabase
           .from("meal_plan_days")
-          .insert({
-            meal_plan_id: mealPlanId,
-            day_date: dayDate,
-            nutritional_focus: null,
-          })
+          .insert({ meal_plan_id: mealPlanId, day_date: dayDate, nutritional_focus: null })
           .select("id")
           .single();
         if (dayErr) throw new Error(`Failed to create meal_plan_day: ${dayErr.message}`);
         mealPlanDayId = newDay.id;
       }
 
-      for (const meal of day.meals) {
+      for (const meal of dayMeals.meals) {
         const mealType = meal.mealType;
-        const originalExternalId = String(meal.source_menu_set_external_id ?? "").trim();
-        if (!originalExternalId) throw new Error(`Missing source_menu_set_external_id for ${dayDate} ${mealType}`);
-
-        let ms = await getMenuSetByExternalIdSafe(originalExternalId);
-        if (!ms) throw new Error(`Selected menu set not found: ${originalExternalId}`);
-
-        let built = await buildMealFromMenuSet(ms);
-        let allergyViolationSummary: string | null = null;
-
-        // 絶対制約: アレルギーを機械検証し、必要なら候補内で差し替える
-        if (allergyTokens.length > 0 && built.allergyHits.length > 0) {
-          allergyViolationSummary = summarizeAllergenHits(built.allergyHits);
-          reservedExternalIds.delete(originalExternalId);
-
-          const candidatePool = candidatesByMealType[mealType] ?? [];
-          let replaced = false;
-          for (const cand of candidatePool) {
-            const candId = String(cand?.external_id ?? "").trim();
-            if (!candId || candId === originalExternalId) continue;
-            if (reservedExternalIds.has(candId)) continue; // 週内の重複を抑制
-
-            // まずはタイトル/料理名ベースで「明らかなもの」を除外
-            if (!candidateSeemsAllergySafe(cand)) continue;
-
-            const ms2 = await getMenuSetByExternalIdSafe(candId);
-            if (!ms2) continue;
-            const built2 = await buildMealFromMenuSet(ms2);
-            if (built2.allergyHits.length === 0) {
-              ms = ms2;
-              built = built2;
-              meal.source_menu_set_external_id = candId; // selectionにも反映（後続の保存/結果JSONに反映される）
-              reservedExternalIds.add(candId);
-              replacementLog.push({
-                date: dayDate,
-                mealType,
-                from: originalExternalId,
-                to: candId,
-                reason: allergyViolationSummary ?? "allergy",
-              });
-              replaced = true;
-              break;
+        const dishDetails = buildDishDetails(meal);
+        const aggregatedIngredients = meal.dishes.flatMap(d => d.ingredients.map(i => `${i.name} ${i.amount_g}g`));
+        const dishName = meal.dishes.map(d => d.name).join("、");
+        
+        // 栄養値を合算
+        const totalNutrition = meal.dishes.reduce((acc, dish) => {
+          const n = (dish as any).nutrition as NutritionTotals | undefined;
+          if (n) {
+            for (const key of Object.keys(acc) as (keyof NutritionTotals)[]) {
+              acc[key] += n[key] ?? 0;
             }
           }
+          return acc;
+        }, emptyNutrition());
 
-          if (!replaced) {
-            reservedExternalIds.add(originalExternalId);
-            throw new Error(
-              `Allergy constraint violated for ${dayDate} ${mealType}: ${allergyViolationSummary ?? summarizeAllergenHits(built.allergyHits)}`,
-            );
-          }
-        }
+        const mealData = {
+          user_id: userId,
+          meal_plan_day_id: mealPlanDayId,
+          meal_plan_id: mealPlanId,
+          meal_type: mealType,
+          display_order: DISPLAY_ORDER_MAP[mealType] ?? 99,
+          source_type: "generated" as const,
+          dish_name: dishName,
+          dishes: dishDetails,
+          ingredients: aggregatedIngredients,
+          calories_kcal: Math.round(totalNutrition.calories_kcal) || null,
+          protein_g: Math.round(totalNutrition.protein_g * 10) / 10 || null,
+          fat_g: Math.round(totalNutrition.fat_g * 10) / 10 || null,
+          carbs_g: Math.round(totalNutrition.carbs_g * 10) / 10 || null,
+          fiber_g: Math.round(totalNutrition.fiber_g * 10) / 10 || null,
+          sodium_mg: Math.round(totalNutrition.sodium_mg) || null,
+          salt_equivalent_g: Math.round((totalNutrition.sodium_mg / 400) * 10) / 10 || null,
+          iron_mg: Math.round(totalNutrition.iron_mg * 10) / 10 || null,
+          calcium_mg: Math.round(totalNutrition.calcium_mg) || null,
+          zinc_mg: Math.round(totalNutrition.zinc_mg * 10) / 10 || null,
+          vitamin_a_ug: Math.round(totalNutrition.vitamin_a_ug) || null,
+          vitamin_c_mg: Math.round(totalNutrition.vitamin_c_mg) || null,
+          vitamin_d_ug: Math.round(totalNutrition.vitamin_d_ug * 10) / 10 || null,
+          magnesium_mg: Math.round(totalNutrition.magnesium_mg) || null,
+          folic_acid_ug: Math.round(totalNutrition.folic_acid_ug) || null,
+          is_eaten: false,
+          is_skipped: false,
+          generation_metadata: {
+            generator: "generate-weekly-menu-v2",
+            mode: "creative",
+            generated_at: new Date().toISOString(),
+            nutrition_source: "calculated",
+          },
+        };
 
-        const dishDetails = built.dishDetails;
-        const aggregatedIngredients = built.aggregatedIngredients;
-        const dishName = built.dishName;
-        const finalExternalId = String(meal.source_menu_set_external_id ?? originalExternalId).trim() || originalExternalId;
-
-        // 既存が複数あるケースでも安全に「先頭1件」を更新する（重複増殖を防ぐ）
+        // 既存レコードがあれば更新、なければ挿入
         const { data: existingMeal } = await supabase
           .from("planned_meals")
           .select("id")
           .eq("meal_plan_day_id", mealPlanDayId)
-          .eq("meal_type", meal.mealType)
-          .order("created_at", { ascending: true })
-          .limit(1)
+          .eq("meal_type", mealType)
           .maybeSingle();
 
-        const mealData: Record<string, any> = {
-          meal_plan_day_id: mealPlanDayId,
-          meal_type: meal.mealType,
-          mode: "cook",
-          dish_name: dishName,
-          description: null,
-          dishes: dishDetails,
-          ingredients: aggregatedIngredients.length > 0 ? aggregatedIngredients : null,
-          recipe_steps: null,
-          is_simple: dishDetails.length <= 1,
-          is_completed: false,
-          updated_at: new Date().toISOString(),
-
-          // v2 traceability
-          source_type: "dataset",
-          source_dataset_version: datasetVersion,
-          source_menu_set_external_id: ms.external_id,
-          generation_metadata: {
-            generator: "generate-weekly-menu-v2",
-            llm_model: "gpt-5-mini",
-            embeddings_model: "text-embedding-3-small",
-            search_query_base: String(searchQueryBase).slice(0, 1200),
-            user_context: userContextForLog,
-            constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
-            allergy_validation: {
-              checked: allergyTokens.length > 0,
-              allergy_tokens: allergyTokens.slice(0, 30),
-              original_external_id: originalExternalId,
-              final_external_id: finalExternalId,
-              replaced: finalExternalId !== originalExternalId,
-              violation: allergyViolationSummary,
-            },
-            candidate_counts: {
-              breakfast: candidatesByMealType.breakfast.length,
-              lunch: candidatesByMealType.lunch.length,
-              dinner: candidatesByMealType.dinner.length,
-            },
-          },
-
-          // 栄養（セット全体＝確定値）
-          calories_kcal: toNullableNumber(ms.calories_kcal),
-          protein_g: toNullableNumber(ms.protein_g),
-          fat_g: toNullableNumber(ms.fat_g),
-          carbs_g: toNullableNumber(ms.carbs_g),
-          sodium_g: toNullableNumber(ms.sodium_g),
-          sugar_g: toNullableNumber(ms.sugar_g),
-          fiber_g: toNullableNumber(ms.fiber_g),
-          fiber_soluble_g: toNullableNumber(ms.fiber_soluble_g),
-          fiber_insoluble_g: toNullableNumber(ms.fiber_insoluble_g),
-          potassium_mg: toNullableNumber(ms.potassium_mg),
-          calcium_mg: toNullableNumber(ms.calcium_mg),
-          magnesium_mg: toNullableNumber(ms.magnesium_mg),
-          phosphorus_mg: toNullableNumber(ms.phosphorus_mg),
-          iron_mg: toNullableNumber(ms.iron_mg),
-          zinc_mg: toNullableNumber(ms.zinc_mg),
-          iodine_ug: toNullableNumber(ms.iodine_ug),
-          cholesterol_mg: toNullableNumber(ms.cholesterol_mg),
-          vitamin_b1_mg: toNullableNumber(ms.vitamin_b1_mg),
-          vitamin_b2_mg: toNullableNumber(ms.vitamin_b2_mg),
-          vitamin_c_mg: toNullableNumber(ms.vitamin_c_mg),
-          vitamin_b6_mg: toNullableNumber(ms.vitamin_b6_mg),
-          vitamin_b12_ug: toNullableNumber(ms.vitamin_b12_ug),
-          folic_acid_ug: toNullableNumber(ms.folic_acid_ug),
-          vitamin_a_ug: toNullableNumber(ms.vitamin_a_ug),
-          vitamin_d_ug: toNullableNumber(ms.vitamin_d_ug),
-          vitamin_k_ug: toNullableNumber(ms.vitamin_k_ug),
-          vitamin_e_mg: toNullableNumber(ms.vitamin_e_mg),
-          saturated_fat_g: toNullableNumber(ms.saturated_fat_g),
-          monounsaturated_fat_g: toNullableNumber(ms.monounsaturated_fat_g),
-          polyunsaturated_fat_g: toNullableNumber(ms.polyunsaturated_fat_g),
-        };
-
         if (existingMeal?.id) {
-          const { error: updErr } = await supabase.from("planned_meals").update(mealData).eq("id", existingMeal.id);
-          if (updErr) throw new Error(`Failed to update planned_meal: ${updErr.message}`);
+          await supabase
+            .from("planned_meals")
+            .update({ ...mealData, updated_at: new Date().toISOString() })
+            .eq("id", existingMeal.id);
         } else {
-          // UI互換: display_order が無いと同日の並びが崩れるため、初回insert時のみデフォルトを入れる
-          const insertData = {
-            ...mealData,
-            display_order: DISPLAY_ORDER_MAP[meal.mealType] ?? 0,
-          };
-          const { error: insErr } = await supabase.from("planned_meals").insert(insertData);
-          if (insErr) throw new Error(`Failed to insert planned_meal: ${insErr.message}`);
+          await supabase.from("planned_meals").insert(mealData);
         }
       }
     }
+    
+    phaseEnd("7_save_to_db");
 
-    phaseEnd("8_save_to_db");
-
-    // ========== Phase 9: ステータス更新 ==========
-    phaseStart("9_complete_status");
+    // ========== Phase 8: 完了ステータス更新 ==========
+    phaseStart("8_complete");
+    
     if (requestId) {
-      const resultJson = {
-        ...selection,
-        _meta: {
-          generator: "generate-weekly-menu-v2",
-          dataset_version: datasetVersion,
-          search_query_base: String(searchQueryBase).slice(0, 1200),
-          user_context: userContextForLog,
-          constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
-          allergy_tokens: allergyTokens.slice(0, 30),
-          replacements: replacementLog,
-          timings, // タイミング情報を保存
-        },
-      };
       await supabase
         .from("weekly_menu_requests")
         .update({
           status: "completed",
+          progress: {
+            phase: "completed",
+            message: "献立が完成しました！",
+            percentage: 100,
+          },
           updated_at: new Date().toISOString(),
-          result_json: resultJson,
         })
-        .eq("id", requestId)
-        .eq("user_id", userId);
+        .eq("id", requestId);
     }
-    phaseEnd("9_complete_status");
+    
+    phaseEnd("8_complete");
 
     // ========== 完了サマリー ==========
-    const totalDuration = Date.now() - totalStart;
-    console.log(`[PHASE] ========== 完了サマリー ==========`);
-    console.log(`[PHASE] 合計時間: ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}秒)`);
-    console.log(`[PHASE] 各フェーズ: ${JSON.stringify({
-      "1_init": timings["1_init_ms"],
-      "2_user_info": timings["2_user_info_ms"],
-      "3_vector_search": timings["3_vector_search_ms"],
-      "4_filter_candidates": timings["4_filter_candidates_ms"],
-      "5_llm_selection": timings["5_llm_selection_ms"],
-      "6_fetch_menu_sets": timings["6_fetch_menu_sets_ms"],
-      "7_resolve_recipes": timings["7_resolve_recipes_ms"],
-      "8_save_to_db": timings["8_save_to_db_ms"],
-      "9_complete_status": timings["9_complete_status_ms"],
-    })}`);
-
-    return { selection, datasetVersion };
-  } catch (error: any) {
-    console.error("❌ generateMenuV2BackgroundTask failed:", error?.message ?? error);
-
-    // 失敗時: weekly_menu_requests を failed に更新
-    // プレースホルダーは作成していないので、is_generating のクリアは不要
+    console.log("[PHASE] ========== 完了サマリー ==========");
+    console.log("[PHASE] timings:", JSON.stringify(timings));
+    const totalTime = Object.values(timings).reduce((a, b) => a + b, 0);
+    console.log(`[PHASE] 総処理時間: ${totalTime}ms`);
+    
+    await logger.info("background_task_complete", { timings, totalTime });
+    
+  } catch (err: any) {
+    console.error("Background task error:", err);
+    await logger.error("background_task_failed", { error: err.message, stack: err.stack });
+    
     if (requestId) {
       await supabase
         .from("weekly_menu_requests")
-        .update({
-          status: "failed",
-          error_message: error?.message ?? String(error),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", requestId)
-        .eq("user_id", userId);
+        .update({ status: "failed", error_message: err.message, updated_at: new Date().toISOString() })
+        .eq("id", requestId);
     }
-    throw error;
   }
 }
 
 // =========================================================
-// HTTP handler
+// dishDetails 構築ヘルパー
 // =========================================================
 
-export async function handleGenerateWeeklyMenuV2(req: Request): Promise<Response> {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-
-  try {
-    // 認証: service role または user JWT を許可（verify_jwt=false を補完）
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Authorization header required" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 401,
-      });
+function buildDishDetails(meal: GeneratedMeal): any[] {
+  return meal.dishes.map((dish) => {
+    const nutrition = (dish as any).nutrition as NutritionTotals | undefined;
+    
+    // マークダウン形式で材料を整形
+    let ingredientsMd = "| 材料 | 分量 |\n|------|------|\n";
+    for (const ing of dish.ingredients) {
+      ingredientsMd += `| ${ing.name} | ${ing.amount_g}g${ing.note ? ` (${ing.note})` : ""} |\n`;
     }
+    
+    // 作り方をマークダウン番号リスト形式に
+    const recipeStepsMd = dish.instructions.map((step, i) => `${i + 1}. ${step}`).join("\n\n");
 
-    const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader;
-    const serviceRoleKey = Deno.env.get("DATASET_SERVICE_ROLE_KEY") ?? "";
-
-    const body = await req.json().catch(() => ({}));
-    const startDate = (body as any)?.startDate;
-    // 互換: note / prompt どちらでも受け取る（single/regenerate-v2と揃える）
-    const note = typeof (body as any)?.note === "string"
-      ? (body as any).note
-      : (typeof (body as any)?.prompt === "string" ? (body as any).prompt : null);
-    // 互換: constraints / preferences の揺れを吸収
-    const constraints = (body as any)?.constraints ?? (body as any)?.preferences ?? null;
-    const requestId = (body as any)?.requestId ?? null;
-    const bodyUserId = (body as any)?.userId ?? null;
-
-    let userId: string;
-    if (serviceRoleKey && token === serviceRoleKey) {
-      if (!bodyUserId) {
-        return new Response(JSON.stringify({ error: "userId is required for service role calls" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 400,
-        });
-      }
-      userId = bodyUserId;
-    } else {
-      const supabaseAuth = createClient(
-        Deno.env.get("SUPABASE_URL") ?? "",
-        Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-        { global: { headers: { Authorization: authHeader } } },
-      );
-      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 401,
-        });
-      }
-      if (bodyUserId && bodyUserId !== user.id) {
-        return new Response(JSON.stringify({ error: "Forbidden" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 403,
-        });
-      }
-      userId = user.id;
-    }
-
-    if (typeof startDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-      return new Response(JSON.stringify({ error: "startDate must be YYYY-MM-DD" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 400,
-      });
-    }
-
-    // バックグラウンド処理: 即座にレスポンスを返し、EdgeRuntime.waitUntilで処理を継続
-    const backgroundTask = generateMenuV2BackgroundTask({
-      userId,
-      startDate,
-      note: typeof note === "string" ? note : null,
-      requestId,
-      constraints,
-    }).then((result) => {
-      console.log("✅ generate-weekly-menu-v2 completed in background");
-      return result;
-    }).catch((err) => {
-      console.error("❌ generate-weekly-menu-v2 background task failed:", err?.message ?? err);
-    });
-
-    // EdgeRuntime.waitUntil を使用してバックグラウンド処理を継続
-    // @ts-ignore: EdgeRuntime is a global in Supabase Edge Functions
-    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
-      // @ts-ignore
-      EdgeRuntime.waitUntil(backgroundTask);
-    }
-
-    // 即座にレスポンスを返す（処理はバックグラウンドで継続）
-    return new Response(
-      JSON.stringify({
-        message: "Menu generation v2 started (background)",
-        success: true,
-        status: "processing",
-        requestId,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (error: any) {
-    console.error("❌ generate-weekly-menu-v2 failed:", error?.message ?? error);
-    return new Response(JSON.stringify({ success: false, error: error?.message ?? String(error) }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 500,
-    });
-  }
-}
-
-if (import.meta.main) {
-  Deno.serve(handleGenerateWeeklyMenuV2);
+    return {
+      name: dish.name,
+      role: dish.role,
+      cal: Math.round(nutrition?.calories_kcal ?? 0),
+      protein: Math.round((nutrition?.protein_g ?? 0) * 10) / 10,
+      fat: Math.round((nutrition?.fat_g ?? 0) * 10) / 10,
+      carbs: Math.round((nutrition?.carbs_g ?? 0) * 10) / 10,
+      fiber: Math.round((nutrition?.fiber_g ?? 0) * 10) / 10,
+      sugar: 0,
+      sodium: Math.round((nutrition?.sodium_mg ?? 0) / 1000 * 10) / 10,
+      iron: Math.round((nutrition?.iron_mg ?? 0) * 10) / 10,
+      calcium: Math.round(nutrition?.calcium_mg ?? 0),
+      zinc: Math.round((nutrition?.zinc_mg ?? 0) * 10) / 10,
+      vitaminA: Math.round(nutrition?.vitamin_a_ug ?? 0),
+      vitaminC: Math.round(nutrition?.vitamin_c_mg ?? 0),
+      vitaminD: Math.round((nutrition?.vitamin_d_ug ?? 0) * 10) / 10,
+      vitaminE: 0,
+      vitaminK: 0,
+      vitaminB1: 0,
+      vitaminB2: 0,
+      vitaminB6: 0,
+      vitaminB12: 0,
+      folicAcid: Math.round(nutrition?.folic_acid_ug ?? 0),
+      potassium: 0,
+      phosphorus: 0,
+      iodine: 0,
+      cholesterol: 0,
+      fiberSoluble: 0,
+      fiberInsoluble: 0,
+      saturatedFat: 0,
+      monounsaturatedFat: 0,
+      polyunsaturatedFat: 0,
+      ingredient: dish.ingredients.slice(0, 3).map(i => i.name).join("、"),
+      ingredients: dish.ingredients.map(i => `${i.name} ${i.amount_g}g`),
+      recipeSteps: dish.instructions,
+      ingredientsMd,
+      recipeStepsMd,
+      base_recipe_id: null,
+      is_generated_name: true,
+    };
+  });
 }

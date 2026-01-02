@@ -8,6 +8,7 @@ import {
   emptyNutrition, 
   type NutritionTotals 
 } from "../_shared/nutrition-calculator.ts";
+import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 
 console.log("Regenerate Meal Direct v2 Function loaded (pgvector + dataset driven)");
 
@@ -565,6 +566,11 @@ async function regenerateMealV2BackgroundTask(args: {
   const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceRoleKey);
 
   const { userId, mealId, note, requestId, constraints } = args;
+  
+  // DBロガーを初期化
+  const reqId = generateRequestId();
+  const logger = createLogger("regenerate-meal-direct-v2", reqId).withUser(userId);
+  logger.info("献立再生成開始", { mealId, requestId, note: note?.slice(0, 100) });
 
   if (requestId) {
     await supabase
@@ -829,6 +835,12 @@ async function regenerateMealV2BackgroundTask(args: {
     }
     logPhase("8_complete_update", phaseStart);
     console.log(`[END] regenerate-meal-direct-v2 total=${Date.now() - totalStart}ms`);
+    logger.info("献立再生成完了", { 
+      mealId, 
+      totalDuration: Date.now() - totalStart,
+      dishCount: generatedMeal.dishes.length,
+      datasetVersion,
+    });
 
     // 新方式の戻り値
     const dummySelection: RegenerateV2Selection = {
@@ -839,6 +851,7 @@ async function regenerateMealV2BackgroundTask(args: {
     return { selection: dummySelection, datasetVersion, plannedMealId: mealId };
   } catch (error: any) {
     console.error("❌ regenerateMealV2BackgroundTask failed:", error?.message ?? error);
+    logger.error("献立再生成失敗", error, { mealId, requestId });
 
     // 失敗時: weekly_menu_requests を failed に更新
     // is_generating フラグは使用しないので、クリアは不要

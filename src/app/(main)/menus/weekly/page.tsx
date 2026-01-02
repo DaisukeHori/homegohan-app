@@ -348,6 +348,7 @@ export default function WeeklyMenuPage() {
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
   
   // Supabase Realtime チャンネルを保持（クリーンアップ用）
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
@@ -644,7 +645,14 @@ export default function WeeklyMenuPage() {
         },
         async (payload) => {
           console.log('📡 Realtime update received:', payload.new);
-          const newStatus = (payload.new as { status: string }).status;
+          const newData = payload.new as { status: string; progress?: { phase: string; message: string; percentage: number } };
+          const newStatus = newData.status;
+          
+          // 進捗情報を更新
+          if (newData.progress) {
+            console.log('📊 Progress update:', newData.progress);
+            setGenerationProgress(newData.progress);
+          }
           
           if (newStatus === 'completed') {
             // 完了したら献立を再取得
@@ -657,6 +665,7 @@ export default function WeeklyMenuPage() {
             }
             setIsGenerating(false);
             setGeneratingMeal(null);
+            setGenerationProgress(null);
             localStorage.removeItem('weeklyMenuGenerating');
             localStorage.removeItem('singleMealGenerating');
             cleanupRealtime();
@@ -664,6 +673,7 @@ export default function WeeklyMenuPage() {
             console.log('❌ Generation failed');
             setIsGenerating(false);
             setGeneratingMeal(null);
+            setGenerationProgress(null);
             localStorage.removeItem('weeklyMenuGenerating');
             localStorage.removeItem('singleMealGenerating');
             cleanupRealtime();
@@ -2220,16 +2230,28 @@ export default function WeeklyMenuPage() {
       {/* === AI Banner === */}
       {isGenerating ? (
         <div
-          className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
+          className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl"
           style={{ background: `linear-gradient(135deg, ${colors.accent} 0%, ${colors.purple} 100%)` }}
         >
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-              AIが献立を生成中...
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
+                {generationProgress?.message || 'AIが献立を生成中...'}
+              </span>
+            </div>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
+              {generationProgress?.percentage ? `${generationProgress.percentage}%` : 'しばらくお待ちください'}
             </span>
           </div>
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>しばらくお待ちください</span>
+          {generationProgress?.percentage && (
+            <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-white rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${generationProgress.percentage}%` }}
+              />
+            </div>
+          )}
         </div>
       ) : (
         <button

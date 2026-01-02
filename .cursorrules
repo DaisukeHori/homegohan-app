@@ -1,0 +1,128 @@
+# ほめゴハン - Cursor AI ルール
+
+## プロジェクト概要
+AIを活用した食事管理・献立提案アプリケーション。
+- Web: Next.js 14 (App Router)
+- Mobile: Expo (React Native)
+- Backend: Supabase (PostgreSQL, Edge Functions, Auth, Storage)
+- AI: OpenAI GPT-5-mini, Google Gemini 2.0 Flash
+
+## 仕様書の場所
+- **SPECIFICATION.md** - 詳細仕様（データベース、API、アルゴリズム）
+- **DESIGN.md** - UI/UXデザイン
+- **MOBILE_TODO.md** - モバイルアプリの進捗
+
+---
+
+## 🔧 MCP（Model Context Protocol）でできること
+
+### Supabase MCP
+AIがデータベースとEdge Functionsに直接アクセス可能。
+
+**使い方の例:**
+- 「app_logsテーブルの最新エラーを見せて」
+- 「generate-weekly-menu-v2のログを確認して」
+- 「今日のAPIエラーを調べて」
+- 「ユーザー◯◯の献立データを確認して」
+- 「Edge Functionsのログを見せて」
+
+**利用可能なツール:**
+| ツール | 説明 |
+|--------|------|
+| `list_tables` | テーブル一覧を取得 |
+| `execute_sql` | SQLクエリを実行 |
+| `apply_migration` | マイグレーションを適用 |
+| `get_logs` | Edge Functions/Auth/Storage等のログを取得 |
+| `generate_typescript_types` | 型定義を生成 |
+
+### Vercel MCP
+- デプロイ、ログ確認、ドキュメント検索
+
+### GitHub MCP
+- Issue、PR、コード検索
+
+---
+
+## 📋 app_logs テーブル（デバッグ用）
+
+Edge Functions、API Routes、クライアントからのログを一元管理。
+
+**よく使うクエリ:**
+```sql
+-- 最新のエラーログ
+SELECT * FROM app_logs WHERE level = 'error' ORDER BY created_at DESC LIMIT 20;
+
+-- 特定の関数のログ
+SELECT * FROM app_logs WHERE function_name = 'generate-weekly-menu-v2' ORDER BY created_at DESC LIMIT 50;
+
+-- 今日のログ
+SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC;
+
+-- 特定ユーザーのログ
+SELECT * FROM app_logs WHERE user_id = 'ユーザーID' ORDER BY created_at DESC LIMIT 30;
+```
+
+**ログヘルパー:**
+- Edge Functions用: `supabase/functions/_shared/db-logger.ts`
+- Next.js API用: `src/lib/db-logger.ts`
+
+---
+
+## 🚀 Edge Functions
+
+| 関数名 | 用途 |
+|--------|------|
+| `generate-weekly-menu-v2` | 週間献立生成（v2/データセット駆動） |
+| `generate-single-meal-v2` | 単発献立生成 |
+| `regenerate-meal-direct-v2` | 献立差し替え |
+| `analyze-health-photo` | 健康機器写真分析 |
+| `generate-health-insights` | 健康分析生成 |
+
+**デプロイ:**
+```bash
+npx supabase functions deploy <関数名> --project-ref flmeolcfutuwwbjmzyoz
+```
+
+---
+
+## 🛠️ 開発コマンド
+
+```bash
+# Web開発サーバー
+npm run dev
+
+# モバイル開発
+cd apps/mobile && npx expo start
+
+# Edge Functionsデプロイ
+npx supabase functions deploy <関数名> --project-ref flmeolcfutuwwbjmzyoz
+
+# 型生成
+npx supabase gen types typescript --project-id flmeolcfutuwwbjmzyoz > types/database.ts
+```
+
+---
+
+## ⚠️ 注意事項
+
+1. **秘密鍵をクライアントに置かない**: `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `GOOGLE_*_API_KEY`
+2. **v1/v2の区別**: Edge Functionsには旧方式(v1)と新方式(v2)がある。現在はv2を使用。
+3. **RLS有効**: 全テーブルにRow Level Securityが設定されている。
+
+---
+
+## 📦 プロジェクト構造
+
+```
+homegohan-app/
+├── apps/mobile/          # Expo (iOS/Android)
+├── packages/core/        # 共有型/ロジック
+├── src/                  # Next.js Web
+│   ├── app/              # App Router
+│   ├── components/       # コンポーネント
+│   └── lib/              # ユーティリティ
+├── supabase/
+│   ├── functions/        # Edge Functions
+│   └── migrations/       # DBマイグレーション
+└── types/                # 型定義
+```

@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   try {
     const { data: request, error } = await supabase
       .from('weekly_menu_requests')
-      .select('id, status, error_message, updated_at, mode, start_date, target_meal_id')
+      .select('id, status, error_message, updated_at, mode, start_date, target_meal_id, progress')
       .eq('id', requestId)
       .eq('user_id', user.id)
       .single();
@@ -67,6 +67,7 @@ export async function GET(request: Request) {
       status: request.status,
       errorMessage: request.error_message,
       updatedAt: request.updated_at,
+      progress: request.progress,
     });
 
   } catch (error: any) {

@@ -318,6 +318,50 @@ CREATE TABLE health_insights (
 - `health_challenges` - 健康チャレンジ
 - `notification_preferences` - 通知設定
 
+### 4.4 開発・デバッグ用テーブル
+
+#### `app_logs`
+アプリケーションログを保存するテーブル。Edge Functions、API Routes、クライアントからのログを一元管理する。
+**Supabase MCP経由でAI（Cursor等）がログを直接クエリ可能。**
+
+```sql
+CREATE TABLE app_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  level TEXT NOT NULL DEFAULT 'info',        -- 'debug', 'info', 'warn', 'error'
+  source TEXT NOT NULL,                      -- 'edge-function', 'api-route', 'client'
+  function_name TEXT,                        -- 関数名/ルート名
+  user_id UUID REFERENCES auth.users(id),    -- ユーザーID（オプション）
+  message TEXT NOT NULL,                     -- ログメッセージ
+  metadata JSONB DEFAULT '{}'::jsonb,        -- 追加データ（JSON）
+  error_message TEXT,                        -- エラーメッセージ
+  error_stack TEXT,                          -- スタックトレース
+  request_id TEXT                            -- リクエスト追跡用ID
+);
+```
+
+**用途:**
+- Edge Functions/API Routesのエラー調査
+- ユーザー操作のトレース
+- AI（Claude等）によるリアルタイムデバッグ支援
+
+**ログヘルパー:**
+- Edge Functions用: `supabase/functions/_shared/db-logger.ts`
+- Next.js API用: `src/lib/db-logger.ts`
+- クライアント用: `POST /api/log`
+
+**クエリ例（MCP経由でAIが実行可能）:**
+```sql
+-- 最新のエラーログ
+SELECT * FROM app_logs WHERE level = 'error' ORDER BY created_at DESC LIMIT 20;
+
+-- 特定の関数のログ
+SELECT * FROM app_logs WHERE function_name = 'generate-weekly-menu-v2' ORDER BY created_at DESC LIMIT 50;
+
+-- 今日のログ
+SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC;
+```
+
 ---
 
 ## 5. 画面構成と遷移
