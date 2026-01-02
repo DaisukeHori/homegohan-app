@@ -144,6 +144,131 @@ const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: {
   );
 };
 
+// 進捗ToDoカード（タップで展開）
+const PROGRESS_PHASES = [
+  { phase: 'user_context', label: 'ユーザー情報を取得', threshold: 5 },
+  { phase: 'search_references', label: '参考レシピを検索', threshold: 10 },
+  { phase: 'generating', label: '7日分の献立をAIが作成', threshold: 15 },
+  { phase: 'step1_complete', label: '献立生成完了', threshold: 40 },
+  { phase: 'reviewing', label: '献立のバランスをチェック', threshold: 45 },
+  { phase: 'review_done', label: '改善点を発見', threshold: 55 },
+  { phase: 'fixing', label: '改善点を修正', threshold: 60 },
+  { phase: 'no_issues', label: '問題なし', threshold: 70 },
+  { phase: 'step2_complete', label: 'レビュー完了', threshold: 75 },
+  { phase: 'calculating', label: '栄養価を計算', threshold: 80 },
+  { phase: 'saving', label: '献立を保存', threshold: 88 },
+  { phase: 'completed', label: '完了！', threshold: 100 },
+];
+
+const ProgressTodoCard = ({ 
+  progress, 
+  colors: cardColors 
+}: { 
+  progress: { phase: string; message: string; percentage: number } | null;
+  colors: { accent: string; purple: string };
+}) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  const currentPercentage = progress?.percentage ?? 0;
+  const currentPhase = progress?.phase ?? '';
+  
+  // 各フェーズの状態を判定
+  const getPhaseStatus = (phase: typeof PROGRESS_PHASES[0]) => {
+    if (currentPercentage >= phase.threshold) {
+      return 'completed';
+    }
+    if (currentPhase === phase.phase || 
+        (currentPhase.startsWith(phase.phase.split('_')[0]) && currentPercentage < phase.threshold)) {
+      return 'in_progress';
+    }
+    return 'pending';
+  };
+
+  return (
+    <div
+      className="mx-3 mt-2 rounded-xl overflow-hidden cursor-pointer transition-all duration-300"
+      style={{ background: `linear-gradient(135deg, ${cardColors.accent} 0%, ${cardColors.purple} 100%)` }}
+      onClick={() => setIsExpanded(!isExpanded)}
+    >
+      {/* ヘッダー部分 */}
+      <div className="px-3.5 py-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
+              {progress?.message || 'AIが献立を生成中...'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
+              {progress?.percentage ? `${progress.percentage}%` : ''}
+            </span>
+            {isExpanded ? (
+              <ChevronUp size={14} color="rgba(255,255,255,0.7)" />
+            ) : (
+              <ChevronDown size={14} color="rgba(255,255,255,0.7)" />
+            )}
+          </div>
+        </div>
+        {progress?.percentage && (
+          <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-white rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${progress.percentage}%` }}
+            />
+          </div>
+        )}
+      </div>
+      
+      {/* 展開時のToDoリスト */}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="px-3.5 pb-3 pt-1 border-t border-white/20">
+              <div className="space-y-1.5">
+                {PROGRESS_PHASES.map((phase, idx) => {
+                  const status = getPhaseStatus(phase);
+                  return (
+                    <div 
+                      key={phase.phase}
+                      className="flex items-center gap-2"
+                    >
+                      {status === 'completed' ? (
+                        <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                          <Check size={10} color={cardColors.accent} strokeWidth={3} />
+                        </div>
+                      ) : status === 'in_progress' ? (
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full border-2 border-white/40" />
+                      )}
+                      <span 
+                        style={{ 
+                          fontSize: 11, 
+                          color: status === 'pending' ? 'rgba(255,255,255,0.5)' : '#fff',
+                          fontWeight: status === 'in_progress' ? 600 : 400,
+                        }}
+                      >
+                        {phase.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 // 材料テキストをパースして配列に変換
 const parseIngredientsText = (text: string): { name: string; amount: string }[] => {
   const results: { name: string; amount: string }[] = [];
@@ -2318,30 +2443,10 @@ export default function WeeklyMenuPage() {
 
       {/* === AI Banner === */}
       {isGenerating ? (
-        <div
-          className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl"
-          style={{ background: `linear-gradient(135deg, ${colors.accent} 0%, ${colors.purple} 100%)` }}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-                {generationProgress?.message || 'AIが献立を生成中...'}
-              </span>
-            </div>
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
-              {generationProgress?.percentage ? `${generationProgress.percentage}%` : 'しばらくお待ちください'}
-            </span>
-          </div>
-          {generationProgress?.percentage && (
-            <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-white rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${generationProgress.percentage}%` }}
-              />
-            </div>
-          )}
-        </div>
+        <ProgressTodoCard 
+          progress={generationProgress}
+          colors={colors}
+        />
       ) : (
         <button
           onClick={() => setActiveModal('ai')}
