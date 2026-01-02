@@ -491,6 +491,23 @@ async function generateMenuV2BackgroundTask(args: {
 
   const { userId, startDate, note, requestId, constraints } = args;
 
+  // タイミング計測用
+  const timings: Record<string, number> = {};
+  const phaseStart = (name: string) => {
+    timings[`${name}_start`] = Date.now();
+    console.log(`[PHASE] ${name} 開始`);
+  };
+  const phaseEnd = (name: string) => {
+    const start = timings[`${name}_start`] ?? Date.now();
+    const duration = Date.now() - start;
+    timings[`${name}_ms`] = duration;
+    console.log(`[PHASE] ${name} 完了: ${duration}ms`);
+  };
+  const totalStart = Date.now();
+
+  // ========== Phase 1: 初期化 ==========
+  phaseStart("1_init");
+
   if (requestId) {
     await supabase
       .from("weekly_menu_requests")
@@ -498,8 +515,11 @@ async function generateMenuV2BackgroundTask(args: {
       .eq("id", requestId)
       .eq("user_id", userId);
   }
+  phaseEnd("1_init");
 
   try {
+    // ========== Phase 2: ユーザー情報取得 ==========
+    phaseStart("2_user_info");
     const { data: profile, error: profileError } = await supabase
       .from("user_profiles")
       .select("*")
@@ -514,6 +534,7 @@ async function generateMenuV2BackgroundTask(args: {
       .maybeSingle();
 
     const datasetVersion = await getActiveDatasetVersion(supabase);
+    phaseEnd("2_user_info");
 
     const dates = getWeekDates(startDate);
     const userContext = buildUserContextForPrompt({
@@ -531,13 +552,17 @@ async function generateMenuV2BackgroundTask(args: {
       },
     };
 
-    // 1) pgvectorで候補抽出（mealTypeごとに一度）
+    // ========== Phase 3: ベクトル検索 ==========
+    phaseStart("3_vector_search");
     const searchQueryBase = buildSearchQueryBase({ profile, nutritionTargets: nutritionTargets ?? null, note: note ?? null, constraints });
     // パフォーマンス改善: 候補数を大幅に削減（600-1200→150-200、max 60-80→20-25）
     const breakfastRaw = await searchMenuCandidates(supabase, `朝食\n${searchQueryBase}`, 150);
     const lunchRaw = await searchMenuCandidates(supabase, `昼食\n${searchQueryBase}`, 200);
     const dinnerRaw = await searchMenuCandidates(supabase, `夕食\n${searchQueryBase}`, 200);
+    phaseEnd("3_vector_search");
 
+    // ========== Phase 4: 候補フィルタリング ==========
+    phaseStart("4_filter_candidates");
     const candidatesByMealType: Record<MealType, MenuSetCandidate[]> = {
       breakfast: pickCandidatesForMealType("breakfast", breakfastRaw, { min: 7, max: 20 }),
       lunch: pickCandidatesForMealType("lunch", lunchRaw, { min: 7, max: 25 }),
@@ -580,8 +605,11 @@ async function generateMenuV2BackgroundTask(args: {
         throw new Error(`Not enough candidates for ${mt}: ${candidatesByMealType[mt]?.length ?? 0}`);
       }
     }
+    console.log(`[PHASE] 候補数: breakfast=${candidatesByMealType.breakfast.length}, lunch=${candidatesByMealType.lunch.length}, dinner=${candidatesByMealType.dinner.length}`);
+    phaseEnd("4_filter_candidates");
 
-    // 2) LLMで「候補からID選択」だけ実施（設計通り）
+    // ========== Phase 5: LLM選択 ==========
+    phaseStart("5_llm_selection");
     const rawSelection = await runAgentToSelectWeeklyMenuIds({
       userSummary,
       userContext,
@@ -591,8 +619,10 @@ async function generateMenuV2BackgroundTask(args: {
     });
     const selection = repairSelectionToCandidates({ dates, selection: rawSelection, candidatesByMealType });
     const replacementLog: Array<{ date: string; mealType: MealType; from: string; to: string; reason: string }> = [];
+    phaseEnd("5_llm_selection");
 
-    // 3) 選ばれたmenu_setをDBから取得
+    // ========== Phase 6: メニューセット取得 ==========
+    phaseStart("6_fetch_menu_sets");
     const selectedExternalIds = Array.from(
       new Set(selection.days.flatMap((d) => d.meals.map((m) => m.source_menu_set_external_id))),
     ).filter(Boolean);
@@ -605,6 +635,8 @@ async function generateMenuV2BackgroundTask(args: {
 
     const menuSetByExternalId = new Map<string, any>((menuSets ?? []).map((m: any) => [m.external_id, m]));
     const reservedExternalIds = new Set<string>(selectedExternalIds);
+    console.log(`[PHASE] 選択されたメニューセット: ${selectedExternalIds.length}件`);
+    phaseEnd("6_fetch_menu_sets");
 
     async function getMenuSetByExternalIdSafe(externalId: string): Promise<any | null> {
       const id = String(externalId ?? "").trim();
@@ -617,7 +649,8 @@ async function generateMenuV2BackgroundTask(args: {
       return data ?? null;
     }
 
-    // 4) dish名→recipeを引く（まず正規化一致をまとめて取得）
+    // ========== Phase 7: レシピ解決 ==========
+    phaseStart("7_resolve_recipes");
     const allDishNames: string[] = [];
     for (const ms of menuSets ?? []) {
       const dishes = Array.isArray(ms.dishes) ? ms.dishes : [];
@@ -626,6 +659,7 @@ async function generateMenuV2BackgroundTask(args: {
       }
     }
     const uniqNorms = Array.from(new Set(allDishNames.map((n) => normalizeDishNameJs(n)))).filter(Boolean);
+    console.log(`[PHASE] 解決するレシピ: ${allDishNames.length}件 (ユニーク: ${uniqNorms.length}件)`);
 
     const { data: exactRecipes, error: recipeErr } = await supabase
       .from("dataset_recipes")
@@ -636,6 +670,8 @@ async function generateMenuV2BackgroundTask(args: {
     if (recipeErr) throw new Error(`Failed to fetch dataset_recipes: ${recipeErr.message}`);
 
     const recipeByNorm = new Map<string, any>((exactRecipes ?? []).map((r: any) => [r.name_norm, r]));
+    console.log(`[PHASE] 完全一致レシピ: ${exactRecipes?.length ?? 0}件`);
+    phaseEnd("7_resolve_recipes");
 
     async function resolveRecipeForDishName(dishName: string): Promise<any | null> {
       const norm = normalizeDishNameJs(dishName);
@@ -744,7 +780,8 @@ async function generateMenuV2BackgroundTask(args: {
       return { dishDetails, aggregatedIngredients, dishName, allergyHits };
     }
 
-    // 5) meal_plans / meal_plan_days / planned_meals 保存
+    // ========== Phase 8: DB保存 ==========
+    phaseStart("8_save_to_db");
     const endDate = dates[6];
 
     // meal_plan: 既存があれば再利用（無ければ作成）
@@ -972,6 +1009,10 @@ async function generateMenuV2BackgroundTask(args: {
       }
     }
 
+    phaseEnd("8_save_to_db");
+
+    // ========== Phase 9: ステータス更新 ==========
+    phaseStart("9_complete_status");
     if (requestId) {
       const resultJson = {
         ...selection,
@@ -983,6 +1024,7 @@ async function generateMenuV2BackgroundTask(args: {
           constraints: (userContextForLog as any)?.weekly?.constraints ?? null,
           allergy_tokens: allergyTokens.slice(0, 30),
           replacements: replacementLog,
+          timings, // タイミング情報を保存
         },
       };
       await supabase
@@ -995,6 +1037,23 @@ async function generateMenuV2BackgroundTask(args: {
         .eq("id", requestId)
         .eq("user_id", userId);
     }
+    phaseEnd("9_complete_status");
+
+    // ========== 完了サマリー ==========
+    const totalDuration = Date.now() - totalStart;
+    console.log(`[PHASE] ========== 完了サマリー ==========`);
+    console.log(`[PHASE] 合計時間: ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}秒)`);
+    console.log(`[PHASE] 各フェーズ: ${JSON.stringify({
+      "1_init": timings["1_init_ms"],
+      "2_user_info": timings["2_user_info_ms"],
+      "3_vector_search": timings["3_vector_search_ms"],
+      "4_filter_candidates": timings["4_filter_candidates_ms"],
+      "5_llm_selection": timings["5_llm_selection_ms"],
+      "6_fetch_menu_sets": timings["6_fetch_menu_sets_ms"],
+      "7_resolve_recipes": timings["7_resolve_recipes_ms"],
+      "8_save_to_db": timings["8_save_to_db_ms"],
+      "9_complete_status": timings["9_complete_status_ms"],
+    })}`);
 
     return { selection, datasetVersion };
   } catch (error: any) {
