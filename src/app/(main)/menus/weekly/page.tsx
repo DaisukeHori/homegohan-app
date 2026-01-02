@@ -487,13 +487,12 @@ export default function WeeklyMenuPage() {
     }
   }, []);
   
-  // コンポーネントアンマウント時にクリーンアップ
+  // コンポーネントアンマウント時にクリーンアップ（Realtimeのみ）
   useEffect(() => {
     return () => {
       cleanupRealtime();
-      cleanupPolling();
     };
-  }, [cleanupRealtime, cleanupPolling]);
+  }, [cleanupRealtime]);
   
   // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
@@ -902,6 +901,13 @@ export default function WeeklyMenuPage() {
       }
     }, 5000);
   }, [cleanupRealtime, cleanupPolling, startPolling]);
+
+  // ポーリングのクリーンアップ（アンマウント時）
+  useEffect(() => {
+    return () => {
+      cleanupPolling();
+    };
+  }, [cleanupPolling]);
   
   // Fetch Pantry
   useEffect(() => {
