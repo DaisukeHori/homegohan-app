@@ -58,7 +58,7 @@ export async function GET() {
 
   const { data: requests, error } = await supabase
     .from('weekly_menu_requests')
-    .select('id, request_type, status, created_at, updated_at')
+    .select('id, mode, status, created_at, updated_at')
     .eq('user_id', user.id)
     .in('status', ['pending', 'processing'])
     .order('created_at', { ascending: false })
