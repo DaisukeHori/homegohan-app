@@ -366,8 +366,9 @@ export default function WeeklyMenuPage() {
   useEffect(() => {
     return () => {
       cleanupRealtime();
+      cleanupPolling();
     };
-  }, [cleanupRealtime]);
+  }, [cleanupRealtime, cleanupPolling]);
   
   // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
@@ -626,12 +627,78 @@ export default function WeeklyMenuPage() {
     fetchPlan();
   }, [weekStart]);
   
-  // Realtime で生成完了を監視
+  // フォールバックポーリング用の参照
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // ポーリングをクリーンアップする関数
+  const cleanupPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  }, []);
+
+  // ポーリングで進捗を取得
+  const startPolling = useCallback((targetDate: string, requestId: string) => {
+    console.log('⏱️ Starting fallback polling for requestId:', requestId);
+    cleanupPolling();
+    
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.progress) {
+          setGenerationProgress(data.progress);
+        }
+        
+        if (data.status === 'completed') {
+          console.log('✅ Polling: Generation completed');
+          const planRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+          if (planRes.ok) {
+            const { mealPlan } = await planRes.json();
+            setCurrentPlan(mealPlan);
+            if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+          }
+          setIsGenerating(false);
+          setGeneratingMeal(null);
+          setGenerationProgress(null);
+          localStorage.removeItem('weeklyMenuGenerating');
+          localStorage.removeItem('singleMealGenerating');
+          cleanupPolling();
+          cleanupRealtime();
+        } else if (data.status === 'failed') {
+          console.log('❌ Polling: Generation failed');
+          setIsGenerating(false);
+          setGeneratingMeal(null);
+          setGenerationProgress(null);
+          localStorage.removeItem('weeklyMenuGenerating');
+          localStorage.removeItem('singleMealGenerating');
+          cleanupPolling();
+          cleanupRealtime();
+          alert('献立の生成に失敗しました。もう一度お試しください。');
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+    };
+    
+    // 即座に1回実行
+    poll();
+    // 3秒ごとにポーリング
+    pollingIntervalRef.current = setInterval(poll, 3000);
+  }, [cleanupPolling, cleanupRealtime]);
+
+  // Realtime で生成完了を監視（フォールバックポーリング付き）
   const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string) => {
     // 既存のサブスクリプションをクリーンアップ
     cleanupRealtime();
+    cleanupPolling();
     
     console.log('📡 Subscribing to Realtime for requestId:', requestId);
+    
+    let realtimeConnected = false;
     
     const channel = supabaseRef.current
       .channel(`menu-request-${requestId}`)
@@ -645,6 +712,9 @@ export default function WeeklyMenuPage() {
         },
         async (payload) => {
           console.log('📡 Realtime update received:', payload.new);
+          // Realtimeが動作しているのでポーリングを停止
+          cleanupPolling();
+          
           const newData = payload.new as { status: string; progress?: { phase: string; message: string; percentage: number } };
           const newStatus = newData.status;
           
@@ -684,10 +754,29 @@ export default function WeeklyMenuPage() {
       )
       .subscribe((status) => {
         console.log('📡 Realtime subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          realtimeConnected = true;
+          // Realtimeが接続できたらポーリングを停止
+          cleanupPolling();
+        } else if (status === 'TIMED_OUT' || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          // Realtimeが失敗したらポーリングにフォールバック
+          if (!realtimeConnected) {
+            console.warn('📡 Realtime failed, falling back to polling');
+            startPolling(targetDate, requestId);
+          }
+        }
       });
     
     realtimeChannelRef.current = channel;
-  }, [cleanupRealtime]);
+    
+    // 5秒後にRealtimeが接続できていなければポーリング開始
+    setTimeout(() => {
+      if (!realtimeConnected && !pollingIntervalRef.current) {
+        console.warn('📡 Realtime not connected after 5s, starting polling');
+        startPolling(targetDate, requestId);
+      }
+    }, 5000);
+  }, [cleanupRealtime, cleanupPolling, startPolling]);
   
   // Fetch Pantry
   useEffect(() => {
