@@ -172,7 +172,7 @@ async function updateProgress(
 // 次のステップをトリガー
 // =========================================================
 
-function triggerNextStep(
+async function triggerNextStep(
   supabaseUrl: string,
   supabaseServiceKey: string,
   requestId: string,
@@ -185,23 +185,26 @@ function triggerNextStep(
   
   const url = `${supabaseUrl}/functions/v1/generate-single-meal-v3`;
   
-  fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${supabaseServiceKey}`,
-    },
-    body: JSON.stringify({
-      request_id: requestId,
-      target_date: targetDate,
-      meal_type: mealType,
-      userId: userId,
-      note: note,
-      _continue: true,
-    }),
-  }).catch(e => {
-    console.error("Failed to trigger next step:", e);
-  });
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
+        request_id: requestId,
+        target_date: targetDate,
+        meal_type: mealType,
+        userId: userId,
+        note: note,
+        _continue: true,
+      }),
+    });
+    console.log(`✅ Next step triggered: ${res.status}`);
+  } catch (e) {
+    console.error("❌ Failed to trigger next step:", e);
+  }
 }
 
 // =========================================================
@@ -444,7 +447,7 @@ async function executeStep1_Generate(
     .eq("id", requestId);
 
   // 次のステップをトリガー
-  triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, targetDate, mealType, note);
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, targetDate, mealType, note);
 }
 
 // =========================================================
@@ -521,7 +524,7 @@ async function executeStep2_Nutrition(
     .eq("id", requestId);
 
   // 次のステップをトリガー
-  triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, targetDate, mealType, note);
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, targetDate, mealType, note);
 }
 
 // =========================================================

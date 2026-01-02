@@ -185,25 +185,28 @@ async function triggerNextStep(
 ) {
   console.log("🔄 Triggering next step...");
   
-  // 自分自身を非同期で呼び出す
+  // 自分自身を呼び出す（レスポンスを待つ）
   const url = `${supabaseUrl}/functions/v1/generate-weekly-menu-v3`;
   
-  fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${supabaseServiceKey}`,
-    },
-    body: JSON.stringify({
-      request_id: requestId,
-      start_date: startDate,
-      userId: userId,
-      note: note,
-      _continue: true, // 継続フラグ
-    }),
-  }).catch(e => {
-    console.error("Failed to trigger next step:", e);
-  });
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
+        request_id: requestId,
+        start_date: startDate,
+        userId: userId,
+        note: note,
+        _continue: true, // 継続フラグ
+      }),
+    });
+    console.log(`✅ Next step triggered: ${res.status}`);
+  } catch (e) {
+    console.error("❌ Failed to trigger next step:", e);
+  }
 }
 
 // =========================================================
@@ -485,7 +488,7 @@ async function executeStep1_Generate(
     .eq("id", requestId);
 
   // 次のステップをトリガー
-  triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, startDate, note);
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, startDate, note);
 }
 
 // =========================================================
@@ -651,7 +654,7 @@ async function executeStep2_Review(
     .eq("id", requestId);
 
   // 次のステップをトリガー
-  triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, startDate, note);
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId!, userId, startDate, note);
 }
 
 // =========================================================
