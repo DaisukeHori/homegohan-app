@@ -379,7 +379,20 @@ export default function WeeklyMenuPage() {
       const targetDate = formatLocalDate(weekStart);
       console.log('🔍 checkPendingRequests called with targetDate:', targetDate);
       
-      // 0. 週間献立の生成中リクエストをDBで確認
+      // 0. まずスタックしたリクエストを自動クリーンアップ（5分以上前のprocessing/pending）
+      try {
+        const cleanupRes = await fetch('/api/ai/menu/weekly/cleanup', { method: 'POST' });
+        if (cleanupRes.ok) {
+          const cleanupData = await cleanupRes.json();
+          if (cleanupData.cleaned > 0) {
+            console.log('🧹 自動クリーンアップ完了:', cleanupData.cleaned, '件のスタックしたリクエストを停止');
+          }
+        }
+      } catch (e) {
+        console.warn('自動クリーンアップに失敗:', e);
+      }
+      
+      // 1. 週間献立の生成中リクエストをDBで確認
       try {
         const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
         console.log('🔍 weeklyRes status:', weeklyRes.status);
