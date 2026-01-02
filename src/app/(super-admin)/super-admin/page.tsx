@@ -18,26 +18,93 @@ interface DbStats {
   };
 }
 
+const EMBEDDING_TABLES = [
+  { name: "dataset_ingredients", label: "食材データセット", description: "食材名の埋め込みベクトル" },
+  { name: "dataset_recipes", label: "レシピデータセット", description: "レシピ名の埋め込みベクトル" },
+  { name: "dataset_menu_sets", label: "献立セットデータセット", description: "献立セット内容の埋め込みベクトル" },
+];
+
+const EMBEDDING_MODELS = [
+  { value: "text-embedding-3-small", label: "text-embedding-3-small", dimensions: [512, 1536] },
+  { value: "text-embedding-3-large", label: "text-embedding-3-large", dimensions: [256, 1024, 3072] },
+  { value: "text-embedding-ada-002", label: "text-embedding-ada-002", dimensions: [1536] },
+];
+
+// デフォルトの次元を設定（text-embedding-3-largeの最初の次元）
+const DEFAULT_DIMENSIONS = 256;
+
+interface EmbeddingProgress {
+  jobId?: string;
+  status: "idle" | "running" | "completed" | "error";
+  table?: string;
+  model?: string;
+  dimensions?: number;
+  startTime?: number;
+  currentOffset?: number;
+  totalProcessed?: number;
+  totalCount?: number;
+  percentage?: number;
+  elapsedMinutes?: string;
+  error?: string;
+  completedAt?: string;
+  message?: string;
+}
+
 export default function SuperAdminDashboard() {
   const [dbStats, setDbStats] = useState<DbStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedModel, setSelectedModel] = useState("text-embedding-3-large");
+  const [selectedDimensions, setSelectedDimensions] = useState(256);
+  const [progress, setProgress] = useState<EmbeddingProgress>({ status: "idle" });
+  const [progressInterval, setProgressInterval] = useState<NodeJS.Timeout | null>(null);
+
+  // モデルが変更されたら、利用可能な次元を更新
+  useEffect(() => {
+    const model = EMBEDDING_MODELS.find(m => m.value === selectedModel);
+    if (model && !model.dimensions.includes(selectedDimensions)) {
+      setSelectedDimensions(model.dimensions[0]);
+    }
+  }, [selectedModel]);
+
+  // 進捗を取得
+  const fetchProgress = async () => {
+    try {
+      const res = await fetch("/api/super-admin/embeddings/progress");
+      if (res.ok) {
+        const data = await res.json();
+        setProgress(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch progress:", error);
+    }
+  };
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res = await fetch("/api/super-admin/db-stats");
-        if (res.ok) {
-          const data = await res.json();
-          setDbStats(data);
-        }
-      } catch (error) {
-        console.error("Failed to fetch stats:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchStats();
+    fetchProgress();
+    
+    // 進捗を5秒おきに更新
+    const interval = setInterval(fetchProgress, 5000);
+    setProgressInterval(interval);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, []);
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch("/api/super-admin/db-stats");
+      if (res.ok) {
+        const data = await res.json();
+        setDbStats(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch stats:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -150,6 +217,163 @@ export default function SuperAdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* Embedding Regeneration */}
+      <div className="bg-white/10 backdrop-blur rounded-2xl p-6">
+        <h2 className="text-lg font-bold text-white mb-4">埋め込みベクトル再生成</h2>
+        <p className="text-purple-300 text-sm mb-4">
+          AI検索機能で使用する埋め込みベクトルを再生成します。エラーが発生しても自動的にリトライされます。
+        </p>
+        
+        {/* モデルと次元の選択 */}
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-white text-sm font-medium mb-2">モデル</label>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              disabled={progress.status === "running"}
+              className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+            >
+              {EMBEDDING_MODELS.map((model) => (
+                <option key={model.value} value={model.value} className="bg-gray-800">
+                  {model.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-white text-sm font-medium mb-2">次元数</label>
+            <select
+              value={selectedDimensions}
+              onChange={(e) => setSelectedDimensions(Number(e.target.value))}
+              disabled={progress.status === "running"}
+              className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+            >
+              {EMBEDDING_MODELS.find(m => m.value === selectedModel)?.dimensions.map((dim) => (
+                <option key={dim} value={dim} className="bg-gray-800">
+                  {dim}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* 進捗表示 */}
+        {progress.status === "running" && (
+          <div className="mb-6 bg-white/5 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-white font-medium">処理中: {progress.table}</h3>
+              <span className="text-purple-300 text-sm">
+                {progress.model} ({progress.dimensions}次元)
+              </span>
+            </div>
+            {progress.totalCount && progress.currentOffset !== undefined && (
+              <>
+                <div className="w-full bg-white/10 rounded-full h-3 mb-2">
+                  <div
+                    className="bg-gradient-to-r from-purple-600 to-indigo-600 h-3 rounded-full transition-all duration-300"
+                    style={{ width: `${progress.percentage || 0}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-sm text-purple-300">
+                  <span>
+                    {progress.currentOffset.toLocaleString()} / {progress.totalCount.toLocaleString()}件
+                    ({progress.percentage?.toFixed(1)}%)
+                  </span>
+                  {progress.elapsedMinutes && (
+                    <span>経過時間: {progress.elapsedMinutes}分</span>
+                  )}
+                </div>
+                {progress.error && (
+                  <p className="text-yellow-300 text-xs mt-2">⚠️ {progress.error}</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {progress.status === "completed" && (
+          <div className="mb-6 bg-green-500/20 rounded-xl p-4">
+            <p className="text-green-300 font-medium">✅ 処理が完了しました</p>
+            {progress.totalProcessed && (
+              <p className="text-green-200 text-sm mt-1">
+                処理件数: {progress.totalProcessed.toLocaleString()}件
+                {progress.elapsedMinutes && ` (所要時間: ${progress.elapsedMinutes}分)`}
+              </p>
+            )}
+          </div>
+        )}
+
+        {progress.status === "error" && (
+          <div className="mb-6 bg-red-500/20 rounded-xl p-4">
+            <p className="text-red-300 font-medium">❌ エラーが発生しました</p>
+            {progress.error && (
+              <p className="text-red-200 text-xs mt-1">{progress.error}</p>
+            )}
+          </div>
+        )}
+        
+        <div className="space-y-3">
+          {EMBEDDING_TABLES.map((table) => (
+            <div
+              key={table.name}
+              className="bg-white/5 rounded-xl p-4 flex items-center justify-between"
+            >
+              <div className="flex-1">
+                <h3 className="text-white font-medium">{table.label}</h3>
+                <p className="text-purple-300 text-sm">{table.description}</p>
+              </div>
+              <button
+                onClick={async () => {
+                  if (progress.status === "running") return;
+                  
+                  try {
+                    const res = await fetch("/api/super-admin/embeddings/regenerate", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        table: table.name,
+                        startOffset: 0,
+                        model: selectedModel,
+                        dimensions: selectedDimensions,
+                      }),
+                    });
+                    
+                    const data = await res.json();
+                    
+                    if (res.ok) {
+                      // 進捗を即座に更新
+                      setTimeout(fetchProgress, 1000);
+                    } else {
+                      alert(`エラー: ${data.error}`);
+                    }
+                  } catch (error: any) {
+                    alert(`エラー: ${error.message}`);
+                  }
+                }}
+                disabled={progress.status === "running"}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  progress.status === "running"
+                    ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                    : "bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700"
+                }`}
+              >
+                {progress.status === "running" && progress.table === table.name
+                  ? "処理中..."
+                  : "再生成開始"}
+              </button>
+            </div>
+          ))}
+        </div>
+        
+        <div className="mt-4 p-3 bg-yellow-500/20 rounded-lg">
+          <p className="text-yellow-200 text-xs">
+            ⚠️ 注意: 処理はバックグラウンドで実行されます。大量のデータがある場合、完了まで数時間かかる場合があります。
+            エラーが発生しても5秒間隔で自動的にリトライされます。
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
