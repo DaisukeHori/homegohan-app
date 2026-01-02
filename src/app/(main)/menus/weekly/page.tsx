@@ -1649,8 +1649,11 @@ export default function WeeklyMenuPage() {
   const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => {
     // 単一食事の追加生成中かどうか
     const isGeneratingThis = generatingMeal?.dayIndex === dayIndex && generatingMeal?.mealType === mealKey;
+    // 週間献立生成中で、この日が今日以降かどうか
+    const dayDate = weekDates[dayIndex]?.dateStr;
+    const isWeeklyGeneratingThis = isGenerating && dayDate && dayDate >= todayStr;
     
-    if (isGeneratingThis) {
+    if (isGeneratingThis || isWeeklyGeneratingThis) {
       return (
         <div
           className="w-full rounded-[14px] p-5 mb-2 overflow-hidden relative"
@@ -1665,7 +1668,7 @@ export default function WeeklyMenuPage() {
                 AIが{MEAL_LABELS[mealKey]}を考え中...
               </p>
               <p style={{ fontSize: 11, color: colors.textMuted }}>
-                数秒〜数十秒かかります
+                {isWeeklyGeneratingThis ? '週間献立を生成しています' : '数秒〜数十秒かかります'}
               </p>
             </div>
             <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
