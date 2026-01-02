@@ -1145,20 +1145,34 @@ export async function handleGenerateWeeklyMenuV2(req: Request): Promise<Response
       });
     }
 
-    const { selection, datasetVersion } = await generateMenuV2BackgroundTask({
+    // バックグラウンド処理: 即座にレスポンスを返し、EdgeRuntime.waitUntilで処理を継続
+    const backgroundTask = generateMenuV2BackgroundTask({
       userId,
       startDate,
       note: typeof note === "string" ? note : null,
       requestId,
       constraints,
+    }).then((result) => {
+      console.log("✅ generate-weekly-menu-v2 completed in background");
+      return result;
+    }).catch((err) => {
+      console.error("❌ generate-weekly-menu-v2 background task failed:", err?.message ?? err);
     });
 
+    // EdgeRuntime.waitUntil を使用してバックグラウンド処理を継続
+    // @ts-ignore: EdgeRuntime is a global in Supabase Edge Functions
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      // @ts-ignore
+      EdgeRuntime.waitUntil(backgroundTask);
+    }
+
+    // 即座にレスポンスを返す（処理はバックグラウンドで継続）
     return new Response(
       JSON.stringify({
-        message: "Menu generation v2 completed",
+        message: "Menu generation v2 started (background)",
         success: true,
-        datasetVersion,
-        overall_advice: selection.overall_advice ?? null,
+        status: "processing",
+        requestId,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
