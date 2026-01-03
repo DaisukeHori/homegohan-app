@@ -112,11 +112,31 @@ const formatNutrition = (value: number | null | undefined, decimals = 1): string
   if (value === null || value === undefined) return '';
   const num = Number(value);
   if (!Number.isFinite(num)) return '';
+  
   // 丸め処理
-  const rounded = Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals);
+  const factor = Math.pow(10, decimals);
+  const rounded = Math.round(num * factor) / factor;
+  
   // 丸めた結果が0なら空文字を返す（表示しない）
   if (rounded === 0) return '';
-  return rounded.toFixed(decimals).replace(/\.?0+$/, '');
+  
+  // 整数として表示する場合（decimals=0）：そのまま整数文字列に変換
+  // 例: 100 → "100", 5.6 → "6"
+  if (decimals === 0) {
+    return String(Math.round(num));
+  }
+  
+  // 小数点以下の表示がある場合
+  const fixed = rounded.toFixed(decimals);
+  
+  // 小数部分が全て0の場合は整数として返す（例: "100.0" → "100"）
+  if (fixed.endsWith('.0') || fixed.endsWith('.00')) {
+    return String(Math.round(rounded));
+  }
+  
+  // 末尾の余分な0だけを削除（例: "1.50" → "1.5"）
+  // 整数部分の0は削除しない
+  return fixed.replace(/(\.\d*[1-9])0+$/, '$1');
 };
 
 // 栄養素を表示すべきかどうか（丸めた結果が0より大きい場合のみ true）
@@ -1596,7 +1616,7 @@ export default function WeeklyMenuPage() {
       return;
     }
     
-    const totalCal = validDishes.reduce((sum, d) => sum + (d.cal || 0), 0);
+    const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? (d as any).cal ?? 0), 0);
     const dishName = validDishes.map(d => d.name).join('、');
     
     try {
@@ -2198,47 +2218,41 @@ export default function WeeklyMenuPage() {
                   onClick={() => {
                     // タップした料理だけを表示
                     setSelectedRecipe(dish.name);
-                    setSelectedRecipeData({ 
-                      name: dish.name,
-                      role: dish.role,
-                      cal: dish.cal,
-                      calories: dish.cal,
+                    // 古い形式(cal, protein等)と新しい形式(calories_kcal, protein_g等)の両方に対応
+                    const d = dish as any;
+                    const normalizedDish = {
+                      ...dish,
+                      // 新しい形式を優先、なければ古い形式からマッピング
+                      calories_kcal: dish.calories_kcal ?? d.cal ?? null,
+                      protein_g: dish.protein_g ?? d.protein ?? null,
+                      fat_g: dish.fat_g ?? d.fat ?? null,
+                      carbs_g: dish.carbs_g ?? d.carbs ?? null,
+                      fiber_g: dish.fiber_g ?? d.fiber ?? null,
+                      sugar_g: dish.sugar_g ?? d.sugar ?? null,
+                      sodium_g: dish.sodium_g ?? d.sodium ?? null,
+                      potassium_mg: dish.potassium_mg ?? d.potassium ?? null,
+                      calcium_mg: dish.calcium_mg ?? d.calcium ?? null,
+                      phosphorus_mg: dish.phosphorus_mg ?? d.phosphorus ?? null,
+                      iron_mg: dish.iron_mg ?? d.iron ?? null,
+                      zinc_mg: dish.zinc_mg ?? d.zinc ?? null,
+                      cholesterol_mg: dish.cholesterol_mg ?? d.cholesterol ?? null,
+                      vitamin_a_ug: dish.vitamin_a_ug ?? d.vitaminA ?? null,
+                      vitamin_b1_mg: dish.vitamin_b1_mg ?? d.vitaminB1 ?? null,
+                      vitamin_b2_mg: dish.vitamin_b2_mg ?? d.vitaminB2 ?? null,
+                      vitamin_b6_mg: dish.vitamin_b6_mg ?? d.vitaminB6 ?? null,
+                      vitamin_b12_ug: dish.vitamin_b12_ug ?? d.vitaminB12 ?? null,
+                      vitamin_c_mg: dish.vitamin_c_mg ?? d.vitaminC ?? null,
+                      vitamin_d_ug: dish.vitamin_d_ug ?? d.vitaminD ?? null,
+                      vitamin_e_mg: dish.vitamin_e_mg ?? d.vitaminE ?? null,
+                      vitamin_k_ug: dish.vitamin_k_ug ?? d.vitaminK ?? null,
+                      folic_acid_ug: dish.folic_acid_ug ?? d.folicAcid ?? null,
+                    };
+                    setSelectedRecipeData({
+                      ...normalizedDish,
                       // この料理だけを配列に入れる（UIの互換性のため）
-                      dishes: [dish],
-                      // この料理の材料とレシピ
-                      ingredients: dish.ingredients || [],
-                      recipeSteps: dish.recipeSteps || [],
+                      dishes: [normalizedDish],
                       // 全料理の材料（買い物リスト用）
-                      allIngredients: dishesArray.flatMap(d => d.ingredients || []),
-                      // この料理の栄養素
-                      protein: dish.protein,
-                      fat: dish.fat,
-                      carbs: dish.carbs,
-                      sodium: dish.sodium,
-                      sugar: dish.sugar,
-                      fiber: dish.fiber,
-                      fiberSoluble: dish.fiberSoluble,
-                      fiberInsoluble: dish.fiberInsoluble,
-                      potassium: dish.potassium,
-                      calcium: dish.calcium,
-                      phosphorus: dish.phosphorus,
-                      iron: dish.iron,
-                      zinc: dish.zinc,
-                      iodine: dish.iodine,
-                      cholesterol: dish.cholesterol,
-                      vitaminB1: dish.vitaminB1,
-                      vitaminB2: dish.vitaminB2,
-                      vitaminC: dish.vitaminC,
-                      vitaminB6: dish.vitaminB6,
-                      vitaminB12: dish.vitaminB12,
-                      folicAcid: dish.folicAcid,
-                      vitaminA: dish.vitaminA,
-                      vitaminD: dish.vitaminD,
-                      vitaminK: dish.vitaminK,
-                      vitaminE: dish.vitaminE,
-                      saturatedFat: dish.saturatedFat,
-                      monounsaturatedFat: dish.monounsaturatedFat,
-                      polyunsaturatedFat: dish.polyunsaturatedFat,
+                      allIngredients: dishesArray.flatMap(dd => dd.ingredients || []),
                     });
                     setActiveModal('recipe');
                   }}
@@ -2247,15 +2261,15 @@ export default function WeeklyMenuPage() {
                 >
                   <div className="flex justify-between mb-1">
                     <span style={{ fontSize: 9, fontWeight: 700, color: config.color }}>{config.label}</span>
-                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.cal || '-'}kcal</span>
+                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.calories_kcal ?? (dish as any).cal ?? '-'}kcal</span>
                   </div>
                   <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, margin: 0 }}>{dish.name}</p>
-                  {/* 栄養素（P/F/C） */}
-                  {(dish.protein || dish.fat || dish.carbs) && (
+                  {/* 栄養素（P/F/C）- 新旧形式両対応 */}
+                  {(dish.protein_g || dish.fat_g || dish.carbs_g || (dish as any).protein || (dish as any).fat || (dish as any).carbs) && (
                     <div className="flex gap-2 mt-1 text-[8px]" style={{ color: colors.textMuted }}>
-                      {(dish.protein ?? 0) > 0 && <span>P:{dish.protein}g</span>}
-                      {(dish.fat ?? 0) > 0 && <span>F:{dish.fat}g</span>}
-                      {(dish.carbs ?? 0) > 0 && <span>C:{dish.carbs}g</span>}
+                      {((dish.protein_g ?? (dish as any).protein) ?? 0) > 0 && <span>P:{dish.protein_g ?? (dish as any).protein}g</span>}
+                      {((dish.fat_g ?? (dish as any).fat) ?? 0) > 0 && <span>F:{dish.fat_g ?? (dish as any).fat}g</span>}
+                      {((dish.carbs_g ?? (dish as any).carbs) ?? 0) > 0 && <span>C:{dish.carbs_g ?? (dish as any).carbs}g</span>}
                     </div>
                   )}
                   <span className="inline-flex items-center gap-1 mt-auto text-[9px]" style={{ color: colors.blue }}>
@@ -3049,46 +3063,46 @@ export default function WeeklyMenuPage() {
                     )}
                     <div className="flex items-center gap-1">
                       <Flame size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.cal || selectedRecipeData?.calories || '-'}kcal</span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories_kcal ?? selectedRecipeData?.cal ?? '-'}kcal</span>
                     </div>
                   </div>
 
                   {/* この料理の栄養素 */}
-                  {selectedRecipeData && (selectedRecipeData.protein || selectedRecipeData.fat || selectedRecipeData.carbs) && (
+                  {selectedRecipeData && (selectedRecipeData.protein_g || selectedRecipeData.fat_g || selectedRecipeData.carbs_g) && (
                     <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
                       <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>📊 この料理の栄養素</p>
                       <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[11px]" style={{ color: colors.text }}>
                         {/* 基本栄養素 */}
-                        <NutritionItem label="エネルギー" value={selectedRecipeData.cal} unit="kcal" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="タンパク質" value={selectedRecipeData.protein} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="脂質" value={selectedRecipeData.fat} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="炭水化物" value={selectedRecipeData.carbs} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="食物繊維" value={selectedRecipeData.fiber} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="糖質" value={selectedRecipeData.sugar} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="エネルギー" value={selectedRecipeData.calories_kcal} unit="kcal" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="タンパク質" value={selectedRecipeData.protein_g} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="脂質" value={selectedRecipeData.fat_g} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="炭水化物" value={selectedRecipeData.carbs_g} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="食物繊維" value={selectedRecipeData.fiber_g} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="糖質" value={selectedRecipeData.sugar_g} unit="g" textColor={colors.textMuted} />
                         {/* ミネラル */}
-                        <NutritionItem label="塩分" value={selectedRecipeData.sodium} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="カリウム" value={selectedRecipeData.potassium} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="カルシウム" value={selectedRecipeData.calcium} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="リン" value={selectedRecipeData.phosphorus} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="鉄分" value={selectedRecipeData.iron} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="亜鉛" value={selectedRecipeData.zinc} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="ヨウ素" value={selectedRecipeData.iodine} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="コレステロール" value={selectedRecipeData.cholesterol} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="塩分" value={selectedRecipeData.sodium_g} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="カリウム" value={selectedRecipeData.potassium_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="カルシウム" value={selectedRecipeData.calcium_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="リン" value={selectedRecipeData.phosphorus_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="鉄分" value={selectedRecipeData.iron_mg} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="亜鉛" value={selectedRecipeData.zinc_mg} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="ヨウ素" value={selectedRecipeData.iodine_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="コレステロール" value={selectedRecipeData.cholesterol_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
                         {/* ビタミン */}
-                        <NutritionItem label="ビタミンA" value={selectedRecipeData.vitaminA} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB1" value={selectedRecipeData.vitaminB1} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB2" value={selectedRecipeData.vitaminB2} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB6" value={selectedRecipeData.vitaminB6} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB12" value={selectedRecipeData.vitaminB12} unit="µg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンC" value={selectedRecipeData.vitaminC} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンD" value={selectedRecipeData.vitaminD} unit="µg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンE" value={selectedRecipeData.vitaminE} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンK" value={selectedRecipeData.vitaminK} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="葉酸" value={selectedRecipeData.folicAcid} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンA" value={selectedRecipeData.vitamin_a_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB1" value={selectedRecipeData.vitamin_b1_mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB2" value={selectedRecipeData.vitamin_b2_mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB6" value={selectedRecipeData.vitamin_b6_mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB12" value={selectedRecipeData.vitamin_b12_ug} unit="µg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンC" value={selectedRecipeData.vitamin_c_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンD" value={selectedRecipeData.vitamin_d_ug} unit="µg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンE" value={selectedRecipeData.vitamin_e_mg} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンK" value={selectedRecipeData.vitamin_k_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="葉酸" value={selectedRecipeData.folic_acid_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
                         {/* 脂肪酸 */}
-                        <NutritionItem label="飽和脂肪酸" value={selectedRecipeData.saturatedFat} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="一価不飽和脂肪酸" value={selectedRecipeData.monounsaturatedFat} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="多価不飽和脂肪酸" value={selectedRecipeData.polyunsaturatedFat} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="飽和脂肪酸" value={selectedRecipeData.saturated_fat_g} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="一価不飽和脂肪酸" value={selectedRecipeData.monounsaturated_fat_g} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="多価不飽和脂肪酸" value={selectedRecipeData.polyunsaturated_fat_g} unit="g" textColor={colors.textMuted} />
                       </div>
                     </div>
                   )}
@@ -3580,8 +3594,8 @@ export default function WeeklyMenuPage() {
                         />
                         <input
                           type="number"
-                          value={dish.cal || ''}
-                          onChange={(e) => updateManualDish(idx, 'cal', parseInt(e.target.value) || 0)}
+                          value={dish.calories_kcal || ''}
+                          onChange={(e) => updateManualDish(idx, 'calories_kcal', parseInt(e.target.value) || 0)}
                           placeholder="kcal"
                           className="w-16 p-2 rounded-lg text-[13px] outline-none text-center"
                           style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
