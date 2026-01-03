@@ -1,6 +1,6 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
-import { calculateNutritionFromIngredients, emptyNutrition } from "../_shared/nutrition-calculator.ts";
+import { calculateNutritionFromIngredients, emptyNutrition, validateAndAdjustNutrition } from "../_shared/nutrition-calculator.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import {
   generateDayMealsWithLLM,
@@ -66,7 +66,7 @@ async function withRetry<T>(
 // Embeddings / Search
 // =========================================================
 
-async function embedText(text: string, dimensions = 384): Promise<number[]> {
+async function embedText(text: string, dimensions = 1536): Promise<number[]> {
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -80,7 +80,7 @@ async function embedText(text: string, dimensions = 384): Promise<number[]> {
         },
         body: JSON.stringify({
           input: text,
-          model: "text-embedding-3-small",
+          model: "text-embedding-3-large",
           dimensions,
         }),
       });
@@ -113,7 +113,7 @@ async function searchMenuCandidates(
   queryText: string,
   matchCount: number,
 ): Promise<MenuSetCandidate[]> {
-  const emb = await embedText(queryText, 384);
+  const emb = await embedText(queryText, 1536);
   const { data, error } = await supabase.rpc("search_menu_examples", {
     query_embedding: emb,
     match_count: matchCount,
@@ -184,10 +184,16 @@ async function triggerNextStep(
   note: string | null,
 ) {
   console.log("🔄 Triggering next step...");
-  
+
+  // userIdの検証（undefinedだとJSON.stringifyで省略されてしまう）
+  if (!userId) {
+    console.error("❌ Cannot trigger next step: userId is missing");
+    throw new Error("userId is required to trigger next step");
+  }
+
   // 自分自身を呼び出す（レスポンスを待つ）
   const url = `${supabaseUrl}/functions/v1/generate-weekly-menu-v3`;
-  
+
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -204,6 +210,10 @@ async function triggerNextStep(
       }),
     });
     console.log(`✅ Next step triggered: ${res.status}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`❌ Next step response error: ${res.status} - ${text}`);
+    }
   } catch (e) {
     console.error("❌ Failed to trigger next step:", e);
   }
@@ -235,7 +245,15 @@ Deno.serve(async (req: Request) => {
 
     if (!accessToken) throw new Error("Missing access token");
 
-    if (body.userId) {
+    // 継続呼び出し（_continue=true）の場合、SERVICE_ROLE_KEYで呼ばれるので
+    // getUser()は使えない。body.userIdを必須とする。
+    if (isContinue) {
+      if (!body.userId) {
+        throw new Error("userId is required for continuation calls");
+      }
+      userId = body.userId;
+      console.log(`📍 Continuation call with userId: ${userId}`);
+    } else if (body.userId) {
       userId = body.userId;
     } else {
       const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
@@ -482,7 +500,7 @@ async function executeStep1_Generate(
 }
 
 // =========================================================
-// Step 2: レビュー・修正 (Phase 4-5)
+// Step 2: レビュー・修正 (Phase 4-5) - 並列処理版
 // =========================================================
 
 async function executeStep2_Review(
@@ -544,35 +562,34 @@ async function executeStep2_Review(
     percentage: 55,
   });
 
-  // 修正フェーズ
-  let finalDailyResults = dailyResults.map((d: any) => d);
+  // 修正フェーズ - 並列処理
+  let finalDailyResults = dailyResults.map((d: any) => JSON.parse(JSON.stringify(d)));
   
   if (reviewResult.hasIssues && reviewResult.issues.length > 0) {
-    const maxFixes = 3;
+    const maxFixes = 2; // タイムアウト回避のため2件に制限
     const issuesToFix = reviewResult.issues.slice(0, maxFixes);
     
     console.log(`Fixing ${issuesToFix.length} of ${reviewResult.issues.length} issues (limited to ${maxFixes})`);
     
-    for (let fixIdx = 0; fixIdx < issuesToFix.length; fixIdx++) {
-      const issue = issuesToFix[fixIdx];
-      const percentage = 55 + Math.round(((fixIdx + 1) / issuesToFix.length) * 15); // 55% → 70%
-      
-      await updateProgress(supabase, requestId, {
-        phase: "fixing",
-        message: `改善点${fixIdx + 1}/${issuesToFix.length}を修正中...`,
-        percentage,
-      });
-      
+    await updateProgress(supabase, requestId, {
+      phase: "fixing",
+      message: `${issuesToFix.length}件の改善を並列処理中...`,
+      percentage: 60,
+    });
+
+    // 並列で修正を実行
+    const fixPromises = issuesToFix.map(async (issue, fixIdx) => {
       const dayIndex = dates.indexOf(issue.date);
-      if (dayIndex === -1) continue;
+      if (dayIndex === -1) return { success: false, fixIdx, reason: "invalid date" };
       
       const dayMeals = finalDailyResults[dayIndex];
       const mealIndex = dayMeals.meals.findIndex((m: any) => m.mealType === issue.mealType);
-      if (mealIndex === -1) continue;
+      if (mealIndex === -1) return { success: false, fixIdx, reason: "invalid mealType" };
       
       const currentDishes = dayMeals.meals[mealIndex].dishes.map((d: any) => d.name);
       
       try {
+        console.log(`🔧 Fixing issue ${fixIdx + 1}: ${issue.date} ${issue.mealType}`);
         const fixedMeal = await regenerateMealForIssue({
           userSummary,
           userContext,
@@ -585,12 +602,26 @@ async function executeStep2_Review(
           referenceMenus: references,
         });
         
-        dayMeals.meals[mealIndex] = fixedMeal;
-        console.log(`Fixed ${issue.date} ${issue.mealType}: ${issue.issue}`);
+        return { success: true, fixIdx, dayIndex, mealIndex, fixedMeal, issue };
       } catch (e) {
         console.error(`Failed to fix ${issue.date} ${issue.mealType}:`, e);
+        return { success: false, fixIdx, reason: String(e) };
+      }
+    });
+
+    // 全ての修正を待機
+    const fixResults = await Promise.all(fixPromises);
+    
+    // 成功した修正を適用
+    for (const result of fixResults) {
+      if (result.success && result.fixedMeal) {
+        finalDailyResults[result.dayIndex].meals[result.mealIndex] = result.fixedMeal;
+        console.log(`✅ Fixed ${result.issue.date} ${result.issue.mealType}: ${result.issue.issue}`);
       }
     }
+    
+    const successCount = fixResults.filter(r => r.success).length;
+    console.log(`Fix results: ${successCount}/${issuesToFix.length} successful`);
   } else {
     await updateProgress(supabase, requestId, {
       phase: "no_issues",
@@ -712,6 +743,60 @@ async function executeStep3_Complete(
   }
   
   console.log(`✅ Nutrition calculation completed for ${allDishes.length} dishes`);
+
+  // カロリーが異常に低い料理を検証・調整
+  const suspiciousDishes: Array<{ dayIdx: number; mealIdx: number; dishIdx: number; dish: any; nutrition: any }> = [];
+  
+  for (let i = 0; i < allDishes.length; i++) {
+    const { dayIdx, mealIdx, dishIdx, dish } = allDishes[i];
+    const nutrition = nutritionResults[i];
+    const category = dish.category || "";
+    
+    // カテゴリに応じた最低カロリー閾値
+    let minExpectedCal = 20; // デフォルト
+    if (category === "主菜" || category === "ご飯") {
+      minExpectedCal = 100; // 主菜とご飯は100kcal以上を期待
+    } else if (category === "副菜") {
+      minExpectedCal = 30;  // 副菜は30kcal以上を期待
+    } else if (category === "汁物") {
+      minExpectedCal = 20;  // 汁物は20kcal以上を期待
+    }
+    
+    if (nutrition.calories_kcal < minExpectedCal) {
+      suspiciousDishes.push({ dayIdx, mealIdx, dishIdx, dish, nutrition });
+    }
+  }
+  
+  if (suspiciousDishes.length > 0) {
+    console.log(`🔍 Validating ${suspiciousDishes.length} suspicious low-calorie dishes...`);
+    
+    // 並列で検証（最大10件ずつ）
+    const batchSize = 10;
+    for (let b = 0; b < suspiciousDishes.length; b += batchSize) {
+      const batch = suspiciousDishes.slice(b, b + batchSize);
+      
+      await Promise.all(batch.map(async ({ dayIdx, mealIdx, dishIdx, dish, nutrition }) => {
+        try {
+          const validation = await validateAndAdjustNutrition(
+            supabase,
+            dish.name,
+            nutrition,
+            { maxDeviationPercent: 70, useReferenceIfInvalid: true }
+          );
+          
+          if (validation.adjustedNutrition) {
+            // 調整された栄養値を反映
+            dailyResults[dayIdx].meals[mealIdx].dishes[dishIdx].nutrition = validation.adjustedNutrition;
+            console.log(`📝 Adjusted "${dish.name}": ${Math.round(nutrition.calories_kcal)}kcal → ${Math.round(validation.adjustedNutrition.calories_kcal)}kcal`);
+          }
+        } catch (e: any) {
+          console.warn(`Validation failed for ${dish.name}:`, e?.message);
+        }
+      }));
+    }
+    
+    console.log(`✅ Nutrition validation completed`);
+  }
 
   await updateProgress(supabase, requestId, {
     phase: "saving",
@@ -905,27 +990,64 @@ async function executeStep3_Complete(
 // =========================================================
 
 function buildDishDetails(meal: GeneratedMeal) {
+  const round1 = (v: number | null | undefined) => v != null ? Math.round(v * 10) / 10 : null;
+  
   const dishes = meal.dishes.map((d, idx) => {
     // 栄養値を取得（Step 3 で計算されて dish.nutrition に設定される）
     const n = (d as any).nutrition;
-    const round1 = (v: number | null | undefined) => v != null ? Math.round(v * 10) / 10 : null;
     
+    // デバッグ: nutritionプロパティが存在するか確認
+    if (!n) {
+      console.warn(`[buildDishDetails] ⚠️ "${d.name}": nutrition is undefined! Keys: ${Object.keys(d).join(", ")}`);
+    } else {
+      console.log(`[buildDishDetails] ✅ "${d.name}": calories_kcal=${n.calories_kcal}`);
+    }
+
     return {
       name: d.name,
       role: d.role ?? "other",
       ingredients: d.ingredients,
       // 材料表示: テーブル形式で統一
-      ingredientsMd: "| 材料 | 分量 |\n|------|------|\n" + 
+      ingredientsMd: "| 材料 | 分量 |\n|------|------|\n" +
         d.ingredients.map(ing => `| ${ing.name} | ${ing.amount_g}g |`).join("\n"),
       recipeStepsMd: d.instructions?.map((step, i) => `${i + 1}. ${step}`).join("\n") ?? "",
       displayOrder: idx,
-      // NutritionTotals 形式の栄養値
+      
+      // 栄養素（単位付きの統一形式のみ）
       calories_kcal: n?.calories_kcal != null ? Math.round(n.calories_kcal) : null,
       protein_g: round1(n?.protein_g),
       fat_g: round1(n?.fat_g),
       carbs_g: round1(n?.carbs_g),
       fiber_g: round1(n?.fiber_g),
+      sugar_g: round1(n?.sugar_g),
       sodium_g: round1(n?.sodium_g),
+      
+      // ミネラル
+      potassium_mg: round1(n?.potassium_mg),
+      calcium_mg: round1(n?.calcium_mg),
+      phosphorus_mg: round1(n?.phosphorus_mg),
+      magnesium_mg: round1(n?.magnesium_mg),
+      iron_mg: round1(n?.iron_mg),
+      zinc_mg: round1(n?.zinc_mg),
+      iodine_ug: round1(n?.iodine_ug),
+      cholesterol_mg: round1(n?.cholesterol_mg),
+      
+      // ビタミン
+      vitamin_a_ug: round1(n?.vitamin_a_ug),
+      vitamin_b1_mg: round1(n?.vitamin_b1_mg),
+      vitamin_b2_mg: round1(n?.vitamin_b2_mg),
+      vitamin_b6_mg: round1(n?.vitamin_b6_mg),
+      vitamin_b12_ug: round1(n?.vitamin_b12_ug),
+      vitamin_c_mg: round1(n?.vitamin_c_mg),
+      vitamin_d_ug: round1(n?.vitamin_d_ug),
+      vitamin_e_mg: round1(n?.vitamin_e_mg),
+      vitamin_k_ug: round1(n?.vitamin_k_ug),
+      folic_acid_ug: round1(n?.folic_acid_ug),
+      
+      // 脂肪酸
+      saturated_fat_g: round1(n?.saturated_fat_g),
+      monounsaturated_fat_g: round1(n?.monounsaturated_fat_g),
+      polyunsaturated_fat_g: round1(n?.polyunsaturated_fat_g),
     };
   });
 

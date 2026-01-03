@@ -78,8 +78,11 @@ async function fetchWithRetry(url, options) {
   }
 }
 
-async function processTable(tableName, startOffset = 0, model = "text-embedding-3-large", dimensions = 1536, jobId = null) {
+async function processTable(tableName, startOffset = 0, model = "text-embedding-3-large", dimensions = 1536, jobId = null, onlyMissing = false) {
   console.log(`\n📊 Processing ${tableName} from offset ${startOffset}...`);
+  if (onlyMissing) {
+    console.log(`   Mode: 埋め込みベクトルがNULLのレコードのみを処理`);
+  }
   console.log(`   Model: ${model}`);
   console.log(`   Dimensions: ${dimensions}`);
   if (jobId) {
@@ -106,7 +109,7 @@ async function processTable(tableName, startOffset = 0, model = "text-embedding-
         total_processed: progress.totalProcessed || totalProcessed,
         total_count: progress.totalCount || 0,
         percentage: progress.percentage || 0,
-        start_time: progress.startTime ? new Date(progress.startTime).toISOString() : new Date().toISOString(),
+        start_time: progress.startTime ? new Date(progress.startTime).toISOString() : new Date(startTime).toISOString(),
         elapsed_minutes: progress.elapsedMinutes ? parseFloat(progress.elapsedMinutes) : null,
         error_message: progress.error || null,
         completed_at: progress.completedAt || null,
@@ -142,6 +145,7 @@ async function processTable(tableName, startOffset = 0, model = "text-embedding-
           limit: BATCH_LIMIT,
           model,
           dimensions,
+          onlyMissing: onlyMissing,
         }),
       });
       
@@ -190,28 +194,11 @@ async function processTable(tableName, startOffset = 0, model = "text-embedding-
       await new Promise(r => setTimeout(r, 500));
       
     } catch (error) {
-      consecutiveErrors++;
-      console.error(`\n   ❌ エラー発生 (連続${consecutiveErrors}回目): ${error.message.substring(0, 200)}`);
-      
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        console.error(`   ❌ 連続エラーが${MAX_CONSECUTIVE_ERRORS}回発生しました。処理を中断します。`);
-        console.error(`   💡 offset ${offset} から再開してください`);
-        console.error(`   💡 コマンド: node scripts/resume-embedding-regeneration.mjs`);
-        break;
-      }
-      
-      // 一時的なエラーの場合は待機してリトライ
-      if (isTemporaryError(error.message)) {
-        console.error(`   ⏳ ${RETRY_DELAY / 1000}秒待機してからリトライします...`);
-        await new Promise(r => setTimeout(r, RETRY_DELAY));
-        continue; // 同じoffsetでリトライ
-      } else {
-        // 永続的なエラーの場合はスキップして次へ
-        console.error(`   ⚠️  永続的なエラーの可能性があります。次のバッチに進みます...`);
-        offset += BATCH_LIMIT; // offsetを進める
-        await new Promise(r => setTimeout(r, RETRY_DELAY));
-        continue;
-      }
+      // すべてのエラーに対して5秒待ってリトライ（無限）
+      console.error(`\n   ❌ エラー発生: ${error.message.substring(0, 200)}`);
+      console.error(`   ⏳ ${RETRY_DELAY / 1000}秒待機してからリトライします...`);
+      await new Promise(r => setTimeout(r, RETRY_DELAY));
+      continue; // 同じoffsetでリトライ（無限）
     }
   }
   
@@ -225,8 +212,12 @@ async function main() {
   const model = process.env.EMBEDDING_MODEL || "text-embedding-3-large";
   const dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || "1536", 10);
   const jobId = process.env.EMBEDDING_JOB_ID || null;
+  const onlyMissing = process.env.EMBEDDING_ONLY_MISSING === "true";
   
   console.log("🔄 Resuming embedding regeneration");
+  if (onlyMissing) {
+    console.log("   Mode: 埋め込みベクトルがNULLのレコードのみを処理");
+  }
   console.log("   Model: " + model);
   console.log("   Dimensions: " + dimensions);
   console.log("   Auto-retry: Enabled (無限リトライ、間隔: " + RETRY_DELAY / 1000 + "秒)");
@@ -263,7 +254,7 @@ async function main() {
     }
   }
   
-  await processTable(table, startOffset, model, dimensions, jobId);
+  await processTable(table, startOffset, model, dimensions, jobId, onlyMissing);
   
   const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
   console.log(`\n🎉 All done! Total time: ${elapsed} minutes`);

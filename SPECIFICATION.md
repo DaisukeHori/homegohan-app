@@ -83,8 +83,10 @@
 | モデル | プロバイダー | 用途 |
 |--------|-------------|------|
 | GPT-5-mini | OpenAI | 献立生成（ID選定/差し替え）、栄養アドバイス（文章） |
-| Gemini 2.0 Flash | Google | 画像分析（食事・冷蔵庫・健康機器） |
-| Gemini 2.5 Flash Preview | Google | 料理画像生成 |
+| Gemini 2.0 Flash | Google | 画像分析（食事・冷蔵庫・健康機器）※v1レガシー |
+| Gemini 3 Pro | Google | 画像分析（食事写真）※v2エビデンスベース |
+| Gemini 3 Pro Image Preview | Google | 料理画像生成（Nano Banana Pro） |
+| text-embedding-3-large | OpenAI | 材料名ベクトル埋め込み（1536次元） |
 
 ### 設計原則（必ず遵守）
 
@@ -138,10 +140,12 @@
 - gpt-5-mini は呼び出し形態によって `max_tokens` / `temperature` が制約される場合があるため、**本リポジトリでは `max_completion_tokens` + temperature省略**を基本とする
 - 週献立/派生レシピなど **JSON厳格性が重要**な場面は、可能なら **OpenAI Agents SDK**（JSON-only指示 + Zod等で検証/修復）を優先する
 
-### 3.2 Google Gemini 2.0 Flash
+### 3.2 Google Gemini（画像分析）
 
-**使用箇所:**
-- `/api/ai/analyze-meal-photo` - 食事写真分析
+#### 3.2.1 Gemini 2.0 Flash（v1 / レガシー）
+
+**使用箇所（v1パイプライン）:**
+- `/api/ai/analyze-meal-photo` - 食事写真分析（mealIdなし時の同期処理）
 - `/api/ai/analyze-fridge` - 冷蔵庫画像分析
 - `analyze-health-photo` Edge Function - 健康機器写真分析
 
@@ -162,6 +166,39 @@
 - `model`: gemini-2.0-flash-exp
 - `temperature`: 0.4
 - `maxOutputTokens`: 2048-4096
+
+#### 3.2.2 Gemini 3 Pro（v2 / エビデンスベース）
+
+**使用箇所（v2パイプライン）:**
+- `analyze-meal-photo-v2` Edge Function - エビデンスベース食事写真分析
+
+**特徴:**
+- 料理認識 + **材料と分量の推定**を行う
+- 推定された材料は `dataset_ingredients` でベクトル検索してマッチング
+- 栄養計算は材料ベースで行い、`dataset_recipes` で検証
+
+**プロンプト例（Step 1: 画像認識）:**
+```
+この食事の写真を分析してください。
+各料理について、材料と分量を推定してください。
+
+{
+  "dishes": [
+    {
+      "name": "料理名",
+      "role": "main/side/soup/rice/salad/dessert",
+      "estimatedIngredients": [
+        { "name": "材料名", "amount_g": 推定量(g) }
+      ]
+    }
+  ]
+}
+```
+
+**パラメータ:**
+- `model`: gemini-3-pro-preview
+- `temperature`: 0.4
+- `maxOutputTokens`: 4096
 
 ### 3.3 Google Gemini 3 Pro Image Preview (画像生成 / Nano Banana Pro)
 
@@ -482,8 +519,8 @@ SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC
 
 ### 6.1 AI関連API
 
-#### `POST /api/ai/analyze-meal-photo`
-食事写真を分析し、料理と栄養情報を推定
+#### `POST /api/ai/analyze-meal-photo`（v1 / レガシー）
+食事写真を分析し、料理と栄養情報をLLMが直接推定
 
 **リクエスト:**
 ```json
@@ -504,6 +541,83 @@ SELECT * FROM app_logs WHERE created_at >= CURRENT_DATE ORDER BY created_at DESC
   "nutritionalAdvice": "タンパク質が豊富な良いバランスです"
 }
 ```
+
+#### `POST /api/ai/analyze-meal-photo-v2`（v2 / エビデンスベース）
+食事写真を分析し、材料ベースでエビデンスのある栄養計算を行う
+
+**特徴:**
+- Gemini 3 Proで料理・材料・分量を認識
+- `dataset_ingredients` からベクトル検索で材料マッチング
+- 材料の栄養値を積算して栄養計算
+- `dataset_recipes` の類似レシピで検証
+
+**リクエスト:**
+```json
+{
+  "images": [{"base64": "...", "mimeType": "image/jpeg"}],
+  "mealType": "lunch",
+  "mealId": "uuid (optional)"
+}
+```
+
+**レスポンス:**
+```json
+{
+  "dishes": [
+    {
+      "name": "鶏の照り焼き",
+      "role": "main",
+      "calories_kcal": 350,
+      "protein_g": 25.5,
+      "carbs_g": 12.0,
+      "fat_g": 18.5,
+      "ingredient": "鶏もも肉",
+      "ingredients": [
+        {
+          "name": "鶏もも肉",
+          "amount_g": 120,
+          "matched": {
+            "id": "uuid",
+            "name": "鶏肉 もも 皮つき 生",
+            "similarity": 0.92
+          }
+        }
+      ]
+    }
+  ],
+  "totalCalories": 550,
+  "totalProtein": 32.0,
+  "totalCarbs": 65.0,
+  "totalFat": 22.0,
+  "nutrition": {
+    "sodiumG": 2.1,
+    "fiberG": 3.5,
+    "calciumMg": 45,
+    "ironMg": 1.8,
+    "vitaminCMg": 12
+  },
+  "evidence": {
+    "calculationMethod": "ingredient_based",
+    "matchedIngredients": [...],
+    "referenceRecipes": [
+      {"name": "鶏の照り焼き定食", "calories_kcal": 520, "similarity": 0.85}
+    ],
+    "verification": {
+      "isVerified": true,
+      "deviationPercent": 5.7
+    },
+    "confidenceScore": 0.88
+  },
+  "overallScore": 82,
+  "vegScore": 45,
+  "praiseComment": "タンパク質たっぷりで筋肉の味方ですね！",
+  "nutritionTip": "鶏もも肉はビタミンB群が豊富で疲労回復に効果的"
+}
+```
+
+**エラーハンドリング:**
+- 材料マッチング失敗時: v1方式（LLM直接推定）にフォールバック
+- 検証失敗時: 計算値をそのまま使用（confidenceScore低下）
 
 #### `POST /api/ai/analyze-fridge`
 冷蔵庫の写真から食材を検出
@@ -766,14 +880,62 @@ const mealCalorieRatio = {
 
 **注意:** 全ての埋め込みベクトルカラム（`dataset_ingredients.name_embedding`, `dataset_recipes.name_embedding`, `dataset_menu_sets.content_embedding`）は統一して `text-embedding-3-large` モデルと 1536次元を使用します。
 
-### 7.3 `analyze-meal-photo`
+### 7.3 `analyze-meal-photo`（v1 / レガシー）
 
 **トリガー:** `/api/ai/analyze-meal-photo` からの呼び出し（mealId指定時）
 
 **処理フロー:**
-1. Gemini Vision で画像分析
-2. 料理名、カロリー、栄養素を推定
-3. `planned_meals` の `dishes` フィールドを更新
+1. Gemini Vision（gemini-2.0-flash-exp）で画像分析
+2. 料理名、カロリー、栄養素をLLMが直接推定
+3. `planned_meals` の `dishes`, `calories_kcal` フィールドを更新
+
+**制限:** 
+- 栄養素の推定に根拠がない
+- 拡張栄養素（ビタミン、ミネラル等）が保存されない
+
+### 7.3.1 `analyze-meal-photo-v2`（v2 / エビデンスベース）
+
+**トリガー:** `/api/ai/analyze-meal-photo-v2` からの呼び出し
+
+**処理フロー:**
+```
+Step 1: 画像認識（Gemini 3 Pro）
+    │
+    ├─→ 料理リスト（name, role）
+    └─→ 材料・分量推定（estimatedIngredients）
+           │
+Step 2: 材料マッチング
+    │
+    ├─→ 各材料名をEmbedding生成（text-embedding-3-large, 1536次元）
+    ├─→ dataset_ingredients をベクトル検索（上位5件）
+    └─→ LLMが最適候補を選択
+           │
+Step 3: 栄養計算
+    │
+    ├─→ 材料ごとの栄養 = (栄養/100g) × 使用量(g) × (1 - 廃棄率)
+    └─→ 食事全体の栄養 = Σ各料理の栄養
+           │
+Step 4: エビデンス検証
+    │
+    ├─→ dataset_recipes から類似レシピ検索
+    ├─→ 計算値と参照値を比較
+    └─→ 偏差20%以内 → OK / 大きい → 調整
+           │
+Step 5: DB更新
+    │
+    └─→ planned_meals に全栄養素を保存
+        + generation_metadata にエビデンス情報を保存
+```
+
+**フォールバック:**
+- 材料マッチング失敗 → テキスト類似度検索（pg_trgm）
+- 全材料失敗 → v1方式（LLM直接推定）
+- 検証失敗 → 計算値をそのまま使用
+
+**更新するカラム:**
+- 基本: `dish_name`, `dishes`, `image_url`, `description`
+- 栄養: `calories_kcal`, `protein_g`, `fat_g`, `carbs_g` + 全拡張栄養素
+- メタ: `veg_score`, `generation_metadata`（エビデンス情報）
 
 ### 7.4 `analyze-health-photo`
 
@@ -1355,6 +1517,7 @@ SELECT * FROM dataset_recipes
 WHERE name_norm = normalize_name($dish_name);
 
 -- 2. 類似検索（pg_trgm + pgvector のハイブリッド）
+-- 埋め込みベクトルは text-embedding-3-large (1536次元) を使用
 SELECT
   id, name, name_norm,
   (0.4 * similarity(name_norm, $query_norm)
@@ -1692,6 +1855,176 @@ const imageResults = await Promise.allSettled(
 **Phase 4: 安定化**
 1. 監視データを確認し、閾値調整
 2. 問題があれば `v2_enabled=false` でロールバック
+
+### 8.6 食事写真分析（v2）エビデンスベース栄養計算
+
+**ファイル:** `supabase/functions/_shared/nutrition-pipeline.ts`
+
+#### 8.6.1 概要
+
+従来の食事写真分析（v1）はLLMが直接栄養素を推定していたが、v2ではエビデンスベースの計算を行う。
+
+**処理パイプライン:**
+1. **画像認識**: Gemini 3 Proで料理・材料・分量を認識
+2. **材料マッチング**: dataset_ingredientsからベクトル検索で材料を特定
+3. **栄養計算**: 材料の栄養値を積算
+4. **検証**: dataset_recipesの類似レシピと比較
+
+#### 8.6.2 材料マッチングアルゴリズム
+
+```typescript
+async function matchIngredient(
+  ingredientName: string,
+  supabase: SupabaseClient
+): Promise<IngredientMatch> {
+  // 1. 材料名をEmbedding生成
+  const embedding = await generateEmbedding(ingredientName);
+  // モデル: text-embedding-3-large, 次元: 1536
+  
+  // 2. ベクトル検索（上位5件）
+  const candidates = await supabase.rpc(
+    'search_ingredients_full_by_embedding',
+    { query_embedding: embedding, match_count: 5 }
+  );
+  
+  // 3. 類似度による判定
+  if (candidates.length === 0) {
+    // フォールバック: テキスト類似度検索
+    return fallbackToTextSearch(ingredientName);
+  }
+  
+  const best = candidates[0];
+  if (best.similarity >= 0.7) {
+    return { matched: best, confidence: 'high' };
+  } else if (best.similarity >= 0.5) {
+    return { matched: best, confidence: 'medium' };
+  } else {
+    return { matched: null, confidence: 'low' };
+  }
+}
+```
+
+#### 8.6.3 栄養計算式
+
+```typescript
+function calculateNutrition(
+  ingredients: MatchedIngredient[]
+): NutritionTotals {
+  const totals = initNutritionTotals();
+  
+  for (const ing of ingredients) {
+    if (!ing.matched) continue;
+    
+    const db = ing.matched; // dataset_ingredients の栄養値
+    const amount = ing.amount_g;
+    const discardRate = db.discard_rate_percent || 0;
+    const effectiveAmount = amount * (1 - discardRate / 100);
+    
+    // 100gあたりの栄養 × 実効使用量(g) / 100
+    totals.calories_kcal += (db.calories_kcal || 0) * effectiveAmount / 100;
+    totals.protein_g += (db.protein_g || 0) * effectiveAmount / 100;
+    totals.fat_g += (db.fat_g || 0) * effectiveAmount / 100;
+    totals.carbs_g += (db.carbs_g || 0) * effectiveAmount / 100;
+    // ... 全栄養素
+  }
+  
+  return roundNutrition(totals);
+}
+```
+
+#### 8.6.4 エビデンス検証
+
+```typescript
+async function verifyWithRecipes(
+  dishName: string,
+  calculated: NutritionTotals
+): Promise<Verification> {
+  // 類似レシピを検索
+  const recipes = await supabase.rpc(
+    'search_recipes_with_nutrition',
+    { query_name: dishName, result_limit: 3 }
+  );
+  
+  if (recipes.length === 0) {
+    return { isVerified: false, reason: 'no_reference' };
+  }
+  
+  const ref = recipes[0];
+  const deviation = Math.abs(
+    (calculated.calories_kcal - ref.calories_kcal) / ref.calories_kcal
+  );
+  
+  if (deviation <= 0.2) {
+    return { 
+      isVerified: true, 
+      deviationPercent: deviation * 100,
+      referenceRecipe: ref 
+    };
+  } else if (deviation <= 0.5) {
+    // 警告付きで採用
+    return {
+      isVerified: true,
+      deviationPercent: deviation * 100,
+      warning: 'high_deviation',
+      referenceRecipe: ref
+    };
+  } else {
+    // 大幅な乖離 - confidenceScore低下
+    return {
+      isVerified: false,
+      deviationPercent: deviation * 100,
+      reason: 'excessive_deviation'
+    };
+  }
+}
+```
+
+#### 8.6.5 DB関数
+
+```sql
+-- 材料マッチング用（全栄養素を返す）
+CREATE OR REPLACE FUNCTION search_ingredients_full_by_embedding(
+  query_embedding vector(1536),
+  match_count integer DEFAULT 5
+) RETURNS TABLE (
+  id uuid,
+  name text,
+  calories_kcal numeric,
+  protein_g numeric,
+  fat_g numeric,
+  carbs_g numeric,
+  fiber_g numeric,
+  sodium_mg numeric,
+  -- ... 全栄養素カラム
+  discard_rate_percent numeric,
+  similarity double precision
+) LANGUAGE sql STABLE;
+
+-- レシピ検証用（栄養素付き）
+CREATE OR REPLACE FUNCTION search_recipes_with_nutrition(
+  query_name text,
+  similarity_threshold numeric DEFAULT 0.3,
+  result_limit integer DEFAULT 5
+) RETURNS TABLE (
+  id uuid,
+  name text,
+  calories_kcal integer,
+  protein_g numeric,
+  fat_g numeric,
+  carbs_g numeric,
+  ingredients_text text,
+  similarity numeric
+) LANGUAGE sql STABLE;
+```
+
+#### 8.6.6 フォールバック戦略
+
+| 状況 | フォールバック | confidenceScore |
+|------|---------------|-----------------|
+| ベクトル検索0件 | pg_trgm検索 | 0.7 |
+| マッチ類似度 < 0.5 | LLM直接推定（v1方式） | 0.5 |
+| 全材料マッチ失敗 | v1方式 | 0.3 |
+| 検証偏差 > 50% | 計算値採用（警告付き） | 0.6 |
 
 ---
 

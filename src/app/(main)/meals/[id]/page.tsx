@@ -352,8 +352,8 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
                     </span>
                     <span className="text-sm font-medium text-gray-900">{dish.name}</span>
                   </div>
-                  {dish.cal && (
-                    <span className="text-xs text-gray-500">{dish.cal} kcal</span>
+                  {dish.calories_kcal && (
+                    <span className="text-xs text-gray-500">{dish.calories_kcal} kcal</span>
                   )}
                 </div>
               ))}

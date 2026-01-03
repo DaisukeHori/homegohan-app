@@ -1,6 +1,29 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+/**
+ * 食事写真分析 API Route (v2 - エビデンスベース)
+ * 
+ * Gemini 3 Pro で画像認識 → 材料マッチング → 栄養計算 → エビデンス検証
+ */
+
+// 型定義
+interface ImageInput {
+  base64: string;
+  mimeType: string;
+}
+
+interface EstimatedIngredient {
+  name: string;
+  amount_g: number;
+}
+
+interface GeminiDish {
+  name: string;
+  role: string;
+  estimatedIngredients: EstimatedIngredient[];
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -8,11 +31,9 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    // 複数枚対応: images配列または従来のimageBase64を受け付ける
     const { images, imageBase64, mimeType, mealType, mealId } = body;
     
-    // images配列がある場合は複数枚、なければ従来の単一画像
-    const imageDataArray: { base64: string; mimeType: string }[] = images || 
+    const imageDataArray: ImageInput[] = images || 
       (imageBase64 ? [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }] : []);
 
     if (imageDataArray.length === 0) {
@@ -41,8 +62,9 @@ export async function POST(request: Request) {
       });
     }
     
-    // mealId がない場合は同期的にGemini APIで解析して結果を返す（カメラボタンからの新規入力）
+    // mealId がない場合は同期的に解析
     const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_STUDIO_API_KEY || process.env.GOOGLE_GEN_AI_API_KEY;
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     
     if (!GOOGLE_AI_API_KEY) {
       return NextResponse.json({ error: 'AI API key not configured' }, { status: 500 });
@@ -56,10 +78,12 @@ export async function POST(request: Request) {
       : '食事';
 
     const imageCountText = imageDataArray.length > 1 ? `${imageDataArray.length}枚の` : '';
-    const prompt = `あなたは「ほめゴハン」という食事管理アプリのAIアシスタントです。
-ユーザーの食事を分析し、**良いところを見つけて褒める**ことが最も重要な役割です。
-
+    
+    // Step 1: Gemini 3 Pro で画像認識（材料・分量推定）
+    const geminiPrompt = `あなたは「ほめゴハン」という食事管理アプリのAIアシスタントです。
 この${imageCountText}${mealTypeJa}の写真を分析してください。
+
+各料理について、**材料と分量を推定**してください。
 
 以下のJSON形式で回答してください：
 
@@ -68,150 +92,287 @@ export async function POST(request: Request) {
     {
       "name": "料理名",
       "role": "main または side または soup または rice または salad または dessert",
-      "cal": 推定カロリー（数値）,
-      "protein": 推定タンパク質（g、数値）,
-      "carbs": 推定炭水化物（g、数値）,
-      "fat": 推定脂質（g、数値）,
-      "ingredient": "主な食材"
+      "estimatedIngredients": [
+        { "name": "材料名（一般的な食材名で）", "amount_g": 推定量(g) }
+      ]
     }
-  ],
-  "totalCalories": 合計カロリー（数値）,
-  "totalProtein": 合計タンパク質（g、数値）,
-  "totalCarbs": 合計炭水化物（g、数値）,
-  "totalFat": 合計脂質（g、数値）,
-  
-  "nutrition": {
-    "sodium_g": ナトリウム（塩分）g,
-    "amino_acid_g": アミノ酸 g（タンパク質とほぼ同等）,
-    "sugar_g": 糖質 g,
-    "fiber_g": 食物繊維 g,
-    "fiber_soluble_g": 水溶性食物繊維 g,
-    "fiber_insoluble_g": 不溶性食物繊維 g,
-    "potassium_mg": カリウム mg,
-    "calcium_mg": カルシウム mg,
-    "phosphorus_mg": リン mg,
-    "iron_mg": 鉄分 mg,
-    "zinc_mg": 亜鉛 mg,
-    "iodine_ug": ヨウ素 µg,
-    "cholesterol_mg": コレステロール mg,
-    "vitamin_b1_mg": ビタミンB1 mg,
-    "vitamin_b2_mg": ビタミンB2 mg,
-    "vitamin_c_mg": ビタミンC mg,
-    "vitamin_b6_mg": ビタミンB6 mg,
-    "vitamin_b12_ug": ビタミンB12 µg,
-    "folic_acid_ug": 葉酸 µg,
-    "vitamin_a_ug": ビタミンA µg,
-    "vitamin_d_ug": ビタミンD µg,
-    "vitamin_k_ug": ビタミンK µg,
-    "vitamin_e_mg": ビタミンE mg,
-    "saturated_fat_g": 飽和脂肪酸 g,
-    "monounsaturated_fat_g": 一価不飽和脂肪酸 g,
-    "polyunsaturated_fat_g": 多価不飽和脂肪酸 g
-  },
-  
-  "overallScore": 総合スコア（0-100の数値、栄養バランス・彩り・食材の多様性を考慮）,
-  "vegScore": 野菜スコア（0-100の数値、野菜の量と種類を考慮）,
-  "praiseComment": "【重要】この食事の良いところを見つけて、温かく褒めるコメント（80-120文字程度）。絵文字を1-2個使用。ダメ出しは絶対にしない。例：「わぁ、すごい彩り！アボカドの良質な脂質と、たっぷりの野菜でビタミンもバッチリですね。見た目も美しくて、食べるのがもったいないくらい✨」",
-  "nutritionTip": "この食事に関連する豆知識（40-60文字程度）。例：「アボカドは「森のバター」と呼ばれるほど栄養豊富。ビタミンEで美肌効果も期待できます！」"
+  ]
 }
 
 注意：
 - 全ての写真に写っている全ての料理を含めてください
-- カロリー・栄養素は1人前として推定してください
-- roleは料理の種類に応じて適切に設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート/おやつ=dessert）
-- praiseCommentは必ずポジティブな内容にしてください。批判や改善提案は含めないでください
-- overallScoreは厳しすぎず、70-95の範囲で評価してください（普通の食事でも75以上）
-- nutritionオブジェクト内の全ての栄養素を推定してください（日本食品標準成分表を参考に）
+- 材料名は「鶏もも肉」「白米」「味噌」など一般的な食材名で記載
+- 分量は1人前として推定してください
+- 調味料（塩、砂糖、しょうゆ等）も含めてください
+- roleは料理の種類に応じて設定
 - JSONのみを出力してください`;
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GOOGLE_AI_API_KEY}`;
+    // Gemini 3 Pro を使用
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${GOOGLE_AI_API_KEY}`;
     
-    // 複数枚の画像をpartsに追加
     const parts: any[] = imageDataArray.map(img => ({
       inlineData: {
         mimeType: img.mimeType,
         data: img.base64
       }
     }));
-    parts.push({ text: prompt });
+    parts.push({ text: geminiPrompt });
     
-    const response = await fetch(apiUrl, {
+    const geminiResponse = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: parts
-        }],
+        contents: [{ parts }],
         generationConfig: {
           temperature: 0.4,
-          maxOutputTokens: 2048,
+          maxOutputTokens: 4096,
         }
       })
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
+    if (!geminiResponse.ok) {
+      const errorText = await geminiResponse.text();
       console.error('Gemini API error:', errorText);
       return NextResponse.json({ error: 'AI analysis failed' }, { status: 500 });
     }
 
-    const data = await response.json();
-    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const geminiData = await geminiResponse.json();
+    const textContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
-    // JSONを抽出
     const jsonMatch = textContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.error('Failed to parse AI response:', textContent);
       return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 500 });
     }
     
-    const analysisResult = JSON.parse(jsonMatch[0]);
-    
-    const nutrition = analysisResult.nutrition || {};
-    
+    const geminiResult: { dishes: GeminiDish[] } = JSON.parse(jsonMatch[0]);
+
+    // Step 2-4: 材料マッチング → 栄養計算 → エビデンス検証
+    // Note: API Routeでは簡易版を実行（フル版はEdge Functionで）
+    const analyzedDishes: any[] = [];
+    let totalCalories = 0;
+    let totalProtein = 0;
+    let totalCarbs = 0;
+    let totalFat = 0;
+    const matchedIngredients: any[] = [];
+
+    for (const dish of geminiResult.dishes) {
+      // 材料マッチング（ベクトル検索）
+      const dishIngredients: any[] = [];
+      let dishCalories = 0;
+      let dishProtein = 0;
+      let dishCarbs = 0;
+      let dishFat = 0;
+
+      for (const ingredient of dish.estimatedIngredients) {
+        // OpenAI Embedding生成
+        let matched = null;
+        if (OPENAI_API_KEY) {
+          try {
+            const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'text-embedding-3-large',
+                input: ingredient.name,
+                dimensions: 1536,
+              }),
+            });
+
+            if (embeddingResponse.ok) {
+              const embeddingData = await embeddingResponse.json();
+              const embedding = embeddingData.data[0].embedding;
+
+              // ベクトル検索
+              const { data: searchResults } = await supabase.rpc('search_ingredients_full_by_embedding', {
+                query_embedding: embedding,
+                match_count: 1,
+              });
+
+              if (searchResults && searchResults.length > 0) {
+                const best = searchResults[0];
+                const factor = ingredient.amount_g / 100;
+                const discardRate = best.discard_rate_percent || 0;
+                const effectiveFactor = factor * (1 - discardRate / 100);
+
+                dishCalories += (best.calories_kcal || 0) * effectiveFactor;
+                dishProtein += (best.protein_g || 0) * effectiveFactor;
+                dishCarbs += (best.carbs_g || 0) * effectiveFactor;
+                dishFat += (best.fat_g || 0) * effectiveFactor;
+
+                matched = {
+                  id: best.id,
+                  name: best.name,
+                  similarity: best.similarity,
+                };
+
+                matchedIngredients.push({
+                  input: ingredient.name,
+                  matchedName: best.name,
+                  matchedId: best.id,
+                  similarity: best.similarity,
+                  amount_g: ingredient.amount_g,
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('Ingredient matching failed:', e);
+          }
+        }
+
+        dishIngredients.push({
+          name: ingredient.name,
+          amount_g: ingredient.amount_g,
+          matched,
+        });
+      }
+
+      analyzedDishes.push({
+        name: dish.name,
+        role: dish.role,
+        calories_kcal: Math.round(dishCalories),
+        protein_g: Math.round(dishProtein * 10) / 10,
+        carbs_g: Math.round(dishCarbs * 10) / 10,
+        fat_g: Math.round(dishFat * 10) / 10,
+        ingredient: dish.estimatedIngredients.map(i => i.name).slice(0, 3).join('、'),
+        ingredients: dishIngredients,
+      });
+
+      totalCalories += dishCalories;
+      totalProtein += dishProtein;
+      totalCarbs += dishCarbs;
+      totalFat += dishFat;
+    }
+
+    // Step 4: エビデンス検証（代表料理で）
+    const mainDish = analyzedDishes.find(d => d.role === 'main') || analyzedDishes[0];
+    let referenceRecipes: any[] = [];
+    let verification = {
+      isVerified: false,
+      calculatedCalories: Math.round(totalCalories),
+      referenceCalories: null as number | null,
+      deviationPercent: null as number | null,
+      reason: 'no_reference' as string,
+    };
+
+    if (mainDish) {
+      const { data: recipes } = await supabase.rpc('search_recipes_with_nutrition', {
+        query_name: mainDish.name,
+        similarity_threshold: 0.3,
+        result_limit: 3,
+      });
+
+      if (recipes && recipes.length > 0) {
+        referenceRecipes = recipes.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          calories_kcal: r.calories_kcal,
+          similarity: r.similarity,
+        }));
+
+        const ref = recipes[0];
+        if (ref.calories_kcal) {
+          const deviation = Math.abs((totalCalories - ref.calories_kcal) / ref.calories_kcal) * 100;
+          verification = {
+            isVerified: deviation <= 50,
+            calculatedCalories: Math.round(totalCalories),
+            referenceCalories: ref.calories_kcal,
+            deviationPercent: Math.round(deviation * 10) / 10,
+            reason: deviation <= 20 ? 'ok' : deviation <= 50 ? 'high_deviation' : 'excessive_deviation',
+          };
+        }
+      }
+    }
+
+    // 信頼度スコア計算
+    const matchRate = matchedIngredients.length / Math.max(1, geminiResult.dishes.reduce((sum, d) => sum + d.estimatedIngredients.length, 0));
+    let confidenceScore = matchRate;
+    if (verification.isVerified) {
+      confidenceScore = verification.reason === 'ok' ? Math.min(confidenceScore * 1.1, 1.0) : confidenceScore * 0.85;
+    } else {
+      confidenceScore = verification.reason === 'no_reference' ? confidenceScore * 0.7 : confidenceScore * 0.5;
+    }
+    confidenceScore = Math.max(0.1, Math.min(1.0, Math.round(confidenceScore * 100) / 100));
+
+    // Step 5: 褒めコメント生成
+    const praisePrompt = `料理: ${analyzedDishes.map(d => d.name).join('、')}
+カロリー: ${Math.round(totalCalories)}kcal
+
+以下のJSON形式で回答：
+{
+  "praiseComment": "良いところを見つけて褒めるコメント（80-120文字、絵文字1-2個使用）",
+  "nutritionTip": "この食事に関連する豆知識（40-60文字）",
+  "overallScore": 総合スコア（70-95の数値）,
+  "vegScore": 野菜スコア（0-100の数値）
+}`;
+
+    let praiseResult = {
+      praiseComment: 'おいしそうな食事ですね！バランスの良い食事を心がけていて素晴らしいです✨',
+      nutritionTip: '食事を楽しむことも健康の大切な要素です。',
+      overallScore: 80,
+      vegScore: 50,
+    };
+
+    try {
+      const praiseResponse = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: praisePrompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 512 },
+        })
+      });
+
+      if (praiseResponse.ok) {
+        const praiseData = await praiseResponse.json();
+        const praiseText = praiseData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const praiseMatch = praiseText.match(/\{[\s\S]*\}/);
+        if (praiseMatch) {
+          const parsed = JSON.parse(praiseMatch[0]);
+          praiseResult = {
+            praiseComment: parsed.praiseComment || praiseResult.praiseComment,
+            nutritionTip: parsed.nutritionTip || praiseResult.nutritionTip,
+            overallScore: parsed.overallScore || praiseResult.overallScore,
+            vegScore: parsed.vegScore || praiseResult.vegScore,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Praise generation failed:', e);
+    }
+
     return NextResponse.json({
-      dishes: analysisResult.dishes || [],
-      totalCalories: analysisResult.totalCalories || 0,
-      totalProtein: analysisResult.totalProtein || 0,
-      totalCarbs: analysisResult.totalCarbs || 0,
-      totalFat: analysisResult.totalFat || 0,
+      dishes: analyzedDishes,
+      totalCalories: Math.round(totalCalories),
+      totalProtein: Math.round(totalProtein * 10) / 10,
+      totalCarbs: Math.round(totalCarbs * 10) / 10,
+      totalFat: Math.round(totalFat * 10) / 10,
       
-      // 拡張栄養素
       nutrition: {
-        sodiumG: nutrition.sodium_g || 0,
-        aminoAcidG: nutrition.amino_acid_g || 0,
-        sugarG: nutrition.sugar_g || 0,
-        fiberG: nutrition.fiber_g || 0,
-        fiberSolubleG: nutrition.fiber_soluble_g || 0,
-        fiberInsolubleG: nutrition.fiber_insoluble_g || 0,
-        potassiumMg: nutrition.potassium_mg || 0,
-        calciumMg: nutrition.calcium_mg || 0,
-        phosphorusMg: nutrition.phosphorus_mg || 0,
-        ironMg: nutrition.iron_mg || 0,
-        zincMg: nutrition.zinc_mg || 0,
-        iodineUg: nutrition.iodine_ug || 0,
-        cholesterolMg: nutrition.cholesterol_mg || 0,
-        vitaminB1Mg: nutrition.vitamin_b1_mg || 0,
-        vitaminB2Mg: nutrition.vitamin_b2_mg || 0,
-        vitaminCMg: nutrition.vitamin_c_mg || 0,
-        vitaminB6Mg: nutrition.vitamin_b6_mg || 0,
-        vitaminB12Ug: nutrition.vitamin_b12_ug || 0,
-        folicAcidUg: nutrition.folic_acid_ug || 0,
-        vitaminAUg: nutrition.vitamin_a_ug || 0,
-        vitaminDUg: nutrition.vitamin_d_ug || 0,
-        vitaminKUg: nutrition.vitamin_k_ug || 0,
-        vitaminEMg: nutrition.vitamin_e_mg || 0,
-        saturatedFatG: nutrition.saturated_fat_g || 0,
-        monounsaturatedFatG: nutrition.monounsaturated_fat_g || 0,
-        polyunsaturatedFatG: nutrition.polyunsaturated_fat_g || 0,
+        sodiumG: 0, // 簡易版では省略
+        fiberG: 0,
+        potassiumMg: 0,
+        calciumMg: 0,
+        ironMg: 0,
+        vitaminCMg: 0,
       },
       
-      overallScore: analysisResult.overallScore || 75,
-      vegScore: analysisResult.vegScore || 50,
-      praiseComment: analysisResult.praiseComment || 'おいしそうな食事ですね！',
-      nutritionTip: analysisResult.nutritionTip || '',
-      // 後方互換性のため
-      nutritionalAdvice: analysisResult.praiseComment || analysisResult.nutritionalAdvice || '',
+      evidence: {
+        calculationMethod: 'ingredient_based',
+        matchedIngredients,
+        referenceRecipes,
+        verification,
+        confidenceScore,
+      },
+      
+      overallScore: praiseResult.overallScore,
+      vegScore: praiseResult.vegScore,
+      praiseComment: praiseResult.praiseComment,
+      nutritionTip: praiseResult.nutritionTip,
+      nutritionalAdvice: praiseResult.praiseComment, // 後方互換性
     });
 
   } catch (error: any) {

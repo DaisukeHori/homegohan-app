@@ -762,10 +762,10 @@ ${importantMessagesInfo}
       "carbs_g": 40,
       "mode": "cook",
       "dishes": [
-        {"name": "サーロインステーキ", "role": "main", "cal": 400, "ingredient": "牛サーロイン"},
-        {"name": "ほうれん草のソテー", "role": "side", "cal": 50, "ingredient": "ほうれん草、バター"},
-        {"name": "コールスローサラダ", "role": "side", "cal": 80, "ingredient": "キャベツ、にんじん"},
-        {"name": "コンソメスープ", "role": "soup", "cal": 30, "ingredient": "玉ねぎ、にんじん"}
+        {"name": "サーロインステーキ", "role": "main", "calories_kcal": 400, "ingredient": "牛サーロイン"},
+        {"name": "ほうれん草のソテー", "role": "side", "calories_kcal": 50, "ingredient": "ほうれん草、バター"},
+        {"name": "コールスローサラダ", "role": "side", "calories_kcal": 80, "ingredient": "キャベツ、にんじん"},
+        {"name": "コンソメスープ", "role": "soup", "calories_kcal": 30, "ingredient": "玉ねぎ、にんじん"}
       ]
     }
   }
@@ -797,10 +797,10 @@ ${importantMessagesInfo}
       "carbs_g": 60,
       "mode": "cook",
       "dishes": [
-        {"name": "鮭の塩焼き", "role": "main", "cal": 200, "ingredient": "鮭"},
-        {"name": "ほうれん草のおひたし", "role": "side", "cal": 30, "ingredient": "ほうれん草"},
-        {"name": "きんぴらごぼう", "role": "side", "cal": 80, "ingredient": "ごぼう、にんじん"},
-        {"name": "味噌汁", "role": "soup", "cal": 40, "ingredient": "豆腐、わかめ"}
+        {"name": "鮭の塩焼き", "role": "main", "calories_kcal": 200, "ingredient": "鮭"},
+        {"name": "ほうれん草のおひたし", "role": "side", "calories_kcal": 30, "ingredient": "ほうれん草"},
+        {"name": "きんぴらごぼう", "role": "side", "calories_kcal": 80, "ingredient": "ごぼう、にんじん"},
+        {"name": "味噌汁", "role": "soup", "calories_kcal": 40, "ingredient": "豆腐、わかめ"}
       ]
     }
   }
@@ -840,10 +840,10 @@ ${importantMessagesInfo}
       "carbs_g": 100,
       "mode": "cook",
       "dishes": [
-        {"name": "かけそば", "role": "main", "cal": 350, "ingredient": "そば、そばつゆ、ねぎ"},
-        {"name": "野菜天ぷら", "role": "side", "cal": 200, "ingredient": "さつまいも、ししとう、なす"},
-        {"name": "ほうれん草のおひたし", "role": "side", "cal": 30, "ingredient": "ほうれん草"},
-        {"name": "そばつゆ", "role": "soup", "cal": 30, "ingredient": "だし、醤油、みりん"}
+        {"name": "かけそば", "role": "main", "calories_kcal": 350, "ingredient": "そば、そばつゆ、ねぎ"},
+        {"name": "野菜天ぷら", "role": "side", "calories_kcal": 200, "ingredient": "さつまいも、ししとう、なす"},
+        {"name": "ほうれん草のおひたし", "role": "side", "calories_kcal": 30, "ingredient": "ほうれん草"},
+        {"name": "そばつゆ", "role": "soup", "calories_kcal": 30, "ingredient": "だし、醤油、みりん"}
       ]
     }
   }
@@ -873,9 +873,9 @@ ${importantMessagesInfo}
       "carbs_g": 100,
       "mode": "cook",
       "dishes": [
-        {"name": "ビーフカレー", "role": "main", "cal": 700, "ingredient": "牛肉、じゃがいも、にんじん、玉ねぎ、ご飯"},
-        {"name": "サラダ", "role": "side", "cal": 30, "ingredient": "レタス、トマト"},
-        {"name": "福神漬け", "role": "side", "cal": 20, "ingredient": "福神漬け"}
+        {"name": "ビーフカレー", "role": "main", "calories_kcal": 700, "ingredient": "牛肉、じゃがいも、にんじん、玉ねぎ、ご飯"},
+        {"name": "サラダ", "role": "side", "calories_kcal": 30, "ingredient": "レタス、トマト"},
+        {"name": "福神漬け", "role": "side", "calories_kcal": 20, "ingredient": "福神漬け"}
       ]
     }
   }

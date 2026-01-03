@@ -394,7 +394,7 @@ export default function MealNewPage() {
           <View style={{ gap: 6 }}>
             {result.dishes?.map((d, idx) => (
               <Text key={`${d.name}-${idx}`} style={{ color: "#666" }}>
-                - {d.name}（{d.role} / {d.cal ?? 0}kcal）
+                - {d.name}（{d.role} / {d.calories_kcal ?? 0}kcal）
               </Text>
             ))}
           </View>

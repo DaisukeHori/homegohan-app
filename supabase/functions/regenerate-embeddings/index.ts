@@ -82,16 +82,31 @@ Deno.serve(async (req) => {
 
     const config = TABLE_CONFIGS[tableName];
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const onlyMissing = body.onlyMissing ?? false;
 
-    // 総数を取得
-    const { count: totalCount } = await supabase
+    // 総数を取得（onlyMissingがtrueの場合はNULLのレコード数）
+    let countQuery = supabase
       .from(tableName)
       .select("*", { count: "exact", head: true });
+    
+    if (onlyMissing) {
+      countQuery = countQuery.is(config.embeddingColumn, null);
+    }
+    
+    const { count: totalCount } = await countQuery;
 
-    // レコード取得
-    const { data: rows, error: fetchError } = await supabase
+    // 埋め込みベクトルがNULLのレコードのみを取得（offset指定がある場合は従来通り）
+    let query = supabase
       .from(tableName)
-      .select(`id, ${config.textColumn}`)
+      .select(`id, ${config.textColumn}`);
+    
+    // onlyMissingパラメータがtrueの場合、NULLのレコードのみを取得
+    if (onlyMissing) {
+      query = query.is(config.embeddingColumn, null);
+    }
+    
+    // offset指定がある場合はrangeを使用
+    const { data: rows, error: fetchError } = await query
       .range(offset, offset + limit - 1);
 
     if (fetchError) {

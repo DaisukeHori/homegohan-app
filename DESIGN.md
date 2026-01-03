@@ -358,6 +358,19 @@ IDごとに簡潔にまとめます。
   * 野菜・果物などの充足度の目安
 * 解析結果をMealに紐づけて保存
 
+#### FR-04-v2 エビデンスベース栄養解析（v2）
+
+* **目的**: 栄養推定の根拠を明確化し、精度を向上
+* **処理方式**:
+  1. Gemini 3 Proで料理・材料・分量を認識
+  2. `dataset_ingredients`（2,483件）からベクトル検索で材料マッチング
+  3. 材料の栄養値（100gあたり）× 使用量で栄養計算
+  4. `dataset_recipes`（11,707件）の類似レシピで検証
+* **追加出力**:
+  * 拡張栄養素（ビタミン、ミネラル、食物繊維等 約25種類）
+  * エビデンス情報（マッチした材料、参照レシピ、信頼度スコア）
+* **フォールバック**: マッチ失敗時はv1方式（LLM直接推定）を使用
+
 ### FR-05 AIほめコメント
 
 * Meal＋栄養推定＋プロファイルを入力として、
@@ -1007,6 +1020,112 @@ export interface UserBadge {
 
 ※ 実際にはVision APIのレスポンスをラップする実装が必要。
 
+### 3-3-v2. 栄養解析（v2 / エビデンスベース） `/api/ai/analyze-meal-photo-v2` POST
+
+* 入力：
+  * 食事写真（Base64 × 1枚以上）
+  * mealType（breakfast/lunch/dinner/snack/midnight_snack）
+  * mealId（既存献立更新時のみ）
+
+* リクエスト例：
+
+```json
+{
+  "images": [{"base64": "...", "mimeType": "image/jpeg"}],
+  "mealType": "lunch",
+  "mealId": "uuid (optional)"
+}
+```
+
+* レスポンス：
+
+```json
+{
+  "dishes": [
+    {
+      "name": "鶏の照り焼き",
+      "role": "main",
+      "calories_kcal": 350,
+      "protein_g": 25.5,
+      "carbs_g": 12.0,
+      "fat_g": 18.5,
+      "ingredient": "鶏もも肉",
+      "ingredients": [
+        {
+          "name": "鶏もも肉",
+          "amount_g": 120,
+          "matched": {
+            "id": "uuid",
+            "name": "鶏肉 もも 皮つき 生",
+            "similarity": 0.92
+          },
+          "nutrition": {
+            "calories_kcal": 253,
+            "protein_g": 21.2
+          }
+        }
+      ]
+    }
+  ],
+  "totalCalories": 550,
+  "totalProtein": 32.0,
+  "totalCarbs": 65.0,
+  "totalFat": 22.0,
+  "nutrition": {
+    "sodiumG": 2.1,
+    "fiberG": 3.5,
+    "calciumMg": 45,
+    "ironMg": 1.8,
+    "vitaminCMg": 12,
+    "potassiumMg": 450,
+    "magnesiumMg": 35
+  },
+  "evidence": {
+    "calculationMethod": "ingredient_based",
+    "matchedIngredients": [
+      {
+        "input": "鶏もも肉",
+        "matchedName": "鶏肉 もも 皮つき 生",
+        "matchedId": "uuid",
+        "similarity": 0.92,
+        "amount_g": 120
+      }
+    ],
+    "referenceRecipes": [
+      {
+        "id": "uuid",
+        "name": "鶏の照り焼き定食",
+        "similarity": 0.85,
+        "calories_kcal": 520,
+        "protein_g": 28
+      }
+    ],
+    "verification": {
+      "isVerified": true,
+      "calculatedCalories": 550,
+      "referenceCalories": 520,
+      "deviationPercent": 5.7
+    },
+    "confidenceScore": 0.88
+  },
+  "overallScore": 82,
+  "vegScore": 45,
+  "praiseComment": "タンパク質たっぷりで筋肉の味方ですね！",
+  "nutritionTip": "鶏もも肉はビタミンB群が豊富で疲労回復に効果的"
+}
+```
+
+* 処理フロー：
+  1. Gemini 3 Pro で画像認識（料理・材料・分量推定）
+  2. 材料名をEmbedding生成（text-embedding-3-large, 1536次元）
+  3. `dataset_ingredients` をベクトル検索
+  4. 栄養計算（材料の栄養/100g × 使用量g）
+  5. `dataset_recipes` で類似レシピ検索・検証
+  6. `planned_meals` に全栄養素を保存
+
+* フォールバック：
+  * 材料マッチング失敗 → v1方式（LLM直接推定）
+
 ### 3-4. AIほめコメント `/api/ai/feedback` POST
 
 * リクエスト：
@@ -1096,6 +1215,77 @@ export interface UserBadge {
    2. カテゴリ分類（grain/protein/vegetable等）を行うことで、
       後段のパフォーマンスロジックで扱いやすくする
    3. 数値はあくまで「目安」とし、コメント生成や献立生成用の**特徴量**として使う
+
+### 4-1-v2. 栄養推定（エビデンスベース / v2）
+
+v1の課題（LLM直接推定で根拠がない）を解決するため、材料ベースの栄養計算を行う。
+
+**処理パイプライン:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Step 1: 画像認識（Gemini 3 Pro）                           │
+│  ・料理名、役割（main/side/soup等）を認識                    │
+│  ・各料理の材料と分量（g）を推定                             │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 2: 材料マッチング                                      │
+│  ・材料名 → Embedding生成（text-embedding-3-large, 1536次元）│
+│  ・dataset_ingredients（2,483件）をベクトル検索              │
+│  ・上位5件からLLMが最適候補を選択                            │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 3: 栄養計算                                            │
+│  ・材料の栄養 = (栄養/100g) × 使用量(g) × (1-廃棄率)         │
+│  ・食事全体の栄養 = Σ各材料の栄養                            │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 4: エビデンス検証                                      │
+│  ・dataset_recipes（11,707件）から類似レシピ検索             │
+│  ・計算値と参照値を比較（偏差20%以内→OK）                    │
+│  ・大幅な乖離→警告付きで採用 or 調整                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 5: 結果保存                                            │
+│  ・planned_meals に全栄養素（約30カラム）を保存              │
+│  ・generation_metadata にエビデンス情報を保存                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**使用するDBテーブル:**
+
+| テーブル | 件数 | 用途 |
+|---------|------|------|
+| `dataset_ingredients` | 2,483 | 食材ごとの栄養値（日本食品標準成分表ベース） |
+| `dataset_recipes` | 11,707 | レシピごとの栄養値（検証用参照） |
+
+**フォールバック戦略:**
+
+| 状況 | 対応 |
+|------|------|
+| 材料マッチング失敗 | テキスト類似度検索（pg_trgm）にフォールバック |
+| 全材料マッチ失敗 | v1方式（LLM直接推定）にフォールバック |
+| 検証で大幅な乖離 | 計算値を採用、confidenceScore低下 |
+
+**出力に追加されるフィールド:**
+
+```typescript
+evidence: {
+  calculationMethod: "ingredient_based",
+  matchedIngredients: [...],     // マッチした材料情報
+  referenceRecipes: [...],       // 参照したレシピ
+  verification: { ... },         // 検証結果
+  confidenceScore: 0.88          // 信頼度スコア
+}
+```
 
 ### 4-2. AIほめコメント
 
@@ -1372,7 +1562,7 @@ LLM（GPT）は **管理栄養士としての味付け（ID選定/差し替え/�
 - **Supabase Postgres**：データセット（献立セット/レシピ）を保持（真実）
 - **Supabase Storage**：データセットCSV/TSVの置き場（非公開）
 - **データセットインポーター**：CSV→DBのETL（管理者実行、またはCI/定期）
-- **食材栄養インポーター**：`食材栄養.csv` → `dataset_ingredients`（表記揺れ対策のため `name_embedding vector(384)` を保持）
+- **食材栄養インポーター**：`食材栄養.csv` → `dataset_ingredients`（表記揺れ対策のため `name_embedding vector(1536)` を保持）
 - **派生レシピ永続化**：`derived_recipes`（DB原型 + 差分（材料/手順）+ 食材DB合算栄養）
 - **類似検索（ベクトル/RAG）**：
   - 献立例（1食の例文書）検索：OpenAI Vector Store（`file_search`）を利用（相性判断の根拠）
@@ -1463,7 +1653,7 @@ LLM（GPT）は **管理栄養士としての味付け（ID選定/差し替え/�
   - `id`（uuid, PK）
   - `name`（text）, `name_norm`（text）
   - `calories_kcal`, `protein_g`, `fat_g`, `carbs_g`, `fiber_g`, `salt_eq_g`, `potassium_mg`, ...（多数）
-  - `name_embedding`（vector(384)）：食材名の近傍検索（表記揺れ対策）
+  - `name_embedding`（vector(1536)）：食材名の近傍検索（表記揺れ対策）
   - `created_at`, `updated_at`
 - **索引**
   - `name_norm` btree
@@ -1474,6 +1664,92 @@ LLM（GPT）は **管理栄養士としての味付け（ID選定/差し替え/�
 - **検索補助RPC**
   - `search_similar_dataset_ingredients`（pg_trgm）
   - `search_dataset_ingredients_by_embedding`（pgvector）
+  - `search_ingredients_full_by_embedding`（v2用：全栄養素を返すベクトル検索）
+
+#### 5-1-5-v2. 食事写真分析v2用DB関数
+
+**`search_ingredients_full_by_embedding`**（材料マッチング用）
+
+```sql
+CREATE OR REPLACE FUNCTION search_ingredients_full_by_embedding(
+  query_embedding vector(1536),
+  match_count integer DEFAULT 5
+) RETURNS TABLE (
+  id uuid,
+  name text,
+  calories_kcal numeric,
+  protein_g numeric,
+  fat_g numeric,
+  carbs_g numeric,
+  fiber_g numeric,
+  sodium_mg numeric,
+  potassium_mg numeric,
+  calcium_mg numeric,
+  magnesium_mg numeric,
+  phosphorus_mg numeric,
+  iron_mg numeric,
+  zinc_mg numeric,
+  iodine_ug numeric,
+  cholesterol_mg numeric,
+  vitamin_a_ug numeric,
+  vitamin_d_ug numeric,
+  vitamin_e_alpha_mg numeric,
+  vitamin_k_ug numeric,
+  vitamin_b1_mg numeric,
+  vitamin_b2_mg numeric,
+  vitamin_b6_mg numeric,
+  vitamin_b12_ug numeric,
+  folic_acid_ug numeric,
+  vitamin_c_mg numeric,
+  salt_eq_g numeric,
+  discard_rate_percent numeric,
+  similarity double precision
+) LANGUAGE sql STABLE AS $$
+  SELECT
+    i.id, i.name,
+    i.calories_kcal, i.protein_g, i.fat_g, i.carbs_g, i.fiber_g,
+    i.sodium_mg, i.potassium_mg, i.calcium_mg, i.magnesium_mg, i.phosphorus_mg,
+    i.iron_mg, i.zinc_mg, i.iodine_ug, i.cholesterol_mg,
+    i.vitamin_a_ug, i.vitamin_d_ug, i.vitamin_e_alpha_mg, i.vitamin_k_ug,
+    i.vitamin_b1_mg, i.vitamin_b2_mg, i.vitamin_b6_mg, i.vitamin_b12_ug,
+    i.folic_acid_ug, i.vitamin_c_mg, i.salt_eq_g, i.discard_rate_percent,
+    1 - (i.name_embedding <=> query_embedding) as similarity
+  FROM dataset_ingredients i
+  WHERE i.name_embedding IS NOT NULL
+  ORDER BY i.name_embedding <=> query_embedding ASC
+  LIMIT match_count;
+$$;
+```
+
+**`search_recipes_with_nutrition`**（エビデンス検証用）
+
+```sql
+CREATE OR REPLACE FUNCTION search_recipes_with_nutrition(
+  query_name text,
+  similarity_threshold numeric DEFAULT 0.3,
+  result_limit integer DEFAULT 5
+) RETURNS TABLE (
+  id uuid,
+  name text,
+  calories_kcal integer,
+  protein_g numeric,
+  fat_g numeric,
+  carbs_g numeric,
+  sodium_g numeric,
+  fiber_g numeric,
+  ingredients_text text,
+  similarity numeric
+) LANGUAGE sql STABLE AS $$
+  SELECT
+    r.id, r.name, r.calories_kcal, r.protein_g, r.fat_g, r.carbs_g,
+    r.sodium_g, r.fiber_g, r.ingredients_text,
+    similarity(r.name_norm, public.normalize_dish_name(query_name)) as similarity
+  FROM dataset_recipes r
+  WHERE similarity(r.name_norm, public.normalize_dish_name(query_name)) >= similarity_threshold
+  ORDER BY similarity DESC
+  LIMIT result_limit;
+$$;
+```
 
 #### 5-1-6. `derived_recipes`（派生レシピ永続化）
 - **用途**：AIが生成した派生レシピを保存し、後で再利用/評価/改善できるようにする
@@ -1486,7 +1762,7 @@ LLM（GPT）は **管理栄養士としての味付け（ID選定/差し替え/�
   - `instructions`（text[]）
   - 推定/計算栄養（`calories_kcal`, `protein_g`, `fat_g`, `carbs_g`, `sodium_g`, `vitamin_*` など。食材DBに存在しない項目は NULL になり得る）
   - `generation_metadata`（jsonb）：`mapping_rate`, `warnings`, `elapsed_ms` など
-  - `name_embedding`（vector(384)）
+  - `name_embedding`（vector(1536)）
 - **アクセス**
   - RLS有効。v2初期は **service role のみ**（ユーザーへの表示は `planned_meals` 側のキャッシュで行う）
 

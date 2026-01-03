@@ -280,7 +280,7 @@ export async function POST(request: NextRequest) {
     }
     
     const body = await request.json();
-    const { table, startOffset = 0, model = "text-embedding-3-large", dimensions = 1536 } = body;
+    const { table, startOffset = 0, model = "text-embedding-3-large", dimensions = 1536, onlyMissing = true } = body;
     
     if (!table || !["dataset_ingredients", "dataset_recipes", "dataset_menu_sets"].includes(table)) {
       return NextResponse.json(
@@ -325,6 +325,7 @@ export async function POST(request: NextRequest) {
       EMBEDDING_MODEL: model,
       EMBEDDING_DIMENSIONS: dimensions.toString(),
       EMBEDDING_JOB_ID: jobId,
+      EMBEDDING_ONLY_MISSING: onlyMissing ? "true" : "false",
       SUPABASE_URL: SUPABASE_URL,
       SUPABASE_ANON_KEY: supabaseAnonKey,
       SUPABASE_SERVICE_ROLE_KEY: SUPABASE_SERVICE_ROLE_KEY,

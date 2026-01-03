@@ -127,7 +127,7 @@ async function embedText(text: string, dimensions = 384): Promise<number[]> {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "text-embedding-3-small",
+          model: "text-embedding-3-large",
           input: text,
           dimensions,
         }),
@@ -160,7 +160,7 @@ type MenuSetCandidate = {
 };
 
 async function searchMenuCandidates(supabase: any, queryText: string, matchCount: number): Promise<MenuSetCandidate[]> {
-  const emb = await embedText(queryText, 384);
+  const emb = await embedText(queryText, 1536);
   const { data, error } = await supabase.rpc("search_menu_examples", {
     query_embedding: emb,
     match_count: matchCount,
@@ -239,6 +239,12 @@ async function triggerNextStep(
   note: string | null,
 ) {
   console.log("🔄 Triggering next step...");
+
+  // userIdの検証（undefinedだとJSON.stringifyで省略されてしまう）
+  if (!userId) {
+    console.error("❌ Cannot trigger next step: userId is missing");
+    throw new Error("userId is required to trigger next step");
+  }
   
   const url = `${supabaseUrl}/functions/v1/regenerate-meal-direct-v3`;
   
@@ -258,6 +264,10 @@ async function triggerNextStep(
       }),
     });
     console.log(`✅ Next step triggered: ${res.status}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`❌ Next step response error: ${res.status} - ${text}`);
+    }
   } catch (e) {
     console.error("❌ Failed to trigger next step:", e);
   }
@@ -366,7 +376,15 @@ Deno.serve(async (req: Request) => {
 
     if (!accessToken) throw new Error("Missing access token");
 
-    if (body.userId) {
+    // 継続呼び出し（_continue=true）の場合、SERVICE_ROLE_KEYで呼ばれるので
+    // getUser()は使えない。body.userIdを必須とする。
+    if (isContinue) {
+      if (!body.userId) {
+        throw new Error("userId is required for continuation calls");
+      }
+      userId = body.userId;
+      console.log(`📍 Continuation call with userId: ${userId}`);
+    } else if (body.userId) {
       userId = body.userId;
     } else {
       const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
@@ -710,15 +728,11 @@ async function executeStep3_Save(
     
     const recipeStepsMd = dish.instructions.map((step: string, i: number) => `${i + 1}. ${step}`).join("\n\n");
     
+    const round1 = (v: number | null | undefined) => v != null ? Math.round(v * 10) / 10 : null;
+    
     dishDetails.push({
       name: dish.name,
       role: dish.role,
-      cal: Math.round(nutrition?.calories_kcal ?? 0),
-      protein: Math.round((nutrition?.protein_g ?? 0) * 10) / 10,
-      fat: Math.round((nutrition?.fat_g ?? 0) * 10) / 10,
-      carbs: Math.round((nutrition?.carbs_g ?? 0) * 10) / 10,
-      fiber: Math.round((nutrition?.fiber_g ?? 0) * 10) / 10,
-      sodium: Math.round((nutrition?.sodium_mg ?? 0) / 1000 * 10) / 10,
       ingredient: dish.ingredients.slice(0, 3).map((i: any) => i.name).join("、"),
       ingredients: dish.ingredients.map((i: any) => `${i.name} ${i.amount_g}g`),
       recipeSteps: dish.instructions,
@@ -726,6 +740,42 @@ async function executeStep3_Save(
       recipeStepsMd,
       base_recipe_id: null,
       is_generated_name: true,
+      
+      // 栄養素（単位付きの統一形式のみ）
+      calories_kcal: nutrition?.calories_kcal != null ? Math.round(nutrition.calories_kcal) : null,
+      protein_g: round1(nutrition?.protein_g),
+      fat_g: round1(nutrition?.fat_g),
+      carbs_g: round1(nutrition?.carbs_g),
+      fiber_g: round1(nutrition?.fiber_g),
+      sugar_g: round1(nutrition?.sugar_g),
+      sodium_g: round1(nutrition?.sodium_g),
+      
+      // ミネラル
+      potassium_mg: round1(nutrition?.potassium_mg),
+      calcium_mg: round1(nutrition?.calcium_mg),
+      phosphorus_mg: round1(nutrition?.phosphorus_mg),
+      magnesium_mg: round1(nutrition?.magnesium_mg),
+      iron_mg: round1(nutrition?.iron_mg),
+      zinc_mg: round1(nutrition?.zinc_mg),
+      iodine_ug: round1(nutrition?.iodine_ug),
+      cholesterol_mg: round1(nutrition?.cholesterol_mg),
+      
+      // ビタミン
+      vitamin_a_ug: round1(nutrition?.vitamin_a_ug),
+      vitamin_b1_mg: round1(nutrition?.vitamin_b1_mg),
+      vitamin_b2_mg: round1(nutrition?.vitamin_b2_mg),
+      vitamin_b6_mg: round1(nutrition?.vitamin_b6_mg),
+      vitamin_b12_ug: round1(nutrition?.vitamin_b12_ug),
+      vitamin_c_mg: round1(nutrition?.vitamin_c_mg),
+      vitamin_d_ug: round1(nutrition?.vitamin_d_ug),
+      vitamin_e_mg: round1(nutrition?.vitamin_e_mg),
+      vitamin_k_ug: round1(nutrition?.vitamin_k_ug),
+      folic_acid_ug: round1(nutrition?.folic_acid_ug),
+      
+      // 脂肪酸
+      saturated_fat_g: round1(nutrition?.saturated_fat_g),
+      monounsaturated_fat_g: round1(nutrition?.monounsaturated_fat_g),
+      polyunsaturated_fat_g: round1(nutrition?.polyunsaturated_fat_g),
     });
   }
 

@@ -158,7 +158,7 @@ export default function MealDetailPage() {
           <Text style={{ fontWeight: "900" }}>料理内訳</Text>
           {meal.dishes.map((d: any, idx: number) => (
             <Text key={`${d?.name ?? idx}-${idx}`} style={{ color: "#666" }}>
-              - {d?.name ?? "?"}（{d?.role ?? "?"} / {d?.cal ?? 0}kcal）
+              - {d?.name ?? "?"}（{d?.role ?? "?"} / {d?.calories_kcal ?? 0}kcal）
             </Text>
           ))}
         </View>

@@ -110,10 +110,10 @@ export async function POST(request: Request) {
     const mainDish = dishesArray.find((d: any) => d.role === 'main') || dishesArray[0];
     const allDishNames = dishesArray.map((d: any) => d.name).join('、') || '写真から入力';
     
-    // dishes を配列形式で保存
+    // dishes を配列形式で保存（統一形式）
     const dishesJson = dishesArray.map((d: any) => ({
       name: d.name,
-      cal: d.cal || 0,
+      calories_kcal: d.cal || d.calories_kcal || 0,
       role: d.role || 'side',
       ingredient: d.ingredient || ''
     }));

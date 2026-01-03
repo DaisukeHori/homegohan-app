@@ -540,7 +540,7 @@ export default function MealCaptureModal() {
                         <p style={{ fontSize: 11, color: colors.textMuted, margin: 0 }}>{dish.role === 'main' ? '主菜' : dish.role === 'side' ? '副菜' : dish.role === 'soup' ? '汁物' : dish.role === 'rice' ? 'ご飯' : dish.role === 'salad' ? 'サラダ' : 'おかず'}</p>
                       </div>
                     </div>
-                    <span style={{ fontSize: 13, color: colors.textLight }}>{dish.cal} kcal</span>
+                    <span style={{ fontSize: 13, color: colors.textLight }}>{dish.calories_kcal} kcal</span>
                   </div>
                 ))}
               </div>
