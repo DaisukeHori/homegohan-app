@@ -2026,6 +2026,368 @@ CREATE OR REPLACE FUNCTION search_recipes_with_nutrition(
 | 全材料マッチ失敗 | v1方式 | 0.3 |
 | 検証偏差 > 50% | 計算値採用（警告付き） | 0.6 |
 
+### 8.7 汎用献立生成エンジン（V4）
+
+**バージョン:** v4
+**ファイル:** `supabase/functions/generate-menu-v4/index.ts`
+
+#### 8.7.1 概要
+
+V4は「週間献立生成」ではなく「汎用献立生成エンジン」として設計される。
+
+**コア原則:**
+1. **「週」の概念を持たない**: 1食〜最大31日分（93スロット）まで柔軟に対応
+2. **V4は何も判断しない**: 渡されたスロットをそのまま生成
+3. **スロット判断はUI/API側**: 「空欄を探す」「範囲を展開する」はUI/APIの責務
+4. **コンテキストは明示的に渡す**: 前後の献立、冷蔵庫食材などを明示的に渡す
+
+#### 8.7.2 パラメータ設計
+
+```typescript
+interface GenerateMenuV4Request {
+  // === 必須 ===
+  targetSlots: Array<{
+    date: string;       // "2026-01-03"
+    mealType: MealType; // "breakfast" | "lunch" | "dinner" | "snack" | "midnight_snack"
+  }>;
+  
+  // === コンテキスト ===
+  existingMenus?: Array<{
+    date: string;
+    mealType: MealType;
+    dishName: string;
+    status: "completed" | "manual" | "ai" | "planned";
+    isPast: boolean;
+  }>;
+  
+  fridgeItems?: Array<{
+    name: string;
+    expirationDate?: string;
+    quantity?: string;
+  }>;
+  
+  note?: string; // ユーザーの自然言語要望
+  
+  // === 条件・制約（V3互換 + 拡張） ===
+  constraints?: {
+    useFridgeFirst?: boolean;
+    quickMeals?: boolean;
+    japaneseStyle?: boolean;
+    healthy?: boolean;
+    themes?: string[];
+    ingredients?: string[];
+    cookingTime?: { weekday?: number; weekend?: number };
+    cheatDay?: string;
+    avoidDuplicates?: boolean;
+  };
+  
+  familySize?: number;
+  detectedIngredients?: string[];
+  
+  // === ユーザー情報（自動収集 or 明示指定） ===
+  userProfile?: {
+    age?: number;
+    gender?: string;
+    cooking_experience?: string;
+    preferred_cuisines?: string[];
+    disliked_foods?: string[];
+    cookingEquipment?: CookingEquipment;
+    shoppingPattern?: ShoppingPattern;
+  };
+  
+  allergies?: Array<{ allergen: string; severity?: string }>;
+  nutritionGoals?: NutritionGoals;
+  
+  // === 季節・イベント（自動計算 or 明示指定） ===
+  seasonalContext?: {
+    month: number;
+    seasonalIngredients?: SeasonalIngredients;
+    events?: SeasonalEvent[];
+  };
+  
+  // === 内部用 ===
+  userId?: string;
+  mealPlanId?: string;
+  requestId?: string;
+}
+```
+
+#### 8.7.3 コンテキスト範囲（動的）
+
+生成対象スロットの日数に応じて、前後の参照範囲を自動調整:
+
+| 生成対象日数 | 前後の参照範囲 | 合計参照日数 |
+|-------------|---------------|-------------|
+| 1〜3日 | 前後3日 | 最大9日 |
+| 4〜7日 | 前後7日 | 最大21日 |
+| 8〜14日 | 前後10日 | 最大34日 |
+| 15〜31日 | 前後14日 | 最大59日 |
+
+```typescript
+function calculateContextRange(targetSlots: Slot[]): { before: number; after: number } {
+  const dates = [...new Set(targetSlots.map(s => s.date))];
+  const targetDays = dates.length;
+  
+  let rangeDays: number;
+  if (targetDays <= 3) {
+    rangeDays = 3;
+  } else if (targetDays <= 7) {
+    rangeDays = 7;
+  } else if (targetDays <= 14) {
+    rangeDays = 10;
+  } else {
+    rangeDays = 14;
+  }
+  
+  return { before: rangeDays, after: rangeDays };
+}
+```
+
+#### 8.7.4 LLMプロンプト構成
+
+1. **既存献立**（過去・未来を区別して重複回避）
+2. **冷蔵庫食材**（優先使用）
+3. **旬の食材**（月に応じた野菜・魚・果物）
+4. **イベント・行事**（正月、クリスマスなど）
+5. **調理器具**（使える/使えない）
+6. **買い物パターン**（食材使い回し計画）
+7. **ユーザー要望**（自然言語）
+
+#### 8.7.5 API Route
+
+**エンドポイント:** `POST /api/ai/menu/v4/generate`
+
+```typescript
+// src/app/api/ai/menu/v4/generate/route.ts
+
+export async function POST(request: Request) {
+  const supabase = await createClient();
+  const body = await request.json();
+  
+  // 1. 認証
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  
+  // 2. バリデーション
+  if (!body.targetSlots || body.targetSlots.length === 0) {
+    return NextResponse.json({ error: 'targetSlots is required' }, { status: 400 });
+  }
+  if (body.targetSlots.length > 93) { // 31日 × 3食
+    return NextResponse.json({ error: 'Maximum 93 slots (31 days)' }, { status: 400 });
+  }
+  
+  // 3. 自動収集（渡されていなければ）
+  const existingMenus = body.existingMenus ?? 
+    await collectExistingMenus(supabase, user.id, body.targetSlots);
+  const fridgeItems = body.fridgeItems ?? 
+    await collectFridgeItems(supabase, user.id);
+  const userProfile = body.userProfile ?? 
+    await collectUserProfile(supabase, user.id);
+  const seasonalContext = body.seasonalContext ?? 
+    buildSeasonalContext(body.targetSlots);
+  
+  // 4. meal_plan取得/作成
+  const mealPlan = await getOrCreateMealPlan(supabase, user.id, body.targetSlots);
+  
+  // 5. リクエスト作成
+  const { data: requestData } = await supabase
+    .from('weekly_menu_requests')
+    .insert({
+      user_id: user.id,
+      start_date: body.targetSlots[0].date,
+      mode: 'v4',
+      status: 'processing',
+      prompt: body.note || '',
+    })
+    .select('id')
+    .single();
+  
+  // 6. Edge Function呼び出し（waitUntilでバックグラウンド）
+  waitUntil(invokeEdgeFunction('generate-menu-v4', {
+    userId: user.id,
+    mealPlanId: mealPlan.id,
+    requestId: requestData.id,
+    targetSlots: body.targetSlots,
+    existingMenus,
+    fridgeItems,
+    userProfile,
+    seasonalContext,
+    constraints: body.constraints,
+    note: body.note,
+    familySize: body.familySize,
+  }));
+  
+  return NextResponse.json({ 
+    status: 'processing',
+    requestId: requestData.id,
+  });
+}
+```
+
+#### 8.7.6 DBマイグレーション（V4対応）
+
+```sql
+-- Migration: 20260103_add_v4_profile_columns.sql
+
+-- 買い物パターン
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS shopping_frequency TEXT;
+-- "daily" | "twice_weekly" | "weekly" | "biweekly"
+
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS weekly_food_budget INTEGER;
+-- 週の食費予算（円）
+
+-- 調理器具
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS cooking_equipment JSONB DEFAULT '{}';
+-- {
+--   "has_oven": true,
+--   "has_pressure_cooker": false,
+--   "has_air_fryer": false,
+--   "has_grill": true,
+--   "stove_type": "gas" | "ih"
+-- }
+
+-- インデックス
+CREATE INDEX IF NOT EXISTS idx_user_profiles_shopping_frequency 
+  ON user_profiles(shopping_frequency);
+```
+
+### 8.8 旬の食材・イベントデータ
+
+#### 8.8.1 旬の食材
+
+```typescript
+// lib/seasonal-ingredients.ts
+
+interface SeasonalIngredients {
+  vegetables: string[];
+  fish: string[];
+  fruits: string[];
+}
+
+const SEASONAL_INGREDIENTS: Record<number, SeasonalIngredients> = {
+  1: { // 1月
+    vegetables: ["白菜", "大根", "ほうれん草", "小松菜", "ねぎ", "ブロッコリー", "かぶ", "れんこん"],
+    fish: ["ぶり", "たら", "かに", "ふぐ", "あんこう", "金目鯛", "牡蠣"],
+    fruits: ["みかん", "りんご", "いちご", "きんかん"],
+  },
+  // ... 2〜12月（詳細は設計書参照）
+};
+```
+
+#### 8.8.2 イベント・行事食
+
+```typescript
+// lib/seasonal-events.ts
+
+interface SeasonalEvent {
+  name: string;
+  date: string; // "MM-DD" or "variable"
+  dishes: string[];
+  ingredients: string[];
+  note?: string;
+}
+
+const SEASONAL_EVENTS: SeasonalEvent[] = [
+  { name: "お正月", date: "01-01", dishes: ["おせち料理", "お雑煮", "お屠蘇"], ingredients: ["餅", "数の子", "黒豆"], note: "1/1〜1/3" },
+  { name: "節分", date: "02-03", dishes: ["恵方巻き", "福豆", "いわし"], ingredients: ["海苔", "大豆", "いわし"] },
+  { name: "ひな祭り", date: "03-03", dishes: ["ちらし寿司", "はまぐりのお吸い物"], ingredients: ["はまぐり", "菜の花"] },
+  { name: "こどもの日", date: "05-05", dishes: ["ちまき", "柏餅"], ingredients: ["柏の葉", "笹の葉"] },
+  { name: "七夕", date: "07-07", dishes: ["そうめん", "ちらし寿司"], ingredients: ["そうめん", "オクラ"] },
+  { name: "お盆", date: "08-13", dishes: ["精進料理", "そうめん"], ingredients: ["なす", "きゅうり"], note: "8/13〜8/16" },
+  { name: "十五夜", date: "variable", dishes: ["月見団子", "月見そば"], ingredients: ["団子", "里芋", "栗"] },
+  { name: "ハロウィン", date: "10-31", dishes: ["かぼちゃ料理"], ingredients: ["かぼちゃ"] },
+  { name: "クリスマス", date: "12-25", dishes: ["ローストチキン", "ケーキ", "シチュー"], ingredients: ["鶏肉", "生クリーム"], note: "12/24〜25" },
+  { name: "大晦日", date: "12-31", dishes: ["年越しそば"], ingredients: ["そば"] },
+];
+```
+
+### 8.9 オンボーディング追加項目（V4対応）
+
+#### 8.9.1 追加質問
+
+既存の `QUESTIONS` 配列に以下を追加（`family_size` の後に挿入）:
+
+```typescript
+// 買い物頻度
+{
+  id: 'shopping_frequency',
+  text: '普段の買い物の頻度は？',
+  type: 'choice',
+  options: [
+    { label: '🛒 毎日買い物に行く', value: 'daily' },
+    { label: '🛒 週2〜3回', value: 'twice_weekly' },
+    { label: '🛒 週1回まとめ買い', value: 'weekly' },
+    { label: '🛒 2週間に1回程度', value: 'biweekly' },
+  ],
+},
+
+// 週の食費予算（任意）
+{
+  id: 'weekly_food_budget',
+  text: '週の食費予算は？（任意）',
+  type: 'choice',
+  allowSkip: true,
+  options: [
+    { label: '〜5,000円', value: '5000' },
+    { label: '5,000〜10,000円', value: '10000' },
+    { label: '10,000〜15,000円', value: '15000' },
+    { label: '15,000〜20,000円', value: '20000' },
+    { label: '20,000円以上', value: '25000' },
+    { label: '特に決めていない', value: 'none' },
+  ],
+},
+
+// 調理器具
+{
+  id: 'cooking_equipment',
+  text: 'お持ちの調理器具は？（複数選択可）',
+  type: 'multi_choice',
+  allowSkip: true,
+  options: [
+    { label: '🔥 オーブン/オーブンレンジ', value: 'oven' },
+    { label: '🐟 魚焼きグリル', value: 'grill' },
+    { label: '⏱️ 圧力鍋', value: 'pressure_cooker' },
+    { label: '🤖 ホットクック/電気圧力鍋', value: 'slow_cooker' },
+    { label: '🍟 エアフライヤー', value: 'air_fryer' },
+    { label: '🥤 フードプロセッサー/ミキサー', value: 'food_processor' },
+  ],
+},
+
+// コンロの種類
+{
+  id: 'stove_type',
+  text: 'お使いのコンロは？',
+  type: 'choice',
+  options: [
+    { label: '🔥 ガスコンロ', value: 'gas' },
+    { label: '⚡ IHコンロ', value: 'ih' },
+  ],
+},
+```
+
+#### 8.9.2 オンボーディングフロー（変更後）
+
+```
+1. ニックネーム
+2. 性別
+3. 身体情報
+4. 栄養目標
+5. 体重変化ペース（条件付き）
+6-9. 運動関連
+10. 仕事スタイル
+11. 健康状態
+12. 服用中の薬
+13. アレルギー
+14. 料理経験
+15. 調理時間
+16. 料理ジャンル嗜好
+17. 家族人数
+18. 🆕 買い物頻度
+19. 🆕 週の食費予算（任意）
+20. 🆕 調理器具
+21. 🆕 コンロの種類
+```
+
 ---
 
 ## 9. 認証・認可
@@ -2302,6 +2664,6 @@ homegohan/
 
 ---
 
-**更新日:** 2026年1月2日
-**バージョン:** 0.2.0
+**更新日:** 2026年1月3日
+**バージョン:** 0.3.0 (V4汎用献立生成エンジン追加)
 
