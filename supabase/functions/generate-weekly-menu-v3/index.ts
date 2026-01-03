@@ -200,6 +200,7 @@ async function triggerNextStep(
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${supabaseServiceKey}`,
+        "apikey": supabaseServiceKey,
       },
       body: JSON.stringify({
         request_id: requestId,
