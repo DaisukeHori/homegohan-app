@@ -748,7 +748,7 @@ const mealCalorieRatio = {
 
 ### 7.2.4 `backfill-ingredient-embeddings`（食材embeddingバックフィル）
 
-**目的:** `dataset_ingredients.name_embedding`（vector(384)）を埋めて、食材名の表記揺れ検索（pgvector）を有効化する
+**目的:** `dataset_ingredients.name_embedding`（vector(1536)）を埋めて、食材名の表記揺れ検索（pgvector）を有効化する
 
 **認証:** service role JWT のみ
 
@@ -756,11 +756,15 @@ const mealCalorieRatio = {
 - `batchSize`（1..500, default 200）
 - `maxRows`（任意）
 - `dryRun`（任意）
+- `model`（任意、デフォルト: `text-embedding-3-large`）
+- `dimensions`（任意、デフォルト: 1536）
 
 **処理フロー:**
 1. `name_embedding is null` の食材をバッチ取得
-2. OpenAI Embeddings（`text-embedding-3-small`, dimensions=384）で埋め込み生成
+2. OpenAI Embeddings（`text-embedding-3-large`, dimensions=1536）で埋め込み生成
 3. `dataset_ingredients` を upsert して埋め込みを保存
+
+**注意:** 全ての埋め込みベクトルカラム（`dataset_ingredients.name_embedding`, `dataset_recipes.name_embedding`, `dataset_menu_sets.content_embedding`）は統一して `text-embedding-3-large` モデルと 1536次元を使用します。
 
 ### 7.3 `analyze-meal-photo`
 
