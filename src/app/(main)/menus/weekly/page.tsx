@@ -1544,8 +1544,8 @@ export default function WeeklyMenuPage() {
       ? meal.dishes
       : meal.dishes
         ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
-        : [{ name: meal.dishName, cal: meal.caloriesKcal || 0, role: 'main' }];
-    setManualDishes(existingDishes.length > 0 ? existingDishes : [{ name: '', cal: 0, role: 'main' }]);
+        : [{ name: meal.dishName || '', calories_kcal: meal.caloriesKcal || 0, role: 'main' }];
+    setManualDishes(existingDishes.length > 0 ? existingDishes : [{ name: '', calories_kcal: 0, role: 'main' }]);
     setManualMode(meal.mode || 'cook');
     setActiveModal('manualEdit');
   };
@@ -1591,7 +1591,7 @@ export default function WeeklyMenuPage() {
 
   // Add dish to manual edit
   const addManualDish = () => {
-    setManualDishes(prev => [...prev, { name: '', cal: 0, role: 'side' }]);
+    setManualDishes(prev => [...prev, { name: '', calories_kcal: 0, role: 'side' }]);
   };
 
   // Remove dish from manual edit
