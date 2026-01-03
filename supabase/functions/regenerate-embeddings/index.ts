@@ -113,14 +113,43 @@ Deno.serve(async (req) => {
       throw new Error(`Fetch error: ${fetchError.message}`);
     }
 
+    // onlyMissing=trueの場合、rows.length === 0でも実際にNULLレコードが残っているか確認
     if (!rows || rows.length === 0) {
+      // onlyMissingモードの場合、実際にNULLレコードが残っているか再確認
+      if (onlyMissing) {
+        const { count: remainingCount } = await supabase
+          .from(tableName)
+          .select("*", { count: "exact", head: true })
+          .is(config.embeddingColumn, null);
+        
+        if (remainingCount && remainingCount > 0) {
+          // NULLレコードが残っている場合は、offset=0から再開
+          return new Response(
+            JSON.stringify({
+              success: true,
+              table: tableName,
+              processed: 0,
+              offset: 0,
+              nextOffset: 0,
+              totalCount: remainingCount,
+              hasMore: true,
+              model,
+              dimensions,
+              message: `No rows fetched at offset ${offset}, but ${remainingCount} NULL records remain. Restart from offset=0.`,
+            }),
+            { headers: { "Content-Type": "application/json" } }
+          );
+        }
+      }
+      
       return new Response(
         JSON.stringify({
           success: true,
           message: "No more rows to process",
           processed: 0,
           offset,
-          totalCount,
+          totalCount: totalCount ?? 0,
+          hasMore: false,
         }),
         { headers: { "Content-Type": "application/json" } }
       );
@@ -149,8 +178,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // onlyMissing=trueの場合、処理後に実際のNULLレコード数を再取得してhasMoreを判定
+    let actualRemainingCount = totalCount;
+    if (onlyMissing) {
+      const { count: remainingCount } = await supabase
+        .from(tableName)
+        .select("*", { count: "exact", head: true })
+        .is(config.embeddingColumn, null);
+      actualRemainingCount = remainingCount ?? 0;
+    }
+
     const nextOffset = offset + rows.length;
-    const hasMore = nextOffset < (totalCount ?? 0);
+    // hasMoreの判定を改善：rows.length > 0 かつ (nextOffset < totalCount または onlyMissingで実際にNULLレコードが残っている)
+    const hasMore = rows.length > 0 && (
+      (totalCount !== null && nextOffset < totalCount) ||
+      (onlyMissing && actualRemainingCount > 0)
+    );
 
     return new Response(
       JSON.stringify({

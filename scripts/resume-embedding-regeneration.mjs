@@ -168,7 +168,13 @@ async function processTable(tableName, startOffset = 0, model = "text-embedding-
       }
       
       totalProcessed += data.processed;
-      offset = data.nextOffset;
+      // onlyMissingモードでoffset=0が返された場合はリセット
+      if (onlyMissing && data.nextOffset === 0 && data.message?.includes("Restart from offset=0")) {
+        offset = 0;
+        console.log(`\n   🔄 NULLレコードが残っているため、offset=0から再開します`);
+      } else {
+        offset = data.nextOffset;
+      }
       hasMore = data.hasMore;
       
       const pct = data.totalCount > 0 
