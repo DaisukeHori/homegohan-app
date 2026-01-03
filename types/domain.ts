@@ -421,44 +421,54 @@ export type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
 
 export interface DishDetail {
   name: string;
-  cal: number;
-  ingredient?: string;
   role?: string; // 'main' | 'side' | 'soup' | 'rice' | 'salad' | etc.
+  ingredient?: string; // 主な食材（旧形式、後方互換用）
   ingredients?: string[]; // この料理の材料リスト
   recipeSteps?: string[]; // この料理のレシピ手順
+  ingredientsMd?: string; // 材料のマークダウン
+  recipeStepsMd?: string; // 作り方のマークダウン
+  displayOrder?: number; // 表示順序
+  
+  // ===== 栄養素（単位付きの統一形式）=====
   // 基本栄養素
-  protein?: number;
-  fat?: number;
-  carbs?: number;
+  calories_kcal?: number;  // エネルギー (kcal)
+  protein_g?: number;      // タンパク質 (g)
+  fat_g?: number;          // 脂質 (g)
+  carbs_g?: number;        // 炭水化物 (g)
+  
   // 塩分・糖質・食物繊維
-  sodium?: number;
-  sugar?: number;
-  fiber?: number;
-  fiberSoluble?: number;
-  fiberInsoluble?: number;
+  sodium_g?: number;       // 塩分 (g)
+  sugar_g?: number;        // 糖質 (g)
+  fiber_g?: number;        // 食物繊維 (g)
+  fiber_soluble_g?: number;   // 水溶性食物繊維 (g)
+  fiber_insoluble_g?: number; // 不溶性食物繊維 (g)
+  
   // ミネラル
-  potassium?: number;
-  calcium?: number;
-  phosphorus?: number;
-  iron?: number;
-  zinc?: number;
-  iodine?: number;
-  cholesterol?: number;
+  potassium_mg?: number;   // カリウム (mg)
+  calcium_mg?: number;     // カルシウム (mg)
+  phosphorus_mg?: number;  // リン (mg)
+  magnesium_mg?: number;   // マグネシウム (mg)
+  iron_mg?: number;        // 鉄 (mg)
+  zinc_mg?: number;        // 亜鉛 (mg)
+  iodine_ug?: number;      // ヨウ素 (µg)
+  cholesterol_mg?: number; // コレステロール (mg)
+  
   // ビタミン
-  vitaminB1?: number;
-  vitaminB2?: number;
-  vitaminC?: number;
-  vitaminB6?: number;
-  vitaminB12?: number;
-  folicAcid?: number;
-  vitaminA?: number;
-  vitaminD?: number;
-  vitaminK?: number;
-  vitaminE?: number;
+  vitamin_a_ug?: number;   // ビタミンA (µg)
+  vitamin_b1_mg?: number;  // ビタミンB1 (mg)
+  vitamin_b2_mg?: number;  // ビタミンB2 (mg)
+  vitamin_b6_mg?: number;  // ビタミンB6 (mg)
+  vitamin_b12_ug?: number; // ビタミンB12 (µg)
+  vitamin_c_mg?: number;   // ビタミンC (mg)
+  vitamin_d_ug?: number;   // ビタミンD (µg)
+  vitamin_e_mg?: number;   // ビタミンE (mg)
+  vitamin_k_ug?: number;   // ビタミンK (µg)
+  folic_acid_ug?: number;  // 葉酸 (µg)
+  
   // 脂肪酸
-  saturatedFat?: number;
-  monounsaturatedFat?: number;
-  polyunsaturatedFat?: number;
+  saturated_fat_g?: number;       // 飽和脂肪酸 (g)
+  monounsaturated_fat_g?: number; // 一価不飽和脂肪酸 (g)
+  polyunsaturated_fat_g?: number; // 多価不飽和脂肪酸 (g)
 }
 
 // dishes は配列形式で可変数に対応
