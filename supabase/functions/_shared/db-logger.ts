@@ -22,8 +22,8 @@ interface LogEntry {
 // Supabase クライアント（service_role）
 function getSupabaseClient() {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  // Edge Functionsでは DATASET_SERVICE_ROLE_KEY を使用（Supabase CLIの制限回避）
-  const supabaseServiceKey = Deno.env.get('DATASET_SERVICE_ROLE_KEY') 
+  // SERVICE_ROLE_JWT を優先し、なければ SUPABASE_SERVICE_ROLE_KEY を使用
+  const supabaseServiceKey = Deno.env.get('SERVICE_ROLE_JWT') 
     ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   
   if (!supabaseUrl || !supabaseServiceKey) {
