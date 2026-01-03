@@ -52,6 +52,7 @@ interface DishDetail {
   name: string;
   role: string;
   cal?: number;
+  calories_kcal?: number;
   ingredients?: string;
 }
 

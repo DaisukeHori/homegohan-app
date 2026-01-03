@@ -30,7 +30,7 @@ const colors = {
 };
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
-type DishDetail = { name: string; cal: number; role: string; ingredient?: string };
+type DishDetail = { name: string; cal: number; calories_kcal?: number; role: string; ingredient?: string };
 type Step = 'capture' | 'analyzing' | 'result' | 'select-date';
 
 const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; bg: string }> = {
