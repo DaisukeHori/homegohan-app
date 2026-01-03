@@ -193,6 +193,7 @@ async function triggerNextStep(
 
   // 自分自身を呼び出す（レスポンスを待つ）
   const url = `${supabaseUrl}/functions/v1/generate-weekly-menu-v3`;
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
   try {
     const res = await fetch(url, {
@@ -200,7 +201,7 @@ async function triggerNextStep(
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${supabaseServiceKey}`,
-        "apikey": supabaseServiceKey,
+        "apikey": anonKey,
       },
       body: JSON.stringify({
         request_id: requestId,
