@@ -164,8 +164,28 @@ export interface DbWeeklyMenuRequest {
   constraints: any | null;
   inventory_image_url: string | null;
   detected_ingredients: string[] | null;
+  prediction_result: any | null;
   created_at: string;
   updated_at: string;
+  
+  // V3+ fields
+  mode: string | null; // 'weekly' | 'single' | 'regenerate' | 'v4'
+  target_date: string | null;
+  target_meal_type: string | null;
+  target_meal_id: string | null;
+  progress: any | null; // JSONB for progress tracking
+  generated_data: any | null; // JSONB for intermediate state
+  current_step: number | null;
+  
+  // V4 fields
+  target_slots: DbTargetSlot[] | null; // V4: 生成対象スロット
+}
+
+// V4 TargetSlot type (DB format)
+export interface DbTargetSlot {
+  date: string;
+  meal_type: string;
+  planned_meal_id?: string; // 上書き対象のID（既存スロットを更新する場合のみ）
 }
 
 export interface DbAnnouncement {

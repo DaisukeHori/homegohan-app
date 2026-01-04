@@ -2,7 +2,8 @@ import type {
   UserProfile, Meal, MealNutritionEstimate, WeeklyMenuRequest, 
   Announcement, OrgDailyStats, Organization, DailyActivityLog, Badge,
   MealPlan, MealPlanDay, PlannedMeal, ShoppingListItem, WeeklyMenuResult,
-  FitnessGoal, WorkStyle, CookingExperience, DietStyle, Frequency, QualityLevel, StressLevel
+  FitnessGoal, WorkStyle, CookingExperience, DietStyle, Frequency, QualityLevel, StressLevel,
+  TargetSlot, MenuRequestMode, MenuGenerationProgress, MealType, ShoppingFrequency
 } from '@/types/domain';
 import type { 
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
@@ -303,9 +304,38 @@ export const toWeeklyMenuRequest = (db: DbWeeklyMenuRequest): WeeklyMenuRequest 
   constraints: db.constraints,
   inventoryImageUrl: db.inventory_image_url,
   detectedIngredients: db.detected_ingredients,
+  predictionResult: db.prediction_result,
   createdAt: db.created_at,
   updatedAt: db.updated_at,
+  
+  // V3+ fields
+  mode: db.mode as MenuRequestMode | null,
+  targetDate: db.target_date,
+  targetMealType: db.target_meal_type as MealType | null,
+  targetMealId: db.target_meal_id,
+  progress: db.progress as MenuGenerationProgress | null,
+  generatedData: db.generated_data,
+  currentStep: db.current_step,
+  
+  // V4 fields
+  targetSlots: db.target_slots ? toTargetSlots(db.target_slots) : null,
 });
+
+// V4 TargetSlot conversion (DB snake_case -> camelCase)
+export const toTargetSlots = (dbSlots: any[]): TargetSlot[] => 
+  dbSlots.map(slot => ({
+    date: slot.date,
+    mealType: slot.meal_type as MealType,
+    plannedMealId: slot.planned_meal_id,
+  }));
+
+// V4 TargetSlot conversion (camelCase -> DB snake_case)
+export const fromTargetSlots = (slots: TargetSlot[]): any[] =>
+  slots.map(slot => ({
+    date: slot.date,
+    meal_type: slot.mealType,
+    planned_meal_id: slot.plannedMealId,
+  }));
 
 // Announcement
 export const toAnnouncement = (db: DbAnnouncement): Announcement => ({

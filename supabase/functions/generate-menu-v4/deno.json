@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.ns", "dom"],
+    "strict": true
+  },
+  "imports": {
+    "@openai/agents": "npm:@openai/agents",
+    "zod": "npm:zod"
+  }
+}

@@ -20,6 +20,16 @@ type Question =
       text: string;
       type: "choice";
       options: { label: string; value: string; description?: string }[];
+      allowSkip?: boolean;
+      showIf?: (answers: Record<string, any>) => boolean;
+    }
+  | {
+      id: string;
+      text: string;
+      type: "number";
+      placeholder?: string;
+      min?: number;
+      max?: number;
       showIf?: (answers: Record<string, any>) => boolean;
     }
   | {
@@ -239,6 +249,58 @@ const QUESTIONS: Question[] = [
     min: 1,
     max: 10,
   },
+  // V4: 買い物頻度
+  {
+    id: "shopping_frequency",
+    text: "普段の買い物の頻度は？",
+    type: "choice",
+    options: [
+      { label: "毎日買い物に行く", value: "daily" },
+      { label: "週2〜3回", value: "2-3_weekly" },
+      { label: "週1回まとめ買い", value: "weekly" },
+      { label: "2週間に1回程度", value: "biweekly" },
+    ],
+  },
+  // V4: 週の食費予算（任意）
+  {
+    id: "weekly_food_budget",
+    text: "週の食費予算は？（任意）",
+    type: "choice",
+    allowSkip: true,
+    options: [
+      { label: "〜5,000円", value: "5000" },
+      { label: "5,000〜10,000円", value: "10000" },
+      { label: "10,000〜15,000円", value: "15000" },
+      { label: "15,000〜20,000円", value: "20000" },
+      { label: "20,000円以上", value: "25000" },
+      { label: "特に決めていない", value: "none" },
+    ],
+  },
+  // V4: 調理器具（複数選択）
+  {
+    id: "kitchen_appliances",
+    text: "お持ちの調理器具は？（複数選択可）",
+    type: "multi_choice",
+    allowSkip: true,
+    options: [
+      { label: "オーブン/オーブンレンジ", value: "oven" },
+      { label: "魚焼きグリル", value: "grill" },
+      { label: "圧力鍋", value: "pressure_cooker" },
+      { label: "ホットクック/電気圧力鍋", value: "slow_cooker" },
+      { label: "エアフライヤー", value: "air_fryer" },
+      { label: "フードプロセッサー/ミキサー", value: "food_processor" },
+    ],
+  },
+  // V4: コンロの種類
+  {
+    id: "stove_type",
+    text: "お使いのコンロは？",
+    type: "choice",
+    options: [
+      { label: "ガスコンロ", value: "stove:gas" },
+      { label: "IHコンロ", value: "stove:ih" },
+    ],
+  },
 ];
 
 function getNextQuestion(fromStep: number, ans: Record<string, any>) {
@@ -291,6 +353,20 @@ function transformAnswersToProfile(ans: Record<string, any>) {
 
   if (ans.family_size) profile.familySize = parseInt(ans.family_size);
 
+  // V4: 買い物頻度
+  if (ans.shopping_frequency) profile.shoppingFrequency = ans.shopping_frequency;
+
+  // V4: 週の食費予算
+  if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") {
+    profile.weeklyFoodBudget = parseInt(ans.weekly_food_budget);
+  }
+
+  // V4: 調理器具（kitchen_appliances + stove_type）
+  const appliances: string[] = [];
+  if (ans.kitchen_appliances?.length) appliances.push(...ans.kitchen_appliances);
+  if (ans.stove_type) appliances.push(ans.stove_type);
+  if (appliances.length > 0) profile.kitchenAppliances = appliances;
+
   return profile;
 }
 
@@ -321,6 +397,11 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.weekdayCookingMinutes !== undefined) updates.weekday_cooking_minutes = body.weekdayCookingMinutes;
   if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;
   if (body.familySize !== undefined) updates.family_size = body.familySize;
+
+  // V4: 買い物頻度・予算・調理器具
+  if (body.shoppingFrequency) updates.shopping_frequency = body.shoppingFrequency;
+  if (body.weeklyFoodBudget !== undefined) updates.weekly_food_budget = body.weeklyFoodBudget;
+  if (body.kitchenAppliances) updates.kitchen_appliances = body.kitchenAppliances;
 
   // デフォルト補完
   if (!updates.nickname) updates.nickname = "Guest";

@@ -11,6 +11,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "mobile:start": "npm --workspace apps/mobile run start",
     "mobile:ios": "npm --workspace apps/mobile run ios",
     "mobile:android": "npm --workspace apps/mobile run android"
@@ -40,6 +41,7 @@
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.3",
     "tailwindcss": "^4.1.17",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.16"
   }
 }

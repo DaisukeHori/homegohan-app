@@ -203,6 +203,58 @@ const QUESTIONS = [
     min: 1,
     max: 10,
   },
+  // V4: 買い物頻度
+  {
+    id: 'shopping_frequency',
+    text: '普段の買い物の頻度は？',
+    type: 'choice',
+    options: [
+      { label: '🛒 毎日買い物に行く', value: 'daily' },
+      { label: '🛒 週2〜3回', value: '2-3_weekly' },
+      { label: '🛒 週1回まとめ買い', value: 'weekly' },
+      { label: '🛒 2週間に1回程度', value: 'biweekly' },
+    ],
+  },
+  // V4: 週の食費予算（任意）
+  {
+    id: 'weekly_food_budget',
+    text: '週の食費予算は？\n（任意）',
+    type: 'choice',
+    allowSkip: true,
+    options: [
+      { label: '💰 〜5,000円', value: '5000' },
+      { label: '💰 5,000〜10,000円', value: '10000' },
+      { label: '💰 10,000〜15,000円', value: '15000' },
+      { label: '💰 15,000〜20,000円', value: '20000' },
+      { label: '💰 20,000円以上', value: '25000' },
+      { label: '🤷 特に決めていない', value: 'none' },
+    ],
+  },
+  // V4: 調理器具（複数選択）
+  {
+    id: 'kitchen_appliances',
+    text: 'お持ちの調理器具は？\n（複数選択可、スキップ可）',
+    type: 'multi_choice',
+    allowSkip: true,
+    options: [
+      { label: '🔥 オーブン/オーブンレンジ', value: 'oven' },
+      { label: '🐟 魚焼きグリル', value: 'grill' },
+      { label: '⏱️ 圧力鍋', value: 'pressure_cooker' },
+      { label: '🤖 ホットクック/電気圧力鍋', value: 'slow_cooker' },
+      { label: '🍟 エアフライヤー', value: 'air_fryer' },
+      { label: '🥤 フードプロセッサー/ミキサー', value: 'food_processor' },
+    ],
+  },
+  // V4: コンロの種類
+  {
+    id: 'stove_type',
+    text: 'お使いのコンロは？',
+    type: 'choice',
+    options: [
+      { label: '🔥 ガスコンロ', value: 'stove:gas' },
+      { label: '⚡ IHコンロ', value: 'stove:ih' },
+    ],
+  },
 ];
 
 export default function OnboardingPage() {
@@ -403,6 +455,29 @@ export default function OnboardingPage() {
     // 家族人数
     if (ans.family_size) {
       profile.familySize = parseInt(ans.family_size);
+    }
+
+    // V4: 買い物頻度
+    if (ans.shopping_frequency) {
+      profile.shoppingFrequency = ans.shopping_frequency;
+    }
+
+    // V4: 週の食費予算
+    if (ans.weekly_food_budget && ans.weekly_food_budget !== 'none') {
+      profile.weeklyFoodBudget = parseInt(ans.weekly_food_budget);
+    }
+
+    // V4: 調理器具
+    const appliances: string[] = [];
+    if (ans.kitchen_appliances?.length) {
+      appliances.push(...ans.kitchen_appliances);
+    }
+    // コンロの種類も kitchen_appliances に追加
+    if (ans.stove_type) {
+      appliances.push(ans.stove_type);
+    }
+    if (appliances.length > 0) {
+      profile.kitchenAppliances = appliances;
     }
 
     return profile;

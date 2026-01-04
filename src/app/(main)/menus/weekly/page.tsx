@@ -5,8 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail } from "@/types/domain";
+import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import ReactMarkdown from "react-markdown";
+import { V4GenerateModal } from "@/components/ai-assistant";
+import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import remarkGfm from "remark-gfm";
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
@@ -413,6 +415,9 @@ export default function WeeklyMenuPage() {
   const [loading, setLoading] = useState(true);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   
+  // V4 AIアシスタントモーダル
+  const [showV4Modal, setShowV4Modal] = useState(false);
+
   // 完了モーダル用
   const [successMessage, setSuccessMessage] = useState<{ title: string; message: string } | null>(null);
   
@@ -498,7 +503,66 @@ export default function WeeklyMenuPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
   const [generationProgress, setGenerationProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
-  
+
+  // Meal Plan再取得関数
+  const refreshMealPlan = useCallback(async () => {
+    const targetDate = formatLocalDate(weekStart);
+    try {
+      const res = await fetch(`/api/meal-plans?date=${targetDate}`);
+      if (res.ok) {
+        const { mealPlan } = await res.json();
+        setCurrentPlan(mealPlan);
+        if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+      }
+    } catch (e) {
+      console.error('Failed to refresh meal plan:', e);
+    }
+  }, [weekStart]);
+
+  // V4 Menu Generation Hook
+  const v4Generation = useV4MenuGeneration({
+    onGenerationStart: (reqId) => {
+      console.log('V4 generation started:', reqId);
+      setIsGenerating(true);
+    },
+    onGenerationComplete: () => {
+      console.log('V4 generation completed');
+      setIsGenerating(false);
+      refreshMealPlan();
+      setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' });
+    },
+    onError: (error) => {
+      console.error('V4 generation error:', error);
+      setIsGenerating(false);
+      alert(error);
+    },
+  });
+
+  // V4 生成ハンドラー
+  const handleV4Generate = async (params: {
+    targetSlots: TargetSlot[];
+    constraints: MenuGenerationConstraints;
+    note: string;
+  }) => {
+    try {
+      const result = await v4Generation.generate(params);
+      setShowV4Modal(false);
+      
+      // Subscribe to progress updates
+      if (result?.requestId) {
+        v4Generation.subscribeToProgress(result.requestId, (progress) => {
+          setGenerationProgress({
+            phase: 'v4',
+            message: progress.message || `${progress.completedSlots || 0}/${progress.totalSlots || 0} 件完了`,
+            percentage: progress.totalSlots ? Math.round((progress.completedSlots || 0) / progress.totalSlots * 100) : 0,
+          });
+        });
+      }
+    } catch (error) {
+      // Error already handled in hook
+    }
+  };
+
   // Supabase Realtime チャンネルを保持（クリーンアップ用）
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const supabaseRef = useRef(createClient());
@@ -2478,21 +2542,21 @@ export default function WeeklyMenuPage() {
 
       {/* === AI Banner === */}
       {isGenerating ? (
-        <ProgressTodoCard 
+        <ProgressTodoCard
           progress={generationProgress}
           colors={colors}
         />
       ) : (
         <button
-          onClick={() => setActiveModal('ai')}
+          onClick={() => setShowV4Modal(true)}
           className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
           style={{ background: colors.accent }}
         >
           <div className="flex items-center gap-2">
             <Sparkles size={16} color="#fff" />
             <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-              {emptySlotCount > 0 
-                ? `空欄${emptySlotCount}件 → AIに埋めてもらう` 
+              {emptySlotCount > 0
+                ? `空欄${emptySlotCount}件 → AIに埋めてもらう`
                 : `これからの${futureMealCount}件 → AIで作り直す`}
             </span>
           </div>
@@ -3819,6 +3883,24 @@ export default function WeeklyMenuPage() {
           </>
         )}
       </AnimatePresence>
+
+      {/* V4 AI Generation Modal */}
+      <V4GenerateModal
+        isOpen={showV4Modal}
+        onClose={() => setShowV4Modal(false)}
+        mealPlanDays={currentPlan?.days || []}
+        weekStartDate={weekDates[0]?.dateStr || formatLocalDate(weekStart)}
+        weekEndDate={weekDates[6]?.dateStr || addDaysStr(formatLocalDate(weekStart), 6)}
+        onGenerate={handleV4Generate}
+        isGenerating={isGenerating}
+      />
     </div>
   );
+}
+
+// V4用の日付加算ヘルパー
+function addDaysStr(dateStr: string, days: number): string {
+  const date = new Date(dateStr);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0];
 }

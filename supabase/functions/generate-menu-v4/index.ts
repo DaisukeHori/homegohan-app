@@ -1,0 +1,1593 @@
+/**
+ * V4 汎用献立生成エンジン
+ * 
+ * - 指定されたスロット（targetSlots）のみを生成
+ * - 既存データはデフォルトで保護（plannedMealIdがない限り上書きしない）
+ * - 季節・イベント・冷蔵庫情報を考慮したLLM生成
+ */
+
+import { createClient } from "jsr:@supabase/supabase-js@2";
+import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
+import {
+  calculateNutritionFromIngredients,
+  emptyNutrition,
+  validateAndAdjustNutrition,
+  type NutritionTotals,
+} from "../_shared/nutrition-calculator.ts";
+import {
+  generateMealWithLLM,
+  generateDayMealsWithLLM,
+  reviewWeeklyMenus,
+  regenerateMealForIssue,
+  type GeneratedMeal,
+  type MealType,
+  type MenuReference,
+  type WeeklyMealsSummary,
+} from "../_shared/meal-generator.ts";
+import {
+  DEFAULT_STEP1_DAY_BATCH,
+  DEFAULT_STEP2_FIXES_PER_RUN,
+  DEFAULT_STEP3_SLOT_BATCH,
+  computeMaxFixesForRange,
+  computeNextCursor,
+} from "./step-utils.ts";
+
+console.log("Generate Menu V4 Function loaded (Slot-based generation)");
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const DISPLAY_ORDER_MAP: Record<string, number> = {
+  breakfast: 10,
+  lunch: 20,
+  dinner: 30,
+  snack: 40,
+  midnight_snack: 50,
+};
+
+function getMinExpectedCaloriesForRole(role: string | undefined): number {
+  // V3のカテゴリ別閾値（主菜/ご飯>=100, 副菜>=30, 汁物>=20）を role にマッピング
+  switch (role) {
+    case "main":
+    case "rice":
+      return 100;
+    case "side":
+      return 30;
+    case "soup":
+      return 20;
+    default:
+      return 20;
+  }
+}
+
+// =========================================================
+// Types
+// =========================================================
+
+interface TargetSlot {
+  date: string;
+  mealType: MealType;
+  plannedMealId?: string;
+}
+
+interface ExistingMenuContext {
+  date: string;
+  mealType: MealType;
+  dishName: string;
+  status: string;
+  isPast: boolean;
+}
+
+interface FridgeItemContext {
+  name: string;
+  expirationDate?: string;
+  quantity?: string;
+}
+
+interface SeasonalContext {
+  month: number;
+  seasonalIngredients: {
+    vegetables: string[];
+    fish: string[];
+    fruits: string[];
+  };
+  events: Array<{
+    name: string;
+    date: string;
+    dishes: string[];
+    ingredients: string[];
+    note?: string;
+  }>;
+}
+
+interface ProgressInfo {
+  currentStep: number;
+  totalSteps: number;
+  message: string;
+  completedSlots?: number;
+  totalSlots?: number;
+}
+
+// =========================================================
+// Helpers
+// =========================================================
+
+async function sleep(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  opts: { retries?: number; baseDelayMs?: number; label?: string } = {},
+): Promise<T> {
+  const retries = opts.retries ?? 3;
+  const baseDelayMs = opts.baseDelayMs ?? 800;
+  const label = opts.label ?? "retryable";
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      const status = e?.status ?? e?.response?.status ?? e?.statusCode;
+      const retryable = status === 429 || (typeof status === "number" && status >= 500 && status <= 599);
+      if (!retryable || attempt === retries) throw e;
+      const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+      console.log(`⏳ ${label}: retry in ${delay}ms (attempt ${attempt + 1}/${retries}) status=${status}`);
+      await sleep(delay);
+    }
+  }
+  throw lastErr;
+}
+
+// =========================================================
+// Progress update
+// =========================================================
+
+async function updateProgress(
+  supabase: any,
+  requestId: string | null,
+  progress: ProgressInfo,
+  currentStep?: number,
+) {
+  if (!requestId) return;
+  try {
+    const updateData: any = {
+      progress,
+      updated_at: new Date().toISOString(),
+    };
+    if (currentStep !== undefined) {
+      updateData.current_step = currentStep;
+    }
+    await supabase
+      .from("weekly_menu_requests")
+      .update(updateData)
+      .eq("id", requestId);
+  } catch (e) {
+    console.error("Failed to update progress:", e);
+  }
+}
+
+// =========================================================
+// 次のステップ（または同一ステップの継続）をトリガー
+// =========================================================
+
+async function triggerNextStep(
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  requestId: string,
+  userId: string,
+) {
+  console.log("🔄 Triggering next step...");
+
+  // userIdの検証（undefinedだとJSON.stringifyで省略されてしまう）
+  if (!userId) {
+    console.error("❌ Cannot trigger next step: userId is missing");
+    throw new Error("userId is required to trigger next step");
+  }
+
+  const url = `${supabaseUrl}/functions/v1/generate-menu-v4`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${supabaseServiceKey}`,
+        "apikey": supabaseServiceKey,
+      },
+      body: JSON.stringify({
+        request_id: requestId,
+        userId,
+        _continue: true,
+      }),
+    });
+    console.log(`✅ Next step triggered: ${res.status}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`❌ Next step response error: ${res.status} - ${text}`);
+    }
+  } catch (e) {
+    console.error("❌ Failed to trigger next step:", e);
+  }
+}
+
+// =========================================================
+// Search reference menus
+// =========================================================
+
+async function embedText(text: string, dimensions = 1536): Promise<number[]> {
+  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+
+  const res = await withRetry(
+    async () => {
+      const r = await fetch("https://api.openai.com/v1/embeddings", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          input: text,
+          model: "text-embedding-3-large",
+          dimensions,
+        }),
+      });
+      if (!r.ok) {
+        const err = new Error(`Embedding failed: ${r.statusText}`) as any;
+        err.status = r.status;
+        throw err;
+      }
+      return r;
+    },
+    { retries: 3, label: "embedText" },
+  );
+
+  const json = await res.json();
+  return json.data?.[0]?.embedding ?? [];
+}
+
+async function searchMenuCandidates(
+  supabase: any,
+  queryText: string,
+  matchCount: number,
+): Promise<MenuReference[]> {
+  try {
+    const emb = await embedText(queryText, 1536);
+    const { data, error } = await supabase.rpc("search_menu_examples", {
+      query_embedding: emb,
+      match_count: matchCount,
+      filter_meal_type_hint: null,
+      filter_max_sodium: null,
+      filter_theme_tags: null,
+    });
+    if (error) throw new Error(`search_menu_examples failed: ${error.message}`);
+    return (data ?? []).map((c: any) => ({
+      title: c.title,
+      dishes: Array.isArray(c.dishes)
+        ? c.dishes.map((d: any) => ({
+            name: String(d?.name ?? ""),
+            role: String(d?.role ?? d?.class_raw ?? "other"),
+          }))
+        : [],
+    }));
+  } catch (e) {
+    console.error("Failed to search menu candidates:", e);
+    return [];
+  }
+}
+
+// =========================================================
+// Build context for LLM
+// =========================================================
+
+function buildV4Context(params: {
+  targetSlot: TargetSlot;
+  existingMenus: ExistingMenuContext[];
+  fridgeItems: FridgeItemContext[];
+  seasonalContext: SeasonalContext;
+  userProfile: any;
+  constraints: any;
+  note: string | null;
+}): string {
+  const { targetSlot, existingMenus, fridgeItems, seasonalContext, constraints, note } = params;
+
+  const lines: string[] = [];
+
+  // Target slot info
+  lines.push(`【生成対象】${targetSlot.date} ${targetSlot.mealType}`);
+  lines.push("");
+
+  // User request/note
+  if (note) {
+    lines.push(`【ユーザーの要望】`);
+    lines.push(note);
+    lines.push("");
+  }
+
+  // Constraints
+  const constraintFlags: string[] = [];
+  if (constraints?.useFridgeFirst) constraintFlags.push("冷蔵庫の食材を優先使用");
+  if (constraints?.quickMeals) constraintFlags.push("時短料理中心");
+  if (constraints?.japaneseStyle) constraintFlags.push("和食多め");
+  if (constraints?.healthy) constraintFlags.push("ヘルシー志向");
+  if (constraints?.budgetFriendly) constraintFlags.push("節約重視");
+  if (constraintFlags.length > 0) {
+    lines.push(`【生成条件】${constraintFlags.join("、")}`);
+    lines.push("");
+  }
+
+  // Fridge items (prioritize items expiring soon)
+  if (fridgeItems.length > 0) {
+    const sortedFridge = [...fridgeItems].sort((a, b) => {
+      if (!a.expirationDate) return 1;
+      if (!b.expirationDate) return -1;
+      return a.expirationDate.localeCompare(b.expirationDate);
+    });
+    const fridgeText = sortedFridge.slice(0, 15).map(item => {
+      let text = item.name;
+      if (item.quantity) text += ` (${item.quantity})`;
+      if (item.expirationDate) text += ` [期限:${item.expirationDate}]`;
+      return text;
+    }).join("、");
+    lines.push(`【冷蔵庫の食材】${fridgeText}`);
+    lines.push("");
+  }
+
+  // Seasonal ingredients
+  if (seasonalContext.seasonalIngredients) {
+    const { vegetables, fish, fruits } = seasonalContext.seasonalIngredients;
+    lines.push(`【旬の食材（${seasonalContext.month}月）】`);
+    if (vegetables.length > 0) lines.push(`野菜: ${vegetables.slice(0, 8).join("、")}`);
+    if (fish.length > 0) lines.push(`魚介: ${fish.slice(0, 8).join("、")}`);
+    if (fruits.length > 0) lines.push(`果物: ${fruits.slice(0, 5).join("、")}`);
+    lines.push("");
+  }
+
+  // Seasonal events
+  if (seasonalContext.events && seasonalContext.events.length > 0) {
+    const relevantEvents = seasonalContext.events.filter(e => {
+      if (e.date === "variable") return true;
+      const eventMonthDay = e.date;
+      const slotMonthDay = targetSlot.date.slice(5); // "MM-DD"
+      return eventMonthDay === slotMonthDay;
+    });
+    if (relevantEvents.length > 0) {
+      lines.push(`【イベント・行事】`);
+      for (const event of relevantEvents) {
+        lines.push(`- ${event.name}: ${event.dishes.join("、")}`);
+      }
+      lines.push("");
+    }
+  }
+
+  // Existing menus (for variety)
+  const recentMenus = existingMenus.filter(m => {
+    const dayDiff = Math.abs(
+      (new Date(targetSlot.date).getTime() - new Date(m.date).getTime()) / (1000 * 60 * 60 * 24)
+    );
+    return dayDiff <= 7;
+  });
+
+  if (recentMenus.length > 0) {
+    lines.push(`【直近の献立（被り回避のため参照）】`);
+    const grouped = new Map<string, string[]>();
+    for (const m of recentMenus) {
+      const key = `${m.date} ${m.mealType}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(m.dishName);
+    }
+    for (const [key, dishes] of grouped) {
+      lines.push(`- ${key}: ${dishes.join("、")}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function mealTypeToJa(mealType: MealType): string {
+  return mealType === "breakfast"
+    ? "朝食"
+    : mealType === "lunch"
+    ? "昼食"
+    : mealType === "dinner"
+    ? "夕食"
+    : mealType === "snack"
+    ? "間食"
+    : "夜食";
+}
+
+function buildV4DayContext(params: {
+  date: string;
+  mealTypes: MealType[];
+  slotsForDate: TargetSlot[];
+  existingMenus: ExistingMenuContext[];
+  fridgeItems: FridgeItemContext[];
+  seasonalContext: SeasonalContext;
+  userProfile: any;
+  constraints: any;
+}): string {
+  const { date, mealTypes, slotsForDate, existingMenus, fridgeItems, seasonalContext, constraints } = params;
+
+  const lines: string[] = [];
+  const mealTypesJa = mealTypes.map(mealTypeToJa).join("、");
+  lines.push(`【生成対象】${date}（${mealTypesJa}）`);
+  lines.push("");
+
+  // 既存献立の差し替え情報（plannedMealIdがある場合）
+  const overwriteInfos: string[] = [];
+  for (const mt of mealTypes) {
+    const slot = slotsForDate.find((s) => s.mealType === mt);
+    if (!slot?.plannedMealId) continue;
+    const current = existingMenus.find((m) => m.date === date && m.mealType === mt && m.dishName);
+    if (current?.dishName) {
+      overwriteInfos.push(`${mealTypeToJa(mt)}: 現在「${current.dishName}」→ 別の献立に差し替え`);
+    }
+  }
+  if (overwriteInfos.length > 0) {
+    lines.push(`【差し替え対象】`);
+    overwriteInfos.forEach((t) => lines.push(`- ${t}`));
+    lines.push("");
+  }
+
+  // Constraints
+  const constraintFlags: string[] = [];
+  if (constraints?.useFridgeFirst) constraintFlags.push("冷蔵庫の食材を優先使用");
+  if (constraints?.quickMeals) constraintFlags.push("時短料理中心");
+  if (constraints?.japaneseStyle) constraintFlags.push("和食多め");
+  if (constraints?.healthy) constraintFlags.push("ヘルシー志向");
+  if (constraints?.budgetFriendly) constraintFlags.push("節約重視");
+  if (constraintFlags.length > 0) {
+    lines.push(`【生成条件】${constraintFlags.join("、")}`);
+    lines.push("");
+  }
+
+  // Fridge items
+  if (fridgeItems.length > 0) {
+    const sortedFridge = [...fridgeItems].sort((a, b) => {
+      if (!a.expirationDate) return 1;
+      if (!b.expirationDate) return -1;
+      return a.expirationDate.localeCompare(b.expirationDate);
+    });
+    const fridgeText = sortedFridge
+      .slice(0, 15)
+      .map((item) => {
+        let text = item.name;
+        if (item.quantity) text += ` (${item.quantity})`;
+        if (item.expirationDate) text += ` [期限:${item.expirationDate}]`;
+        return text;
+      })
+      .join("、");
+    lines.push(`【冷蔵庫の食材】${fridgeText}`);
+    lines.push("");
+  }
+
+  // Seasonal ingredients
+  if (seasonalContext.seasonalIngredients) {
+    const { vegetables, fish, fruits } = seasonalContext.seasonalIngredients;
+    lines.push(`【旬の食材（${seasonalContext.month}月）】`);
+    if (vegetables.length > 0) lines.push(`野菜: ${vegetables.slice(0, 8).join("、")}`);
+    if (fish.length > 0) lines.push(`魚介: ${fish.slice(0, 8).join("、")}`);
+    if (fruits.length > 0) lines.push(`果物: ${fruits.slice(0, 5).join("、")}`);
+    lines.push("");
+  }
+
+  // Seasonal events
+  if (seasonalContext.events && seasonalContext.events.length > 0) {
+    const relevantEvents = seasonalContext.events.filter((e) => {
+      if (e.date === "variable") return true;
+      const eventMonthDay = e.date;
+      const slotMonthDay = date.slice(5); // "MM-DD"
+      return eventMonthDay === slotMonthDay;
+    });
+    if (relevantEvents.length > 0) {
+      lines.push(`【イベント・行事】`);
+      for (const event of relevantEvents) {
+        lines.push(`- ${event.name}: ${event.dishes.join("、")}`);
+      }
+      lines.push("");
+    }
+  }
+
+  // Existing menus (for variety)
+  const recentMenus = existingMenus.filter((m) => {
+    const dayDiff = Math.abs(
+      (new Date(date).getTime() - new Date(m.date).getTime()) / (1000 * 60 * 60 * 24),
+    );
+    return dayDiff <= 7;
+  });
+
+  if (recentMenus.length > 0) {
+    lines.push(`【直近の献立（被り回避のため参照）】`);
+    const grouped = new Map<string, string[]>();
+    for (const m of recentMenus) {
+      const key = `${m.date} ${m.mealType}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(m.dishName);
+    }
+    for (const [key, dishes] of grouped) {
+      lines.push(`- ${key}: ${dishes.join("、")}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function getSlotKey(date: string, mealType: MealType): string {
+  return `${date}:${mealType}`;
+}
+
+// =========================================================
+// Save meal to DB
+// =========================================================
+
+async function saveMealToDb(
+  supabase: any,
+  params: {
+    mealPlanId: string;
+    userId: string;
+    targetSlot: TargetSlot;
+    generatedMeal: GeneratedMeal;
+  }
+): Promise<void> {
+  const { mealPlanId, userId, targetSlot, generatedMeal } = params;
+
+  // Get or create meal_plan_day
+  let { data: dayData } = await supabase
+    .from("meal_plan_days")
+    .select("id")
+    .eq("meal_plan_id", mealPlanId)
+    .eq("day_date", targetSlot.date)
+    .maybeSingle();
+
+  if (!dayData) {
+    const dayOfWeek = new Date(targetSlot.date).toLocaleDateString("ja-JP", { weekday: "long" });
+    const { data: newDay, error: dayError } = await supabase
+      .from("meal_plan_days")
+      .insert({
+        meal_plan_id: mealPlanId,
+        day_date: targetSlot.date,
+        day_of_week: dayOfWeek,
+        is_cheat_day: false,
+      })
+      .select("id")
+      .single();
+    if (dayError) throw new Error(`Failed to create meal_plan_day: ${dayError.message}`);
+    dayData = newDay;
+  }
+
+  // Calculate nutrition per dish + V3-like validation/adjustment for suspicious low-calorie dishes
+  const totalNutrition = emptyNutrition();
+  const dishDetails: any[] = [];
+  const aggregatedIngredients: string[] = [];
+  const allSteps: string[] = [];
+
+  const round1 = (v: number | null | undefined) => (v != null ? Math.round(v * 10) / 10 : null);
+  const round2 = (v: number | null | undefined) => (v != null ? Math.round(v * 100) / 100 : null);
+
+  for (let idx = 0; idx < generatedMeal.dishes.length; idx++) {
+    const dish = generatedMeal.dishes[idx];
+
+    let nutrition: NutritionTotals = emptyNutrition();
+    try {
+      nutrition = await calculateNutritionFromIngredients(supabase, dish.ingredients);
+    } catch (e) {
+      console.warn(`Nutrition calc failed for ${dish.name}:`, e);
+      nutrition = emptyNutrition();
+    }
+
+    // V3同様: 低カロリーなど怪しい料理のみ参照レシピで検証・補正
+    const minExpectedCal = getMinExpectedCaloriesForRole(dish.role);
+    if ((nutrition.calories_kcal ?? 0) < minExpectedCal) {
+      try {
+        const before = nutrition.calories_kcal ?? 0;
+        const validation = await validateAndAdjustNutrition(
+          supabase,
+          dish.name,
+          nutrition,
+          { maxDeviationPercent: 70, useReferenceIfInvalid: true },
+        );
+        if (validation.adjustedNutrition) {
+          nutrition = validation.adjustedNutrition;
+          const after = nutrition.calories_kcal ?? 0;
+          console.log(
+            `📝 Adjusted \"${dish.name}\": ${Math.round(before)}kcal → ${Math.round(after)}kcal (${validation.message})`,
+          );
+        }
+      } catch (e: any) {
+        console.warn(`Validation failed for ${dish.name}:`, e?.message ?? e);
+      }
+    }
+
+    // 合算
+    for (const key of Object.keys(totalNutrition) as (keyof NutritionTotals)[]) {
+      totalNutrition[key] = (totalNutrition[key] || 0) + (nutrition[key] || 0);
+    }
+
+    // dishes(JSON) をV3寄せの形式で保存（買い物リスト・表示の精度向上）
+    let ingredientsMd = "| 材料 | 分量 |\n|------|------|\n";
+    const ingredients = dish.ingredients.map((i: any) => {
+      const line = `${i.name} ${i.amount_g}g${i.note ? ` (${i.note})` : ""}`;
+      ingredientsMd += `| ${i.name} | ${i.amount_g}g${i.note ? ` (${i.note})` : ""} |\n`;
+      aggregatedIngredients.push(line);
+      return line;
+    });
+
+    const recipeSteps = dish.instructions ?? [];
+    const recipeStepsMd = recipeSteps.map((step: string, i: number) => `${i + 1}. ${step}`).join("\n\n");
+    allSteps.push(...recipeSteps);
+
+    dishDetails.push({
+      name: dish.name,
+      role: dish.role,
+      ingredient: dish.ingredients.slice(0, 3).map((i: any) => i.name).join("、"),
+      ingredients,
+      recipeSteps,
+      ingredientsMd,
+      recipeStepsMd,
+      displayOrder: idx,
+
+      // 栄養素（単位付きの統一形式）
+      calories_kcal: nutrition?.calories_kcal != null ? Math.round(nutrition.calories_kcal) : null,
+      protein_g: round1(nutrition?.protein_g),
+      fat_g: round1(nutrition?.fat_g),
+      carbs_g: round1(nutrition?.carbs_g),
+      fiber_g: round1(nutrition?.fiber_g),
+      sugar_g: round1(nutrition?.sugar_g),
+      sodium_g: round1(nutrition?.sodium_g),
+      fiber_soluble_g: round1(nutrition?.fiber_soluble_g),
+      fiber_insoluble_g: round1(nutrition?.fiber_insoluble_g),
+
+      // ミネラル
+      potassium_mg: round1(nutrition?.potassium_mg),
+      calcium_mg: round1(nutrition?.calcium_mg),
+      phosphorus_mg: round1(nutrition?.phosphorus_mg),
+      magnesium_mg: round1(nutrition?.magnesium_mg),
+      iron_mg: round1(nutrition?.iron_mg),
+      zinc_mg: round1(nutrition?.zinc_mg),
+      iodine_ug: round1(nutrition?.iodine_ug),
+      cholesterol_mg: round1(nutrition?.cholesterol_mg),
+
+      // ビタミン
+      vitamin_a_ug: round1(nutrition?.vitamin_a_ug),
+      vitamin_b1_mg: round2(nutrition?.vitamin_b1_mg),
+      vitamin_b2_mg: round2(nutrition?.vitamin_b2_mg),
+      vitamin_b6_mg: round2(nutrition?.vitamin_b6_mg),
+      vitamin_b12_ug: round1(nutrition?.vitamin_b12_ug),
+      vitamin_c_mg: round1(nutrition?.vitamin_c_mg),
+      vitamin_d_ug: round1(nutrition?.vitamin_d_ug),
+      vitamin_e_mg: round1(nutrition?.vitamin_e_mg),
+      vitamin_k_ug: round1(nutrition?.vitamin_k_ug),
+      folic_acid_ug: round1(nutrition?.folic_acid_ug),
+
+      // 脂肪酸
+      saturated_fat_g: round1(nutrition?.saturated_fat_g),
+      monounsaturated_fat_g: round1(nutrition?.monounsaturated_fat_g),
+      polyunsaturated_fat_g: round1(nutrition?.polyunsaturated_fat_g),
+    });
+  }
+
+  const dishName = dishDetails.length === 1
+    ? String(dishDetails[0]?.name ?? "献立")
+    : (() => {
+        const names = dishDetails
+          .slice(0, 3)
+          .map((d: any) => String(d?.name ?? "").trim())
+          .filter(Boolean);
+        const base = names.join("、") || "献立";
+        return base + (dishDetails.length > 3 ? " など" : "");
+      })();
+
+  const plannedMealData = {
+    meal_plan_day_id: dayData.id,
+    meal_type: targetSlot.mealType,
+    dish_name: dishName,
+    ingredients: aggregatedIngredients,
+    recipe_steps: allSteps,
+    dishes: dishDetails,
+    mode: "ai_creative",
+    is_simple: false,
+    display_order: DISPLAY_ORDER_MAP[targetSlot.mealType] ?? 0,
+    is_generating: false,
+    is_completed: false,
+    // Nutrition fields
+    calories_kcal: totalNutrition.calories_kcal,
+    protein_g: totalNutrition.protein_g,
+    fat_g: totalNutrition.fat_g,
+    carbs_g: totalNutrition.carbs_g,
+    sodium_g: totalNutrition.sodium_g,
+    sugar_g: totalNutrition.sugar_g,
+    fiber_g: totalNutrition.fiber_g,
+    fiber_soluble_g: totalNutrition.fiber_soluble_g,
+    fiber_insoluble_g: totalNutrition.fiber_insoluble_g,
+    potassium_mg: totalNutrition.potassium_mg,
+    calcium_mg: totalNutrition.calcium_mg,
+    magnesium_mg: totalNutrition.magnesium_mg,
+    phosphorus_mg: totalNutrition.phosphorus_mg,
+    iron_mg: totalNutrition.iron_mg,
+    zinc_mg: totalNutrition.zinc_mg,
+    iodine_ug: totalNutrition.iodine_ug,
+    cholesterol_mg: totalNutrition.cholesterol_mg,
+    vitamin_a_ug: totalNutrition.vitamin_a_ug,
+    vitamin_b1_mg: totalNutrition.vitamin_b1_mg,
+    vitamin_b2_mg: totalNutrition.vitamin_b2_mg,
+    vitamin_b6_mg: totalNutrition.vitamin_b6_mg,
+    vitamin_b12_ug: totalNutrition.vitamin_b12_ug,
+    vitamin_c_mg: totalNutrition.vitamin_c_mg,
+    vitamin_d_ug: totalNutrition.vitamin_d_ug,
+    vitamin_e_mg: totalNutrition.vitamin_e_mg,
+    vitamin_k_ug: totalNutrition.vitamin_k_ug,
+    folic_acid_ug: totalNutrition.folic_acid_ug,
+    saturated_fat_g: totalNutrition.saturated_fat_g,
+    monounsaturated_fat_g: totalNutrition.monounsaturated_fat_g,
+    polyunsaturated_fat_g: totalNutrition.polyunsaturated_fat_g,
+    updated_at: new Date().toISOString(),
+  };
+
+  // If plannedMealId is specified, update existing record
+  if (targetSlot.plannedMealId) {
+    const { error: updateError } = await supabase
+      .from("planned_meals")
+      .update(plannedMealData)
+      .eq("id", targetSlot.plannedMealId);
+    if (updateError) {
+      console.error(`Failed to update planned_meal ${targetSlot.plannedMealId}:`, updateError);
+      throw updateError;
+    }
+    console.log(`✅ Updated planned_meal ${targetSlot.plannedMealId}`);
+  } else {
+    // Check if slot already exists (should not happen if API validated correctly)
+    const { data: existingMeal } = await supabase
+      .from("planned_meals")
+      .select("id")
+      .eq("meal_plan_day_id", dayData.id)
+      .eq("meal_type", targetSlot.mealType)
+      .maybeSingle();
+
+    if (existingMeal) {
+      // This should not happen in V4 (empty slots only), log warning
+      console.warn(`⚠️ Slot ${targetSlot.date}/${targetSlot.mealType} already exists, skipping to protect data`);
+      return;
+    }
+
+    const { error: insertError } = await supabase
+      .from("planned_meals")
+      .insert(plannedMealData);
+    if (insertError) {
+      console.error(`Failed to insert planned_meal:`, insertError);
+      throw insertError;
+    }
+    console.log(`✅ Created new planned_meal for ${targetSlot.date}/${targetSlot.mealType}`);
+  }
+}
+
+// =========================================================
+// Step execution (V3-compatible self-trigger)
+// =========================================================
+
+type V4GeneratedData = {
+  version?: string;
+  mealPlanId?: string;
+  dates?: string[];
+  targetSlots?: TargetSlot[];
+
+  // Context (persisted for continuation calls)
+  existingMenus?: ExistingMenuContext[];
+  fridgeItems?: FridgeItemContext[];
+  userProfile?: any;
+  seasonalContext?: SeasonalContext;
+  constraints?: any;
+  note?: string | null;
+  familySize?: number;
+
+  // LLM context
+  nutritionTargets?: any | null;
+  userContext?: any;
+  userSummary?: string;
+  references?: MenuReference[];
+
+  // Generated meals (key: YYYY-MM-DD:mealType)
+  generatedMeals?: Record<string, GeneratedMeal>;
+
+  // cursors
+  step1?: { cursor?: number; batchSize?: number };
+  step2?: {
+    reviewResult?: any;
+    issuesToFix?: any[];
+    fixCursor?: number;
+    maxFixes?: number;
+    fixesPerRun?: number;
+    swapsApplied?: boolean;
+  };
+  step3?: {
+    cursor?: number;
+    savedCount?: number;
+    batchSize?: number;
+    errors?: Array<{ key: string; error: string }>;
+  };
+};
+
+function normalizeTargetSlots(dbSlots: any[]): TargetSlot[] {
+  if (!Array.isArray(dbSlots)) return [];
+  return dbSlots
+    .map((s: any) => ({
+      date: String(s?.date ?? "").slice(0, 10),
+      mealType: String(s?.meal_type ?? s?.mealType ?? "") as MealType,
+      plannedMealId: s?.planned_meal_id ?? s?.plannedMealId ?? undefined,
+    }))
+    .filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s.date) && Boolean(s.mealType));
+}
+
+function uniqDatesFromSlots(slots: TargetSlot[]): string[] {
+  const set = new Set<string>();
+  for (const s of slots) set.add(s.date);
+  return Array.from(set).sort();
+}
+
+function sortTargetSlots(slots: TargetSlot[]): TargetSlot[] {
+  const order = (mt: MealType) => DISPLAY_ORDER_MAP[mt] ?? 999;
+  return [...slots].sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return order(a.mealType) - order(b.mealType);
+  });
+}
+
+function countGeneratedTargetSlots(targetSlots: TargetSlot[], generatedMeals: Record<string, GeneratedMeal>): number {
+  let n = 0;
+  for (const s of targetSlots) {
+    const key = getSlotKey(s.date, s.mealType);
+    if (generatedMeals[key]) n++;
+  }
+  return n;
+}
+
+async function loadRequestRow(supabase: any, requestId: string) {
+  const { data, error } = await supabase
+    .from("weekly_menu_requests")
+    .select("id, user_id, start_date, prompt, constraints, target_slots, generated_data, current_step, status")
+    .eq("id", requestId)
+    .single();
+  if (error || !data) throw new Error(`Request not found: ${error?.message ?? "no data"}`);
+  return data as any;
+}
+
+async function executeStep(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+  body: any,
+  currentStep: number,
+) {
+  switch (currentStep) {
+    case 1:
+      await executeStep1_Generate(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, body);
+      break;
+    case 2:
+      await executeStep2_Review(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+      break;
+    case 3:
+      await executeStep3_Complete(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+      break;
+    default:
+      throw new Error(`Unknown step: ${currentStep}`);
+  }
+}
+
+// =========================================================
+// Step 1: Generate (batch by day)
+// =========================================================
+
+async function executeStep1_Generate(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+  body: any,
+) {
+  console.log("📝 V4 Step 1: Generating meals...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  if (reqRow.user_id && String(reqRow.user_id) !== String(userId)) {
+    throw new Error("userId mismatch for request");
+  }
+
+  const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
+
+  // targetSlots (prefer DB)
+  const targetSlotsDb = normalizeTargetSlots(reqRow.target_slots ?? []);
+  const targetSlotsBody = Array.isArray(body?.targetSlots) ? (body.targetSlots as TargetSlot[]) : [];
+  const targetSlots = targetSlotsDb.length > 0 ? targetSlotsDb : targetSlotsBody;
+  if (targetSlots.length === 0) throw new Error("targetSlots is empty");
+
+  const dates = generatedData.dates?.length ? generatedData.dates : uniqDatesFromSlots(targetSlots);
+
+  // Persisted contexts (prefer generated_data, else initial body)
+  const mealPlanId = generatedData.mealPlanId ?? body?.mealPlanId ?? body?.meal_plan_id;
+  if (!mealPlanId) throw new Error("mealPlanId is required");
+
+  const note: string | null = generatedData.note ?? (typeof body?.note === "string" ? body.note : null) ?? (typeof reqRow.prompt === "string" ? reqRow.prompt : null);
+  const constraintsRaw = generatedData.constraints ?? body?.constraints ?? reqRow.constraints ?? {};
+
+  const seasonalContext: SeasonalContext =
+    (generatedData.seasonalContext ?? body?.seasonalContext) ??
+    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+
+  const existingMenus: ExistingMenuContext[] = (generatedData.existingMenus ?? body?.existingMenus ?? []) as any[];
+  const fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? body?.fridgeItems ?? []) as any[];
+  const userProfile = generatedData.userProfile ?? body?.userProfile ?? {};
+
+  const familySize = Number.isFinite(generatedData.familySize)
+    ? Number(generatedData.familySize)
+    : (Number.isFinite(body?.familySize) ? Number(body.familySize) : null) ??
+      (Number.isFinite(userProfile?.family_size) ? Number(userProfile.family_size) : 1);
+
+  const constraintsForContext = { ...(constraintsRaw ?? {}), familySize };
+
+  // Build (or reuse) LLM context
+  const nutritionTargets =
+    generatedData.nutritionTargets ??
+    (await supabase.from("nutrition_goals").select("*").eq("user_id", userId).maybeSingle()).data ??
+    null;
+
+  const userContext =
+    generatedData.userContext ??
+    buildUserContextForPrompt({
+      profile: userProfile,
+      nutritionTargets,
+      note,
+      constraints: constraintsForContext,
+    });
+
+  const userSummary =
+    generatedData.userSummary ??
+    buildUserSummary(userProfile, nutritionTargets, note, constraintsForContext);
+
+  const references: MenuReference[] =
+    generatedData.references ??
+    await (async () => {
+      await updateProgress(
+        supabase,
+        requestId,
+        { currentStep: 0, totalSteps: targetSlots.length, message: "参考レシピを検索中...", completedSlots: 0, totalSlots: targetSlots.length },
+        1,
+      );
+      const searchQuery = buildSearchQueryBase({
+        profile: userProfile,
+        nutritionTargets,
+        note,
+        constraints: constraintsForContext,
+      });
+      return await searchMenuCandidates(supabase, searchQuery, 30);
+    })();
+
+  // Generated meals map (persisted)
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+
+  // Cursor / batching
+  const DAY_BATCH = Number(generatedData.step1?.batchSize ?? DEFAULT_STEP1_DAY_BATCH);
+  const cursor = Number(generatedData.step1?.cursor ?? 0);
+  const nextCursor = computeNextCursor({ cursor, batchSize: DAY_BATCH, length: dates.length });
+
+  // Group slots by date (for this execution)
+  const slotsByDate = new Map<string, TargetSlot[]>();
+  for (const s of targetSlots) {
+    if (!slotsByDate.has(s.date)) slotsByDate.set(s.date, []);
+    slotsByDate.get(s.date)!.push(s);
+  }
+
+  await updateProgress(
+    supabase,
+    requestId,
+    {
+      currentStep: cursor,
+      totalSteps: dates.length,
+      message: `献立を生成中...（${cursor}/${dates.length}日）`,
+      completedSlots: countGeneratedTargetSlots(targetSlots, generatedMeals),
+      totalSlots: targetSlots.length,
+    },
+    1,
+  );
+
+  const CONCURRENCY = 2;
+  for (let i = cursor; i < nextCursor; i += CONCURRENCY) {
+    const batchDates = dates.slice(i, Math.min(i + CONCURRENCY, nextCursor));
+    await Promise.all(
+      batchDates.map(async (date) => {
+        const slotsForDate = slotsByDate.get(date) ?? [];
+        if (slotsForDate.length === 0) return;
+
+        const uniqueMealTypes = Array.from(new Set(slotsForDate.map((s) => s.mealType))) as MealType[];
+        const coreTypes = uniqueMealTypes.filter((t) => t === "breakfast" || t === "lunch" || t === "dinner");
+        const otherTypes = uniqueMealTypes.filter((t) => !(t === "breakfast" || t === "lunch" || t === "dinner"));
+
+        // core (day-based)
+        if (coreTypes.length > 0) {
+          const dayContext = buildV4DayContext({
+            date,
+            mealTypes: coreTypes,
+            slotsForDate,
+            existingMenus,
+            fridgeItems,
+            seasonalContext,
+            userProfile,
+            constraints: constraintsForContext,
+          });
+          const noteForDay = [note, dayContext].filter(Boolean).join("\n\n");
+
+          const dayMeals = await generateDayMealsWithLLM({
+            userSummary,
+            userContext,
+            note: noteForDay,
+            date,
+            mealTypes: coreTypes,
+            referenceMenus: references,
+          });
+
+          for (const meal of dayMeals.meals ?? []) {
+            const key = getSlotKey(date, meal.mealType);
+            generatedMeals[key] = meal;
+          }
+        }
+
+        // snack / midnight (slot-based)
+        for (const mt of otherTypes) {
+          const slot = slotsForDate.find((s) => s.mealType === mt);
+          if (!slot) continue;
+          const key = getSlotKey(slot.date, slot.mealType);
+          if (generatedMeals[key]) continue;
+
+          const contextText = buildV4Context({
+            targetSlot: slot,
+            existingMenus,
+            fridgeItems,
+            seasonalContext,
+            userProfile,
+            constraints: constraintsForContext,
+            note: null,
+          });
+          const noteForMeal = [note, contextText].filter(Boolean).join("\n\n");
+
+          const currentDishName =
+            slot.plannedMealId
+              ? existingMenus.find((m) => m.date === slot.date && m.mealType === slot.mealType)?.dishName ?? null
+              : null;
+
+          const meal = await generateMealWithLLM({
+            userSummary,
+            userContext,
+            note: noteForMeal,
+            mealType: slot.mealType as MealType,
+            currentDishName,
+            referenceMenus: references,
+          });
+
+          generatedMeals[key] = meal;
+        }
+      }),
+    );
+  }
+
+  const generatedCount = countGeneratedTargetSlots(targetSlots, generatedMeals);
+  const step1Done = nextCursor >= dates.length;
+
+  const updatedGeneratedData: V4GeneratedData = {
+    ...generatedData,
+    version: "v4",
+    mealPlanId,
+    dates,
+    targetSlots,
+    existingMenus,
+    fridgeItems,
+    userProfile,
+    seasonalContext,
+    constraints: constraintsForContext,
+    note,
+    familySize,
+    nutritionTargets,
+    userContext,
+    userSummary,
+    references,
+    generatedMeals,
+    step1: { cursor: nextCursor, batchSize: DAY_BATCH },
+  };
+
+  await supabase
+    .from("weekly_menu_requests")
+    .update({
+      generated_data: updatedGeneratedData,
+      current_step: step1Done ? 2 : 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+
+  await updateProgress(
+    supabase,
+    requestId,
+    {
+      currentStep: step1Done ? 2 : 1,
+      totalSteps: 3,
+      message: step1Done ? "生成完了。レビュー開始..." : `生成中...（${nextCursor}/${dates.length}日）`,
+      completedSlots: generatedCount,
+      totalSlots: targetSlots.length,
+    },
+    step1Done ? 2 : 1,
+  );
+
+  // Continue or next step
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+}
+
+// =========================================================
+// Step 2: Review & Fix (batch by issues)
+// =========================================================
+
+async function executeStep2_Review(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+) {
+  console.log("🔍 V4 Step 2: Reviewing meals...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  if (reqRow.user_id && String(reqRow.user_id) !== String(userId)) {
+    throw new Error("userId mismatch for request");
+  }
+
+  const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const mealPlanId = generatedData.mealPlanId;
+  if (!mealPlanId) throw new Error("mealPlanId missing in generated_data");
+
+  const targetSlots = generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []);
+  const dates = generatedData.dates ?? uniqDatesFromSlots(targetSlots);
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+
+  const existingMenus: ExistingMenuContext[] = (generatedData.existingMenus ?? []) as any[];
+  const fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? []) as any[];
+  const seasonalContext: SeasonalContext =
+    generatedData.seasonalContext ??
+    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+  const userProfile = generatedData.userProfile ?? {};
+  const constraints = generatedData.constraints ?? {};
+  const note: string | null = generatedData.note ?? null;
+  const userContext = generatedData.userContext;
+  const userSummary = generatedData.userSummary ?? "";
+  const references: MenuReference[] = (generatedData.references ?? []) as any[];
+
+  const targetKeySet = new Set<string>(targetSlots.map((s) => getSlotKey(s.date, s.mealType)));
+
+  let step2 = generatedData.step2 ?? {};
+
+  // Review once (persist)
+  if (!step2.reviewResult) {
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 2, totalSteps: 3, message: "献立の重複・バランスをAIがチェック中...", completedSlots: 0, totalSlots: targetSlots.length },
+      2,
+    );
+
+    const existingByKey = new Map<string, string[]>();
+    for (const m of existingMenus) {
+      const key = getSlotKey(m.date, m.mealType);
+      if (!existingByKey.has(key)) existingByKey.set(key, []);
+      if (m.dishName) existingByKey.get(key)!.push(m.dishName);
+    }
+
+    const allTypes: MealType[] = ["breakfast", "lunch", "dinner", "snack", "midnight_snack"];
+    const weeklyMealsSummary: WeeklyMealsSummary[] = dates
+      .map((date) => {
+        const meals: Array<{ mealType: MealType; dishNames: string[] }> = [];
+        for (const mt of allTypes) {
+          const key = getSlotKey(date, mt);
+          const gm = generatedMeals[key];
+          if (gm) {
+            meals.push({ mealType: mt, dishNames: (gm.dishes ?? []).map((d: any) => String(d?.name ?? "").trim()).filter(Boolean) });
+            continue;
+          }
+          const ex = existingByKey.get(key);
+          if (ex && ex.length > 0) {
+            meals.push({ mealType: mt, dishNames: ex });
+          }
+        }
+        return { date, meals };
+      })
+      .filter((d) => d.meals.length > 0);
+
+    const reviewResult = await reviewWeeklyMenus({
+      weeklyMeals: weeklyMealsSummary,
+      userSummary,
+    });
+
+    const issuesToFix = (reviewResult.issues ?? []).filter((iss: any) => {
+      const key = getSlotKey(String(iss.date), String(iss.mealType) as MealType);
+      return targetKeySet.has(key) && Boolean(generatedMeals[key]);
+    });
+
+    // Fix budget: V3「2件/週（=7日）」を期間に応じてスケール（capあり）
+    const maxFixes = computeMaxFixesForRange({
+      days: dates.length,
+      issuesCount: issuesToFix.length,
+    });
+
+    step2 = {
+      reviewResult,
+      issuesToFix,
+      fixCursor: 0,
+      maxFixes,
+      fixesPerRun: DEFAULT_STEP2_FIXES_PER_RUN,
+      swapsApplied: false,
+    };
+  }
+
+  const issuesToFix: any[] = Array.isArray(step2.issuesToFix) ? step2.issuesToFix : [];
+  const maxFixes = Number.isFinite(step2.maxFixes)
+    ? Number(step2.maxFixes)
+    : computeMaxFixesForRange({ days: dates.length, issuesCount: issuesToFix.length });
+  const fixesPerRun = Number.isFinite(step2.fixesPerRun) ? Number(step2.fixesPerRun) : DEFAULT_STEP2_FIXES_PER_RUN;
+  const fixCursor = Number.isFinite(step2.fixCursor) ? Number(step2.fixCursor) : 0;
+
+  const end = Math.min(fixCursor + fixesPerRun, maxFixes, issuesToFix.length);
+
+  if (end > fixCursor) {
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 2, totalSteps: 3, message: `改善中...（${fixCursor}/${maxFixes}）`, completedSlots: 0, totalSlots: targetSlots.length },
+      2,
+    );
+
+    // Index slots by key for context
+    const slotByKey = new Map<string, TargetSlot>();
+    for (const s of targetSlots) slotByKey.set(getSlotKey(s.date, s.mealType), s);
+
+    for (let i = fixCursor; i < end; i++) {
+      const issue = issuesToFix[i];
+      const date = String(issue.date);
+      const mealType = String(issue.mealType) as MealType;
+      const key = getSlotKey(date, mealType);
+      const current = generatedMeals[key];
+      if (!current) continue;
+
+      const currentDishes = (current.dishes ?? []).map((d: any) => String(d?.name ?? "").trim()).filter(Boolean);
+      const slot = slotByKey.get(key);
+      if (!slot) continue;
+
+      const contextText = buildV4Context({
+        targetSlot: slot,
+        existingMenus,
+        fridgeItems,
+        seasonalContext,
+        userProfile,
+        constraints,
+        note: null,
+      });
+      const noteForFix = [note, contextText].filter(Boolean).join("\n\n");
+
+      const fixedMeal = await regenerateMealForIssue({
+        userSummary,
+        userContext,
+        note: noteForFix,
+        date,
+        mealType,
+        currentDishes,
+        issue: String(issue.issue ?? ""),
+        suggestion: String(issue.suggestion ?? ""),
+        referenceMenus: references,
+      });
+
+      generatedMeals[key] = fixedMeal;
+    }
+  }
+
+  const newFixCursor = end;
+
+  // Persist intermediate state
+  const updatedGeneratedData: V4GeneratedData = {
+    ...generatedData,
+    generatedMeals,
+    step2: {
+      ...step2,
+      fixCursor: newFixCursor,
+    },
+  };
+
+  // Continue fixing?
+  if (newFixCursor < maxFixes && newFixCursor < issuesToFix.length) {
+    await supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 2,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 2, totalSteps: 3, message: `改善中...（${newFixCursor}/${maxFixes}）`, completedSlots: 0, totalSlots: targetSlots.length },
+      2,
+    );
+
+    await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Apply swaps once (only when both slots are target + generated)
+  if (!step2.swapsApplied && step2.reviewResult?.swaps?.length) {
+    for (const swap of step2.reviewResult.swaps as any[]) {
+      if (swap.date1 !== swap.date2) continue;
+      const date = String(swap.date1);
+      const mt1 = String(swap.mealType1) as MealType;
+      const mt2 = String(swap.mealType2) as MealType;
+      const k1 = getSlotKey(date, mt1);
+      const k2 = getSlotKey(date, mt2);
+      if (!targetKeySet.has(k1) || !targetKeySet.has(k2)) continue;
+      if (!generatedMeals[k1] || !generatedMeals[k2]) continue;
+
+      const temp = generatedMeals[k1];
+      generatedMeals[k1] = { ...generatedMeals[k2], mealType: mt1 };
+      generatedMeals[k2] = { ...temp, mealType: mt2 };
+      console.log(`Swapped ${date} ${mt1} <-> ${mt2}`);
+    }
+    updatedGeneratedData.step2 = { ...updatedGeneratedData.step2, swapsApplied: true };
+  }
+
+  // Move to Step 3
+  await supabase
+    .from("weekly_menu_requests")
+    .update({
+      generated_data: updatedGeneratedData,
+      current_step: 3,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 3, totalSteps: 3, message: "レビュー完了。栄養計算・保存開始...", completedSlots: 0, totalSlots: targetSlots.length },
+    3,
+  );
+
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+}
+
+// =========================================================
+// Step 3: Nutrition & Save (batch by slots)
+// =========================================================
+
+async function executeStep3_Complete(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+) {
+  console.log("💾 V4 Step 3: Nutrition & saving...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  if (reqRow.user_id && String(reqRow.user_id) !== String(userId)) {
+    throw new Error("userId mismatch for request");
+  }
+
+  const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const mealPlanId = generatedData.mealPlanId;
+  if (!mealPlanId) throw new Error("mealPlanId missing in generated_data");
+
+  const targetSlots = sortTargetSlots(generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []));
+  const totalSlots = targetSlots.length;
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+
+  const step3 = generatedData.step3 ?? {};
+  const BATCH = Number(step3.batchSize ?? DEFAULT_STEP3_SLOT_BATCH);
+  const cursor = Number(step3.cursor ?? 0);
+  const savedCountStart = Number(step3.savedCount ?? 0);
+  const errors: Array<{ key: string; error: string }> = Array.isArray(step3.errors) ? step3.errors : [];
+
+  const end = Math.min(cursor + BATCH, totalSlots);
+  let savedCount = savedCountStart;
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 3, totalSteps: 3, message: `保存中...（${cursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+    3,
+  );
+
+  for (let i = cursor; i < end; i++) {
+    const slot = targetSlots[i];
+    const key = getSlotKey(slot.date, slot.mealType);
+    const meal = generatedMeals[key];
+    if (!meal) {
+      errors.push({ key, error: "No generated meal" });
+      continue;
+    }
+    try {
+      await saveMealToDb(supabase, { mealPlanId, userId, targetSlot: slot, generatedMeal: meal });
+      savedCount++;
+    } catch (e: any) {
+      errors.push({ key, error: e?.message ?? String(e) });
+    }
+  }
+
+  const newCursor = end;
+
+  const updatedGeneratedData: V4GeneratedData = {
+    ...generatedData,
+    step3: {
+      cursor: newCursor,
+      batchSize: BATCH,
+      savedCount,
+      errors: errors.slice(-200), // cap
+    },
+  };
+
+  // Continue?
+  if (newCursor < totalSlots) {
+    await supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 3,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 3, totalSteps: 3, message: `保存中...（${newCursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+      3,
+    );
+
+    await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Done
+  const hasErrors = errors.length > 0;
+  const finalStatus = hasErrors ? (savedCount > 0 ? "completed" : "failed") : "completed";
+  const finalMessage = hasErrors
+    ? `保存完了（成功${savedCount}/${totalSlots}、エラー${errors.length}）`
+    : `全${totalSlots}件の献立が完成しました！`;
+
+  await supabase
+    .from("weekly_menu_requests")
+    .update({
+      status: finalStatus,
+      generated_data: updatedGeneratedData,
+      current_step: 3,
+      progress: {
+        currentStep: 3,
+        totalSteps: 3,
+        message: finalMessage,
+        completedSlots: savedCount,
+        totalSlots,
+      },
+      error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+}
+
+// =========================================================
+// Main Handler
+// =========================================================
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const supabaseServiceKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  let requestId: string | null = null;
+  let userId: string | null = null;
+
+  try {
+    const body = await req.json().catch(() => ({}));
+    requestId = body.request_id ?? body.requestId ?? null;
+    const isContinue = body._continue === true;
+
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const accessToken = authHeader.replace(/^Bearer\\s+/i, "").trim();
+    if (!accessToken) throw new Error("Missing access token");
+    if (!requestId) throw new Error("request_id is required");
+
+    // 継続呼び出し（_continue=true）の場合、SERVICE_ROLE_KEYで呼ばれるので getUser()は使えない
+    if (isContinue) {
+      if (!body.userId) throw new Error("userId is required for continuation calls");
+      userId = body.userId;
+      console.log(`📍 Continuation call with userId: ${userId}`);
+    } else if (body.userId) {
+      userId = body.userId;
+    } else {
+      const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
+      if (userErr || !userData?.user) throw new Error(`Auth failed: ${userErr?.message ?? "no user"}`);
+      userId = userData.user.id;
+    }
+
+    // 現在のステップを取得
+    let currentStep = 1;
+    if (requestId && isContinue) {
+      const { data: reqData } = await supabase
+        .from("weekly_menu_requests")
+        .select("current_step")
+        .eq("id", requestId)
+        .single();
+      currentStep = reqData?.current_step ?? 1;
+    }
+
+    console.log(`📍 Starting step ${currentStep} for request ${requestId}`);
+
+    const wrappedBackgroundTask = async () => {
+      console.log(`🚀 Step ${currentStep} starting...`);
+      try {
+        await executeStep(supabase, supabaseUrl, supabaseServiceKey, userId!, requestId!, body, currentStep);
+        console.log(`✅ Step ${currentStep} completed successfully`);
+      } catch (bgErr: any) {
+        console.error(`❌ Step ${currentStep} error:`, bgErr?.message ?? String(bgErr), bgErr);
+        if (requestId) {
+          await supabase
+            .from("weekly_menu_requests")
+            .update({
+              status: "failed",
+              error_message: bgErr?.message ?? String(bgErr) ?? "Step error",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", requestId);
+        }
+      }
+    };
+
+    // @ts-ignore EdgeRuntime
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      console.log("📤 Using EdgeRuntime.waitUntil for background processing");
+      // @ts-ignore EdgeRuntime
+      EdgeRuntime.waitUntil(wrappedBackgroundTask());
+      return new Response(
+        JSON.stringify({ status: "processing", request_id: requestId, step: currentStep, message: `Step ${currentStep} を実行中...` }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    console.log("⚠️ EdgeRuntime.waitUntil not available, running synchronously");
+    await wrappedBackgroundTask();
+    return new Response(
+      JSON.stringify({ status: "completed", request_id: requestId, message: "完了" }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  } catch (err: any) {
+    const errorMessage = err?.message ?? String(err) ?? "Unknown error";
+    console.error("Request error:", errorMessage, err);
+    
+    if (requestId) {
+      await supabase
+        .from("weekly_menu_requests")
+        .update({
+          status: "failed",
+          error_message: errorMessage,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId);
+    }
+
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});

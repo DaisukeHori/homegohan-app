@@ -52,6 +52,9 @@ export type DietStyle = 'normal' | 'vegetarian' | 'vegan' | 'pescatarian' | 'fle
 // --- Frequency Types ---
 export type Frequency = 'never' | 'rarely' | 'sometimes' | 'often' | 'daily';
 
+// --- Shopping Frequency (V4) ---
+export type ShoppingFrequency = 'daily' | '2-3_weekly' | 'weekly' | 'biweekly';
+
 // --- Quality Level ---
 export type QualityLevel = 'good' | 'average' | 'poor';
 
@@ -230,7 +233,7 @@ export interface UserProfile {
 
   // === NEW: Budget & Shopping ===
   weeklyFoodBudget: number | null;
-  shoppingFrequency: 'daily' | '2-3_weekly' | 'weekly' | null;
+  shoppingFrequency: ShoppingFrequency | null;
   preferredStores: string[];
   onlineGrocery: boolean;
   costcoMember: boolean;
@@ -328,9 +331,102 @@ export interface WeeklyMenuRequest {
   constraints: WeeklyMenuConstraints | null;
   inventoryImageUrl: string | null;
   detectedIngredients: string[] | null;
+  predictionResult: any | null;
 
   createdAt: ISODateTimeString;
   updatedAt: ISODateTimeString;
+  
+  // V3+ fields
+  mode: MenuRequestMode | null;
+  targetDate: ISODateString | null;
+  targetMealType: MealType | null;
+  targetMealId: string | null;
+  progress: MenuGenerationProgress | null;
+  generatedData: any | null;
+  currentStep: number | null;
+  
+  // V4 fields
+  targetSlots: TargetSlot[] | null;
+}
+
+// --- V4 Types ---
+
+export type MenuRequestMode = 'weekly' | 'single' | 'regenerate' | 'v4';
+
+// V4 TargetSlot: 生成対象のスロット
+export interface TargetSlot {
+  date: ISODateString;
+  mealType: MealType;
+  plannedMealId?: string; // 既存スロットの上書き時のみ指定
+}
+
+// V4 Menu Generation Progress
+export interface MenuGenerationProgress {
+  currentStep: number;
+  totalSteps: number;
+  currentDay?: number;
+  totalDays?: number;
+  message?: string;
+  completedSlots?: number;
+  totalSlots?: number;
+}
+
+// V4 Request body for /api/ai/menu/v4/generate
+export interface GenerateMenuV4Request {
+  targetSlots: TargetSlot[];
+  existingMenus?: ExistingMenuContext[];
+  fridgeItems?: FridgeItemContext[];
+  note?: string;
+  constraints?: MenuGenerationConstraints;
+  familySize?: number;
+  userProfile?: Partial<UserProfile>;
+  seasonalContext?: SeasonalContext;
+}
+
+// 既存献立のコンテキスト
+export interface ExistingMenuContext {
+  date: ISODateString;
+  mealType: MealType;
+  dishName: string;
+  status: 'completed' | 'ai' | 'manual' | 'skip';
+  isPast: boolean;
+}
+
+// 冷蔵庫食材のコンテキスト
+export interface FridgeItemContext {
+  name: string;
+  expirationDate?: ISODateString;
+  quantity?: string;
+}
+
+// 生成制約
+export interface MenuGenerationConstraints {
+  useFridgeFirst?: boolean;
+  quickMeals?: boolean;
+  japaneseStyle?: boolean;
+  healthy?: boolean;
+  budgetFriendly?: boolean;
+  familyFriendly?: boolean;
+}
+
+// 季節コンテキスト
+export interface SeasonalContext {
+  month: number;
+  seasonalIngredients: {
+    vegetables: string[];
+    fish: string[];
+    fruits: string[];
+  };
+  events: SeasonalEvent[];
+}
+
+// 季節イベント
+export interface SeasonalEvent {
+  name: string;
+  date: string; // "MM-DD" or "variable"
+  dishes: string[];
+  ingredients: string[];
+  note?: string;
 }
 
 export interface WeeklyMenuConstraints {
