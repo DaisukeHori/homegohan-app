@@ -1177,6 +1177,9 @@ export interface UserBadge {
 
 **概要:** 指定されたスロットに対して献立を生成する汎用API
 
+> v4.0ではまず **朝/昼/夕（breakfast/lunch/dinner）** の1日3枠を対象にする（既存UI/実装との整合を優先）。  
+> `snack` 等の「同一mealTypeが複数になり得る枠」を扱う場合は、必ず `plannedMealId` を指定して上書き対象を特定する。
+
 **リクエスト:**
 
 ```json
@@ -1184,7 +1187,8 @@ export interface UserBadge {
   "targetSlots": [
     { "date": "2026-01-03", "mealType": "lunch" },
     { "date": "2026-01-03", "mealType": "dinner" },
-    { "date": "2026-01-04", "mealType": "breakfast" }
+    { "date": "2026-01-04", "mealType": "breakfast" },
+    { "date": "2026-01-04", "mealType": "dinner", "plannedMealId": "planned_meal_uuid" }
   ],
   "existingMenus": [
     { "date": "2026-01-02", "mealType": "dinner", "dishName": "鶏の照り焼き", "status": "completed", "isPast": true },
@@ -1221,7 +1225,7 @@ export interface UserBadge {
 
 | パラメータ | 必須 | 型 | 説明 |
 |-----------|-----|-----|------|
-| targetSlots | ◯ | array | 生成対象スロット（最大93件=31日×3食） |
+| targetSlots | ◯ | array | 生成対象スロット（最大93件=31日×3食）。既存枠の上書きは `plannedMealId` を含める |
 | existingMenus | △ | array | 既存献立（省略時は自動収集） |
 | fridgeItems | △ | array | 冷蔵庫食材（省略時は自動収集） |
 | note | × | string | ユーザーの自由記述要望 |
@@ -1229,6 +1233,16 @@ export interface UserBadge {
 | familySize | × | number | 家族人数（省略時はプロファイルから） |
 | userProfile | × | object | ユーザー情報（省略時は自動収集） |
 | seasonalContext | × | object | 季節情報（省略時は自動計算） |
+
+**`targetSlots` の識別ルール（重要）:**
+- **空欄の定義**: `planned_meals` レコードが存在しない状態（`mode='skip'` は空欄ではない）
+- **fill empty**: UI/APIで空欄判定し、空欄だけを `targetSlots` に積む（V4は空欄探索をしない）
+- **上書き**: `plannedMealId` を指定したスロットのみ更新する（`date+mealType` だけでの上書きは禁止）
+
+**ジョブ管理（`weekly_menu_requests`）:**
+- 既存実装では `weekly/single/regenerate` を同テーブルで管理している。V4も `mode='v4'` で同運用とする
+- ステータス監視は `weekly_menu_requests.progress` を Realtime で購読する（ポーリング禁止）
+- 型定義（例: `types/database.ts` の `DbWeeklyMenuRequest`）が現行カラム（`mode`, `progress`, `target_*` 等）を網羅していない場合は更新する
 
 **constraints詳細:**
 
@@ -1244,33 +1258,22 @@ export interface UserBadge {
 | cheatDay | string | null | チートデイ（日付） |
 | avoidDuplicates | boolean | true | 重複を避ける |
 
-### 3-7. ユーザー設定更新 `/api/user/preferences` PATCH
+### 3-7. ユーザー設定更新 `/api/profile` PUT（推奨）
 
-**概要:** ユーザーの買い物パターン・調理器具などの設定を更新
+**概要:** ユーザーの買い物頻度・食費予算・調理器具などの設定を更新する。  
+既存のプロフィール更新API（`PUT /api/profile`）を利用し、camelCaseで送る（`fromUserProfile` で snake_case に変換される）。
 
-**リクエスト:**
-
-```json
-{
-  "shopping_frequency": "weekly",
-  "weekly_food_budget": 15000,
-  "cooking_equipment": {
-    "has_oven": true,
-    "has_grill": true,
-    "has_pressure_cooker": false,
-    "stove_type": "gas"
-  }
-}
-```
-
-**レスポンス:**
+**リクエスト例（camelCase）:**
 
 ```json
 {
-  "success": true,
-  "message": "設定を更新しました"
+  "shoppingFrequency": "weekly",
+  "weeklyFoodBudget": 15000,
+  "kitchenAppliances": ["oven", "grill", "stove:gas"]
 }
 ```
+
+**レスポンス:** `UserProfile`（更新後のプロファイル）
 
 ---
 
@@ -1779,6 +1782,13 @@ V4は「週間献立生成」ではなく「汎用献立生成エンジン」と
 4. **コンテキストは明示的に渡す**: 前後の献立、冷蔵庫食材などを明示的に渡す
 5. **既存データはデフォルトで保護**: 明示的に指定されたスロットのみ生成/更新
 
+**スロット識別（v4.0 / 実装整合優先）:**
+- v4.0はまず **朝/昼/夕の1日3枠**を主要対象とする（`snack` 等の複数枠対応は後続）
+- **空欄の定義**: `planned_meals` レコードが存在しない状態（`mode='skip'` は空欄ではない）
+- **fill empty**: UI/APIが空欄判定を行い、空欄だけを `targetSlots` に積む（V4は空欄探索をしない）
+- **上書き**: 既存枠の上書きは `plannedMealId` 指定を必須にする（`date+mealType`だけで上書きしない）
+  - 理由：同一`mealType`が複数存在し得る（`displayOrder`）ため
+
 **生成モード（UIで選択）:**
 - **空欄を埋める**: 空いているスロットのみ生成（デフォルト）
 - **選択したところだけ**: ユーザーが明示的に選んだスロットのみ
@@ -1790,8 +1800,8 @@ V4は「週間献立生成」ではなく「汎用献立生成エンジン」と
 2. **冷蔵庫食材**（賞味期限、優先使用）
 3. **旬の食材**（月ごとの野菜・魚・果物）
 4. **イベント・行事**（正月、クリスマス等）
-5. **調理器具**（使える/使えない）
-6. **買い物パターン**（食材使い回し計画）
+5. **調理器具**（`user_profiles.kitchen_appliances` を利用：使える/使えない）
+6. **買い物パターン**（`user_profiles.shopping_frequency`, `weekly_food_budget`）
 7. **ユーザー要望**（自然言語）
 
 **コンテキスト範囲（動的）:**
@@ -2187,43 +2197,32 @@ $$;
 
 #### `user_profiles`（v4対応）
 
-買い物パターンと調理器具を追加する：
+買い物パターンを追加し、調理器具は既存の `kitchen_appliances` を利用する（推奨）：
 
 ```sql
 -- Migration: 20260103_add_v4_profile_columns.sql
 
--- 買い物パターン
+-- 買い物頻度（既存実装の型に合わせる）
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS shopping_frequency TEXT;
--- "daily" | "twice_weekly" | "weekly" | "biweekly"
+-- "daily" | "2-3_weekly" | "weekly" | "biweekly"
+-- NOTE: 現行の `types/domain.ts` は biweekly 未対応のため、実装時に型拡張 or マッピング方針を決める
 
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS weekly_food_budget INTEGER;
 -- 週の食費予算（円）
 
--- 調理器具
-ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS cooking_equipment JSONB DEFAULT '{}';
--- {
---   "has_oven": true,
---   "has_pressure_cooker": false,
---   "has_air_fryer": false,
---   "has_grill": true,
---   "stove_type": "gas" | "ih"
--- }
+-- 調理器具・コンロ種別（既存列）
+-- kitchen_appliances: string[]（例: ["oven","grill","pressure_cooker","stove:gas"]）
+-- もし kitchen_appliances が無い環境なら追加:
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS kitchen_appliances TEXT[];
 
 -- インデックス
 CREATE INDEX IF NOT EXISTS idx_user_profiles_shopping_frequency 
   ON user_profiles(shopping_frequency);
 ```
 
-**cooking_equipment構造:**
-| フィールド | 型 | 説明 |
-|-----------|-----|------|
-| has_oven | boolean | オーブン/オーブンレンジ |
-| has_grill | boolean | 魚焼きグリル |
-| has_pressure_cooker | boolean | 圧力鍋 |
-| has_slow_cooker | boolean | ホットクック/電気圧力鍋 |
-| has_air_fryer | boolean | エアフライヤー |
-| has_food_processor | boolean | フードプロセッサー/ミキサー |
-| stove_type | string | "gas" \| "ih" |
+**kitchen_appliances の推奨値:**
+- `oven`, `grill`, `pressure_cooker`, `slow_cooker`, `air_fryer`, `food_processor`
+- `stove:gas` / `stove:ih`
 
 ### 5-3. データ取り込み（ETL）
 

@@ -2049,6 +2049,7 @@ interface GenerateMenuV4Request {
   targetSlots: Array<{
     date: string;       // "2026-01-03"
     mealType: MealType; // "breakfast" | "lunch" | "dinner" | "snack" | "midnight_snack"
+    plannedMealId?: string; // 既存枠を上書きする場合は必須（曖昧さ回避/既存データ保護）
   }>;
   
   // === コンテキスト ===
@@ -2088,11 +2089,12 @@ interface GenerateMenuV4Request {
   userProfile?: {
     age?: number;
     gender?: string;
-    cooking_experience?: string;
-    preferred_cuisines?: string[];
-    disliked_foods?: string[];
-    cookingEquipment?: CookingEquipment;
-    shoppingPattern?: ShoppingPattern;
+    cookingExperience?: string;
+    weekdayCookingMinutes?: number;
+    weekendCookingMinutes?: number;
+    kitchenAppliances?: string[]; // 例: ["oven","grill","pressure_cooker","stove:gas"]
+    shoppingFrequency?: "daily" | "2-3_weekly" | "weekly" | "biweekly";
+    weeklyFoodBudget?: number | null;
   };
   
   allergies?: Array<{ allergen: string; severity?: string }>;
@@ -2111,6 +2113,21 @@ interface GenerateMenuV4Request {
   requestId?: string;
 }
 ```
+
+#### 8.7.2.1 `targetSlots` の識別ルール（重要）
+
+V4は「既存データ保護」を最優先にするため、**どのレコードを更新するか**の曖昧さを設計で潰す。
+
+- **v4.0の推奨スコープ**: `breakfast/lunch/dinner`（各日1枠）をまず対象にする（UI/既存実装もこの前提が強い）
+- **空欄の定義**: `planned_meals` レコードが存在しない状態  
+  - `mode='skip'` は「空欄ではない」（＝ユーザーが“作らない”意思を持つ）として扱うのがデフォルト
+- **上書きのルール**:
+  - 既存枠を上書きする場合は **`targetSlots[].plannedMealId` を必須**にする  
+    （同一`date+mealType`で複数レコードがあり得るため、`plannedMealId`なしの上書きは禁止）
+  - UIの「選択したところだけ」「作り直す」は、必ず `plannedMealId` を含めて送る
+- **生成（新規作成）のルール**:
+  - UIの「空欄を埋める」は、空欄判定（レコード不存在）をUI/APIで行い、空欄だけを `targetSlots` に積む
+  - `plannedMealId` を付けずに送られたスロットは **新規作成のみ**を許可（既存更新はしない）
 
 #### 8.7.3 コンテキスト範囲（動的）
 
@@ -2224,27 +2241,29 @@ export async function POST(request: Request) {
 }
 ```
 
+**ジョブ管理（`weekly_menu_requests`）:**
+- 既存実装では `weekly/single/regenerate` も同テーブルで管理している。V4も `mode='v4'` を付与して同運用とする
+- 進捗は `weekly_menu_requests.progress` を Supabase Realtime で監視する（ポーリング禁止）
+- 長期生成（最大31日）では `progress` 更新で `updated_at` を継続更新し、stale判定に引っかからない設計にする
+
 #### 8.7.6 DBマイグレーション（V4対応）
 
 ```sql
 -- Migration: 20260103_add_v4_profile_columns.sql
 
--- 買い物パターン
+-- 買い物頻度（既存実装の型に合わせる）
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS shopping_frequency TEXT;
--- "daily" | "twice_weekly" | "weekly" | "biweekly"
+-- "daily" | "2-3_weekly" | "weekly" | "biweekly"
+-- NOTE: 現行の `types/domain.ts` は biweekly 未対応のため、実装時に型拡張 or マッピング方針を決める
 
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS weekly_food_budget INTEGER;
 -- 週の食費予算（円）
 
--- 調理器具
-ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS cooking_equipment JSONB DEFAULT '{}';
--- {
---   "has_oven": true,
---   "has_pressure_cooker": false,
---   "has_air_fryer": false,
---   "has_grill": true,
---   "stove_type": "gas" | "ih"
--- }
+-- 調理器具・コンロ種別
+-- 既存の user_profiles.kitchen_appliances (text[]) を利用する（推奨）
+-- 例: ["oven","grill","pressure_cooker","air_fryer","food_processor","stove:gas"]
+-- kitchen_appliances が存在しない環境の場合のみ追加:
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS kitchen_appliances TEXT[];
 
 -- インデックス
 CREATE INDEX IF NOT EXISTS idx_user_profiles_shopping_frequency 
@@ -2315,7 +2334,7 @@ const SEASONAL_EVENTS: SeasonalEvent[] = [
   type: 'choice',
   options: [
     { label: '🛒 毎日買い物に行く', value: 'daily' },
-    { label: '🛒 週2〜3回', value: 'twice_weekly' },
+    { label: '🛒 週2〜3回', value: '2-3_weekly' },
     { label: '🛒 週1回まとめ買い', value: 'weekly' },
     { label: '🛒 2週間に1回程度', value: 'biweekly' },
   ],
@@ -2337,9 +2356,9 @@ const SEASONAL_EVENTS: SeasonalEvent[] = [
   ],
 },
 
-// 調理器具
+// 調理器具（user_profiles.kitchen_appliances に保存）
 {
-  id: 'cooking_equipment',
+  id: 'kitchen_appliances',
   text: 'お持ちの調理器具は？（複数選択可）',
   type: 'multi_choice',
   allowSkip: true,
@@ -2353,14 +2372,14 @@ const SEASONAL_EVENTS: SeasonalEvent[] = [
   ],
 },
 
-// コンロの種類
+// コンロの種類（kitchen_appliances に "stove:gas" 形式で保存）
 {
   id: 'stove_type',
   text: 'お使いのコンロは？',
   type: 'choice',
   options: [
-    { label: '🔥 ガスコンロ', value: 'gas' },
-    { label: '⚡ IHコンロ', value: 'ih' },
+    { label: '🔥 ガスコンロ', value: 'stove:gas' },
+    { label: '⚡ IHコンロ', value: 'stove:ih' },
   ],
 },
 ```
