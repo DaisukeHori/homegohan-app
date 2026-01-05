@@ -54,16 +54,23 @@ export default function LoginPage() {
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('role, nickname')
+          .select('roles, nickname, onboarding_started_at, onboarding_completed_at')
           .eq('id', user.id)
           .single();
         
-        if (profile?.role === 'admin') {
+        const roles = profile?.roles || [];
+        
+        if (roles.includes('admin') || roles.includes('super_admin')) {
           router.push('/admin');
-        } else if (!profile || !profile.nickname) {
-          router.push('/onboarding');
-        } else {
+        } else if (profile?.onboarding_completed_at) {
+          // オンボーディング完了済み → ホームへ
           router.push('/home');
+        } else if (profile?.onboarding_started_at) {
+          // オンボーディング進行中 → 再開ページへ
+          router.push('/onboarding/resume');
+        } else {
+          // 未開始 → 初回ウェルカムへ
+          router.push('/onboarding/welcome');
         }
         router.refresh();
       }

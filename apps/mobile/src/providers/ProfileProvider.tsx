@@ -8,6 +8,14 @@ export type MobileUserProfile = {
   nickname?: string | null;
   roles: string[];
   organizationId?: string | null;
+  onboardingStartedAt?: string | null;
+  onboardingCompletedAt?: string | null;
+  onboardingProgress?: {
+    currentStep: number;
+    answers: Record<string, any>;
+    totalQuestions: number;
+    lastUpdatedAt: string;
+  } | null;
 };
 
 type ProfileState = {
@@ -35,7 +43,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     const { data, error } = await supabase
       .from("user_profiles")
-      .select("id,nickname,roles,organization_id")
+      .select("id,nickname,roles,organization_id,onboarding_started_at,onboarding_completed_at,onboarding_progress")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -46,6 +54,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         nickname: null,
         roles: [],
         organizationId: null,
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+        onboardingProgress: null,
       });
       setIsLoading(false);
       return;
@@ -56,6 +67,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       nickname: (data as any).nickname ?? null,
       roles: Array.isArray((data as any).roles) ? (data as any).roles : [],
       organizationId: (data as any).organization_id ?? null,
+      onboardingStartedAt: (data as any).onboarding_started_at ?? null,
+      onboardingCompletedAt: (data as any).onboarding_completed_at ?? null,
+      onboardingProgress: (data as any).onboarding_progress ?? null,
     });
     setIsLoading(false);
   }, [user?.id]);

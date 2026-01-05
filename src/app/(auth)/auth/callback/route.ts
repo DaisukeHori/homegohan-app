@@ -16,17 +16,27 @@ export async function GET(request: Request) {
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('role, nickname')
+          .select('roles, nickname, onboarding_started_at, onboarding_completed_at')
           .eq('id', user.id)
           .single()
         
+        const roles = profile?.roles || []
+        
         // 管理者の場合は強制的に管理画面へ
-        if (profile?.role === 'admin') {
+        if (roles.includes('admin') || roles.includes('super_admin')) {
           next = '/admin'
         }
-        // プロフィールが存在しない、またはニックネームが未設定（オンボーディング未完了）の場合はオンボーディングへ
-        else if (!profile || !profile.nickname) {
-          next = '/onboarding'
+        // オンボーディング完了済み → ホームへ
+        else if (profile?.onboarding_completed_at) {
+          next = '/home'
+        }
+        // オンボーディング進行中 → 再開ページへ
+        else if (profile?.onboarding_started_at) {
+          next = '/onboarding/resume'
+        }
+        // 未開始 → 初回ウェルカムへ
+        else {
+          next = '/onboarding/welcome'
         }
       }
     }

@@ -18,7 +18,17 @@ export default function TabsLayout() {
   }
 
   if (!session) return <Redirect href="/" />;
-  if (!profile?.nickname) return <Redirect href="/onboarding" />;
+  
+  // オンボーディング状態に応じてリダイレクト
+  if (profile?.onboardingCompletedAt) {
+    // 完了済み → そのまま表示
+  } else if (profile?.onboardingStartedAt) {
+    // 進行中 → 再開ページへ
+    return <Redirect href="/onboarding/resume" />;
+  } else {
+    // 未開始 → ウェルカムページへ
+    return <Redirect href="/onboarding/welcome" />;
+  }
 
   return (
     <Tabs screenOptions={{ headerShown: true }}>
