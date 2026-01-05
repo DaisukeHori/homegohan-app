@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -254,7 +254,7 @@ const QUESTIONS = [
 ];
 
 // OB-UI-02: 質問フロー（リアルタイム保存対応）
-export default function OnboardingQuestionsPage() {
+function OnboardingQuestionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isResume = searchParams.get('resume') === 'true';
@@ -766,5 +766,21 @@ export default function OnboardingQuestionsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Suspense境界でラップしたエクスポート
+export default function OnboardingQuestionsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500 mx-auto mb-4" />
+          <p className="text-gray-500">読み込み中...</p>
+        </div>
+      </div>
+    }>
+      <OnboardingQuestionsContent />
+    </Suspense>
   );
 }
