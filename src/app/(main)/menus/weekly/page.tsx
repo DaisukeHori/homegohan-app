@@ -468,7 +468,7 @@ export default function WeeklyMenuPage() {
   // Week Navigation
   const [weekStart, setWeekStart] = useState<Date>(getWeekStart(new Date()));
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
-  const weekDates = getWeekDates(weekStart);
+  const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
 
   // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
