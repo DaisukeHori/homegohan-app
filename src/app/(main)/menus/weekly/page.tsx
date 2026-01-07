@@ -1301,17 +1301,21 @@ export default function WeeklyMenuPage() {
     } catch (e) { alert("追加に失敗しました"); }
   };
 
-  const toggleShoppingItem = async (id: string, currentChecked: boolean) => {
+  // チェックボックスのトグル（楽観的更新）
+  const toggleShoppingItem = (id: string, currentChecked: boolean) => {
+    // 即座にUIを更新
     setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
-    try {
-      await fetch(`/api/shopping-list/${id}`, { 
-        method: 'PATCH', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ isChecked: !currentChecked }) 
-      });
-    } catch (e) { 
+    
+    // 裏でAPI呼び出し（永続化）- レスポンスを待たない
+    fetch(`/api/shopping-list/${id}`, { 
+      method: 'PATCH', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ isChecked: !currentChecked }) 
+    }).catch(e => { 
+      console.error('Failed to save check state:', e);
+      // エラー時はロールバック
       setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i)); 
-    }
+    });
   };
 
   const deleteShoppingItem = async (id: string) => {
@@ -1583,21 +1587,34 @@ export default function WeeklyMenuPage() {
   };
 
   // Toggle shopping item variant (tap to switch display unit)
-  const toggleShoppingVariant = async (itemId: string, item: ShoppingListItem) => {
+  // 楽観的更新: 即座にUIを更新し、裏でAPI呼び出し
+  const toggleShoppingVariant = (itemId: string, item: ShoppingListItem) => {
     if (!item.quantityVariants || item.quantityVariants.length <= 1) return;
     
     const nextIndex = (item.selectedVariantIndex + 1) % item.quantityVariants.length;
-    try {
-      const res = await fetch(`/api/shopping-list/${itemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedVariantIndex: nextIndex })
-      });
-      if (res.ok) {
-        const { item: updatedItem } = await res.json();
-        setShoppingList(prev => prev.map(i => i.id === itemId ? updatedItem : i));
-      }
-    } catch (e) { console.error('Failed to toggle variant:', e); }
+    const newQuantity = item.quantityVariants[nextIndex]?.display || item.quantity;
+    
+    // 即座にUIを更新（楽観的更新）
+    setShoppingList(prev => prev.map(i => 
+      i.id === itemId 
+        ? { ...i, selectedVariantIndex: nextIndex, quantity: newQuantity }
+        : i
+    ));
+    
+    // 裏でAPIを呼び出し（永続化）- レスポンスを待たない
+    fetch(`/api/shopping-list/${itemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedVariantIndex: nextIndex })
+    }).catch(e => {
+      console.error('Failed to save variant change:', e);
+      // エラー時はロールバック
+      setShoppingList(prev => prev.map(i => 
+        i.id === itemId 
+          ? { ...i, selectedVariantIndex: item.selectedVariantIndex, quantity: item.quantity }
+          : i
+      ));
+    });
   };
 
   // Add recipe ingredients to shopping list
@@ -3399,24 +3416,24 @@ export default function WeeklyMenuPage() {
                           </div>
                           {/* カテゴリ内アイテム */}
                           {items.map(item => (
-                            <div
-                              key={item.id}
-                              className="flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5"
-                              style={{ background: item.isChecked ? colors.bg : colors.card, border: item.isChecked ? 'none' : `1px solid ${colors.border}` }}
-                            >
-                              <button
-                                onClick={() => toggleShoppingItem(item.id, item.isChecked)}
-                                className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
-                                style={{ 
-                                  border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
-                                  background: item.isChecked ? colors.success : 'transparent'
-                                }}
-                              >
-                                {item.isChecked && <Check size={12} color="#fff" />}
-                              </button>
-                              <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
-                                {item.itemName}
-                              </span>
+                      <div
+                        key={item.id}
+                        className="flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5"
+                        style={{ background: item.isChecked ? colors.bg : colors.card, border: item.isChecked ? 'none' : `1px solid ${colors.border}` }}
+                      >
+                        <button
+                          onClick={() => toggleShoppingItem(item.id, item.isChecked)}
+                          className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
+                          style={{ 
+                            border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
+                            background: item.isChecked ? colors.success : 'transparent'
+                          }}
+                        >
+                          {item.isChecked && <Check size={12} color="#fff" />}
+                        </button>
+                        <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
+                          {item.itemName}
+                        </span>
                               {/* 数量（タップで切り替え） */}
                               <button
                                 onClick={() => toggleShoppingVariant(item.id, item)}
@@ -3442,14 +3459,14 @@ export default function WeeklyMenuPage() {
                               >
                                 {item.source === 'generated' ? 'AI' : '手動'}
                               </span>
-                              <button
-                                onClick={() => deleteShoppingItem(item.id)}
-                                className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
-                                style={{ background: 'rgba(0,0,0,0.05)' }}
-                              >
-                                <Trash2 size={12} color={colors.textMuted} />
-                              </button>
-                            </div>
+                        <button
+                          onClick={() => deleteShoppingItem(item.id)}
+                          className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                          style={{ background: 'rgba(0,0,0,0.05)' }}
+                        >
+                          <Trash2 size={12} color={colors.textMuted} />
+                        </button>
+                      </div>
                           ))}
                         </div>
                       ))}
@@ -3485,8 +3502,8 @@ export default function WeeklyMenuPage() {
                       </>
                     ) : (
                       <>
-                        <RefreshCw size={14} color="#fff" />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>献立から再生成</span>
+                    <RefreshCw size={14} color="#fff" />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>献立から再生成</span>
                       </>
                     )}
                   </button>
