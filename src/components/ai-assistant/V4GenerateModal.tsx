@@ -7,13 +7,14 @@ import {
   Refrigerator, Zap, UtensilsCrossed, Heart,
   ChevronRight, AlertTriangle, Loader2
 } from "lucide-react";
-import type { MealPlanDay, TargetSlot, MenuGenerationConstraints } from "@/types/domain";
+import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import { 
   buildEmptySlots, 
   buildRangeSlots, 
   buildAllFutureSlots,
   countEmptySlots,
   validateSlotCount,
+  type MealDay,
 } from "@/lib/slot-builder";
 
 // ============================================
@@ -25,7 +26,7 @@ type GenerateMode = 'empty' | 'selected' | 'range' | 'all';
 interface V4GenerateModalProps {
   isOpen: boolean;
   onClose: () => void;
-  mealPlanDays: MealPlanDay[];
+  mealPlanDays: MealDay[];
   weekStartDate: string;
   weekEndDate: string;
   onGenerate: (params: {

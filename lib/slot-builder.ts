@@ -10,7 +10,13 @@
  * - 「全部作り直す」→ buildAllFutureSlots()
  */
 
-import type { TargetSlot, MealType, PlannedMeal, MealPlanDay } from '@/types/domain';
+import type { TargetSlot, MealType, PlannedMeal } from '@/types/domain';
+
+// 日付ベースモデル対応: MealPlanDay と DailyMeal の両方と互換性のある最小インターフェース
+export interface MealDay {
+  dayDate: string;
+  meals?: PlannedMeal[];
+}
 
 // 基本の食事タイプ（V4.0ではこの3つを主要対象）
 export const BASE_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
@@ -48,8 +54,8 @@ function generateDateRange(startDate: string, endDate: string): string[] {
 }
 
 export interface SlotBuilderParams {
-  /** 既存の meal_plan_days データ（planned_meals を含む） */
-  mealPlanDays: MealPlanDay[];
+  /** 既存の日次献立データ（planned_meals を含む） */
+  mealPlanDays: MealDay[];
   /** 対象とする食事タイプ（デフォルト: breakfast, lunch, dinner） */
   mealTypes?: MealType[];
 }
@@ -62,7 +68,7 @@ export interface SlotBuilderParams {
 export function isSlotEmpty(
   date: string,
   mealType: MealType,
-  mealPlanDays: MealPlanDay[]
+  mealPlanDays: MealDay[]
 ): boolean {
   const day = mealPlanDays.find(d => d.dayDate === date);
   if (!day || !day.meals) return true;
@@ -78,7 +84,7 @@ export function isSlotEmpty(
 export function getMealAtSlot(
   date: string,
   mealType: MealType,
-  mealPlanDays: MealPlanDay[]
+  mealPlanDays: MealDay[]
 ): PlannedMeal | null {
   const day = mealPlanDays.find(d => d.dayDate === date);
   if (!day || !day.meals) return null;
@@ -245,7 +251,7 @@ export function buildAllFutureSlots(params: SlotBuilderParams & {
 export function buildSingleSlot(params: {
   date: string;
   mealType: MealType;
-  mealPlanDays: MealPlanDay[];
+  mealPlanDays: MealDay[];
 }): TargetSlot[] {
   const { date, mealType, mealPlanDays } = params;
   const existingMeal = getMealAtSlot(date, mealType, mealPlanDays);
