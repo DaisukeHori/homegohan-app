@@ -242,7 +242,6 @@ export const useHomeData = () => {
           };
           setDailySummary(summary);
         }
-      }
 
       // ========== 拡張データを並列取得（高速化） ==========
       await Promise.all([
