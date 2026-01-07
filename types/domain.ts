@@ -81,6 +81,22 @@ export interface CheatDayConfig {
   dayOfWeek: string; // 'Sunday', etc.
 }
 
+// --- Servings Config (曜日別・食事別人数設定) ---
+export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+
+export interface MealServings {
+  breakfast?: number;
+  lunch?: number;
+  dinner?: number;
+}
+
+export interface ServingsConfig {
+  default: number;
+  byDayMeal: {
+    [key in DayOfWeek]?: MealServings;
+  };
+}
+
 // --- Extended Profile Types ---
 
 export interface WorkHours {
@@ -165,6 +181,7 @@ export interface UserProfile {
   department: string | null;
   familySize: number;
   cheatDayConfig: CheatDayConfig | null;
+  servingsConfig: ServingsConfig | null;
 
   // === NEW: Body Info ===
   bodyFatPercentage: number | null;

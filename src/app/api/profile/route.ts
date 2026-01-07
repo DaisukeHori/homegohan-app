@@ -72,6 +72,7 @@ export async function POST(request: Request) {
     if (body.weekdayCookingMinutes) updates.weekday_cooking_minutes = parseInt(body.weekdayCookingMinutes);
     if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;
     if (body.familySize) updates.family_size = parseInt(body.familySize);
+    if (body.servingsConfig) updates.servings_config = body.servingsConfig;
 
     // デフォルト値の補完（必須カラムエラー回避）
     if (!updates.nickname) updates.nickname = 'Guest'; 

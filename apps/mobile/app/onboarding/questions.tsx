@@ -54,7 +54,56 @@ type Question =
       text: string;
       type: "custom_stats";
       showIf?: (answers: Record<string, any>) => boolean;
+    }
+  | {
+      id: string;
+      text: string;
+      type: "servings_grid";
+      showIf?: (answers: Record<string, any>) => boolean;
     };
+
+// 曜日別人数設定のデフォルト値
+const DAYS_OF_WEEK = [
+  { key: "monday", label: "月" },
+  { key: "tuesday", label: "火" },
+  { key: "wednesday", label: "水" },
+  { key: "thursday", label: "木" },
+  { key: "friday", label: "金" },
+  { key: "saturday", label: "土" },
+  { key: "sunday", label: "日" },
+] as const;
+
+const MEAL_TYPES = [
+  { key: "breakfast", label: "朝" },
+  { key: "lunch", label: "昼" },
+  { key: "dinner", label: "夜" },
+] as const;
+
+type ServingsConfig = {
+  default: number;
+  byDayMeal: {
+    [day: string]: {
+      breakfast?: number;
+      lunch?: number;
+      dinner?: number;
+    };
+  };
+};
+
+function createDefaultServingsConfig(familySize: number): ServingsConfig {
+  const config: ServingsConfig = {
+    default: familySize,
+    byDayMeal: {},
+  };
+  for (const day of DAYS_OF_WEEK) {
+    config.byDayMeal[day.key] = {
+      breakfast: familySize,
+      lunch: 0, // 昼は外食想定でデフォルト0
+      dinner: familySize,
+    };
+  }
+  return config;
+}
 
 const QUESTIONS: Question[] = [
   {
@@ -249,6 +298,11 @@ const QUESTIONS: Question[] = [
     max: 10,
   },
   {
+    id: "servings_config",
+    text: "曜日ごとの食事人数を設定してください\n（0人＝作らない/外食）",
+    type: "servings_grid",
+  },
+  {
     id: "shopping_frequency",
     text: "普段の買い物の頻度は？",
     type: "choice",
@@ -342,6 +396,7 @@ function transformAnswersToProfile(ans: Record<string, any>) {
     profile.cuisinePreferences = prefs;
   }
   if (ans.family_size) profile.familySize = parseInt(ans.family_size);
+  if (ans.servings_config) profile.servingsConfig = ans.servings_config;
   if (ans.shopping_frequency) profile.shoppingFrequency = ans.shopping_frequency;
   if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") profile.weeklyFoodBudget = parseInt(ans.weekly_food_budget);
   const appliances: string[] = [];
@@ -376,6 +431,7 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.weekdayCookingMinutes !== undefined) updates.weekday_cooking_minutes = body.weekdayCookingMinutes;
   if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;
   if (body.familySize !== undefined) updates.family_size = body.familySize;
+  if (body.servingsConfig !== undefined) updates.servings_config = body.servingsConfig;
   if (body.shoppingFrequency) updates.shopping_frequency = body.shoppingFrequency;
   if (body.weeklyFoodBudget !== undefined) updates.weekly_food_budget = body.weeklyFoodBudget;
   if (body.kitchenAppliances) updates.kitchen_appliances = body.kitchenAppliances;
@@ -891,6 +947,102 @@ export default function OnboardingQuestions() {
               alignItems: "center",
             }}
             disabled={!answers.age || !answers.height || !answers.weight}
+          >
+            <Text style={{ color: "white", fontWeight: "700" }}>次へ</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {currentQuestion.type === "servings_grid" ? (
+        <View style={{ gap: 16 }}>
+          {/* 説明テキスト */}
+          <Text style={{ color: "#666", fontSize: 13, textAlign: "center" }}>
+            各セルをタップして人数を変更できます
+          </Text>
+          
+          {/* ヘッダー行 */}
+          <View style={{ flexDirection: "row", marginBottom: 4 }}>
+            <View style={{ width: 36 }} />
+            {MEAL_TYPES.map((meal) => (
+              <View key={meal.key} style={{ flex: 1, alignItems: "center" }}>
+                <Text style={{ fontWeight: "700", color: "#333" }}>{meal.label}</Text>
+              </View>
+            ))}
+          </View>
+          
+          {/* 曜日行 */}
+          {DAYS_OF_WEEK.map((day) => (
+            <View key={day.key} style={{ flexDirection: "row", alignItems: "center" }}>
+              <View style={{ width: 36, alignItems: "center" }}>
+                <Text style={{ fontWeight: "700", color: day.key === "saturday" || day.key === "sunday" ? "#e74c3c" : "#333" }}>
+                  {day.label}
+                </Text>
+              </View>
+              {MEAL_TYPES.map((meal) => {
+                const familySize = parseInt(answers.family_size) || 2;
+                const currentConfig = answers.servings_config || createDefaultServingsConfig(familySize);
+                const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? familySize;
+                
+                return (
+                  <Pressable
+                    key={meal.key}
+                    onPress={() => {
+                      const newValue = (value + 1) % 11; // 0-10でループ
+                      const updatedConfig = { ...currentConfig };
+                      if (!updatedConfig.byDayMeal) updatedConfig.byDayMeal = {};
+                      if (!updatedConfig.byDayMeal[day.key]) updatedConfig.byDayMeal[day.key] = {};
+                      updatedConfig.byDayMeal[day.key][meal.key] = newValue;
+                      setAnswers((prev) => ({ ...prev, servings_config: updatedConfig }));
+                    }}
+                    style={{
+                      flex: 1,
+                      margin: 2,
+                      backgroundColor: value === 0 ? "#f0f0f0" : "#e8f5e9",
+                      borderRadius: 8,
+                      padding: 12,
+                      alignItems: "center",
+                      borderWidth: 1,
+                      borderColor: value === 0 ? "#ddd" : "#81c784",
+                    }}
+                  >
+                    <Text style={{ 
+                      fontWeight: "700", 
+                      fontSize: 16,
+                      color: value === 0 ? "#999" : "#2e7d32",
+                    }}>
+                      {value === 0 ? "-" : value}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+          
+          {/* 凡例 */}
+          <View style={{ flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <View style={{ width: 16, height: 16, backgroundColor: "#e8f5e9", borderRadius: 4, borderWidth: 1, borderColor: "#81c784" }} />
+              <Text style={{ fontSize: 12, color: "#666" }}>作る</Text>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <View style={{ width: 16, height: 16, backgroundColor: "#f0f0f0", borderRadius: 4, borderWidth: 1, borderColor: "#ddd" }} />
+              <Text style={{ fontSize: 12, color: "#666" }}>作らない</Text>
+            </View>
+          </View>
+          
+          <Pressable
+            onPress={() => {
+              const familySize = parseInt(answers.family_size) || 2;
+              const config = answers.servings_config || createDefaultServingsConfig(familySize);
+              handleAnswer(config);
+            }}
+            style={{
+              backgroundColor: "#333",
+              padding: 14,
+              borderRadius: 12,
+              alignItems: "center",
+              marginTop: 8,
+            }}
           >
             <Text style={{ color: "white", fontWeight: "700" }}>次へ</Text>
           </Pressable>

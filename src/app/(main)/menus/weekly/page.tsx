@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints } from "@/types/domain";
+import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings } from "@/types/domain";
 import ReactMarkdown from "react-markdown";
 import { V4GenerateModal } from "@/components/ai-assistant";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
@@ -838,6 +838,12 @@ export default function WeeklyMenuPage() {
   const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
   const [shoppingListProgress, setShoppingListProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
   const [shoppingListRequestId, setShoppingListRequestId] = useState<string | null>(null);
+  const [shoppingListTotalServings, setShoppingListTotalServings] = useState<number | null>(null);
+  
+  // 曜日別人数設定モーダル
+  const [showServingsModal, setShowServingsModal] = useState(false);
+  const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
+  const [isLoadingServingsConfig, setIsLoadingServingsConfig] = useState(false);
   
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
@@ -975,6 +981,34 @@ export default function WeeklyMenuPage() {
     };
     fetchPlan();
   }, [weekStart]);
+  
+  // Fetch servings config from user profile
+  useEffect(() => {
+    const fetchServingsConfig = async () => {
+      setIsLoadingServingsConfig(true);
+      try {
+        const res = await fetch('/api/profile');
+        if (res.ok) {
+          const profile = await res.json();
+          if (profile.servings_config) {
+            setServingsConfig(profile.servings_config);
+          } else if (profile.family_size) {
+            // servings_configがない場合はfamily_sizeからデフォルト作成
+            const defaultConfig: ServingsConfig = {
+              default: profile.family_size,
+              byDayMeal: {}
+            };
+            setServingsConfig(defaultConfig);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch servings config:', e);
+      } finally {
+        setIsLoadingServingsConfig(false);
+      }
+    };
+    fetchServingsConfig();
+  }, []);
   
   // フォールバックポーリング用の参照
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -1413,7 +1447,7 @@ export default function WeeklyMenuPage() {
           const newData = payload.new as { 
             status: string; 
             progress?: { phase: string; message: string; percentage: number };
-            result?: { stats?: { inputCount: number; outputCount: number; mergedCount: number }; error?: string };
+            result?: { stats?: { inputCount: number; outputCount: number; mergedCount: number; totalServings?: number }; error?: string };
           };
           
           if (newData?.progress) {
@@ -1422,6 +1456,10 @@ export default function WeeklyMenuPage() {
           
           if (newData.status === 'completed') {
             console.log('✅ Shopping list regeneration completed (realtime)');
+            // totalServingsを保存
+            if (newData.result?.stats?.totalServings !== undefined) {
+              setShoppingListTotalServings(newData.result.stats.totalServings);
+            }
             try {
               const listRes = await fetch(`/api/shopping-list?mealPlanId=${mealPlanId}`);
               if (listRes.ok) {
@@ -1431,10 +1469,13 @@ export default function WeeklyMenuPage() {
             } catch (fetchErr) {
               console.error('❌ Failed to fetch shopping list:', fetchErr);
             }
+            const servingsDisplay = newData.result?.stats?.totalServings 
+              ? ` (合計${newData.result.stats.totalServings}食分)` 
+              : '';
             setSuccessMessage({
               title: '買い物リストを更新しました ✓',
               message: newData.result?.stats 
-                ? `${newData.result.stats.outputCount}件の材料（${newData.result.stats.mergedCount}件を統合）`
+                ? `${newData.result.stats.outputCount}件の材料（${newData.result.stats.mergedCount}件を統合）${servingsDisplay}`
                 : '買い物リストを再生成しました'
             });
             setIsRegeneratingShoppingList(false);
@@ -3395,10 +3436,25 @@ export default function WeeklyMenuPage() {
                     <ShoppingCart size={18} color={colors.accent} />
                     <span style={{ fontSize: 15, fontWeight: 600 }}>買い物リスト</span>
                     <span style={{ fontSize: 11, color: colors.textMuted }}>{shoppingList.filter(i => !i.isChecked).length}/{shoppingList.length}</span>
+                    {shoppingListTotalServings !== null && shoppingListTotalServings > 0 && (
+                      <span style={{ fontSize: 11, color: colors.accent, fontWeight: 600, background: colors.accentLight, padding: '2px 6px', borderRadius: 8 }}>
+                        {shoppingListTotalServings}食分
+                      </span>
+                    )}
                   </div>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setShowServingsModal(true)} 
+                      className="w-7 h-7 rounded-full flex items-center justify-center" 
+                      style={{ background: colors.bg }}
+                      title="人数設定"
+                    >
+                      <Users size={14} color={colors.textLight} />
+                    </button>
+                    <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                      <X size={14} color={colors.textLight} />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 p-3 overflow-auto">
                   {shoppingList.length === 0 ? (
@@ -3883,6 +3939,120 @@ export default function WeeklyMenuPage() {
                     材料を買い物リストに追加
                   </button>
                 </div>
+              </motion.div>
+            )}
+
+            {/* Servings Config Modal */}
+            {showServingsModal && (
+              <motion.div
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[300] flex items-center justify-center"
+                style={{ background: 'rgba(0,0,0,0.5)' }}
+                onClick={() => setShowServingsModal(false)}
+              >
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                  className="w-[95%] max-w-md rounded-2xl p-5"
+                  style={{ background: colors.card }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 style={{ fontSize: 18, fontWeight: 700 }}>曜日別人数設定</h3>
+                    <button onClick={() => setShowServingsModal(false)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                      <X size={16} color={colors.textLight} />
+                    </button>
+                  </div>
+                  
+                  <p style={{ fontSize: 13, color: colors.textLight, marginBottom: 16 }}>
+                    各セルをクリックして人数を変更（0=作らない/外食）
+                  </p>
+                  
+                  {/* Grid Header */}
+                  <div className="grid grid-cols-4 gap-2 mb-2">
+                    <div />
+                    {(['朝', '昼', '夜'] as const).map((label, i) => (
+                      <div key={i} className="text-center font-bold" style={{ fontSize: 13, color: colors.text }}>{label}</div>
+                    ))}
+                  </div>
+                  
+                  {/* Grid Rows */}
+                  {(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const).map((day) => {
+                    const labels: Record<string, string> = { monday: '月', tuesday: '火', wednesday: '水', thursday: '木', friday: '金', saturday: '土', sunday: '日' };
+                    const isWeekend = day === 'saturday' || day === 'sunday';
+                    const defaultServings = servingsConfig?.default ?? 2;
+                    
+                    return (
+                      <div key={day} className="grid grid-cols-4 gap-2 mb-2">
+                        <div className="flex items-center justify-center font-bold" style={{ fontSize: 13, color: isWeekend ? colors.accent : colors.text }}>
+                          {labels[day]}
+                        </div>
+                        {(['breakfast', 'lunch', 'dinner'] as const).map((meal) => {
+                          const value = servingsConfig?.byDayMeal?.[day]?.[meal] ?? defaultServings;
+                          
+                          return (
+                            <button
+                              key={meal}
+                              onClick={() => {
+                                const newValue = (value + 1) % 11;
+                                const updated: ServingsConfig = {
+                                  default: servingsConfig?.default ?? 2,
+                                  byDayMeal: { ...servingsConfig?.byDayMeal }
+                                };
+                                if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
+                                updated.byDayMeal[day][meal] = newValue;
+                                setServingsConfig(updated);
+                              }}
+                              className="p-3 rounded-lg text-center font-bold transition-colors"
+                              style={{
+                                background: value === 0 ? colors.bg : colors.successLight,
+                                color: value === 0 ? colors.textMuted : colors.success,
+                                border: `1px solid ${value === 0 ? colors.border : colors.success}`
+                              }}
+                            >
+                              {value === 0 ? '-' : value}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                  
+                  {/* Legend */}
+                  <div className="flex justify-center gap-4 mt-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded" style={{ background: colors.successLight, border: `1px solid ${colors.success}` }} />
+                      <span style={{ fontSize: 11, color: colors.textLight }}>作る</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded" style={{ background: colors.bg, border: `1px solid ${colors.border}` }} />
+                      <span style={{ fontSize: 11, color: colors.textLight }}>作らない</span>
+                    </div>
+                  </div>
+                  
+                  {/* Save Button */}
+                  <button
+                    onClick={async () => {
+                      if (!servingsConfig) return;
+                      try {
+                        const res = await fetch('/api/profile', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ servingsConfig })
+                        });
+                        if (res.ok) {
+                          setSuccessMessage({ title: '保存しました', message: '人数設定を更新しました' });
+                          setShowServingsModal(false);
+                        }
+                      } catch (e) {
+                        console.error('Failed to save servings config:', e);
+                      }
+                    }}
+                    className="w-full p-3.5 rounded-xl font-semibold"
+                    style={{ background: colors.accent, color: '#fff' }}
+                  >
+                    保存する
+                  </button>
+                </motion.div>
               </motion.div>
             )}
 

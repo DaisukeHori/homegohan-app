@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { mealPlanId, startDate, endDate, mealTypes } = await request.json();
+    const { mealPlanId, startDate, endDate, mealTypes, servingsConfig } = await request.json();
     
     if (!mealPlanId) {
       return NextResponse.json({ error: 'mealPlanId is required' }, { status: 400 });
@@ -66,6 +66,8 @@ export async function POST(request: Request) {
         startDate: startDate || null,
         endDate: endDate || null,
         mealTypes: mealTypes || null,
+        // 人数設定（渡されない場合はEdge Functionでプロフィールから取得）
+        servingsConfig: servingsConfig || null,
       }),
     }).catch((err) => {
       console.error('Edge Function call failed:', err);

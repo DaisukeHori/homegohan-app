@@ -3,7 +3,8 @@ import type {
   Announcement, OrgDailyStats, Organization, DailyActivityLog, Badge,
   MealPlan, MealPlanDay, PlannedMeal, ShoppingListItem, WeeklyMenuResult,
   FitnessGoal, WorkStyle, CookingExperience, DietStyle, Frequency, QualityLevel, StressLevel,
-  TargetSlot, MenuRequestMode, MenuGenerationProgress, MealType, ShoppingFrequency
+  TargetSlot, MenuRequestMode, MenuGenerationProgress, MealType, ShoppingFrequency,
+  ServingsConfig
 } from '@/types/domain';
 import type { 
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
@@ -29,6 +30,7 @@ export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   department: db.department,
   familySize: db.family_size || 1,
   cheatDayConfig: db.cheat_day_config,
+  servingsConfig: db.servings_config as ServingsConfig | null,
   
   // === NEW: Body Info ===
   bodyFatPercentage: db.body_fat_percentage ?? null,
@@ -157,6 +159,7 @@ export const fromUserProfile = (profile: Partial<UserProfile>): Record<string, a
   if (profile.dietFlags !== undefined) result.diet_flags = profile.dietFlags;
   if (profile.familySize !== undefined) result.family_size = profile.familySize;
   if (profile.cheatDayConfig !== undefined) result.cheat_day_config = profile.cheatDayConfig;
+  if (profile.servingsConfig !== undefined) result.servings_config = profile.servingsConfig;
   
   // Body Info
   if (profile.bodyFatPercentage !== undefined) result.body_fat_percentage = profile.bodyFatPercentage;

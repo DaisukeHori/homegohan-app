@@ -67,7 +67,7 @@ async function updateProgress(
 async function markCompleted(
   supabase: SupabaseClient,
   requestId: string,
-  stats: { inputCount: number; outputCount: number; mergedCount: number }
+  stats: { inputCount: number; outputCount: number; mergedCount: number; totalServings?: number }
 ): Promise<void> {
   await supabase
     .from("shopping_list_requests")
@@ -272,6 +272,61 @@ interface RangeFilter {
 }
 
 // ============================================
+// 人数設定型
+// ============================================
+
+interface MealServings {
+  breakfast?: number;
+  lunch?: number;
+  dinner?: number;
+}
+
+interface ServingsConfig {
+  default: number;
+  byDayMeal: {
+    [day: string]: MealServings;
+  };
+}
+
+// 日付から曜日を取得 (monday, tuesday, ...)
+function getDayOfWeek(dateStr: string): string {
+  const date = new Date(dateStr);
+  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  return days[date.getDay()];
+}
+
+// servingsConfigから人数を取得
+function getServingsForSlot(
+  config: ServingsConfig | null | undefined,
+  dayOfWeek: string,
+  mealType: string
+): number {
+  if (!config) return 1;
+  const byDay = config.byDayMeal?.[dayOfWeek];
+  if (byDay && byDay[mealType as keyof MealServings] !== undefined) {
+    return byDay[mealType as keyof MealServings] ?? config.default ?? 1;
+  }
+  return config.default ?? 1;
+}
+
+// 材料文字列から分量をパース
+function parseIngredientAmount(ing: any): { name: string; amount_g: number } | null {
+  if (typeof ing === 'object' && ing.name) {
+    return { name: ing.name, amount_g: ing.amount_g ?? 0 };
+  }
+  if (typeof ing === 'string') {
+    // "玉ねぎ 50g" → { name: "玉ねぎ", amount_g: 50 }
+    const match = ing.match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*g$/);
+    if (match) {
+      return { name: match[1].trim(), amount_g: parseFloat(match[2]) };
+    }
+    // 数量なしの場合
+    return { name: ing.trim(), amount_g: 0 };
+  }
+  return null;
+}
+
+// ============================================
 // メイン処理
 // ============================================
 
@@ -280,7 +335,8 @@ async function processRegeneration(
   requestId: string,
   mealPlanId: string,
   userId: string,
-  rangeFilter: RangeFilter = {}
+  rangeFilter: RangeFilter = {},
+  servingsConfig?: ServingsConfig | null
 ): Promise<void> {
   try {
     // Phase 1: 材料抽出
@@ -292,6 +348,23 @@ async function processRegeneration(
       message: `献立から材料を抽出中...（${rangeDesc}）`,
       percentage: 10,
     });
+
+    // servingsConfigがなければユーザープロフィールから取得
+    let effectiveServingsConfig = servingsConfig;
+    if (!effectiveServingsConfig) {
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("servings_config, family_size")
+        .eq("id", userId)
+        .single();
+      
+      if (profile?.servings_config) {
+        effectiveServingsConfig = profile.servings_config as ServingsConfig;
+      } else if (profile?.family_size) {
+        // servings_configがない場合はfamily_sizeをデフォルトとして使用
+        effectiveServingsConfig = { default: profile.family_size, byDayMeal: {} };
+      }
+    }
 
     // Get all planned meals for this meal plan with day_date and meal_type
     const { data: mealPlan, error: planError } = await supabase
@@ -315,15 +388,9 @@ async function processRegeneration(
 
     if (planError) throw planError;
 
-    // 材料を抽出（範囲フィルタ適用）
+    // 材料を抽出（範囲フィルタ適用 + 人数倍率適用）
     const ingredientsMap = new Map<string, InputIngredient>();
-    
-    // 食事タイプのマッピング（クライアント側との整合性）
-    const mealTypeMap: Record<string, string> = {
-      'breakfast': 'breakfast',
-      'lunch': 'lunch', 
-      'dinner': 'dinner',
-    };
+    let totalServings = 0; // 合計人数をカウント
 
     mealPlan.meal_plan_days?.forEach((day: any) => {
       const dayDate = day.day_date;
@@ -331,6 +398,8 @@ async function processRegeneration(
       // 日付フィルタ
       if (rangeFilter.startDate && dayDate < rangeFilter.startDate) return;
       if (rangeFilter.endDate && dayDate > rangeFilter.endDate) return;
+      
+      const dayOfWeek = getDayOfWeek(dayDate);
       
       day.planned_meals?.forEach((meal: any) => {
         const mealType = meal.meal_type;
@@ -340,25 +409,35 @@ async function processRegeneration(
           if (!rangeFilter.mealTypes.includes(mealType)) return;
         }
         
+        // この食事の人数を取得
+        const servings = getServingsForSlot(effectiveServingsConfig, dayOfWeek, mealType);
+        
+        // 人数が0の場合はスキップ（外食など）
+        if (servings === 0) return;
+        
+        totalServings += servings;
+        
         if (meal.dishes && Array.isArray(meal.dishes)) {
           meal.dishes.forEach((dish: any) => {
             if (dish.ingredients && Array.isArray(dish.ingredients)) {
               dish.ingredients.forEach((ing: any) => {
-                const name = typeof ing === "string" ? ing : ing.name;
-                const amount =
-                  typeof ing === "object"
-                    ? ing.amount || (ing.amount_g ? `${ing.amount_g}g` : null)
-                    : null;
+                const parsed = parseIngredientAmount(ing);
+                if (!parsed) return;
+                
+                const { name, amount_g } = parsed;
+                // 人数倍率を適用
+                const scaledAmount = amount_g * servings;
+                const amountStr = scaledAmount > 0 ? `${Math.round(scaledAmount)}g` : null;
 
                 if (name) {
-                  const key = `${name}|${amount || ""}`;
+                  const key = `${name}|${amountStr || ""}`;
                   const existing = ingredientsMap.get(key);
                   if (existing) {
                     existing.count++;
                   } else {
                     ingredientsMap.set(key, {
                       name: name.trim(),
-                      amount,
+                      amount: amountStr,
                       count: 1,
                     });
                   }
@@ -368,23 +447,30 @@ async function processRegeneration(
           });
         } else if (meal.ingredients && Array.isArray(meal.ingredients)) {
           meal.ingredients.forEach((ingredient: string) => {
-            const trimmed = ingredient.trim();
-            if (trimmed) {
-              const existing = ingredientsMap.get(trimmed);
-              if (existing) {
-                existing.count++;
-              } else {
-                ingredientsMap.set(trimmed, {
-                  name: trimmed,
-                  amount: null,
-                  count: 1,
-                });
-              }
+            const parsed = parseIngredientAmount(ingredient);
+            if (!parsed) return;
+            
+            const { name, amount_g } = parsed;
+            const scaledAmount = amount_g * servings;
+            const amountStr = scaledAmount > 0 ? `${Math.round(scaledAmount)}g` : null;
+            const key = `${name}|${amountStr || ""}`;
+            
+            const existing = ingredientsMap.get(key);
+            if (existing) {
+              existing.count++;
+            } else {
+              ingredientsMap.set(key, {
+                name: name.trim(),
+                amount: amountStr,
+                count: 1,
+              });
             }
           });
         }
       });
     });
+
+    console.log(`Total servings calculated: ${totalServings}`);
 
     const rawIngredients = Array.from(ingredientsMap.values());
 
@@ -400,6 +486,7 @@ async function processRegeneration(
         inputCount: 0,
         outputCount: 0,
         mergedCount: 0,
+        totalServings: 0,
       });
       return;
     }
@@ -519,6 +606,7 @@ async function processRegeneration(
       inputCount: rawIngredients.length,
       outputCount: validatedItems.length,
       mergedCount: rawIngredients.length - validatedItems.length,
+      totalServings,
     };
 
     await markCompleted(supabase, requestId, stats);
@@ -542,7 +630,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { requestId, mealPlanId, userId, startDate, endDate, mealTypes } = await req.json();
+    const { requestId, mealPlanId, userId, startDate, endDate, mealTypes, servingsConfig } = await req.json();
 
     if (!requestId || !mealPlanId || !userId) {
       return new Response(
@@ -568,7 +656,7 @@ Deno.serve(async (req: Request) => {
 
     // 非同期で処理開始（即座にレスポンス返す）
     // EdgeRuntimeではバックグラウンド実行のためにPromiseをresolveしない
-    processRegeneration(supabase, requestId, mealPlanId, userId, rangeFilter);
+    processRegeneration(supabase, requestId, mealPlanId, userId, rangeFilter, servingsConfig || null);
 
     return new Response(
       JSON.stringify({ success: true, requestId }),

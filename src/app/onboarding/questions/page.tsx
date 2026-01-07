@@ -6,6 +6,49 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
 
+// 曜日別人数設定のデータ
+const DAYS_OF_WEEK = [
+  { key: "monday", label: "月" },
+  { key: "tuesday", label: "火" },
+  { key: "wednesday", label: "水" },
+  { key: "thursday", label: "木" },
+  { key: "friday", label: "金" },
+  { key: "saturday", label: "土" },
+  { key: "sunday", label: "日" },
+] as const;
+
+const MEAL_TYPES = [
+  { key: "breakfast", label: "朝" },
+  { key: "lunch", label: "昼" },
+  { key: "dinner", label: "夜" },
+] as const;
+
+type ServingsConfig = {
+  default: number;
+  byDayMeal: {
+    [day: string]: {
+      breakfast?: number;
+      lunch?: number;
+      dinner?: number;
+    };
+  };
+};
+
+function createDefaultServingsConfig(familySize: number): ServingsConfig {
+  const config: ServingsConfig = {
+    default: familySize,
+    byDayMeal: {},
+  };
+  for (const day of DAYS_OF_WEEK) {
+    config.byDayMeal[day.key] = {
+      breakfast: familySize,
+      lunch: 0,
+      dinner: familySize,
+    };
+  }
+  return config;
+}
+
 // 質問データの定義（運動・目標・健康情報を詳細に収集）
 const QUESTIONS = [
   {
@@ -202,6 +245,11 @@ const QUESTIONS = [
     placeholder: '例: 4',
     min: 1,
     max: 10,
+  },
+  {
+    id: 'servings_config',
+    text: '曜日ごとの食事人数を設定してください\n（0人＝作らない/外食）',
+    type: 'servings_grid',
   },
   {
     id: 'shopping_frequency',
@@ -755,6 +803,88 @@ function OnboardingQuestionsContent() {
                     onClick={() => handleAnswer("completed")}
                     disabled={!answers.age || !answers.height || !answers.weight}
                     className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-3 sm:mt-4 text-sm sm:text-base"
+                  >
+                    次へ
+                  </Button>
+                </div>
+              )}
+
+              {/* 曜日別人数設定グリッド */}
+              {currentQuestion.type === 'servings_grid' && (
+                <div className="space-y-4">
+                  <p className="text-center text-sm text-gray-500">
+                    各セルをクリックして人数を変更できます
+                  </p>
+                  
+                  {/* ヘッダー行 */}
+                  <div className="grid grid-cols-4 gap-2">
+                    <div /> {/* 空セル */}
+                    {MEAL_TYPES.map((meal) => (
+                      <div key={meal.key} className="text-center font-bold text-gray-700">
+                        {meal.label}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* 曜日行 */}
+                  {DAYS_OF_WEEK.map((day) => {
+                    const familySize = parseInt(answers.family_size) || 2;
+                    const currentConfig: ServingsConfig = answers.servings_config || createDefaultServingsConfig(familySize);
+                    
+                    return (
+                      <div key={day.key} className="grid grid-cols-4 gap-2">
+                        <div className={`flex items-center justify-center font-bold ${
+                          day.key === 'saturday' || day.key === 'sunday' ? 'text-red-500' : 'text-gray-700'
+                        }`}>
+                          {day.label}
+                        </div>
+                        {MEAL_TYPES.map((meal) => {
+                          const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? familySize;
+                          
+                          return (
+                            <button
+                              key={meal.key}
+                              onClick={() => {
+                                const newValue = (value + 1) % 11;
+                                const updatedConfig = { ...currentConfig };
+                                if (!updatedConfig.byDayMeal) updatedConfig.byDayMeal = {};
+                                if (!updatedConfig.byDayMeal[day.key]) updatedConfig.byDayMeal[day.key] = {};
+                                updatedConfig.byDayMeal[day.key][meal.key] = newValue;
+                                setAnswers({ ...answers, servings_config: updatedConfig });
+                              }}
+                              className={`p-3 rounded-lg text-center font-bold transition-colors ${
+                                value === 0
+                                  ? 'bg-gray-100 text-gray-400 border border-gray-200'
+                                  : 'bg-green-50 text-green-700 border border-green-300 hover:bg-green-100'
+                              }`}
+                            >
+                              {value === 0 ? '-' : value}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                  
+                  {/* 凡例 */}
+                  <div className="flex justify-center gap-6 mt-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 bg-green-50 border border-green-300 rounded" />
+                      <span className="text-xs text-gray-600">作る</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 bg-gray-100 border border-gray-200 rounded" />
+                      <span className="text-xs text-gray-600">作らない</span>
+                    </div>
+                  </div>
+                  
+                  <Button
+                    onClick={() => {
+                      const familySize = parseInt(answers.family_size) || 2;
+                      const config = answers.servings_config || createDefaultServingsConfig(familySize);
+                      handleAnswer(config);
+                    }}
+                    className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-4 text-sm sm:text-base"
                   >
                     次へ
                   </Button>

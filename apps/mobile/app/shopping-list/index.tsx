@@ -34,6 +34,7 @@ export default function ShoppingListPage() {
   const [newCategory, setNewCategory] = useState("その他");
   const [newQuantity, setNewQuantity] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [totalServings, setTotalServings] = useState<number | null>(null);
 
   async function load() {
     setIsLoading(true);
@@ -162,11 +163,58 @@ export default function ShoppingListPage() {
             try {
               const api = getApi();
               const response = await api.post("/api/shopping-list/regenerate", { mealPlanId });
-              await load();
-              const stats = response.stats;
-              if (stats) {
-                Alert.alert("完了", `${stats.outputCount}件の材料を整理しました（${stats.mergedCount}件を統合）`);
+              
+              // 非同期処理：requestIdが返ってくるのでポーリング
+              if (response.requestId) {
+                // ポーリングで完了を待つ
+                let attempts = 0;
+                const maxAttempts = 60; // 最大2分
+                const poll = async () => {
+                  try {
+                    const statusRes = await api.get(`/api/shopping-list/regenerate/status?requestId=${response.requestId}`);
+                    if (statusRes.status === 'completed') {
+                      if (statusRes.result?.stats?.totalServings) {
+                        setTotalServings(statusRes.result.stats.totalServings);
+                      }
+                      await load();
+                      const stats = statusRes.result?.stats;
+                      const servingsText = stats?.totalServings ? ` (${stats.totalServings}食分)` : '';
+                      Alert.alert("完了", `${stats?.outputCount ?? 0}件の材料を整理しました${servingsText}`);
+                      return true;
+                    } else if (statusRes.status === 'failed') {
+                      throw new Error(statusRes.result?.error || '再生成に失敗しました');
+                    }
+                    return false;
+                  } catch (e) {
+                    throw e;
+                  }
+                };
+                
+                const pollInterval = setInterval(async () => {
+                  attempts++;
+                  if (attempts > maxAttempts) {
+                    clearInterval(pollInterval);
+                    setIsRegenerating(false);
+                    Alert.alert("タイムアウト", "処理に時間がかかっています。後で確認してください。");
+                    return;
+                  }
+                  try {
+                    const done = await poll();
+                    if (done) {
+                      clearInterval(pollInterval);
+                      setIsRegenerating(false);
+                    }
+                  } catch (e: any) {
+                    clearInterval(pollInterval);
+                    setIsRegenerating(false);
+                    Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
+                  }
+                }, 2000);
+                
+                return; // 非同期処理中なので即座にreturn
               }
+              
+              await load();
             } catch (e: any) {
               Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
             } finally {
@@ -181,7 +229,14 @@ export default function ShoppingListPage() {
   return (
     <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>買い物リスト</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text style={{ fontSize: 20, fontWeight: "900" }}>買い物リスト</Text>
+          {totalServings !== null && totalServings > 0 && (
+            <View style={{ backgroundColor: "#FDF0ED", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#E07A5F" }}>{totalServings}食分</Text>
+            </View>
+          )}
+        </View>
         <Pressable 
           onPress={regenerate} 
           disabled={isRegenerating}
