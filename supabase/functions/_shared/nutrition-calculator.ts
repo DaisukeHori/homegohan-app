@@ -268,7 +268,7 @@ ${batch.map((m, j) => `${j + 1}. 入力:「${m.inputName}」→ マッチ:「${m
   return invalidIndices;
 }
 
-// LLMに候補リストから最適なマッチを選んでもらう
+// LLMに候補リストから最適なマッチを選んでもらう（リトライ付き）
 async function selectBestMatchWithLLM(
   inputName: string,
   candidates: Array<{ id: string; name: string; name_norm: string; similarity: number }>
@@ -282,57 +282,79 @@ async function selectBestMatchWithLLM(
     return 0;
   }
   
-  const prompt = `あなたは日本の食品データベースの専門家です。
+  const MAX_RETRIES = 3;
+  const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 100).toFixed(0)}%)`).join("\n");
+  
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    // リトライ時はより明確な指示を追加
+    const retryHint = attempt > 1 ? `\n\n※前回の回答が数字として認識できませんでした。必ず半角数字1文字だけで回答してください。` : "";
+    
+    const prompt = `あなたは日本の食品データベースの専門家です。
 
 料理で使われる食材「${inputName}」に最も適切な食品データベースエントリを選んでください。
 
 【候補】
-${candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 100).toFixed(0)}%)`).join("\n")}
+${candidateList}
 
 【重要なルール】
 - 料理に使う「${inputName}」として最も自然なものを選ぶ
 - **調理状態を考慮**: ご飯・麦ご飯など「炊いた状態」で使う食材は「めし」「ゆで」を選ぶ。「乾」は乾燥状態でカロリーが3倍近く高いので避ける
 - 明らかに全く異なる食材しかない場合は「0」と答える
-- 数字だけで答える（例: 「2」）
+- **数字だけで答える**（例: 「2」）- 説明は不要${retryHint}
 
 回答:`;
 
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-5-mini",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: 10,
-      }),
-    });
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: 10,
+        }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      const content = (data.choices?.[0]?.message?.content ?? "").trim();
-      const num = parseInt(content, 10);
-      
-      if (num === 0) {
-        console.log(`[nutrition] LLM: 「${inputName}」→ 全候補却下`);
-        return -1;
+      if (res.ok) {
+        const data = await res.json();
+        const content = (data.choices?.[0]?.message?.content ?? "").trim();
+        
+        // 数字を抽出（文字列の中から最初の数字を探す）
+        const numMatch = content.match(/\d+/);
+        const num = numMatch ? parseInt(numMatch[0], 10) : NaN;
+        
+        if (num === 0) {
+          console.log(`[nutrition] LLM: 「${inputName}」→ 全候補却下 (attempt ${attempt})`);
+          return -1;
+        }
+        
+        if (num >= 1 && num <= candidates.length) {
+          console.log(`[nutrition] LLM: 「${inputName}」→ ${num}番「${candidates[num - 1].name}」を選択 (attempt ${attempt})`);
+          return num - 1;
+        }
+        
+        // パース失敗 - リトライ
+        console.warn(`[nutrition] LLM response parse failed for "${inputName}" (attempt ${attempt}): "${content}"`);
+      } else {
+        const errorText = await res.text().catch(() => "unknown");
+        console.warn(`[nutrition] LLM API error for "${inputName}" (attempt ${attempt}): ${res.status} - ${errorText}`);
       }
-      
-      if (num >= 1 && num <= candidates.length) {
-        console.log(`[nutrition] LLM: 「${inputName}」→ ${num}番「${candidates[num - 1].name}」を選択`);
-        return num - 1;
-      }
+    } catch (e: any) {
+      console.warn(`[nutrition] LLM selection failed for "${inputName}" (attempt ${attempt}):`, e?.message);
     }
-  } catch (e: any) {
-    console.warn(`[nutrition] LLM selection failed for "${inputName}":`, e?.message);
+    
+    // リトライ前に少し待機（最後の試行では待たない）
+    if (attempt < MAX_RETRIES) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
   }
   
-  // フォールバック: 最初の候補を使用
-  console.log(`[nutrition] LLM selection fallback: using first candidate for "${inputName}"`);
+  // 全リトライ失敗 - フォールバック: 最初の候補を使用
+  console.log(`[nutrition] LLM selection fallback after ${MAX_RETRIES} retries: using first candidate for "${inputName}"`);
   return 0;
 }
 
