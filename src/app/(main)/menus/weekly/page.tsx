@@ -3856,28 +3856,49 @@ export default function WeeklyMenuPage() {
                           {(['breakfast', 'lunch', 'dinner'] as const).map((meal) => {
                             const value = servingsConfig?.byDayMeal?.[day]?.[meal] ?? defaultServings;
                             
+                            const updateValue = (newValue: number) => {
+                              const updated: ServingsConfig = {
+                                default: servingsConfig?.default ?? 2,
+                                byDayMeal: { ...servingsConfig?.byDayMeal }
+                              };
+                              if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
+                              updated.byDayMeal[day][meal] = Math.max(0, Math.min(10, newValue));
+                              setServingsConfig(updated);
+                            };
+                            
                             return (
-                              <button
+                              <div
                                 key={meal}
-                                onClick={() => {
-                                  const newValue = (value + 1) % 11;
-                                  const updated: ServingsConfig = {
-                                    default: servingsConfig?.default ?? 2,
-                                    byDayMeal: { ...servingsConfig?.byDayMeal }
-                                  };
-                                  if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
-                                  updated.byDayMeal[day][meal] = newValue;
-                                  setServingsConfig(updated);
-                                }}
-                                className="p-2.5 rounded-lg text-center font-bold transition-colors"
+                                className="flex items-center justify-between rounded-lg px-1"
                                 style={{
                                   background: value === 0 ? colors.bg : colors.successLight,
-                                  color: value === 0 ? colors.textMuted : colors.success,
                                   border: `1px solid ${value === 0 ? colors.border : colors.success}`
                                 }}
                               >
-                                {value === 0 ? '-' : value}
-                              </button>
+                                <button
+                                  onClick={() => updateValue(value - 1)}
+                                  className="w-6 h-8 flex items-center justify-center text-lg font-bold"
+                                  style={{ color: value === 0 ? colors.textMuted : colors.success }}
+                                >
+                                  −
+                                </button>
+                                <span 
+                                  className="font-bold text-center min-w-[16px]"
+                                  style={{ 
+                                    fontSize: 14,
+                                    color: value === 0 ? colors.textMuted : colors.success 
+                                  }}
+                                >
+                                  {value === 0 ? '-' : value}
+                                </span>
+                                <button
+                                  onClick={() => updateValue(value + 1)}
+                                  className="w-6 h-8 flex items-center justify-center text-lg font-bold"
+                                  style={{ color: value === 0 ? colors.textMuted : colors.success }}
+                                >
+                                  +
+                                </button>
+                              </div>
                             );
                           })}
                         </div>
@@ -4110,28 +4131,49 @@ export default function WeeklyMenuPage() {
                         {(['breakfast', 'lunch', 'dinner'] as const).map((meal) => {
                           const value = servingsConfig?.byDayMeal?.[day]?.[meal] ?? defaultServings;
                           
+                          const updateValue = (newValue: number) => {
+                            const updated: ServingsConfig = {
+                              default: servingsConfig?.default ?? 2,
+                              byDayMeal: { ...servingsConfig?.byDayMeal }
+                            };
+                            if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
+                            updated.byDayMeal[day][meal] = Math.max(0, Math.min(10, newValue));
+                            setServingsConfig(updated);
+                          };
+                          
                           return (
-                            <button
+                            <div
                               key={meal}
-                              onClick={() => {
-                                const newValue = (value + 1) % 11;
-                                const updated: ServingsConfig = {
-                                  default: servingsConfig?.default ?? 2,
-                                  byDayMeal: { ...servingsConfig?.byDayMeal }
-                                };
-                                if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
-                                updated.byDayMeal[day][meal] = newValue;
-                                setServingsConfig(updated);
-                              }}
-                              className="p-3 rounded-lg text-center font-bold transition-colors"
+                              className="flex items-center justify-between rounded-lg px-1"
                               style={{
                                 background: value === 0 ? colors.bg : colors.successLight,
-                                color: value === 0 ? colors.textMuted : colors.success,
                                 border: `1px solid ${value === 0 ? colors.border : colors.success}`
                               }}
                             >
-                              {value === 0 ? '-' : value}
-                            </button>
+                              <button
+                                onClick={() => updateValue(value - 1)}
+                                className="w-7 h-9 flex items-center justify-center text-lg font-bold"
+                                style={{ color: value === 0 ? colors.textMuted : colors.success }}
+                              >
+                                −
+                              </button>
+                              <span 
+                                className="font-bold text-center min-w-[18px]"
+                                style={{ 
+                                  fontSize: 15,
+                                  color: value === 0 ? colors.textMuted : colors.success 
+                                }}
+                              >
+                                {value === 0 ? '-' : value}
+                              </span>
+                              <button
+                                onClick={() => updateValue(value + 1)}
+                                className="w-7 h-9 flex items-center justify-center text-lg font-bold"
+                                style={{ color: value === 0 ? colors.textMuted : colors.success }}
+                              >
+                                +
+                              </button>
+                            </div>
                           );
                         })}
                       </div>

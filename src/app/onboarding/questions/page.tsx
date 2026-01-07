@@ -841,25 +841,46 @@ function OnboardingQuestionsContent() {
                         {MEAL_TYPES.map((meal) => {
                           const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? familySize;
                           
+                          const updateValue = (newValue: number) => {
+                            const clampedValue = Math.max(0, Math.min(10, newValue));
+                            const updatedConfig = { ...currentConfig };
+                            if (!updatedConfig.byDayMeal) updatedConfig.byDayMeal = {};
+                            if (!updatedConfig.byDayMeal[day.key]) updatedConfig.byDayMeal[day.key] = {};
+                            updatedConfig.byDayMeal[day.key][meal.key] = clampedValue;
+                            setAnswers({ ...answers, servings_config: updatedConfig });
+                          };
+                          
                           return (
-                            <button
+                            <div
                               key={meal.key}
-                              onClick={() => {
-                                const newValue = (value + 1) % 11;
-                                const updatedConfig = { ...currentConfig };
-                                if (!updatedConfig.byDayMeal) updatedConfig.byDayMeal = {};
-                                if (!updatedConfig.byDayMeal[day.key]) updatedConfig.byDayMeal[day.key] = {};
-                                updatedConfig.byDayMeal[day.key][meal.key] = newValue;
-                                setAnswers({ ...answers, servings_config: updatedConfig });
-                              }}
-                              className={`p-3 rounded-lg text-center font-bold transition-colors ${
+                              className={`flex items-center justify-between rounded-lg px-1 ${
                                 value === 0
-                                  ? 'bg-gray-100 text-gray-400 border border-gray-200'
-                                  : 'bg-green-50 text-green-700 border border-green-300 hover:bg-green-100'
+                                  ? 'bg-gray-100 border border-gray-200'
+                                  : 'bg-green-50 border border-green-300'
                               }`}
                             >
-                              {value === 0 ? '-' : value}
-                            </button>
+                              <button
+                                onClick={() => updateValue(value - 1)}
+                                className={`w-7 h-10 flex items-center justify-center text-lg font-bold ${
+                                  value === 0 ? 'text-gray-400' : 'text-green-700'
+                                }`}
+                              >
+                                −
+                              </button>
+                              <span className={`font-bold text-center min-w-[16px] ${
+                                value === 0 ? 'text-gray-400' : 'text-green-700'
+                              }`}>
+                                {value === 0 ? '-' : value}
+                              </span>
+                              <button
+                                onClick={() => updateValue(value + 1)}
+                                className={`w-7 h-10 flex items-center justify-center text-lg font-bold ${
+                                  value === 0 ? 'text-gray-400' : 'text-green-700'
+                                }`}
+                              >
+                                +
+                              </button>
+                            </div>
                           );
                         })}
                       </div>

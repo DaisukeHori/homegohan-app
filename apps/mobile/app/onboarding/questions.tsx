@@ -983,36 +983,47 @@ export default function OnboardingQuestions() {
                 const currentConfig = answers.servings_config || createDefaultServingsConfig(familySize);
                 const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? familySize;
                 
+                const updateValue = (newValue: number) => {
+                  const clampedValue = Math.max(0, Math.min(10, newValue));
+                  const updatedConfig = { ...currentConfig };
+                  if (!updatedConfig.byDayMeal) updatedConfig.byDayMeal = {};
+                  if (!updatedConfig.byDayMeal[day.key]) updatedConfig.byDayMeal[day.key] = {};
+                  updatedConfig.byDayMeal[day.key][meal.key] = clampedValue;
+                  setAnswers((prev) => ({ ...prev, servings_config: updatedConfig }));
+                };
+                
                 return (
-                  <Pressable
+                  <View
                     key={meal.key}
-                    onPress={() => {
-                      const newValue = (value + 1) % 11; // 0-10でループ
-                      const updatedConfig = { ...currentConfig };
-                      if (!updatedConfig.byDayMeal) updatedConfig.byDayMeal = {};
-                      if (!updatedConfig.byDayMeal[day.key]) updatedConfig.byDayMeal[day.key] = {};
-                      updatedConfig.byDayMeal[day.key][meal.key] = newValue;
-                      setAnswers((prev) => ({ ...prev, servings_config: updatedConfig }));
-                    }}
                     style={{
                       flex: 1,
                       margin: 2,
                       backgroundColor: value === 0 ? "#f0f0f0" : "#e8f5e9",
                       borderRadius: 8,
-                      padding: 12,
+                      flexDirection: "row",
                       alignItems: "center",
+                      justifyContent: "space-between",
+                      paddingHorizontal: 4,
                       borderWidth: 1,
                       borderColor: value === 0 ? "#ddd" : "#81c784",
                     }}
                   >
+                    <Pressable onPress={() => updateValue(value - 1)} style={{ padding: 8 }}>
+                      <Text style={{ fontWeight: "900", fontSize: 18, color: value === 0 ? "#999" : "#2e7d32" }}>−</Text>
+                    </Pressable>
                     <Text style={{ 
                       fontWeight: "700", 
-                      fontSize: 16,
+                      fontSize: 14,
                       color: value === 0 ? "#999" : "#2e7d32",
+                      minWidth: 16,
+                      textAlign: "center",
                     }}>
                       {value === 0 ? "-" : value}
                     </Text>
-                  </Pressable>
+                    <Pressable onPress={() => updateValue(value + 1)} style={{ padding: 8 }}>
+                      <Text style={{ fontWeight: "900", fontSize: 18, color: value === 0 ? "#999" : "#2e7d32" }}>+</Text>
+                    </Pressable>
+                  </View>
                 );
               })}
             </View>
