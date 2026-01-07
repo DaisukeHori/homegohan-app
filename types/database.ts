@@ -20,6 +20,7 @@ export interface DbUserProfile {
   family_size: number;
   family_config: any | null;
   cheat_day_config: any | null;
+  servings_config: any | null;
   created_at: string;
   updated_at: string;
 
