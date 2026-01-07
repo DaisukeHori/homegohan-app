@@ -81,6 +81,9 @@ export interface CheatDayConfig {
   dayOfWeek: string; // 'Sunday', etc.
 }
 
+// --- Week Start Day (週の開始曜日) ---
+export type WeekStartDay = 'sunday' | 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
+
 // --- Servings Config (曜日別・食事別人数設定) ---
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 
@@ -182,6 +185,7 @@ export interface UserProfile {
   familySize: number;
   cheatDayConfig: CheatDayConfig | null;
   servingsConfig: ServingsConfig | null;
+  weekStartDay: WeekStartDay;
 
   // === NEW: Body Info ===
   bodyFatPercentage: number | null;
@@ -494,10 +498,69 @@ export interface ProjectedImpact {
   comment: string;
 }
 
-// --- Meal Planner (Structured Plan) ---
+// --- Daily Meal (日付ベースの献立管理) ---
+
+export interface DailyMeal {
+  id: string;
+  userId: string;
+  dayDate: ISODateString;
+  theme: string | null;
+  nutritionalFocus: string | null;
+  isCheatDay: boolean;
+  sourceRequestId: string | null;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+
+  // Joined
+  meals?: PlannedMeal[];
+}
+
+// --- Shopping List (買い物リスト親テーブル) ---
+
+export type ShoppingListStatus = 'active' | 'archived';
+
+export interface ShoppingList {
+  id: string;
+  userId: string;
+  title: string | null;
+  startDate: ISODateString;
+  endDate: ISODateString;
+  status: ShoppingListStatus;
+  servingsConfig: ServingsConfig | null;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+
+  // Joined
+  items?: ShoppingListItem[];
+}
+
+// --- Shopping List Request (非同期生成リクエスト) ---
+
+export type ShoppingListRequestStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface ShoppingListRequestProgress {
+  phase: string;
+  message: string;
+  percentage: number;
+}
+
+export interface ShoppingListRequest {
+  id: string;
+  userId: string;
+  shoppingListId: string | null;
+  status: ShoppingListRequestStatus;
+  progress: ShoppingListRequestProgress | null;
+  result: any | null;
+  errorMessage: string | null;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+}
+
+// --- Legacy Meal Plan Types (互換性のため残す、段階的に削除予定) ---
 
 export type MealPlanStatus = 'draft' | 'active' | 'completed' | 'archived';
 
+/** @deprecated Use DailyMeal instead */
 export interface MealPlan {
   id: string;
   userId: string;
@@ -515,6 +578,7 @@ export interface MealPlan {
   shoppingList?: ShoppingListItem[];
 }
 
+/** @deprecated Use DailyMeal instead */
 export interface MealPlanDay {
   id: string;
   mealPlanId: string;
@@ -624,7 +688,7 @@ export type MealDishes = DishDetail[];
 
 export interface PlannedMeal {
   id: string;
-  mealPlanDayId: string;
+  dailyMealId: string;
   mealType: MealType;
   dishName: string;
   recipeUrl: string | null;
@@ -772,7 +836,7 @@ export type ShoppingListItemSource = 'manual' | 'generated';
 
 export interface ShoppingListItem {
   id: string;
-  mealPlanId: string;
+  shoppingListId: string;
   category: string;
   itemName: string;
   quantity: string | null; // 後方互換: 現在選択中の表示

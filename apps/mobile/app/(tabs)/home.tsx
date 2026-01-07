@@ -49,19 +49,25 @@ export default function HomeScreen() {
       setIsLoading(true);
       setError(null);
 
-      // 今日の献立（meal_plan_days -> planned_meals）
+      // 今日の献立（user_daily_meals -> planned_meals）
       const { data: dayData, error: dayError } = await supabase
-        .from("meal_plan_days")
+        .from("user_daily_meals")
         .select(
           `
           id,
           day_date,
-          meal_plan_id,
-          meal_plans!inner(user_id)
+          planned_meals (
+            id,
+            meal_type,
+            mode,
+            dish_name,
+            calories_kcal,
+            is_completed
+          )
         `
         )
         .eq("day_date", todayStr)
-        .eq("meal_plans.user_id", user.id)
+        .eq("user_id", user.id)
         .maybeSingle();
 
       if (cancelled) return;
@@ -72,19 +78,8 @@ export default function HomeScreen() {
       } else if (!dayData) {
         setTodayMeals([]);
       } else {
-        const { data: mealsData, error: mealsError } = await supabase
-          .from("planned_meals")
-          .select("id,meal_type,mode,dish_name,calories_kcal,is_completed")
-          .eq("meal_plan_day_id", (dayData as any).id)
-          .order("meal_type");
-
-        if (cancelled) return;
-        if (mealsError) {
-          setError(mealsError.message);
-          setTodayMeals([]);
-        } else {
-          setTodayMeals((mealsData as any) ?? []);
-        }
+        const meals = (dayData as any)?.planned_meals ?? [];
+        setTodayMeals(meals);
       }
 
       setIsLoading(false);

@@ -5,10 +5,10 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const { mealPlanDayId, dayDate, preferences } = await request.json();
+    const { dailyMealId, dayDate, preferences } = await request.json();
 
-    if (!mealPlanDayId && !dayDate) {
-      return NextResponse.json({ error: 'Either mealPlanDayId or dayDate is required' }, { status: 400 });
+    if (!dailyMealId && !dayDate) {
+      return NextResponse.json({ error: 'Either dailyMealId or dayDate is required' }, { status: 400 });
     }
 
     // 1. ユーザー認証
@@ -17,19 +17,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. meal_plan_day_idを取得
-    let targetDayId = mealPlanDayId;
+    // 2. daily_meal_idを取得
+    let targetDayId = dailyMealId;
     
     if (!targetDayId && dayDate) {
-      // dayDateからmeal_plan_day_idを取得
+      // dayDateからuser_daily_mealsのidを取得
       const { data: dayData, error: dayError } = await supabase
-        .from('meal_plan_days')
-        .select(`
-          id,
-          meal_plans!inner(user_id)
-        `)
+        .from('user_daily_meals')
+        .select('id')
         .eq('day_date', dayDate)
-        .eq('meal_plans.user_id', user.id)
+        .eq('user_id', user.id)
         .single();
 
       if (dayError || !dayData) {
@@ -39,18 +36,21 @@ export async function POST(request: Request) {
     }
 
     // 3. その日の全てのplanned_mealsを取得
+    const { data: dailyMeal, error: dailyMealError } = await supabase
+      .from('user_daily_meals')
+      .select('id, day_date')
+      .eq('id', targetDayId)
+      .eq('user_id', user.id)
+      .single();
+
+    if (dailyMealError || !dailyMeal) {
+      return NextResponse.json({ error: 'Daily meal not found' }, { status: 404 });
+    }
+
     const { data: meals, error: mealsError } = await supabase
       .from('planned_meals')
-      .select(`
-        id,
-        meal_type,
-        meal_plan_days!inner(
-          day_date,
-          meal_plans!inner(user_id)
-        )
-      `)
-      .eq('meal_plan_day_id', targetDayId)
-      .eq('meal_plan_days.meal_plans.user_id', user.id);
+      .select('id, meal_type')
+      .eq('daily_meal_id', targetDayId);
 
     if (mealsError) {
       return NextResponse.json({ error: mealsError.message }, { status: 500 });
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
       const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct-v3', {
         body: {
           mealId: meal.id,
-          dayDate: (meal.meal_plan_days as any)?.day_date,
+          dayDate: dailyMeal.day_date,
           mealType: meal.meal_type,
           userId: user.id,
           preferences: preferences || {},

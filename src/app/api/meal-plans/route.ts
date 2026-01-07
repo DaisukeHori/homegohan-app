@@ -1,7 +1,15 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { toMealPlan } from '@/lib/converter';
+import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
+import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
 
+/**
+ * Get meals for a date range (日付ベースモデル対応)
+ * Query params:
+ * - startDate: 開始日 (YYYY-MM-DD)
+ * - endDate: 終了日 (YYYY-MM-DD)
+ * - date: 特定の日付 (YYYY-MM-DD) - startDate/endDateの代わりに使用可能
+ */
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -10,61 +18,90 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const mode = searchParams.get('mode'); // 'latest', 'active', 'date'
-  const date = searchParams.get('date'); // YYYY-MM-DD
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
+  const date = searchParams.get('date');
 
-  let query = supabase
-    .from('meal_plans')
-    .select(`
-      *,
-      meal_plan_days (
+  // 単一日付指定の場合
+  if (date) {
+    const { data, error } = await supabase
+      .from('user_daily_meals')
+      .select(`
         *,
         planned_meals (*)
-      ),
-      shopping_list_items (*)
-    `)
-    .eq('user_id', user.id);
+      `)
+      .eq('user_id', user.id)
+      .eq('day_date', date)
+      .maybeSingle();
 
-  if (mode === 'active') {
-    // 現在アクティブな、または今日の日付を含む献立
-    const today = new Date().toISOString().split('T')[0];
-    query = query
-      .lte('start_date', today)
-      .gte('end_date', today)
-      .order('is_active', { ascending: false }) // is_active: true を優先
-      .order('updated_at', { ascending: false }) // 次に更新日時が新しいもの
-      .limit(1);
-  } else if (mode === 'latest') {
-    // 最新のもの
-    query = query
-      .order('is_active', { ascending: false }) // is_active: true を優先
-      .order('start_date', { ascending: false })
-      .limit(1);
-  } else if (date) {
-    // 指定した日付を含む献立（is_active: true を優先）
-    query = query
-      .lte('start_date', date)
-      .gte('end_date', date)
-      .order('is_active', { ascending: false }) // is_active: true を優先
-      .order('updated_at', { ascending: false }) // 次に更新日時が新しいもの
-      .limit(1);
-  } else {
-    // デフォルト: 最新かつアクティブなもの
-    query = query
-      .order('is_active', { ascending: false }) // is_active: true を優先
-      .order('start_date', { ascending: false })
-      .limit(1);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    if (!data) {
+      return NextResponse.json({ dailyMeal: null, meals: [] });
+    }
+
+    const dailyMeal = toDailyMeal(data);
+    const meals = ((data as any).planned_meals || []).map(toPlannedMeal);
+
+    return NextResponse.json({ dailyMeal, meals });
   }
 
-  const { data, error } = await query;
+  // 日付範囲指定の場合（デフォルトは今週）
+  const today = new Date();
+  const defaultStart = new Date(today);
+  defaultStart.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+  const defaultEnd = new Date(defaultStart);
+  defaultEnd.setDate(defaultStart.getDate() + 6);
+
+  const formatDate = (d: Date) => d.toISOString().split('T')[0];
+  const queryStartDate = startDate || formatDate(defaultStart);
+  const queryEndDate = endDate || formatDate(defaultEnd);
+
+  const { data, error } = await supabase
+    .from('user_daily_meals')
+    .select(`
+      *,
+      planned_meals (*)
+    `)
+    .eq('user_id', user.id)
+    .gte('day_date', queryStartDate)
+    .lte('day_date', queryEndDate)
+    .order('day_date', { ascending: true });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const mealPlan = data && data.length > 0 ? toMealPlan(data[0]) : null;
+  const dailyMeals = (data || []).map((day: any) => ({
+    ...toDailyMeal(day),
+    meals: (day.planned_meals || []).map(toPlannedMeal),
+  }));
 
-  return NextResponse.json({ mealPlan });
+  // アクティブな買い物リストを取得
+  const { data: shoppingListData } = await supabase
+    .from('shopping_lists')
+    .select(`
+      *,
+      shopping_list_items (*)
+    `)
+    .eq('user_id', user.id)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const shoppingList = shoppingListData ? {
+    id: shoppingListData.id,
+    status: shoppingListData.status,
+    items: ((shoppingListData as any).shopping_list_items || []).map(toShoppingListItem),
+  } : null;
+
+  return NextResponse.json({ 
+    dailyMeals,
+    startDate: queryStartDate,
+    endDate: queryEndDate,
+    shoppingList,
+  });
 }
-
-

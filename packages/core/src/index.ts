@@ -1,7 +1,7 @@
 // packages/core は Web / Mobile で共有するコードの置き場です。
 // まずは雛形として追加し、必要なものから段階的に移行します。
 
-export const CORE_VERSION = "0.2.0"; // v2スキーマ追加
+export const CORE_VERSION = "0.3.0"; // 日付ベースモデル対応
 
 // 型定義
 export * from "./types/userProfile";
@@ -14,5 +14,8 @@ export * from "./api/httpClient";
 
 // 献立生成v2スキーマ
 export * from "./schemas";
+
+// 週計算ユーティリティ
+export * from "./utils/week-utils";
 
 

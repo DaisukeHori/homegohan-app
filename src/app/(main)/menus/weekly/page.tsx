@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { MealPlan, MealPlanDay, PlannedMeal, PantryItem, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings } from "@/types/domain";
+import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
 import ReactMarkdown from "react-markdown";
 import { V4GenerateModal } from "@/components/ai-assistant";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
@@ -779,8 +779,8 @@ export default function WeeklyMenuPage() {
   }, [weekStart, weekDates, isGenerating, generatingMeal]);
   
   
-  // 復元用のmealPlanId（購読開始時に使用）
-  const [restoredMealPlanId, setRestoredMealPlanId] = useState<string | null>(null);
+  // 復元用フラグ（購読開始時に使用）
+  const [shouldRestoreSubscription, setShouldRestoreSubscription] = useState(false);
 
   // 買い物リスト再生成の復元（リロード時）
   useEffect(() => {
@@ -789,7 +789,7 @@ export default function WeeklyMenuPage() {
       if (!stored) return;
       
       try {
-        const { requestId, mealPlanId, timestamp } = JSON.parse(stored);
+        const { requestId, timestamp } = JSON.parse(stored);
         const elapsed = Date.now() - timestamp;
         
         // 5分以内のみ復元
@@ -811,7 +811,7 @@ export default function WeeklyMenuPage() {
           console.log('📦 買い物リスト再生成を復元:', requestId);
           setIsRegeneratingShoppingList(true);
           setShoppingListRequestId(requestId);
-          setRestoredMealPlanId(mealPlanId);
+          setShouldRestoreSubscription(true);
           if (data.progress) {
             setShoppingListProgress(data.progress);
           }
@@ -835,6 +835,7 @@ export default function WeeklyMenuPage() {
   // Pantry & Shopping
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
+  const [activeShoppingList, setActiveShoppingList] = useState<ShoppingList | null>(null);
   const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
   const [shoppingListProgress, setShoppingListProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
   const [shoppingListRequestId, setShoppingListRequestId] = useState<string | null>(null);
@@ -1319,7 +1320,7 @@ export default function WeeklyMenuPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          mealPlanId: currentPlan.id,
+          shoppingListId: activeShoppingList?.id,
           itemName: newShoppingName, 
           quantity: newShoppingAmount, 
           category: newShoppingCategory
@@ -1381,7 +1382,7 @@ export default function WeeklyMenuPage() {
     }
   }, []);
 
-  const subscribeToShoppingListRequest = useCallback((requestId: string, mealPlanId: string) => {
+  const subscribeToShoppingListRequest = useCallback((requestId: string) => {
     cleanupShoppingListSubscription();
     
     console.log('📡 Subscribing to shopping list request:', requestId);
@@ -1399,10 +1400,13 @@ export default function WeeklyMenuPage() {
         
         if (data.status === 'completed') {
           console.log('✅ Shopping list regeneration completed (polling)');
-          const listRes = await fetch(`/api/shopping-list?mealPlanId=${mealPlanId}`);
+          const listRes = await fetch(`/api/shopping-list`);
           if (listRes.ok) {
-            const { items } = await listRes.json();
-            setShoppingList(items);
+            const { shoppingList: sl } = await listRes.json();
+            if (sl?.items) {
+              setShoppingList(sl.items);
+              setActiveShoppingList(sl);
+            }
           }
           setSuccessMessage({
             title: '買い物リストを更新しました ✓',
@@ -1462,10 +1466,13 @@ export default function WeeklyMenuPage() {
               setShoppingListTotalServings(newData.result.stats.totalServings);
             }
             try {
-              const listRes = await fetch(`/api/shopping-list?mealPlanId=${mealPlanId}`);
+              const listRes = await fetch(`/api/shopping-list`);
               if (listRes.ok) {
-                const { items } = await listRes.json();
-                setShoppingList(items);
+                const { shoppingList: sl } = await listRes.json();
+                if (sl?.items) {
+                  setShoppingList(sl.items);
+                  setActiveShoppingList(sl);
+                }
               }
             } catch (fetchErr) {
               console.error('❌ Failed to fetch shopping list:', fetchErr);
@@ -1511,12 +1518,12 @@ export default function WeeklyMenuPage() {
 
   // 復元後に購読を開始
   useEffect(() => {
-    if (shoppingListRequestId && restoredMealPlanId && isRegeneratingShoppingList) {
+    if (shoppingListRequestId && shouldRestoreSubscription && isRegeneratingShoppingList) {
       console.log('📡 復元された買い物リスト再生成の購読を開始:', shoppingListRequestId);
-      subscribeToShoppingListRequest(shoppingListRequestId, restoredMealPlanId);
-      setRestoredMealPlanId(null); // 一度だけ実行
+      subscribeToShoppingListRequest(shoppingListRequestId);
+      setShouldRestoreSubscription(false); // 一度だけ実行
     }
-  }, [shoppingListRequestId, restoredMealPlanId, isRegeneratingShoppingList, subscribeToShoppingListRequest]);
+  }, [shoppingListRequestId, shouldRestoreSubscription, isRegeneratingShoppingList, subscribeToShoppingListRequest]);
 
   // クリーンアップ（アンマウント時）
   useEffect(() => {
@@ -1596,7 +1603,6 @@ export default function WeeklyMenuPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          mealPlanId: currentPlan.id,
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
           mealTypes: dateRange.mealTypes,
@@ -1610,12 +1616,13 @@ export default function WeeklyMenuPage() {
         // localStorageに保存（リロード時復元用）
         localStorage.setItem('shoppingListRegenerating', JSON.stringify({
           requestId,
-          mealPlanId: currentPlan.id,
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate,
           timestamp: Date.now(),
         }));
         
         // 購読開始
-        subscribeToShoppingListRequest(requestId, currentPlan.id);
+        subscribeToShoppingListRequest(requestId);
       } else {
         const err = await res.json();
         throw new Error(err.error || '再生成に失敗しました');
@@ -1702,7 +1709,7 @@ export default function WeeklyMenuPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          mealPlanId: currentPlan.id,
+          shoppingListId: activeShoppingList?.id,
           ingredients: parsedIngredients 
         })
       });

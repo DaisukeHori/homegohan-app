@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     const { data: meals, error: fetchError } = await supabase
       .from('planned_meals')
       .select('id, meal_type, display_order')
-      .eq('meal_plan_day_id', dayId)
+      .eq('daily_meal_id', dayId)
       .order('display_order', { ascending: true });
 
     if (fetchError) throw fetchError;

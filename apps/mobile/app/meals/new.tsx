@@ -30,14 +30,7 @@ const formatLocalDate = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
-function getWeekStart(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
+// getWeekStart was removed as it's no longer needed with date-based model
 
 export default function MealNewPage() {
   const [mealType, setMealType] = useState<MealType>(() => {
@@ -153,79 +146,36 @@ export default function MealNewPage() {
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) throw new Error("Unauthorized");
 
-      // 1) meal_plan を取得/作成（週単位）
-      const targetDate = new Date(dayDate);
-      const weekStart = getWeekStart(targetDate);
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 6);
-
-      const weekStartStr = weekStart.toISOString().split("T")[0];
-      const weekEndStr = weekEnd.toISOString().split("T")[0];
-
-      let mealPlanId: string;
-
-      const { data: existingPlan, error: planFindError } = await supabase
-        .from("meal_plans")
-        .select("id,start_date")
-        .eq("user_id", auth.user.id)
-        .gte("start_date", weekStartStr)
-        .lte("start_date", weekEndStr)
-        .maybeSingle();
-
-      if (planFindError) throw planFindError;
-
-      if (existingPlan?.id) {
-        mealPlanId = existingPlan.id;
-      } else {
-        const { data: newPlan, error: planError } = await supabase
-          .from("meal_plans")
-          .insert({
-            user_id: auth.user.id,
-            title: `${weekStart.getMonth() + 1}月${weekStart.getDate()}日〜の献立`,
-            start_date: weekStartStr,
-            end_date: weekEndStr,
-            status: "active",
-            is_active: true,
-          })
-          .select("id")
-          .single();
-
-        if (planError || !newPlan) throw planError ?? new Error("Failed to create meal plan");
-        mealPlanId = newPlan.id;
-      }
-
-      // 2) meal_plan_day を取得/作成
-      let dayId: string;
+      // 1) user_daily_meals を取得/作成
+      let dailyMealId: string;
       const { data: existingDay, error: dayFindError } = await supabase
-        .from("meal_plan_days")
+        .from("user_daily_meals")
         .select("id")
-        .eq("meal_plan_id", mealPlanId)
+        .eq("user_id", auth.user.id)
         .eq("day_date", dayDate)
         .maybeSingle();
 
       if (dayFindError) throw dayFindError;
 
       if (existingDay?.id) {
-        dayId = existingDay.id;
+        dailyMealId = existingDay.id;
       } else {
-        const dayOfWeek = new Date(dayDate).toLocaleDateString("en-US", { weekday: "long" });
         const { data: newDay, error: dayError } = await supabase
-          .from("meal_plan_days")
+          .from("user_daily_meals")
           .insert({
-            meal_plan_id: mealPlanId,
+            user_id: auth.user.id,
             day_date: dayDate,
-            day_of_week: dayOfWeek,
             is_cheat_day: false,
           })
           .select("id")
           .single();
 
-        if (dayError || !newDay) throw dayError ?? new Error("Failed to create meal plan day");
-        dayId = newDay.id;
+        if (dayError || !newDay) throw dayError ?? new Error("Failed to create daily meal");
+        dailyMealId = newDay.id;
       }
 
-      // 3) 既存の同じ meal_type を削除（上書き）
-      await supabase.from("planned_meals").delete().eq("meal_plan_day_id", dayId).eq("meal_type", mealType);
+      // 2) 既存の同じ meal_type を削除（上書き）
+      await supabase.from("planned_meals").delete().eq("daily_meal_id", dailyMealId).eq("meal_type", mealType);
 
       // 4) planned_meal を作成
       const dishesArray = result.dishes || [];
@@ -245,7 +195,7 @@ export default function MealNewPage() {
       const { data: newMeal, error: mealError } = await supabase
         .from("planned_meals")
         .insert({
-          meal_plan_day_id: dayId,
+          daily_meal_id: dailyMealId,
           meal_type: mealType,
           mode: "cook",
           dish_name: allDishNames,

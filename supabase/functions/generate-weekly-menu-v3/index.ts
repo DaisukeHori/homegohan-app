@@ -806,47 +806,7 @@ async function executeStep3_Complete(
     percentage: 88,
   });
 
-  // DB保存
-  const endDate = dates[6];
-  
-  // meal_plan: 既存があれば再利用
-  const { data: existingPlan } = await supabase
-    .from("meal_plans")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("start_date", startDate)
-    .maybeSingle();
-
-  let mealPlanId: string;
-  if (existingPlan?.id) {
-    mealPlanId = existingPlan.id;
-    await supabase
-      .from("meal_plans")
-      .update({ 
-        end_date: endDate, 
-        status: "active", 
-        is_active: true, 
-        source_request_id: requestId,
-        updated_at: new Date().toISOString() 
-      })
-      .eq("id", mealPlanId);
-  } else {
-    const { data: newPlan, error: planErr } = await supabase
-      .from("meal_plans")
-      .insert({ 
-        user_id: userId, 
-        start_date: startDate, 
-        end_date: endDate, 
-        status: "active", 
-        is_active: true,
-        source_request_id: requestId
-      })
-      .select("id")
-      .single();
-    if (planErr || !newPlan?.id) throw new Error(`Failed to create meal_plan: ${planErr?.message}`);
-    mealPlanId = newPlan.id;
-  }
-
+  // DB保存（日付ベースモデル: user_daily_meals → planned_meals）
   // 各日のデータを保存
   for (let dayIdx = 0; dayIdx < dates.length; dayIdx++) {
     const dateStr = dates[dayIdx];
@@ -862,26 +822,25 @@ async function executeStep3_Complete(
       percentage,
     });
 
-    // meal_plan_days
-    const { data: existingDay } = await supabase
-      .from("meal_plan_days")
+    // user_daily_meals: upsert（日付ベース）
+    const { data: dailyMeal, error: dailyMealErr } = await supabase
+      .from("user_daily_meals")
+      .upsert(
+        { 
+          user_id: userId, 
+          day_date: dateStr,
+          source_request_id: requestId,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'user_id,day_date' }
+      )
       .select("id")
-      .eq("meal_plan_id", mealPlanId)
-      .eq("day_date", dateStr)
-      .maybeSingle();
+      .single();
 
-    let mealPlanDayId: string;
-    if (existingDay?.id) {
-      mealPlanDayId = existingDay.id;
-    } else {
-      const { data: newDay, error: dayErr } = await supabase
-        .from("meal_plan_days")
-        .insert({ meal_plan_id: mealPlanId, day_date: dateStr })
-        .select("id")
-        .single();
-      if (dayErr || !newDay?.id) throw new Error(`Failed to create meal_plan_days: ${dayErr?.message}`);
-      mealPlanDayId = newDay.id;
+    if (dailyMealErr || !dailyMeal?.id) {
+      throw new Error(`Failed to upsert user_daily_meals: ${dailyMealErr?.message}`);
     }
+    const dailyMealId = dailyMeal.id;
 
     // 各食事を保存
     for (const meal of dayData.meals) {
@@ -895,7 +854,7 @@ async function executeStep3_Complete(
       const round1 = (v: number) => Math.round((v ?? 0) * 10) / 10;
       
       const mealData = {
-        meal_plan_day_id: mealPlanDayId,
+        daily_meal_id: dailyMealId,
         meal_type: mealType,
         dish_name: dishDetails.dishName,
         mode: "ai_creative",
@@ -943,7 +902,7 @@ async function executeStep3_Complete(
       const { data: existingMeal } = await supabase
         .from("planned_meals")
         .select("id")
-        .eq("meal_plan_day_id", mealPlanDayId)
+        .eq("daily_meal_id", dailyMealId)
         .eq("meal_type", mealType)
         .maybeSingle();
 

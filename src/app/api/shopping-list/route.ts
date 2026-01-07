@@ -1,36 +1,57 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { toShoppingListItem } from '@/lib/converter';
+import { toShoppingListItem, toShoppingList } from '@/lib/converter';
 
 /**
- * 買い物リスト取得API
+ * 買い物リスト取得API（日付ベースモデル: shopping_lists → shopping_list_items）
  */
 export async function GET(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
-  const mealPlanId = searchParams.get('mealPlanId');
-
-  if (!mealPlanId) {
-    return NextResponse.json({ error: 'mealPlanId is required' }, { status: 400 });
-  }
+  const shoppingListId = searchParams.get('shoppingListId');
+  const status = searchParams.get('status') || 'active';
 
   try {
-    const { data, error } = await supabase
-      .from('shopping_list_items')
-      .select('*')
-      .eq('meal_plan_id', mealPlanId)
-      .order('category')
-      .order('created_at');
+    if (shoppingListId) {
+      // 特定の買い物リストを取得
+      const { data, error } = await supabase
+        .from('shopping_lists')
+        .select(`
+          *,
+          shopping_list_items(*)
+        `)
+        .eq('id', shoppingListId)
+        .eq('user_id', user.id)
+        .single();
 
-    if (error) throw error;
+      if (error) throw error;
 
-    return NextResponse.json({ 
-      items: (data || []).map(toShoppingListItem) 
-    });
+      return NextResponse.json({ 
+        shoppingList: data ? toShoppingList(data) : null
+      });
+    } else {
+      // アクティブな買い物リストを取得
+      const { data, error } = await supabase
+        .from('shopping_lists')
+        .select(`
+          *,
+          shopping_list_items(*)
+        `)
+        .eq('user_id', user.id)
+        .eq('status', status)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return NextResponse.json({ 
+        shoppingList: data ? toShoppingList(data) : null
+      });
+    }
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -40,18 +61,22 @@ export async function GET(request: Request) {
  * 買い物リストアイテム追加API
  */
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     const json = await request.json();
-    const { mealPlanId, itemName, category, quantity } = json;
+    const { shoppingListId, itemName, category, quantity } = json;
+
+    if (!shoppingListId) {
+      return NextResponse.json({ error: 'shoppingListId is required' }, { status: 400 });
+    }
 
     const { data, error } = await supabase
       .from('shopping_list_items')
       .insert({
-        meal_plan_id: mealPlanId,
+        shopping_list_id: shoppingListId,
         item_name: itemName,
         normalized_name: itemName, // 手動追加は item_name をそのまま使用
         category: category || 'その他',
@@ -71,6 +96,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-
-
-

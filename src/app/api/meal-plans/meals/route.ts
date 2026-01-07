@@ -13,75 +13,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });
     }
 
-    // Get or create meal_plan for the week
-    const targetDate = new Date(dayDate);
-    const dayOfWeek = targetDate.getDay();
-    const weekStart = new Date(targetDate);
-    weekStart.setDate(targetDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1));
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-
-    const formatDate = (d: Date) => d.toISOString().split('T')[0];
-
-    // Find existing meal plan for this week
-    let { data: existingPlan } = await supabase
-      .from('meal_plans')
+    // Get or create user_daily_meals for the target date
+    let { data: existingDay } = await supabase
+      .from('user_daily_meals')
       .select('id')
       .eq('user_id', user.id)
-      .lte('start_date', dayDate)
-      .gte('end_date', dayDate)
-      .single();
-
-    let mealPlanId: string;
-
-    if (existingPlan) {
-      mealPlanId = existingPlan.id;
-    } else {
-      // Create new meal plan
-      const { data: newPlan, error: planError } = await supabase
-        .from('meal_plans')
-        .insert({
-          user_id: user.id,
-          title: '週間献立',
-          start_date: formatDate(weekStart),
-          end_date: formatDate(weekEnd),
-          status: 'active',
-          is_active: true
-        })
-        .select('id')
-        .single();
-
-      if (planError) throw planError;
-      mealPlanId = newPlan.id;
-    }
-
-    // Get or create meal_plan_day
-    let { data: existingDay } = await supabase
-      .from('meal_plan_days')
-      .select('id')
-      .eq('meal_plan_id', mealPlanId)
       .eq('day_date', dayDate)
       .single();
 
-    let dayId: string;
+    let dailyMealId: string;
 
     if (existingDay) {
-      dayId = existingDay.id;
+      dailyMealId = existingDay.id;
     } else {
-      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       const { data: newDay, error: dayError } = await supabase
-        .from('meal_plan_days')
+        .from('user_daily_meals')
         .insert({
-          meal_plan_id: mealPlanId,
+          user_id: user.id,
           day_date: dayDate,
-          day_of_week: dayNames[targetDate.getDay()],
           is_cheat_day: false
         })
         .select('id')
         .single();
 
       if (dayError) throw dayError;
-      dayId = newDay.id;
+      dailyMealId = newDay.id;
     }
 
     // 同じタイプの食事を複数追加可能にするため、削除はしない
@@ -89,7 +45,7 @@ export async function POST(request: Request) {
     const { data: newMeal, error: mealError } = await supabase
       .from('planned_meals')
       .insert({
-        meal_plan_day_id: dayId,
+        daily_meal_id: dailyMealId,
         meal_type: mealType,
         mode: mode || 'cook',
         dish_name: dishName || '未設定',
@@ -109,7 +65,7 @@ export async function POST(request: Request) {
       success: true,
       meal: {
         id: newMeal.id,
-        mealPlanDayId: newMeal.meal_plan_day_id,
+        dailyMealId: newMeal.daily_meal_id,
         mealType: newMeal.meal_type,
         mode: newMeal.mode,
         dishName: newMeal.dish_name,
@@ -128,4 +84,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

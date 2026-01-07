@@ -10,7 +10,7 @@ type MealListItem = {
   meal_type: string;
   calories_kcal: number | null;
   is_completed: boolean | null;
-  meal_plan_days: { day_date: string } | null;
+  user_daily_meals: { day_date: string } | null;
 };
 
 export default function MealsScreen() {
@@ -34,7 +34,7 @@ export default function MealsScreen() {
           meal_type,
           calories_kcal,
           is_completed,
-          meal_plan_days!inner(day_date)
+          user_daily_meals!inner(day_date)
         `
         )
         .order("created_at", { ascending: false })
@@ -82,7 +82,7 @@ export default function MealsScreen() {
             >
               <Text style={{ fontWeight: "900" }}>{m.dish_name || "（未設定）"}</Text>
               <Text style={{ color: "#666" }}>
-                {m.meal_plan_days?.day_date ?? ""} / {m.meal_type} / {m.calories_kcal ? `${m.calories_kcal}kcal` : "kcal未設定"}
+                {m.user_daily_meals?.day_date ?? ""} / {m.meal_type} / {m.calories_kcal ? `${m.calories_kcal}kcal` : "kcal未設定"}
               </Text>
               <Text style={{ color: "#999" }}>{m.is_completed ? "完了" : "未完了"}</Text>
             </Pressable>

@@ -513,9 +513,9 @@ async function executeStep1_Generate(
   // 既存の献立を取得
   const { data: existingMeal, error: mealErr } = await supabase
     .from("planned_meals")
-    .select("id, meal_type, dish_name, meal_plan_day_id, meal_plan_days!inner(day_date, meal_plans!inner(user_id))")
+    .select("id, meal_type, dish_name, daily_meal_id, user_daily_meals!inner(day_date, user_id)")
     .eq("id", mealId)
-    .eq("meal_plan_days.meal_plans.user_id", userId)
+    .eq("user_daily_meals.user_id", userId)
     .single();
   if (mealErr) throw new Error(`Meal not found or unauthorized: ${mealErr.message}`);
 
@@ -585,7 +585,7 @@ async function executeStep1_Generate(
     generatedMeal: generatedMeal,
     mealId: mealId,
     mealType: mealType,
-    mealPlanDayId: (existingMeal as any).meal_plan_day_id,
+    dailyMealId: (existingMeal as any).daily_meal_id,
     currentDishName: currentDishName,
   };
 

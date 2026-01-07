@@ -21,7 +21,7 @@ type PlannedMealDetail = {
   dishes: any[] | null;
   is_simple: boolean | null;
   cooking_time_minutes: number | null;
-  meal_plan_day_id: string;
+  daily_meal_id: string;
   day_date: string | null;
 };
 
@@ -50,7 +50,7 @@ export default function MealDetailPage() {
         } else {
           setMeal({
             ...(data as any),
-            day_date: (data as any).meal_plan_days?.day_date ?? null,
+            day_date: (data as any).user_daily_meals?.day_date ?? null,
           });
         }
       } catch (e: any) {

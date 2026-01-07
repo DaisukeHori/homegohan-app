@@ -16,18 +16,18 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // planned_mealsとmeal_plan_daysをJOINして取得
+    // planned_mealsとuser_daily_mealsをJOINして取得
     const { data, error } = await supabase
       .from('planned_meals')
       .select(`
         *,
-        meal_plan_days!inner(
+        user_daily_meals!inner(
           day_date,
-          meal_plans!inner(user_id)
+          user_id
         )
       `)
       .eq('id', params.id)
-      .eq('meal_plan_days.meal_plans.user_id', user.id)
+      .eq('user_daily_meals.user_id', user.id)
       .single();
 
     if (error) {
@@ -81,12 +81,10 @@ export async function PATCH(
       .from('planned_meals')
       .select(`
         id,
-        meal_plan_days!inner(
-          meal_plans!inner(user_id)
-        )
+        user_daily_meals!inner(user_id)
       `)
       .eq('id', params.id)
-      .eq('meal_plan_days.meal_plans.user_id', user.id)
+      .eq('user_daily_meals.user_id', user.id)
       .single();
 
     if (!existing) {
@@ -130,12 +128,10 @@ export async function DELETE(
       .from('planned_meals')
       .select(`
         id,
-        meal_plan_days!inner(
-          meal_plans!inner(user_id)
-        )
+        user_daily_meals!inner(user_id)
       `)
       .eq('id', params.id)
-      .eq('meal_plan_days.meal_plans.user_id', user.id)
+      .eq('user_daily_meals.user_id', user.id)
       .single();
 
     if (!existing) {

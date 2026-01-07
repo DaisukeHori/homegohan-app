@@ -4,11 +4,11 @@ import type {
   MealPlan, MealPlanDay, PlannedMeal, ShoppingListItem, WeeklyMenuResult,
   FitnessGoal, WorkStyle, CookingExperience, DietStyle, Frequency, QualityLevel, StressLevel,
   TargetSlot, MenuRequestMode, MenuGenerationProgress, MealType, ShoppingFrequency,
-  ServingsConfig
+  ServingsConfig, WeekStartDay, DailyMeal, ShoppingList, ShoppingListRequest
 } from '@/types/domain';
 import type { 
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
-  DbAnnouncement, DbOrgDailyStats 
+  DbAnnouncement, DbOrgDailyStats, DbDailyMeal, DbShoppingList, DbShoppingListRequest
 } from '@/types/database';
 
 // User Profile (Extended)
@@ -31,6 +31,7 @@ export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   familySize: db.family_size || 1,
   cheatDayConfig: db.cheat_day_config,
   servingsConfig: db.servings_config as ServingsConfig | null,
+  weekStartDay: (db.week_start_day as WeekStartDay) || 'monday',
   
   // === NEW: Body Info ===
   bodyFatPercentage: db.body_fat_percentage ?? null,
@@ -160,6 +161,7 @@ export const fromUserProfile = (profile: Partial<UserProfile>): Record<string, a
   if (profile.familySize !== undefined) result.family_size = profile.familySize;
   if (profile.cheatDayConfig !== undefined) result.cheat_day_config = profile.cheatDayConfig;
   if (profile.servingsConfig !== undefined) result.servings_config = profile.servingsConfig;
+  if (profile.weekStartDay !== undefined) result.week_start_day = profile.weekStartDay;
   
   // Body Info
   if (profile.bodyFatPercentage !== undefined) result.body_fat_percentage = profile.bodyFatPercentage;
@@ -426,7 +428,7 @@ export const toMealPlanDay = (data: any): MealPlanDay => ({
 
 export const toPlannedMeal = (data: any): PlannedMeal => ({
   id: data.id,
-  mealPlanDayId: data.meal_plan_day_id,
+  dailyMealId: data.daily_meal_id,
   mealType: data.meal_type,
   dishName: data.dish_name,
   recipeUrl: data.recipe_url,
@@ -489,7 +491,7 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
 
 export const toShoppingListItem = (data: any): ShoppingListItem => ({
   id: data.id,
-  mealPlanId: data.meal_plan_id,
+  shoppingListId: data.shopping_list_id,
   category: data.category,
   itemName: data.item_name,
   quantity: data.quantity,
@@ -502,4 +504,48 @@ export const toShoppingListItem = (data: any): ShoppingListItem => ({
   normalizedName: data.normalized_name ?? null,
   quantityVariants: data.quantity_variants ?? [],
   selectedVariantIndex: data.selected_variant_index ?? 0,
+});
+
+// === 日付ベースモデル ===
+
+export const toDailyMeal = (data: any): DailyMeal => ({
+  id: data.id,
+  userId: data.user_id,
+  dayDate: data.day_date,
+  theme: data.theme,
+  nutritionalFocus: data.nutritional_focus,
+  isCheatDay: data.is_cheat_day ?? false,
+  sourceRequestId: data.source_request_id,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+  // Joined data if available - sorted by display_order
+  meals: data.planned_meals
+    ?.map(toPlannedMeal)
+    ?.sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)),
+});
+
+export const toShoppingList = (data: any): ShoppingList => ({
+  id: data.id,
+  userId: data.user_id,
+  title: data.title,
+  startDate: data.start_date,
+  endDate: data.end_date,
+  status: data.status ?? 'active',
+  servingsConfig: data.servings_config,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+  // Joined data if available
+  items: data.shopping_list_items?.map(toShoppingListItem),
+});
+
+export const toShoppingListRequest = (data: any): ShoppingListRequest => ({
+  id: data.id,
+  userId: data.user_id,
+  shoppingListId: data.shopping_list_id,
+  status: data.status ?? 'pending',
+  progress: data.progress,
+  result: data.result,
+  errorMessage: data.error_message,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
 });

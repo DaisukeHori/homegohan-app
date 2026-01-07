@@ -67,26 +67,21 @@ export async function GET(request: Request) {
         startDate = todayStr;
     }
 
-    // 3. アクティブな献立プランを取得
-    let { data: activePlan } = await supabase
-      .from('meal_plans')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .single();
+    // 3. 食事データを取得（日付ベースで直接取得）
+    const { data: meals } = await supabase
+      .from('planned_meals')
+      .select(`
+        *,
+        user_daily_meals!inner(day_date, user_id)
+      `)
+      .eq('user_daily_meals.user_id', user.id)
+      .gte('user_daily_meals.day_date', startDate)
+      .lte('user_daily_meals.day_date', endDate)
+      .eq('is_completed', true);
 
-    if (!activePlan) {
-      const { data: latestPlan } = await supabase
-        .from('meal_plans')
-        .select('id')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-      activePlan = latestPlan;
-    }
-
-    if (!activePlan) {
+    const completedMeals = meals || [];
+    
+    if (completedMeals.length === 0) {
       return NextResponse.json({
         success: true,
         period,
@@ -94,20 +89,6 @@ export async function GET(request: Request) {
         message: '献立データがありません',
       });
     }
-
-    // 4. 食事データを取得
-    const { data: meals } = await supabase
-      .from('planned_meals')
-      .select(`
-        *,
-        meal_plan_days!inner(day_date, meal_plan_id)
-      `)
-      .eq('meal_plan_days.meal_plan_id', activePlan.id)
-      .gte('meal_plan_days.day_date', startDate)
-      .lte('meal_plan_days.day_date', endDate)
-      .eq('is_completed', true);
-
-    const completedMeals = meals || [];
 
     // 5. 栄養素を集計
     const aggregated: Record<string, number> = {
@@ -129,7 +110,7 @@ export async function GET(request: Request) {
     const daysWithData = new Set<string>();
 
     for (const meal of completedMeals) {
-      const dayDate = meal.meal_plan_days?.day_date;
+      const dayDate = meal.user_daily_meals?.day_date;
       if (dayDate) daysWithData.add(dayDate);
 
       aggregated.calories += meal.calories_kcal || 0;

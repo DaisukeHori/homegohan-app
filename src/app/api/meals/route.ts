@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
 /**
- * 食事一覧取得（planned_mealsベース）
+ * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
  * 今日の献立または指定日の献立を取得
  */
 export async function GET(request: Request) {
@@ -20,33 +20,35 @@ export async function GET(request: Request) {
     // 日付が指定されていない場合は今日
     const targetDate = date || new Date().toISOString().split('T')[0];
 
-    // meal_plan_daysとplanned_mealsをJOINして取得
-    const { data: dayData, error: dayError } = await supabase
-      .from('meal_plan_days')
+    // user_daily_mealsとplanned_mealsをJOINして取得
+    const { data: dailyMeal, error: dayError } = await supabase
+      .from('user_daily_meals')
       .select(`
         id,
         day_date,
-        meal_plans!inner(user_id)
+        theme,
+        nutritional_focus,
+        is_cheat_day,
+        planned_meals(*)
       `)
       .eq('day_date', targetDate)
-      .eq('meal_plans.user_id', user.id)
-      .single();
+      .eq('user_id', user.id)
+      .maybeSingle();
 
-    if (dayError || !dayData) {
+    if (dayError) {
+      return NextResponse.json({ error: dayError.message }, { status: 500 });
+    }
+
+    if (!dailyMeal) {
       return NextResponse.json({ meals: [] });
     }
 
-    const { data: meals, error: mealsError } = await supabase
-      .from('planned_meals')
-      .select('*')
-      .eq('meal_plan_day_id', dayData.id)
-      .order('meal_type');
+    // display_orderでソート
+    const meals = (dailyMeal.planned_meals || []).sort(
+      (a: any, b: any) => (a.display_order ?? 0) - (b.display_order ?? 0)
+    );
 
-    if (mealsError) {
-      return NextResponse.json({ error: mealsError.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ meals: meals || [] });
+    return NextResponse.json({ meals });
 
   } catch (error: any) {
     console.error('Error fetching meals:', error);
@@ -55,8 +57,7 @@ export async function GET(request: Request) {
 }
 
 /**
- * 新しい食事を追加（planned_mealsに追加）
- * 指定日のmeal_plan_dayが存在しない場合は作成
+ * 新しい食事を追加（日付ベースモデル: user_daily_meals upsert → planned_meals insert）
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -84,69 +85,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // 1. 該当日のmeal_plan_dayを探す or 作成
-    let { data: dayData } = await supabase
-      .from('meal_plan_days')
-      .select(`
-        id,
-        meal_plan_id,
-        meal_plans!inner(user_id)
-      `)
-      .eq('day_date', date)
-      .eq('meal_plans.user_id', user.id)
+    // 1. user_daily_mealsをupsert
+    const { data: dailyMeal, error: dailyMealError } = await supabase
+      .from('user_daily_meals')
+      .upsert(
+        { 
+          user_id: user.id, 
+          day_date: date,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'user_id,day_date' }
+      )
+      .select('id')
       .single();
 
-    if (!dayData) {
-      // meal_planを探す or 作成
-      const weekStart = getWeekStart(new Date(date));
-      const weekEnd = getWeekEnd(new Date(date));
-
-      let { data: planData } = await supabase
-        .from('meal_plans')
-        .select('id')
-        .eq('user_id', user.id)
-        .lte('start_date', date)
-        .gte('end_date', date)
-        .single();
-
-      if (!planData) {
-        const { data: newPlan, error: planError } = await supabase
-          .from('meal_plans')
-          .insert({
-            user_id: user.id,
-            title: '週間献立',
-            start_date: weekStart,
-            end_date: weekEnd,
-            status: 'active',
-            is_active: true,
-          })
-          .select()
-          .single();
-
-        if (planError || !newPlan) throw planError || new Error('Failed to create meal plan');
-        planData = newPlan;
-      }
-
-      // meal_plan_dayを作成
-      const { data: newDay, error: dayError } = await supabase
-        .from('meal_plan_days')
-        .insert({
-          meal_plan_id: planData!.id,
-          day_date: date,
-          day_of_week: getDayOfWeek(new Date(date)),
-        })
-        .select()
-        .single();
-
-      if (dayError || !newDay) throw dayError || new Error('Failed to create meal plan day');
-      dayData = { ...newDay, meal_plans: { user_id: user.id } };
+    if (dailyMealError || !dailyMeal) {
+      throw dailyMealError || new Error('Failed to create daily meal');
     }
 
     // 2. planned_mealを追加
     const { data: meal, error: mealError } = await supabase
       .from('planned_meals')
       .insert({
-        meal_plan_day_id: dayData!.id,
+        daily_meal_id: dailyMeal.id,
         meal_type: mealType,
         dish_name: dishName,
         mode: mode,
@@ -168,28 +129,4 @@ export async function POST(request: Request) {
     console.error('Error creating meal:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-}
-
-// Helper: 週の開始日（月曜日）を取得
-function getWeekStart(date: Date): string {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  return d.toISOString().split('T')[0];
-}
-
-// Helper: 週の終了日（日曜日）を取得
-function getWeekEnd(date: Date): string {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? 0 : 7);
-  d.setDate(diff);
-  return d.toISOString().split('T')[0];
-}
-
-// Helper: 曜日を取得
-function getDayOfWeek(date: Date): string {
-  const days = ['日', '月', '火', '水', '木', '金', '土'];
-  return days[date.getDay()];
 }

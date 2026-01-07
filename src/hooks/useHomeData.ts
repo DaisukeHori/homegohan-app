@@ -151,30 +151,23 @@ export const useHomeData = () => {
         setActivityLevel(activity.feeling);
       }
 
-      // 3. 今日の献立を取得（planned_mealsベース）
-      const { data: dayData } = await supabase
-        .from('meal_plan_days')
+      // 3. 今日の献立を取得（日付ベースモデル: user_daily_meals → planned_meals）
+      const { data: dailyMealData } = await supabase
+        .from('user_daily_meals')
         .select(`
           id,
           day_date,
-          meal_plan_id,
-          meal_plans!inner(user_id)
+          planned_meals(*)
         `)
         .eq('day_date', todayStr)
-        .eq('meal_plans.user_id', authUser.id)
-        .single();
+        .eq('user_id', authUser.id)
+        .maybeSingle();
 
-      if (dayData) {
-        const { data: mealsData } = await supabase
-          .from('planned_meals')
-          .select('*')
-          .eq('meal_plan_day_id', dayData.id)
-          .order('meal_type');
-
-        if (mealsData) {
-          const meals: PlannedMeal[] = mealsData.map((m: any) => ({
+      if (dailyMealData && dailyMealData.planned_meals) {
+        const mealsData = dailyMealData.planned_meals;
+        const meals: PlannedMeal[] = mealsData.map((m: any) => ({
             id: m.id,
-            mealPlanDayId: m.meal_plan_day_id,
+            dailyMealId: m.daily_meal_id,
             mealType: m.meal_type,
             mode: m.mode || 'cook',
             dishName: m.dish_name,
@@ -233,8 +226,8 @@ export const useHomeData = () => {
           }));
 
           setTodayPlan({
-            dayId: dayData.id,
-            dayDate: dayData.day_date,
+            dayId: dailyMealData.id,
+            dayDate: dailyMealData.day_date,
             meals,
           });
 
@@ -289,19 +282,17 @@ export const useHomeData = () => {
   // 連続自炊ストリーク（完了した自炊のみカウント）
   const fetchCookingStreak = async (userId: string) => {
     try {
-      // 過去30日分のデータを取得
+      // 過去30日分のデータを取得（日付ベースモデル）
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       
       const { data: daysData } = await supabase
-        .from('meal_plan_days')
+        .from('user_daily_meals')
         .select(`
           day_date,
-          meal_plan_id,
-          meal_plans!inner(user_id),
           planned_meals(mode, is_completed)
         `)
-        .eq('meal_plans.user_id', userId)
+        .eq('user_id', userId)
         .gte('day_date', formatLocalDate(thirtyDaysAgo))
         .lte('day_date', todayStr)
         .order('day_date', { ascending: false });
@@ -333,20 +324,19 @@ export const useHomeData = () => {
     }
   };
 
-  // 週間統計
+  // 週間統計（日付ベースモデル）
   const fetchWeeklyStats = async (userId: string) => {
     try {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
       
       const { data: daysData } = await supabase
-        .from('meal_plan_days')
+        .from('user_daily_meals')
         .select(`
           day_date,
-          meal_plans!inner(user_id),
           planned_meals(mode, is_completed, calories_kcal)
         `)
-        .eq('meal_plans.user_id', userId)
+        .eq('user_id', userId)
         .gte('day_date', formatLocalDate(sevenDaysAgo))
         .lte('day_date', todayStr)
         .order('day_date');
@@ -395,21 +385,19 @@ export const useHomeData = () => {
     }
   };
 
-  // 月間統計
-  // 月間統計（完了した自炊のみカウント）
+  // 月間統計（日付ベースモデル、完了した自炊のみカウント）
   const fetchMonthlyStats = async (userId: string) => {
     try {
       const firstOfMonth = new Date();
       firstOfMonth.setDate(1);
       
       const { data: daysData } = await supabase
-        .from('meal_plan_days')
+        .from('user_daily_meals')
         .select(`
           day_date,
-          meal_plans!inner(user_id),
           planned_meals(mode, is_completed)
         `)
-        .eq('meal_plans.user_id', userId)
+        .eq('user_id', userId)
         .gte('day_date', formatLocalDate(firstOfMonth))
         .lte('day_date', todayStr);
 
@@ -472,22 +460,22 @@ export const useHomeData = () => {
     }
   };
 
-  // 買い物リスト残数
+  // 買い物リスト残数（日付ベースモデル）
   const fetchShoppingRemaining = async (userId: string) => {
     try {
-      // 現在アクティブなmeal_planの買い物リストを取得
-      const { data: planData } = await supabase
-        .from('meal_plans')
+      // アクティブな買い物リストを取得
+      const { data: shoppingList } = await supabase
+        .from('shopping_lists')
         .select('id')
         .eq('user_id', userId)
-        .eq('is_active', true)
-        .single();
+        .eq('status', 'active')
+        .maybeSingle();
 
-      if (planData) {
+      if (shoppingList) {
         const { count } = await supabase
           .from('shopping_list_items')
           .select('*', { count: 'exact', head: true })
-          .eq('meal_plan_id', planData.id)
+          .eq('shopping_list_id', shoppingList.id)
           .eq('is_checked', false);
 
         setShoppingRemaining(count || 0);
@@ -533,7 +521,7 @@ export const useHomeData = () => {
     }
   };
 
-  // 今週のベスト料理
+  // 今週のベスト料理（日付ベースモデル）
   const fetchBestMealThisWeek = async (userId: string) => {
     try {
       const sevenDaysAgo = new Date();
@@ -543,13 +531,13 @@ export const useHomeData = () => {
         .from('planned_meals')
         .select(`
           *,
-          meal_plan_days!inner(
+          user_daily_meals!inner(
             day_date,
-            meal_plans!inner(user_id)
+            user_id
           )
         `)
-        .eq('meal_plan_days.meal_plans.user_id', userId)
-        .gte('meal_plan_days.day_date', formatLocalDate(sevenDaysAgo))
+        .eq('user_daily_meals.user_id', userId)
+        .gte('user_daily_meals.day_date', formatLocalDate(sevenDaysAgo))
         .eq('is_completed', true)
         .not('image_url', 'is', null)
         .order('veg_score', { ascending: false, nullsFirst: false })
@@ -559,7 +547,7 @@ export const useHomeData = () => {
         const m = data[0];
         setBestMealThisWeek({
           id: m.id,
-          mealPlanDayId: m.meal_plan_day_id,
+          dailyMealId: m.daily_meal_id,
           mealType: m.meal_type,
           mode: m.mode || 'cook',
           dishName: m.dish_name,

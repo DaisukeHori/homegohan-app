@@ -1,23 +1,22 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 /**
- * 買い物リスト再生成API（非同期版）
+ * 買い物リスト再生成API（日付ベースモデル）
  * - リクエストレコードを作成して即座にrequestIdを返す
  * - Edge Functionで非同期処理
  * - クライアントはSupabase Realtimeで進捗を購読
  */
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { mealPlanId, startDate, endDate, mealTypes, servingsConfig } = await request.json();
+    const { startDate, endDate, servingsConfig } = await request.json();
     
-    if (!mealPlanId) {
-      return NextResponse.json({ error: 'mealPlanId is required' }, { status: 400 });
+    if (!startDate || !endDate) {
+      return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 });
     }
 
     // リクエストレコードを作成
@@ -25,7 +24,6 @@ export async function POST(request: Request) {
       .from('shopping_list_requests')
       .insert({
         user_id: user.id,
-        meal_plan_id: mealPlanId,
         status: 'processing',
         progress: {
           phase: 'starting',
@@ -60,12 +58,9 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         requestId,
-        mealPlanId,
         userId: user.id,
-        // 範囲フィルタ
-        startDate: startDate || null,
-        endDate: endDate || null,
-        mealTypes: mealTypes || null,
+        startDate,
+        endDate,
         // 人数設定（渡されない場合はEdge Functionでプロフィールから取得）
         servingsConfig: servingsConfig || null,
       }),

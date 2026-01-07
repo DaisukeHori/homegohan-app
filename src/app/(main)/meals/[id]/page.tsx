@@ -58,7 +58,7 @@ interface DishDetail {
 
 interface PlannedMealDetail {
   id: string;
-  mealPlanDayId: string;
+  dailyMealId: string;
   mealType: MealType;
   mode: MealMode;
   dishName: string;
@@ -90,12 +90,12 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
     const fetchData = async () => {
       setLoading(true);
       
-      // planned_mealsとmeal_plan_daysをJOINして取得
+      // planned_mealsとuser_daily_mealsをJOINして取得
       const { data, error } = await supabase
         .from('planned_meals')
         .select(`
           *,
-          meal_plan_days!inner(day_date)
+          user_daily_meals!inner(day_date)
         `)
         .eq('id', params.id)
         .single();
@@ -108,7 +108,7 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
 
       const mappedMeal: PlannedMealDetail = {
         id: data.id,
-        mealPlanDayId: data.meal_plan_day_id,
+        dailyMealId: data.daily_meal_id,
         mealType: data.meal_type as MealType,
         mode: (data.mode || 'cook') as MealMode,
         dishName: data.dish_name,
@@ -125,7 +125,7 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
         dishes: data.dishes,
         isSimple: data.is_simple,
         cookingTimeMinutes: data.cooking_time_minutes,
-        dayDate: data.meal_plan_days.day_date,
+        dayDate: data.user_daily_meals.day_date,
       };
 
       setMeal(mappedMeal);

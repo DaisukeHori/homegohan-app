@@ -124,54 +124,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. meal_planを取得または作成
-    const endDate = addDays(startDate, 6);
-
-    let { data: mealPlan, error: planError } = await supabase
-      .from('meal_plans')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('start_date', startDate)
-      .maybeSingle();
-
-    if (planError) throw new Error(`Failed to fetch meal_plan: ${planError.message}`);
-
-    if (!mealPlan) {
-      // 指定週のmeal_planが存在しない場合は作成（start_date/end_dateは必須）
-      const ws = new Date(startDate);
-      const title = `${ws.getMonth() + 1}月${ws.getDate()}日〜の献立`;
-      const { data: newPlan, error: createError } = await supabase
-        .from('meal_plans')
-        .insert({
-          user_id: user.id,
-          title,
-          start_date: startDate,
-          end_date: endDate,
-          status: 'active',
-          is_active: true,
-        })
-        .select('id')
-        .single();
-
-      if (createError) throw new Error(`Failed to create meal_plan: ${createError.message}`);
-      mealPlan = newPlan;
-    } else {
-      // 既存プランを最新化（念のため）
-      await supabase
-        .from('meal_plans')
-        .update({ end_date: endDate, status: 'active', is_active: true, updated_at: new Date().toISOString() })
-        .eq('id', mealPlan.id)
-        .eq('user_id', user.id);
-    }
-
-    // 他のプランを非アクティブ化（アクティブは1つに揃える）
-    await supabase
-      .from('meal_plans')
-      .update({ is_active: false })
-      .eq('user_id', user.id)
-      .neq('id', mealPlan.id);
-
-    // 3. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
+    // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = getTodayStr();
 
     for (let i = 0; i < 7; i++) {
@@ -179,9 +132,9 @@ export async function POST(request: Request) {
       // 今日以降の日付のみ対象
       if (dateStr >= todayStr) {
         const { data: existingDay } = await supabase
-          .from('meal_plan_days')
+          .from('user_daily_meals')
           .select('id')
-          .eq('meal_plan_id', mealPlan.id)
+          .eq('user_id', user.id)
           .eq('day_date', dateStr)
           .maybeSingle();
 
@@ -190,14 +143,14 @@ export async function POST(request: Request) {
           await supabase
             .from('planned_meals')
             .delete()
-            .eq('meal_plan_day_id', existingDay.id);
+            .eq('daily_meal_id', existingDay.id);
         }
       }
     }
     
     console.log(`📝 Cleared existing meals for week starting ${startDate}`);
 
-    // 4. リクエストをDBに保存（ステータス追跡用）
+    // 3. リクエストをDBに保存（ステータス追跡用）
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({
@@ -216,7 +169,7 @@ export async function POST(request: Request) {
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 
-    // 5. プレースホルダーのIDを即座に返す（Edge Functionは非同期で呼び出し）
+    // 4. プレースホルダーのIDを即座に返す（Edge Functionは非同期で呼び出し）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     
@@ -242,7 +195,6 @@ export async function POST(request: Request) {
         preferences: constraints,
         constraints, // 将来の呼び出し元互換のため残す
         requestId: requestData.id,
-        mealPlanId: mealPlan.id,
       }),
     }).then(async (res) => {
       if (!res.ok) {

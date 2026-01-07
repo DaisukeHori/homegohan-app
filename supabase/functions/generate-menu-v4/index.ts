@@ -529,37 +529,31 @@ function getSlotKey(date: string, mealType: MealType): string {
 async function saveMealToDb(
   supabase: any,
   params: {
-    mealPlanId: string;
     userId: string;
     targetSlot: TargetSlot;
     generatedMeal: GeneratedMeal;
   }
 ): Promise<void> {
-  const { mealPlanId, userId, targetSlot, generatedMeal } = params;
+  const { userId, targetSlot, generatedMeal } = params;
 
-  // Get or create meal_plan_day
-  let { data: dayData } = await supabase
-    .from("meal_plan_days")
-    .select("id")
-    .eq("meal_plan_id", mealPlanId)
-    .eq("day_date", targetSlot.date)
-    .maybeSingle();
-
-  if (!dayData) {
-    const dayOfWeek = new Date(targetSlot.date).toLocaleDateString("ja-JP", { weekday: "long" });
-    const { data: newDay, error: dayError } = await supabase
-      .from("meal_plan_days")
-      .insert({
-        meal_plan_id: mealPlanId,
+  // user_daily_meals: upsert（日付ベース）
+  const { data: dailyMeal, error: dailyMealErr } = await supabase
+    .from("user_daily_meals")
+    .upsert(
+      { 
+        user_id: userId, 
         day_date: targetSlot.date,
-        day_of_week: dayOfWeek,
-        is_cheat_day: false,
-      })
-      .select("id")
-      .single();
-    if (dayError) throw new Error(`Failed to create meal_plan_day: ${dayError.message}`);
-    dayData = newDay;
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'user_id,day_date' }
+    )
+    .select("id")
+    .single();
+
+  if (dailyMealErr || !dailyMeal?.id) {
+    throw new Error(`Failed to upsert user_daily_meals: ${dailyMealErr?.message}`);
   }
+  const dayData = dailyMeal;
 
   // Calculate nutrition per dish + V3-like validation/adjustment for suspicious low-calorie dishes
   const totalNutrition = emptyNutrition();
@@ -684,7 +678,7 @@ async function saveMealToDb(
       })();
 
   const plannedMealData = {
-    meal_plan_day_id: dayData.id,
+    daily_meal_id: dayData.id,
     meal_type: targetSlot.mealType,
     dish_name: dishName,
     ingredients: aggregatedIngredients,
@@ -745,7 +739,7 @@ async function saveMealToDb(
     const { data: existingMeal } = await supabase
       .from("planned_meals")
       .select("id")
-      .eq("meal_plan_day_id", dayData.id)
+      .eq("daily_meal_id", dayData.id)
       .eq("meal_type", targetSlot.mealType)
       .maybeSingle();
 
@@ -1414,7 +1408,7 @@ async function executeStep3_Complete(
       continue;
     }
     try {
-      await saveMealToDb(supabase, { mealPlanId, userId, targetSlot: slot, generatedMeal: meal });
+      await saveMealToDb(supabase, { userId, targetSlot: slot, generatedMeal: meal });
       savedCount++;
     } catch (e: any) {
       errors.push({ key, error: e?.message ?? String(e) });

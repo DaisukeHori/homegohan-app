@@ -21,6 +21,7 @@ export interface DbUserProfile {
   family_config: any | null;
   cheat_day_config: any | null;
   servings_config: any | null;
+  week_start_day: string | null;
   created_at: string;
   updated_at: string;
 
@@ -210,4 +211,114 @@ export interface DbOrgDailyStats {
   late_night_rate: number;
   avg_score: number;
   created_at: string;
+}
+
+// === 日付ベースモデル ===
+
+export interface DbDailyMeal {
+  id: string;
+  user_id: string;
+  day_date: string;
+  theme: string | null;
+  nutritional_focus: string | null;
+  is_cheat_day: boolean;
+  source_request_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbShoppingList {
+  id: string;
+  user_id: string;
+  title: string | null;
+  start_date: string;
+  end_date: string;
+  status: 'active' | 'archived';
+  servings_config: any | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbShoppingListRequest {
+  id: string;
+  user_id: string;
+  shopping_list_id: string | null;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress: { phase: string; message: string; percentage: number } | null;
+  result: any | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbShoppingListItem {
+  id: string;
+  shopping_list_id: string;
+  category: string;
+  item_name: string;
+  quantity: string | null;
+  is_checked: boolean;
+  source: 'manual' | 'generated';
+  normalized_name: string | null;
+  quantity_variants: any[] | null;
+  selected_variant_index: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbPlannedMeal {
+  id: string;
+  daily_meal_id: string;
+  meal_type: string;
+  dish_name: string;
+  recipe_url: string | null;
+  image_url: string | null;
+  description: string | null;
+  ingredients: string[] | null;
+  recipe_steps: string[] | null;
+  calories_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  sodium_g: number | null;
+  amino_acid_g: number | null;
+  sugar_g: number | null;
+  fiber_g: number | null;
+  fiber_soluble_g: number | null;
+  fiber_insoluble_g: number | null;
+  potassium_mg: number | null;
+  calcium_mg: number | null;
+  magnesium_mg: number | null;
+  phosphorus_mg: number | null;
+  iron_mg: number | null;
+  zinc_mg: number | null;
+  iodine_ug: number | null;
+  cholesterol_mg: number | null;
+  vitamin_b1_mg: number | null;
+  vitamin_b2_mg: number | null;
+  vitamin_c_mg: number | null;
+  vitamin_b6_mg: number | null;
+  vitamin_b12_ug: number | null;
+  folic_acid_ug: number | null;
+  vitamin_a_ug: number | null;
+  vitamin_d_ug: number | null;
+  vitamin_k_ug: number | null;
+  vitamin_e_mg: number | null;
+  saturated_fat_g: number | null;
+  monounsaturated_fat_g: number | null;
+  polyunsaturated_fat_g: number | null;
+  is_completed: boolean;
+  completed_at: string | null;
+  actual_meal_id: string | null;
+  mode: string;
+  dishes: any | null;
+  is_simple: boolean;
+  cooking_time_minutes: number | null;
+  memo: string | null;
+  veg_score: number | null;
+  quality_tags: string[] | null;
+  display_order: number;
+  is_generating: boolean;
+  created_at: string;
+  updated_at: string;
 }

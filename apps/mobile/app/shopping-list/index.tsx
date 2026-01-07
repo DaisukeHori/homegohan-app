@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 import { getApi } from "../../src/lib/api";
-import { ensureActiveMealPlanId } from "../../src/lib/mealPlan";
+import { getActiveShoppingListId } from "../../src/lib/mealPlan";
 import { supabase } from "../../src/lib/supabase";
 
 type QuantityVariant = {
@@ -24,7 +24,7 @@ type Item = {
 };
 
 export default function ShoppingListPage() {
-  const [mealPlanId, setMealPlanId] = useState<string | null>(null);
+  const [shoppingListId, setShoppingListId] = useState<string | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,13 +40,20 @@ export default function ShoppingListPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const planId = mealPlanId ?? (await ensureActiveMealPlanId());
-      setMealPlanId(planId);
+      // Get active shopping list
+      const listId = shoppingListId ?? (await getActiveShoppingListId());
+      setShoppingListId(listId);
+
+      if (!listId) {
+        // No shopping list exists yet
+        setItems([]);
+        return;
+      }
 
       const { data, error: fetchError } = await supabase
         .from("shopping_list_items")
         .select("id,item_name,quantity,category,is_checked,source,quantity_variants,selected_variant_index")
-        .eq("meal_plan_id", planId)
+        .eq("shopping_list_id", listId)
         .order("category", { ascending: true })
         .order("created_at", { ascending: true });
 
@@ -77,16 +84,11 @@ export default function ShoppingListPage() {
   async function addItem() {
     const name = newName.trim();
     if (!name) return;
-    if (!mealPlanId) {
-      await load();
-    }
-    if (!mealPlanId) return;
 
     setIsSubmitting(true);
     try {
       const api = getApi();
       await api.post("/api/shopping-list", {
-        mealPlanId,
         itemName: name,
         category: newCategory || "その他",
         quantity: newQuantity.trim() || null,
@@ -150,7 +152,7 @@ export default function ShoppingListPage() {
   }
 
   async function regenerate() {
-    if (!mealPlanId || isRegenerating) return;
+    if (isRegenerating) return;
     Alert.alert(
       "献立から再生成", 
       "AIが材料を整理します。手動追加した項目は残ります。", 
@@ -162,7 +164,7 @@ export default function ShoppingListPage() {
             setIsRegenerating(true);
             try {
               const api = getApi();
-              const response = await api.post("/api/shopping-list/regenerate", { mealPlanId });
+              const response = await api.post("/api/shopping-list/regenerate", {});
               
               // 非同期処理：requestIdが返ってくるのでポーリング
               if (response.requestId) {

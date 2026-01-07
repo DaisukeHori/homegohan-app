@@ -2,6 +2,7 @@
  * regenerate-shopping-list-v2
  * 
  * 買い物リスト再生成を非同期で実行するEdge Function
+ * - 日付ベースモデル対応（user_daily_meals, shopping_lists）
  * - 進捗をshopping_list_requestsテーブルに書き込み
  * - Supabase Realtimeでクライアントに進捗通知
  */
@@ -60,21 +61,24 @@ async function updateProgress(
 ): Promise<void> {
   await supabase
     .from("shopping_list_requests")
-    .update({ progress })
+    .update({ progress, updated_at: new Date().toISOString() })
     .eq("id", requestId);
 }
 
 async function markCompleted(
   supabase: SupabaseClient,
   requestId: string,
+  shoppingListId: string,
   stats: { inputCount: number; outputCount: number; mergedCount: number; totalServings?: number }
 ): Promise<void> {
   await supabase
     .from("shopping_list_requests")
     .update({
       status: "completed",
+      shopping_list_id: shoppingListId,
       progress: { phase: "completed", message: "完了！", percentage: 100 },
       result: { stats },
+      updated_at: new Date().toISOString(),
     })
     .eq("id", requestId);
 }
@@ -90,6 +94,7 @@ async function markFailed(
       status: "failed",
       progress: { phase: "failed", message: "エラーが発生しました", percentage: 0 },
       result: { error },
+      updated_at: new Date().toISOString(),
     })
     .eq("id", requestId);
 }
@@ -262,16 +267,6 @@ function validateItems(
 }
 
 // ============================================
-// 範囲フィルタ型
-// ============================================
-
-interface RangeFilter {
-  startDate?: string | null;
-  endDate?: string | null;
-  mealTypes?: string[] | null;
-}
-
-// ============================================
 // 人数設定型
 // ============================================
 
@@ -327,25 +322,22 @@ function parseIngredientAmount(ing: any): { name: string; amount_g: number } | n
 }
 
 // ============================================
-// メイン処理
+// メイン処理（日付ベースモデル対応）
 // ============================================
 
 async function processRegeneration(
   supabase: SupabaseClient,
   requestId: string,
-  mealPlanId: string,
   userId: string,
-  rangeFilter: RangeFilter = {},
+  startDate: string,
+  endDate: string,
   servingsConfig?: ServingsConfig | null
 ): Promise<void> {
   try {
     // Phase 1: 材料抽出
-    const rangeDesc = rangeFilter.startDate && rangeFilter.endDate 
-      ? `${rangeFilter.startDate}〜${rangeFilter.endDate}` 
-      : "すべて";
     await updateProgress(supabase, requestId, {
       phase: "extracting",
-      message: `献立から材料を抽出中...（${rangeDesc}）`,
+      message: `献立から材料を抽出中...（${startDate}〜${endDate}）`,
       percentage: 10,
     });
 
@@ -361,53 +353,39 @@ async function processRegeneration(
       if (profile?.servings_config) {
         effectiveServingsConfig = profile.servings_config as ServingsConfig;
       } else if (profile?.family_size) {
-        // servings_configがない場合はfamily_sizeをデフォルトとして使用
         effectiveServingsConfig = { default: profile.family_size, byDayMeal: {} };
       }
     }
 
-    // Get all planned meals for this meal plan with day_date and meal_type
-    const { data: mealPlan, error: planError } = await supabase
-      .from("meal_plans")
+    // 日付ベースで献立を取得（user_daily_meals → planned_meals）
+    const { data: dailyMeals, error: mealsError } = await supabase
+      .from("user_daily_meals")
       .select(`
         id,
-        meal_plan_days (
+        day_date,
+        planned_meals (
           id,
-          day_date,
-          planned_meals (
-            id,
-            meal_type,
-            ingredients,
-            dishes
-          )
+          meal_type,
+          ingredients,
+          dishes
         )
       `)
-      .eq("id", mealPlanId)
       .eq("user_id", userId)
-      .single();
+      .gte("day_date", startDate)
+      .lte("day_date", endDate);
 
-    if (planError) throw planError;
+    if (mealsError) throw mealsError;
 
-    // 材料を抽出（範囲フィルタ適用 + 人数倍率適用）
+    // 材料を抽出（人数倍率適用）
     const ingredientsMap = new Map<string, InputIngredient>();
-    let totalServings = 0; // 合計人数をカウント
+    let totalServings = 0;
 
-    mealPlan.meal_plan_days?.forEach((day: any) => {
-      const dayDate = day.day_date;
-      
-      // 日付フィルタ
-      if (rangeFilter.startDate && dayDate < rangeFilter.startDate) return;
-      if (rangeFilter.endDate && dayDate > rangeFilter.endDate) return;
-      
+    (dailyMeals || []).forEach((dailyMeal: any) => {
+      const dayDate = dailyMeal.day_date;
       const dayOfWeek = getDayOfWeek(dayDate);
       
-      day.planned_meals?.forEach((meal: any) => {
+      (dailyMeal.planned_meals || []).forEach((meal: any) => {
         const mealType = meal.meal_type;
-        
-        // 食事タイプフィルタ
-        if (rangeFilter.mealTypes && rangeFilter.mealTypes.length > 0) {
-          if (!rangeFilter.mealTypes.includes(mealType)) return;
-        }
         
         // この食事の人数を取得
         const servings = getServingsForSlot(effectiveServingsConfig, dayOfWeek, mealType);
@@ -425,7 +403,6 @@ async function processRegeneration(
                 if (!parsed) return;
                 
                 const { name, amount_g } = parsed;
-                // 人数倍率を適用
                 const scaledAmount = amount_g * servings;
                 const amountStr = scaledAmount > 0 ? `${Math.round(scaledAmount)}g` : null;
 
@@ -474,15 +451,33 @@ async function processRegeneration(
 
     const rawIngredients = Array.from(ingredientsMap.values());
 
-    if (rawIngredients.length === 0) {
-      // 材料がない場合
-      await supabase
-        .from("shopping_list_items")
-        .delete()
-        .eq("meal_plan_id", mealPlanId)
-        .eq("source", "generated");
+    // 既存のアクティブな買い物リストをアーカイブ
+    await supabase
+      .from("shopping_lists")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("status", "active");
 
-      await markCompleted(supabase, requestId, {
+    // 新しい買い物リストを作成
+    const { data: newShoppingList, error: listError } = await supabase
+      .from("shopping_lists")
+      .insert({
+        user_id: userId,
+        start_date: startDate,
+        end_date: endDate,
+        status: "active",
+        servings_config: effectiveServingsConfig,
+        title: `${startDate}〜${endDate}の買い物リスト`,
+      })
+      .select("id")
+      .single();
+
+    if (listError) throw listError;
+    const shoppingListId = newShoppingList.id;
+
+    if (rawIngredients.length === 0) {
+      // 材料がない場合は空のリストで完了
+      await markCompleted(supabase, requestId, shoppingListId, {
         inputCount: 0,
         outputCount: 0,
         mergedCount: 0,
@@ -518,65 +513,17 @@ async function processRegeneration(
       percentage: 70,
     });
 
-    // 既存アイテム取得
-    const { data: existingItems } = await supabase
-      .from("shopping_list_items")
-      .select("*")
-      .eq("meal_plan_id", mealPlanId);
-
-    const manualNames = new Set(
-      (existingItems || [])
-        .filter((item: any) => item.source !== "generated")
-        .map((item: any) => item.normalized_name || item.item_name)
-    );
-
-    const prevCheckedMap = new Map(
-      (existingItems || [])
-        .filter((item: any) => item.source === "generated")
-        .map((item: any) => [
-          item.normalized_name || item.item_name,
-          item.is_checked,
-        ])
-    );
-
-    const prevSelectedUnitMap = new Map(
-      (existingItems || [])
-        .filter((item: any) => item.source === "generated")
-        .map((item: any) => {
-          const variants = item.quantity_variants || [];
-          const idx = item.selected_variant_index || 0;
-          const unit = variants[idx]?.unit || null;
-          return [item.normalized_name || item.item_name, unit];
-        })
-    );
-
-    const newItems = validatedItems
-      .filter((item) => !manualNames.has(item.normalizedName))
-      .map((item) => {
-        const prevUnit = prevSelectedUnitMap.get(item.normalizedName);
-        let selectedIdx = 0;
-        if (prevUnit) {
-          const idx = item.quantityVariants.findIndex(
-            (v) => v.unit === prevUnit
-          );
-          if (idx >= 0) selectedIdx = idx;
-        }
-
-        return {
-          meal_plan_id: mealPlanId,
-          item_name: item.itemName,
-          normalized_name: item.normalizedName,
-          quantity:
-            item.quantityVariants[selectedIdx]?.display ||
-            item.quantityVariants[0]?.display ||
-            null,
-          quantity_variants: item.quantityVariants,
-          selected_variant_index: selectedIdx,
-          category: item.category,
-          source: "generated",
-          is_checked: prevCheckedMap.get(item.normalizedName) || false,
-        };
-      });
+    const newItems = validatedItems.map((item) => ({
+      shopping_list_id: shoppingListId,
+      item_name: item.itemName,
+      normalized_name: item.normalizedName,
+      quantity: item.quantityVariants[0]?.display || null,
+      quantity_variants: item.quantityVariants,
+      selected_variant_index: 0,
+      category: item.category,
+      source: "generated",
+      is_checked: false,
+    }));
 
     // Phase 5: 保存
     await updateProgress(supabase, requestId, {
@@ -585,14 +532,6 @@ async function processRegeneration(
       percentage: 85,
     });
 
-    // generated分削除
-    await supabase
-      .from("shopping_list_items")
-      .delete()
-      .eq("meal_plan_id", mealPlanId)
-      .eq("source", "generated");
-
-    // 新規挿入
     if (newItems.length > 0) {
       const { error: insertError } = await supabase
         .from("shopping_list_items")
@@ -609,7 +548,7 @@ async function processRegeneration(
       totalServings,
     };
 
-    await markCompleted(supabase, requestId, stats);
+    await markCompleted(supabase, requestId, shoppingListId, stats);
   } catch (error) {
     console.error("Regeneration error:", error);
     await markFailed(
@@ -630,11 +569,11 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { requestId, mealPlanId, userId, startDate, endDate, mealTypes, servingsConfig } = await req.json();
+    const { requestId, userId, startDate, endDate, servingsConfig } = await req.json();
 
-    if (!requestId || !mealPlanId || !userId) {
+    if (!requestId || !userId || !startDate || !endDate) {
       return new Response(
-        JSON.stringify({ error: "requestId, mealPlanId, userId are required" }),
+        JSON.stringify({ error: "requestId, userId, startDate, endDate are required" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -647,16 +586,8 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 範囲フィルタ
-    const rangeFilter: RangeFilter = {
-      startDate: startDate || null,
-      endDate: endDate || null,
-      mealTypes: mealTypes || null,
-    };
-
     // 非同期で処理開始（即座にレスポンス返す）
-    // EdgeRuntimeではバックグラウンド実行のためにPromiseをresolveしない
-    processRegeneration(supabase, requestId, mealPlanId, userId, rangeFilter, servingsConfig || null);
+    processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);
 
     return new Response(
       JSON.stringify({ success: true, requestId }),

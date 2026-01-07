@@ -113,42 +113,7 @@ export async function POST(request: Request) {
     const startDate = dates[0];
     const endDate = dates[dates.length - 1];
     
-    // 4. meal_planを取得または作成
-    let { data: mealPlan, error: planError } = await supabase
-      .from('meal_plans')
-      .select('id')
-      .eq('user_id', user.id)
-      .lte('start_date', startDate)
-      .gte('end_date', endDate)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (planError && planError.code !== 'PGRST116') {
-      throw new Error(`Failed to fetch meal_plan: ${planError.message}`);
-    }
-
-    if (!mealPlan) {
-      // Create new meal_plan covering the date range
-      const ws = new Date(startDate);
-      const title = `${ws.getMonth() + 1}月${ws.getDate()}日〜の献立`;
-      const { data: newPlan, error: createError } = await supabase
-        .from('meal_plans')
-        .insert({
-          user_id: user.id,
-          title,
-          start_date: startDate,
-          end_date: endDate,
-          status: 'active',
-          is_active: true,
-        })
-        .select('id')
-        .single();
-
-      if (createError) throw new Error(`Failed to create meal_plan: ${createError.message}`);
-      mealPlan = newPlan;
-    }
-
-    // 4.5 plannedMealId の所有権・整合性チェック（Edge Functionはサービスロールで更新するため必須）
+    // 4. plannedMealIdの所有権・整合性チェック
     const slotsWithPlannedId = targetSlots.filter(s => !!s.plannedMealId);
     if (slotsWithPlannedId.length > 0) {
       const plannedMealIds = Array.from(new Set(slotsWithPlannedId.map(s => s.plannedMealId!).filter(Boolean)));
@@ -158,15 +123,14 @@ export async function POST(request: Request) {
         .select(`
           id,
           meal_type,
-          meal_plan_day_id,
-          meal_plan_days!inner(
+          daily_meal_id,
+          user_daily_meals!inner(
             day_date,
-            meal_plan_id,
-            meal_plans!inner(user_id)
+            user_id
           )
         `)
         .in('id', plannedMealIds)
-        .eq('meal_plan_days.meal_plans.user_id', user.id);
+        .eq('user_daily_meals.user_id', user.id);
 
       if (plannedMealsError) {
         return NextResponse.json({ error: plannedMealsError.message }, { status: 500 });
@@ -184,10 +148,7 @@ export async function POST(request: Request) {
         if (!pm) {
           return NextResponse.json({ error: 'Meal not found or unauthorized' }, { status: 404 });
         }
-        const day = (pm.meal_plan_days as any) || {};
-        if (day.meal_plan_id !== mealPlan.id) {
-          return NextResponse.json({ error: 'plannedMealId does not belong to the current meal plan' }, { status: 400 });
-        }
+        const day = (pm.user_daily_meals as any) || {};
         if (String(pm.meal_type) !== String(slot.mealType)) {
           return NextResponse.json({ error: 'plannedMealId mealType mismatch' }, { status: 400 });
         }
@@ -202,7 +163,7 @@ export async function POST(request: Request) {
     const contextEndDate = addDays(endDate, 7); // 7 days after
     
     const { data: existingMealsData } = await supabase
-      .from('meal_plan_days')
+      .from('user_daily_meals')
       .select(`
         day_date,
         planned_meals (
@@ -213,7 +174,7 @@ export async function POST(request: Request) {
           mode
         )
       `)
-      .eq('meal_plan_id', mealPlan.id)
+      .eq('user_id', user.id)
       .gte('day_date', contextStartDate)
       .lte('day_date', contextEndDate);
 
@@ -324,7 +285,6 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         userId: user.id,
-        mealPlanId: mealPlan.id,
         requestId: requestData.id,
         targetSlots,
         existingMenus,
