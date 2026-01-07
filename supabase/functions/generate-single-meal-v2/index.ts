@@ -326,8 +326,6 @@ Deno.serve(async (req: Request) => {
       vitamin_d_ug: Math.round(totalNutrition.vitamin_d_ug * 10) / 10 || null,
       magnesium_mg: Math.round(totalNutrition.magnesium_mg) || null,
       folic_acid_ug: Math.round(totalNutrition.folic_acid_ug) || null,
-      is_eaten: false,
-      is_skipped: false,
       generation_metadata: {
         generator: "generate-single-meal-v2",
         mode: "creative",

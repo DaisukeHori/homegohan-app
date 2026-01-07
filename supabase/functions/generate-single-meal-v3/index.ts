@@ -613,8 +613,6 @@ async function executeStep3_Save(
     dish_name: dishName,
     dishes: dishDetails,
     ingredients: aggregatedIngredients,
-    is_eaten: false,
-    is_skipped: false,
     generation_metadata: {
       generator: "generate-single-meal-v3",
       mode: "creative",
