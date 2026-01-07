@@ -605,7 +605,6 @@ async function executeStep3_Save(
   const dishName = generatedMeal.dishes.map((d: any) => d.name).join("、");
 
   const mealData = {
-    user_id: userId,
     daily_meal_id: dailyMealId,
     meal_type: mealType,
     display_order: DISPLAY_ORDER_MAP[mealType] ?? 99,
