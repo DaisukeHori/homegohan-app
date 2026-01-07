@@ -186,12 +186,29 @@ const PROGRESS_PHASES = [
   { phase: 'completed', label: '完了！', threshold: 100 },
 ];
 
+// 買い物リスト再生成の進捗フェーズ
+const SHOPPING_LIST_PHASES = [
+  { phase: 'starting', label: '開始中...', threshold: 0 },
+  { phase: 'extracting', label: '献立から材料を抽出', threshold: 10 },
+  { phase: 'normalizing', label: 'AIが材料を整理中', threshold: 30 },
+  { phase: 'validating', label: '整合性チェック', threshold: 60 },
+  { phase: 'categorizing', label: 'カテゴリ分類', threshold: 70 },
+  { phase: 'saving', label: '保存中', threshold: 85 },
+  { phase: 'completed', label: '完了！', threshold: 100 },
+];
+
+type PhaseDefinition = { phase: string; label: string; threshold: number };
+
 const ProgressTodoCard = ({ 
   progress, 
-  colors: cardColors 
+  colors: cardColors,
+  phases = PROGRESS_PHASES,
+  defaultMessage = 'AIが献立を生成中...',
 }: { 
   progress: { phase: string; message: string; percentage: number } | null;
   colors: { accent: string; purple: string };
+  phases?: PhaseDefinition[];
+  defaultMessage?: string;
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   
@@ -199,7 +216,7 @@ const ProgressTodoCard = ({
   const currentPhase = progress?.phase ?? '';
   
   // 各フェーズの状態を判定
-  const getPhaseStatus = (phase: typeof PROGRESS_PHASES[0]) => {
+  const getPhaseStatus = (phase: PhaseDefinition) => {
     if (currentPercentage >= phase.threshold) {
       return 'completed';
     }
@@ -222,7 +239,7 @@ const ProgressTodoCard = ({
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
             <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-              {progress?.message || 'AIが献立を生成中...'}
+              {progress?.message || defaultMessage}
             </span>
           </div>
           <div className="flex items-center gap-1">
@@ -236,7 +253,7 @@ const ProgressTodoCard = ({
             )}
           </div>
         </div>
-        {progress?.percentage && (
+        {progress?.percentage !== undefined && (
           <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
             <div 
               className="h-full bg-white rounded-full transition-all duration-500 ease-out"
@@ -258,7 +275,7 @@ const ProgressTodoCard = ({
           >
             <div className="px-3.5 pb-3 pt-1 border-t border-white/20">
               <div className="space-y-1.5">
-                {PROGRESS_PHASES.map((phase, idx) => {
+                {phases.map((phase) => {
                   const status = getPhaseStatus(phase);
                   return (
                     <div 
@@ -758,6 +775,8 @@ export default function WeeklyMenuPage() {
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
   const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
+  const [shoppingListProgress, setShoppingListProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
+  const [shoppingListRequestId, setShoppingListRequestId] = useState<string | null>(null);
 
   // スーパーの動線に合わせたカテゴリ順序
   const CATEGORY_ORDER = [
@@ -1239,31 +1258,92 @@ export default function WeeklyMenuPage() {
     }
   };
 
-  // Regenerate shopping list from menu
+  // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {
     if (!currentPlan || isRegeneratingShoppingList) return;
     setIsRegeneratingShoppingList(true);
+    setShoppingListProgress({ phase: 'starting', message: '開始中...', percentage: 0 });
+    
     try {
       const res = await fetch(`/api/shopping-list/regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mealPlanId: currentPlan.id })
       });
+      
       if (res.ok) {
-        const { items, stats } = await res.json();
-        setShoppingList(items);
-        setSuccessMessage({
-          title: '買い物リストを更新しました ✓',
-          message: `${stats.outputCount}件の材料（${stats.mergedCount}件を統合）`
-        });
+        const { requestId } = await res.json();
+        setShoppingListRequestId(requestId);
+        
+        // Supabase Realtimeで進捗を購読
+        const channel = supabaseRef.current
+          .channel(`shopping-list-request-${requestId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'shopping_list_requests',
+              filter: `id=eq.${requestId}`,
+            },
+            async (payload) => {
+              console.log('📡 Shopping list progress update:', payload.new);
+              const newData = payload.new as { 
+                status: string; 
+                progress?: { phase: string; message: string; percentage: number };
+                result?: { stats?: { inputCount: number; outputCount: number; mergedCount: number }; error?: string };
+              };
+              
+              // 進捗情報を更新
+              if (newData?.progress) {
+                setShoppingListProgress(newData.progress);
+              }
+              
+              if (newData.status === 'completed') {
+                // 完了したら買い物リストを再取得
+                console.log('✅ Shopping list regeneration completed');
+                try {
+                  const listRes = await fetch(`/api/shopping-list?mealPlanId=${currentPlan.id}`);
+                  if (listRes.ok) {
+                    const { items } = await listRes.json();
+                    setShoppingList(items);
+                  }
+                } catch (fetchErr) {
+                  console.error('❌ Failed to fetch shopping list:', fetchErr);
+                }
+                
+                setSuccessMessage({
+                  title: '買い物リストを更新しました ✓',
+                  message: newData.result?.stats 
+                    ? `${newData.result.stats.outputCount}件の材料（${newData.result.stats.mergedCount}件を統合）`
+                    : '買い物リストを再生成しました'
+                });
+                
+                setIsRegeneratingShoppingList(false);
+                setShoppingListProgress(null);
+                setShoppingListRequestId(null);
+                channel.unsubscribe();
+              } else if (newData.status === 'failed') {
+                console.log('❌ Shopping list regeneration failed');
+                alert(newData.result?.error || '再生成に失敗しました');
+                setIsRegeneratingShoppingList(false);
+                setShoppingListProgress(null);
+                setShoppingListRequestId(null);
+                channel.unsubscribe();
+              }
+            }
+          )
+          .subscribe((status) => {
+            console.log('📡 Shopping list subscription status:', status);
+          });
       } else {
         const err = await res.json();
         throw new Error(err.error || '再生成に失敗しました');
       }
     } catch (e: any) { 
       alert(e.message || "再生成に失敗しました"); 
-    } finally {
       setIsRegeneratingShoppingList(false);
+      setShoppingListProgress(null);
     }
   };
 
@@ -3141,6 +3221,17 @@ export default function WeeklyMenuPage() {
                     </div>
                   )}
                 </div>
+                {/* 再生成中の進捗表示 */}
+                {isRegeneratingShoppingList && shoppingListProgress && (
+                  <div className="mx-0">
+                    <ProgressTodoCard
+                      progress={shoppingListProgress}
+                      colors={colors}
+                      phases={SHOPPING_LIST_PHASES}
+                      defaultMessage="買い物リストを生成中..."
+                    />
+                  </div>
+                )}
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button onClick={() => setActiveModal('addShopping')} className="flex-1 p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
                     <Plus size={14} color={colors.textMuted} />
