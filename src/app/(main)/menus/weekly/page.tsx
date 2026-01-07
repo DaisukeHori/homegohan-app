@@ -26,6 +26,20 @@ import {
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addMealSlot' | 'confirmDelete' | 'shoppingRange' | null;
 
+// 日付ベースモデル用のローカル型定義
+interface MealPlanDay {
+  id: string;
+  dayDate: string;
+  theme?: string | null;
+  nutritionalFocus?: string | null;
+  isCheatDay?: boolean;
+  meals?: PlannedMeal[];
+}
+
+interface WeekPlan {
+  days: MealPlanDay[];
+}
+
 // 買い物リスト範囲選択の型
 type ShoppingRangeType = 'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'custom';
 interface ShoppingRangeSelection {
@@ -441,7 +455,7 @@ const getDaysUntil = (dateStr: string | null | undefined): number | null => {
 export default function WeeklyMenuPage() {
   const router = useRouter();
   
-  const [currentPlan, setCurrentPlan] = useState<MealPlan | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<WeekPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   
@@ -461,7 +475,7 @@ export default function WeeklyMenuPage() {
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
   
   // 直近の食事を自動展開する関数
-  const autoExpandNextMeal = (plan: MealPlan | null, dates: { dateStr: string }[]) => {
+  const autoExpandNextMeal = (plan: WeekPlan | null, dates: { dateStr: string }[]) => {
     if (!plan || !plan.days || hasAutoExpanded) return;
     
     const now = new Date();
@@ -537,12 +551,17 @@ export default function WeeklyMenuPage() {
   // Meal Plan再取得関数
   const refreshMealPlan = useCallback(async () => {
     const targetDate = formatLocalDate(weekStart);
+    const endDate = addDaysStr(targetDate, 6);
     try {
-      const res = await fetch(`/api/meal-plans?date=${targetDate}`);
+      const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (res.ok) {
-        const { mealPlan } = await res.json();
-        setCurrentPlan(mealPlan);
-        if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+        const { dailyMeals, shoppingList: shoppingListData } = await res.json();
+        if (dailyMeals && dailyMeals.length > 0) {
+          setCurrentPlan({ days: dailyMeals });
+          if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+        } else {
+          setCurrentPlan(null);
+        }
       }
     } catch (e) {
       console.error('Failed to refresh meal plan:', e);
@@ -951,14 +970,18 @@ export default function WeeklyMenuPage() {
       setLoading(true);
       try {
         const targetDate = formatLocalDate(weekStart);
-        const res = await fetch(`/api/meal-plans?date=${targetDate}`);
+        const endDate = addDaysStr(targetDate, 6);
+        const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (res.ok) {
-          const { mealPlan } = await res.json();
-          setCurrentPlan(mealPlan);
-          if (mealPlan) {
-            setShoppingList(mealPlan.shoppingList || []);
+          const { dailyMeals, shoppingList: shoppingListData } = await res.json();
+          if (dailyMeals && dailyMeals.length > 0) {
+            const plan = { days: dailyMeals };
+            setCurrentPlan(plan);
+            if (shoppingListData?.items) setShoppingList(shoppingListData.items);
             // 直近の食事を自動展開
-            autoExpandNextMeal(mealPlan, weekDates);
+            autoExpandNextMeal(plan, weekDates);
+          } else {
+            setCurrentPlan(null);
           }
         } else {
           setCurrentPlan(null);
@@ -1040,11 +1063,14 @@ export default function WeeklyMenuPage() {
         
         if (data.status === 'completed') {
           console.log('✅ Polling: Generation completed');
-          const planRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+          const endDate = addDaysStr(targetDate, 6);
+          const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
           if (planRes.ok) {
-            const { mealPlan } = await planRes.json();
-            setCurrentPlan(mealPlan);
-            if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+            const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
+            if (dailyMeals && dailyMeals.length > 0) {
+              setCurrentPlan({ days: dailyMeals });
+              if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+            }
           }
           setIsGenerating(false);
           setGeneratingMeal(null);
@@ -1117,11 +1143,14 @@ export default function WeeklyMenuPage() {
               // 完了したら献立を再取得
               console.log('✅ Generation completed, fetching meal plan...');
               try {
-                const planRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+                const endDate = addDaysStr(targetDate, 6);
+                const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
                 if (planRes.ok) {
-                  const { mealPlan } = await planRes.json();
-                  setCurrentPlan(mealPlan);
-                  if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+                  const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
+                  if (dailyMeals && dailyMeals.length > 0) {
+                    setCurrentPlan({ days: dailyMeals });
+                    if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                  }
                 }
               } catch (fetchErr) {
                 console.error('❌ Failed to fetch meal plan:', fetchErr);
@@ -1209,7 +1238,7 @@ export default function WeeklyMenuPage() {
     if (currentPlan?.days && currentPlan.days.length > 0) {
       fetchAiHint();
     }
-  }, [currentPlan?.id]);
+  }, [currentPlan?.days?.length]);
   
   const fetchAiHint = async () => {
     setIsLoadingHint(true);
@@ -1885,10 +1914,13 @@ export default function WeeklyMenuPage() {
       if (res.ok) {
         // Refresh data
         const targetDate = formatLocalDate(weekStart);
-        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        const endDate = addDaysStr(targetDate, 6);
+        const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
-          const { mealPlan } = await refreshRes.json();
-          setCurrentPlan(mealPlan);
+          const { dailyMeals } = await refreshRes.json();
+          if (dailyMeals && dailyMeals.length > 0) {
+            setCurrentPlan({ days: dailyMeals });
+          }
         }
         setActiveModal(null);
       }
@@ -1996,11 +2028,14 @@ export default function WeeklyMenuPage() {
           if (newStatus === 'completed') {
             // 完了したら献立を再取得
             console.log('✅ Regeneration completed, fetching meal plan...');
-            const planRes = await fetch(`/api/meal-plans?date=${weekStartDate}`);
+            const weekEndDate = addDaysStr(weekStartDate, 6);
+            const planRes = await fetch(`/api/meal-plans?startDate=${weekStartDate}&endDate=${weekEndDate}`);
             if (planRes.ok) {
-              const { mealPlan } = await planRes.json();
-              setCurrentPlan(mealPlan);
-              if (mealPlan) setShoppingList(mealPlan.shoppingList || []);
+              const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
+              if (dailyMeals && dailyMeals.length > 0) {
+                setCurrentPlan({ days: dailyMeals });
+                if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+              }
             }
             setIsRegenerating(false);
             setRegeneratingMealId(null);
@@ -2096,10 +2131,15 @@ export default function WeeklyMenuPage() {
         setDeletingMeal(null);
         // データを再取得
         const targetDate = formatLocalDate(weekStart);
-        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        const endDate = addDaysStr(targetDate, 6);
+        const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
-          const { mealPlan } = await refreshRes.json();
-          setCurrentPlan(mealPlan);
+          const { dailyMeals } = await refreshRes.json();
+          if (dailyMeals && dailyMeals.length > 0) {
+            setCurrentPlan({ days: dailyMeals });
+          } else {
+            setCurrentPlan(null);
+          }
         }
       } else {
         alert('削除に失敗しました');
@@ -2244,12 +2284,13 @@ export default function WeeklyMenuPage() {
         
         // 写真解析は同期的に行われるので、すぐにデータを再取得
         const targetDate = formatLocalDate(weekStart);
-        const pollRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        const endDate = addDaysStr(targetDate, 6);
+        const pollRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (pollRes.ok) {
-          const { mealPlan } = await pollRes.json();
-          if (mealPlan) {
-            setCurrentPlan(mealPlan);
-            setShoppingList(mealPlan.shoppingList || []);
+          const { dailyMeals, shoppingList: shoppingListData } = await pollRes.json();
+          if (dailyMeals && dailyMeals.length > 0) {
+            setCurrentPlan({ days: dailyMeals });
+            if (shoppingListData?.items) setShoppingList(shoppingListData.items);
           }
         }
         setIsAnalyzingPhoto(false);
@@ -2293,11 +2334,12 @@ export default function WeeklyMenuPage() {
       if (res.ok && data.success) {
         // 献立を再取得
         const targetDate = formatLocalDate(weekStart);
-        const refreshRes = await fetch(`/api/meal-plans?date=${targetDate}`);
+        const endDate = addDaysStr(targetDate, 6);
+        const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
-          const { mealPlan } = await refreshRes.json();
-          if (mealPlan) {
-            setCurrentPlan(mealPlan);
+          const { dailyMeals } = await refreshRes.json();
+          if (dailyMeals && dailyMeals.length > 0) {
+            setCurrentPlan({ days: dailyMeals });
           }
         }
       } else if (data.message) {
