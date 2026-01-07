@@ -119,13 +119,12 @@ export async function POST(
       case 'generate_day_menu': {
         const { date } = action.action_params;
         // NOTE:
-        // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
-        // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
-        const { error: invokeError } = await supabase.functions.invoke('generate-single-meal-v3', {
+        // - 1日分の献立生成には generate-weekly-menu-v3 を startDate = date として使用
+        // - generate-single-meal-v3 は単一食事（朝/昼/夜のいずれか）用
+        const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu-v3', {
           body: {
-            date,
+            startDate: date,
             userId: user.id,
-            mealTypes: ['breakfast', 'lunch', 'dinner'],
           },
         });
         success = !invokeError;
