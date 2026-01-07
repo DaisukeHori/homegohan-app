@@ -62,30 +62,19 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .eq('id', userId)
     .single();
 
-  // 2. ユーザーの献立プランを取得（アクティブ優先、なければ最新）
+  // 2. 今日の日付を取得
   const today = new Date().toISOString().split('T')[0];
-  let { data: userActivePlan } = await supabase
-    .from('meal_plans')
+
+  // 3. 今日の献立を取得（日付ベースモデル）
+  let todayMeals: any[] = [];
+  const { data: dailyMeal } = await supabase
+    .from('user_daily_meals')
     .select('id')
     .eq('user_id', userId)
-    .eq('is_active', true)
+    .eq('day_date', today)
     .single();
 
-  // アクティブなプランがない場合は最新のプランを使用
-  if (!userActivePlan) {
-    const { data: latestPlan } = await supabase
-      .from('meal_plans')
-      .select('id')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-    userActivePlan = latestPlan;
-  }
-
-  // 3. 今日の献立を取得（アクション実行用にIDを含める）
-  let todayMeals: any[] = [];
-  if (userActivePlan) {
+  if (dailyMeal) {
     const { data } = await supabase
       .from('planned_meals')
       .select(`
@@ -100,65 +89,58 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
         is_completed,
         mode,
         memo,
-        meal_plan_days!inner(day_date, meal_plan_id)
+        user_daily_meals!inner(day_date)
       `)
-      .eq('meal_plan_days.day_date', today)
-      .eq('meal_plan_days.meal_plan_id', userActivePlan.id);
+      .eq('daily_meal_id', dailyMeal.id);
     todayMeals = data || [];
   }
 
-  // 4. 明日〜1週間の献立も取得
+  // 4. 明日〜1週間の献立も取得（日付ベースモデル）
   const oneWeekLater = new Date();
   oneWeekLater.setDate(oneWeekLater.getDate() + 7);
   let upcomingMeals: any[] = [];
-  if (userActivePlan) {
-    const { data } = await supabase
-      .from('planned_meals')
-      .select(`
-        id,
-        meal_type,
-        dish_name,
-        calories_kcal,
-        is_completed,
-        mode,
-        meal_plan_days!inner(day_date, meal_plan_id)
-      `)
-      .eq('meal_plan_days.meal_plan_id', userActivePlan.id)
-      .gt('meal_plan_days.day_date', today)
-      .lte('meal_plan_days.day_date', oneWeekLater.toISOString().split('T')[0])
-      .order('meal_plan_days(day_date)', { ascending: true })
-      .limit(30);
-    upcomingMeals = data || [];
-  }
+  const { data: upcomingData } = await supabase
+    .from('planned_meals')
+    .select(`
+      id,
+      meal_type,
+      dish_name,
+      calories_kcal,
+      is_completed,
+      mode,
+      user_daily_meals!inner(day_date)
+    `)
+    .eq('user_id', userId)
+    .gt('user_daily_meals.day_date', today)
+    .lte('user_daily_meals.day_date', oneWeekLater.toISOString().split('T')[0])
+    .limit(30);
+  upcomingMeals = upcomingData || [];
 
   // 5. 最近の食事データ（過去14日分）
   const fourteenDaysAgo = new Date();
   fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
   
   let recentMeals: any[] = [];
-  if (userActivePlan) {
-    const { data } = await supabase
-      .from('planned_meals')
-      .select(`
-        id,
-        meal_type,
-        dish_name,
-        dishes,
-        calories_kcal,
-        protein_g,
-        fat_g,
-        carbs_g,
-        is_completed,
-        mode,
-        meal_plan_days!inner(day_date, meal_plan_id)
-      `)
-      .eq('meal_plan_days.meal_plan_id', userActivePlan.id)
-      .gte('meal_plan_days.day_date', fourteenDaysAgo.toISOString().split('T')[0])
-      .lt('meal_plan_days.day_date', today)
-      .order('meal_plan_days(day_date)', { ascending: false })
-      .limit(50);
-    recentMeals = data || [];
-  }
+  const { data: recentData } = await supabase
+    .from('planned_meals')
+    .select(`
+      id,
+      meal_type,
+      dish_name,
+      dishes,
+      calories_kcal,
+      protein_g,
+      fat_g,
+      carbs_g,
+      is_completed,
+      mode,
+      user_daily_meals!inner(day_date)
+    `)
+    .eq('user_id', userId)
+    .gte('user_daily_meals.day_date', fourteenDaysAgo.toISOString().split('T')[0])
+    .lt('user_daily_meals.day_date', today)
+    .limit(50);
+  recentMeals = recentData || [];
 
   // 3. 健康記録（過去14日分）
   const { data: healthRecords } = await supabase
@@ -202,13 +184,20 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     .order('created_at', { ascending: false })
     .limit(5);
 
-  // 9. 買い物リスト（IDを含める）- userActivePlanを使用
+  // 9. 買い物リスト（IDを含める）- アクティブな買い物リストを使用
   let shoppingList: any[] = [];
-  if (userActivePlan) {
+  const { data: activeShoppingList } = await supabase
+    .from('shopping_lists')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  if (activeShoppingList) {
     const { data: shoppingData } = await supabase
       .from('shopping_list_items')
       .select('id, item_name, quantity, category, is_checked')
-      .eq('meal_plan_id', userActivePlan.id)
+      .eq('shopping_list_id', activeShoppingList.id)
       .order('category', { ascending: true });
     shoppingList = shoppingData || [];
   }
@@ -385,8 +374,8 @@ ${todayMeals.map((m: any) => {
   };
   
   const sortedUpcomingMeals = [...(upcomingMeals || [])].sort((a, b) => {
-    const dateA = a.meal_plan_days?.day_date || '';
-    const dateB = b.meal_plan_days?.day_date || '';
+    const dateA = a.user_daily_meals?.day_date || '';
+    const dateB = b.user_daily_meals?.day_date || '';
     if (dateA !== dateB) return dateA.localeCompare(dateB);
     return (mealTypeOrder[a.meal_type] || 99) - (mealTypeOrder[b.meal_type] || 99);
   });
@@ -394,7 +383,7 @@ ${todayMeals.map((m: any) => {
   const upcomingMealsInfo = sortedUpcomingMeals.length > 0 ? `
 【📆 今後1週間の献立】
 ${sortedUpcomingMeals.map((m: any) => {
-  const date = m.meal_plan_days?.day_date || '不明';
+  const date = m.user_daily_meals?.day_date || '不明';
   const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
   // mealIdは内部用途のみ（ユーザーには見せない）
   return `- ${date} ${mealTypeJa}: ${m.dish_name || '未設定'} [内部ID: ${m.id}]`;
@@ -405,7 +394,7 @@ ${sortedUpcomingMeals.map((m: any) => {
   const mealHistory = recentMeals && recentMeals.length > 0 ? `
 【最近の食事履歴（過去14日）】
 ${recentMeals.map((m: any) => {
-  const date = m.meal_plan_days?.day_date || '不明';
+  const date = m.user_daily_meals?.day_date || '不明';
   const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
   const status = m.is_completed ? '✓完了' : '未完了';
   const mode = m.mode === 'cook' ? '自炊' : m.mode === 'out' ? '外食' : m.mode === 'buy' ? '中食' : m.mode === 'skip' ? 'スキップ' : '';

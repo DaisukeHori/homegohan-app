@@ -63,7 +63,7 @@ export async function POST(request: Request) {
       .eq('id', user.id)
       .single();
 
-    // 最近の食事データ
+    // 最近の食事データ（日付ベースモデル）
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const { data: recentMeals } = await supabase
@@ -74,9 +74,10 @@ export async function POST(request: Request) {
         calories_kcal,
         protein_g,
         is_completed,
-        meal_plan_days!inner(day_date)
+        user_daily_meals!inner(day_date)
       `)
-      .gte('meal_plan_days.day_date', sevenDaysAgo.toISOString().split('T')[0])
+      .eq('user_id', user.id)
+      .gte('user_daily_meals.day_date', sevenDaysAgo.toISOString().split('T')[0])
       .limit(30);
 
     // 健康記録

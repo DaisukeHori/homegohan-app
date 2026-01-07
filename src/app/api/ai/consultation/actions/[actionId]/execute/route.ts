@@ -4,110 +4,60 @@ import { NextResponse } from 'next/server';
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
 
-// ユーザーのアクティブな献立プランを取得または作成するヘルパー関数
-async function getOrCreateActivePlan(supabase: any, userId: string, targetDate?: string): Promise<{ id: string } | null> {
-  // まずアクティブなプランを探す
-  let { data: activePlan } = await supabase
-    .from('meal_plans')
+// 指定日付の user_daily_meals を取得または作成するヘルパー関数
+async function getOrCreateDailyMeal(supabase: any, userId: string, dayDate: string): Promise<{ id: string } | null> {
+  // 既存のレコードを探す
+  let { data: dailyMeal, error } = await supabase
+    .from('user_daily_meals')
     .select('id')
     .eq('user_id', userId)
-    .eq('is_active', true)
-    .single();
+    .eq('day_date', dayDate)
+    .maybeSingle();
 
-  if (activePlan) return activePlan;
+  if (error) return null;
+  if (dailyMeal) return dailyMeal;
 
-  // アクティブなプランがない場合、既存のプランをアクティブにする
-  const { data: existingPlan } = await supabase
-    .from('meal_plans')
-    .select('id')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-
-  if (existingPlan) {
-    await supabase
-      .from('meal_plans')
-      .update({ is_active: true })
-      .eq('id', existingPlan.id);
-    return existingPlan;
-  }
-
-  // 既存プランもない場合は新規作成
-  const date = targetDate || new Date().toISOString().split('T')[0];
-  const startOfWeek = new Date(date);
-  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(endOfWeek.getDate() + 6);
-
-  const { data: newPlan, error: planError } = await supabase
-    .from('meal_plans')
+  // なければ新規作成
+  const { data: newDailyMeal, error: createError } = await supabase
+    .from('user_daily_meals')
     .insert({
       user_id: userId,
-      start_date: startOfWeek.toISOString().split('T')[0],
-      end_date: endOfWeek.toISOString().split('T')[0],
-      is_active: true,
+      day_date: dayDate,
+      is_cheat_day: false,
     })
     .select('id')
     .single();
 
-  if (planError) return null;
-  return newPlan;
+  if (createError) return null;
+  return newDailyMeal;
 }
 
-// 週次生成で「このstartDateの週」をアクティブに揃える（UIが is_active=true を前提に読む箇所があるため）
-function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split('T')[0];
-}
-
-async function ensureWeeklyPlanActive(supabase: any, userId: string, startDate: string): Promise<string> {
-  const endDate = addDays(startDate, 6);
-
-  let { data: mealPlan, error: planError } = await supabase
-    .from('meal_plans')
+// ユーザーのアクティブな買い物リストを取得または作成するヘルパー関数
+async function getOrCreateActiveShoppingList(supabase: any, userId: string): Promise<{ id: string } | null> {
+  // アクティブな買い物リストを探す
+  let { data: shoppingList, error } = await supabase
+    .from('shopping_lists')
     .select('id')
     .eq('user_id', userId)
-    .eq('start_date', startDate)
+    .eq('status', 'active')
     .maybeSingle();
 
-  if (planError) throw planError;
+  if (error) return null;
+  if (shoppingList) return shoppingList;
 
-  if (!mealPlan) {
-    const ws = new Date(startDate);
-    const title = `${ws.getMonth() + 1}月${ws.getDate()}日〜の献立`;
-    const { data: newPlan, error: createError } = await supabase
-      .from('meal_plans')
-      .insert({
-        user_id: userId,
-        title,
-        start_date: startDate,
-        end_date: endDate,
-        status: 'active',
-        is_active: true,
-      })
-      .select('id')
-      .single();
+  // なければ新規作成
+  const { data: newList, error: createError } = await supabase
+    .from('shopping_lists')
+    .insert({
+      user_id: userId,
+      status: 'active',
+      name: '買い物リスト',
+    })
+    .select('id')
+    .single();
 
-    if (createError) throw createError;
-    mealPlan = newPlan;
-  } else {
-    await supabase
-      .from('meal_plans')
-      .update({ end_date: endDate, status: 'active', is_active: true, updated_at: new Date().toISOString() })
-      .eq('id', mealPlan.id)
-      .eq('user_id', userId);
-  }
-
-  // 他のプランを非アクティブ化（アクティブは1つに揃える）
-  await supabase
-    .from('meal_plans')
-    .update({ is_active: false })
-    .eq('user_id', userId)
-    .neq('id', mealPlan.id);
-
-  return mealPlan.id;
+  if (createError) return null;
+  return newList;
 }
 
 // アクション実行
@@ -185,16 +135,14 @@ export async function POST(
 
       case 'generate_week_menu': {
         const { startDate } = action.action_params;
-        // 週次生成の結果がUIに確実に出るよう、この週をアクティブに揃えてから生成を開始
-        const mealPlanId = await ensureWeeklyPlanActive(supabase, user.id, startDate);
         // NOTE:
-        // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
-        // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
+        // - Edge Function名の `*-v3` は「献立生成ロジックの世代（dataset駆動・日付ベースモデル）」を表します。
+        // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2/v3とは別です。
         const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu-v3', {
           body: {
             startDate,
             userId: user.id,
-            mealPlanId,
+            // 日付ベースモデルでは mealPlanId は不要
           },
         });
         success = !invokeError;
@@ -206,70 +154,53 @@ export async function POST(
         // 新規食事を登録
         const { date, mealType, dishName, mode, calories, protein, fat, carbs, memo, dishes } = action.action_params;
         
-        // 献立プランを取得または作成
-        const activePlan = await getOrCreateActivePlan(supabase, user.id, date);
-        if (!activePlan) {
-          result = { error: '献立プランの作成に失敗しました' };
+        // user_daily_meals を取得または作成（日付ベースモデル）
+        const dailyMeal = await getOrCreateDailyMeal(supabase, user.id, date);
+        if (!dailyMeal) {
+          result = { error: 'daily_meals の作成に失敗しました' };
           break;
         }
 
-        let { data: dayData } = await supabase
-          .from('meal_plan_days')
+        // dishes配列の処理
+        let dishesData = null;
+        let isSimple = true;
+        
+        if (dishes && Array.isArray(dishes) && dishes.length > 0) {
+          dishesData = dishes;
+          isSimple = dishes.length === 1;
+        } else if (dishName) {
+          // dishesが提供されていない場合は単品として作成
+          dishesData = [{
+            name: dishName,
+            role: 'main',
+            cal: calories || null,
+            ingredient: '',
+          }];
+        }
+
+        const { data: newMeal, error: insertError } = await supabase
+          .from('planned_meals')
+          .insert({
+            daily_meal_id: dailyMeal.id,
+            user_id: user.id,
+            meal_type: mealType || 'dinner',
+            dish_name: dishName,
+            mode: mode || 'cook',
+            calories_kcal: calories,
+            protein_g: protein,
+            fat_g: fat,
+            carbs_g: carbs,
+            memo,
+            dishes: dishesData,
+            is_simple: isSimple,
+          })
           .select('id')
-          .eq('meal_plan_id', activePlan.id)
-          .eq('day_date', date)
           .single();
-
-        if (!dayData) {
-          const { data: newDay } = await supabase
-            .from('meal_plan_days')
-            .insert({ meal_plan_id: activePlan.id, day_date: date })
-            .select('id')
-            .single();
-          dayData = newDay;
+        success = !insertError;
+        if (insertError) {
+          console.error('Failed to create meal:', insertError);
         }
-
-        if (dayData) {
-          // dishes配列の処理
-          let dishesData = null;
-          let isSimple = true;
-          
-          if (dishes && Array.isArray(dishes) && dishes.length > 0) {
-            dishesData = dishes;
-            isSimple = dishes.length === 1;
-          } else if (dishName) {
-            // dishesが提供されていない場合は単品として作成
-            dishesData = [{
-              name: dishName,
-              role: 'main',
-              cal: calories || null,
-              ingredient: '',
-            }];
-          }
-
-          const { data: newMeal, error: insertError } = await supabase
-            .from('planned_meals')
-            .insert({
-              meal_plan_day_id: dayData.id,
-              meal_type: mealType || 'dinner',
-              dish_name: dishName,
-              mode: mode || 'cook',
-              calories_kcal: calories,
-              protein_g: protein,
-              fat_g: fat,
-              carbs_g: carbs,
-              memo,
-              dishes: dishesData,
-              is_simple: isSimple,
-            })
-            .select('id')
-            .single();
-          success = !insertError;
-          if (insertError) {
-            console.error('Failed to create meal:', insertError);
-          }
-          result = { mealId: newMeal?.id, created: success };
-        }
+        result = { mealId: newMeal?.id, created: success };
         break;
       }
 
@@ -285,7 +216,7 @@ export async function POST(
         // セキュリティ: 自分の献立のみ更新可能
         const { data: meal, error: mealFetchError } = await supabase
           .from('planned_meals')
-          .select('id, dish_name, meal_plan_days!inner(meal_plans!inner(user_id))')
+          .select('id, dish_name, user_id')
           .eq('id', mealId)
           .single();
 
@@ -294,8 +225,8 @@ export async function POST(
           result = { error: `食事の取得に失敗: ${mealFetchError.message}` };
           break;
         }
-
-        if (!meal || (meal as any).meal_plan_days.meal_plans.user_id !== user.id) {
+        
+        if (!meal || meal.user_id !== user.id) {
           result = { error: '権限がありません' };
           break;
         }
@@ -345,14 +276,14 @@ export async function POST(
 
       case 'delete_meal': {
         const { mealId } = action.action_params;
-        // セキュリティチェック
+        // セキュリティチェック - planned_meals の user_id を直接確認
         const { data: meal } = await supabase
           .from('planned_meals')
-          .select('meal_plan_days!inner(meal_plans!inner(user_id))')
+          .select('id, user_id')
           .eq('id', mealId)
           .single();
 
-        if (!meal || (meal as any).meal_plan_days.meal_plans.user_id !== user.id) {
+        if (!meal || meal.user_id !== user.id) {
           result = { error: '権限がありません' };
           break;
         }
@@ -368,14 +299,14 @@ export async function POST(
 
       case 'complete_meal': {
         const { mealId, isCompleted } = action.action_params;
-        // セキュリティチェック
+        // セキュリティチェック - planned_meals の user_id を直接確認
         const { data: meal } = await supabase
           .from('planned_meals')
-          .select('meal_plan_days!inner(meal_plans!inner(user_id))')
+          .select('id, user_id')
           .eq('id', mealId)
           .single();
 
-        if (!meal || (meal as any).meal_plan_days.meal_plans.user_id !== user.id) {
+        if (!meal || meal.user_id !== user.id) {
           result = { error: '権限がありません' };
           break;
         }
@@ -391,17 +322,18 @@ export async function POST(
 
       // ==================== 買い物リスト関連 ====================
       case 'add_to_shopping_list': {
-        const { items, mealPlanId } = action.action_params;
+        const { items } = action.action_params;
         
-        let planId = mealPlanId;
-        if (!planId) {
-          const activePlan = await getOrCreateActivePlan(supabase, user.id);
-          planId = activePlan?.id;
+        // アクティブな買い物リストを取得または作成
+        const shoppingList = await getOrCreateActiveShoppingList(supabase, user.id);
+        if (!shoppingList) {
+          result = { error: '買い物リストの作成に失敗しました' };
+          break;
         }
 
-        if (planId && items?.length > 0) {
+        if (items?.length > 0) {
           const insertData = items.map((item: any) => ({
-            meal_plan_id: planId,
+            shopping_list_id: shoppingList.id,
             item_name: item.name,
             normalized_name: item.name, // 手動追加は item_name をそのまま使用
             quantity: item.quantity,
@@ -422,21 +354,21 @@ export async function POST(
 
       case 'update_shopping_item': {
         const { itemId, updates } = action.action_params;
-        // セキュリティチェック - meal_plan経由でuser_idを確認
+        // セキュリティチェック - shopping_lists経由でuser_idを確認
         const { data: item } = await supabase
           .from('shopping_list_items')
-          .select('meal_plan_id')
+          .select('shopping_list_id')
           .eq('id', itemId)
           .single();
 
         if (item) {
-          const { data: plan } = await supabase
-            .from('meal_plans')
+          const { data: shoppingList } = await supabase
+            .from('shopping_lists')
             .select('user_id')
-            .eq('id', item.meal_plan_id)
+            .eq('id', item.shopping_list_id)
             .single();
           
-          if (!plan || plan.user_id !== user.id) {
+          if (!shoppingList || shoppingList.user_id !== user.id) {
             result = { error: '権限がありません' };
             break;
           }
@@ -456,21 +388,21 @@ export async function POST(
 
       case 'delete_shopping_item': {
         const { itemId } = action.action_params;
-        // セキュリティチェック
+        // セキュリティチェック - shopping_lists経由でuser_idを確認
         const { data: item } = await supabase
           .from('shopping_list_items')
-          .select('meal_plan_id')
+          .select('shopping_list_id')
           .eq('id', itemId)
           .single();
 
         if (item) {
-          const { data: plan } = await supabase
-            .from('meal_plans')
+          const { data: shoppingList } = await supabase
+            .from('shopping_lists')
             .select('user_id')
-            .eq('id', item.meal_plan_id)
+            .eq('id', item.shopping_list_id)
             .single();
           
-          if (!plan || plan.user_id !== user.id) {
+          if (!shoppingList || shoppingList.user_id !== user.id) {
             result = { error: '権限がありません' };
             break;
           }
@@ -490,21 +422,21 @@ export async function POST(
 
       case 'check_shopping_item': {
         const { itemId, isChecked } = action.action_params;
-        // セキュリティチェック
+        // セキュリティチェック - shopping_lists経由でuser_idを確認
         const { data: item } = await supabase
           .from('shopping_list_items')
-          .select('meal_plan_id')
+          .select('shopping_list_id')
           .eq('id', itemId)
           .single();
 
         if (item) {
-          const { data: plan } = await supabase
-            .from('meal_plans')
+          const { data: shoppingList } = await supabase
+            .from('shopping_lists')
             .select('user_id')
-            .eq('id', item.meal_plan_id)
+            .eq('id', item.shopping_list_id)
             .single();
           
-          if (!plan || plan.user_id !== user.id) {
+          if (!shoppingList || shoppingList.user_id !== user.id) {
             result = { error: '権限がありません' };
             break;
           }

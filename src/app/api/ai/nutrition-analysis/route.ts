@@ -338,42 +338,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // 該当の食事を取得（is_active=trueか、なければ最新のプラン）
-    let activePlan = null;
-    const { data: activePlanData } = await supabase
-      .from('meal_plans')
+    // 該当日付の user_daily_meals を取得（日付ベースモデル）
+    const { data: dailyMeal } = await supabase
+      .from('user_daily_meals')
       .select('id')
       .eq('user_id', user.id)
-      .eq('is_active', true)
-      .single();
-
-    if (activePlanData) {
-      activePlan = activePlanData;
-    } else {
-      // is_active=trueがなければ最新のプランを使用
-      const { data: latestPlan } = await supabase
-        .from('meal_plans')
-        .select('id')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-      activePlan = latestPlan;
-    }
-
-    if (!activePlan) {
-      return NextResponse.json({ error: 'No meal plan found' }, { status: 404 });
-    }
-
-    // meal_plan_dayを取得
-    const { data: day } = await supabase
-      .from('meal_plan_days')
-      .select('id')
-      .eq('meal_plan_id', activePlan.id)
       .eq('day_date', targetDate)
       .single();
 
-    if (!day) {
+    if (!dailyMeal) {
       return NextResponse.json({ error: 'Day not found' }, { status: 404 });
     }
 
@@ -381,7 +354,7 @@ export async function POST(request: Request) {
     const { data: meal } = await supabase
       .from('planned_meals')
       .select('id')
-      .eq('meal_plan_day_id', day.id)
+      .eq('daily_meal_id', dailyMeal.id)
       .eq('meal_type', targetMealType)
       .single();
 

@@ -14,15 +14,13 @@ interface PlannedMealWithUser {
   is_completed: boolean;
   created_at: string;
   calories_kcal: number | null;
-  meal_plan_days: {
+  user_id: string;
+  user_daily_meals: {
     day_date: string;
-    meal_plans: {
-      user_id: string;
-      user_profiles: {
-        nickname: string | null;
-      } | null;
-    };
-  };
+  } | null;
+  user_profiles: {
+    nickname: string | null;
+  } | null;
 }
 
 const MODE_ICONS: Record<string, typeof ChefHat> = {
@@ -47,7 +45,7 @@ export default function ModerationPage() {
   const fetchMeals = async () => {
     setLoading(true);
     
-    // planned_mealsをJOINして取得
+    // planned_mealsをJOINして取得（日付ベースモデル）
     const { data, error } = await supabase
       .from('planned_meals')
       .select(`
@@ -59,13 +57,9 @@ export default function ModerationPage() {
         is_completed,
         created_at,
         calories_kcal,
-        meal_plan_days!inner(
-          day_date,
-          meal_plans!inner(
-            user_id,
-            user_profiles:user_id(nickname)
-          )
-        )
+        user_id,
+        user_daily_meals(day_date),
+        user_profiles:user_id(nickname)
       `)
       .order('created_at', { ascending: false })
       .limit(50);
@@ -114,8 +108,8 @@ export default function ModerationPage() {
           {meals.map((meal) => {
             const ModeIcon = MODE_ICONS[meal.mode] || ChefHat;
             const modeColor = MODE_COLORS[meal.mode] || 'text-gray-600 bg-gray-50';
-            const nickname = meal.meal_plan_days?.meal_plans?.user_profiles?.nickname || 'Unknown';
-            const dayDate = meal.meal_plan_days?.day_date || '';
+            const nickname = meal.user_profiles?.nickname || 'Unknown';
+            const dayDate = meal.user_daily_meals?.day_date || '';
             
             return (
               <div key={meal.id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 group">

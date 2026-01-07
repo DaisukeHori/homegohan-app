@@ -1,39 +1,45 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { toShoppingListItem } from '@/lib/converter';
 
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { mealPlanId, ingredients } = await request.json();
-    
-    if (!mealPlanId) {
-      return NextResponse.json({ error: 'mealPlanId is required' }, { status: 400 });
-    }
+    const { ingredients } = await request.json();
 
     if (!ingredients || !Array.isArray(ingredients)) {
       return NextResponse.json({ error: 'ingredients must be an array' }, { status: 400 });
     }
 
-    // Verify the meal plan belongs to the user
-    const { data: mealPlan, error: planError } = await supabase
-      .from('meal_plans')
+    // アクティブな買い物リストを取得、なければ作成
+    let { data: shoppingList } = await supabase
+      .from('shopping_lists')
       .select('id')
-      .eq('id', mealPlanId)
       .eq('user_id', user.id)
-      .single();
+      .eq('status', 'active')
+      .maybeSingle();
 
-    if (planError || !mealPlan) {
-      return NextResponse.json({ error: 'Meal plan not found' }, { status: 404 });
+    if (!shoppingList) {
+      const { data: newList, error: createError } = await supabase
+        .from('shopping_lists')
+        .insert({
+          user_id: user.id,
+          status: 'active',
+          name: '買い物リスト',
+        })
+        .select('id')
+        .single();
+      
+      if (createError) throw createError;
+      shoppingList = newList;
     }
 
     // Create shopping list items from ingredients
     const newItems = ingredients.map((ing: { name: string; amount?: string }) => ({
-      meal_plan_id: mealPlanId,
+      shopping_list_id: shoppingList!.id,
       item_name: ing.name,
       normalized_name: ing.name, // 手動追加は item_name をそのまま使用
       quantity: ing.amount || null,
@@ -85,4 +91,3 @@ function categorizeIngredient(name: string): string {
   }
   return 'その他';
 }
-

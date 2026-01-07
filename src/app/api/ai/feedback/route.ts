@@ -20,17 +20,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'plannedMealId is required' }, { status: 400 })
     }
 
-    // 献立データを取得
+    // 献立データを取得（日付ベースモデル）
     const { data: meal, error: mealError } = await supabase
       .from('planned_meals')
-      .select(`
-        *,
-        meal_plan_days!inner(
-          meal_plans!inner(user_id)
-        )
-      `)
+      .select('*')
       .eq('id', plannedMealId)
-      .eq('meal_plan_days.meal_plans.user_id', user.id)
+      .eq('user_id', user.id)
       .single()
 
     if (mealError || !meal) {

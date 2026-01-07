@@ -50,7 +50,7 @@ export default function SuperAdminDatabasePage() {
   // テーブルをカテゴリ別に分類
   const categories: Record<string, string[]> = {
     "ユーザー関連": ["user_profiles", "user_badges", "health_records", "health_goals"],
-    "食事関連": ["meal_plans", "planned_meals", "recipes"],
+    "食事関連": ["user_daily_meals", "planned_meals", "recipes", "shopping_lists"],
     "AI関連": ["ai_consultation_sessions", "ai_consultation_messages"],
     "組織関連": ["organizations"],
     "システム": ["announcements", "inquiries", "badges"],

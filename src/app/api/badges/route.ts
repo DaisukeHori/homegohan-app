@@ -22,41 +22,30 @@ export async function GET(request: Request) {
     
     const earnedBadgeIds = new Set(userBadges?.map(ub => ub.badge_id) || []);
 
-    // 3. 統計データを取得（planned_mealsベース）
+    // 3. 統計データを取得（planned_mealsベース、日付ベースモデル）
     // 完了した食事の数
     const { count: completedMealCount } = await supabase
       .from('planned_meals')
-      .select(`
-        id,
-        meal_plan_days!inner(
-          meal_plans!inner(user_id)
-        )
-      `, { count: 'exact', head: true })
-      .eq('meal_plan_days.meal_plans.user_id', user.id)
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
       .eq('is_completed', true);
 
     // 自炊の数
     const { count: cookCount } = await supabase
       .from('planned_meals')
-      .select(`
-        id,
-        meal_plan_days!inner(
-          meal_plans!inner(user_id)
-        )
-      `, { count: 'exact', head: true })
-      .eq('meal_plan_days.meal_plans.user_id', user.id)
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
       .eq('is_completed', true)
       .in('mode', ['cook', 'quick']);
 
-    // 連続日数計算（簡易版）
+    // 連続日数計算（日付ベースモデル）
     const { data: completedDays } = await supabase
-      .from('meal_plan_days')
+      .from('user_daily_meals')
       .select(`
         day_date,
-        meal_plans!inner(user_id),
         planned_meals!inner(is_completed)
       `)
-      .eq('meal_plans.user_id', user.id)
+      .eq('user_id', user.id)
       .eq('planned_meals.is_completed', true)
       .order('day_date', { ascending: false })
       .limit(30);

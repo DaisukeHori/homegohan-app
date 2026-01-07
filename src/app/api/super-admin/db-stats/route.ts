@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     // 主要テーブルのレコード数を取得
     const tables = [
       'user_profiles',
-      'meal_plans',
+      'user_daily_meals',
       'planned_meals',
       'health_records',
       'ai_consultation_sessions',

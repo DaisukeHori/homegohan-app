@@ -45,59 +45,49 @@ export async function GET(request: Request) {
 
     const memberIds = (members || []).map(m => m.id);
 
-    // 今週の食事完了数
+    // 今週の食事完了数（日付ベースモデル）
     let weeklyMeals = 0;
     let breakfastCount = 0;
     let totalMealsThisWeek = 0;
 
     if (memberIds.length > 0) {
-      // 食事プランを取得
-      const { data: mealPlans } = await supabase
-        .from('meal_plans')
+      // user_daily_meals のIDを取得
+      const { data: dailyMeals } = await supabase
+        .from('user_daily_meals')
         .select('id')
-        .in('user_id', memberIds);
+        .in('user_id', memberIds)
+        .gte('day_date', sevenDaysAgo.toISOString().split('T')[0]);
 
-      const planIds = (mealPlans || []).map(p => p.id);
+      const dailyMealIds = (dailyMeals || []).map(d => d.id);
 
-      if (planIds.length > 0) {
-        // 食事日を取得
-        const { data: mealDays } = await supabase
-          .from('meal_plan_days')
-          .select('id')
-          .in('meal_plan_id', planIds)
-          .gte('day_date', sevenDaysAgo.toISOString().split('T')[0]);
+      if (dailyMealIds.length > 0) {
+        // 完了した食事数
+        const { count } = await supabase
+          .from('planned_meals')
+          .select('*', { count: 'exact', head: true })
+          .in('daily_meal_id', dailyMealIds)
+          .eq('is_completed', true);
 
-        const dayIds = (mealDays || []).map(d => d.id);
+        weeklyMeals = count || 0;
 
-        if (dayIds.length > 0) {
-          // 完了した食事数
-          const { count } = await supabase
-            .from('planned_meals')
-            .select('*', { count: 'exact', head: true })
-            .in('meal_plan_day_id', dayIds)
-            .eq('is_completed', true);
+        // 朝食数
+        const { count: bCount } = await supabase
+          .from('planned_meals')
+          .select('*', { count: 'exact', head: true })
+          .in('daily_meal_id', dailyMealIds)
+          .eq('meal_type', 'breakfast')
+          .eq('is_completed', true);
 
-          weeklyMeals = count || 0;
+        breakfastCount = bCount || 0;
 
-          // 朝食数
-          const { count: bCount } = await supabase
-            .from('planned_meals')
-            .select('*', { count: 'exact', head: true })
-            .in('meal_plan_day_id', dayIds)
-            .eq('meal_type', 'breakfast')
-            .eq('is_completed', true);
+        // 総食事数
+        const { count: tCount } = await supabase
+          .from('planned_meals')
+          .select('*', { count: 'exact', head: true })
+          .in('daily_meal_id', dailyMealIds)
+          .eq('is_completed', true);
 
-          breakfastCount = bCount || 0;
-
-          // 総食事数
-          const { count: tCount } = await supabase
-            .from('planned_meals')
-            .select('*', { count: 'exact', head: true })
-            .in('meal_plan_day_id', dayIds)
-            .eq('is_completed', true);
-
-          totalMealsThisWeek = tCount || 0;
-        }
+        totalMealsThisWeek = tCount || 0;
       }
     }
 
@@ -151,4 +141,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

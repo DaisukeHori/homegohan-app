@@ -23,17 +23,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'plannedMealId is required' }, { status: 400 });
     }
 
-    // 2. 所有権確認
+    // 2. 所有権確認（日付ベースモデル）
     const { data: existing, error: existError } = await supabase
       .from('planned_meals')
-      .select(`
-        id,
-        meal_plan_days!inner(
-          meal_plans!inner(user_id)
-        )
-      `)
+      .select('id, user_id')
       .eq('id', plannedMealId)
-      .eq('meal_plan_days.meal_plans.user_id', user.id)
+      .eq('user_id', user.id)
       .single();
 
     if (existError || !existing) {
