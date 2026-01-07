@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -41,8 +42,9 @@ export async function POST(request: Request) {
       .select('id')
       .single();
 
-    if (insertError) {
+    if (insertError || !requestData?.id) {
       console.error('Failed to create request record:', insertError);
+      return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
     }
 
     // NOTE:
@@ -51,15 +53,16 @@ export async function POST(request: Request) {
     //
     // 5. Edge Function を非同期で呼び出し（完了を待たない）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
     console.log('🚀 Calling Edge Function regenerate-meal-direct-v3...');
 
-    fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v3`, {
+    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v3`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${supabaseServiceKey}`,
+        'apikey': supabaseServiceKey,
       },
       body: JSON.stringify({
         mealId,
@@ -68,17 +71,40 @@ export async function POST(request: Request) {
         userId: user.id,
         preferences: preferences || {},
         note: note || '',
-        requestId: requestData?.id,
+        requestId: requestData.id,
       }),
-    }).catch(err => {
+    }).then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        console.error('❌ Edge Function error:', res.status, text);
+        await supabase
+          .from('weekly_menu_requests')
+          .update({
+            status: 'failed',
+            error_message: `edge_function_error:${res.status}`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', requestData.id);
+      }
+    }).catch(async (err) => {
       console.error('❌ Edge Function call error:', err.message);
+      await supabase
+        .from('weekly_menu_requests')
+        .update({
+          status: 'failed',
+          error_message: err.message,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', requestData.id);
     });
+
+    waitUntil(edgeFunctionPromise);
 
     return NextResponse.json({ 
       success: true,
       message: 'Meal regeneration started in background',
       status: 'processing',
-      requestId: requestData?.id,
+      requestId: requestData.id,
       regeneratingMealId: mealId,
     });
 
