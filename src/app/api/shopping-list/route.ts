@@ -3,6 +3,42 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { toShoppingListItem } from '@/lib/converter';
 
+/**
+ * 買い物リスト取得API
+ */
+export async function GET(request: Request) {
+  const supabase = createClient(cookies());
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { searchParams } = new URL(request.url);
+  const mealPlanId = searchParams.get('mealPlanId');
+
+  if (!mealPlanId) {
+    return NextResponse.json({ error: 'mealPlanId is required' }, { status: 400 });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('shopping_list_items')
+      .select('*')
+      .eq('meal_plan_id', mealPlanId)
+      .order('category')
+      .order('created_at');
+
+    if (error) throw error;
+
+    return NextResponse.json({ 
+      items: (data || []).map(toShoppingListItem) 
+    });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+/**
+ * 買い物リストアイテム追加API
+ */
 export async function POST(request: Request) {
   const supabase = createClient(cookies());
   const { data: { user }, error: userError } = await supabase.auth.getUser();
