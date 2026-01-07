@@ -757,6 +757,7 @@ export default function WeeklyMenuPage() {
   // Pantry & Shopping
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
+  const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
   
   // Add fridge item form
   const [newFridgeName, setNewFridgeName] = useState("");
@@ -1192,7 +1193,8 @@ export default function WeeklyMenuPage() {
 
   // Regenerate shopping list from menu
   const regenerateShoppingList = async () => {
-    if (!currentPlan) return;
+    if (!currentPlan || isRegeneratingShoppingList) return;
+    setIsRegeneratingShoppingList(true);
     try {
       const res = await fetch(`/api/shopping-list/regenerate`, {
         method: 'POST',
@@ -1200,11 +1202,39 @@ export default function WeeklyMenuPage() {
         body: JSON.stringify({ mealPlanId: currentPlan.id })
       });
       if (res.ok) {
-        const { items } = await res.json();
+        const { items, stats } = await res.json();
         setShoppingList(items);
-        alert('買い物リストを再生成しました');
+        setSuccessMessage({
+          title: '買い物リストを更新しました ✓',
+          message: `${stats.outputCount}件の材料（${stats.mergedCount}件を統合）`
+        });
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || '再生成に失敗しました');
       }
-    } catch (e) { alert("再生成に失敗しました"); }
+    } catch (e: any) { 
+      alert(e.message || "再生成に失敗しました"); 
+    } finally {
+      setIsRegeneratingShoppingList(false);
+    }
+  };
+
+  // Toggle shopping item variant (tap to switch display unit)
+  const toggleShoppingVariant = async (itemId: string, item: ShoppingListItem) => {
+    if (!item.quantityVariants || item.quantityVariants.length <= 1) return;
+    
+    const nextIndex = (item.selectedVariantIndex + 1) % item.quantityVariants.length;
+    try {
+      const res = await fetch(`/api/shopping-list/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedVariantIndex: nextIndex })
+      });
+      if (res.ok) {
+        const { item: updatedItem } = await res.json();
+        setShoppingList(prev => prev.map(i => i.id === itemId ? updatedItem : i));
+      }
+    } catch (e) { console.error('Failed to toggle variant:', e); }
   };
 
   // Add recipe ingredients to shopping list
@@ -3013,8 +3043,32 @@ export default function WeeklyMenuPage() {
                         <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
                           {item.itemName}
                         </span>
-                        <span style={{ fontSize: 12, color: colors.textMuted }}>{item.quantity}</span>
+                        {/* 数量（タップで切り替え） */}
+                        <button
+                          onClick={() => toggleShoppingVariant(item.id, item)}
+                          disabled={!item.quantityVariants || item.quantityVariants.length <= 1}
+                          className="px-2 py-0.5 rounded text-[12px] transition-colors"
+                          style={{ 
+                            color: colors.textMuted, 
+                            background: item.quantityVariants?.length > 1 ? colors.bg : 'transparent',
+                            cursor: item.quantityVariants?.length > 1 ? 'pointer' : 'default'
+                          }}
+                          title={item.quantityVariants?.length > 1 ? 'タップで単位切替' : undefined}
+                        >
+                          {item.quantity || '適量'}
+                          {item.quantityVariants?.length > 1 && <span className="ml-0.5 text-[10px]">⟳</span>}
+                        </button>
                         <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ color: colors.textMuted, background: colors.bg }}>{item.category || '食材'}</span>
+                        {/* AI/手動バッジ */}
+                        <span 
+                          className="px-1.5 py-0.5 rounded text-[10px]" 
+                          style={{ 
+                            background: item.source === 'generated' ? '#E8F5E9' : '#FFF3E0',
+                            color: item.source === 'generated' ? '#2E7D32' : '#E65100'
+                          }}
+                        >
+                          {item.source === 'generated' ? 'AI' : '手動'}
+                        </span>
                         <button
                           onClick={() => deleteShoppingItem(item.id)}
                           className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
@@ -3031,9 +3085,23 @@ export default function WeeklyMenuPage() {
                     <Plus size={14} color={colors.textMuted} />
                     <span style={{ fontSize: 12, color: colors.textMuted }}>追加</span>
                   </button>
-                  <button onClick={regenerateShoppingList} className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.accent }}>
-                    <RefreshCw size={14} color="#fff" />
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>献立から再生成</span>
+                  <button 
+                    onClick={regenerateShoppingList} 
+                    disabled={isRegeneratingShoppingList}
+                    className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5 transition-opacity" 
+                    style={{ background: colors.accent, opacity: isRegeneratingShoppingList ? 0.7 : 1 }}
+                  >
+                    {isRegeneratingShoppingList ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>AIが整理中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} color="#fff" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>献立から再生成</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </motion.div>

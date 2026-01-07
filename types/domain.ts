@@ -744,15 +744,30 @@ export interface NutritionTargets {
   updatedAt: ISODateTimeString;
 }
 
+// 数量バリエーション（タップ切り替え用）
+export interface QuantityVariant {
+  display: string;  // 表示用（"500g", "2枚(約500g)" など）
+  unit: string;     // 単位（"g", "枚", "個" など）
+  value: number | null; // 数値（パース可能な場合）
+}
+
+export type ShoppingListItemSource = 'manual' | 'generated';
+
 export interface ShoppingListItem {
   id: string;
   mealPlanId: string;
   category: string;
   itemName: string;
-  quantity: string | null;
+  quantity: string | null; // 後方互換: 現在選択中の表示
   isChecked: boolean;
   createdAt: ISODateTimeString;
   updatedAt: ISODateTimeString;
+  
+  // LLM正規化対応
+  source: ShoppingListItemSource;
+  normalizedName: string | null;
+  quantityVariants: QuantityVariant[];
+  selectedVariantIndex: number;
 }
 
 // --- Pantry & Recipes ---

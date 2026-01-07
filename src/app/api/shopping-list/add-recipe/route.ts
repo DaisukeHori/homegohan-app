@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { toShoppingListItem } from '@/lib/converter';
 
 export async function POST(request: Request) {
   const supabase = createClient(cookies());
@@ -34,7 +35,11 @@ export async function POST(request: Request) {
     const newItems = ingredients.map((ing: { name: string; amount?: string }) => ({
       meal_plan_id: mealPlanId,
       item_name: ing.name,
+      normalized_name: ing.name, // 手動追加は item_name をそのまま使用
       quantity: ing.amount || null,
+      quantity_variants: ing.amount ? [{ display: ing.amount, unit: '', value: null }] : [],
+      selected_variant_index: 0,
+      source: 'manual',
       category: categorizeIngredient(ing.name),
       is_checked: false
     }));
@@ -48,16 +53,7 @@ export async function POST(request: Request) {
       if (insertError) throw insertError;
 
       return NextResponse.json({ 
-        items: insertedItems.map((item: any) => ({
-          id: item.id,
-          mealPlanId: item.meal_plan_id,
-          itemName: item.item_name,
-          category: item.category,
-          quantity: item.quantity,
-          isChecked: item.is_checked,
-          createdAt: item.created_at,
-          updatedAt: item.updated_at
-        }))
+        items: insertedItems.map((item: any) => toShoppingListItem(item))
       });
     }
 

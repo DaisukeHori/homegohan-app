@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { toShoppingListItem } from '@/lib/converter';
 
 export async function PATCH(
   request: Request,
@@ -12,20 +13,49 @@ export async function PATCH(
 
   try {
     const json = await request.json();
-    const { isChecked } = json;
+    const { isChecked, selectedVariantIndex } = json;
 
-    // RLSポリシーにより、自分のmeal_planに紐づくitemしか更新できないはずだが、
-    // 明示的なチェックはDB側に任せる
+    // 更新対象フィールドを動的に構築
+    const updateFields: Record<string, any> = {};
+    
+    if (typeof isChecked === 'boolean') {
+      updateFields.is_checked = isChecked;
+    }
+
+    if (typeof selectedVariantIndex === 'number') {
+      // 現在のアイテムを取得してバリデーション
+      const { data: currentItem, error: fetchError } = await supabase
+        .from('shopping_list_items')
+        .select('quantity_variants')
+        .eq('id', params.id)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const variants = currentItem?.quantity_variants || [];
+      if (selectedVariantIndex < 0 || selectedVariantIndex >= variants.length) {
+        return NextResponse.json({ error: 'Invalid selectedVariantIndex' }, { status: 400 });
+      }
+
+      updateFields.selected_variant_index = selectedVariantIndex;
+      // quantityも同期（後方互換）
+      updateFields.quantity = variants[selectedVariantIndex]?.display || null;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
+    }
+
     const { data, error } = await supabase
       .from('shopping_list_items')
-      .update({ is_checked: isChecked })
+      .update(updateFields)
       .eq('id', params.id)
       .select()
       .single();
 
     if (error) throw error;
 
-    return NextResponse.json({ success: true, item: data });
+    return NextResponse.json({ success: true, item: toShoppingListItem(data) });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

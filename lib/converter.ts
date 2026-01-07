@@ -493,4 +493,10 @@ export const toShoppingListItem = (data: any): ShoppingListItem => ({
   isChecked: data.is_checked,
   createdAt: data.created_at,
   updatedAt: data.updated_at,
+  
+  // LLM正規化対応
+  source: data.source ?? 'manual',
+  normalizedName: data.normalized_name ?? null,
+  quantityVariants: data.quantity_variants ?? [],
+  selectedVariantIndex: data.selected_variant_index ?? 0,
 });

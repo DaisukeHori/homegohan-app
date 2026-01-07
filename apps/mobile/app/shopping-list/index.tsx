@@ -6,12 +6,21 @@ import { getApi } from "../../src/lib/api";
 import { ensureActiveMealPlanId } from "../../src/lib/mealPlan";
 import { supabase } from "../../src/lib/supabase";
 
+type QuantityVariant = {
+  display: string;
+  unit: string;
+  value: number | null;
+};
+
 type Item = {
   id: string;
   item_name: string;
   quantity: string | null;
   category: string | null;
   is_checked: boolean;
+  source?: 'manual' | 'generated';
+  quantity_variants?: QuantityVariant[];
+  selected_variant_index?: number;
 };
 
 export default function ShoppingListPage() {
@@ -19,6 +28,7 @@ export default function ShoppingListPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("その他");
@@ -34,7 +44,7 @@ export default function ShoppingListPage() {
 
       const { data, error: fetchError } = await supabase
         .from("shopping_list_items")
-        .select("id,item_name,quantity,category,is_checked")
+        .select("id,item_name,quantity,category,is_checked,source,quantity_variants,selected_variant_index")
         .eq("meal_plan_id", planId)
         .order("category", { ascending: true })
         .order("created_at", { ascending: true });
@@ -100,6 +110,25 @@ export default function ShoppingListPage() {
     }
   }
 
+  async function toggleVariant(item: Item) {
+    if (!item.quantity_variants || item.quantity_variants.length <= 1) return;
+    
+    const nextIndex = ((item.selected_variant_index ?? 0) + 1) % item.quantity_variants.length;
+    try {
+      const api = getApi();
+      const response = await api.patch(`/api/shopping-list/${item.id}`, { selectedVariantIndex: nextIndex });
+      if (response.item) {
+        setItems((prev) => prev.map((x) => (x.id === item.id ? {
+          ...x,
+          quantity: response.item.quantity,
+          selected_variant_index: nextIndex
+        } : x)));
+      }
+    } catch (e: any) {
+      console.error("Failed to toggle variant:", e);
+    }
+  }
+
   async function deleteItem(id: string) {
     Alert.alert("削除", "この項目を削除しますか？", [
       { text: "キャンセル", style: "cancel" },
@@ -120,30 +149,60 @@ export default function ShoppingListPage() {
   }
 
   async function regenerate() {
-    if (!mealPlanId) return;
-    Alert.alert("再生成", "献立の材料から買い物リストを再生成します。現在のリストは置き換えられます。", [
-      { text: "キャンセル", style: "cancel" },
-      {
-        text: "再生成",
-        onPress: async () => {
-          try {
-            const api = getApi();
-            await api.post("/api/shopping-list/regenerate", { mealPlanId });
-            await load();
-          } catch (e: any) {
-            Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
-          }
+    if (!mealPlanId || isRegenerating) return;
+    Alert.alert(
+      "献立から再生成", 
+      "AIが材料を整理します。手動追加した項目は残ります。", 
+      [
+        { text: "キャンセル", style: "cancel" },
+        {
+          text: "再生成",
+          onPress: async () => {
+            setIsRegenerating(true);
+            try {
+              const api = getApi();
+              const response = await api.post("/api/shopping-list/regenerate", { mealPlanId });
+              await load();
+              const stats = response.stats;
+              if (stats) {
+                Alert.alert("完了", `${stats.outputCount}件の材料を整理しました（${stats.mergedCount}件を統合）`);
+              }
+            } catch (e: any) {
+              Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
+            } finally {
+              setIsRegenerating(false);
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   }
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={{ fontSize: 20, fontWeight: "900" }}>買い物リスト</Text>
-        <Pressable onPress={regenerate} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>再生成</Text>
+        <Pressable 
+          onPress={regenerate} 
+          disabled={isRegenerating}
+          style={{ 
+            paddingVertical: 8, 
+            paddingHorizontal: 10, 
+            borderRadius: 10, 
+            backgroundColor: isRegenerating ? "#666" : "#333",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6
+          }}
+        >
+          {isRegenerating ? (
+            <>
+              <ActivityIndicator size="small" color="white" />
+              <Text style={{ color: "white", fontWeight: "900" }}>整理中...</Text>
+            </>
+          ) : (
+            <Text style={{ color: "white", fontWeight: "900" }}>再生成</Text>
+          )}
         </Pressable>
       </View>
 
@@ -206,11 +265,50 @@ export default function ShoppingListPage() {
                     gap: 6,
                   }}
                 >
-                  <Text style={{ fontWeight: "900" }}>
-                    {it.is_checked ? "✅ " : "⬜️ "}
-                    {it.item_name}
-                    {it.quantity ? `（${it.quantity}）` : ""}
-                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Text style={{ fontWeight: "900", flex: 1 }}>
+                      {it.is_checked ? "✅ " : "⬜️ "}
+                      {it.item_name}
+                    </Text>
+                    {/* AI/手動バッジ */}
+                    <View 
+                      style={{ 
+                        paddingHorizontal: 6, 
+                        paddingVertical: 2, 
+                        borderRadius: 4,
+                        backgroundColor: it.source === 'generated' ? '#E8F5E9' : '#FFF3E0'
+                      }}
+                    >
+                      <Text style={{ 
+                        fontSize: 10, 
+                        fontWeight: "700",
+                        color: it.source === 'generated' ? '#2E7D32' : '#E65100'
+                      }}>
+                        {it.source === 'generated' ? 'AI' : '手動'}
+                      </Text>
+                    </View>
+                  </View>
+                  
+                  {/* 数量（タップで切り替え） */}
+                  {it.quantity && (
+                    <Pressable 
+                      onPress={() => toggleVariant(it)}
+                      disabled={!it.quantity_variants || it.quantity_variants.length <= 1}
+                      style={{ 
+                        alignSelf: "flex-start",
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 6,
+                        backgroundColor: it.quantity_variants && it.quantity_variants.length > 1 ? "#f0f0f0" : "transparent"
+                      }}
+                    >
+                      <Text style={{ color: "#666" }}>
+                        {it.quantity}
+                        {it.quantity_variants && it.quantity_variants.length > 1 && " ⟳"}
+                      </Text>
+                    </Pressable>
+                  )}
+                  
                   <View style={{ flexDirection: "row", gap: 10 }}>
                     <Pressable
                       onPress={() => toggleChecked(it.id, !it.is_checked)}
@@ -238,6 +336,3 @@ export default function ShoppingListPage() {
     </ScrollView>
   );
 }
-
-
-

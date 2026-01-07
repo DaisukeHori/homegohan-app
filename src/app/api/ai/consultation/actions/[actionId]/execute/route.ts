@@ -403,7 +403,11 @@ export async function POST(
           const insertData = items.map((item: any) => ({
             meal_plan_id: planId,
             item_name: item.name,
+            normalized_name: item.name, // 手動追加は item_name をそのまま使用
             quantity: item.quantity,
+            quantity_variants: item.quantity ? [{ display: item.quantity, unit: '', value: null }] : [],
+            selected_variant_index: 0,
+            source: 'manual',
             category: item.category || 'その他',
             is_checked: false,
           }));
