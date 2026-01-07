@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { toShoppingListItem } from '@/lib/converter';
-import { dbLog } from '@/lib/db-logger';
+import { createLogger } from '@/lib/db-logger';
 
 interface InputIngredient {
   name: string;
@@ -28,6 +28,8 @@ export async function POST(request: Request) {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const logger = createLogger('shopping-list/regenerate').withUser(user.id);
+
   try {
     const { mealPlanId } = await request.json();
     
@@ -35,14 +37,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'mealPlanId is required' }, { status: 400 });
     }
 
-    await dbLog({
-      level: 'info',
-      source: 'api-route',
-      functionName: 'shopping-list/regenerate',
-      userId: user.id,
-      message: 'Starting shopping list regeneration',
-      metadata: { mealPlanId }
-    });
+    logger.info('Starting shopping list regeneration', { mealPlanId });
 
     // Get all planned meals for this meal plan (dishes優先、ingredientsフォールバック)
     const { data: mealPlan, error: planError } = await supabase
@@ -241,14 +236,7 @@ export async function POST(request: Request) {
 
     if (fetchError) throw fetchError;
 
-    await dbLog({
-      level: 'info',
-      source: 'api-route',
-      functionName: 'shopping-list/regenerate',
-      userId: user.id,
-      message: 'Shopping list regeneration completed',
-      metadata: { mealPlanId, stats, newItemsCount: newItems.length }
-    });
+    logger.info('Shopping list regeneration completed', { mealPlanId, stats, newItemsCount: newItems.length });
 
     return NextResponse.json({ 
       items: (allItems || []).map(toShoppingListItem),
@@ -256,17 +244,7 @@ export async function POST(request: Request) {
     });
   } catch (error: any) {
     console.error('Regenerate shopping list error:', error);
-    
-    await dbLog({
-      level: 'error',
-      source: 'api-route',
-      functionName: 'shopping-list/regenerate',
-      userId: user.id,
-      message: 'Shopping list regeneration failed',
-      errorMessage: error.message,
-      errorStack: error.stack,
-    });
-
+    logger.error('Shopping list regeneration failed', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
