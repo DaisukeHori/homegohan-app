@@ -758,6 +758,54 @@ export default function WeeklyMenuPage() {
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
   const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
+
+  // スーパーの動線に合わせたカテゴリ順序
+  const CATEGORY_ORDER = [
+    '青果（野菜・果物）',
+    '精肉',
+    '鮮魚',
+    '乳製品・卵',
+    '豆腐・練り物',
+    '米・パン・麺',
+    '調味料',
+    '油・香辛料',
+    '乾物・缶詰',
+    '冷凍食品',
+    '飲料',
+    // 旧カテゴリとの互換性
+    '野菜',
+    '肉',
+    '魚',
+    '乳製品',
+    '卵',
+    '豆腐・大豆',
+    '麺・米',
+    '乾物',
+    '食材',
+    'その他',
+  ];
+
+  // カテゴリでグループ化・ソート
+  const groupedShoppingList = useMemo(() => {
+    const groups = new Map<string, ShoppingListItem[]>();
+    shoppingList.forEach(item => {
+      const category = item.category || 'その他';
+      const existing = groups.get(category) || [];
+      existing.push(item);
+      groups.set(category, existing);
+    });
+    
+    // カテゴリ順序でソート
+    const sortedEntries = Array.from(groups.entries()).sort((a, b) => {
+      const indexA = CATEGORY_ORDER.indexOf(a[0]);
+      const indexB = CATEGORY_ORDER.indexOf(b[0]);
+      const orderA = indexA === -1 ? 999 : indexA;
+      const orderB = indexB === -1 ? 999 : indexB;
+      return orderA - orderB;
+    });
+    
+    return sortedEntries;
+  }, [shoppingList]);
   
   // Add fridge item form
   const [newFridgeName, setNewFridgeName] = useState("");
@@ -3024,60 +3072,73 @@ export default function WeeklyMenuPage() {
                   {shoppingList.length === 0 ? (
                     <p className="text-center py-8" style={{ color: colors.textMuted }}>買い物リストは空です</p>
                   ) : (
-                    shoppingList.map(item => (
-                      <div
-                        key={item.id}
-                        className="flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5"
-                        style={{ background: item.isChecked ? colors.bg : colors.card, border: item.isChecked ? 'none' : `1px solid ${colors.border}` }}
-                      >
-                        <button
-                          onClick={() => toggleShoppingItem(item.id, item.isChecked)}
-                          className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
-                          style={{ 
-                            border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
-                            background: item.isChecked ? colors.success : 'transparent'
-                          }}
-                        >
-                          {item.isChecked && <Check size={12} color="#fff" />}
-                        </button>
-                        <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
-                          {item.itemName}
-                        </span>
-                        {/* 数量（タップで切り替え） */}
-                        <button
-                          onClick={() => toggleShoppingVariant(item.id, item)}
-                          disabled={!item.quantityVariants || item.quantityVariants.length <= 1}
-                          className="px-2 py-0.5 rounded text-[12px] transition-colors"
-                          style={{ 
-                            color: colors.textMuted, 
-                            background: item.quantityVariants?.length > 1 ? colors.bg : 'transparent',
-                            cursor: item.quantityVariants?.length > 1 ? 'pointer' : 'default'
-                          }}
-                          title={item.quantityVariants?.length > 1 ? 'タップで単位切替' : undefined}
-                        >
-                          {item.quantity || '適量'}
-                          {item.quantityVariants?.length > 1 && <span className="ml-0.5 text-[10px]">⟳</span>}
-                        </button>
-                        <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ color: colors.textMuted, background: colors.bg }}>{item.category || '食材'}</span>
-                        {/* AI/手動バッジ */}
-                        <span 
-                          className="px-1.5 py-0.5 rounded text-[10px]" 
-                          style={{ 
-                            background: item.source === 'generated' ? '#E8F5E9' : '#FFF3E0',
-                            color: item.source === 'generated' ? '#2E7D32' : '#E65100'
-                          }}
-                        >
-                          {item.source === 'generated' ? 'AI' : '手動'}
-                        </span>
-                        <button
-                          onClick={() => deleteShoppingItem(item.id)}
-                          className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'rgba(0,0,0,0.05)' }}
-                        >
-                          <Trash2 size={12} color={colors.textMuted} />
-                        </button>
-                      </div>
-                    ))
+                    <div className="space-y-4">
+                      {groupedShoppingList.map(([category, items]) => (
+                        <div key={category}>
+                          {/* カテゴリ見出し */}
+                          <div className="flex items-center gap-2 mb-2 px-1">
+                            <span className="text-[13px] font-semibold" style={{ color: colors.text }}>{category}</span>
+                            <span className="text-[11px]" style={{ color: colors.textMuted }}>
+                              {items.filter(i => !i.isChecked).length}/{items.length}
+                            </span>
+                          </div>
+                          {/* カテゴリ内アイテム */}
+                          {items.map(item => (
+                            <div
+                              key={item.id}
+                              className="flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5"
+                              style={{ background: item.isChecked ? colors.bg : colors.card, border: item.isChecked ? 'none' : `1px solid ${colors.border}` }}
+                            >
+                              <button
+                                onClick={() => toggleShoppingItem(item.id, item.isChecked)}
+                                className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
+                                style={{ 
+                                  border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
+                                  background: item.isChecked ? colors.success : 'transparent'
+                                }}
+                              >
+                                {item.isChecked && <Check size={12} color="#fff" />}
+                              </button>
+                              <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
+                                {item.itemName}
+                              </span>
+                              {/* 数量（タップで切り替え） */}
+                              <button
+                                onClick={() => toggleShoppingVariant(item.id, item)}
+                                disabled={!item.quantityVariants || item.quantityVariants.length <= 1}
+                                className="px-2 py-0.5 rounded text-[12px] transition-colors"
+                                style={{ 
+                                  color: colors.textMuted, 
+                                  background: item.quantityVariants?.length > 1 ? colors.bg : 'transparent',
+                                  cursor: item.quantityVariants?.length > 1 ? 'pointer' : 'default'
+                                }}
+                                title={item.quantityVariants?.length > 1 ? 'タップで単位切替' : undefined}
+                              >
+                                {item.quantity || '適量'}
+                                {item.quantityVariants?.length > 1 && <span className="ml-0.5 text-[10px]">⟳</span>}
+                              </button>
+                              {/* AI/手動バッジ */}
+                              <span 
+                                className="px-1.5 py-0.5 rounded text-[10px]" 
+                                style={{ 
+                                  background: item.source === 'generated' ? '#E8F5E9' : '#FFF3E0',
+                                  color: item.source === 'generated' ? '#2E7D32' : '#E65100'
+                                }}
+                              >
+                                {item.source === 'generated' ? 'AI' : '手動'}
+                              </span>
+                              <button
+                                onClick={() => deleteShoppingItem(item.id)}
+                                className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                                style={{ background: 'rgba(0,0,0,0.05)' }}
+                              >
+                                <Trash2 size={12} color={colors.textMuted} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
