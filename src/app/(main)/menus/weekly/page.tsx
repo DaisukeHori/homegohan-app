@@ -24,7 +24,20 @@ import {
 // ============================================
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
-type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addMealSlot' | 'confirmDelete' | null;
+type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addMealSlot' | 'confirmDelete' | 'shoppingRange' | null;
+
+// 買い物リスト範囲選択の型
+type ShoppingRangeType = 'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'custom';
+interface ShoppingRangeSelection {
+  type: ShoppingRangeType;
+  // today選択時の食事タイプ
+  todayMeals: ('breakfast' | 'lunch' | 'dinner')[];
+  // days選択時の日数
+  daysCount: number;
+  // custom選択時の開始・終了日
+  customStartDate?: string;
+  customEndDate?: string;
+}
 
 // 全ての食事タイプ
 const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
@@ -825,6 +838,14 @@ export default function WeeklyMenuPage() {
   const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
   const [shoppingListProgress, setShoppingListProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
   const [shoppingListRequestId, setShoppingListRequestId] = useState<string | null>(null);
+  
+  // 買い物リスト範囲選択
+  const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
+    type: 'week',
+    todayMeals: ['breakfast', 'lunch', 'dinner'],
+    daysCount: 3,
+  });
+  const [isTodayExpanded, setIsTodayExpanded] = useState(false);
 
   // スーパーの動線に合わせたカテゴリ順序
   const CATEGORY_ORDER = [
@@ -1458,17 +1479,82 @@ export default function WeeklyMenuPage() {
     };
   }, [cleanupShoppingListSubscription]);
 
+  // 買い物範囲から日付範囲を計算
+  const calculateDateRange = useCallback(() => {
+    const today = new Date();
+    const todayStr = formatLocalDate(today);
+    
+    switch (shoppingRange.type) {
+      case 'today':
+        return {
+          startDate: todayStr,
+          endDate: todayStr,
+          mealTypes: shoppingRange.todayMeals,
+        };
+      case 'tomorrow': {
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        return {
+          startDate: formatLocalDate(tomorrow),
+          endDate: formatLocalDate(tomorrow),
+          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
+        };
+      }
+      case 'dayAfterTomorrow': {
+        const dayAfter = new Date(today);
+        dayAfter.setDate(dayAfter.getDate() + 2);
+        return {
+          startDate: formatLocalDate(dayAfter),
+          endDate: formatLocalDate(dayAfter),
+          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
+        };
+      }
+      case 'week': {
+        const weekEnd = new Date(today);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        return {
+          startDate: todayStr,
+          endDate: formatLocalDate(weekEnd),
+          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
+        };
+      }
+      case 'days': {
+        const endDay = new Date(today);
+        endDay.setDate(endDay.getDate() + shoppingRange.daysCount - 1);
+        return {
+          startDate: todayStr,
+          endDate: formatLocalDate(endDay),
+          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
+        };
+      }
+      default:
+        return {
+          startDate: todayStr,
+          endDate: todayStr,
+          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
+        };
+    }
+  }, [shoppingRange]);
+
   // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {
     if (!currentPlan || isRegeneratingShoppingList) return;
     setIsRegeneratingShoppingList(true);
     setShoppingListProgress({ phase: 'starting', message: '開始中...', percentage: 0 });
     
+    // 範囲を計算
+    const dateRange = calculateDateRange();
+    
     try {
       const res = await fetch(`/api/shopping-list/regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mealPlanId: currentPlan.id })
+        body: JSON.stringify({ 
+          mealPlanId: currentPlan.id,
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate,
+          mealTypes: dateRange.mealTypes,
+        })
       });
       
       if (res.ok) {
@@ -3387,7 +3473,7 @@ export default function WeeklyMenuPage() {
                     <span style={{ fontSize: 12, color: colors.textMuted }}>追加</span>
                   </button>
                   <button 
-                    onClick={regenerateShoppingList} 
+                    onClick={() => setActiveModal('shoppingRange')} 
                     disabled={isRegeneratingShoppingList}
                     className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5 transition-opacity" 
                     style={{ background: colors.accent, opacity: isRegeneratingShoppingList ? 0.7 : 1 }}
@@ -3463,6 +3549,186 @@ export default function WeeklyMenuPage() {
                     追加する
                   </button>
                 </div>
+              </motion.div>
+            )}
+
+            {/* Shopping Range Selection Modal */}
+            {activeModal === 'shoppingRange' && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl max-h-[70vh] overflow-y-auto"
+                style={{ background: colors.card }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>買い物の範囲を選択</span>
+                  <button onClick={() => setActiveModal('shopping')} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                
+                <div className="space-y-2">
+                  {/* 今日の分 */}
+                  <div>
+                    <button
+                      onClick={() => {
+                        if (shoppingRange.type === 'today') {
+                          setIsTodayExpanded(!isTodayExpanded);
+                        } else {
+                          setShoppingRange({ ...shoppingRange, type: 'today' });
+                          setIsTodayExpanded(true);
+                        }
+                      }}
+                      className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+                      style={{ 
+                        background: shoppingRange.type === 'today' ? colors.accent : colors.bg,
+                        border: `1px solid ${shoppingRange.type === 'today' ? colors.accent : colors.border}`
+                      }}
+                    >
+                      <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'today' ? '#fff' : colors.text }}>
+                        今日の分
+                      </span>
+                      {shoppingRange.type === 'today' && (
+                        <ChevronDown 
+                          size={16} 
+                          color="#fff" 
+                          style={{ transform: isTodayExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                        />
+                      )}
+                    </button>
+                    
+                    {/* 今日の食事タイプ選択 */}
+                    <AnimatePresence>
+                      {shoppingRange.type === 'today' && isTodayExpanded && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="pl-4 pt-2 space-y-1">
+                            {(['breakfast', 'lunch', 'dinner'] as const).map((mealType) => {
+                              const isSelected = shoppingRange.todayMeals.includes(mealType);
+                              const label = mealType === 'breakfast' ? '朝食' : mealType === 'lunch' ? '昼食' : '夕食';
+                              return (
+                                <button
+                                  key={mealType}
+                                  onClick={() => {
+                                    const newMeals = isSelected
+                                      ? shoppingRange.todayMeals.filter(m => m !== mealType)
+                                      : [...shoppingRange.todayMeals, mealType];
+                                    setShoppingRange({ ...shoppingRange, todayMeals: newMeals });
+                                  }}
+                                  className="w-full p-2.5 rounded-lg flex items-center gap-2"
+                                  style={{ background: isSelected ? `${colors.accent}15` : 'transparent' }}
+                                >
+                                  <div 
+                                    className="w-5 h-5 rounded flex items-center justify-center"
+                                    style={{ 
+                                      background: isSelected ? colors.accent : 'transparent',
+                                      border: `2px solid ${isSelected ? colors.accent : colors.border}`
+                                    }}
+                                  >
+                                    {isSelected && <Check size={12} color="#fff" />}
+                                  </div>
+                                  <span style={{ fontSize: 13, color: colors.text }}>{label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  
+                  {/* 明日の分 */}
+                  <button
+                    onClick={() => setShoppingRange({ ...shoppingRange, type: 'tomorrow' })}
+                    className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+                    style={{ 
+                      background: shoppingRange.type === 'tomorrow' ? colors.accent : colors.bg,
+                      border: `1px solid ${shoppingRange.type === 'tomorrow' ? colors.accent : colors.border}`
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'tomorrow' ? '#fff' : colors.text }}>
+                      明日の分
+                    </span>
+                  </button>
+                  
+                  {/* 明後日の分 */}
+                  <button
+                    onClick={() => setShoppingRange({ ...shoppingRange, type: 'dayAfterTomorrow' })}
+                    className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+                    style={{ 
+                      background: shoppingRange.type === 'dayAfterTomorrow' ? colors.accent : colors.bg,
+                      border: `1px solid ${shoppingRange.type === 'dayAfterTomorrow' ? colors.accent : colors.border}`
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'dayAfterTomorrow' ? '#fff' : colors.text }}>
+                      明後日の分
+                    </span>
+                  </button>
+                  
+                  {/* 1週間分 */}
+                  <button
+                    onClick={() => setShoppingRange({ ...shoppingRange, type: 'week' })}
+                    className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+                    style={{ 
+                      background: shoppingRange.type === 'week' ? colors.accent : colors.bg,
+                      border: `1px solid ${shoppingRange.type === 'week' ? colors.accent : colors.border}`
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'week' ? '#fff' : colors.text }}>
+                      1週間分
+                    </span>
+                  </button>
+                  
+                  {/* ○○日分 */}
+                  <div>
+                    <button
+                      onClick={() => setShoppingRange({ ...shoppingRange, type: 'days' })}
+                      className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+                      style={{ 
+                        background: shoppingRange.type === 'days' ? colors.accent : colors.bg,
+                        border: `1px solid ${shoppingRange.type === 'days' ? colors.accent : colors.border}`
+                      }}
+                    >
+                      <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'days' ? '#fff' : colors.text }}>
+                        {shoppingRange.daysCount}日分
+                      </span>
+                    </button>
+                    
+                    {shoppingRange.type === 'days' && (
+                      <div className="pl-4 pt-2 flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={14}
+                          value={shoppingRange.daysCount}
+                          onChange={(e) => setShoppingRange({ ...shoppingRange, daysCount: parseInt(e.target.value) || 1 })}
+                          className="w-20 p-2 rounded-lg text-center text-[14px] outline-none"
+                          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                        />
+                        <span style={{ fontSize: 13, color: colors.textMuted }}>日分（今日から）</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* 再生成ボタン */}
+                <button
+                  onClick={() => {
+                    setActiveModal('shopping');
+                    regenerateShoppingList();
+                  }}
+                  disabled={shoppingRange.type === 'today' && shoppingRange.todayMeals.length === 0}
+                  className="w-full mt-4 p-3.5 rounded-xl font-semibold text-[14px] disabled:opacity-50"
+                  style={{ background: colors.accent, color: '#fff' }}
+                >
+                  この範囲で買い物リストを生成
+                </button>
               </motion.div>
             )}
 

@@ -262,6 +262,16 @@ function validateItems(
 }
 
 // ============================================
+// 範囲フィルタ型
+// ============================================
+
+interface RangeFilter {
+  startDate?: string | null;
+  endDate?: string | null;
+  mealTypes?: string[] | null;
+}
+
+// ============================================
 // メイン処理
 // ============================================
 
@@ -269,25 +279,31 @@ async function processRegeneration(
   supabase: SupabaseClient,
   requestId: string,
   mealPlanId: string,
-  userId: string
+  userId: string,
+  rangeFilter: RangeFilter = {}
 ): Promise<void> {
   try {
     // Phase 1: 材料抽出
+    const rangeDesc = rangeFilter.startDate && rangeFilter.endDate 
+      ? `${rangeFilter.startDate}〜${rangeFilter.endDate}` 
+      : "すべて";
     await updateProgress(supabase, requestId, {
       phase: "extracting",
-      message: "献立から材料を抽出中...",
+      message: `献立から材料を抽出中...（${rangeDesc}）`,
       percentage: 10,
     });
 
-    // Get all planned meals for this meal plan
+    // Get all planned meals for this meal plan with day_date and meal_type
     const { data: mealPlan, error: planError } = await supabase
       .from("meal_plans")
       .select(`
         id,
         meal_plan_days (
           id,
+          day_date,
           planned_meals (
             id,
+            meal_type,
             ingredients,
             dishes
           )
@@ -299,11 +315,31 @@ async function processRegeneration(
 
     if (planError) throw planError;
 
-    // 材料を抽出
+    // 材料を抽出（範囲フィルタ適用）
     const ingredientsMap = new Map<string, InputIngredient>();
+    
+    // 食事タイプのマッピング（クライアント側との整合性）
+    const mealTypeMap: Record<string, string> = {
+      'breakfast': 'breakfast',
+      'lunch': 'lunch', 
+      'dinner': 'dinner',
+    };
 
     mealPlan.meal_plan_days?.forEach((day: any) => {
+      const dayDate = day.day_date;
+      
+      // 日付フィルタ
+      if (rangeFilter.startDate && dayDate < rangeFilter.startDate) return;
+      if (rangeFilter.endDate && dayDate > rangeFilter.endDate) return;
+      
       day.planned_meals?.forEach((meal: any) => {
+        const mealType = meal.meal_type;
+        
+        // 食事タイプフィルタ
+        if (rangeFilter.mealTypes && rangeFilter.mealTypes.length > 0) {
+          if (!rangeFilter.mealTypes.includes(mealType)) return;
+        }
+        
         if (meal.dishes && Array.isArray(meal.dishes)) {
           meal.dishes.forEach((dish: any) => {
             if (dish.ingredients && Array.isArray(dish.ingredients)) {
@@ -506,7 +542,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { requestId, mealPlanId, userId } = await req.json();
+    const { requestId, mealPlanId, userId, startDate, endDate, mealTypes } = await req.json();
 
     if (!requestId || !mealPlanId || !userId) {
       return new Response(
@@ -523,9 +559,16 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // 範囲フィルタ
+    const rangeFilter: RangeFilter = {
+      startDate: startDate || null,
+      endDate: endDate || null,
+      mealTypes: mealTypes || null,
+    };
+
     // 非同期で処理開始（即座にレスポンス返す）
     // EdgeRuntimeではバックグラウンド実行のためにPromiseをresolveしない
-    processRegeneration(supabase, requestId, mealPlanId, userId);
+    processRegeneration(supabase, requestId, mealPlanId, userId, rangeFilter);
 
     return new Response(
       JSON.stringify({ success: true, requestId }),
