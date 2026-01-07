@@ -766,6 +766,54 @@ export default function WeeklyMenuPage() {
   }, [weekStart, weekDates, isGenerating, generatingMeal]);
   
   
+  // 復元用のmealPlanId（購読開始時に使用）
+  const [restoredMealPlanId, setRestoredMealPlanId] = useState<string | null>(null);
+
+  // 買い物リスト再生成の復元（リロード時）
+  useEffect(() => {
+    const restoreShoppingListRegeneration = async () => {
+      const stored = localStorage.getItem('shoppingListRegenerating');
+      if (!stored) return;
+      
+      try {
+        const { requestId, mealPlanId, timestamp } = JSON.parse(stored);
+        const elapsed = Date.now() - timestamp;
+        
+        // 5分以内のみ復元
+        if (elapsed > 5 * 60 * 1000) {
+          localStorage.removeItem('shoppingListRegenerating');
+          return;
+        }
+        
+        // ステータス確認
+        const statusRes = await fetch(`/api/shopping-list/regenerate/status?requestId=${requestId}`);
+        if (!statusRes.ok) {
+          localStorage.removeItem('shoppingListRegenerating');
+          return;
+        }
+        
+        const data = await statusRes.json();
+        
+        if (data.status === 'processing') {
+          console.log('📦 買い物リスト再生成を復元:', requestId);
+          setIsRegeneratingShoppingList(true);
+          setShoppingListRequestId(requestId);
+          setRestoredMealPlanId(mealPlanId);
+          if (data.progress) {
+            setShoppingListProgress(data.progress);
+          }
+        } else {
+          // completed または failed の場合はクリア
+          localStorage.removeItem('shoppingListRegenerating');
+        }
+      } catch {
+        localStorage.removeItem('shoppingListRegenerating');
+      }
+    };
+    
+    restoreShoppingListRegeneration();
+  }, []);
+  
   // Edit meal state
   const [editingMeal, setEditingMeal] = useState<PlannedMeal | null>(null);
   const [editMealName, setEditMealName] = useState("");
@@ -1258,6 +1306,158 @@ export default function WeeklyMenuPage() {
     }
   };
 
+  // 買い物リスト再生成の進捗購読（Realtime + ポーリング）
+  const shoppingListChannelRef = useRef<any>(null);
+  const shoppingListPollingRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const cleanupShoppingListSubscription = useCallback(() => {
+    if (shoppingListChannelRef.current) {
+      shoppingListChannelRef.current.unsubscribe();
+      shoppingListChannelRef.current = null;
+    }
+    if (shoppingListPollingRef.current) {
+      clearInterval(shoppingListPollingRef.current);
+      shoppingListPollingRef.current = null;
+    }
+  }, []);
+
+  const subscribeToShoppingListRequest = useCallback((requestId: string, mealPlanId: string) => {
+    cleanupShoppingListSubscription();
+    
+    console.log('📡 Subscribing to shopping list request:', requestId);
+    
+    // ポーリングも並行開始（Realtimeのバックアップ）
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/shopping-list/regenerate/status?requestId=${requestId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.progress) {
+          setShoppingListProgress(data.progress);
+        }
+        
+        if (data.status === 'completed') {
+          console.log('✅ Shopping list regeneration completed (polling)');
+          const listRes = await fetch(`/api/shopping-list?mealPlanId=${mealPlanId}`);
+          if (listRes.ok) {
+            const { items } = await listRes.json();
+            setShoppingList(items);
+          }
+          setSuccessMessage({
+            title: '買い物リストを更新しました ✓',
+            message: data.result?.stats 
+              ? `${data.result.stats.outputCount}件の材料（${data.result.stats.mergedCount}件を統合）`
+              : '買い物リストを再生成しました'
+          });
+          setIsRegeneratingShoppingList(false);
+          setShoppingListProgress(null);
+          setShoppingListRequestId(null);
+          localStorage.removeItem('shoppingListRegenerating');
+          cleanupShoppingListSubscription();
+        } else if (data.status === 'failed') {
+          console.log('❌ Shopping list regeneration failed (polling)');
+          alert(data.result?.error || '再生成に失敗しました');
+          setIsRegeneratingShoppingList(false);
+          setShoppingListProgress(null);
+          setShoppingListRequestId(null);
+          localStorage.removeItem('shoppingListRegenerating');
+          cleanupShoppingListSubscription();
+        }
+      } catch (e) {
+        console.error('Shopping list polling error:', e);
+      }
+    };
+    
+    poll(); // 即座に1回実行
+    shoppingListPollingRef.current = setInterval(poll, 2000);
+    
+    // Realtime購読
+    const channel = supabaseRef.current
+      .channel(`shopping-list-request-${requestId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'shopping_list_requests',
+          filter: `id=eq.${requestId}`,
+        },
+        async (payload) => {
+          console.log('📡 Shopping list progress update:', payload.new);
+          const newData = payload.new as { 
+            status: string; 
+            progress?: { phase: string; message: string; percentage: number };
+            result?: { stats?: { inputCount: number; outputCount: number; mergedCount: number }; error?: string };
+          };
+          
+          if (newData?.progress) {
+            setShoppingListProgress(newData.progress);
+          }
+          
+          if (newData.status === 'completed') {
+            console.log('✅ Shopping list regeneration completed (realtime)');
+            try {
+              const listRes = await fetch(`/api/shopping-list?mealPlanId=${mealPlanId}`);
+              if (listRes.ok) {
+                const { items } = await listRes.json();
+                setShoppingList(items);
+              }
+            } catch (fetchErr) {
+              console.error('❌ Failed to fetch shopping list:', fetchErr);
+            }
+            setSuccessMessage({
+              title: '買い物リストを更新しました ✓',
+              message: newData.result?.stats 
+                ? `${newData.result.stats.outputCount}件の材料（${newData.result.stats.mergedCount}件を統合）`
+                : '買い物リストを再生成しました'
+            });
+            setIsRegeneratingShoppingList(false);
+            setShoppingListProgress(null);
+            setShoppingListRequestId(null);
+            localStorage.removeItem('shoppingListRegenerating');
+            cleanupShoppingListSubscription();
+          } else if (newData.status === 'failed') {
+            console.log('❌ Shopping list regeneration failed (realtime)');
+            alert(newData.result?.error || '再生成に失敗しました');
+            setIsRegeneratingShoppingList(false);
+            setShoppingListProgress(null);
+            setShoppingListRequestId(null);
+            localStorage.removeItem('shoppingListRegenerating');
+            cleanupShoppingListSubscription();
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 Shopping list subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          // Realtime接続成功したらポーリング停止
+          if (shoppingListPollingRef.current) {
+            clearInterval(shoppingListPollingRef.current);
+            shoppingListPollingRef.current = null;
+          }
+        }
+      });
+    
+    shoppingListChannelRef.current = channel;
+  }, [cleanupShoppingListSubscription, setShoppingList, setSuccessMessage]);
+
+  // 復元後に購読を開始
+  useEffect(() => {
+    if (shoppingListRequestId && restoredMealPlanId && isRegeneratingShoppingList) {
+      console.log('📡 復元された買い物リスト再生成の購読を開始:', shoppingListRequestId);
+      subscribeToShoppingListRequest(shoppingListRequestId, restoredMealPlanId);
+      setRestoredMealPlanId(null); // 一度だけ実行
+    }
+  }, [shoppingListRequestId, restoredMealPlanId, isRegeneratingShoppingList, subscribeToShoppingListRequest]);
+
+  // クリーンアップ（アンマウント時）
+  useEffect(() => {
+    return () => {
+      cleanupShoppingListSubscription();
+    };
+  }, [cleanupShoppingListSubscription]);
+
   // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {
     if (!currentPlan || isRegeneratingShoppingList) return;
@@ -1275,67 +1475,15 @@ export default function WeeklyMenuPage() {
         const { requestId } = await res.json();
         setShoppingListRequestId(requestId);
         
-        // Supabase Realtimeで進捗を購読
-        const channel = supabaseRef.current
-          .channel(`shopping-list-request-${requestId}`)
-          .on(
-            'postgres_changes',
-            {
-              event: 'UPDATE',
-              schema: 'public',
-              table: 'shopping_list_requests',
-              filter: `id=eq.${requestId}`,
-            },
-            async (payload) => {
-              console.log('📡 Shopping list progress update:', payload.new);
-              const newData = payload.new as { 
-                status: string; 
-                progress?: { phase: string; message: string; percentage: number };
-                result?: { stats?: { inputCount: number; outputCount: number; mergedCount: number }; error?: string };
-              };
-              
-              // 進捗情報を更新
-              if (newData?.progress) {
-                setShoppingListProgress(newData.progress);
-              }
-              
-              if (newData.status === 'completed') {
-                // 完了したら買い物リストを再取得
-                console.log('✅ Shopping list regeneration completed');
-                try {
-                  const listRes = await fetch(`/api/shopping-list?mealPlanId=${currentPlan.id}`);
-                  if (listRes.ok) {
-                    const { items } = await listRes.json();
-                    setShoppingList(items);
-                  }
-                } catch (fetchErr) {
-                  console.error('❌ Failed to fetch shopping list:', fetchErr);
-                }
-                
-                setSuccessMessage({
-                  title: '買い物リストを更新しました ✓',
-                  message: newData.result?.stats 
-                    ? `${newData.result.stats.outputCount}件の材料（${newData.result.stats.mergedCount}件を統合）`
-                    : '買い物リストを再生成しました'
-                });
-                
-                setIsRegeneratingShoppingList(false);
-                setShoppingListProgress(null);
-                setShoppingListRequestId(null);
-                channel.unsubscribe();
-              } else if (newData.status === 'failed') {
-                console.log('❌ Shopping list regeneration failed');
-                alert(newData.result?.error || '再生成に失敗しました');
-                setIsRegeneratingShoppingList(false);
-                setShoppingListProgress(null);
-                setShoppingListRequestId(null);
-                channel.unsubscribe();
-              }
-            }
-          )
-          .subscribe((status) => {
-            console.log('📡 Shopping list subscription status:', status);
-          });
+        // localStorageに保存（リロード時復元用）
+        localStorage.setItem('shoppingListRegenerating', JSON.stringify({
+          requestId,
+          mealPlanId: currentPlan.id,
+          timestamp: Date.now(),
+        }));
+        
+        // 購読開始
+        subscribeToShoppingListRequest(requestId, currentPlan.id);
       } else {
         const err = await res.json();
         throw new Error(err.error || '再生成に失敗しました');
@@ -1344,6 +1492,7 @@ export default function WeeklyMenuPage() {
       alert(e.message || "再生成に失敗しました"); 
       setIsRegeneratingShoppingList(false);
       setShoppingListProgress(null);
+      localStorage.removeItem('shoppingListRegenerating');
     }
   };
 
