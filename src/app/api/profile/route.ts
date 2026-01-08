@@ -73,6 +73,7 @@ export async function POST(request: Request) {
     if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;
     if (body.familySize) updates.family_size = parseInt(body.familySize);
     if (body.servingsConfig) updates.servings_config = body.servingsConfig;
+    if (body.radarChartNutrients) updates.radar_chart_nutrients = body.radarChartNutrients;
 
     // デフォルト値の補完（必須カラムエラー回避）
     if (!updates.nickname) updates.nickname = 'Guest'; 

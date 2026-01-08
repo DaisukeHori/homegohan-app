@@ -186,6 +186,7 @@ export interface UserProfile {
   cheatDayConfig: CheatDayConfig | null;
   servingsConfig: ServingsConfig | null;
   weekStartDay: WeekStartDay;
+  radarChartNutrients: string[] | null; // レーダーチャートに表示する栄養素キーの配列
 
   // === NEW: Body Info ===
   bodyFatPercentage: number | null;

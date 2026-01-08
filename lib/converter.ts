@@ -32,6 +32,7 @@ export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   cheatDayConfig: db.cheat_day_config,
   servingsConfig: db.servings_config as ServingsConfig | null,
   weekStartDay: (db.week_start_day as WeekStartDay) || 'monday',
+  radarChartNutrients: db.radar_chart_nutrients as string[] | null,
   
   // === NEW: Body Info ===
   bodyFatPercentage: db.body_fat_percentage ?? null,
@@ -162,6 +163,7 @@ export const fromUserProfile = (profile: Partial<UserProfile>): Record<string, a
   if (profile.cheatDayConfig !== undefined) result.cheat_day_config = profile.cheatDayConfig;
   if (profile.servingsConfig !== undefined) result.servings_config = profile.servingsConfig;
   if (profile.weekStartDay !== undefined) result.week_start_day = profile.weekStartDay;
+  if (profile.radarChartNutrients !== undefined) result.radar_chart_nutrients = profile.radarChartNutrients;
   
   // Body Info
   if (profile.bodyFatPercentage !== undefined) result.body_fat_percentage = profile.bodyFatPercentage;

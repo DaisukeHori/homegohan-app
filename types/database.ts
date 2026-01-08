@@ -22,6 +22,7 @@ export interface DbUserProfile {
   cheat_day_config: any | null;
   servings_config: any | null;
   week_start_day: string | null;
+  radar_chart_nutrients: string[] | null;
   created_at: string;
   updated_at: string;
 

@@ -9,6 +9,8 @@ import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList
 import ReactMarkdown from "react-markdown";
 import { V4GenerateModal } from "@/components/ai-assistant";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { NutritionRadarChart } from "@/components/NutritionRadarChart";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS } from "@/lib/nutrition-constants";
 import remarkGfm from "remark-gfm";
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
@@ -976,6 +978,12 @@ export default function WeeklyMenuPage() {
   const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
   const [isLoadingServingsConfig, setIsLoadingServingsConfig] = useState(false);
   
+  // レーダーチャート関連
+  const [radarChartNutrients, setRadarChartNutrients] = useState<string[]>(DEFAULT_RADAR_NUTRIENTS);
+  const [showNutritionDetailModal, setShowNutritionDetailModal] = useState(false);
+  const [nutritionFeedback, setNutritionFeedback] = useState<string | null>(null);
+  const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
+  
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
     type: 'week',
@@ -1118,14 +1126,15 @@ export default function WeeklyMenuPage() {
     fetchPlan();
   }, [weekStart]);
   
-  // Fetch servings config from user profile
+  // Fetch servings config and radar chart nutrients from user profile
   useEffect(() => {
-    const fetchServingsConfig = async () => {
+    const fetchUserSettings = async () => {
       setIsLoadingServingsConfig(true);
       try {
         const res = await fetch('/api/profile');
         if (res.ok) {
           const profile = await res.json();
+          // Servings config
           if (profile.servings_config) {
             setServingsConfig(profile.servings_config);
           } else if (profile.family_size) {
@@ -1136,14 +1145,18 @@ export default function WeeklyMenuPage() {
             };
             setServingsConfig(defaultConfig);
           }
+          // Radar chart nutrients
+          if (profile.radar_chart_nutrients && Array.isArray(profile.radar_chart_nutrients)) {
+            setRadarChartNutrients(profile.radar_chart_nutrients);
+          }
         }
       } catch (e) {
-        console.error('Failed to fetch servings config:', e);
+        console.error('Failed to fetch user settings:', e);
       } finally {
         setIsLoadingServingsConfig(false);
       }
     };
-    fetchServingsConfig();
+    fetchUserSettings();
   }, []);
   
   // フォールバックポーリング用の参照
@@ -3416,7 +3429,7 @@ export default function WeeklyMenuPage() {
             </div>
           </div>
           
-          {/* 展開時：1日の全栄養素 */}
+          {/* 展開時：レーダーチャート＋栄養サマリー */}
           <AnimatePresence>
             {isDayNutritionExpanded && (
               <motion.div
@@ -3431,42 +3444,69 @@ export default function WeeklyMenuPage() {
                   const mealCount = currentDay?.meals?.length || 0;
                   return (
                     <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${colors.border}` }}>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <BarChart3 size={12} color={colors.accent} />
-                        <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>
-                          1日の合計栄養（{mealCount}食分）
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[10px]" style={{ color: colors.text }}>
-                        {/* 基本栄養素 */}
-                        <NutritionItem label="エネルギー" value={dayNutrition.caloriesKcal} unit="kcal" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="タンパク質" value={dayNutrition.proteinG} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="脂質" value={dayNutrition.fatG} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="炭水化物" value={dayNutrition.carbsG} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="食物繊維" value={dayNutrition.fiberG} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="糖質" value={dayNutrition.sugarG} unit="g" textColor={colors.textMuted} />
-                        {/* ミネラル */}
-                        <NutritionItem label="塩分" value={dayNutrition.sodiumG} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="カリウム" value={dayNutrition.potassiumMg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="カルシウム" value={dayNutrition.calciumMg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="リン" value={dayNutrition.phosphorusMg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="鉄分" value={dayNutrition.ironMg} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="亜鉛" value={dayNutrition.zincMg} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="ヨウ素" value={dayNutrition.iodineUg} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        {/* 脂質詳細 */}
-                        <NutritionItem label="飽和脂肪酸" value={dayNutrition.saturatedFatG} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="コレステロール" value={dayNutrition.cholesterolMg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        {/* ビタミン類 */}
-                        <NutritionItem label="ビタミンA" value={dayNutrition.vitaminAUg} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB1" value={dayNutrition.vitaminB1Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB2" value={dayNutrition.vitaminB2Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB6" value={dayNutrition.vitaminB6Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB12" value={dayNutrition.vitaminB12Ug} unit="µg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンC" value={dayNutrition.vitaminCMg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンD" value={dayNutrition.vitaminDUg} unit="µg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンE" value={dayNutrition.vitaminEMg} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンK" value={dayNutrition.vitaminKUg} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="葉酸" value={dayNutrition.folicAcidUg} unit="µg" decimals={0} textColor={colors.textMuted} />
+                      {/* レーダーチャート＋主要栄養素 */}
+                      <div className="flex items-start gap-3">
+                        {/* レーダーチャート（タップで詳細モーダル） */}
+                        <div 
+                          className="flex-shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowNutritionDetailModal(true);
+                          }}
+                        >
+                          <NutritionRadarChart
+                            nutrition={dayNutrition}
+                            selectedNutrients={radarChartNutrients}
+                            size={140}
+                            showLabels={false}
+                            onTap={() => setShowNutritionDetailModal(true)}
+                          />
+                          <p className="text-center text-[9px] mt-1" style={{ color: colors.textMuted }}>
+                            タップで詳細
+                          </p>
+                        </div>
+
+                        {/* 主要栄養素サマリー */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <BarChart3 size={12} color={colors.accent} />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>
+                              {mealCount}食分の栄養
+                            </span>
+                          </div>
+                          <div className="space-y-1">
+                            {radarChartNutrients.slice(0, 6).map(key => {
+                              const def = getNutrientDefinition(key);
+                              const value = (dayNutrition as any)[key] ?? 0;
+                              const percentage = calculateDriPercentage(key, value);
+                              const isGood = percentage >= 80 && percentage <= 120;
+                              const isLow = percentage < 50;
+                              const isHigh = percentage > 150;
+                              return (
+                                <div key={key} className="flex items-center gap-2">
+                                  <span className="text-[10px] w-16 truncate" style={{ color: colors.textMuted }}>
+                                    {def?.label}
+                                  </span>
+                                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: colors.bg }}>
+                                    <div
+                                      className="h-full rounded-full transition-all"
+                                      style={{
+                                        width: `${Math.min(percentage, 100)}%`,
+                                        background: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted,
+                                      }}
+                                    />
+                                  </div>
+                                  <span 
+                                    className="text-[9px] w-8 text-right font-medium"
+                                    style={{ color: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted }}
+                                  >
+                                    {percentage}%
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );
@@ -5312,6 +5352,203 @@ export default function WeeklyMenuPage() {
         onGenerate={handleV4Generate}
         isGenerating={isGenerating}
       />
+
+      {/* 栄養詳細モーダル */}
+      <AnimatePresence>
+        {showNutritionDetailModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={() => setShowNutritionDetailModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
+                <div className="flex items-center gap-2">
+                  <BarChart3 size={20} style={{ color: colors.accent }} />
+                  <h2 className="text-lg font-bold" style={{ color: colors.text }}>
+                    {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()} の栄養分析
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setShowNutritionDetailModal(false)}
+                  className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+                >
+                  <X size={20} style={{ color: colors.textLight }} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-4 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 140px)' }}>
+                {(() => {
+                  const dayNutrition = getDayTotalNutrition(currentDay);
+                  const mealCount = currentDay?.meals?.length || 0;
+                  return (
+                    <>
+                      {/* レーダーチャート（大きく表示） */}
+                      <div className="flex justify-center mb-4">
+                        <NutritionRadarChart
+                          nutrition={dayNutrition}
+                          selectedNutrients={radarChartNutrients}
+                          size={220}
+                          showLabels={true}
+                        />
+                      </div>
+
+                      {/* AI栄養士のコメント */}
+                      <div className="mb-4 p-3 rounded-xl" style={{ background: colors.accentLight }}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Sparkles size={14} color={colors.accent} />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: colors.accent }}>AI栄養士のコメント</span>
+                        </div>
+                        {isLoadingFeedback ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+                            <span style={{ fontSize: 11, color: colors.textLight }}>分析中...</span>
+                          </div>
+                        ) : nutritionFeedback ? (
+                          <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6 }}>
+                            {nutritionFeedback}
+                          </p>
+                        ) : (
+                          <button
+                            onClick={async () => {
+                              setIsLoadingFeedback(true);
+                              try {
+                                const res = await fetch('/api/ai/nutrition/feedback', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    date: weekDates[selectedDayIndex]?.dateStr,
+                                    nutrition: dayNutrition,
+                                    mealCount,
+                                    weekData: currentPlan?.days?.map(d => ({
+                                      date: d.dayDate,
+                                      meals: d.meals?.map(m => ({ title: m.dishName, calories: m.caloriesKcal })) || []
+                                    })) || [],
+                                  })
+                                });
+                                if (res.ok) {
+                                  const data = await res.json();
+                                  setNutritionFeedback(data.feedback);
+                                }
+                              } catch (e) {
+                                console.error('Failed to get nutrition feedback:', e);
+                              } finally {
+                                setIsLoadingFeedback(false);
+                              }
+                            }}
+                            className="text-xs underline"
+                            style={{ color: colors.accent }}
+                          >
+                            AIに分析してもらう
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 全栄養素一覧 */}
+                      <div className="mb-4">
+                        <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
+                          📊 全栄養素（{mealCount}食分）
+                        </p>
+                        {Object.entries(NUTRIENT_BY_CATEGORY).map(([category, nutrients]) => (
+                          <div key={category} className="mb-3">
+                            <p className="text-[10px] font-bold mb-1.5" style={{ color: colors.textMuted }}>
+                              {CATEGORY_LABELS[category]}
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {nutrients.map(def => {
+                                const value = (dayNutrition as any)[def.key] ?? 0;
+                                const percentage = calculateDriPercentage(def.key, value);
+                                const isGood = percentage >= 80 && percentage <= 120;
+                                const isLow = percentage < 50;
+                                const isHigh = percentage > 150;
+                                return (
+                                  <div key={def.key} className="flex items-center gap-2 p-1.5 rounded" style={{ background: colors.bg }}>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-[10px] truncate" style={{ color: colors.textLight }}>
+                                          {def.label}
+                                        </span>
+                                        <span className="text-[9px]" style={{ color: colors.textMuted }}>
+                                          {value.toFixed(def.decimals)}{def.unit}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-1 mt-0.5">
+                                        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: colors.border }}>
+                                          <div
+                                            className="h-full rounded-full"
+                                            style={{
+                                              width: `${Math.min(percentage, 100)}%`,
+                                              background: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted,
+                                            }}
+                                          />
+                                        </div>
+                                        <span 
+                                          className="text-[8px] w-7 text-right font-medium"
+                                          style={{ color: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted }}
+                                        >
+                                          {percentage}%
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* レーダーチャート表示栄養素の変更 */}
+                      <div className="pt-3" style={{ borderTop: `1px solid ${colors.border}` }}>
+                        <p className="text-[11px] mb-2" style={{ color: colors.textMuted }}>
+                          レーダーチャートに表示する栄養素
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {radarChartNutrients.map(key => {
+                            const def = getNutrientDefinition(key);
+                            return (
+                              <span
+                                key={key}
+                                className="px-2 py-0.5 rounded-full text-[10px]"
+                                style={{ background: colors.accentLight, color: colors.accent }}
+                              >
+                                {def?.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <button
+                          onClick={() => {
+                            setShowNutritionDetailModal(false);
+                            // 設定画面に遷移（簡易版: ここでは直接変更UI）
+                            setActiveModal(null);
+                            // TODO: 設定ページへ遷移
+                            alert('設定画面は準備中です。今後のアップデートで追加予定です。');
+                          }}
+                          className="w-full py-2 rounded-lg text-xs"
+                          style={{ background: colors.bg, color: colors.textLight }}
+                        >
+                          表示する栄養素を変更 →
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
