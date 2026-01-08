@@ -383,7 +383,7 @@ export default function LLMUsageDashboard() {
                     cx="50%"
                     cy="50%"
                     outerRadius={100}
-                    label={({ model, percent }) => `${model} (${(percent * 100).toFixed(0)}%)`}
+                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                     labelLine={{ stroke: "#a78bfa" }}
                   >
                     {data.byModel.map((_, index) => (
