@@ -990,6 +990,11 @@ export default function WeeklyMenuPage() {
   const [feedbackCacheId, setFeedbackCacheId] = useState<string | null>(null);
   const feedbackChannelRef = useRef<RealtimeChannel | null>(null);
   
+  // AI栄養士のコメントで献立改善
+  const [showImproveMealModal, setShowImproveMealModal] = useState(false);
+  const [improveMealTargets, setImproveMealTargets] = useState<MealType[]>([]);
+  const [isImprovingMeal, setIsImprovingMeal] = useState(false);
+  
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
     type: 'week',
@@ -3595,19 +3600,19 @@ export default function WeeklyMenuPage() {
           onClick={() => setIsDayNutritionExpanded(!isDayNutritionExpanded)}
         >
           <div className="flex justify-between items-center">
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontSize: 16, fontWeight: 600, color: weekDates[selectedDayIndex]?.dateStr < todayStr ? colors.textMuted : colors.text }}>
-                {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()}（{weekDates[selectedDayIndex]?.dayOfWeek}）
-              </span>
-              {weekDates[selectedDayIndex]?.dateStr === todayStr && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
-              )}
-              {weekDates[selectedDayIndex]?.dateStr < todayStr && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.textMuted, color: '#fff' }}>過去</span>
-              )}
-            </div>
+          <div className="flex items-center gap-1.5">
+            <span style={{ fontSize: 16, fontWeight: 600, color: weekDates[selectedDayIndex]?.dateStr < todayStr ? colors.textMuted : colors.text }}>
+              {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()}（{weekDates[selectedDayIndex]?.dayOfWeek}）
+            </span>
+            {weekDates[selectedDayIndex]?.dateStr === todayStr && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
+            )}
+            {weekDates[selectedDayIndex]?.dateStr < todayStr && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.textMuted, color: '#fff' }}>過去</span>
+            )}
+          </div>
             <div className="flex items-center gap-1">
-              <span style={{ fontSize: 12, color: colors.textMuted }}>{getDayTotalCal(currentDay)} kcal</span>
+          <span style={{ fontSize: 12, color: colors.textMuted }}>{getDayTotalCal(currentDay)} kcal</span>
               {isDayNutritionExpanded ? (
                 <ChevronUp size={14} color={colors.textMuted} />
               ) : (
@@ -5619,9 +5624,26 @@ export default function WeeklyMenuPage() {
                             <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
                           </div>
                         ) : nutritionFeedback ? (
-                          <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6 }}>
-                            {nutritionFeedback}
-                          </p>
+                          <>
+                            <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6, marginBottom: 12 }}>
+                              {nutritionFeedback}
+                            </p>
+                            {/* この提案で献立を改善ボタン */}
+                            <button
+                              onClick={() => {
+                                setShowImproveMealModal(true);
+                                // デフォルトで全食事を選択
+                                const mealsForDay = currentDay?.meals?.map(m => m.mealType) || [];
+                                const uniqueMeals = [...new Set(mealsForDay)] as MealType[];
+                                setImproveMealTargets(uniqueMeals.length > 0 ? uniqueMeals : ['breakfast', 'lunch', 'dinner']);
+                              }}
+                              className="w-full p-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all hover:opacity-90"
+                              style={{ background: colors.accent, color: '#fff', fontSize: 12 }}
+                            >
+                              <RefreshCw size={14} />
+                              この提案で献立を改善
+                            </button>
+                          </>
                         ) : (
                           <div className="flex items-center gap-2">
                             <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
@@ -5676,8 +5698,8 @@ export default function WeeklyMenuPage() {
                                         </span>
                                       </div>
                                     </div>
-                                  </div>
-                                );
+    </div>
+  );
                               })}
                             </div>
                           </div>
@@ -5809,6 +5831,309 @@ export default function WeeklyMenuPage() {
                     </>
                   );
                 })()}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 献立改善の食事選択モーダル */}
+      <AnimatePresence>
+        {showImproveMealModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+            onClick={() => !isImprovingMeal && setShowImproveMealModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
+                <div className="flex items-center gap-2">
+                  <RefreshCw size={20} style={{ color: colors.accent }} />
+                  <h2 className="text-lg font-bold" style={{ color: colors.text }}>
+                    献立を改善
+                  </h2>
+                </div>
+                {!isImprovingMeal && (
+                  <button
+                    onClick={() => setShowImproveMealModal(false)}
+                    className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+                  >
+                    <X size={20} style={{ color: colors.textLight }} />
+                  </button>
+                )}
+              </div>
+
+              {/* Content */}
+              <div className="p-4">
+                {isImprovingMeal ? (
+                  // 生成中
+                  <div className="py-8 text-center">
+                    <div className="w-12 h-12 border-3 border-t-transparent rounded-full animate-spin mx-auto mb-4" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+                    <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>AI栄養士の提案で献立を改善中...</p>
+                    <p style={{ fontSize: 12, color: colors.textLight, marginTop: 8 }}>しばらくお待ちください</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* 対象日表示 */}
+                    <div className="mb-4 p-3 rounded-lg" style={{ background: colors.bg }}>
+                      <p style={{ fontSize: 12, color: colors.textLight }}>対象日</p>
+                      <p style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
+                        {weekDates[selectedDayIndex]?.date.getMonth() + 1}月{weekDates[selectedDayIndex]?.date.getDate()}日（{weekDates[selectedDayIndex]?.dayOfWeek}）
+                        {weekDates[selectedDayIndex]?.dateStr === new Date().toISOString().split('T')[0] && <span className="ml-2 text-xs px-2 py-0.5 rounded-full" style={{ background: colors.accentLight, color: colors.accent }}>今日</span>}
+                      </p>
+                    </div>
+
+                    {/* AI栄養士のコメント抜粋 */}
+                    {nutritionFeedback && (
+                      <div className="mb-4 p-3 rounded-lg" style={{ background: colors.accentLight }}>
+                        <div className="flex items-center gap-1 mb-1">
+                          <Sparkles size={12} color={colors.accent} />
+                          <span style={{ fontSize: 10, fontWeight: 600, color: colors.accent }}>AI栄養士の提案</span>
+                        </div>
+                        <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }} className="line-clamp-3">
+                          {nutritionFeedback}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 改善対象の選択 */}
+                    <div className="mb-4">
+                      <p style={{ fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
+                        どの食事を改善しますか？
+                      </p>
+                      {(() => {
+                        const targetDateStr = weekDates[selectedDayIndex]?.dateStr;
+                        const targetDay = currentPlan?.days?.find((d: MealPlanDay) => d.dayDate === targetDateStr);
+                        const todayStr = new Date().toISOString().split('T')[0];
+                        const isPast = targetDateStr && targetDateStr < todayStr;
+                        
+                        if (isPast) {
+                          // 過去の日は翌日を対象に
+                          return (
+                            <div className="p-3 rounded-lg text-center" style={{ background: colors.bg }}>
+                              <p style={{ fontSize: 12, color: colors.textLight, marginBottom: 8 }}>
+                                この日は過去のため、翌日の献立を改善します
+                              </p>
+                              <button
+                                onClick={() => {
+                                  // 翌日へ移動して再表示
+                                  const nextIndex = Math.min(selectedDayIndex + 1, weekDates.length - 1);
+                                  if (nextIndex !== selectedDayIndex) {
+                                    setSelectedDayIndex(nextIndex);
+                                    setShowImproveMealModal(false);
+                                    // 翌日のモーダルを再度開く
+                                    setTimeout(() => {
+                                      setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
+                                      setShowImproveMealModal(true);
+                                    }, 100);
+                                  }
+                                }}
+                                className="px-4 py-2 rounded-lg text-xs font-medium"
+                                style={{ background: colors.accent, color: '#fff' }}
+                              >
+                                翌日の献立を改善
+                              </button>
+                            </div>
+                          );
+                        }
+                        
+                        const mealOptions: { type: MealType; label: string; icon: string }[] = [
+                          { type: 'breakfast', label: '朝食', icon: '🌅' },
+                          { type: 'lunch', label: '昼食', icon: '☀️' },
+                          { type: 'dinner', label: '夕食', icon: '🌙' },
+                        ];
+                        
+                        return (
+                          <div className="space-y-2">
+                            {mealOptions.map(opt => {
+                              const isSelected = improveMealTargets.includes(opt.type);
+                              const existingMeal = targetDay?.meals?.find((m: PlannedMeal) => m.mealType === opt.type);
+                              
+                              return (
+                                <button
+                                  key={opt.type}
+                                  onClick={() => {
+                                    if (isSelected) {
+                                      setImproveMealTargets(improveMealTargets.filter(t => t !== opt.type));
+                                    } else {
+                                      setImproveMealTargets([...improveMealTargets, opt.type]);
+                                    }
+                                  }}
+                                  className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all ${isSelected ? 'ring-2 ring-orange-400' : ''}`}
+                                  style={{
+                                    background: isSelected ? colors.accentLight : colors.bg,
+                                  }}
+                                >
+                                  <span className="text-xl">{opt.icon}</span>
+                                  <div className="flex-1 text-left">
+                                    <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{opt.label}</p>
+                                    <p style={{ fontSize: 11, color: colors.textLight }}>
+                                      {existingMeal?.dishes?.length 
+                                        ? `現在: ${existingMeal.dishes.map((d: DishDetail) => d.name).join('、')}` 
+                                        : '未設定'
+                                      }
+                                    </p>
+                                  </div>
+                                  <div 
+                                    className={`w-5 h-5 rounded-full flex items-center justify-center ${isSelected ? 'bg-white' : ''}`}
+                                    style={{ border: isSelected ? 'none' : `2px solid ${colors.border}` }}
+                                  >
+                                    {isSelected && <Check size={14} color={colors.accent} />}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                            
+                            {/* 1日全体を選択 */}
+                            <button
+                              onClick={() => {
+                                if (improveMealTargets.length === 3) {
+                                  setImproveMealTargets([]);
+                                } else {
+                                  setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
+                                }
+                              }}
+                              className="w-full p-2 rounded-lg text-xs text-center transition-all"
+                              style={{ 
+                                background: improveMealTargets.length === 3 ? colors.accentLight : 'transparent',
+                                color: colors.accent 
+                              }}
+                            >
+                              {improveMealTargets.length === 3 ? '✓ 1日全体を選択中' : '1日全体を選択'}
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* 実行ボタン */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowImproveMealModal(false)}
+                        className="flex-1 py-3 rounded-lg text-sm"
+                        style={{ background: colors.bg, color: colors.textLight }}
+                      >
+                        キャンセル
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (improveMealTargets.length === 0) {
+                            alert('改善する食事を選択してください');
+                            return;
+                          }
+                          
+                          setIsImprovingMeal(true);
+                          
+                          try {
+                            const targetDateStr = weekDates[selectedDayIndex]?.dateStr;
+                            
+                            // AI栄養士のコメントをユーザーコメントとして使用
+                            const userComment = nutritionFeedback 
+                              ? `AI栄養士の提案に基づいて改善してください：\n${nutritionFeedback}`
+                              : undefined;
+                            
+                            // V4 Generateを呼び出すためのスロットを構築
+                            const targetSlots = improveMealTargets.map(mealType => ({
+                              date: targetDateStr,
+                              mealType,
+                            }));
+                            
+                            // menu_generation_requests にリクエストを作成
+                            const requestRes = await fetch('/api/ai/menu/weekly/request', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                mode: 'v4',
+                                targetSlots,
+                                userComment,
+                                includeExisting: true, // 既存を上書き
+                              }),
+                            });
+                            
+                            if (!requestRes.ok) {
+                              throw new Error('リクエストの作成に失敗しました');
+                            }
+                            
+                            const requestData = await requestRes.json();
+                            
+                            // バックグラウンドでgenerate-menu-v4を呼び出し
+                            fetch('/api/ai/menu/v4/generate', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                requestId: requestData.id,
+                                step: 1,
+                              }),
+                            }).catch(console.error);
+                            
+                            // モーダルを閉じてメインページで進捗を確認
+                            setShowImproveMealModal(false);
+                            setShowNutritionDetailModal(false);
+                            
+                            // 進捗表示を開始
+                            setIsGenerating(true);
+                            setGenerationProgress({
+                              phase: 'analyzing',
+                              message: 'AI栄養士の提案を反映中...',
+                              percentage: 10,
+                            });
+                            
+                            // ポーリングで進捗を追跡（既存のV4用のRealtimeを使用）
+                            if (requestData.id) {
+                              v4Generation.subscribeToProgress(
+                                requestData.id,
+                                async (progress: any) => {
+                                  // 進捗更新
+                                  const uiProgress = convertV4ProgressToUIFormat(progress);
+                                  setGenerationProgress(uiProgress);
+                                  
+                                  // 完了したらデータを再取得
+                                  if (progress.status === 'completed' || progress.status === 'failed') {
+                                    setIsGenerating(false);
+                                    setGenerationProgress(null);
+                                    // データを再取得
+                                    const startStr = weekDates[0]?.dateStr;
+                                    const endStr = weekDates[weekDates.length - 1]?.dateStr;
+                                    if (startStr && endStr) {
+                                      const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
+                                      if (refreshRes.ok) {
+                                        const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
+                                        if (dailyMeals && dailyMeals.length > 0) {
+                                          setCurrentPlan({ days: dailyMeals });
+                                          if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              );
+                            }
+                          } catch (error) {
+                            console.error('Failed to improve meals:', error);
+                            alert('献立の改善に失敗しました。もう一度お試しください。');
+                          } finally {
+                            setIsImprovingMeal(false);
+                          }
+                        }}
+                        disabled={improveMealTargets.length === 0}
+                        className="flex-1 py-3 rounded-lg text-sm font-medium text-white disabled:opacity-50 flex items-center justify-center gap-2"
+                        style={{ background: colors.accent }}
+                      >
+                        <Sparkles size={14} />
+                        {improveMealTargets.length}食分を改善
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </motion.div>
           </motion.div>

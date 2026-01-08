@@ -1,7 +1,7 @@
 // packages/core は Web / Mobile で共有するコードの置き場です。
 // まずは雛形として追加し、必要なものから段階的に移行します。
 
-export const CORE_VERSION = "0.3.0"; // 日付ベースモデル対応
+export const CORE_VERSION = "0.4.0"; // 栄養目標計算モジュール追加
 
 // 型定義
 export * from "./types/userProfile";
@@ -17,5 +17,8 @@ export * from "./schemas";
 
 // 週計算ユーティリティ
 export * from "./utils/week-utils";
+
+// 栄養目標計算モジュール（DRI2020準拠）
+export * from "./nutrition";
 
 

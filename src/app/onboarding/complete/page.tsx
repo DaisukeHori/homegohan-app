@@ -79,6 +79,20 @@ export default function OnboardingCompletePage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.0 }}
+          className="text-center"
+        >
+          <Link
+            href="/profile/nutrition-targets"
+            className="text-sm text-orange-500 hover:text-orange-600 underline underline-offset-2"
+          >
+            栄養プランの根拠を見る（任意）
+          </Link>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 1.2 }}
         >
           <Link

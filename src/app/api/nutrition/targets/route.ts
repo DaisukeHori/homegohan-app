@@ -1,34 +1,13 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { calculateNutritionTargets, type NutritionCalculatorInput } from '@homegohan/core';
 
-// デフォルトの栄養目標値（成人）
-const DEFAULT_TARGETS = {
-  daily_calories: 2000,
-  protein_g: 60,
-  fat_g: 55,
-  carbs_g: 300,
-  sodium_g: 2.0,
-  sugar_g: 25,
-  fiber_g: 20,
-  potassium_mg: 2500,
-  calcium_mg: 650,
-  phosphorus_mg: 800,
-  iron_mg: 7.5,
-  zinc_mg: 10,
-  iodine_ug: 130,
-  cholesterol_mg: 300,
-  vitamin_b1_mg: 1.2,
-  vitamin_b2_mg: 1.4,
-  vitamin_b6_mg: 1.4,
-  vitamin_b12_ug: 2.4,
-  folic_acid_ug: 240,
-  vitamin_c_mg: 100,
-  vitamin_a_ug: 850,
-  vitamin_d_ug: 8.5,
-  vitamin_k_ug: 150,
-  vitamin_e_mg: 6.5,
-  saturated_fat_g: 16,
-};
+/**
+ * 栄養目標の取得・更新API
+ * 
+ * GET: 栄養目標を取得（auto_calculate=true または未設定の場合は自動計算）
+ * PUT: 栄養目標を更新
+ */
 
 // 栄養目標を取得
 export async function GET() {
@@ -60,12 +39,57 @@ export async function GET() {
         .eq('id', user.id)
         .single();
 
-      const calculatedTargets = calculateNutritionTargets(profile);
+      // 共通モジュールで計算
+      const calculatorInput: NutritionCalculatorInput = {
+        id: user.id,
+        age: profile?.age,
+        gender: profile?.gender,
+        height: profile?.height,
+        weight: profile?.weight,
+        work_style: profile?.work_style,
+        exercise_intensity: profile?.exercise_intensity,
+        exercise_frequency: profile?.exercise_frequency,
+        exercise_duration_per_session: profile?.exercise_duration_per_session,
+        nutrition_goal: profile?.nutrition_goal,
+        weight_change_rate: profile?.weight_change_rate,
+        health_conditions: profile?.health_conditions,
+        medications: profile?.medications,
+        pregnancy_status: profile?.pregnancy_status,
+      };
+
+      const { targetData } = calculateNutritionTargets(calculatorInput);
       
       return NextResponse.json({
         targets: {
-          ...calculatedTargets,
+          id: null,
+          userId: user.id,
+          dailyCalories: targetData.daily_calories,
+          proteinG: targetData.protein_g,
+          fatG: targetData.fat_g,
+          carbsG: targetData.carbs_g,
+          sodiumG: targetData.sodium_g,
+          sugarG: targetData.sugar_g,
+          fiberG: targetData.fiber_g,
+          potassiumMg: targetData.potassium_mg,
+          calciumMg: targetData.calcium_mg,
+          phosphorusMg: targetData.phosphorus_mg,
+          ironMg: targetData.iron_mg,
+          zincMg: targetData.zinc_mg,
+          iodineUg: targetData.iodine_ug,
+          cholesterolMg: targetData.cholesterol_mg,
+          vitaminB1Mg: targetData.vitamin_b1_mg,
+          vitaminB2Mg: targetData.vitamin_b2_mg,
+          vitaminB6Mg: targetData.vitamin_b6_mg,
+          vitaminB12Ug: targetData.vitamin_b12_ug,
+          folicAcidUg: targetData.folic_acid_ug,
+          vitaminCMg: targetData.vitamin_c_mg,
+          vitaminAUg: targetData.vitamin_a_ug,
+          vitaminDUg: targetData.vitamin_d_ug,
+          vitaminKUg: targetData.vitamin_k_ug,
+          vitaminEMg: targetData.vitamin_e_mg,
+          saturatedFatG: targetData.saturated_fat_g,
           autoCalculate: true,
+          calculationBasis: targetData.calculation_basis,
         },
         isCalculated: true,
       });
@@ -102,13 +126,15 @@ export async function GET() {
         vitaminEMg: targets.vitamin_e_mg,
         saturatedFatG: targets.saturated_fat_g,
         autoCalculate: targets.auto_calculate,
+        calculationBasis: targets.calculation_basis,
       },
       isCalculated: false,
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to fetch nutrition targets:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -125,9 +151,10 @@ export async function PUT(request: Request) {
     const body = await request.json();
     
     // スネークケースに変換
-    const dbData: any = {
+    const dbData: Record<string, unknown> = {
       user_id: user.id,
       auto_calculate: body.autoCalculate ?? false,
+      updated_at: new Date().toISOString(),
     };
 
     if (body.dailyCalories !== undefined) dbData.daily_calories = body.dailyCalories;
@@ -167,99 +194,9 @@ export async function PUT(request: Request) {
 
     return NextResponse.json({ success: true, targets: data });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to update nutrition targets:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-
-// 栄養目標を自動計算
-function calculateNutritionTargets(profile: any) {
-  const targets = { ...DEFAULT_TARGETS };
-  
-  if (!profile) return targets;
-
-  // 基礎代謝計算（Mifflin-St Jeor式）
-  let bmr = 1800;
-  if (profile.weight && profile.height && profile.age) {
-    if (profile.gender === 'male') {
-      bmr = Math.round(10 * profile.weight + 6.25 * profile.height - 5 * profile.age + 5);
-    } else {
-      bmr = Math.round(10 * profile.weight + 6.25 * profile.height - 5 * profile.age - 161);
-    }
-  }
-
-  // 活動係数
-  let activityMultiplier = 1.3;
-  const weeklyExercise = profile.weekly_exercise_minutes || 0;
-  if (weeklyExercise > 300) activityMultiplier = 1.7;
-  else if (weeklyExercise > 150) activityMultiplier = 1.5;
-  else if (weeklyExercise > 60) activityMultiplier = 1.4;
-
-  let tdee = bmr * activityMultiplier;
-
-  // 目標による調整
-  const goals = profile.fitness_goals || [];
-  if (goals.includes('lose_weight')) {
-    tdee -= 500;
-  } else if (goals.includes('gain_weight') || goals.includes('build_muscle')) {
-    tdee += 300;
-  }
-
-  targets.daily_calories = Math.max(Math.round(tdee), 1200);
-
-  // PFCバランス
-  let proteinRatio = 0.20;
-  let fatRatio = 0.25;
-  let carbsRatio = 0.55;
-
-  if (goals.includes('build_muscle')) {
-    proteinRatio = 0.30;
-    carbsRatio = 0.45;
-  } else if (goals.includes('lose_weight')) {
-    proteinRatio = 0.25;
-    fatRatio = 0.30;
-    carbsRatio = 0.45;
-  }
-
-  targets.protein_g = Math.round((targets.daily_calories * proteinRatio) / 4);
-  targets.fat_g = Math.round((targets.daily_calories * fatRatio) / 9);
-  targets.carbs_g = Math.round((targets.daily_calories * carbsRatio) / 4);
-
-  // 健康状態による調整
-  const conditions = profile.health_conditions || [];
-  if (conditions.includes('高血圧')) {
-    targets.sodium_g = 1.5;
-    targets.potassium_mg = 3500;
-  }
-  if (conditions.includes('糖尿病')) {
-    targets.sugar_g = 15;
-    targets.fiber_g = 25;
-  }
-  if (conditions.includes('脂質異常症')) {
-    targets.cholesterol_mg = 200;
-    targets.saturated_fat_g = 10;
-  }
-  if (conditions.includes('貧血')) {
-    targets.iron_mg = 15;
-    targets.vitamin_b12_ug = 3.0;
-    targets.folic_acid_ug = 400;
-  }
-
-  // 性別による調整
-  if (profile.gender === 'female') {
-    targets.iron_mg = 10.5;
-    targets.folic_acid_ug = 240;
-    if (profile.pregnancy_status === 'pregnant') {
-      targets.folic_acid_ug = 480;
-      targets.iron_mg = 21.5;
-      targets.calcium_mg = 800;
-    } else if (profile.pregnancy_status === 'nursing') {
-      targets.daily_calories += 350;
-      targets.calcium_mg = 800;
-    }
-  }
-
-  return targets;
-}
-

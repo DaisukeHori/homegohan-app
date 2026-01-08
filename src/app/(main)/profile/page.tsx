@@ -202,7 +202,16 @@ export default function ProfilePage() {
             transition={{ delay: 0.1 }}
             className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-6"
           >
-            <h3 className="text-sm font-bold text-gray-900 mb-3">📊 あなたの栄養目標（1日）</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-900">📊 あなたの栄養目標（1日）</h3>
+              <a 
+                href="/profile/nutrition-targets"
+                className="text-xs text-orange-500 hover:text-orange-600 flex items-center gap-1"
+              >
+                根拠を見る
+                <Icons.ChevronRight className="w-4 h-4" />
+              </a>
+            </div>
             <div className="grid grid-cols-4 gap-2">
               <div className="text-center p-2 bg-orange-50 rounded-xl">
                 <p className="text-lg font-bold text-orange-500">{nutritionTarget.protein}g</p>

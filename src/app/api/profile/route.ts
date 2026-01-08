@@ -1,6 +1,34 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { fromUserProfile } from '@/lib/converter'
+import { calculateNutritionTargets, type NutritionCalculatorInput } from '@homegohan/core'
+
+/**
+ * プロフィールAPI
+ * 
+ * 栄養目標に影響するフィールドの更新時は自動で再計算を行う
+ * （auto_calculate=true のユーザーのみ）
+ */
+
+// 栄養目標の再計算をトリガーするフィールド
+const NUTRITION_TRIGGER_FIELDS = [
+  'age', 'gender', 'height', 'weight',
+  'work_style', 'exercise_intensity', 'exercise_frequency', 'exercise_duration_per_session',
+  'nutrition_goal', 'weight_change_rate',
+  'health_conditions', 'medications', 'pregnancy_status',
+];
+
+// snake_case → camelCase のマッピング
+const FIELD_MAP: Record<string, string> = {
+  nutritionGoal: 'nutrition_goal',
+  weightChangeRate: 'weight_change_rate',
+  exerciseFrequency: 'exercise_frequency',
+  exerciseIntensity: 'exercise_intensity',
+  exerciseDurationPerSession: 'exercise_duration_per_session',
+  workStyle: 'work_style',
+  healthConditions: 'health_conditions',
+  pregnancyStatus: 'pregnancy_status',
+};
 
 export async function GET() {
   try {
@@ -22,8 +50,9 @@ export async function GET() {
     }
 
     return NextResponse.json(data)
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -39,7 +68,7 @@ export async function POST(request: Request) {
     const body = await request.json()
     
     // マッピング
-    const updates: any = {
+    const updates: Record<string, unknown> = {
       id: user.id,
       updated_at: new Date().toISOString(),
     };
@@ -66,6 +95,7 @@ export async function POST(request: Request) {
     if (body.workStyle) updates.work_style = body.workStyle;
     if (body.healthConditions) updates.health_conditions = body.healthConditions;
     if (body.medications) updates.medications = body.medications;
+    if (body.pregnancyStatus) updates.pregnancy_status = body.pregnancyStatus;
     if (body.fitnessGoals) updates.fitness_goals = body.fitnessGoals;
     if (body.dietFlags) updates.diet_flags = body.dietFlags;
     if (body.cookingExperience) updates.cooking_experience = body.cookingExperience;
@@ -91,10 +121,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
+    // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
+    const shouldRecalculate = checkShouldRecalculateNutrition(body);
+    if (shouldRecalculate) {
+      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data);
+    }
+
     return NextResponse.json(data)
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('API Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -138,14 +175,101 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
+    // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
+    const shouldRecalculate = checkShouldRecalculateNutrition(body);
+    if (shouldRecalculate) {
+      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data);
+    }
+
     return NextResponse.json(data)
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("API Error (PUT /api/profile):", error);
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+/**
+ * リクエストボディに栄養目標に影響するフィールドが含まれているかチェック
+ */
+function checkShouldRecalculateNutrition(body: Record<string, unknown>): boolean {
+  for (const key of Object.keys(body)) {
+    const snakeKey = FIELD_MAP[key] || key;
+    if (NUTRITION_TRIGGER_FIELDS.includes(snakeKey)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 栄養目標を再計算する（auto_calculate=true の場合のみ）
+ */
+async function recalculateNutritionTargetsIfNeeded(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  profile: any
+): Promise<void> {
+  try {
+    // 現在の栄養目標を取得
+    const { data: targets } = await supabase
+      .from('nutrition_targets')
+      .select('auto_calculate')
+      .eq('user_id', userId)
+      .single();
+
+    // auto_calculate=false（手動編集）の場合はスキップ
+    if (targets && targets.auto_calculate === false) {
+      return;
+    }
+
+    // 共通モジュールで計算
+    const calculatorInput: NutritionCalculatorInput = {
+      id: userId,
+      age: profile.age,
+      gender: profile.gender,
+      height: profile.height,
+      weight: profile.weight,
+      work_style: profile.work_style,
+      exercise_intensity: profile.exercise_intensity,
+      exercise_frequency: profile.exercise_frequency,
+      exercise_duration_per_session: profile.exercise_duration_per_session,
+      nutrition_goal: profile.nutrition_goal,
+      weight_change_rate: profile.weight_change_rate,
+      health_conditions: profile.health_conditions,
+      medications: profile.medications,
+      pregnancy_status: profile.pregnancy_status,
+    };
+
+    const { targetData } = calculateNutritionTargets(calculatorInput);
+
+    // 既存レコードがあるか確認
+    const { data: existing } = await supabase
+      .from('nutrition_targets')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (existing) {
+      await supabase
+        .from('nutrition_targets')
+        .update(targetData)
+        .eq('user_id', userId);
+    } else {
+      await supabase
+        .from('nutrition_targets')
+        .insert(targetData);
+    }
+  } catch (error) {
+    // エラーはログのみ（プロフィール更新自体は成功させる）
+    console.error('Nutrition targets recalculation error:', error);
   }
 }
 
 // プロファイル完成度を計算
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function calculateProfileCompleteness(profile: any): number {
   const fields = [
     // 基本情報 (20%)
