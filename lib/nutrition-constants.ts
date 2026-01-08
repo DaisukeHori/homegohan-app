@@ -65,14 +65,13 @@ export const calculateDriPercentage = (key: string, value: number | null | undef
   return Math.round((value / def.dri) * 100);
 };
 
-// デフォルトのレーダーチャート栄養素
+// デフォルトのレーダーチャート栄養素（5角形）
 export const DEFAULT_RADAR_NUTRIENTS = [
   'caloriesKcal',
   'proteinG',
   'fatG',
   'carbsG',
   'fiberG',
-  'vitaminCMg',
 ];
 
 // カテゴリごとにグループ化

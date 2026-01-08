@@ -983,6 +983,9 @@ export default function WeeklyMenuPage() {
   const [showNutritionDetailModal, setShowNutritionDetailModal] = useState(false);
   const [nutritionFeedback, setNutritionFeedback] = useState<string | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
+  const [isEditingRadarNutrients, setIsEditingRadarNutrients] = useState(false);
+  const [tempRadarNutrients, setTempRadarNutrients] = useState<string[]>([]);
+  const [isSavingRadarNutrients, setIsSavingRadarNutrients] = useState(false);
   
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
@@ -5510,36 +5513,125 @@ export default function WeeklyMenuPage() {
 
                       {/* レーダーチャート表示栄養素の変更 */}
                       <div className="pt-3" style={{ borderTop: `1px solid ${colors.border}` }}>
-                        <p className="text-[11px] mb-2" style={{ color: colors.textMuted }}>
-                          レーダーチャートに表示する栄養素
-                        </p>
-                        <div className="flex flex-wrap gap-1.5 mb-3">
-                          {radarChartNutrients.map(key => {
-                            const def = getNutrientDefinition(key);
-                            return (
-                              <span
-                                key={key}
-                                className="px-2 py-0.5 rounded-full text-[10px]"
-                                style={{ background: colors.accentLight, color: colors.accent }}
-                              >
-                                {def?.label}
-                              </span>
-                            );
-                          })}
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[11px]" style={{ color: colors.textMuted }}>
+                            レーダーチャートに表示する栄養素（{isEditingRadarNutrients ? tempRadarNutrients.length : radarChartNutrients.length}角形）
+                          </p>
+                          {!isEditingRadarNutrients && (
+                            <button
+                              onClick={() => {
+                                setTempRadarNutrients([...radarChartNutrients]);
+                                setIsEditingRadarNutrients(true);
+                              }}
+                              className="text-[10px] px-2 py-1 rounded"
+                              style={{ background: colors.bg, color: colors.accent }}
+                            >
+                              変更
+                            </button>
+                          )}
                         </div>
-                        <button
-                          onClick={() => {
-                            setShowNutritionDetailModal(false);
-                            // 設定画面に遷移（簡易版: ここでは直接変更UI）
-                            setActiveModal(null);
-                            // TODO: 設定ページへ遷移
-                            alert('設定画面は準備中です。今後のアップデートで追加予定です。');
-                          }}
-                          className="w-full py-2 rounded-lg text-xs"
-                          style={{ background: colors.bg, color: colors.textLight }}
-                        >
-                          表示する栄養素を変更 →
-                        </button>
+
+                        {isEditingRadarNutrients ? (
+                          // 編集モード: 栄養素を選択
+                          <div>
+                            <p className="text-[9px] mb-2" style={{ color: colors.textMuted }}>
+                              3〜8個を選択してください（選択順で表示）
+                            </p>
+                            {Object.entries(NUTRIENT_BY_CATEGORY).map(([category, nutrients]) => (
+                              <div key={category} className="mb-2">
+                                <p className="text-[9px] font-bold mb-1" style={{ color: colors.textMuted }}>
+                                  {CATEGORY_LABELS[category]}
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {nutrients.map(def => {
+                                    const isSelected = tempRadarNutrients.includes(def.key);
+                                    const index = tempRadarNutrients.indexOf(def.key);
+                                    return (
+                                      <button
+                                        key={def.key}
+                                        onClick={() => {
+                                          if (isSelected) {
+                                            setTempRadarNutrients(prev => prev.filter(k => k !== def.key));
+                                          } else if (tempRadarNutrients.length < 8) {
+                                            setTempRadarNutrients(prev => [...prev, def.key]);
+                                          }
+                                        }}
+                                        className="px-2 py-0.5 rounded-full text-[9px] transition-all flex items-center gap-1"
+                                        style={{
+                                          background: isSelected ? colors.accent : colors.bg,
+                                          color: isSelected ? '#fff' : colors.textLight,
+                                          opacity: !isSelected && tempRadarNutrients.length >= 8 ? 0.5 : 1,
+                                        }}
+                                      >
+                                        {isSelected && <span className="text-[8px]">{index + 1}</span>}
+                                        {def.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex gap-2 mt-3">
+                              <button
+                                onClick={() => {
+                                  setIsEditingRadarNutrients(false);
+                                  setTempRadarNutrients([]);
+                                }}
+                                className="flex-1 py-2 rounded-lg text-xs"
+                                style={{ background: colors.bg, color: colors.textLight }}
+                              >
+                                キャンセル
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (tempRadarNutrients.length < 3) {
+                                    alert('3個以上選択してください');
+                                    return;
+                                  }
+                                  setIsSavingRadarNutrients(true);
+                                  try {
+                                    const res = await fetch('/api/profile', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ radarChartNutrients: tempRadarNutrients })
+                                    });
+                                    if (res.ok) {
+                                      setRadarChartNutrients(tempRadarNutrients);
+                                      setIsEditingRadarNutrients(false);
+                                      setTempRadarNutrients([]);
+                                    }
+                                  } catch (e) {
+                                    console.error('Failed to save radar chart nutrients:', e);
+                                  } finally {
+                                    setIsSavingRadarNutrients(false);
+                                  }
+                                }}
+                                disabled={tempRadarNutrients.length < 3 || isSavingRadarNutrients}
+                                className="flex-1 py-2 rounded-lg text-xs text-white disabled:opacity-50"
+                                style={{ background: colors.accent }}
+                              >
+                                {isSavingRadarNutrients ? '保存中...' : `保存（${tempRadarNutrients.length}角形）`}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          // 表示モード: 現在の選択を表示
+                          <div className="flex flex-wrap gap-1.5">
+                            {radarChartNutrients.map((key, idx) => {
+                              const def = getNutrientDefinition(key);
+                              return (
+                                <span
+                                  key={key}
+                                  className="px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1"
+                                  style={{ background: colors.accentLight, color: colors.accent }}
+                                >
+                                  <span className="text-[8px] opacity-70">{idx + 1}</span>
+                                  {def?.label}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </>
                   );
