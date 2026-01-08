@@ -220,9 +220,9 @@ async function callOpenAI(prompt: string): Promise<NormalizedItem[]> {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
-      max_completion_tokens: 8000,
+      max_tokens: 8000,
       response_format: { type: "json_object" },
     }),
   });
