@@ -103,25 +103,41 @@ export function V4GenerateModal({
   // Confirmation for "all" mode
   const [confirmAllMode, setConfirmAllMode] = useState(false);
 
-  // Calculate empty slots count for current week
+  // 今日の日付を取得
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }, []);
+
+  // 計算開始日は今日とweekStartDateの遅い方（過去の空欄はカウントしない）
+  const effectiveStartDate = useMemo(() => {
+    return weekStartDate >= todayStr ? weekStartDate : todayStr;
+  }, [weekStartDate, todayStr]);
+
+  // Calculate empty slots count for current week (今日以降のみ)
   const emptySlotCount = useMemo(() => {
+    // 開始日が終了日を超える場合は0（週全体が過去の場合）
+    if (effectiveStartDate > weekEndDate) return 0;
     return countEmptySlots({
       mealPlanDays,
-      startDate: weekStartDate,
+      startDate: effectiveStartDate,
       endDate: weekEndDate,
     });
-  }, [mealPlanDays, weekStartDate, weekEndDate]);
+  }, [mealPlanDays, effectiveStartDate, weekEndDate]);
 
-  // Build target slots based on selected mode
+  // Build target slots based on selected mode (今日以降のみ対象)
   const buildTargetSlots = useCallback((): TargetSlot[] => {
     switch (selectedMode) {
       case 'empty':
+        // 今日以降の空欄のみ
+        if (effectiveStartDate > weekEndDate) return [];
         return buildEmptySlots({
           mealPlanDays,
-          startDate: weekStartDate,
+          startDate: effectiveStartDate,
           endDate: weekEndDate,
         });
       case 'range':
+        // 範囲指定は指定された日付をそのまま使う（ユーザーの意図を尊重）
         return buildRangeSlots({
           mealPlanDays,
           startDate: rangeStart,
@@ -129,15 +145,17 @@ export function V4GenerateModal({
           includeExisting,
         });
       case 'all':
+        // 今日以降のすべて
+        if (effectiveStartDate > weekEndDate) return [];
         return buildAllFutureSlots({
           mealPlanDays,
-          startDate: weekStartDate,
+          startDate: effectiveStartDate,
           endDate: weekEndDate,
         });
       default:
         return [];
     }
-  }, [selectedMode, mealPlanDays, weekStartDate, weekEndDate, rangeStart, rangeEnd, includeExisting]);
+  }, [selectedMode, mealPlanDays, effectiveStartDate, weekEndDate, rangeStart, rangeEnd, includeExisting]);
 
   // Handle generate
   const handleGenerate = async () => {
