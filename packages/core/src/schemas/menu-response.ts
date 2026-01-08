@@ -123,21 +123,15 @@ export type RegenerateMealResponse = z.infer<
 /**
  * LLMレスポンスをパース＆バリデーション
  */
-export function parseWeeklyMenuResponse(
-  json: unknown
-): z.SafeParseReturnType<unknown, WeeklyMenuResponse> {
+export function parseWeeklyMenuResponse(json: unknown) {
   return WeeklyMenuResponseSchema.safeParse(json);
 }
 
-export function parseSingleMealResponse(
-  json: unknown
-): z.SafeParseReturnType<unknown, SingleMealResponse> {
+export function parseSingleMealResponse(json: unknown) {
   return SingleMealResponseSchema.safeParse(json);
 }
 
-export function parseRegenerateMealResponse(
-  json: unknown
-): z.SafeParseReturnType<unknown, RegenerateMealResponse> {
+export function parseRegenerateMealResponse(json: unknown) {
   return RegenerateMealResponseSchema.safeParse(json);
 }
 
