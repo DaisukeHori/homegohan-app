@@ -7,7 +7,6 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // 栄養データと週間データからハッシュを生成（変更検知用）
 function generateHash(nutrition: any, weekData: any): string {
-  // 主要な栄養素の値を丸めて文字列化（小さな誤差は無視）
   const nutritionStr = JSON.stringify({
     cal: Math.round(nutrition.caloriesKcal || 0),
     prot: Math.round(nutrition.proteinG || 0),
@@ -15,7 +14,6 @@ function generateHash(nutrition: any, weekData: any): string {
     carb: Math.round(nutrition.carbsG || 0),
   });
   
-  // 週間の献立をシンプルに文字列化
   const weekStr = (weekData || [])
     .map((d: any) => `${d.date}:${d.meals?.map((m: any) => m.title).join(',') || ''}`)
     .join('|');
@@ -23,69 +21,42 @@ function generateHash(nutrition: any, weekData: any): string {
   return crypto.createHash('md5').update(nutritionStr + weekStr).digest('hex');
 }
 
-export async function POST(request: Request) {
-  try {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+// LLMでフィードバックを生成する関数
+async function generateFeedbackWithLLM(
+  date: string,
+  nutrition: any,
+  mealCount: number,
+  weekData: any[]
+): Promise<string> {
+  const mainNutrients = [
+    'caloriesKcal', 'proteinG', 'fatG', 'carbsG', 'fiberG', 
+    'sodiumG', 'vitaminCMg', 'calciumMg', 'ironMg', 'vitaminAUg',
+    'vitaminB1Mg', 'vitaminB2Mg', 'vitaminDUg', 'zincMg', 'magnesiumMg'
+  ];
+  
+  const nutrientAnalysis = mainNutrients.map(key => {
+    const def = getNutrientDefinition(key);
+    const value = nutrition[key] ?? 0;
+    const percentage = calculateDriPercentage(key, value);
+    return {
+      name: def?.label ?? key,
+      value: value.toFixed(def?.decimals ?? 1),
+      unit: def?.unit ?? '',
+      percentage,
+      status: percentage >= 80 && percentage <= 120 ? '適正' : percentage < 50 ? '不足' : percentage > 150 ? '過剰' : '目標に近い',
+    };
+  });
 
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+  const deficient = nutrientAnalysis.filter(n => n.percentage < 50);
+  const excess = nutrientAnalysis.filter(n => n.percentage > 150);
+  const good = nutrientAnalysis.filter(n => n.percentage >= 80 && n.percentage <= 120);
 
-    const body = await request.json();
-    const { date, nutrition, mealCount, weekData, forceRefresh } = body;
+  const weekSummary = weekData?.map((d: any) => {
+    const dayMeals = d.meals?.map((m: any) => `${m.title}(${m.calories || '?'}kcal)`).join(', ') || '献立なし';
+    return `${d.date}: ${dayMeals}`;
+  }).join('\n') || '';
 
-    if (!nutrition || !date) {
-      return NextResponse.json({ error: 'Nutrition data and date required' }, { status: 400 });
-    }
-
-    // ハッシュを生成
-    const nutritionHash = generateHash(nutrition, weekData);
-
-    // キャッシュを確認（forceRefreshでない場合）
-    if (!forceRefresh) {
-      const { data: cached } = await supabase
-        .from('nutrition_feedback_cache')
-        .select('feedback, nutrition_hash')
-        .eq('user_id', user.id)
-        .eq('target_date', date)
-        .single();
-
-      // キャッシュがあり、ハッシュが一致すればキャッシュを返す
-      if (cached && cached.nutrition_hash === nutritionHash) {
-        return NextResponse.json({ feedback: cached.feedback, cached: true });
-      }
-    }
-
-    // キャッシュがないか、データが変更されているのでLLM呼び出し
-    const mainNutrients = [
-      'caloriesKcal', 'proteinG', 'fatG', 'carbsG', 'fiberG', 
-      'sodiumG', 'vitaminCMg', 'calciumMg', 'ironMg', 'vitaminAUg',
-      'vitaminB1Mg', 'vitaminB2Mg', 'vitaminDUg', 'zincMg', 'magnesiumMg'
-    ];
-    const nutrientAnalysis = mainNutrients.map(key => {
-      const def = getNutrientDefinition(key);
-      const value = nutrition[key] ?? 0;
-      const percentage = calculateDriPercentage(key, value);
-      return {
-        name: def?.label ?? key,
-        value: value.toFixed(def?.decimals ?? 1),
-        unit: def?.unit ?? '',
-        percentage,
-        status: percentage >= 80 && percentage <= 120 ? '適正' : percentage < 50 ? '不足' : percentage > 150 ? '過剰' : '目標に近い',
-      };
-    });
-
-    const deficient = nutrientAnalysis.filter(n => n.percentage < 50);
-    const excess = nutrientAnalysis.filter(n => n.percentage > 150);
-    const good = nutrientAnalysis.filter(n => n.percentage >= 80 && n.percentage <= 120);
-
-    const weekSummary = weekData?.map((d: any) => {
-      const dayMeals = d.meals?.map((m: any) => `${m.title}(${m.calories || '?'}kcal)`).join(', ') || '献立なし';
-      return `${d.date}: ${dayMeals}`;
-    }).join('\n') || '';
-
-    const prompt = `あなたはベテランの管理栄養士です。以下の1日の栄養データと1週間の献立を詳細に分析し、具体的で実践的なアドバイスをしてください。
+  const prompt = `あなたはベテランの管理栄養士です。以下の1日の栄養データと1週間の献立を詳細に分析し、具体的で実践的なアドバイスをしてください。
 
 ## 対象日: ${date}
 ## 食事数: ${mealCount}食
@@ -109,51 +80,201 @@ ${weekSummary}
 - 専門用語は避けてわかりやすく
 - 週間の献立傾向も考慮してコメント`;
 
-    // GPT-5.2を使用（栄養士コメントのみ高品質モデル）
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-5.2',
-        messages: [
-          {
-            role: 'system',
-            content: 'あなたは親しみやすく経験豊富な管理栄養士です。ユーザーの食生活を優しく、前向きに、かつ具体的にアドバイスします。週間の食事傾向も見ながら、実践しやすいアドバイスを心がけてください。',
-          },
-          { role: 'user', content: prompt },
-        ],
-        max_completion_tokens: 500,
-      }),
-    });
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-5.2',
+      messages: [
+        {
+          role: 'system',
+          content: 'あなたは親しみやすく経験豊富な管理栄養士です。ユーザーの食生活を優しく、前向きに、かつ具体的にアドバイスします。週間の食事傾向も見ながら、実践しやすいアドバイスを心がけてください。',
+        },
+        { role: 'user', content: prompt },
+      ],
+      max_completion_tokens: 500,
+    }),
+  });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('OpenAI API error:', errorData);
-      return NextResponse.json({ error: 'AI分析に失敗しました', details: errorData }, { status: 500 });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    console.error('OpenAI API error:', errorData);
+    throw new Error('AI分析に失敗しました');
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content?.trim() || '分析結果を取得できませんでした。';
+}
+
+export async function POST(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const data = await response.json();
-    const feedback = data.choices?.[0]?.message?.content?.trim() || '分析結果を取得できませんでした。';
+    const body = await request.json();
+    const { date, nutrition, mealCount, weekData, forceRefresh } = body;
 
-    // キャッシュに保存（upsert）
-    await supabase
+    if (!nutrition || !date) {
+      return NextResponse.json({ error: 'Nutrition data and date required' }, { status: 400 });
+    }
+
+    const nutritionHash = generateHash(nutrition, weekData);
+
+    // キャッシュを確認（forceRefreshでない場合）
+    if (!forceRefresh) {
+      const { data: cached } = await supabase
+        .from('nutrition_feedback_cache')
+        .select('id, feedback, nutrition_hash, status')
+        .eq('user_id', user.id)
+        .eq('target_date', date)
+        .single();
+
+      // キャッシュがあり、ハッシュが一致し、完了状態ならキャッシュを返す
+      if (cached && cached.nutrition_hash === nutritionHash && cached.status === 'completed') {
+        return NextResponse.json({ 
+          feedback: cached.feedback, 
+          cached: true,
+          status: 'completed'
+        });
+      }
+
+      // 生成中の場合はステータスのみ返す
+      if (cached && cached.status === 'generating') {
+        return NextResponse.json({ 
+          feedback: null, 
+          cached: false,
+          status: 'generating',
+          cacheId: cached.id
+        });
+      }
+    }
+
+    // 新規生成または再生成が必要
+    // まずpendingステータスでレコードを作成/更新
+    const { data: cacheRecord, error: upsertError } = await supabase
       .from('nutrition_feedback_cache')
       .upsert({
         user_id: user.id,
         target_date: date,
-        feedback,
+        feedback: '',
         nutrition_hash: nutritionHash,
-        week_hash: nutritionHash, // 簡略化のため同じハッシュを使用
+        week_hash: nutritionHash,
+        status: 'generating',
       }, {
         onConflict: 'user_id,target_date'
-      });
+      })
+      .select('id')
+      .single();
 
-    return NextResponse.json({ feedback, cached: false });
+    if (upsertError) {
+      console.error('Failed to create cache record:', upsertError);
+      return NextResponse.json({ error: 'キャッシュの作成に失敗しました' }, { status: 500 });
+    }
+
+    const cacheId = cacheRecord.id;
+
+    // バックグラウンドでLLM処理を実行（レスポンスは先に返す）
+    // Next.jsのwaitUntilを使用
+    const backgroundTask = (async () => {
+      try {
+        const feedback = await generateFeedbackWithLLM(date, nutrition, mealCount, weekData);
+        
+        // 完了したらDBを更新（Realtimeで自動通知される）
+        await supabase
+          .from('nutrition_feedback_cache')
+          .update({
+            feedback,
+            status: 'completed',
+          })
+          .eq('id', cacheId);
+          
+        console.log(`Nutrition feedback generated for ${date}`);
+      } catch (error) {
+        console.error('Background LLM task failed:', error);
+        
+        // エラー時もDBを更新
+        await supabase
+          .from('nutrition_feedback_cache')
+          .update({
+            feedback: '分析中にエラーが発生しました。再分析をお試しください。',
+            status: 'error',
+          })
+          .eq('id', cacheId);
+      }
+    })();
+
+    // waitUntilが利用可能な場合はバックグラウンドで実行
+    // @ts-ignore - Next.js edge runtime specific
+    if (typeof globalThis.waitUntil === 'function') {
+      // @ts-ignore
+      globalThis.waitUntil(backgroundTask);
+    } else {
+      // waitUntilが使えない場合は同期的に実行
+      await backgroundTask;
+    }
+
+    // 即座にレスポンスを返す（フロントエンドはRealtimeで更新を受け取る）
+    return NextResponse.json({ 
+      feedback: null, 
+      cached: false,
+      status: 'generating',
+      cacheId
+    });
   } catch (error: any) {
     console.error('Nutrition feedback error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// キャッシュのステータスを確認するGETエンドポイント
+export async function GET(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const date = searchParams.get('date');
+    const cacheId = searchParams.get('cacheId');
+
+    if (!date && !cacheId) {
+      return NextResponse.json({ error: 'date or cacheId required' }, { status: 400 });
+    }
+
+    let query = supabase
+      .from('nutrition_feedback_cache')
+      .select('id, feedback, status, nutrition_hash')
+      .eq('user_id', user.id);
+
+    if (cacheId) {
+      query = query.eq('id', cacheId);
+    } else if (date) {
+      query = query.eq('target_date', date);
+    }
+
+    const { data, error } = await query.single();
+
+    if (error || !data) {
+      return NextResponse.json({ status: 'not_found' });
+    }
+
+    return NextResponse.json({
+      feedback: data.status === 'completed' ? data.feedback : null,
+      status: data.status,
+      cacheId: data.id
+    });
+  } catch (error: any) {
+    console.error('Nutrition feedback GET error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

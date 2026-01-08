@@ -987,6 +987,8 @@ export default function WeeklyMenuPage() {
   const [tempRadarNutrients, setTempRadarNutrients] = useState<string[]>([]);
   const [isSavingRadarNutrients, setIsSavingRadarNutrients] = useState(false);
   const [lastFeedbackDate, setLastFeedbackDate] = useState<string | null>(null);
+  const [feedbackCacheId, setFeedbackCacheId] = useState<string | null>(null);
+  const feedbackChannelRef = useRef<RealtimeChannel | null>(null);
   
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
@@ -1523,10 +1525,17 @@ export default function WeeklyMenuPage() {
     }
   };
 
-  // AI栄養士フィードバックを取得する関数
+  // AI栄養士フィードバックを取得する関数（非同期＋Realtime対応）
   const fetchNutritionFeedback = async (dateStr: string, forceRefresh = false) => {
     setNutritionFeedback(null);
     setIsLoadingFeedback(true);
+    setFeedbackCacheId(null);
+    
+    // 既存のRealtime購読をクリーンアップ
+    if (feedbackChannelRef.current) {
+      supabase.removeChannel(feedbackChannelRef.current);
+      feedbackChannelRef.current = null;
+    }
     
     const targetDay = currentPlan?.days?.find(d => d.dayDate === dateStr);
     const mealCount = targetDay?.meals?.filter(m => m.dishName)?.length || 0;
@@ -1551,20 +1560,84 @@ export default function WeeklyMenuPage() {
           })) || [],
         })
       });
+      
       if (res.ok) {
         const data = await res.json();
-        setNutritionFeedback(data.feedback);
-        // キャッシュから取得した場合はログ
-        if (data.cached) {
+        
+        // キャッシュから即座に取得できた場合
+        if (data.cached && data.feedback) {
+          setNutritionFeedback(data.feedback);
+          setIsLoadingFeedback(false);
           console.log('Nutrition feedback loaded from cache');
+          return;
+        }
+        
+        // 生成中の場合はRealtimeで更新を待つ
+        if (data.status === 'generating' && data.cacheId) {
+          setFeedbackCacheId(data.cacheId);
+          console.log('Nutrition feedback generating, subscribing to Realtime...');
+          
+          // Realtime購読を設定
+          const channel = supabase
+            .channel(`nutrition_feedback_${data.cacheId}`)
+            .on(
+              'postgres_changes',
+              {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'nutrition_feedback_cache',
+                filter: `id=eq.${data.cacheId}`,
+              },
+              (payload: any) => {
+                const newRecord = payload.new;
+                console.log('Realtime update received:', newRecord.status);
+                
+                if (newRecord.status === 'completed' && newRecord.feedback) {
+                  setNutritionFeedback(newRecord.feedback);
+                  setIsLoadingFeedback(false);
+                  
+                  // 購読解除
+                  if (feedbackChannelRef.current) {
+                    supabase.removeChannel(feedbackChannelRef.current);
+                    feedbackChannelRef.current = null;
+                  }
+                } else if (newRecord.status === 'error') {
+                  setNutritionFeedback(newRecord.feedback || '分析中にエラーが発生しました。');
+                  setIsLoadingFeedback(false);
+                  
+                  if (feedbackChannelRef.current) {
+                    supabase.removeChannel(feedbackChannelRef.current);
+                    feedbackChannelRef.current = null;
+                  }
+                }
+              }
+            )
+            .subscribe();
+          
+          feedbackChannelRef.current = channel;
+          
+          // タイムアウト：30秒後にポーリングにフォールバック
+          setTimeout(async () => {
+            if (isLoadingFeedback && feedbackCacheId) {
+              console.log('Realtime timeout, polling for result...');
+              const pollRes = await fetch(`/api/ai/nutrition/feedback?cacheId=${data.cacheId}`);
+              if (pollRes.ok) {
+                const pollData = await pollRes.json();
+                if (pollData.status === 'completed' && pollData.feedback) {
+                  setNutritionFeedback(pollData.feedback);
+                  setIsLoadingFeedback(false);
+                }
+              }
+            }
+          }, 30000);
         }
       } else {
         setNutritionFeedback('分析結果を取得できませんでした。');
+        setIsLoadingFeedback(false);
       }
     } catch (e) {
       console.error('Failed to get nutrition feedback:', e);
       setNutritionFeedback('分析中にエラーが発生しました。');
-    } finally {
       setIsLoadingFeedback(false);
     }
   };
@@ -1578,6 +1651,14 @@ export default function WeeklyMenuPage() {
       setLastFeedbackDate(currentDateStr);
       fetchNutritionFeedback(currentDateStr);
     }
+    
+    // クリーンアップ：モーダルが閉じたらRealtime購読を解除
+    return () => {
+      if (!showNutritionDetailModal && feedbackChannelRef.current) {
+        supabase.removeChannel(feedbackChannelRef.current);
+        feedbackChannelRef.current = null;
+      }
+    };
   }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);
   
   // Week Navigation
