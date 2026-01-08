@@ -1557,7 +1557,7 @@ export default function WeeklyMenuPage() {
             meals: d.meals?.map(m => ({ 
               title: m.dishName, 
               calories: m.caloriesKcal,
-              dishes: m.dishes?.map(dish => dish.title) || []
+              dishes: m.dishes?.map(dish => dish.name) || []
             })) || []
           })) || [],
         })
