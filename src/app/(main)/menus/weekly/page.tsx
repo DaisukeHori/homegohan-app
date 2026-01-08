@@ -6340,9 +6340,9 @@ export default function WeeklyMenuPage() {
                             });
                             
                             // ポーリングで進捗を追跡（既存のV4用のRealtimeを使用）
-                            if (requestData.id) {
+                            if (requestData.requestId) {
                               v4Generation.subscribeToProgress(
-                                requestData.id,
+                                requestData.requestId,
                                 async (progress: any) => {
                                   // 進捗更新
                                   const uiProgress = convertV4ProgressToUIFormat(progress);

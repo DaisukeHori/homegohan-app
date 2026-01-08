@@ -80,9 +80,13 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
         (payload) => {
           const newData = payload.new as any;
           
-          if (newData.progress) {
-            onProgress(newData.progress);
-          }
+          // progressにstatusも含めて渡す（コールバック側で完了判定できるように）
+          const progressWithStatus = {
+            ...(newData.progress || {}),
+            status: newData.status,
+            errorMessage: newData.error_message,
+          };
+          onProgress(progressWithStatus);
           
           if (newData.status === "completed" || newData.status === "failed") {
             setIsGenerating(false);
