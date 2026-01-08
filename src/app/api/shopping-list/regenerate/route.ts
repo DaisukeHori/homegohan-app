@@ -19,12 +19,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 });
     }
 
-    // リクエストレコードを作成
+    // リクエストレコードを作成（日付ベースモデル対応）
     const { data: requestData, error: insertError } = await supabase
       .from('shopping_list_requests')
       .insert({
         user_id: user.id,
         status: 'processing',
+        start_date: startDate,
+        end_date: endDate,
         progress: {
           phase: 'starting',
           message: '開始中...',
