@@ -904,8 +904,7 @@ async function executeStep1_Generate(
   const dates = generatedData.dates?.length ? generatedData.dates : uniqDatesFromSlots(targetSlots);
 
   // Persisted contexts (prefer generated_data, else initial body)
-  const mealPlanId = generatedData.mealPlanId ?? body?.mealPlanId ?? body?.meal_plan_id;
-  if (!mealPlanId) throw new Error("mealPlanId is required");
+  // Note: mealPlanId は日付ベースモデルでは不要（user_daily_meals を直接使用）
 
   const note: string | null = generatedData.note ?? (typeof body?.note === "string" ? body.note : null) ?? (typeof reqRow.prompt === "string" ? reqRow.prompt : null);
   const constraintsRaw = generatedData.constraints ?? body?.constraints ?? reqRow.constraints ?? {};
@@ -1075,7 +1074,6 @@ async function executeStep1_Generate(
   const updatedGeneratedData: V4GeneratedData = {
     ...generatedData,
     version: "v4",
-    mealPlanId,
     dates,
     targetSlots,
     existingMenus,
@@ -1138,8 +1136,7 @@ async function executeStep2_Review(
   }
 
   const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
-  const mealPlanId = generatedData.mealPlanId;
-  if (!mealPlanId) throw new Error("mealPlanId missing in generated_data");
+  // Note: mealPlanId は日付ベースモデルでは不要
 
   const targetSlots = generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []);
   const dates = generatedData.dates ?? uniqDatesFromSlots(targetSlots);
@@ -1376,8 +1373,7 @@ async function executeStep3_Complete(
   }
 
   const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
-  const mealPlanId = generatedData.mealPlanId;
-  if (!mealPlanId) throw new Error("mealPlanId missing in generated_data");
+  // Note: mealPlanId は日付ベースモデルでは不要
 
   const targetSlots = sortTargetSlots(generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []));
   const totalSlots = targetSlots.length;
