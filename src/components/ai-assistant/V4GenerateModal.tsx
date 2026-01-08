@@ -150,15 +150,25 @@ export function V4GenerateModal({
   }, [includeExisting]);
 
   // rangeStart/rangeEndのsetterをラップして、過去日付の場合は今日に調整
+  // 開始日が終了日より後になった場合は終了日を開始日に合わせる
   const handleSetRangeStart = useCallback((value: string) => {
     const adjusted = value < todayStr ? todayStr : value;
     setRangeStart(adjusted);
-  }, [todayStr]);
+    // 開始日が終了日より後になった場合、終了日を開始日に合わせる
+    if (adjusted > rangeEnd) {
+      setRangeEnd(adjusted);
+    }
+  }, [todayStr, rangeEnd]);
 
+  // 終了日が開始日より前になった場合は開始日を終了日に合わせる
   const handleSetRangeEnd = useCallback((value: string) => {
     const adjusted = value < todayStr ? todayStr : value;
     setRangeEnd(adjusted);
-  }, [todayStr]);
+    // 終了日が開始日より前になった場合、開始日を終了日に合わせる
+    if (adjusted < rangeStart) {
+      setRangeStart(adjusted);
+    }
+  }, [todayStr, rangeStart]);
   
   // Constraints
   const [constraints, setConstraints] = useState<MenuGenerationConstraints>({
