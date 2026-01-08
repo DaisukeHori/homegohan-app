@@ -195,7 +195,7 @@ ${instructionsText ?? '(なし)'}
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.3,
-        max_tokens: 2000,
+        max_completion_tokens: 2000,
       }),
     });
 

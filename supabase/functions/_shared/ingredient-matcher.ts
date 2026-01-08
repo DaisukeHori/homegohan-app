@@ -188,7 +188,7 @@ ${candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 10
         model: 'gpt-5-mini',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
-        max_tokens: 10,
+        max_completion_tokens: 10,
       }),
     })
 
