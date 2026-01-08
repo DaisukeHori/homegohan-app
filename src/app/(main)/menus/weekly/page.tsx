@@ -1531,6 +1531,8 @@ export default function WeeklyMenuPage() {
     setIsLoadingFeedback(true);
     setFeedbackCacheId(null);
     
+    const supabase = supabaseRef.current;
+    
     // 既存のRealtime購読をクリーンアップ
     if (feedbackChannelRef.current) {
       supabase.removeChannel(feedbackChannelRef.current);
@@ -1655,7 +1657,7 @@ export default function WeeklyMenuPage() {
     // クリーンアップ：モーダルが閉じたらRealtime購読を解除
     return () => {
       if (!showNutritionDetailModal && feedbackChannelRef.current) {
-        supabase.removeChannel(feedbackChannelRef.current);
+        supabaseRef.current.removeChannel(feedbackChannelRef.current);
         feedbackChannelRef.current = null;
       }
     };
