@@ -331,9 +331,9 @@ const ProgressTodoCard = ({
         )}
       </div>
       
-      {/* 展開時のToDoリスト */}
+      {/* 展開時のToDoリスト（エラー時は表示しない） */}
       <AnimatePresence>
-        {isExpanded && (
+        {isExpanded && !isError && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -343,7 +343,7 @@ const ProgressTodoCard = ({
           >
             <div className="px-3.5 pb-3 pt-1 border-t border-white/20">
               <div className="space-y-1.5">
-                {dynamicPhases.map((phase) => {
+                {dynamicPhases.filter(p => p.phase !== 'failed').map((phase) => {
                   const status = getPhaseStatus(phase);
                   return (
                     <div 
@@ -352,7 +352,7 @@ const ProgressTodoCard = ({
                     >
                       {status === 'completed' ? (
                         <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
-                          <Check size={10} color={cardColors.accent} strokeWidth={3} />
+                          <Check size={10} color={isError ? '#ef4444' : cardColors.accent} strokeWidth={3} />
                         </div>
                       ) : status === 'in_progress' ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

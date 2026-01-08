@@ -223,7 +223,7 @@ async function callOpenAI(prompt: string): Promise<NormalizedItem[]> {
       model: "gpt-5-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 8000,
-      reasoning_effort: "none",
+      reasoning_effort: "minimal",
       response_format: { type: "json_object" },
     }),
   });
