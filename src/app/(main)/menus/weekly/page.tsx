@@ -224,6 +224,7 @@ const SHOPPING_LIST_PHASES = [
   { phase: 'categorizing', label: 'カテゴリ分類', threshold: 70 },
   { phase: 'saving', label: '保存中', threshold: 85 },
   { phase: 'completed', label: '完了！', threshold: 100 },
+  { phase: 'failed', label: 'エラーが発生しました', threshold: 0 },
 ];
 
 type PhaseDefinition = { phase: string; label: string; threshold: number };
@@ -276,28 +277,43 @@ const ProgressTodoCard = ({
     return 'pending';
   };
 
+  const isError = currentPhase === 'failed';
+
   return (
     <div
       className="mx-3 mt-2 rounded-xl overflow-hidden cursor-pointer transition-all duration-300"
-      style={{ background: `linear-gradient(135deg, ${cardColors.accent} 0%, ${cardColors.purple} 100%)` }}
+      style={{ background: isError 
+        ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+        : `linear-gradient(135deg, ${cardColors.accent} 0%, ${cardColors.purple} 100%)` 
+      }}
       onClick={() => setIsExpanded(!isExpanded)}
     >
       {/* ヘッダー部分 */}
       <div className="px-3.5 py-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            {isError ? (
+              <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700 }}>!</span>
+              </div>
+            ) : (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            )}
             <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-              {totalDays > 0 
-                ? `献立を生成中...（${progress?.completedSlots || 0}/${totalSlots}食、${totalDays}日分）`
-                : (progress?.message || defaultMessage)
+              {isError 
+                ? (progress?.message || 'エラーが発生しました')
+                : totalDays > 0 
+                  ? `献立を生成中...（${progress?.completedSlots || 0}/${totalSlots}食、${totalDays}日分）`
+                  : (progress?.message || defaultMessage)
               }
             </span>
           </div>
           <div className="flex items-center gap-1">
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
-              {progress?.percentage ? `${progress.percentage}%` : ''}
-            </span>
+            {!isError && (
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
+                {progress?.percentage ? `${progress.percentage}%` : ''}
+              </span>
+            )}
             {isExpanded ? (
               <ChevronUp size={14} color="rgba(255,255,255,0.7)" />
             ) : (
@@ -305,7 +321,7 @@ const ProgressTodoCard = ({
             )}
           </div>
         </div>
-        {progress?.percentage !== undefined && (
+        {progress?.percentage !== undefined && !isError && (
           <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
             <div 
               className="h-full bg-white rounded-full transition-all duration-500 ease-out"
@@ -1899,8 +1915,25 @@ export default function WeeklyMenuPage() {
     
     console.log('📡 Subscribing to shopping list request:', requestId);
     
+    // タイムアウト処理（2分で強制終了）
+    const TIMEOUT_MS = 120000;
+    const startTime = Date.now();
+    
     // ポーリングも並行開始（Realtimeのバックアップ）
     const poll = async () => {
+      // タイムアウトチェック
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        console.log('⏰ Shopping list regeneration timed out');
+        setShoppingListProgress({ phase: 'failed', message: '処理がタイムアウトしました。もう一度お試しください。', percentage: 0 });
+        setTimeout(() => {
+          setIsRegeneratingShoppingList(false);
+          setShoppingListProgress(null);
+          setShoppingListRequestId(null);
+        }, 5000);
+        localStorage.removeItem('shoppingListRegenerating');
+        cleanupShoppingListSubscription();
+        return;
+      }
       try {
         const res = await fetch(`/api/shopping-list/regenerate/status?requestId=${requestId}`);
         if (!res.ok) return;
@@ -1933,10 +1966,14 @@ export default function WeeklyMenuPage() {
           cleanupShoppingListSubscription();
         } else if (data.status === 'failed') {
           console.log('❌ Shopping list regeneration failed (polling)');
-          alert(data.result?.error || '再生成に失敗しました');
-          setIsRegeneratingShoppingList(false);
-          setShoppingListProgress(null);
-          setShoppingListRequestId(null);
+          const errorMsg = data.result?.error || '再生成に失敗しました';
+          setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
+          // 5秒後に自動で閉じる
+          setTimeout(() => {
+            setIsRegeneratingShoppingList(false);
+            setShoppingListProgress(null);
+            setShoppingListRequestId(null);
+          }, 5000);
           localStorage.removeItem('shoppingListRegenerating');
           cleanupShoppingListSubscription();
         }
@@ -2005,10 +2042,14 @@ export default function WeeklyMenuPage() {
             cleanupShoppingListSubscription();
           } else if (newData.status === 'failed') {
             console.log('❌ Shopping list regeneration failed (realtime)');
-            alert(newData.result?.error || '再生成に失敗しました');
-            setIsRegeneratingShoppingList(false);
-            setShoppingListProgress(null);
-            setShoppingListRequestId(null);
+            const errorMsg = newData.result?.error || '再生成に失敗しました';
+            setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
+            // 5秒後に自動で閉じる
+            setTimeout(() => {
+              setIsRegeneratingShoppingList(false);
+              setShoppingListProgress(null);
+              setShoppingListRequestId(null);
+            }, 5000);
             localStorage.removeItem('shoppingListRegenerating');
             cleanupShoppingListSubscription();
           }
@@ -4444,6 +4485,23 @@ export default function WeeklyMenuPage() {
                       phases={SHOPPING_LIST_PHASES}
                       defaultMessage="買い物リストを生成中..."
                     />
+                    {/* エラー時の閉じるボタン */}
+                    {shoppingListProgress.phase === 'failed' && (
+                      <div className="mx-3 mt-2 flex justify-end">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsRegeneratingShoppingList(false);
+                            setShoppingListProgress(null);
+                            setShoppingListRequestId(null);
+                          }}
+                          className="px-4 py-2 rounded-lg text-sm font-medium"
+                          style={{ background: colors.card, color: colors.text, border: `1px solid ${colors.border}` }}
+                        >
+                          閉じる
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
