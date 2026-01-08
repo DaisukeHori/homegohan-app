@@ -491,6 +491,7 @@ export default function WeeklyMenuPage() {
   // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
+  const [isDayNutritionExpanded, setIsDayNutritionExpanded] = useState(false);
   
   // 直近の食事を自動展開する関数
   const autoExpandNextMeal = (plan: WeekPlan | null, dates: { dateStr: string }[]) => {
@@ -1513,6 +1514,7 @@ export default function WeeklyMenuPage() {
     setSelectedDayIndex(0);
     setHasAutoExpanded(false); // 週が変わったらリセット
     setExpandedMealId(null);
+    setIsDayNutritionExpanded(false);
   };
   
   const goToNextWeek = () => {
@@ -1522,6 +1524,7 @@ export default function WeeklyMenuPage() {
     setSelectedDayIndex(0);
     setHasAutoExpanded(false); // 週が変わったらリセット
     setExpandedMealId(null);
+    setIsDayNutritionExpanded(false);
   };
 
   // --- Handlers ---
@@ -2716,6 +2719,69 @@ export default function WeeklyMenuPage() {
     return day.meals.reduce((sum, m) => sum + (m.caloriesKcal || 0), 0);
   };
 
+  // 1日の全栄養素を合計
+  const getDayTotalNutrition = (day: MealPlanDay | undefined) => {
+    const totals = {
+      caloriesKcal: 0,
+      proteinG: 0,
+      fatG: 0,
+      carbsG: 0,
+      sodiumG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      potassiumMg: 0,
+      calciumMg: 0,
+      phosphorusMg: 0,
+      magnesiumMg: 0,
+      ironMg: 0,
+      zincMg: 0,
+      iodineUg: 0,
+      cholesterolMg: 0,
+      vitaminAUg: 0,
+      vitaminB1Mg: 0,
+      vitaminB2Mg: 0,
+      vitaminB6Mg: 0,
+      vitaminB12Ug: 0,
+      vitaminCMg: 0,
+      vitaminDUg: 0,
+      vitaminEMg: 0,
+      vitaminKUg: 0,
+      folicAcidUg: 0,
+      saturatedFatG: 0,
+    };
+    if (!day?.meals) return totals;
+    
+    for (const m of day.meals) {
+      totals.caloriesKcal += m.caloriesKcal || 0;
+      totals.proteinG += m.proteinG || 0;
+      totals.fatG += m.fatG || 0;
+      totals.carbsG += m.carbsG || 0;
+      totals.sodiumG += m.sodiumG || 0;
+      totals.sugarG += m.sugarG || 0;
+      totals.fiberG += m.fiberG || 0;
+      totals.potassiumMg += m.potassiumMg || 0;
+      totals.calciumMg += m.calciumMg || 0;
+      totals.phosphorusMg += m.phosphorusMg || 0;
+      totals.magnesiumMg += m.magnesiumMg || 0;
+      totals.ironMg += m.ironMg || 0;
+      totals.zincMg += m.zincMg || 0;
+      totals.iodineUg += m.iodineUg || 0;
+      totals.cholesterolMg += m.cholesterolMg || 0;
+      totals.vitaminAUg += m.vitaminAUg || 0;
+      totals.vitaminB1Mg += m.vitaminB1Mg || 0;
+      totals.vitaminB2Mg += m.vitaminB2Mg || 0;
+      totals.vitaminB6Mg += m.vitaminB6Mg || 0;
+      totals.vitaminB12Ug += m.vitaminB12Ug || 0;
+      totals.vitaminCMg += m.vitaminCMg || 0;
+      totals.vitaminDUg += m.vitaminDUg || 0;
+      totals.vitaminEMg += m.vitaminEMg || 0;
+      totals.vitaminKUg += m.vitaminKUg || 0;
+      totals.folicAcidUg += m.folicAcidUg || 0;
+      totals.saturatedFatG += m.saturatedFatG || 0;
+    }
+    return totals;
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: colors.bg }}>
@@ -3249,7 +3315,10 @@ export default function WeeklyMenuPage() {
               return (
                 <button
                   key={day.dateStr}
-                  onClick={() => setSelectedDayIndex(idx)}
+                  onClick={() => {
+                    setSelectedDayIndex(idx);
+                    setIsDayNutritionExpanded(false);
+                  }}
                   className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all relative"
                   style={{
                     background: isSelected 
@@ -3316,19 +3385,95 @@ export default function WeeklyMenuPage() {
 
       {/* === Main Content === */}
       <main className="flex-1 p-3 overflow-y-auto">
-        <div className="flex justify-between items-center mb-2 px-1">
-          <div className="flex items-center gap-1.5">
-            <span style={{ fontSize: 16, fontWeight: 600, color: weekDates[selectedDayIndex]?.dateStr < todayStr ? colors.textMuted : colors.text }}>
-              {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()}（{weekDates[selectedDayIndex]?.dayOfWeek}）
-            </span>
-            {weekDates[selectedDayIndex]?.dateStr === todayStr && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
-            )}
-            {weekDates[selectedDayIndex]?.dateStr < todayStr && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.textMuted, color: '#fff' }}>過去</span>
-            )}
+        {/* 日付ヘッダー（タップで1日の栄養を展開） */}
+        <div 
+          className="mb-2 px-3 py-2 rounded-xl cursor-pointer transition-all duration-200"
+          style={{ 
+            background: isDayNutritionExpanded ? colors.card : 'transparent',
+            border: isDayNutritionExpanded ? `1px solid ${colors.border}` : '1px solid transparent',
+          }}
+          onClick={() => setIsDayNutritionExpanded(!isDayNutritionExpanded)}
+        >
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontSize: 16, fontWeight: 600, color: weekDates[selectedDayIndex]?.dateStr < todayStr ? colors.textMuted : colors.text }}>
+                {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()}（{weekDates[selectedDayIndex]?.dayOfWeek}）
+              </span>
+              {weekDates[selectedDayIndex]?.dateStr === todayStr && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
+              )}
+              {weekDates[selectedDayIndex]?.dateStr < todayStr && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.textMuted, color: '#fff' }}>過去</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <span style={{ fontSize: 12, color: colors.textMuted }}>{getDayTotalCal(currentDay)} kcal</span>
+              {isDayNutritionExpanded ? (
+                <ChevronUp size={14} color={colors.textMuted} />
+              ) : (
+                <ChevronDown size={14} color={colors.textMuted} />
+              )}
+            </div>
           </div>
-          <span style={{ fontSize: 12, color: colors.textMuted }}>{getDayTotalCal(currentDay)} kcal</span>
+          
+          {/* 展開時：1日の全栄養素 */}
+          <AnimatePresence>
+            {isDayNutritionExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                {(() => {
+                  const dayNutrition = getDayTotalNutrition(currentDay);
+                  const mealCount = currentDay?.meals?.length || 0;
+                  return (
+                    <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${colors.border}` }}>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <BarChart3 size={12} color={colors.accent} />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>
+                          1日の合計栄養（{mealCount}食分）
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[10px]" style={{ color: colors.text }}>
+                        {/* 基本栄養素 */}
+                        <NutritionItem label="エネルギー" value={dayNutrition.caloriesKcal} unit="kcal" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="タンパク質" value={dayNutrition.proteinG} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="脂質" value={dayNutrition.fatG} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="炭水化物" value={dayNutrition.carbsG} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="食物繊維" value={dayNutrition.fiberG} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="糖質" value={dayNutrition.sugarG} unit="g" textColor={colors.textMuted} />
+                        {/* ミネラル */}
+                        <NutritionItem label="塩分" value={dayNutrition.sodiumG} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="カリウム" value={dayNutrition.potassiumMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="カルシウム" value={dayNutrition.calciumMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="リン" value={dayNutrition.phosphorusMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="鉄分" value={dayNutrition.ironMg} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="亜鉛" value={dayNutrition.zincMg} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="ヨウ素" value={dayNutrition.iodineUg} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        {/* 脂質詳細 */}
+                        <NutritionItem label="飽和脂肪酸" value={dayNutrition.saturatedFatG} unit="g" textColor={colors.textMuted} />
+                        <NutritionItem label="コレステロール" value={dayNutrition.cholesterolMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        {/* ビタミン類 */}
+                        <NutritionItem label="ビタミンA" value={dayNutrition.vitaminAUg} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB1" value={dayNutrition.vitaminB1Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB2" value={dayNutrition.vitaminB2Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB6" value={dayNutrition.vitaminB6Mg} unit="mg" decimals={2} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンB12" value={dayNutrition.vitaminB12Ug} unit="µg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンC" value={dayNutrition.vitaminCMg} unit="mg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンD" value={dayNutrition.vitaminDUg} unit="µg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンE" value={dayNutrition.vitaminEMg} unit="mg" textColor={colors.textMuted} />
+                        <NutritionItem label="ビタミンK" value={dayNutrition.vitaminKUg} unit="µg" decimals={0} textColor={colors.textMuted} />
+                        <NutritionItem label="葉酸" value={dayNutrition.folicAcidUg} unit="µg" decimals={0} textColor={colors.textMuted} />
+                      </div>
+                    </div>
+                  );
+                })()}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Meal Cards - 基本の3食（複数対応） */}
