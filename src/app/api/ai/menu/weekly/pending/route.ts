@@ -23,11 +23,12 @@ export async function GET(request: Request) {
 
     // ユーザーの最新の pending または processing の週間生成リクエストを確認
     // start_date に関係なく、最新のリクエストを返す（リロード時の復元を確実にするため）
+    // mode='weekly', mode='v4', mode=null のすべてを対象
     const { data: pendingRequest, error } = await supabase
       .from('weekly_menu_requests')
       .select('id, status, mode, start_date, created_at, updated_at')
       .eq('user_id', user.id)
-      .or('mode.eq.weekly,mode.is.null')
+      .or('mode.eq.weekly,mode.eq.v4,mode.is.null')
       .in('status', ['pending', 'processing'])
       .order('created_at', { ascending: false })
       .limit(1)

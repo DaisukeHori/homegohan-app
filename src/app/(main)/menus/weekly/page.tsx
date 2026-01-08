@@ -1130,6 +1130,113 @@ export default function WeeklyMenuPage() {
     }
   }, []);
 
+  // V4進捗をUI形式に変換するヘルパー関数
+  const convertV4ProgressToUIFormat = useCallback((progress: {
+    phase?: string;
+    message?: string;
+    percentage?: number;
+    currentStep?: number;
+    totalSteps?: number;
+    completedSlots?: number;
+    totalSlots?: number;
+  }) => {
+    // 既にUI形式の場合はそのまま返す
+    if (progress.phase && progress.percentage !== undefined) {
+      return {
+        phase: progress.phase,
+        message: progress.message || '',
+        percentage: progress.percentage,
+      };
+    }
+    
+    // V4形式の場合はUI形式に変換
+    if (progress.currentStep !== undefined && progress.totalSteps !== undefined) {
+      const message = progress.message || 'AIが献立を生成中...';
+      const currentStep = progress.currentStep;
+      const completedSlots = progress.completedSlots || 0;
+      const totalSlots = progress.totalSlots || 1;
+      
+      let phase = 'generating';
+      let percentage = 0;
+      
+      // Step 1 (0-40%): 生成フェーズ
+      if (currentStep === 1 || currentStep === 0) {
+        if (message.includes('ユーザー情報') || message.includes('取得中')) {
+          phase = 'user_context';
+          percentage = 5;
+        } else if (message.includes('参考') || message.includes('検索中')) {
+          phase = 'search_references';
+          percentage = 10;
+        } else {
+          phase = 'generating';
+          percentage = 12 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 28);
+        }
+      }
+      // Step 2 (40-75%): レビューフェーズ
+      else if (currentStep === 2) {
+        if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
+          phase = 'reviewing';
+          percentage = 47;
+        } else if (message.includes('改善中')) {
+          phase = 'fixing';
+          const match = message.match(/(\d+)\/(\d+)/);
+          if (match) {
+            const current = parseInt(match[1]);
+            const total = parseInt(match[2]);
+            percentage = 58 + Math.round((current / Math.max(total, 1)) * 12);
+          } else {
+            percentage = 60;
+          }
+        } else if (message.includes('問題なし')) {
+          phase = 'no_issues';
+          percentage = 72;
+        } else if (message.includes('レビュー完了')) {
+          phase = 'step2_complete';
+          percentage = 75;
+        } else {
+          phase = 'reviewing';
+          percentage = 50;
+        }
+      }
+      // Step 3 (75-100%): 保存フェーズ
+      else if (currentStep === 3) {
+        if (message.includes('栄養計算') || message.includes('栄養')) {
+          phase = 'calculating';
+          percentage = 80;
+        } else if (message.includes('保存中')) {
+          phase = 'saving';
+          const match = message.match(/(\d+)\/(\d+)/);
+          if (match) {
+            const current = parseInt(match[1]);
+            const total = parseInt(match[2]);
+            percentage = 88 + Math.round((current / Math.max(total, 1)) * 10);
+          } else {
+            percentage = 90;
+          }
+        } else if (message.includes('完了') || message.includes('保存しました')) {
+          phase = 'completed';
+          percentage = 100;
+        } else {
+          phase = 'saving';
+          percentage = 88;
+        }
+      }
+      
+      return {
+        phase,
+        message,
+        percentage: Math.round(percentage),
+      };
+    }
+    
+    // フォールバック
+    return {
+      phase: 'generating',
+      message: progress.message || 'AIが献立を生成中...',
+      percentage: 0,
+    };
+  }, []);
+
   // ポーリングで進捗を取得
   const startPolling = useCallback((targetDate: string, requestId: string) => {
     console.log('⏱️ Starting fallback polling for requestId:', requestId);
@@ -1142,7 +1249,8 @@ export default function WeeklyMenuPage() {
         const data = await res.json();
         
         if (data.progress) {
-          setGenerationProgress(data.progress);
+          const uiProgress = convertV4ProgressToUIFormat(data.progress);
+          setGenerationProgress(uiProgress);
         }
         
         if (data.status === 'completed') {
@@ -1183,7 +1291,7 @@ export default function WeeklyMenuPage() {
     poll();
     // 3秒ごとにポーリング
     pollingIntervalRef.current = setInterval(poll, 3000);
-  }, [cleanupPolling, cleanupRealtime]);
+  }, [cleanupPolling, cleanupRealtime, convertV4ProgressToUIFormat]);
 
   // Realtime で生成完了を監視（常にポーリングも並行実行）
   const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string) => {
@@ -1214,13 +1322,27 @@ export default function WeeklyMenuPage() {
             // Realtimeが動作しているのでポーリングを停止
             cleanupPolling();
             
-            const newData = payload.new as { status: string; progress?: { phase: string; message: string; percentage: number } };
+            const newData = payload.new as { 
+              status: string; 
+              mode?: string;
+              progress?: { 
+                phase?: string; 
+                message?: string; 
+                percentage?: number;
+                // V4形式のフィールド
+                currentStep?: number;
+                totalSteps?: number;
+                completedSlots?: number;
+                totalSlots?: number;
+              } 
+            };
             const newStatus = newData?.status;
             
-            // 進捗情報を更新
+            // 進捗情報を更新（V4形式をUI形式に変換）
             if (newData?.progress) {
               console.log('📊 Progress update:', newData.progress);
-              setGenerationProgress(newData.progress);
+              const uiProgress = convertV4ProgressToUIFormat(newData.progress);
+              setGenerationProgress(uiProgress);
             }
             
             if (newStatus === 'completed') {
@@ -1285,7 +1407,7 @@ export default function WeeklyMenuPage() {
         startPolling(targetDate, requestId);
       }
     }, 5000);
-  }, [cleanupRealtime, cleanupPolling, startPolling]);
+  }, [cleanupRealtime, cleanupPolling, startPolling, convertV4ProgressToUIFormat]);
 
   // ポーリングのクリーンアップ（アンマウント時）
   useEffect(() => {
