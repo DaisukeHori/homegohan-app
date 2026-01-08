@@ -609,12 +609,14 @@ export default function WeeklyMenuPage() {
     onGenerationComplete: () => {
       console.log('V4 generation completed');
       setIsGenerating(false);
+      setGenerationProgress(null);  // 進捗表示をクリア
       refreshMealPlan();
       setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' });
     },
     onError: (error) => {
       console.error('V4 generation error:', error);
       setIsGenerating(false);
+      setGenerationProgress(null);  // 進捗表示をクリア
       alert(error);
     },
   });
