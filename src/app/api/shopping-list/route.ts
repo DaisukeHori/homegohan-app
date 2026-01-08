@@ -96,3 +96,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+/**
+ * 買い物リストアイテム一括削除API
+ */
+export async function DELETE(request: Request) {
+  const supabase = await createClient();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  try {
+    const json = await request.json();
+    const { itemIds } = json;
+
+    if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
+      return NextResponse.json({ error: 'itemIds is required and must be a non-empty array' }, { status: 400 });
+    }
+
+    const { error } = await supabase
+      .from('shopping_list_items')
+      .delete()
+      .in('id', itemIds);
+
+    if (error) throw error;
+
+    return NextResponse.json({ success: true, deletedCount: itemIds.length });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

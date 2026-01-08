@@ -1889,9 +1889,35 @@ export default function WeeklyMenuPage() {
     try {
       const res = await fetch(`/api/shopping-list/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
-    } catch (e) { 
+    } catch (e) {
       // 失敗したら元に戻す
-      setShoppingList(previousList); 
+      setShoppingList(previousList);
+    }
+  };
+
+  // 買い物リスト全削除
+  const deleteAllShoppingItems = async () => {
+    if (shoppingList.length === 0) return;
+
+    if (!confirm(`${shoppingList.length}件のアイテムをすべて削除しますか？`)) return;
+
+    const previousList = shoppingList;
+    const itemIds = shoppingList.map(i => i.id);
+
+    // 楽観的UI更新
+    setShoppingList([]);
+
+    try {
+      const res = await fetch('/api/shopping-list', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemIds })
+      });
+      if (!res.ok) throw new Error('Delete all failed');
+    } catch (e) {
+      // 失敗したら元に戻す
+      setShoppingList(previousList);
+      alert('削除に失敗しました');
     }
   };
 
@@ -4390,9 +4416,19 @@ export default function WeeklyMenuPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setShowServingsModal(true)} 
-                      className="w-7 h-7 rounded-full flex items-center justify-center" 
+                    {shoppingList.length > 0 && (
+                      <button
+                        onClick={deleteAllShoppingItems}
+                        className="w-7 h-7 rounded-full flex items-center justify-center"
+                        style={{ background: colors.bg }}
+                        title="すべて削除"
+                      >
+                        <Trash2 size={14} color={colors.danger || '#ef4444'} />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowServingsModal(true)}
+                      className="w-7 h-7 rounded-full flex items-center justify-center"
                       style={{ background: colors.bg }}
                       title="人数設定"
                     >
