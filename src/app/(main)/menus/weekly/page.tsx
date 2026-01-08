@@ -1718,6 +1718,18 @@ export default function WeeklyMenuPage() {
     };
   }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);
   
+  // サマリーモーダルを開いた時も今日のフィードバックを取得
+  useEffect(() => {
+    if (activeModal === 'stats' && weeklySummaryTab === 'today') {
+      const todayStr = formatLocalDate(new Date());
+      // まだ取得していない場合のみ取得
+      if (todayStr !== lastFeedbackDate) {
+        setLastFeedbackDate(todayStr);
+        fetchNutritionFeedback(todayStr);
+      }
+    }
+  }, [activeModal, weeklySummaryTab]);
+  
   // Week Navigation
   const goToPreviousWeek = () => {
     const newStart = new Date(weekStart);
