@@ -1523,57 +1523,62 @@ export default function WeeklyMenuPage() {
     }
   };
 
+  // AI栄養士フィードバックを取得する関数
+  const fetchNutritionFeedback = async (dateStr: string, forceRefresh = false) => {
+    setNutritionFeedback(null);
+    setIsLoadingFeedback(true);
+    
+    const targetDay = currentPlan?.days?.find(d => d.dayDate === dateStr);
+    const mealCount = targetDay?.meals?.filter(m => m.dishName)?.length || 0;
+    const dayNutrition = getDayTotalNutrition(targetDay);
+    
+    try {
+      const res = await fetch('/api/ai/nutrition/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: dateStr,
+          nutrition: dayNutrition,
+          mealCount,
+          forceRefresh,
+          weekData: currentPlan?.days?.map(d => ({
+            date: d.dayDate,
+            meals: d.meals?.map(m => ({ 
+              title: m.dishName, 
+              calories: m.caloriesKcal,
+              dishes: m.dishes?.map(dish => dish.title) || []
+            })) || []
+          })) || [],
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNutritionFeedback(data.feedback);
+        // キャッシュから取得した場合はログ
+        if (data.cached) {
+          console.log('Nutrition feedback loaded from cache');
+        }
+      } else {
+        setNutritionFeedback('分析結果を取得できませんでした。');
+      }
+    } catch (e) {
+      console.error('Failed to get nutrition feedback:', e);
+      setNutritionFeedback('分析中にエラーが発生しました。');
+    } finally {
+      setIsLoadingFeedback(false);
+    }
+  };
+
   // AI栄養士フィードバックを自動取得（モーダルを開いた瞬間に開始）
   useEffect(() => {
     const currentDateStr = weekDates[selectedDayIndex]?.dateStr;
     
     // モーダルが開いていて、かつ日付が変わった場合に取得
     if (showNutritionDetailModal && currentDateStr && currentDateStr !== lastFeedbackDate) {
-      // フィードバックをリセットして読み込み開始
-      setNutritionFeedback(null);
-      setIsLoadingFeedback(true);
       setLastFeedbackDate(currentDateStr);
-      
-      // 当日の栄養データを計算
-      const currentDay = currentPlan?.days?.find(d => d.dayDate === currentDateStr);
-      const mealCount = currentDay?.meals?.filter(m => m.dishName)?.length || 0;
-      const dayNutrition = getDayTotalNutrition(currentDay);
-      
-      // 非同期でフィードバック取得
-      (async () => {
-        try {
-          const res = await fetch('/api/ai/nutrition/feedback', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: currentDateStr,
-              nutrition: dayNutrition,
-              mealCount,
-              weekData: currentPlan?.days?.map(d => ({
-                date: d.dayDate,
-                meals: d.meals?.map(m => ({ 
-                  title: m.dishName, 
-                  calories: m.caloriesKcal,
-                  dishes: m.dishes?.map(dish => dish.title) || []
-                })) || []
-              })) || [],
-            })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setNutritionFeedback(data.feedback);
-          } else {
-            setNutritionFeedback('分析結果を取得できませんでした。');
-          }
-        } catch (e) {
-          console.error('Failed to get nutrition feedback:', e);
-          setNutritionFeedback('分析中にエラーが発生しました。');
-        } finally {
-          setIsLoadingFeedback(false);
-        }
-      })();
+      fetchNutritionFeedback(currentDateStr);
     }
-  }, [showNutritionDetailModal, selectedDayIndex, weekDates, currentPlan?.days, lastFeedbackDate]);
+  }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);
   
   // Week Navigation
   const goToPreviousWeek = () => {
@@ -5459,7 +5464,7 @@ export default function WeeklyMenuPage() {
                         />
                       </div>
 
-                      {/* AI栄養士のコメント（自動取得） */}
+                      {/* AI栄養士のコメント（DBキャッシュ使用、変更時は自動再生成） */}
                       <div className="mb-4 p-3 rounded-xl" style={{ background: colors.accentLight }}>
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -5469,8 +5474,11 @@ export default function WeeklyMenuPage() {
                           {nutritionFeedback && !isLoadingFeedback && (
                             <button
                               onClick={() => {
-                                // 再分析を強制実行
-                                setLastFeedbackDate(null);
+                                // 強制的に再分析（キャッシュをスキップ）
+                                const currentDateStr = weekDates[selectedDayIndex]?.dateStr;
+                                if (currentDateStr) {
+                                  fetchNutritionFeedback(currentDateStr, true);
+                                }
                               }}
                               className="text-[10px] px-2 py-0.5 rounded"
                               style={{ background: colors.bg, color: colors.textMuted }}

@@ -1,8 +1,27 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { getNutrientDefinition, calculateDriPercentage } from '@/lib/nutrition-constants';
+import crypto from 'crypto';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// 栄養データと週間データからハッシュを生成（変更検知用）
+function generateHash(nutrition: any, weekData: any): string {
+  // 主要な栄養素の値を丸めて文字列化（小さな誤差は無視）
+  const nutritionStr = JSON.stringify({
+    cal: Math.round(nutrition.caloriesKcal || 0),
+    prot: Math.round(nutrition.proteinG || 0),
+    fat: Math.round(nutrition.fatG || 0),
+    carb: Math.round(nutrition.carbsG || 0),
+  });
+  
+  // 週間の献立をシンプルに文字列化
+  const weekStr = (weekData || [])
+    .map((d: any) => `${d.date}:${d.meals?.map((m: any) => m.title).join(',') || ''}`)
+    .join('|');
+  
+  return crypto.createHash('md5').update(nutritionStr + weekStr).digest('hex');
+}
 
 export async function POST(request: Request) {
   try {
@@ -14,13 +33,31 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { date, nutrition, mealCount, weekData } = body;
+    const { date, nutrition, mealCount, weekData, forceRefresh } = body;
 
-    if (!nutrition) {
-      return NextResponse.json({ error: 'Nutrition data required' }, { status: 400 });
+    if (!nutrition || !date) {
+      return NextResponse.json({ error: 'Nutrition data and date required' }, { status: 400 });
     }
 
-    // 全ての重要な栄養素の達成率を計算（より詳細な分析のため）
+    // ハッシュを生成
+    const nutritionHash = generateHash(nutrition, weekData);
+
+    // キャッシュを確認（forceRefreshでない場合）
+    if (!forceRefresh) {
+      const { data: cached } = await supabase
+        .from('nutrition_feedback_cache')
+        .select('feedback, nutrition_hash')
+        .eq('user_id', user.id)
+        .eq('target_date', date)
+        .single();
+
+      // キャッシュがあり、ハッシュが一致すればキャッシュを返す
+      if (cached && cached.nutrition_hash === nutritionHash) {
+        return NextResponse.json({ feedback: cached.feedback, cached: true });
+      }
+    }
+
+    // キャッシュがないか、データが変更されているのでLLM呼び出し
     const mainNutrients = [
       'caloriesKcal', 'proteinG', 'fatG', 'carbsG', 'fiberG', 
       'sodiumG', 'vitaminCMg', 'calciumMg', 'ironMg', 'vitaminAUg',
@@ -39,18 +76,15 @@ export async function POST(request: Request) {
       };
     });
 
-    // 不足・過剰な栄養素を抽出
     const deficient = nutrientAnalysis.filter(n => n.percentage < 50);
     const excess = nutrientAnalysis.filter(n => n.percentage > 150);
     const good = nutrientAnalysis.filter(n => n.percentage >= 80 && n.percentage <= 120);
 
-    // 週間の献立サマリー（より詳細に）
     const weekSummary = weekData?.map((d: any) => {
       const dayMeals = d.meals?.map((m: any) => `${m.title}(${m.calories || '?'}kcal)`).join(', ') || '献立なし';
       return `${d.date}: ${dayMeals}`;
     }).join('\n') || '';
 
-    // LLMプロンプト（より詳細な分析を促す）
     const prompt = `あなたはベテランの管理栄養士です。以下の1日の栄養データと1週間の献立を詳細に分析し、具体的で実践的なアドバイスをしてください。
 
 ## 対象日: ${date}
@@ -104,7 +138,20 @@ ${weekSummary}
     const data = await response.json();
     const feedback = data.choices?.[0]?.message?.content?.trim() || '分析結果を取得できませんでした。';
 
-    return NextResponse.json({ feedback });
+    // キャッシュに保存（upsert）
+    await supabase
+      .from('nutrition_feedback_cache')
+      .upsert({
+        user_id: user.id,
+        target_date: date,
+        feedback,
+        nutrition_hash: nutritionHash,
+        week_hash: nutritionHash, // 簡略化のため同じハッシュを使用
+      }, {
+        onConflict: 'user_id,target_date'
+      });
+
+    return NextResponse.json({ feedback, cached: false });
   } catch (error: any) {
     console.error('Nutrition feedback error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
