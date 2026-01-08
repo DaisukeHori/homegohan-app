@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 
 const superAdminNavItems = [
   { href: "/super-admin", label: "概要", icon: "🏠" },
+  { href: "/super-admin/llm-usage", label: "LLM使用量", icon: "🤖" },
   { href: "/super-admin/admins", label: "管理者管理", icon: "👑" },
   { href: "/super-admin/settings", label: "システム設定", icon: "⚙️" },
   { href: "/super-admin/feature-flags", label: "機能フラグ", icon: "🚩" },
