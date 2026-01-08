@@ -1525,11 +1525,23 @@ export default function WeeklyMenuPage() {
     }
   };
 
-  // AI栄養士フィードバックを取得する関数（ポーリング方式で確実に更新を検知）
+  // AI栄養士フィードバックを取得する関数（Realtime + ポーリングのハイブリッド方式）
   const fetchNutritionFeedback = async (dateStr: string, forceRefresh = false) => {
     setNutritionFeedback(null);
     setIsLoadingFeedback(true);
     setFeedbackCacheId(null);
+    
+    const supabase = supabaseRef.current;
+    
+    // 既存の購読/ポーリングをクリーンアップ
+    if (feedbackChannelRef.current) {
+      if ('unsubscribe' in feedbackChannelRef.current) {
+        (feedbackChannelRef.current as any).unsubscribe();
+      } else {
+        supabase.removeChannel(feedbackChannelRef.current as RealtimeChannel);
+      }
+      feedbackChannelRef.current = null;
+    }
     
     const targetDay = currentPlan?.days?.find(d => d.dayDate === dateStr);
     const mealCount = targetDay?.meals?.filter(m => m.dishName)?.length || 0;
@@ -1566,17 +1578,24 @@ export default function WeeklyMenuPage() {
           return;
         }
         
-        // 生成中の場合はポーリングで更新を待つ
+        // 生成中の場合はRealtime + ポーリングで更新を待つ
         if (data.status === 'generating' && data.cacheId) {
           const cacheId = data.cacheId;
           setFeedbackCacheId(cacheId);
-          console.log('Nutrition feedback generating, starting polling...');
+          console.log('Nutrition feedback generating, setting up Realtime + polling...');
           
-          // ポーリングで完了を待つ（2秒間隔、最大30秒）
+          let isResolved = false;
+          
+          // ポーリングを設定（フォールバック用、2秒間隔）
           let pollCount = 0;
-          const maxPolls = 15;
+          const maxPolls = 20; // 40秒
           
           const pollInterval = setInterval(async () => {
+            if (isResolved) {
+              clearInterval(pollInterval);
+              return;
+            }
+            
             pollCount++;
             
             try {
@@ -1585,14 +1604,20 @@ export default function WeeklyMenuPage() {
                 const pollData = await pollRes.json();
                 
                 if (pollData.status === 'completed' && pollData.feedback) {
-                  setNutritionFeedback(pollData.feedback);
-                  setIsLoadingFeedback(false);
-                  clearInterval(pollInterval);
-                  console.log('Nutrition feedback received via polling');
+                  if (!isResolved) {
+                    isResolved = true;
+                    setNutritionFeedback(pollData.feedback);
+                    setIsLoadingFeedback(false);
+                    clearInterval(pollInterval);
+                    console.log('Nutrition feedback received via polling');
+                  }
                 } else if (pollData.status === 'error') {
-                  setNutritionFeedback(pollData.feedback || '分析中にエラーが発生しました。');
-                  setIsLoadingFeedback(false);
-                  clearInterval(pollInterval);
+                  if (!isResolved) {
+                    isResolved = true;
+                    setNutritionFeedback(pollData.feedback || '分析中にエラーが発生しました。');
+                    setIsLoadingFeedback(false);
+                    clearInterval(pollInterval);
+                  }
                 }
               }
             } catch (e) {
@@ -1600,15 +1625,56 @@ export default function WeeklyMenuPage() {
             }
             
             // タイムアウト
-            if (pollCount >= maxPolls) {
+            if (pollCount >= maxPolls && !isResolved) {
+              isResolved = true;
               clearInterval(pollInterval);
               setNutritionFeedback('分析がタイムアウトしました。再分析をお試しください。');
               setIsLoadingFeedback(false);
             }
           }, 2000);
           
-          // クリーンアップ用にintervalを保存
-          feedbackChannelRef.current = { unsubscribe: () => clearInterval(pollInterval) } as any;
+          // Realtimeも設定（より高速な通知のため）
+          const channel = supabase
+            .channel(`nutrition_feedback_${cacheId}`)
+            .on(
+              'postgres_changes',
+              {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'nutrition_feedback_cache',
+                filter: `id=eq.${cacheId}`,
+              },
+              (payload: any) => {
+                if (isResolved) return;
+                
+                const newRecord = payload.new;
+                console.log('Realtime update received:', newRecord.status);
+                
+                if (newRecord.status === 'completed' && newRecord.feedback) {
+                  isResolved = true;
+                  setNutritionFeedback(newRecord.feedback);
+                  setIsLoadingFeedback(false);
+                  clearInterval(pollInterval);
+                  console.log('Nutrition feedback received via Realtime');
+                } else if (newRecord.status === 'error') {
+                  isResolved = true;
+                  setNutritionFeedback(newRecord.feedback || '分析中にエラーが発生しました。');
+                  setIsLoadingFeedback(false);
+                  clearInterval(pollInterval);
+                }
+              }
+            )
+            .subscribe((status) => {
+              console.log('Realtime subscription status:', status);
+            });
+          
+          // クリーンアップ用に保存
+          feedbackChannelRef.current = {
+            unsubscribe: () => {
+              clearInterval(pollInterval);
+              supabase.removeChannel(channel);
+            }
+          } as any;
         }
       } else {
         setNutritionFeedback('分析結果を取得できませんでした。');
@@ -1631,7 +1697,7 @@ export default function WeeklyMenuPage() {
       fetchNutritionFeedback(currentDateStr);
     }
     
-    // クリーンアップ：モーダルが閉じたらポーリングを停止
+    // クリーンアップ：モーダルが閉じたら購読/ポーリングを停止
     return () => {
       if (!showNutritionDetailModal && feedbackChannelRef.current) {
         (feedbackChannelRef.current as any).unsubscribe?.();
