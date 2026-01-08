@@ -98,6 +98,64 @@ export function isWaterishIngredient(raw: string): boolean {
   return false;
 }
 
+// だし汁/スープ系の材料を検出し、分量を補正する
+// 例：「中華だし 300g」→ 実際は「顆粒だし 3g + 水 297g」の意味
+// 調味料の分量が異常に多い場合は「液体として使った」と解釈
+export function adjustStockIngredient(name: string, amount_g: number): { name: string; amount_g: number; skipped: boolean; reason?: string } {
+  const n = normalizeIngredientNameJs(name);
+  
+  // だし汁/スープ系のパターン
+  const stockPatterns = [
+    { pattern: /中華だし|チキンスープ|鶏がらスープ|鶏がらだし|鶏ガラスープ|中華スープ/i, stockRatio: 0.01 }, // 1% = 300gに3g
+    { pattern: /和風だし|かつおだし|昆布だし|だし汁|出し汁|だし/i, stockRatio: 0.01 },
+    { pattern: /コンソメ|ブイヨン|洋風スープ/i, stockRatio: 0.01 },
+    { pattern: /めんつゆ/i, stockRatio: 1.0 }, // めんつゆは液体調味料なのでそのまま
+  ];
+  
+  // 量が多い調味料は液体として使った可能性が高い
+  // 顆粒だし50g以上、醤油100g以上などは明らかにおかしい
+  const MAX_STOCK_POWDER_G = 30; // 顆粒だしの現実的な最大量
+  
+  for (const { pattern, stockRatio } of stockPatterns) {
+    if (pattern.test(name) || pattern.test(n)) {
+      if (amount_g > MAX_STOCK_POWDER_G) {
+        // 大量の「だし」= だし汁（液体）として解釈
+        // 液体のだし汁の栄養価は水とほぼ同じなのでスキップ
+        const estimatedPowder = Math.round(amount_g * stockRatio);
+        console.log(`[nutrition] ⚠️ 分量補正: 「${name} ${amount_g}g」→ だし汁として解釈（実際の顆粒だし約${estimatedPowder}g相当、スキップ）`);
+        return { 
+          name, 
+          amount_g: estimatedPowder, 
+          skipped: true, 
+          reason: `だし汁${amount_g}gは液体として扱い栄養計算からスキップ（実際の顆粒は約${estimatedPowder}g）` 
+        };
+      }
+    }
+  }
+  
+  // 一般的な調味料の分量上限チェック
+  const seasoningLimits: { pattern: RegExp; maxG: number; name: string }[] = [
+    { pattern: /醤油|しょうゆ|しょう油/i, maxG: 50, name: "醤油" },
+    { pattern: /砂糖|さとう|グラニュー糖|上白糖/i, maxG: 50, name: "砂糖" },
+    { pattern: /塩|食塩/i, maxG: 20, name: "塩" },
+    { pattern: /味噌|みそ/i, maxG: 50, name: "味噌" },
+    { pattern: /酢|ビネガー/i, maxG: 50, name: "酢" },
+    { pattern: /みりん/i, maxG: 50, name: "みりん" },
+    { pattern: /料理酒|日本酒|清酒/i, maxG: 100, name: "料理酒" },
+  ];
+  
+  for (const { pattern, maxG, name: seasoningName } of seasoningLimits) {
+    if (pattern.test(name) || pattern.test(n)) {
+      if (amount_g > maxG * 2) {
+        // 明らかに多すぎる → 液体として使用した可能性
+        console.log(`[nutrition] ⚠️ 分量警告: 「${name} ${amount_g}g」は${seasoningName}として異常に多い（通常${maxG}g以下）。確認推奨。`);
+      }
+    }
+  }
+  
+  return { name, amount_g, skipped: false };
+}
+
 // よく使う調味料・食材のエイリアス（LLMが生成する名前 → DB上の名前）
 export const INGREDIENT_ALIASES: Record<string, string[]> = {
   // 調味料
@@ -622,8 +680,27 @@ export async function calculateNutritionFromIngredients(
     return totals;
   }
 
-  // 水系食材を除外した材料リスト
-  const validIngredients = ingredients.filter(i => !isWaterishIngredient(i.name) && i.amount_g > 0);
+  // Step 0: 水系食材を除外し、だし汁系の分量を補正
+  const preprocessedIngredients: Array<{ name: string; amount_g: number; note?: string }> = [];
+  for (const i of ingredients) {
+    // 水は除外
+    if (isWaterishIngredient(i.name) || i.amount_g <= 0) continue;
+    
+    // だし汁/スープ系の分量補正
+    const adjusted = adjustStockIngredient(i.name, i.amount_g);
+    if (adjusted.skipped) {
+      // だし汁として解釈されたものはスキップ（液体なので栄養価はほぼ水と同じ）
+      continue;
+    }
+    
+    preprocessedIngredients.push({
+      name: adjusted.name,
+      amount_g: adjusted.amount_g,
+      note: i.note,
+    });
+  }
+  
+  const validIngredients = preprocessedIngredients;
   console.log(`[nutrition] Valid: ${validIngredients.length}/${ingredients.length} - ${validIngredients.slice(0, 5).map(i => `${i.name}(${i.amount_g}g)`).join(", ")}`);
   
   if (validIngredients.length === 0) return totals;
