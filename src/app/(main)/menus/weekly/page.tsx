@@ -203,7 +203,7 @@ const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: {
 const PROGRESS_PHASES = [
   { phase: 'user_context', label: 'ユーザー情報を取得', threshold: 5 },
   { phase: 'search_references', label: '参考レシピを検索', threshold: 10 },
-  { phase: 'generating', label: '7日分の献立をAIが作成', threshold: 15 },
+  { phase: 'generating', label: '献立をAIが作成', threshold: 15 },  // 日数は動的に設定
   { phase: 'step1_complete', label: '献立生成完了', threshold: 40 },
   { phase: 'reviewing', label: '献立のバランスをチェック', threshold: 45 },
   { phase: 'review_done', label: '改善点を発見', threshold: 55 },
@@ -251,9 +251,14 @@ const ProgressTodoCard = ({
   // 動的にフェーズラベルを生成
   const dynamicPhases = useMemo(() => {
     return phases.map(p => {
-      if (p.phase === 'generating' && totalDays > 0) {
-        const dayLabel = totalDays === 1 ? '1日分' : `${totalDays}日分`;
-        return { ...p, label: `${dayLabel}の献立をAIが作成` };
+      if (p.phase === 'generating') {
+        // totalSlotsが設定されていれば日数を表示、なければデフォルト
+        if (totalDays > 0) {
+          const dayLabel = totalDays === 1 ? '1日分' : `${totalDays}日分`;
+          return { ...p, label: `${dayLabel}の献立をAIが作成` };
+        }
+        // totalSlotsがまだ来ていない場合はデフォルトのまま
+        return p;
       }
       return p;
     });
