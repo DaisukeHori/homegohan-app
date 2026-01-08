@@ -288,8 +288,8 @@ export default function LLMUsageDashboard() {
                     borderRadius: "12px",
                     color: "#fff",
                   }}
-                  formatter={(value: number, name: string) => [
-                    name === "total_tokens" ? formatNumber(value) : formatCost(value),
+                  formatter={(value, name) => [
+                    name === "total_tokens" ? formatNumber(value as number) : formatCost(value as number),
                     name === "total_tokens" ? "トークン" : "コスト"
                   ]}
                   labelFormatter={(label) => period === "1d" ? `${label}` : label}
@@ -355,7 +355,7 @@ export default function LLMUsageDashboard() {
                       borderRadius: "12px",
                       color: "#fff",
                     }}
-                    formatter={(value: number) => formatNumber(value)}
+                    formatter={(value) => formatNumber(value as number)}
                   />
                   <Bar dataKey="total_tokens" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -397,7 +397,7 @@ export default function LLMUsageDashboard() {
                       borderRadius: "12px",
                       color: "#fff",
                     }}
-                    formatter={(value: number) => [formatNumber(value), "トークン"]}
+                    formatter={(value) => [formatNumber(value as number), "トークン"]}
                   />
                 </PieChart>
               </ResponsiveContainer>
