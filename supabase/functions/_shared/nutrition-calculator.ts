@@ -242,7 +242,6 @@ ${batch.map((m, j) => `${j + 1}. 入力:「${m.inputName}」→ マッチ:「${m
         body: JSON.stringify({
           model: "gpt-5-mini",
           messages: [{ role: "user", content: prompt }],
-          temperature: 0,
           max_completion_tokens: 200,
         }),
       });
@@ -314,7 +313,6 @@ ${candidateList}
         body: JSON.stringify({
           model: "gpt-5-mini",
           messages: [{ role: "user", content: prompt }],
-          temperature: 0,
           max_completion_tokens: 10,
         }),
       });
