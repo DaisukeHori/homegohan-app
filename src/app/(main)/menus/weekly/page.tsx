@@ -3730,7 +3730,7 @@ export default function WeeklyMenuPage() {
             <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
               {emptySlotCount > 0
                 ? `空欄${emptySlotCount}件 → AIに埋めてもらう`
-                : `これからの${futureMealCount}件 → AIで作り直す`}
+                : `AI献立アシスタント`}
             </span>
           </div>
           <ChevronRight size={16} color="rgba(255,255,255,0.7)" />
@@ -4022,17 +4022,17 @@ export default function WeeklyMenuPage() {
                       <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
                         {isGenerating 
                           ? '生成中...' 
-                          : emptySlotCount > 0 
-                            ? '空欄をすべて埋める' 
-                            : 'これからの献立を作り直す'}
+                          : emptySlotCount > 0
+                            ? '空欄をすべて埋める'
+                            : 'AI献立アシスタント'}
                       </span>
                     </div>
                     <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: 0 }}>
-                      {isGenerating 
-                        ? 'AIが献立を作成しています...' 
+                      {isGenerating
+                        ? 'AIが献立を作成しています...'
                         : emptySlotCount > 0
                           ? `${emptySlotCount}件の空欄にAIが献立を提案します`
-                          : `これからの${futureMealCount}件の献立をAIが書き換えます`}
+                          : `期間を指定してAIに献立を作成してもらえます`}
                     </p>
                   </button>
                   <p style={{ fontSize: 11, color: colors.textMuted, margin: '12px 0 8px' }}>条件を指定（複数選択可）</p>

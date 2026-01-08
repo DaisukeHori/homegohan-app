@@ -411,22 +411,22 @@ async function processRegeneration(
 
     // 材料を抽出（人数倍率適用）
     const ingredientsMap = new Map<string, InputIngredient>();
-    let totalServings = 0;
+    let totalMeals = 0; // 食事数（人数ではなく食事の回数）
 
     (dailyMeals || []).forEach((dailyMeal: any) => {
       const dayDate = dailyMeal.day_date;
       const dayOfWeek = getDayOfWeek(dayDate);
-      
+
       (dailyMeal.planned_meals || []).forEach((meal: any) => {
         const mealType = meal.meal_type;
-        
+
         // この食事の人数を取得
         const servings = getServingsForSlot(effectiveServingsConfig, dayOfWeek, mealType);
-        
+
         // 人数が0の場合はスキップ（外食など）
         if (servings === 0) return;
-        
-        totalServings += servings;
+
+        totalMeals += 1; // 食事数をカウント（人数ではない）
         
         if (meal.dishes && Array.isArray(meal.dishes)) {
           meal.dishes.forEach((dish: any) => {
@@ -480,7 +480,7 @@ async function processRegeneration(
       });
     });
 
-    console.log(`Total servings calculated: ${totalServings}`);
+    console.log(`Total meals calculated: ${totalMeals}`);
 
     const rawIngredients = Array.from(ingredientsMap.values());
 
@@ -514,7 +514,7 @@ async function processRegeneration(
         inputCount: 0,
         outputCount: 0,
         mergedCount: 0,
-        totalServings: 0,
+        totalServings: totalMeals, // 食事数
       });
       return;
     }
@@ -578,7 +578,7 @@ async function processRegeneration(
         inputCount: rawIngredients.length,
         outputCount: validatedItems.length,
         mergedCount: rawIngredients.length - validatedItems.length,
-        totalServings,
+        totalServings: totalMeals, // 食事数
       };
 
       console.log(`[processRegeneration] About to call markCompleted...`);
