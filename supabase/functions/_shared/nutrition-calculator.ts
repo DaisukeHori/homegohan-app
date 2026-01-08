@@ -301,6 +301,7 @@ ${batch.map((m, j) => `${j + 1}. 入力:「${m.inputName}」→ マッチ:「${m
           model: "gpt-5-mini",
           messages: [{ role: "user", content: prompt }],
           max_completion_tokens: 200,
+          reasoning_effort: "minimal",
         }),
       });
 
@@ -372,6 +373,7 @@ ${candidateList}
           model: "gpt-5-mini",
           messages: [{ role: "user", content: prompt }],
           max_completion_tokens: 10,
+          reasoning_effort: "minimal",
         }),
       });
 

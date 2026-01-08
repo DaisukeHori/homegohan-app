@@ -155,6 +155,7 @@ export async function generateMealWithLLM(input: {
     name: "meal-creator",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 
@@ -265,6 +266,7 @@ export async function generateDayMealsWithLLM(input: {
     name: "daily-meal-creator",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 
@@ -380,6 +382,7 @@ export async function reviewWeeklyMenus(input: {
     name: "weekly-menu-reviewer",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 
@@ -473,6 +476,7 @@ export async function regenerateMealForIssue(input: {
     name: "meal-improver",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 

@@ -195,6 +195,7 @@ ${instructionsText ?? '(なし)'}
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 2000,
+        reasoning_effort: "minimal",
       }),
     });
 
@@ -434,6 +435,7 @@ async function runAgentToGenerateMeal(input: {
     name: "meal-creator-v2",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 
@@ -495,6 +497,7 @@ async function runAgentToSelectReplacement(input: {
     name: "regenerate-meal-selector-v2",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 

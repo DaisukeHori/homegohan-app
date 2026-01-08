@@ -482,6 +482,7 @@ ${JSON.stringify(summarizeRecords(records), null, 2)}
           { role: "user", content: prompt },
         ],
         max_completion_tokens: 500,
+        reasoning_effort: "minimal",
       }),
     });
 

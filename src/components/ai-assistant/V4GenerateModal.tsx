@@ -184,6 +184,13 @@ export function V4GenerateModal({
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // モーダルが開くたびに isSubmitting をリセット
+  useEffect(() => {
+    if (isOpen) {
+      setIsSubmitting(false);
+    }
+  }, [isOpen]);
+
   // 計算開始日は今日とweekStartDateの遅い方（過去の空欄はカウントしない）
   const effectiveStartDate = useMemo(() => {
     return weekStartDate >= todayStr ? weekStartDate : todayStr;

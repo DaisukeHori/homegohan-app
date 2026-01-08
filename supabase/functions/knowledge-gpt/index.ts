@@ -85,6 +85,7 @@ async function runAgent(systemPrompt: string, userMessage: string, mode: string 
       name: "knowledge-gpt",
       instructions: enhancedSystemPrompt || "あなたは優秀なAIアシスタントです。ナレッジベースを参照して回答してください。",
       model: "gpt-5-mini",
+      modelSettings: { reasoningEffort: "minimal" },
       tools: [fileSearch],
     });
 

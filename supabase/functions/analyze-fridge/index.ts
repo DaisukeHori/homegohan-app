@@ -50,6 +50,7 @@ serve(async (req) => {
       ],
       // gpt-5-mini は max_tokens 非対応のため max_completion_tokens を使用
       max_completion_tokens: 500,
+      reasoning_effort: "minimal",
       response_format: { type: "json_object" },
     } as any);
 

@@ -337,6 +337,7 @@ async function runAgentToGenerateMeal(input: {
     name: "meal-creator-v3",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 

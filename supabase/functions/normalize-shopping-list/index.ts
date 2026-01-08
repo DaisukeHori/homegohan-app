@@ -174,6 +174,7 @@ async function callOpenAI(
       model: "gpt-5-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 16000, // 200+アイテムのJSON出力に対応
+      reasoning_effort: "minimal",
       response_format: { type: "json_object" },
     }),
   });

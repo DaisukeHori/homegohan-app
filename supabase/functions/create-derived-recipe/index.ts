@@ -334,6 +334,7 @@ async function agentJson(userPrompt: string): Promise<any> {
     name: "derived-recipe-generator",
     instructions: systemPrompt,
     model: "gpt-5-mini",
+    modelSettings: { reasoningEffort: "minimal" },
     tools: [],
   });
 

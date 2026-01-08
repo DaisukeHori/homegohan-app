@@ -276,7 +276,10 @@ export async function withOpenAIUsageContext<T>(
       }
 
       // 新しいResponseを作成して返す（元のヘッダーとステータスを維持）
-      return new Response(bodyText, {
+      // 204, 304などbodyを持てないステータスの場合はbodyをnullにする
+      const nullBodyStatuses = [204, 304];
+      const responseBody = nullBodyStatuses.includes(response.status) ? null : bodyText;
+      return new Response(responseBody, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
