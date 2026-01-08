@@ -340,7 +340,7 @@ async function selectBestMatchWithLLM(
     return 0;
   }
   
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 1; // 高速化: 3→1回に削減（失敗時は即座にフォールバック）
   const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 100).toFixed(0)}%)`).join("\n");
   
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -405,10 +405,7 @@ ${candidateList}
       console.warn(`[nutrition] LLM selection failed for "${inputName}" (attempt ${attempt}):`, e?.message);
     }
     
-    // リトライ前に少し待機（最後の試行では待たない）
-    if (attempt < MAX_RETRIES) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
+    // リトライ1回なので待機不要
   }
   
   // 全リトライ失敗 - フォールバック: 最初の候補を使用
@@ -688,10 +685,9 @@ export const EXACT_NAME_NORM_MAP: Record<string, string> = {
   "絹ごし豆腐": "だいず［豆腐油揚げ類］絹ごし豆腐",
   "油揚げ": "だいず［豆腐油揚げ類］油揚げ生",
   
-  // 海藻
+  // 海藻（乾燥わかめは上で定義済み）
   "わかめ": "わかめ乾燥わかめ素干し水戻し",
-  "乾燥わかめ": "わかめ乾燥わかめ素干し水戻し",
-  
+
   // ツナ・缶詰
   "ツナ": "＜魚類＞まぐろ類缶詰油漬フレークホワイト",
   "ツナ缶": "＜魚類＞まぐろ類缶詰油漬フレークホワイト",
@@ -725,6 +721,176 @@ export const EXACT_NAME_NORM_MAP: Record<string, string> = {
   "玄米（炊いた）": "こめ［水稲めし］玄米",  // AIが出力するバリエーション
   "発芽玄米ご飯": "こめ［水稲めし］発芽玄米",
   "発芽玄米": "こめ［水稲めし］発芽玄米",
+
+  // === 追加マッピング（高速化用）===
+
+  // 野菜（追加）
+  "セロリ": "セロリー茎生",
+  "セロリー": "セロリー茎生",
+  "カブ": "かぶ類かぶ根皮つき生",
+  "かぶ": "かぶ類かぶ根皮つき生",
+  "蕪": "かぶ類かぶ根皮つき生",
+  "チンゲン菜": "チンゲンサイ葉生",
+  "チンゲンサイ": "チンゲンサイ葉生",
+  "青梗菜": "チンゲンサイ葉生",
+  "水菜": "みずな葉生",
+  "みずな": "みずな葉生",
+  "春菊": "しゅんぎく葉生",
+  "しゅんぎく": "しゅんぎく葉生",
+  "菊菜": "しゅんぎく葉生",
+  "レタス": "レタス類レタス土耕栽培結球葉生",
+  "サニーレタス": "レタス類サニーレタス葉生",
+  "かぼちゃ": "かぼちゃ類西洋かぼちゃ果実生",
+  "南瓜": "かぼちゃ類西洋かぼちゃ果実生",
+  "カボチャ": "かぼちゃ類西洋かぼちゃ果実生",
+  "じゃがいも": "じゃがいも塊茎皮なし生",
+  "ジャガイモ": "じゃがいも塊茎皮なし生",
+  "馬鈴薯": "じゃがいも塊茎皮なし生",
+  "さつまいも": "さつまいも塊根皮なし生",
+  "サツマイモ": "さつまいも塊根皮なし生",
+  "薩摩芋": "さつまいも塊根皮なし生",
+  "里芋": "さといも類さといも球茎生",
+  "さといも": "さといも類さといも球茎生",
+  "サトイモ": "さといも類さといも球茎生",
+  "アスパラガス": "アスパラガス若茎生",
+  "アスパラ": "アスパラガス若茎生",
+  "ズッキーニ": "ズッキーニ果実生",
+  "オクラ": "オクラ果実生",
+  "トマト": "トマト類トマト果実生",
+  "ミニトマト": "トマト類ミニトマト果実生",
+  "プチトマト": "トマト類ミニトマト果実生",
+  "青ネギ": "ねぎ類葉ねぎ葉生",
+  "青ねぎ": "ねぎ類葉ねぎ葉生",
+  "万能ねぎ": "ねぎ類葉ねぎ葉生",
+  "小ねぎ": "ねぎ類葉ねぎ葉生",
+  "ニラ": "にら葉生",
+  "にら": "にら葉生",
+  "韮": "にら葉生",
+
+  // 牛肉
+  "牛肉": "＜畜肉類＞うし［和牛肉］もも脂身つき生",
+  "牛もも肉": "＜畜肉類＞うし［和牛肉］もも脂身つき生",
+  "牛モモ肉": "＜畜肉類＞うし［和牛肉］もも脂身つき生",
+  "牛バラ肉": "＜畜肉類＞うし［和牛肉］ばら脂身つき生",
+  "牛バラ": "＜畜肉類＞うし［和牛肉］ばら脂身つき生",
+  "牛ロース": "＜畜肉類＞うし［和牛肉］リブロース脂身つき生",
+  "牛ロース肉": "＜畜肉類＞うし［和牛肉］リブロース脂身つき生",
+  "牛ひき肉": "＜畜肉類＞うし［ひき肉］生",
+  "牛挽き肉": "＜畜肉類＞うし［ひき肉］生",
+  "合い挽き肉": "＜畜肉類＞うし［ひき肉］生",  // 牛として近似
+  "合挽き肉": "＜畜肉類＞うし［ひき肉］生",
+  "牛薄切り肉": "＜畜肉類＞うし［和牛肉］もも脂身つき生",
+  "牛切り落とし": "＜畜肉類＞うし［和牛肉］もも脂身つき生",
+
+  // 加工肉
+  "ベーコン": "＜畜肉類＞ぶた［ベーコン類］ベーコン",
+  "ウインナー": "＜畜肉類＞ぶた［ソーセージ類］ウインナーソーセージ",
+  "ウインナーソーセージ": "＜畜肉類＞ぶた［ソーセージ類］ウインナーソーセージ",
+  "ソーセージ": "＜畜肉類＞ぶた［ソーセージ類］ウインナーソーセージ",
+  "ハム": "＜畜肉類＞ぶた［ハム類］ロースハム",
+  "ロースハム": "＜畜肉類＞ぶた［ハム類］ロースハム",
+
+  // 魚介類
+  "タラ": "＜魚類＞たら類まだら生",
+  "たら": "＜魚類＞たら類まだら生",
+  "鱈": "＜魚類＞たら類まだら生",
+  "タラ切り身": "＜魚類＞たら類まだら生",
+  "アジ": "＜魚類＞あじ類まあじ皮つき生",
+  "あじ": "＜魚類＞あじ類まあじ皮つき生",
+  "鯵": "＜魚類＞あじ類まあじ皮つき生",
+  "イワシ": "＜魚類＞いわし類まいわし生",
+  "いわし": "＜魚類＞いわし類まいわし生",
+  "鰯": "＜魚類＞いわし類まいわし生",
+  "サンマ": "＜魚類＞さんま皮つき生",
+  "さんま": "＜魚類＞さんま皮つき生",
+  "秋刀魚": "＜魚類＞さんま皮つき生",
+  "カツオ": "＜魚類＞かつお春獲り生",
+  "かつお": "＜魚類＞かつお春獲り生",
+  "鰹": "＜魚類＞かつお春獲り生",
+  "マグロ": "＜魚類＞まぐろ類くろまぐろ赤身生",
+  "まぐろ": "＜魚類＞まぐろ類くろまぐろ赤身生",
+  "鮪": "＜魚類＞まぐろ類くろまぐろ赤身生",
+  "エビ": "＜えび・かに類＞くるまえび養殖生",
+  "えび": "＜えび・かに類＞くるまえび養殖生",
+  "海老": "＜えび・かに類＞くるまえび養殖生",
+  "むきエビ": "＜えび・かに類＞くるまえび養殖生",
+  "イカ": "＜いか・たこ類＞するめいか生",
+  "いか": "＜いか・たこ類＞するめいか生",
+  "烏賊": "＜いか・たこ類＞するめいか生",
+  "タコ": "＜いか・たこ類＞まだこ生",
+  "たこ": "＜いか・たこ類＞まだこ生",
+  "蛸": "＜いか・たこ類＞まだこ生",
+  "ホタテ": "＜貝類＞ほたてがい貝柱生",
+  "帆立": "＜貝類＞ほたてがい貝柱生",
+  "アサリ": "＜貝類＞あさり生",
+  "あさり": "＜貝類＞あさり生",
+  "シジミ": "＜貝類＞しじみ生",
+  "しじみ": "＜貝類＞しじみ生",
+
+  // 調味料（追加）
+  "マヨネーズ": "＜調味料類＞マヨネーズ類マヨネーズ全卵型",
+  "ケチャップ": "＜調味料類＞トマト加工品類トマトケチャップ",
+  "トマトケチャップ": "＜調味料類＞トマト加工品類トマトケチャップ",
+  "ポン酢": "＜調味料類＞しょうゆ類ぽんず",
+  "ぽん酢": "＜調味料類＞しょうゆ類ぽんず",
+  "ソース": "＜調味料類＞ウスターソース類中濃ソース",
+  "中濃ソース": "＜調味料類＞ウスターソース類中濃ソース",
+  "ウスターソース": "＜調味料類＞ウスターソース類ウスターソース",
+  "オイスターソース": "＜調味料類＞オイスターソース",
+  "焼肉のたれ": "＜調味料類＞調味ソース類焼肉のたれ",
+  "めんつゆ": "＜調味料類＞めんつゆストレート",
+  "白だし": "＜調味料類＞だし類かつおだし荒節",  // 近似
+  "バター": "バター有塩バター",
+  "有塩バター": "バター有塩バター",
+  "無塩バター": "バター食塩不使用バター",
+  "マーガリン": "＜油脂類＞マーガリン類ソフトタイプマーガリン家庭用",
+
+  // 麺類
+  "うどん": "うどん生",  // 生うどん
+  "ゆでうどん": "うどんゆで",
+  "そば": "そば生",
+  "ゆでそば": "そばゆで",
+  "そうめん": "そうめん・ひやむぎそうめん乾",
+  "ゆでそうめん": "そうめん・ひやむぎそうめんゆで",
+  "中華麺": "中華めん生",
+  "ラーメン": "中華めん生",
+  "パスタ": "マカロニ・スパゲッティ乾",
+  "スパゲッティ": "マカロニ・スパゲッティ乾",
+  "スパゲティ": "マカロニ・スパゲッティ乾",
+  "ゆでパスタ": "マカロニ・スパゲッティゆで",
+  "ゆでスパゲッティ": "マカロニ・スパゲッティゆで",
+
+  // パン
+  "食パン": "パン類食パン",
+  "フランスパン": "パン類フランスパン",
+  "バゲット": "パン類フランスパン",
+  "ロールパン": "パン類ロールパン",
+
+  // 乳製品
+  "牛乳": "普通牛乳",
+  "低脂肪乳": "低脂肪牛乳",
+  "ヨーグルト": "ヨーグルト全脂無糖",
+  "プレーンヨーグルト": "ヨーグルト全脂無糖",
+  "チーズ": "ナチュラルチーズプロセスチーズ",
+  "ピザ用チーズ": "ナチュラルチーズモッツァレラ",
+  "粉チーズ": "ナチュラルチーズパルメザン",
+  "パルメザンチーズ": "ナチュラルチーズパルメザン",
+  "生クリーム": "クリーム類乳脂肪",
+
+  // その他
+  "こんにゃく": "こんにゃく精粉こんにゃく",
+  "蒟蒻": "こんにゃく精粉こんにゃく",
+  "しらたき": "こんにゃくしらたき",
+  "厚揚げ": "だいず［豆腐油揚げ類］生揚げ",
+  "生揚げ": "だいず［豆腐油揚げ類］生揚げ",
+  "がんもどき": "だいず［豆腐油揚げ類］がんもどき",
+  "納豆": "だいず［納豆類］糸引き納豆",
+  "ひきわり納豆": "だいず［納豆類］挽きわり納豆",
+  "高野豆腐": "だいず［豆腐油揚げ類］凍り豆腐乾",
+  "小麦粉": "＜小麦粉類＞薄力粉1等",
+  "薄力粉": "＜小麦粉類＞薄力粉1等",
+  "強力粉": "＜小麦粉類＞強力粉1等",
+  "パン粉": "＜小麦粉類＞パン粉乾燥",
 };
 
 export async function calculateNutritionFromIngredients(
@@ -901,16 +1067,61 @@ export async function calculateNutritionFromIngredients(
   
   console.log(`[nutrition] Phase 1 result: ${pendingMatches.length} matched, ${unmatchedIngredients.length} unmatched`);
 
-  // Phase 2: ベクトル検索 + LLM選択（完全一致しなかった食材に対して）
+  // Phase 1.5: キャッシュ確認（LLM呼び出しを回避）
+  const stillUnmatched: typeof unmatchedIngredients = [];
   if (unmatchedIngredients.length > 0) {
-    console.log(`[nutrition] === Phase 2: Vector search + LLM selection for ${unmatchedIngredients.length} ingredients ===`);
+    const inputNames = unmatchedIngredients.map(u => u.ing.name);
+    const { data: cachedMatches } = await supabase
+      .from("ingredient_match_cache")
+      .select("input_name, matched_ingredient_id")
+      .in("input_name", inputNames);
+
+    const cacheMap = new Map((cachedMatches ?? []).map((c: any) => [c.input_name, c.matched_ingredient_id]));
+    const cachedIds = Array.from(new Set((cachedMatches ?? []).map((c: any) => c.matched_ingredient_id).filter(Boolean)));
+
+    // キャッシュされた食材のデータを一括取得
+    let cachedIngredientData: any[] = [];
+    if (cachedIds.length > 0) {
+      const { data: rows } = await supabase
+        .from("dataset_ingredients")
+        .select(INGREDIENT_SELECT)
+        .in("id", cachedIds);
+      cachedIngredientData = rows ?? [];
+    }
+    const cachedDataMap = new Map(cachedIngredientData.map((r: any) => [r.id, r]));
+
+    for (const { ing, idx } of unmatchedIngredients) {
+      const cachedId = cacheMap.get(ing.name);
+      if (cachedId && cachedDataMap.has(cachedId)) {
+        const matched = cachedDataMap.get(cachedId);
+        console.log(`[nutrition] [${idx}] ✅ cache: "${ing.name}" → ${matched.name} (${matched.calories_kcal}kcal/100g)`);
+        pendingMatches.push({
+          idx,
+          ing,
+          matched,
+          matchMethod: "cache",
+          needsValidation: false,
+        });
+      } else {
+        stillUnmatched.push({ ing, idx });
+      }
+    }
+
+    if (cachedMatches && cachedMatches.length > 0) {
+      console.log(`[nutrition] Cache hit: ${cachedMatches.length}/${unmatchedIngredients.length}`);
+    }
+  }
+
+  // Phase 2: ベクトル検索 + LLM選択（キャッシュになかった食材に対して）
+  if (stillUnmatched.length > 0) {
+    console.log(`[nutrition] === Phase 2: Vector search + LLM selection for ${stillUnmatched.length} ingredients ===`);
     try {
-      const texts = unmatchedIngredients.map(u => u.ing.name);
+      const texts = stillUnmatched.map(u => u.ing.name);
       const embeddings = await embedTexts(texts, 1536);
       
       // 並列でベクトル検索を実行
       const searchResults = await Promise.all(
-        unmatchedIngredients.map(async ({ ing }, i) => {
+        stillUnmatched.map(async ({ ing }, i) => {
           const emb = embeddings[i];
           const { data: rows, error: embErr } = await supabase.rpc("search_dataset_ingredients_by_embedding", {
             query_embedding: emb,
@@ -920,17 +1131,24 @@ export async function calculateNutritionFromIngredients(
         })
       );
       
-      // 各食材について、LLMに最適な候補を選んでもらう
-      for (let i = 0; i < unmatchedIngredients.length; i++) {
-        const { ing, idx } = unmatchedIngredients[i];
+      // 各食材について、LLMに最適な候補を選んでもらう（並列実行で高速化）
+      // Step 1: 有効な候補を持つ食材を抽出
+      const ingredientsWithCandidates: Array<{
+        ing: typeof stillUnmatched[0]["ing"];
+        idx: number;
+        validCandidates: any[];
+      }> = [];
+
+      for (let i = 0; i < stillUnmatched.length; i++) {
+        const { ing, idx } = stillUnmatched[i];
         const rows = searchResults[i].rows;
-        
+
         if (rows.length === 0) {
           console.log(`[nutrition] [${idx}] "${ing.name}": no vector search results`);
           matchResults[idx] = `${ing.name}(${ing.amount_g}g) → UNMATCHED (no candidates)`;
           continue;
         }
-        
+
         // 類似度0.1以上の候補のみ
         const validCandidates = rows.filter((r: any) => r.similarity >= 0.1);
         if (validCandidates.length === 0) {
@@ -938,42 +1156,91 @@ export async function calculateNutritionFromIngredients(
           matchResults[idx] = `${ing.name}(${ing.amount_g}g) → UNMATCHED (low similarity)`;
           continue;
         }
-        
+
         console.log(`[nutrition] [${idx}] "${ing.name}": ${validCandidates.length} candidates - ${validCandidates.map((c: any) => `${c.name?.substring(0, 15)}(${(c.similarity * 100).toFixed(0)}%)`).join(", ")}`);
-        
-        // LLMに最適な候補を選んでもらう
-        const selectedIdx = await selectBestMatchWithLLM(ing.name, validCandidates);
-        
+        ingredientsWithCandidates.push({ ing, idx, validCandidates });
+      }
+
+      // Step 2: LLM選択を並列実行（高速化のポイント）
+      const llmSelections = await Promise.all(
+        ingredientsWithCandidates.map(async ({ ing, validCandidates }) => {
+          return selectBestMatchWithLLM(ing.name, validCandidates);
+        })
+      );
+
+      // Step 3: 選択結果を処理
+      const selectedIds: string[] = [];
+      const selectionMap = new Map<string, { ing: any; idx: number; selected: any }>();
+
+      for (let i = 0; i < ingredientsWithCandidates.length; i++) {
+        const { ing, idx, validCandidates } = ingredientsWithCandidates[i];
+        const selectedIdx = llmSelections[i];
+
         if (selectedIdx === -1) {
-          // LLMが全候補を却下
           matchResults[idx] = `${ing.name}(${ing.amount_g}g) → UNMATCHED (LLM rejected all)`;
           continue;
         }
-        
+
         const selected = validCandidates[selectedIdx];
-        
-        // 選択された候補の詳細データを取得
-        const { data: row } = await supabase
+        selectedIds.push(selected.id);
+        selectionMap.set(selected.id, { ing, idx, selected });
+      }
+
+      // Step 4: 選択された候補の詳細データを一括取得（高速化）
+      if (selectedIds.length > 0) {
+        const { data: detailRows } = await supabase
           .from("dataset_ingredients")
           .select(INGREDIENT_SELECT)
-          .eq("id", selected.id)
-          .maybeSingle();
-        
-        if (row) {
-          pendingMatches.push({
-            idx,
-            ing,
-            matched: row,
-            matchMethod: `vector+llm(${selected.similarity?.toFixed(2) ?? "?"})`,
-            needsValidation: false, // LLMが選んだので検証不要
-          });
-        } else {
-          matchResults[idx] = `${ing.name}(${ing.amount_g}g) → UNMATCHED (DB fetch failed)`;
+          .in("id", selectedIds);
+
+        // キャッシュに保存するデータを収集
+        const cacheInserts: Array<{ input_name: string; matched_ingredient_id: string; match_method: string; similarity: number | null }> = [];
+
+        for (const row of detailRows ?? []) {
+          const selection = selectionMap.get(row.id);
+          if (selection) {
+            pendingMatches.push({
+              idx: selection.idx,
+              ing: selection.ing,
+              matched: row,
+              matchMethod: `vector+llm(${selection.selected.similarity?.toFixed(2) ?? "?"})`,
+              needsValidation: false,
+            });
+            // キャッシュ用データを収集
+            cacheInserts.push({
+              input_name: selection.ing.name,
+              matched_ingredient_id: row.id,
+              match_method: "llm",
+              similarity: selection.selected.similarity ?? null,
+            });
+          }
+        }
+
+        // 取得できなかったものを記録
+        for (const [id, selection] of selectionMap.entries()) {
+          const found = (detailRows ?? []).some((r: any) => r.id === id);
+          if (!found) {
+            matchResults[selection.idx] = `${selection.ing.name}(${selection.ing.amount_g}g) → UNMATCHED (DB fetch failed)`;
+          }
+        }
+
+        // Step 5: 成功したマッチをキャッシュに保存（非同期・エラー無視）
+        if (cacheInserts.length > 0) {
+          supabase
+            .from("ingredient_match_cache")
+            .upsert(cacheInserts, { onConflict: "input_name" })
+            .then(({ error }) => {
+              if (error) {
+                console.warn(`[nutrition] Cache save failed: ${error.message}`);
+              } else {
+                console.log(`[nutrition] Cache saved: ${cacheInserts.length} items`);
+              }
+            });
         }
       }
     } catch (e: any) {
       console.error("[nutrition] Vector search + LLM selection failed:", e?.message ?? e);
-      for (const { ing, idx } of unmatchedIngredients) {
+      for (const { ing, idx } of stillUnmatched) {
         matchResults[idx] = `${ing.name}(${ing.amount_g}g) → UNMATCHED (error)`;
       }
     }
