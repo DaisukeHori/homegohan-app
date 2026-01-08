@@ -624,6 +624,16 @@ export default function WeeklyMenuPage() {
       const result = await v4Generation.generate(params);
       setShowV4Modal(false);
       
+      // 初期進捗を設定（totalSlotsを含める）
+      const initialTotalSlots = result?.totalSlots || params.targetSlots.length;
+      setGenerationProgress({
+        phase: 'user_context',
+        message: 'ユーザー情報を取得中...',
+        percentage: 3,
+        totalSlots: initialTotalSlots,
+        completedSlots: 0,
+      });
+      
       // Subscribe to progress updates
       if (result?.requestId) {
         v4Generation.subscribeToProgress(result.requestId, (progress) => {
@@ -6331,12 +6341,15 @@ export default function WeeklyMenuPage() {
                             setShowImproveMealModal(false);
                             setShowNutritionDetailModal(false);
                             
-                            // 進捗表示を開始
+                            // 進捗表示を開始（totalSlotsを正しく設定）
+                            const totalSlotsCount = targetSlots.length;
                             setIsGenerating(true);
                             setGenerationProgress({
                               phase: 'analyzing',
                               message: 'AI栄養士の提案を反映中...',
-                              percentage: 10,
+                              percentage: 5,
+                              totalSlots: totalSlotsCount,
+                              completedSlots: 0,
                             });
                             
                             // ポーリングで進捗を追跡（既存のV4用のRealtimeを使用）
