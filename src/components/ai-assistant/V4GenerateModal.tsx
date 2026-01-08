@@ -3,15 +3,14 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  X, Sparkles, Calendar, Target, RefreshCw, 
+  X, Sparkles, Calendar, Target,
   Refrigerator, Zap, UtensilsCrossed, Heart,
-  ChevronRight, AlertTriangle, Loader2
+  ChevronRight, Loader2
 } from "lucide-react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import { 
   buildEmptySlots, 
   buildRangeSlots, 
-  buildAllFutureSlots,
   countEmptySlots,
   validateSlotCount,
   type MealDay,
@@ -21,7 +20,11 @@ import {
 // Types
 // ============================================
 
-type GenerateMode = 'empty' | 'selected' | 'range' | 'all';
+type GenerateMode = 'empty' | 'selected' | 'range';
+
+// LocalStorage keys for persisting range settings
+const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
+const STORAGE_KEY_INCLUDE_EXISTING = 'v4_include_existing';
 
 interface V4GenerateModalProps {
   isOpen: boolean;
@@ -83,11 +86,73 @@ export function V4GenerateModal({
   const [rangeEnd, setRangeEnd] = useState(weekEndDate);
   const [includeExisting, setIncludeExisting] = useState(false);
   
-  // Sync range dates with props when week changes
+  // Helper: 日付を加算
+  const addDays = useCallback((dateStr: string, days: number): string => {
+    const date = new Date(dateStr);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().split('T')[0];
+  }, []);
+
+  // Helper: 日付の差（日数）を計算
+  const daysBetween = useCallback((startStr: string, endStr: string): number => {
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  }, []);
+
+  // 初期化: localStorageから設定を復元し、今日を基準に日付を設定
   useEffect(() => {
-    setRangeStart(weekStartDate);
-    setRangeEnd(weekEndDate);
-  }, [weekStartDate, weekEndDate]);
+    // includeExistingを復元
+    const savedIncludeExisting = localStorage.getItem(STORAGE_KEY_INCLUDE_EXISTING);
+    if (savedIncludeExisting !== null) {
+      setIncludeExisting(savedIncludeExisting === 'true');
+    }
+
+    // 保存された日数を復元
+    const savedRangeDays = localStorage.getItem(STORAGE_KEY_RANGE_DAYS);
+    if (savedRangeDays) {
+      try {
+        const { startDays, endDays } = JSON.parse(savedRangeDays);
+        // 今日を基準に日付を計算
+        const newStart = addDays(todayStr, startDays);
+        const newEnd = addDays(todayStr, endDays);
+        setRangeStart(newStart);
+        setRangeEnd(newEnd);
+        return;
+      } catch (e) {
+        // パースエラーの場合はデフォルト値を使用
+      }
+    }
+
+    // デフォルト: 今日から週末まで
+    setRangeStart(todayStr);
+    setRangeEnd(weekEndDate >= todayStr ? weekEndDate : addDays(todayStr, 6));
+  }, [todayStr, weekEndDate, addDays]);
+
+  // rangeStartが変更されたら日数を保存
+  useEffect(() => {
+    if (rangeStart && rangeEnd) {
+      const startDays = daysBetween(todayStr, rangeStart);
+      const endDays = daysBetween(todayStr, rangeEnd);
+      localStorage.setItem(STORAGE_KEY_RANGE_DAYS, JSON.stringify({ startDays, endDays }));
+    }
+  }, [rangeStart, rangeEnd, todayStr, daysBetween]);
+
+  // includeExistingが変更されたら保存
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_INCLUDE_EXISTING, String(includeExisting));
+  }, [includeExisting]);
+
+  // rangeStart/rangeEndのsetterをラップして、過去日付の場合は今日に調整
+  const handleSetRangeStart = useCallback((value: string) => {
+    const adjusted = value < todayStr ? todayStr : value;
+    setRangeStart(adjusted);
+  }, [todayStr]);
+
+  const handleSetRangeEnd = useCallback((value: string) => {
+    const adjusted = value < todayStr ? todayStr : value;
+    setRangeEnd(adjusted);
+  }, [todayStr]);
   
   // Constraints
   const [constraints, setConstraints] = useState<MenuGenerationConstraints>({
@@ -99,9 +164,6 @@ export function V4GenerateModal({
   
   // Free text note
   const [note, setNote] = useState("");
-  
-  // Confirmation for "all" mode
-  const [confirmAllMode, setConfirmAllMode] = useState(false);
 
   // 今日の日付を取得
   const todayStr = useMemo(() => {
@@ -138,19 +200,12 @@ export function V4GenerateModal({
         });
       case 'range':
         // 範囲指定は指定された日付をそのまま使う（ユーザーの意図を尊重）
+        // ただし開始日が過去の場合は今日に調整済み
         return buildRangeSlots({
           mealPlanDays,
           startDate: rangeStart,
           endDate: rangeEnd,
           includeExisting,
-        });
-      case 'all':
-        // 今日以降のすべて
-        if (effectiveStartDate > weekEndDate) return [];
-        return buildAllFutureSlots({
-          mealPlanDays,
-          startDate: effectiveStartDate,
-          endDate: weekEndDate,
         });
       default:
         return [];
@@ -164,11 +219,6 @@ export function V4GenerateModal({
     
     if (!validation.valid) {
       alert(validation.message);
-      return;
-    }
-
-    if (selectedMode === 'all' && !confirmAllMode) {
-      setConfirmAllMode(true);
       return;
     }
 
@@ -187,7 +237,6 @@ export function V4GenerateModal({
   // Reset state when closing
   const handleClose = () => {
     setSelectedMode(null);
-    setConfirmAllMode(false);
     onClose();
   };
 
@@ -220,15 +269,6 @@ export function V4GenerateModal({
       description: '開始〜終了を選んで生成（最大31日）',
       color: colors.purple,
       bg: colors.purpleLight,
-      disabled: false,
-    },
-    {
-      id: 'all' as const,
-      icon: RefreshCw,
-      label: '全部作り直す',
-      description: 'これからの献立をすべてリセットして再生成',
-      color: colors.danger,
-      bg: colors.dangerLight,
       disabled: false,
     },
   ];
@@ -273,41 +313,7 @@ export function V4GenerateModal({
 
           {/* Content */}
           <div className="p-4 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 140px)' }}>
-            {/* Confirmation for "all" mode */}
-            {confirmAllMode ? (
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: colors.dangerLight }}>
-                  <AlertTriangle size={24} style={{ color: colors.danger }} className="flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold" style={{ color: colors.danger }}>本当に全部作り直しますか？</p>
-                    <p className="text-sm mt-1" style={{ color: colors.textLight }}>
-                      今週の献立（{weekStartDate} 〜 {weekEndDate}）をすべて再生成します。
-                      既存の献立は上書きされます。
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setConfirmAllMode(false)}
-                    className="flex-1 py-3 rounded-xl font-bold transition-colors"
-                    style={{ backgroundColor: colors.bg, color: colors.textLight }}
-                  >
-                    キャンセル
-                  </button>
-                  <button
-                    onClick={handleGenerate}
-                    disabled={isGenerating}
-                    className="flex-1 py-3 rounded-xl font-bold text-white transition-colors flex items-center justify-center gap-2"
-                    style={{ backgroundColor: colors.danger }}
-                  >
-                    {isGenerating ? <Loader2 size={18} className="animate-spin" /> : null}
-                    作り直す
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* Mode selection */}
+            {/* Mode selection */}
                 <div className="space-y-3 mb-6">
                   <p className="text-sm font-bold" style={{ color: colors.textLight }}>何を生成しますか？</p>
                   {modes.map((mode) => (
@@ -350,7 +356,8 @@ export function V4GenerateModal({
                         <input
                           type="date"
                           value={rangeStart}
-                          onChange={(e) => setRangeStart(e.target.value)}
+                          min={todayStr}
+                          onChange={(e) => handleSetRangeStart(e.target.value)}
                           className="w-full p-2 rounded-lg border mt-1"
                           style={{ borderColor: colors.border }}
                         />
@@ -360,7 +367,8 @@ export function V4GenerateModal({
                         <input
                           type="date"
                           value={rangeEnd}
-                          onChange={(e) => setRangeEnd(e.target.value)}
+                          min={todayStr}
+                          onChange={(e) => handleSetRangeEnd(e.target.value)}
                           className="w-full p-2 rounded-lg border mt-1"
                           style={{ borderColor: colors.border }}
                         />
@@ -374,7 +382,7 @@ export function V4GenerateModal({
                         className="w-4 h-4 rounded"
                       />
                       <span className="text-sm" style={{ color: colors.textLight }}>
-                        既存も含めて全部生成し直す
+                        既存の献立も作り直す
                       </span>
                     </label>
                   </div>
@@ -434,8 +442,6 @@ export function V4GenerateModal({
                     </>
                   )}
                 </button>
-              </>
-            )}
           </div>
         </motion.div>
       </motion.div>
