@@ -264,16 +264,23 @@ export async function withOpenAIUsageContext<T>(
       // x-request-id ヘッダーを取得
       openaiRequestId = response.headers.get("x-request-id");
 
-      // レスポンスをクローンしてJSONを解析
-      const clonedResponse = response.clone();
+      // レスポンスボディを読み取り、解析してから新しいResponseを返す
+      // （Deno Edge Runtimeでのclone()問題を回避）
+      let bodyText: string | null = null;
       try {
-        const json = await clonedResponse.json();
+        bodyText = await response.text();
+        const json = JSON.parse(bodyText);
         parsedUsage = parseUsageFromResponse(url, json);
       } catch {
         // JSONパースエラーは無視（ストリーミング等）
       }
 
-      return response;
+      // 新しいResponseを作成して返す（元のヘッダーとステータスを維持）
+      return new Response(bodyText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
     } catch (error) {
       success = false;
       errorMessage = error instanceof Error ? error.message : String(error);
