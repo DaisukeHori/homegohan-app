@@ -60,10 +60,14 @@ async function updateProgress(
   requestId: string,
   progress: Progress
 ): Promise<void> {
-  await supabase
+  console.log(`[progress] ${progress.phase}: ${progress.percentage}% - ${progress.message}`);
+  const { error } = await supabase
     .from("shopping_list_requests")
     .update({ progress, updated_at: new Date().toISOString() })
     .eq("id", requestId);
+  if (error) {
+    console.error(`[progress] Failed to update progress:`, error);
+  }
 }
 
 async function markCompleted(
@@ -72,7 +76,9 @@ async function markCompleted(
   shoppingListId: string,
   stats: { inputCount: number; outputCount: number; mergedCount: number; totalServings?: number }
 ): Promise<void> {
-  await supabase
+  console.log(`[markCompleted] Starting - requestId: ${requestId}, shoppingListId: ${shoppingListId}`);
+  console.log(`[markCompleted] Stats:`, JSON.stringify(stats));
+  const { error } = await supabase
     .from("shopping_list_requests")
     .update({
       status: "completed",
@@ -82,6 +88,11 @@ async function markCompleted(
       updated_at: new Date().toISOString(),
     })
     .eq("id", requestId);
+  if (error) {
+    console.error(`[markCompleted] Failed to mark completed:`, error);
+  } else {
+    console.log(`[markCompleted] Successfully marked as completed`);
+  }
 }
 
 async function markFailed(
@@ -89,7 +100,8 @@ async function markFailed(
   requestId: string,
   error: string
 ): Promise<void> {
-  await supabase
+  console.log(`[markFailed] Starting - requestId: ${requestId}, error: ${error}`);
+  const { error: dbError } = await supabase
     .from("shopping_list_requests")
     .update({
       status: "failed",
@@ -98,6 +110,11 @@ async function markFailed(
       updated_at: new Date().toISOString(),
     })
     .eq("id", requestId);
+  if (dbError) {
+    console.error(`[markFailed] Failed to mark failed:`, dbError);
+  } else {
+    console.log(`[markFailed] Successfully marked as failed`);
+  }
 }
 
 // ============================================
@@ -216,13 +233,18 @@ async function callOpenAI(prompt: string): Promise<NormalizedItem[]> {
   }
 
   const data = await response.json();
+  console.log(`[callOpenAI] Response received - model: ${data.model}, finish_reason: ${data.choices?.[0]?.finish_reason}`);
+  
   const content = data.choices?.[0]?.message?.content;
 
   if (!content) {
+    console.error(`[callOpenAI] Empty content! Full response:`, JSON.stringify(data).slice(0, 500));
     throw new Error("Empty response from OpenAI");
   }
 
+  console.log(`[callOpenAI] Content length: ${content.length} chars`);
   const parsed = JSON.parse(content);
+  console.log(`[callOpenAI] Parsed items count: ${parsed.items?.length || 0}`);
   return parsed.items || [];
 }
 
@@ -558,8 +580,11 @@ async function processRegeneration(
         totalServings,
       };
 
+      console.log(`[processRegeneration] About to call markCompleted...`);
       await markCompleted(supabase, requestId, shoppingListId, stats);
+      console.log(`[processRegeneration] markCompleted finished, exiting withOpenAIUsageContext`);
     }); // withOpenAIUsageContext end
+    console.log(`[processRegeneration] withOpenAIUsageContext completed successfully`);
   } catch (error) {
     console.error("Regeneration error:", error);
     await markFailed(
