@@ -986,6 +986,7 @@ export default function WeeklyMenuPage() {
   const [isEditingRadarNutrients, setIsEditingRadarNutrients] = useState(false);
   const [tempRadarNutrients, setTempRadarNutrients] = useState<string[]>([]);
   const [isSavingRadarNutrients, setIsSavingRadarNutrients] = useState(false);
+  const [lastFeedbackDate, setLastFeedbackDate] = useState<string | null>(null);
   
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
@@ -1521,6 +1522,58 @@ export default function WeeklyMenuPage() {
       setIsLoadingHint(false);
     }
   };
+
+  // AI栄養士フィードバックを自動取得（モーダルを開いた瞬間に開始）
+  useEffect(() => {
+    const currentDateStr = weekDates[selectedDayIndex]?.dateStr;
+    
+    // モーダルが開いていて、かつ日付が変わった場合に取得
+    if (showNutritionDetailModal && currentDateStr && currentDateStr !== lastFeedbackDate) {
+      // フィードバックをリセットして読み込み開始
+      setNutritionFeedback(null);
+      setIsLoadingFeedback(true);
+      setLastFeedbackDate(currentDateStr);
+      
+      // 当日の栄養データを計算
+      const currentDay = currentPlan?.days?.find(d => d.dayDate === currentDateStr);
+      const mealCount = currentDay?.meals?.filter(m => m.dishName)?.length || 0;
+      const dayNutrition = getDayTotalNutrition(currentDay);
+      
+      // 非同期でフィードバック取得
+      (async () => {
+        try {
+          const res = await fetch('/api/ai/nutrition/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: currentDateStr,
+              nutrition: dayNutrition,
+              mealCount,
+              weekData: currentPlan?.days?.map(d => ({
+                date: d.dayDate,
+                meals: d.meals?.map(m => ({ 
+                  title: m.dishName, 
+                  calories: m.caloriesKcal,
+                  dishes: m.dishes?.map(dish => dish.title) || []
+                })) || []
+              })) || [],
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setNutritionFeedback(data.feedback);
+          } else {
+            setNutritionFeedback('分析結果を取得できませんでした。');
+          }
+        } catch (e) {
+          console.error('Failed to get nutrition feedback:', e);
+          setNutritionFeedback('分析中にエラーが発生しました。');
+        } finally {
+          setIsLoadingFeedback(false);
+        }
+      })();
+    }
+  }, [showNutritionDetailModal, selectedDayIndex, weekDates, currentPlan?.days, lastFeedbackDate]);
   
   // Week Navigation
   const goToPreviousWeek = () => {
@@ -5406,54 +5459,40 @@ export default function WeeklyMenuPage() {
                         />
                       </div>
 
-                      {/* AI栄養士のコメント */}
+                      {/* AI栄養士のコメント（自動取得） */}
                       <div className="mb-4 p-3 rounded-xl" style={{ background: colors.accentLight }}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <Sparkles size={14} color={colors.accent} />
-                          <span style={{ fontSize: 12, fontWeight: 600, color: colors.accent }}>AI栄養士のコメント</span>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Sparkles size={14} color={colors.accent} />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: colors.accent }}>AI栄養士のコメント</span>
+                          </div>
+                          {nutritionFeedback && !isLoadingFeedback && (
+                            <button
+                              onClick={() => {
+                                // 再分析を強制実行
+                                setLastFeedbackDate(null);
+                              }}
+                              className="text-[10px] px-2 py-0.5 rounded"
+                              style={{ background: colors.bg, color: colors.textMuted }}
+                            >
+                              再分析
+                            </button>
+                          )}
                         </div>
                         {isLoadingFeedback ? (
                           <div className="flex items-center gap-2">
                             <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                            <span style={{ fontSize: 11, color: colors.textLight }}>分析中...</span>
+                            <span style={{ fontSize: 11, color: colors.textLight }}>GPT-5.2で分析中...</span>
                           </div>
                         ) : nutritionFeedback ? (
                           <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6 }}>
                             {nutritionFeedback}
                           </p>
                         ) : (
-                          <button
-                            onClick={async () => {
-                              setIsLoadingFeedback(true);
-                              try {
-                                const res = await fetch('/api/ai/nutrition/feedback', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({
-                                    date: weekDates[selectedDayIndex]?.dateStr,
-                                    nutrition: dayNutrition,
-                                    mealCount,
-                                    weekData: currentPlan?.days?.map(d => ({
-                                      date: d.dayDate,
-                                      meals: d.meals?.map(m => ({ title: m.dishName, calories: m.caloriesKcal })) || []
-                                    })) || [],
-                                  })
-                                });
-                                if (res.ok) {
-                                  const data = await res.json();
-                                  setNutritionFeedback(data.feedback);
-                                }
-                              } catch (e) {
-                                console.error('Failed to get nutrition feedback:', e);
-                              } finally {
-                                setIsLoadingFeedback(false);
-                              }
-                            }}
-                            className="text-xs underline"
-                            style={{ color: colors.accent }}
-                          >
-                            AIに分析してもらう
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+                            <span style={{ fontSize: 11, color: colors.textLight }}>分析を準備中...</span>
+                          </div>
                         )}
                       </div>
 
