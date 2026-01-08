@@ -180,6 +180,9 @@ export function V4GenerateModal({
   
   // Free text note
   const [note, setNote] = useState("");
+  
+  // ローカルの送信中状態（即座にフィードバックを与えるため）
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 計算開始日は今日とweekStartDateの遅い方（過去の空欄はカウントしない）
   const effectiveStartDate = useMemo(() => {
@@ -224,6 +227,9 @@ export function V4GenerateModal({
 
   // Handle generate
   const handleGenerate = async () => {
+    // 連打防止
+    if (isSubmitting || isGenerating) return;
+    
     const slots = buildTargetSlots();
     const validation = validateSlotCount(slots);
     
@@ -232,11 +238,20 @@ export function V4GenerateModal({
       return;
     }
 
-    await onGenerate({
-      targetSlots: slots,
-      constraints,
-      note,
-    });
+    // 即座にローディング状態に
+    setIsSubmitting(true);
+    
+    try {
+      await onGenerate({
+        targetSlots: slots,
+        constraints,
+        note,
+      });
+    } catch (error) {
+      // エラー時はローディングを解除
+      setIsSubmitting(false);
+    }
+    // 成功時はモーダルが閉じるので isSubmitting のリセットは不要
   };
 
   // Toggle constraint
@@ -247,6 +262,7 @@ export function V4GenerateModal({
   // Reset state when closing
   const handleClose = () => {
     setSelectedMode(null);
+    setIsSubmitting(false);
     onClose();
   };
 
@@ -436,14 +452,19 @@ export function V4GenerateModal({
                 {/* Generate button */}
                 <button
                   onClick={handleGenerate}
-                  disabled={!selectedMode || isGenerating}
-                  className="w-full py-4 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  style={{ backgroundColor: colors.accent }}
+                  disabled={!selectedMode || isGenerating || isSubmitting}
+                  className={`w-full py-4 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 ${
+                    isSubmitting || isGenerating ? 'opacity-80' : 'hover:opacity-90 active:scale-[0.98]'
+                  }`}
+                  style={{ 
+                    backgroundColor: isSubmitting || isGenerating ? colors.purple : colors.accent,
+                    cursor: isSubmitting || isGenerating ? 'not-allowed' : 'pointer',
+                  }}
                 >
-                  {isGenerating ? (
+                  {isSubmitting || isGenerating ? (
                     <>
                       <Loader2 size={18} className="animate-spin" />
-                      生成中...
+                      献立を作成中...
                     </>
                   ) : (
                     <>
