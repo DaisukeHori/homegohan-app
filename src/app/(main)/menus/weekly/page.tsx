@@ -600,10 +600,94 @@ export default function WeeklyMenuPage() {
       // Subscribe to progress updates
       if (result?.requestId) {
         v4Generation.subscribeToProgress(result.requestId, (progress) => {
+          // Edge Functionからの progress: { currentStep, totalSteps, message, completedSlots, totalSlots }
+          // フロントエンドが期待: { phase, message, percentage }
+          // PROGRESS_PHASES の phase 名に合わせる
+          
+          const message = progress.message || '';
+          let phase = 'generating';
+          let percentage = 0;
+          
+          const currentStep = progress.currentStep || 1;
+          const totalSlots = progress.totalSlots || 1;
+          const completedSlots = progress.completedSlots || 0;
+          
+          // Step 1 (0-40%): 生成フェーズ
+          if (currentStep === 1 || currentStep === 0) {
+            if (message.includes('ユーザー情報') || message.includes('コンテキスト')) {
+              phase = 'user_context';
+              percentage = 3;
+            } else if (message.includes('参考レシピ') || message.includes('検索')) {
+              phase = 'search_references';
+              percentage = 8;
+            } else if (message.includes('献立をAIが作成') || message.includes('生成中')) {
+              phase = 'generating';
+              percentage = 15 + (completedSlots / totalSlots) * 25; // 15-40%
+            } else if (message.includes('生成完了')) {
+              phase = 'step1_complete';
+              percentage = 40;
+            } else {
+              phase = 'generating';
+              percentage = 12;
+            }
+          }
+          // Step 2 (40-75%): レビューフェーズ
+          else if (currentStep === 2) {
+            if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
+              phase = 'reviewing';
+              percentage = 47;
+            } else if (message.includes('改善中')) {
+              phase = 'fixing';
+              // (0/2) のような部分から進捗を抽出
+              const match = message.match(/(\d+)\/(\d+)/);
+              if (match) {
+                const current = parseInt(match[1]);
+                const total = parseInt(match[2]);
+                // 改善が始まったら review_done を通過済み
+                percentage = 58 + Math.round((current / Math.max(total, 1)) * 12); // 58-70%
+              } else {
+                percentage = 60;
+              }
+            } else if (message.includes('問題なし')) {
+              phase = 'no_issues';
+              percentage = 72;
+            } else if (message.includes('レビュー完了')) {
+              phase = 'step2_complete';
+              percentage = 75;
+            } else {
+              phase = 'reviewing';
+              percentage = 50;
+            }
+          }
+          // Step 3 (75-100%): 保存フェーズ
+          else if (currentStep === 3) {
+            if (message.includes('栄養計算') || message.includes('栄養')) {
+              phase = 'calculating';
+              percentage = 80;
+            } else if (message.includes('保存中')) {
+              phase = 'saving';
+              // (0/16) のような部分から進捗を抽出
+              const match = message.match(/(\d+)\/(\d+)/);
+              if (match) {
+                const current = parseInt(match[1]);
+                const total = parseInt(match[2]);
+                percentage = 88 + Math.round((current / Math.max(total, 1)) * 10); // 88-98%
+              } else {
+                percentage = 90;
+              }
+            } else if (message.includes('完了') || message.includes('保存しました')) {
+              phase = 'completed';
+              percentage = 100;
+            } else {
+              phase = 'saving';
+              percentage = 88;
+            }
+          }
+          
           setGenerationProgress({
-            phase: 'v4',
-            message: progress.message || `${progress.completedSlots || 0}/${progress.totalSlots || 0} 件完了`,
-            percentage: progress.totalSlots ? Math.round((progress.completedSlots || 0) / progress.totalSlots * 100) : 0,
+            phase,
+            message: progress.message || `${completedSlots}/${totalSlots} 件完了`,
+            percentage: Math.round(percentage),
           });
         });
       }
