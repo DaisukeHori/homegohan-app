@@ -232,7 +232,7 @@ const ProgressTodoCard = ({
   phases = PROGRESS_PHASES,
   defaultMessage = 'AIが献立を生成中...',
 }: { 
-  progress: { phase: string; message: string; percentage: number } | null;
+  progress: { phase: string; message: string; percentage: number; totalSlots?: number; completedSlots?: number } | null;
   colors: { accent: string; purple: string };
   phases?: PhaseDefinition[];
   defaultMessage?: string;
@@ -241,6 +241,21 @@ const ProgressTodoCard = ({
   
   const currentPercentage = progress?.percentage ?? 0;
   const currentPhase = progress?.phase ?? '';
+  const totalSlots = progress?.totalSlots ?? 0;
+  
+  // totalSlotsから日数を計算（3スロット = 1日と仮定）
+  const totalDays = totalSlots > 0 ? Math.ceil(totalSlots / 3) : 0;
+  
+  // 動的にフェーズラベルを生成
+  const dynamicPhases = useMemo(() => {
+    return phases.map(p => {
+      if (p.phase === 'generating' && totalDays > 0) {
+        const dayLabel = totalDays === 1 ? '1日分' : `${totalDays}日分`;
+        return { ...p, label: `${dayLabel}の献立をAIが作成` };
+      }
+      return p;
+    });
+  }, [phases, totalDays]);
   
   // 各フェーズの状態を判定
   const getPhaseStatus = (phase: PhaseDefinition) => {
@@ -266,7 +281,10 @@ const ProgressTodoCard = ({
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
             <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-              {progress?.message || defaultMessage}
+              {totalDays > 0 
+                ? `献立を生成中...（${progress?.completedSlots || 0}/${totalSlots}食、${totalDays}日分）`
+                : (progress?.message || defaultMessage)
+              }
             </span>
           </div>
           <div className="flex items-center gap-1">
@@ -302,7 +320,7 @@ const ProgressTodoCard = ({
           >
             <div className="px-3.5 pb-3 pt-1 border-t border-white/20">
               <div className="space-y-1.5">
-                {phases.map((phase) => {
+                {dynamicPhases.map((phase) => {
                   const status = getPhaseStatus(phase);
                   return (
                     <div 
@@ -546,7 +564,13 @@ export default function WeeklyMenuPage() {
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
-  const [generationProgress, setGenerationProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<{ 
+    phase: string; 
+    message: string; 
+    percentage: number;
+    totalSlots?: number;
+    completedSlots?: number;
+  } | null>(null);
 
   // Meal Plan再取得関数
   const refreshMealPlan = useCallback(async () => {
@@ -688,6 +712,8 @@ export default function WeeklyMenuPage() {
             phase,
             message: progress.message || `${completedSlots}/${totalSlots} 件完了`,
             percentage: Math.round(percentage),
+            totalSlots,
+            completedSlots,
           });
         });
       }
@@ -1140,12 +1166,17 @@ export default function WeeklyMenuPage() {
     completedSlots?: number;
     totalSlots?: number;
   }) => {
-    // 既にUI形式の場合はそのまま返す
+    const completedSlots = progress.completedSlots || 0;
+    const totalSlots = progress.totalSlots || 0;
+    
+    // 既にUI形式の場合はそのまま返す（totalSlotsを追加）
     if (progress.phase && progress.percentage !== undefined) {
       return {
         phase: progress.phase,
         message: progress.message || '',
         percentage: progress.percentage,
+        totalSlots,
+        completedSlots,
       };
     }
     
@@ -1153,8 +1184,6 @@ export default function WeeklyMenuPage() {
     if (progress.currentStep !== undefined && progress.totalSteps !== undefined) {
       const message = progress.message || 'AIが献立を生成中...';
       const currentStep = progress.currentStep;
-      const completedSlots = progress.completedSlots || 0;
-      const totalSlots = progress.totalSlots || 1;
       
       let phase = 'generating';
       let percentage = 0;
@@ -1226,6 +1255,8 @@ export default function WeeklyMenuPage() {
         phase,
         message,
         percentage: Math.round(percentage),
+        totalSlots,
+        completedSlots,
       };
     }
     
@@ -1234,6 +1265,8 @@ export default function WeeklyMenuPage() {
       phase: 'generating',
       message: progress.message || 'AIが献立を生成中...',
       percentage: 0,
+      totalSlots,
+      completedSlots,
     };
   }, []);
 
