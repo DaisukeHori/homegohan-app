@@ -9,8 +9,10 @@
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
+import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 // ============================================
 // 型定義
@@ -270,7 +272,14 @@ Deno.serve(async (req: Request) => {
   }
 
   const requestId = generateRequestId();
+  const executionId = generateExecutionId();
   const logger = createLogger("normalize-shopping-list", requestId);
+
+  // Supabaseクライアント作成（トークン使用量記録用）
+  const supabaseClient = createClient(
+    Deno.env.get("SUPABASE_URL") ?? "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+  );
 
   try {
     const { ingredients } = (await req.json()) as {
@@ -304,9 +313,16 @@ Deno.serve(async (req: Request) => {
     // 入力名のセットを作成（バリデーション用）
     const inputNames = new Set(ingredients.map((ing) => ing.name));
 
-    // LLM呼び出し
-    const prompt = buildPrompt(ingredients);
-    const rawItems = await callOpenAI(prompt, logger);
+    // LLM呼び出し（トークン使用量計測付き）
+    const rawItems = await withOpenAIUsageContext({
+      functionName: "normalize-shopping-list",
+      executionId,
+      requestId,
+      supabaseClient,
+    }, async () => {
+      const prompt = buildPrompt(ingredients);
+      return await callOpenAI(prompt, logger);
+    });
 
     // バリデーション: ハルシネーション除去
     const validatedItems = validateItems(rawItems, inputNames, logger);

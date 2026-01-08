@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -111,15 +112,28 @@ Deno.serve(async (req) => {
       .eq('user_id', user.id)
       .eq('status', 'active');
 
-    // 分析を実行
-    const insights = await generateInsights(
-      records as HealthRecord[],
-      profile,
-      goals || [],
-      periodType,
-      startDate,
-      endDate
+    // 分析を実行（LLMトークン使用量計測付き）
+    const executionId = generateExecutionId();
+    const supabaseService = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
+
+    const insights = await withOpenAIUsageContext({
+      functionName: "generate-health-insights",
+      executionId,
+      userId: user.id,
+      supabaseClient: supabaseService,
+    }, async () => {
+      return await generateInsights(
+        records as HealthRecord[],
+        profile,
+        goals || [],
+        periodType,
+        startDate,
+        endDate
+      );
+    });
 
     // インサイトをDBに保存
     for (const insight of insights) {

@@ -1,5 +1,6 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { Agent, type AgentInputItem, Runner } from "npm:@openai/agents";
+import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -551,9 +552,19 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "name and base_recipe_external_id are required" }, 400);
   }
 
+  // LLMトークン使用量計測
+  const executionId = generateExecutionId();
+
   try {
-    // 1) base recipe
-    const { data: baseRecipe, error: baseErr } = await supabaseAdmin
+    // withOpenAIUsageContextで全体をラップ（agentJson, embedTexts呼び出しを計測）
+    return await withOpenAIUsageContext({
+      functionName: "create-derived-recipe",
+      executionId,
+      userId: userId ?? undefined,
+      supabaseClient: supabaseAdmin,
+    }, async () => {
+      // 1) base recipe
+      const { data: baseRecipe, error: baseErr } = await supabaseAdmin
       .from("dataset_recipes")
       .select("id, external_id, name, ingredients_text, instructions_text")
       .eq("external_id", baseRecipeExternalId)
@@ -880,14 +891,15 @@ Deno.serve(async (req) => {
       .single();
     if (saveErr) throw new Error(`Failed to insert derived_recipes: ${saveErr.message}`);
 
-    return jsonResponse({
-      ok: true,
-      derived_recipe: saved,
-      mapping_rate: mappingRate,
-      ingredient_matches: matches,
-      nutrition_totals: totals,
-      elapsed_ms: Date.now() - startedAt,
-    });
+      return jsonResponse({
+        ok: true,
+        derived_recipe: saved,
+        mapping_rate: mappingRate,
+        ingredient_matches: matches,
+        nutrition_totals: totals,
+        elapsed_ms: Date.now() - startedAt,
+      });
+    }); // withOpenAIUsageContext end
   } catch (e: any) {
     console.error("❌ create-derived-recipe failed:", e?.message ?? e);
     return jsonResponse({ ok: false, error: e?.message ?? String(e) }, 500);

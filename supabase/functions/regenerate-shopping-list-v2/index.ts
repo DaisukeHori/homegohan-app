@@ -9,6 +9,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 // ============================================
 // CORS
@@ -332,13 +333,23 @@ async function processRegeneration(
   endDate: string,
   servingsConfig?: ServingsConfig | null
 ): Promise<void> {
+  const executionId = generateExecutionId();
+
   try {
-    // Phase 1: 材料抽出
-    await updateProgress(supabase, requestId, {
-      phase: "extracting",
-      message: `献立から材料を抽出中...（${startDate}〜${endDate}）`,
-      percentage: 10,
-    });
+    // LLMトークン使用量計測付きで実行
+    await withOpenAIUsageContext({
+      functionName: "regenerate-shopping-list-v2",
+      executionId,
+      requestId,
+      userId,
+      supabaseClient: supabase,
+    }, async () => {
+      // Phase 1: 材料抽出
+      await updateProgress(supabase, requestId, {
+        phase: "extracting",
+        message: `献立から材料を抽出中...（${startDate}〜${endDate}）`,
+        percentage: 10,
+      });
 
     // servingsConfigがなければユーザープロフィールから取得
     let effectiveServingsConfig = servingsConfig;
@@ -539,15 +550,16 @@ async function processRegeneration(
       if (insertError) throw insertError;
     }
 
-    // 完了
-    const stats = {
-      inputCount: rawIngredients.length,
-      outputCount: validatedItems.length,
-      mergedCount: rawIngredients.length - validatedItems.length,
-      totalServings,
-    };
+      // 完了
+      const stats = {
+        inputCount: rawIngredients.length,
+        outputCount: validatedItems.length,
+        mergedCount: rawIngredients.length - validatedItems.length,
+        totalServings,
+      };
 
-    await markCompleted(supabase, requestId, shoppingListId, stats);
+      await markCompleted(supabase, requestId, shoppingListId, stats);
+    }); // withOpenAIUsageContext end
   } catch (error) {
     console.error("Regeneration error:", error);
     await markFailed(

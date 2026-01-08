@@ -31,6 +31,7 @@ import {
   computeMaxFixesForRange,
   computeNextCursor,
 } from "./step-utils.ts";
+import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -859,19 +860,30 @@ async function executeStep(
   body: any,
   currentStep: number,
 ) {
-  switch (currentStep) {
-    case 1:
-      await executeStep1_Generate(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, body);
-      break;
-    case 2:
-      await executeStep2_Review(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
-      break;
-    case 3:
-      await executeStep3_Complete(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
-      break;
-    default:
-      throw new Error(`Unknown step: ${currentStep}`);
-  }
+  // LLMトークン使用量計測（各ステップごとにexecutionIdを生成）
+  const executionId = generateExecutionId();
+
+  await withOpenAIUsageContext({
+    functionName: `generate-menu-v4-step${currentStep}`,
+    executionId,
+    requestId,
+    userId,
+    supabaseClient: supabase,
+  }, async () => {
+    switch (currentStep) {
+      case 1:
+        await executeStep1_Generate(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, body);
+        break;
+      case 2:
+        await executeStep2_Review(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        break;
+      case 3:
+        await executeStep3_Complete(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        break;
+      default:
+        throw new Error(`Unknown step: ${currentStep}`);
+    }
+  });
 }
 
 // =========================================================

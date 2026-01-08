@@ -11,6 +11,7 @@ import {
   withTrace,
 } from "@openai/agents";
 import { corsHeaders } from '../_shared/cors.ts'
+import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 console.log("Knowledge-GPT Function loaded")
 
@@ -198,7 +199,20 @@ Deno.serve(async (req) => {
     console.log("User message length:", userMessage.length);
     console.log("Mode:", mode);
 
-    const agentOutput = await runAgent(systemMessage, userMessage, mode);
+    // LLMトークン使用量計測
+    const executionId = generateExecutionId();
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const agentOutput = await withOpenAIUsageContext({
+      functionName: "knowledge-gpt",
+      executionId,
+      supabaseClient: supabase,
+    }, async () => {
+      return await runAgent(systemMessage, userMessage, mode);
+    });
 
     console.log("Knowledge-GPT completed, output length:", agentOutput.length);
 

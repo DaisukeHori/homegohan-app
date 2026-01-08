@@ -8,6 +8,7 @@ import {
   type MealType,
   type MenuReference,
 } from "../_shared/meal-generator.ts";
+import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 console.log("Generate Single Meal v3 Function loaded (3-Step Mode)");
 
@@ -349,19 +350,30 @@ async function executeStep(
   note: string | null,
   currentStep: number,
 ) {
-  switch (currentStep) {
-    case 1:
-      await executeStep1_Generate(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, targetDate, mealType, note);
-      break;
-    case 2:
-      await executeStep2_Nutrition(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, targetDate, mealType, note);
-      break;
-    case 3:
-      await executeStep3_Save(supabase, userId, requestId, targetDate, mealType);
-      break;
-    default:
-      throw new Error(`Unknown step: ${currentStep}`);
-  }
+  // LLMトークン使用量計測
+  const executionId = generateExecutionId();
+
+  await withOpenAIUsageContext({
+    functionName: `generate-single-meal-v3-step${currentStep}`,
+    executionId,
+    requestId: requestId ?? undefined,
+    userId,
+    supabaseClient: supabase,
+  }, async () => {
+    switch (currentStep) {
+      case 1:
+        await executeStep1_Generate(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, targetDate, mealType, note);
+        break;
+      case 2:
+        await executeStep2_Nutrition(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, targetDate, mealType, note);
+        break;
+      case 3:
+        await executeStep3_Save(supabase, userId, requestId, targetDate, mealType);
+        break;
+      default:
+        throw new Error(`Unknown step: ${currentStep}`);
+    }
+  });
 }
 
 // =========================================================
