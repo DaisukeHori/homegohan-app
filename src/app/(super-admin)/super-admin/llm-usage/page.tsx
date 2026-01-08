@@ -377,7 +377,7 @@ export default function LLMUsageDashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={data.byModel}
+                    data={data.byModel as unknown as Record<string, unknown>[]}
                     dataKey="total_tokens"
                     nameKey="model"
                     cx="50%"
