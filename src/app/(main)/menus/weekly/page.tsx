@@ -1525,19 +1525,11 @@ export default function WeeklyMenuPage() {
     }
   };
 
-  // AI栄養士フィードバックを取得する関数（非同期＋Realtime対応）
+  // AI栄養士フィードバックを取得する関数（ポーリング方式で確実に更新を検知）
   const fetchNutritionFeedback = async (dateStr: string, forceRefresh = false) => {
     setNutritionFeedback(null);
     setIsLoadingFeedback(true);
     setFeedbackCacheId(null);
-    
-    const supabase = supabaseRef.current;
-    
-    // 既存のRealtime購読をクリーンアップ
-    if (feedbackChannelRef.current) {
-      supabase.removeChannel(feedbackChannelRef.current);
-      feedbackChannelRef.current = null;
-    }
     
     const targetDay = currentPlan?.days?.find(d => d.dayDate === dateStr);
     const mealCount = targetDay?.meals?.filter(m => m.dishName)?.length || 0;
@@ -1574,64 +1566,49 @@ export default function WeeklyMenuPage() {
           return;
         }
         
-        // 生成中の場合はRealtimeで更新を待つ
+        // 生成中の場合はポーリングで更新を待つ
         if (data.status === 'generating' && data.cacheId) {
-          setFeedbackCacheId(data.cacheId);
-          console.log('Nutrition feedback generating, subscribing to Realtime...');
+          const cacheId = data.cacheId;
+          setFeedbackCacheId(cacheId);
+          console.log('Nutrition feedback generating, starting polling...');
           
-          // Realtime購読を設定
-          const channel = supabase
-            .channel(`nutrition_feedback_${data.cacheId}`)
-            .on(
-              'postgres_changes',
-              {
-                event: 'UPDATE',
-                schema: 'public',
-                table: 'nutrition_feedback_cache',
-                filter: `id=eq.${data.cacheId}`,
-              },
-              (payload: any) => {
-                const newRecord = payload.new;
-                console.log('Realtime update received:', newRecord.status);
-                
-                if (newRecord.status === 'completed' && newRecord.feedback) {
-                  setNutritionFeedback(newRecord.feedback);
-                  setIsLoadingFeedback(false);
-                  
-                  // 購読解除
-                  if (feedbackChannelRef.current) {
-                    supabase.removeChannel(feedbackChannelRef.current);
-                    feedbackChannelRef.current = null;
-                  }
-                } else if (newRecord.status === 'error') {
-                  setNutritionFeedback(newRecord.feedback || '分析中にエラーが発生しました。');
-                  setIsLoadingFeedback(false);
-                  
-                  if (feedbackChannelRef.current) {
-                    supabase.removeChannel(feedbackChannelRef.current);
-                    feedbackChannelRef.current = null;
-                  }
-                }
-              }
-            )
-            .subscribe();
+          // ポーリングで完了を待つ（2秒間隔、最大30秒）
+          let pollCount = 0;
+          const maxPolls = 15;
           
-          feedbackChannelRef.current = channel;
-          
-          // タイムアウト：30秒後にポーリングにフォールバック
-          setTimeout(async () => {
-            if (isLoadingFeedback && feedbackCacheId) {
-              console.log('Realtime timeout, polling for result...');
-              const pollRes = await fetch(`/api/ai/nutrition/feedback?cacheId=${data.cacheId}`);
+          const pollInterval = setInterval(async () => {
+            pollCount++;
+            
+            try {
+              const pollRes = await fetch(`/api/ai/nutrition/feedback?cacheId=${cacheId}`);
               if (pollRes.ok) {
                 const pollData = await pollRes.json();
+                
                 if (pollData.status === 'completed' && pollData.feedback) {
                   setNutritionFeedback(pollData.feedback);
                   setIsLoadingFeedback(false);
+                  clearInterval(pollInterval);
+                  console.log('Nutrition feedback received via polling');
+                } else if (pollData.status === 'error') {
+                  setNutritionFeedback(pollData.feedback || '分析中にエラーが発生しました。');
+                  setIsLoadingFeedback(false);
+                  clearInterval(pollInterval);
                 }
               }
+            } catch (e) {
+              console.error('Polling error:', e);
             }
-          }, 30000);
+            
+            // タイムアウト
+            if (pollCount >= maxPolls) {
+              clearInterval(pollInterval);
+              setNutritionFeedback('分析がタイムアウトしました。再分析をお試しください。');
+              setIsLoadingFeedback(false);
+            }
+          }, 2000);
+          
+          // クリーンアップ用にintervalを保存
+          feedbackChannelRef.current = { unsubscribe: () => clearInterval(pollInterval) } as any;
         }
       } else {
         setNutritionFeedback('分析結果を取得できませんでした。');
@@ -1654,10 +1631,10 @@ export default function WeeklyMenuPage() {
       fetchNutritionFeedback(currentDateStr);
     }
     
-    // クリーンアップ：モーダルが閉じたらRealtime購読を解除
+    // クリーンアップ：モーダルが閉じたらポーリングを停止
     return () => {
       if (!showNutritionDetailModal && feedbackChannelRef.current) {
-        supabaseRef.current.removeChannel(feedbackChannelRef.current);
+        (feedbackChannelRef.current as any).unsubscribe?.();
         feedbackChannelRef.current = null;
       }
     };
@@ -5573,7 +5550,7 @@ export default function WeeklyMenuPage() {
                         {isLoadingFeedback ? (
                           <div className="flex items-center gap-2">
                             <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                            <span style={{ fontSize: 11, color: colors.textLight }}>GPT-5.2で分析中...</span>
+                            <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
                           </div>
                         ) : nutritionFeedback ? (
                           <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6 }}>
