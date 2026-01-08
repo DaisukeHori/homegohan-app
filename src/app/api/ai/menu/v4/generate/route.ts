@@ -158,27 +158,48 @@ export async function POST(request: Request) {
       }
     }
 
-    // 5. Collect existing menus (context for LLM)
+    // 5-7. 並列でデータ取得（パフォーマンス最適化）
     const contextStartDate = addDays(startDate, -7); // 7 days before
     const contextEndDate = addDays(endDate, 7); // 7 days after
-    
-    const { data: existingMealsData } = await supabase
-      .from('user_daily_meals')
-      .select(`
-        day_date,
-        planned_meals (
-          id,
-          meal_type,
-          dish_name,
-          is_completed,
-          mode
-        )
-      `)
-      .eq('user_id', user.id)
-      .gte('day_date', contextStartDate)
-      .lte('day_date', contextEndDate);
-
     const todayStr = getTodayStr();
+
+    // 並列実行: 既存メニュー、冷蔵庫、ユーザープロフィール
+    const [existingMealsResult, pantryResult, profileResult] = await Promise.all([
+      // 5. Collect existing menus (context for LLM)
+      supabase
+        .from('user_daily_meals')
+        .select(`
+          day_date,
+          planned_meals (
+            id,
+            meal_type,
+            dish_name,
+            is_completed,
+            mode
+          )
+        `)
+        .eq('user_id', user.id)
+        .gte('day_date', contextStartDate)
+        .lte('day_date', contextEndDate),
+      
+      // 6. Collect fridge items
+      supabase
+        .from('pantry_items')
+        .select('name, amount, expiration_date')
+        .eq('user_id', user.id)
+        .gte('expiration_date', todayStr)
+        .order('expiration_date', { ascending: true }),
+      
+      // 7. Collect user profile
+      supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single(),
+    ]);
+
+    // 既存メニューの処理
+    const existingMealsData = existingMealsResult.data;
     const existingMenus: ExistingMenuContext[] = [];
     
     if (existingMealsData) {
@@ -204,27 +225,16 @@ export async function POST(request: Request) {
       }
     }
 
-    // 6. Collect fridge items
-    const { data: pantryData } = await supabase
-      .from('pantry_items')
-      .select('name, amount, expiration_date')
-      .eq('user_id', user.id)
-      .gte('expiration_date', todayStr)
-      .order('expiration_date', { ascending: true });
-
+    // 冷蔵庫情報の処理
+    const pantryData = pantryResult.data;
     const fridgeItems: FridgeItemContext[] = (pantryData || []).map(item => ({
       name: item.name,
       quantity: item.amount || undefined,
       expirationDate: item.expiration_date || undefined,
     }));
 
-    // 7. Collect user profile
-    const { data: profileData } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
+    // ユーザープロフィールの処理
+    const profileData = profileResult.data;
     const userProfile = profileData || {};
     const familySize = toOptionalInt(body?.familySize) ?? userProfile.family_size ?? 1;
 
