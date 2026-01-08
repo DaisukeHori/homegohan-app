@@ -994,6 +994,7 @@ export default function WeeklyMenuPage() {
   const [showImproveMealModal, setShowImproveMealModal] = useState(false);
   const [improveMealTargets, setImproveMealTargets] = useState<MealType[]>([]);
   const [isImprovingMeal, setIsImprovingMeal] = useState(false);
+  const [improveNextDay, setImproveNextDay] = useState(false); // 翌日1日を対象にするモード
   
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
@@ -5632,6 +5633,7 @@ export default function WeeklyMenuPage() {
                             <button
                               onClick={() => {
                                 setShowImproveMealModal(true);
+                                setImproveNextDay(false); // リセット
                                 // デフォルトで全食事を選択
                                 const mealsForDay = currentDay?.meals?.map(m => m.mealType) || [];
                                 const uniqueMeals = [...new Set(mealsForDay)] as MealType[];
@@ -5996,6 +5998,7 @@ export default function WeeklyMenuPage() {
                             {/* 1日全体を選択 */}
                             <button
                               onClick={() => {
+                                setImproveNextDay(false);
                                 if (improveMealTargets.length === 3) {
                                   setImproveMealTargets([]);
                                 } else {
@@ -6004,12 +6007,39 @@ export default function WeeklyMenuPage() {
                               }}
                               className="w-full p-2 rounded-lg text-xs text-center transition-all"
                               style={{ 
-                                background: improveMealTargets.length === 3 ? colors.accentLight : 'transparent',
+                                background: !improveNextDay && improveMealTargets.length === 3 ? colors.accentLight : 'transparent',
                                 color: colors.accent 
                               }}
                             >
-                              {improveMealTargets.length === 3 ? '✓ 1日全体を選択中' : '1日全体を選択'}
+                              {!improveNextDay && improveMealTargets.length === 3 ? '✓ この日1日を選択中' : 'この日1日全体を選択'}
                             </button>
+                            
+                            {/* 翌日1日を改善 */}
+                            {(() => {
+                              const nextDayIndex = selectedDayIndex + 1;
+                              const nextDay = weekDates[nextDayIndex];
+                              if (!nextDay) return null;
+                              
+                              return (
+                                <button
+                                  onClick={() => {
+                                    setImproveNextDay(true);
+                                    setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
+                                  }}
+                                  className="w-full p-3 rounded-lg text-sm text-center transition-all flex items-center justify-center gap-2"
+                                  style={{ 
+                                    background: improveNextDay ? colors.accentLight : colors.bg,
+                                    color: improveNextDay ? colors.accent : colors.textLight,
+                                    border: improveNextDay ? `2px solid ${colors.accent}` : 'none'
+                                  }}
+                                >
+                                  <span>📅</span>
+                                  <span>
+                                    {improveNextDay ? '✓ ' : ''}翌日（{nextDay.date.getMonth() + 1}/{nextDay.date.getDate()}）1日を改善
+                                  </span>
+                                </button>
+                              );
+                            })()}
                           </div>
                         );
                       })()}
@@ -6034,11 +6064,21 @@ export default function WeeklyMenuPage() {
                           setIsImprovingMeal(true);
                           
                           try {
-                            const targetDateStr = weekDates[selectedDayIndex]?.dateStr;
+                            // 翌日モードの場合は翌日の日付を使用
+                            const targetDateStr = improveNextDay 
+                              ? weekDates[selectedDayIndex + 1]?.dateStr 
+                              : weekDates[selectedDayIndex]?.dateStr;
+                            
+                            if (!targetDateStr) {
+                              alert('対象日が見つかりません');
+                              setIsImprovingMeal(false);
+                              return;
+                            }
                             
                             // AI栄養士のコメントをユーザーコメントとして使用
+                            const analysisDate = weekDates[selectedDayIndex]?.dateStr;
                             const userComment = nutritionFeedback 
-                              ? `AI栄養士の提案に基づいて改善してください：\n${nutritionFeedback}`
+                              ? `${analysisDate}の栄養分析に基づくAI栄養士の提案を参考に改善してください：\n${nutritionFeedback}`
                               : undefined;
                             
                             // V4 Generateを呼び出すためのスロットを構築
@@ -6129,7 +6169,10 @@ export default function WeeklyMenuPage() {
                         style={{ background: colors.accent }}
                       >
                         <Sparkles size={14} />
-                        {improveMealTargets.length}食分を改善
+                        {improveNextDay 
+                          ? `翌日${improveMealTargets.length}食分を改善` 
+                          : `${improveMealTargets.length}食分を改善`
+                        }
                       </button>
                     </div>
                   </>
