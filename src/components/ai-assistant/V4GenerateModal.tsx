@@ -86,6 +86,12 @@ export function V4GenerateModal({
   const [rangeEnd, setRangeEnd] = useState(weekEndDate);
   const [includeExisting, setIncludeExisting] = useState(false);
   
+  // 今日の日付を取得（他のhooksより先に定義）
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }, []);
+
   // Helper: 日付を加算
   const addDays = useCallback((dateStr: string, days: number): string => {
     const date = new Date(dateStr);
@@ -164,12 +170,6 @@ export function V4GenerateModal({
   
   // Free text note
   const [note, setNote] = useState("");
-
-  // 今日の日付を取得
-  const todayStr = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  }, []);
 
   // 計算開始日は今日とweekStartDateの遅い方（過去の空欄はカウントしない）
   const effectiveStartDate = useMemo(() => {
