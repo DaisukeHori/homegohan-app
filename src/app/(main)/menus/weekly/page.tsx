@@ -6087,33 +6087,23 @@ export default function WeeklyMenuPage() {
                               mealType,
                             }));
                             
-                            // menu_generation_requests にリクエストを作成
-                            const requestRes = await fetch('/api/ai/menu/weekly/request', {
+                            // V4 APIを直接呼び出し（リクエスト作成とEdge Function呼び出しを一括で行う）
+                            const requestRes = await fetch('/api/ai/menu/v4/generate', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
-                                mode: 'v4',
                                 targetSlots,
-                                userComment,
-                                includeExisting: true, // 既存を上書き
+                                note: userComment,
+                                constraints: {},
                               }),
                             });
                             
                             if (!requestRes.ok) {
-                              throw new Error('リクエストの作成に失敗しました');
+                              const errorData = await requestRes.json().catch(() => ({}));
+                              throw new Error(errorData.error || 'リクエストの作成に失敗しました');
                             }
                             
                             const requestData = await requestRes.json();
-                            
-                            // バックグラウンドでgenerate-menu-v4を呼び出し
-                            fetch('/api/ai/menu/v4/generate', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                requestId: requestData.id,
-                                step: 1,
-                              }),
-                            }).catch(console.error);
                             
                             // モーダルを閉じてメインページで進捗を確認
                             setShowImproveMealModal(false);
