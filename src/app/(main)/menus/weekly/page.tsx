@@ -996,6 +996,12 @@ export default function WeeklyMenuPage() {
   const [isImprovingMeal, setIsImprovingMeal] = useState(false);
   const [improveNextDay, setImproveNextDay] = useState(false); // 翌日1日を対象にするモード
   
+  // 週間サマリーモーダル
+  const [showWeeklySummaryModal, setShowWeeklySummaryModal] = useState(false);
+  const [weeklySummaryTab, setWeeklySummaryTab] = useState<'today' | 'week'>('today');
+  const [weeklyNutritionFeedback, setWeeklyNutritionFeedback] = useState<string | null>(null);
+  const [isLoadingWeeklyFeedback, setIsLoadingWeeklyFeedback] = useState(false);
+  
   // 買い物リスト範囲選択
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
     type: 'week',
@@ -2987,6 +2993,62 @@ export default function WeeklyMenuPage() {
     }
     return totals;
   };
+  
+  // 週間の全栄養素を合計（日数で割って1日平均を算出）
+  const getWeekTotalNutrition = () => {
+    const totals = {
+      caloriesKcal: 0,
+      proteinG: 0,
+      fatG: 0,
+      carbsG: 0,
+      sodiumG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      potassiumMg: 0,
+      calciumMg: 0,
+      phosphorusMg: 0,
+      magnesiumMg: 0,
+      ironMg: 0,
+      zincMg: 0,
+      iodineUg: 0,
+      cholesterolMg: 0,
+      vitaminAUg: 0,
+      vitaminB1Mg: 0,
+      vitaminB2Mg: 0,
+      vitaminB6Mg: 0,
+      vitaminB12Ug: 0,
+      vitaminCMg: 0,
+      vitaminDUg: 0,
+      vitaminEMg: 0,
+      vitaminKUg: 0,
+      folicAcidUg: 0,
+      saturatedFatG: 0,
+    };
+    
+    if (!currentPlan?.days) return { totals, daysWithMeals: 0, averages: totals };
+    
+    let daysWithMeals = 0;
+    
+    for (const day of currentPlan.days) {
+      if (day.meals && day.meals.length > 0) {
+        daysWithMeals++;
+        const dayNutrition = getDayTotalNutrition(day);
+        for (const key of Object.keys(totals) as (keyof typeof totals)[]) {
+          totals[key] += dayNutrition[key] || 0;
+        }
+      }
+    }
+    
+    // 1日平均
+    const averages = { ...totals };
+    if (daysWithMeals > 0) {
+      for (const key of Object.keys(averages) as (keyof typeof averages)[]) {
+        averages[key] = Math.round((averages[key] / daysWithMeals) * 10) / 10;
+      }
+    }
+    
+    return { totals, daysWithMeals, averages };
+  };
 
   if (loading) {
     return (
@@ -3918,53 +3980,179 @@ export default function WeeklyMenuPage() {
               </motion.div>
             )}
 
-            {/* Stats Modal */}
+            {/* Stats Modal - 新デザイン: 週間サマリー + 今日/今週タブ */}
             {activeModal === 'stats' && (
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
                 className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '65vh' }}
+                style={{ background: colors.card, maxHeight: '85vh' }}
               >
+                {/* ヘッダー */}
                 <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
                     <BarChart3 size={18} color={colors.purple} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>今週のサマリー</span>
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>栄養分析</span>
                   </div>
                   <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <X size={14} color={colors.textLight} />
                   </button>
                 </div>
-                <div className="flex-1 p-4 overflow-auto pb-4 lg:pb-6">
-                  <div className="flex gap-2.5 mb-4">
-                    <div className="flex-1 rounded-[14px] p-3.5 text-center" style={{ background: colors.successLight }}>
-                      <ChefHat size={24} color={colors.success} className="mx-auto mb-1" />
-                      <p style={{ fontSize: 24, fontWeight: 700, color: colors.success, margin: 0 }}>{stats.cookRate}%</p>
-                      <p style={{ fontSize: 11, color: colors.textLight, margin: '2px 0 0' }}>自炊率</p>
+                
+                <div className="flex-1 overflow-auto pb-4 lg:pb-6">
+                  {/* 週間サマリーヘッダー */}
+                  <div className="px-4 pt-3 pb-2" style={{ background: `linear-gradient(135deg, ${colors.purpleLight} 0%, ${colors.accentLight} 100%)` }}>
+                    <div className="flex gap-2 mb-2">
+                      <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
+                        <ChefHat size={18} color={colors.success} className="mx-auto mb-0.5" />
+                        <p style={{ fontSize: 20, fontWeight: 700, color: colors.success, margin: 0 }}>{stats.cookRate}%</p>
+                        <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>自炊率</p>
                     </div>
-                    <div className="flex-1 rounded-[14px] p-3.5 text-center" style={{ background: colors.accentLight }}>
-                      <Flame size={24} color={colors.accent} className="mx-auto mb-1" />
-                      <p style={{ fontSize: 24, fontWeight: 700, color: colors.accent, margin: 0 }}>{stats.avgCal}</p>
-                      <p style={{ fontSize: 11, color: colors.textLight, margin: '2px 0 0' }}>平均kcal/日</p>
+                      <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
+                        <Flame size={18} color={colors.accent} className="mx-auto mb-0.5" />
+                        <p style={{ fontSize: 20, fontWeight: 700, color: colors.accent, margin: 0 }}>{stats.avgCal}</p>
+                        <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>平均kcal/日</p>
                     </div>
+                      <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
+                        <div className="flex justify-center gap-1 mb-0.5">
+                          <span style={{ fontSize: 9, color: colors.success }}>🍳{stats.cookCount}</span>
+                          <span style={{ fontSize: 9, color: colors.purple }}>🛒{stats.buyCount}</span>
+                          <span style={{ fontSize: 9, color: colors.warning }}>🍽{stats.outCount}</span>
                   </div>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 10px' }}>内訳</p>
-                  <div className="flex gap-2 mb-4">
-                    {[
-                      { label: '自炊', count: stats.cookCount, color: colors.success, bg: colors.successLight },
-                      { label: '買う', count: stats.buyCount, color: colors.purple, bg: colors.purpleLight },
-                      { label: '外食', count: stats.outCount, color: colors.warning, bg: colors.warningLight },
-                    ].map(item => (
-                      <div key={item.label} className="flex-1 rounded-[10px] p-2.5 text-center" style={{ background: item.bg }}>
-                        <p style={{ fontSize: 18, fontWeight: 600, color: item.color, margin: 0 }}>{item.count}</p>
-                        <p style={{ fontSize: 10, color: colors.textLight, margin: '2px 0 0' }}>{item.label}</p>
+                        <p style={{ fontSize: 14, fontWeight: 600, color: colors.text, margin: 0 }}>{stats.cookCount + stats.buyCount + stats.outCount}食</p>
+                        <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>今週の献立</p>
                       </div>
-                    ))}
                   </div>
-                  <div className="p-3 rounded-xl" style={{ background: colors.purpleLight }}>
-                    <div className="flex items-center gap-1 mb-1">
+                  </div>
+                  
+                  {/* タブ */}
+                  <div className="flex px-4 py-2 gap-2" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <button
+                      onClick={() => setWeeklySummaryTab('today')}
+                      className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
+                      style={{
+                        background: weeklySummaryTab === 'today' ? colors.accent : 'transparent',
+                        color: weeklySummaryTab === 'today' ? '#fff' : colors.textLight,
+                      }}
+                    >
+                      📅 今日
+                    </button>
+                    <button
+                      onClick={() => setWeeklySummaryTab('week')}
+                      className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
+                      style={{
+                        background: weeklySummaryTab === 'week' ? colors.accent : 'transparent',
+                        color: weeklySummaryTab === 'week' ? '#fff' : colors.textLight,
+                      }}
+                    >
+                      📊 今週
+                    </button>
+                  </div>
+                  
+                  {/* タブコンテンツ */}
+                  <div className="p-4">
+                    {weeklySummaryTab === 'today' ? (
+                      // 今日タブ
+                      (() => {
+                        const todayIndex = weekDates.findIndex(d => d.dateStr === formatLocalDate(new Date()));
+                        const todayDayData = currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date()));
+                        const todayNutrition = getDayTotalNutrition(todayDayData);
+                        const mealCount = todayDayData?.meals?.length || 0;
+                        
+                        return (
+                          <>
+                            {/* 今日の日付 */}
+                            <div className="flex items-center justify-between mb-3">
+                              <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
+                                {new Date().getMonth() + 1}月{new Date().getDate()}日（{['日', '月', '火', '水', '木', '金', '土'][new Date().getDay()]}）の栄養
+                              </p>
+                              <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.accentLight, color: colors.accent }}>
+                                {mealCount}食分
+                              </span>
+                            </div>
+                            
+                            {/* レーダーチャート */}
+                            <div className="flex justify-center mb-3">
+                              <NutritionRadarChart
+                                nutrition={todayNutrition}
+                                selectedNutrients={radarChartNutrients}
+                                size={180}
+                                showLabels={true}
+                              />
+                            </div>
+                            
+                            {/* AI栄養士コメント */}
+                            <div className="mb-3 p-3 rounded-xl" style={{ background: colors.accentLight }}>
+                              <div className="flex items-center gap-2 mb-1">
+                                <Sparkles size={12} color={colors.accent} />
+                                <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>AI栄養士のコメント</span>
+                              </div>
+                              {isLoadingFeedback ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+                                  <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
+                                </div>
+                              ) : nutritionFeedback ? (
+                                <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }}>{nutritionFeedback}</p>
+                              ) : (
+                                <p style={{ fontSize: 11, color: colors.textMuted }}>分析データがありません</p>
+                              )}
+                            </div>
+                            
+                            {/* 献立改善ボタン */}
+                            {nutritionFeedback && (
+                              <button
+                                onClick={() => {
+                                  setActiveModal(null);
+                                  // 今日の日を選択してから栄養詳細モーダルを開く
+                                  const todayIdx = weekDates.findIndex(d => d.dateStr === formatLocalDate(new Date()));
+                                  if (todayIdx >= 0) {
+                                    setSelectedDayIndex(todayIdx);
+                                  }
+                                  setShowNutritionDetailModal(true);
+                                }}
+                                className="w-full p-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all hover:opacity-90"
+                                style={{ background: colors.accent, color: '#fff', fontSize: 12 }}
+                              >
+                                <RefreshCw size={14} />
+                                詳細を見る / 献立を改善
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()
+                    ) : (
+                      // 今週タブ
+                      (() => {
+                        const weekNutrition = getWeekTotalNutrition();
+                        
+                        return (
+                          <>
+                            {/* 週の期間 */}
+                            <div className="flex items-center justify-between mb-3">
+                              <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
+                                {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} 〜 {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()} の平均栄養
+                              </p>
+                              <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.purpleLight, color: colors.purple }}>
+                                {weekNutrition.daysWithMeals}日分
+                              </span>
+                            </div>
+                            
+                            {/* 週間レーダーチャート */}
+                            <div className="flex justify-center mb-3">
+                              <NutritionRadarChart
+                                nutrition={weekNutrition.averages}
+                                selectedNutrients={radarChartNutrients}
+                                size={180}
+                                showLabels={true}
+                              />
+                            </div>
+                            
+                            {/* 週間AI栄養士コメント */}
+                            <div className="mb-3 p-3 rounded-xl" style={{ background: colors.purpleLight }}>
+                              <div className="flex items-center gap-2 mb-1">
                       <Sparkles size={12} color={colors.purple} />
-                      <p style={{ fontSize: 12, fontWeight: 600, color: colors.purple, margin: 0 }}>AIヒント</p>
+                                <span style={{ fontSize: 11, fontWeight: 600, color: colors.purple }}>週間AIヒント</span>
                     </div>
                     {isLoadingHint ? (
                       <div className="flex items-center gap-2">
@@ -3972,9 +4160,31 @@ export default function WeeklyMenuPage() {
                         <span style={{ fontSize: 11, color: colors.textMuted }}>ヒントを生成中...</span>
                       </div>
                     ) : (
-                      <p style={{ fontSize: 11, color: colors.text, margin: 0, lineHeight: 1.5 }}>
+                                <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }}>
                         {aiHint || `今週の自炊率は${stats.cookRate}%です。週末にまとめて作り置きすると、平日の自炊率が上がりますよ！`}
                       </p>
+                              )}
+                            </div>
+                            
+                            {/* 主要栄養素の週間平均 */}
+                            <div className="grid grid-cols-3 gap-2">
+                              {[
+                                { label: 'カロリー', value: `${Math.round(weekNutrition.averages.caloriesKcal)}`, unit: 'kcal', color: colors.accent },
+                                { label: 'タンパク質', value: `${Math.round(weekNutrition.averages.proteinG)}`, unit: 'g', color: colors.success },
+                                { label: '脂質', value: `${Math.round(weekNutrition.averages.fatG)}`, unit: 'g', color: colors.warning },
+                                { label: '炭水化物', value: `${Math.round(weekNutrition.averages.carbsG)}`, unit: 'g', color: colors.blue },
+                                { label: '食物繊維', value: `${Math.round(weekNutrition.averages.fiberG * 10) / 10}`, unit: 'g', color: colors.purple },
+                                { label: '塩分', value: `${Math.round(weekNutrition.averages.sodiumG * 10) / 10}`, unit: 'g', color: colors.danger },
+                              ].map(item => (
+                                <div key={item.label} className="p-2 rounded-lg text-center" style={{ background: colors.bg }}>
+                                  <p style={{ fontSize: 16, fontWeight: 600, color: item.color, margin: 0 }}>{item.value}</p>
+                                  <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>{item.label}({item.unit}/日)</p>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        );
+                      })()
                     )}
                   </div>
                 </div>
