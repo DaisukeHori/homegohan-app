@@ -1,8 +1,9 @@
 /**
  * 料理を創造するためのLLMロジック（共有モジュール）
+ *
+ * 高速化のため、Agent SDKではなく直接REST API呼び出しを使用
  */
 
-import { Agent, type AgentInputItem, Runner } from "@openai/agents";
 import { z } from "zod";
 
 // =========================================================
@@ -151,24 +152,35 @@ export async function generateMealWithLLM(input: {
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${mealTypeJa}の献立を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
-  const agent = new Agent({
-    name: "meal-creator",
-    instructions: systemPrompt,
-    model: "gpt-5-mini",
-    modelSettings: { reasoningEffort: "minimal" },
-    tools: [],
-  });
+  // 直接REST API呼び出し（Agent SDKよりも高速）
+  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-  const conversationHistory: AgentInputItem[] = [{ role: "user", content: [{ type: "input_text", text: userPrompt }] }];
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "meal-generator-shared",
-      workflow_id: "wf_meal_create",
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 4000,
+      response_format: { type: "json_object" },
+    }),
   });
 
-  const result = await runner.run(agent, conversationHistory);
-  const out = result.finalOutput ? String(result.finalOutput) : "";
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
+  }
+
+  const json = await res.json();
+  const out = json.choices?.[0]?.message?.content ?? "";
   if (!out) throw new Error("LLM output is empty");
   const parsed = safeJsonParse(out);
   return GeneratedMealSchema.parse(parsed);
@@ -244,11 +256,11 @@ export async function generateDayMealsWithLLM(input: {
     return `例${i + 1}: ${m.title} → ${dishNames}`;
   }).join("\n");
 
-  const previousDayText = input.previousDayMeals?.length 
+  const previousDayText = input.previousDayMeals?.length
     ? `【前日の献立（これらとは異なるものを）】\n${input.previousDayMeals.join("、")}\n\n`
     : "";
 
-  const mealTypesJa = input.mealTypes.map(t => 
+  const mealTypesJa = input.mealTypes.map(t =>
     t === "breakfast" ? "朝食" : t === "lunch" ? "昼食" : t === "dinner" ? "夕食" : t
   ).join("、");
 
@@ -262,24 +274,35 @@ export async function generateDayMealsWithLLM(input: {
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${input.date}の1日分の献立（${mealTypesJa}）を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
-  const agent = new Agent({
-    name: "daily-meal-creator",
-    instructions: systemPrompt,
-    model: "gpt-5-mini",
-    modelSettings: { reasoningEffort: "minimal" },
-    tools: [],
-  });
+  // 直接REST API呼び出し（Agent SDKよりも高速）
+  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-  const conversationHistory: AgentInputItem[] = [{ role: "user", content: [{ type: "input_text", text: userPrompt }] }];
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "meal-generator-shared",
-      workflow_id: "wf_daily_meal_create",
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 8000,
+      response_format: { type: "json_object" },
+    }),
   });
 
-  const result = await runner.run(agent, conversationHistory);
-  const out = result.finalOutput ? String(result.finalOutput) : "";
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
+  }
+
+  const json = await res.json();
+  const out = json.choices?.[0]?.message?.content ?? "";
   if (!out) throw new Error("LLM output is empty");
   const parsed = safeJsonParse(out);
   return DailyGeneratedMealsSchema.parse(parsed);
@@ -373,33 +396,45 @@ export async function reviewWeeklyMenus(input: {
     return `${day.date}:\n${mealsStr}`;
   }).join("\n\n");
 
-  const userPrompt = 
+  const userPrompt =
     `【ユーザー情報】\n${input.userSummary}\n\n` +
     `【1週間の献立】\n${mealsText}\n\n` +
     `上記の献立をレビューしてください。`;
 
-  const agent = new Agent({
-    name: "weekly-menu-reviewer",
-    instructions: systemPrompt,
-    model: "gpt-5-mini",
-    modelSettings: { reasoningEffort: "minimal" },
-    tools: [],
-  });
+  // 直接REST API呼び出し（Agent SDKよりも高速）
+  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-  const conversationHistory: AgentInputItem[] = [{ role: "user", content: [{ type: "input_text", text: userPrompt }] }];
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "meal-generator-shared",
-      workflow_id: "wf_weekly_review",
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 2000,
+      response_format: { type: "json_object" },
+    }),
   });
 
-  const result = await runner.run(agent, conversationHistory);
-  const out = result.finalOutput ? String(result.finalOutput) : "";
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error(`OpenAI API error: ${res.status} - ${errorText}`);
+    return { hasIssues: false, issues: [], swaps: [] };
+  }
+
+  const json = await res.json();
+  const out = json.choices?.[0]?.message?.content ?? "";
   if (!out) {
     return { hasIssues: false, issues: [], swaps: [] };
   }
-  
+
   try {
     const parsed = safeJsonParse(out);
     return ReviewResultSchema.parse(parsed);
@@ -472,24 +507,35 @@ export async function regenerateMealForIssue(input: {
     `【参考にできる献立例】\n${referenceText}\n\n` +
     `上記の問題点を解決した新しい献立を創造してください。`;
 
-  const agent = new Agent({
-    name: "meal-improver",
-    instructions: systemPrompt,
-    model: "gpt-5-mini",
-    modelSettings: { reasoningEffort: "minimal" },
-    tools: [],
-  });
+  // 直接REST API呼び出し（Agent SDKよりも高速）
+  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-  const conversationHistory: AgentInputItem[] = [{ role: "user", content: [{ type: "input_text", text: userPrompt }] }];
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "meal-generator-shared",
-      workflow_id: "wf_meal_improve",
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 4000,
+      response_format: { type: "json_object" },
+    }),
   });
 
-  const result = await runner.run(agent, conversationHistory);
-  const out = result.finalOutput ? String(result.finalOutput) : "";
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
+  }
+
+  const json = await res.json();
+  const out = json.choices?.[0]?.message?.content ?? "";
   if (!out) throw new Error("LLM output is empty");
   const parsed = safeJsonParse(out);
   return GeneratedMealSchema.parse(parsed);
