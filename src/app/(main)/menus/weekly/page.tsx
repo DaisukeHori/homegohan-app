@@ -639,8 +639,10 @@ export default function WeeklyMenuPage() {
 
   // ページリロード時に進行中の生成を復元
   useEffect(() => {
-    const stored = localStorage.getItem('v4MenuGenerating');
-    if (stored) {
+    const restoreGeneration = async () => {
+      const stored = localStorage.getItem('v4MenuGenerating');
+      if (!stored) return;
+
       try {
         const { requestId, timestamp, totalSlots } = JSON.parse(stored);
         // 30分以上経過していたら古いデータとして削除
@@ -650,13 +652,57 @@ export default function WeeklyMenuPage() {
         }
 
         console.log('[restore] Restoring V4 generation progress for requestId:', requestId);
+
+        // まずDBから現在の状態を取得（リロード中に完了していた場合に対応）
+        const currentStatus = await v4Generation.getRequestStatus(requestId);
+        console.log('[restore] Current status from DB:', currentStatus);
+
+        // すでに完了している場合
+        if (currentStatus?.status === 'completed') {
+          console.log('[restore] Generation already completed');
+          localStorage.removeItem('v4MenuGenerating');
+          refreshMealPlan();
+          setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' });
+          return;
+        }
+
+        // 失敗している場合
+        if (currentStatus?.status === 'failed') {
+          console.log('[restore] Generation failed');
+          localStorage.removeItem('v4MenuGenerating');
+          alert(currentStatus.errorMessage || '生成に失敗しました');
+          return;
+        }
+
+        // まだ進行中の場合、UI状態を復元して進捗追跡を再開
         setIsGenerating(true);
+
+        // 現在の進捗をDBの値から復元
+        const dbProgress = currentStatus?.progress || {};
+        const currentStep = dbProgress.currentStep || 1;
+        const dbTotalSlots = dbProgress.totalSlots || totalSlots || 1;
+        const completedSlots = dbProgress.completedSlots || 0;
+
+        let initialPhase = 'generating';
+        let initialPercentage = 10;
+
+        if (currentStep === 1) {
+          initialPhase = 'generating';
+          initialPercentage = 5 + Math.round((completedSlots / dbTotalSlots) * 35);
+        } else if (currentStep === 2) {
+          initialPhase = 'reviewing';
+          initialPercentage = 40 + Math.round((completedSlots / dbTotalSlots) * 40);
+        } else if (currentStep === 3) {
+          initialPhase = 'saving';
+          initialPercentage = 85 + Math.round((completedSlots / dbTotalSlots) * 10);
+        }
+
         setGenerationProgress({
-          phase: 'generating',
-          message: '生成状況を確認中...',
-          percentage: 10,
-          totalSlots: totalSlots || 1,
-          completedSlots: 0,
+          phase: initialPhase,
+          message: dbProgress.message || '生成状況を確認中...',
+          percentage: initialPercentage,
+          totalSlots: dbTotalSlots,
+          completedSlots,
         });
 
         // 進捗追跡を再開
@@ -665,19 +711,19 @@ export default function WeeklyMenuPage() {
           let phase = 'generating';
           let percentage = 10;
 
-          const currentStep = progress.currentStep || 1;
+          const progressCurrentStep = progress.currentStep || 1;
           const progressTotalSlots = progress.totalSlots || totalSlots || 1;
-          const completedSlots = progress.completedSlots || 0;
+          const progressCompletedSlots = progress.completedSlots || 0;
 
-          if (currentStep === 1 || currentStep === 0) {
+          if (progressCurrentStep === 1 || progressCurrentStep === 0) {
             phase = 'generating';
-            percentage = 5 + Math.round((completedSlots / progressTotalSlots) * 35);
-          } else if (currentStep === 2) {
+            percentage = 5 + Math.round((progressCompletedSlots / progressTotalSlots) * 35);
+          } else if (progressCurrentStep === 2) {
             phase = 'nutrition';
-            percentage = 40 + Math.round((completedSlots / progressTotalSlots) * 40);
-          } else if (currentStep === 3) {
+            percentage = 40 + Math.round((progressCompletedSlots / progressTotalSlots) * 40);
+          } else if (progressCurrentStep === 3) {
             phase = 'saving';
-            percentage = 85 + Math.round((completedSlots / progressTotalSlots) * 10);
+            percentage = 85 + Math.round((progressCompletedSlots / progressTotalSlots) * 10);
           }
 
           // 完了/失敗判定
@@ -702,14 +748,16 @@ export default function WeeklyMenuPage() {
             message,
             percentage,
             totalSlots: progressTotalSlots,
-            completedSlots,
+            completedSlots: progressCompletedSlots,
           });
         });
       } catch (e) {
         console.error('[restore] Failed to restore V4 generation:', e);
         localStorage.removeItem('v4MenuGenerating');
       }
-    }
+    };
+
+    restoreGeneration();
   }, []);  // マウント時のみ実行
 
   // V4 生成ハンドラー

@@ -115,6 +115,27 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
     localStorage.removeItem("v4MenuGenerating");
   }, []);
 
+  // リクエストの現在の状態をDBから取得
+  const getRequestStatus = useCallback(async (reqId: string) => {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("weekly_menu_requests")
+      .select("status, progress, error_message")
+      .eq("id", reqId)
+      .single();
+
+    if (error) {
+      console.error("[getRequestStatus] Failed to fetch:", error);
+      return null;
+    }
+
+    return {
+      status: data.status,
+      progress: data.progress,
+      errorMessage: data.error_message,
+    };
+  }, []);
+
   return {
     isGenerating,
     requestId,
@@ -122,5 +143,6 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
     generate,
     subscribeToProgress,
     cancelGeneration,
+    getRequestStatus,
   };
 }
