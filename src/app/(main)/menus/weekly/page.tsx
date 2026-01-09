@@ -637,6 +637,81 @@ export default function WeeklyMenuPage() {
     },
   });
 
+  // ページリロード時に進行中の生成を復元
+  useEffect(() => {
+    const stored = localStorage.getItem('v4MenuGenerating');
+    if (stored) {
+      try {
+        const { requestId, timestamp, totalSlots } = JSON.parse(stored);
+        // 30分以上経過していたら古いデータとして削除
+        if (Date.now() - timestamp > 30 * 60 * 1000) {
+          localStorage.removeItem('v4MenuGenerating');
+          return;
+        }
+
+        console.log('[restore] Restoring V4 generation progress for requestId:', requestId);
+        setIsGenerating(true);
+        setGenerationProgress({
+          phase: 'generating',
+          message: '生成状況を確認中...',
+          percentage: 10,
+          totalSlots: totalSlots || 1,
+          completedSlots: 0,
+        });
+
+        // 進捗追跡を再開
+        v4Generation.subscribeToProgress(requestId, (progress) => {
+          const message = progress.message || '';
+          let phase = 'generating';
+          let percentage = 10;
+
+          const currentStep = progress.currentStep || 1;
+          const progressTotalSlots = progress.totalSlots || totalSlots || 1;
+          const completedSlots = progress.completedSlots || 0;
+
+          if (currentStep === 1 || currentStep === 0) {
+            phase = 'generating';
+            percentage = 5 + Math.round((completedSlots / progressTotalSlots) * 35);
+          } else if (currentStep === 2) {
+            phase = 'nutrition';
+            percentage = 40 + Math.round((completedSlots / progressTotalSlots) * 40);
+          } else if (currentStep === 3) {
+            phase = 'saving';
+            percentage = 85 + Math.round((completedSlots / progressTotalSlots) * 10);
+          }
+
+          // 完了/失敗判定
+          if (progress.status === 'completed') {
+            setIsGenerating(false);
+            setGenerationProgress(null);
+            localStorage.removeItem('v4MenuGenerating');
+            refreshMealPlan();
+            setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' });
+            return;
+          }
+          if (progress.status === 'failed') {
+            setIsGenerating(false);
+            setGenerationProgress(null);
+            localStorage.removeItem('v4MenuGenerating');
+            alert(progress.errorMessage || '生成に失敗しました');
+            return;
+          }
+
+          setGenerationProgress({
+            phase,
+            message,
+            percentage,
+            totalSlots: progressTotalSlots,
+            completedSlots,
+          });
+        });
+      } catch (e) {
+        console.error('[restore] Failed to restore V4 generation:', e);
+        localStorage.removeItem('v4MenuGenerating');
+      }
+    }
+  }, []);  // マウント時のみ実行
+
   // V4 生成ハンドラー
   const handleV4Generate = async (params: {
     targetSlots: TargetSlot[];
