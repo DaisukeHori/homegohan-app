@@ -1001,7 +1001,7 @@ async function executeStep1_Generate(
     1,
   );
 
-  const CONCURRENCY = 2;
+  const CONCURRENCY = 4; // 高速化: 2→4日並列
   for (let i = cursor; i < nextCursor; i += CONCURRENCY) {
     const batchDates = dates.slice(i, Math.min(i + CONCURRENCY, nextCursor));
     await Promise.all(
