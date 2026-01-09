@@ -899,6 +899,7 @@ async function executeStep1_Generate(
   body: any,
 ) {
   console.log("📝 V4 Step 1: Generating meals...");
+  console.time("⏱️ Step1_Total");
 
   const reqRow = await loadRequestRow(supabase, requestId);
   if (reqRow.user_id && String(reqRow.user_id) !== String(userId)) {
@@ -970,7 +971,10 @@ async function executeStep1_Generate(
         note,
         constraints: constraintsForContext,
       });
-      return await searchMenuCandidates(supabase, searchQuery, 30);
+      console.time("⏱️ searchMenuCandidates");
+      const result = await searchMenuCandidates(supabase, searchQuery, 30);
+      console.timeEnd("⏱️ searchMenuCandidates");
+      return result;
     })();
 
   // Generated meals map (persisted)
@@ -1027,6 +1031,7 @@ async function executeStep1_Generate(
           });
           const noteForDay = [note, dayContext].filter(Boolean).join("\n\n");
 
+          console.time(`⏱️ generateDayMealsWithLLM[${date}]`);
           const dayMeals = await generateDayMealsWithLLM({
             userSummary,
             userContext,
@@ -1035,6 +1040,7 @@ async function executeStep1_Generate(
             mealTypes: coreTypes,
             referenceMenus: references,
           });
+          console.timeEnd(`⏱️ generateDayMealsWithLLM[${date}]`);
 
           for (const meal of dayMeals.meals ?? []) {
             const key = getSlotKey(date, meal.mealType);
@@ -1124,6 +1130,8 @@ async function executeStep1_Generate(
     },
     step1Done ? 2 : 1,
   );
+
+  console.timeEnd("⏱️ Step1_Total");
 
   // Continue or next step
   await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
