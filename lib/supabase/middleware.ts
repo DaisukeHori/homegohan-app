@@ -2,6 +2,11 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function updateSession(request: NextRequest) {
+  // APIルートの場合は、セッション更新のみ行い、リダイレクトはしない
+  // これにより、不要な getUser() 呼び出しを減らす
+  const isApiRoute = request.nextUrl.pathname.startsWith('/api/')
+  
+  // レスポンスを作成（クッキーを蓄積するために1つのインスタンスを使い回す）
   let supabaseResponse = NextResponse.next({
     request,
   })
@@ -15,14 +20,13 @@ export async function updateSession(request: NextRequest) {
           return request.cookies.get(name)?.value
         },
         set(name: string, value: string, options: any) {
+          // リクエストとレスポンスの両方にクッキーを設定
           request.cookies.set({
             name,
             value,
             ...options,
           })
-          supabaseResponse = NextResponse.next({
-            request,
-          })
+          // 同じレスポンスインスタンスにクッキーを追加（蓄積する）
           supabaseResponse.cookies.set({
             name,
             value,
@@ -35,9 +39,6 @@ export async function updateSession(request: NextRequest) {
             value: '',
             ...options,
           })
-          supabaseResponse = NextResponse.next({
-            request,
-          })
           supabaseResponse.cookies.set({
             name,
             value: '',
@@ -48,6 +49,16 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
+  // APIルートの場合はセッション更新のみ（getUser()は各ルートで行う）
+  // これにより、ミドルウェアでの認証チェックを最小限に抑える
+  if (isApiRoute) {
+    // getSession()でセッションを取得し、必要に応じてトークンをリフレッシュ
+    // getUser()よりも軽量で、サーバーへの追加リクエストを行わない
+    await supabase.auth.getSession()
+    return supabaseResponse
+  }
+
+  // ページナビゲーションの場合は getUser() で認証を確認
   const {
     data: { user },
   } = await supabase.auth.getUser()

@@ -762,6 +762,9 @@ export default function WeeklyMenuPage() {
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const supabaseRef = useRef(createClient());
   
+  // 生成中状態のチェックが進行中かどうかを追跡（重複API呼び出し防止）
+  const isCheckingPendingRef = useRef(false);
+  
   // Realtime サブスクリプションをクリーンアップする関数
   const cleanupRealtime = useCallback(() => {
     if (realtimeChannelRef.current) {
@@ -783,106 +786,115 @@ export default function WeeklyMenuPage() {
     if (realtimeChannelRef.current) return;
     // 既に生成中状態なら何もしない（重複防止）
     if (isGenerating || generatingMeal) return;
+    // 既にチェック中なら何もしない（重複API呼び出し防止）
+    if (isCheckingPendingRef.current) return;
     
     const checkPendingRequests = async () => {
-      const targetDate = formatLocalDate(weekStart);
-      console.log('🔍 checkPendingRequests called with targetDate:', targetDate);
+      // チェック開始をマーク
+      isCheckingPendingRef.current = true;
       
-      // 0. まずスタックしたリクエストを自動クリーンアップ（5分以上前のprocessing/pending）
       try {
-        const cleanupRes = await fetch('/api/ai/menu/weekly/cleanup', { method: 'POST' });
-        if (cleanupRes.ok) {
-          const cleanupData = await cleanupRes.json();
-          if (cleanupData.cleaned > 0) {
-            console.log('🧹 自動クリーンアップ完了:', cleanupData.cleaned, '件のスタックしたリクエストを停止');
-          }
-        }
-      } catch (e) {
-        console.warn('自動クリーンアップに失敗:', e);
-      }
-      
-      // 1. 週間献立の生成中リクエストをDBで確認
-      try {
-        const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
-        console.log('🔍 weeklyRes status:', weeklyRes.status);
-        if (weeklyRes.ok) {
-          const data = await weeklyRes.json();
-          console.log('🔍 weeklyRes data:', data);
-          const { hasPending, requestId, status, startDate: pendingStartDate } = data;
-          if (hasPending && requestId) {
-            console.log('📦 週間献立の生成中リクエストを復元:', requestId, status, 'startDate:', pendingStartDate);
-            
-            // もし生成中のリクエストの週が現在表示中の週と異なる場合、その週に遷移
-            if (pendingStartDate && pendingStartDate !== targetDate) {
-              console.log('🔄 週を切り替え:', targetDate, '->', pendingStartDate);
-              setWeekStart(new Date(pendingStartDate));
-            }
-            
-            setIsGenerating(true);
-            subscribeToRequestStatus(pendingStartDate || targetDate, requestId);
-            return; // 週間生成中なら他はスキップ
-          } else {
-            console.log('🔍 No pending weekly request found');
-          }
-        }
-      } catch (e) {
-        console.error('Failed to check pending weekly requests:', e);
-      }
-      
-      // 1. 単一食事の生成中リクエストをDBで確認
-      try {
-        const singleRes = await fetch(`/api/ai/menu/meal/pending?date=${targetDate}`);
-        if (singleRes.ok) {
-          const { hasPending, requests } = await singleRes.json();
-          if (hasPending && requests.length > 0) {
-            const latestRequest = requests[0];
-            // 日付から dayIndex を計算
-            const targetDayDate = latestRequest.targetDate;
-            const dayIdx = weekDates.findIndex(d => d.dateStr === targetDayDate);
-            
-            if (dayIdx !== -1) {
-              // mode === 'regenerate' の場合は既存食事の再生成
-              if (latestRequest.mode === 'regenerate' && latestRequest.targetMealId) {
-                setRegeneratingMealId(latestRequest.targetMealId);
-                setIsRegenerating(true);
-                setSelectedDayIndex(dayIdx);
-                subscribeToRegenerateStatus(latestRequest.requestId, targetDate);
-              } else {
-                // mode === 'single' の場合は新規追加
-                setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
-                setSelectedDayIndex(dayIdx);
-                subscribeToRequestStatus(targetDate, latestRequest.requestId);
-              }
-              return; // DBで見つかったらlocalStorageはスキップ
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Failed to check pending single meal requests:', e);
-      }
-      
-      // 2. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
-      // ただし、requestIdがある場合はまずステータスを確認してから復元する
-      const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
-      if (storedWeekly) {
+        const targetDate = formatLocalDate(weekStart);
+        console.log('🔍 checkPendingRequests called with targetDate:', targetDate);
+        
+        // 0. まずスタックしたリクエストを自動クリーンアップ（5分以上前のprocessing/pending）
         try {
-          const { weekStartDate, timestamp, requestId } = JSON.parse(storedWeekly);
-          const elapsed = Date.now() - timestamp;
-          // 5分以内かつ同じ週の場合のみ
-          if (elapsed < 5 * 60 * 1000 && weekStartDate === targetDate) {
-            if (requestId) {
-              // ステータスAPIで確認してから復元
-              const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
-              if (statusRes.ok) {
-                const { status } = await statusRes.json();
-                if (status === 'pending' || status === 'processing') {
-                  console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
-                  setIsGenerating(true);
-                  subscribeToRequestStatus(targetDate, requestId);
-                  return;
+          const cleanupRes = await fetch('/api/ai/menu/weekly/cleanup', { method: 'POST' });
+          if (cleanupRes.ok) {
+            const cleanupData = await cleanupRes.json();
+            if (cleanupData.cleaned > 0) {
+              console.log('🧹 自動クリーンアップ完了:', cleanupData.cleaned, '件のスタックしたリクエストを停止');
+            }
+          }
+        } catch (e) {
+          console.warn('自動クリーンアップに失敗:', e);
+        }
+        
+        // 1. 週間献立の生成中リクエストをDBで確認
+        try {
+          const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
+          console.log('🔍 weeklyRes status:', weeklyRes.status);
+          if (weeklyRes.ok) {
+            const data = await weeklyRes.json();
+            console.log('🔍 weeklyRes data:', data);
+            const { hasPending, requestId, status, startDate: pendingStartDate } = data;
+            if (hasPending && requestId) {
+              console.log('📦 週間献立の生成中リクエストを復元:', requestId, status, 'startDate:', pendingStartDate);
+              
+              // もし生成中のリクエストの週が現在表示中の週と異なる場合、その週に遷移
+              if (pendingStartDate && pendingStartDate !== targetDate) {
+                console.log('🔄 週を切り替え:', targetDate, '->', pendingStartDate);
+                setWeekStart(new Date(pendingStartDate));
+              }
+              
+              setIsGenerating(true);
+              subscribeToRequestStatus(pendingStartDate || targetDate, requestId);
+              return; // 週間生成中なら他はスキップ
+            } else {
+              console.log('🔍 No pending weekly request found');
+            }
+          }
+        } catch (e) {
+          console.error('Failed to check pending weekly requests:', e);
+        }
+        
+        // 2. 単一食事の生成中リクエストをDBで確認
+        try {
+          const singleRes = await fetch(`/api/ai/menu/meal/pending?date=${targetDate}`);
+          if (singleRes.ok) {
+            const { hasPending, requests } = await singleRes.json();
+            if (hasPending && requests.length > 0) {
+              const latestRequest = requests[0];
+              // 日付から dayIndex を計算
+              const targetDayDate = latestRequest.targetDate;
+              const dayIdx = weekDates.findIndex(d => d.dateStr === targetDayDate);
+              
+              if (dayIdx !== -1) {
+                // mode === 'regenerate' の場合は既存食事の再生成
+                if (latestRequest.mode === 'regenerate' && latestRequest.targetMealId) {
+                  setRegeneratingMealId(latestRequest.targetMealId);
+                  setIsRegenerating(true);
+                  setSelectedDayIndex(dayIdx);
+                  subscribeToRegenerateStatus(latestRequest.requestId, targetDate);
                 } else {
-                  // completed または failed の場合はlocalStorageをクリア
-                  console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
+                  // mode === 'single' の場合は新規追加
+                  setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
+                  setSelectedDayIndex(dayIdx);
+                  subscribeToRequestStatus(targetDate, latestRequest.requestId);
+                }
+                return; // DBで見つかったらlocalStorageはスキップ
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to check pending single meal requests:', e);
+        }
+        
+        // 3. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
+        // ただし、requestIdがある場合はまずステータスを確認してから復元する
+        const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
+        if (storedWeekly) {
+          try {
+            const { weekStartDate, timestamp, requestId } = JSON.parse(storedWeekly);
+            const elapsed = Date.now() - timestamp;
+            // 5分以内かつ同じ週の場合のみ
+            if (elapsed < 5 * 60 * 1000 && weekStartDate === targetDate) {
+              if (requestId) {
+                // ステータスAPIで確認してから復元
+                const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+                if (statusRes.ok) {
+                  const { status } = await statusRes.json();
+                  if (status === 'pending' || status === 'processing') {
+                    console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
+                    setIsGenerating(true);
+                    subscribeToRequestStatus(targetDate, requestId);
+                    return;
+                  } else {
+                    // completed または failed の場合はlocalStorageをクリア
+                    console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
+                    localStorage.removeItem('weeklyMenuGenerating');
+                  }
+                } else {
                   localStorage.removeItem('weeklyMenuGenerating');
                 }
               } else {
@@ -891,52 +903,53 @@ export default function WeeklyMenuPage() {
             } else {
               localStorage.removeItem('weeklyMenuGenerating');
             }
-          } else {
+          } catch {
             localStorage.removeItem('weeklyMenuGenerating');
           }
-        } catch {
-          localStorage.removeItem('weeklyMenuGenerating');
         }
-      }
-      
-      const storedSingle = localStorage.getItem('singleMealGenerating');
-      if (storedSingle) {
-        try {
-          const { dayIndex, mealType, dayDate, initialCount, timestamp, requestId } = JSON.parse(storedSingle);
-          const elapsed = Date.now() - timestamp;
-          // 2分以内なら確認
-          if (elapsed < 2 * 60 * 1000) {
-            if (requestId) {
-              // ステータスAPIで確認してから復元
-              const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
-              if (statusRes.ok) {
-                const { status } = await statusRes.json();
-                if (status === 'pending' || status === 'processing') {
-                  console.log('📦 単一食事をlocalStorageから復元:', requestId, 'status:', status);
-                  setGeneratingMeal({ dayIndex, mealType });
-                  setSelectedDayIndex(dayIndex);
-                  subscribeToRequestStatus(targetDate, requestId);
+        
+        const storedSingle = localStorage.getItem('singleMealGenerating');
+        if (storedSingle) {
+          try {
+            const { dayIndex, mealType, dayDate, initialCount, timestamp, requestId } = JSON.parse(storedSingle);
+            const elapsed = Date.now() - timestamp;
+            // 2分以内なら確認
+            if (elapsed < 2 * 60 * 1000) {
+              if (requestId) {
+                // ステータスAPIで確認してから復元
+                const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+                if (statusRes.ok) {
+                  const { status } = await statusRes.json();
+                  if (status === 'pending' || status === 'processing') {
+                    console.log('📦 単一食事をlocalStorageから復元:', requestId, 'status:', status);
+                    setGeneratingMeal({ dayIndex, mealType });
+                    setSelectedDayIndex(dayIndex);
+                    subscribeToRequestStatus(targetDate, requestId);
+                  } else {
+                    // completed または failed の場合はlocalStorageをクリア
+                    console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
+                    localStorage.removeItem('singleMealGenerating');
+                  }
                 } else {
-                  // completed または failed の場合はlocalStorageをクリア
-                  console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
                   localStorage.removeItem('singleMealGenerating');
                 }
               } else {
-                localStorage.removeItem('singleMealGenerating');
+                // requestIdがない場合は旧方式でポーリング（古いコードの互換性）
+                setGeneratingMeal({ dayIndex, mealType });
+                setSelectedDayIndex(dayIndex);
+                // レガシーポーリングは廃止（requestIdがある場合のみRealtime監視）
+                console.warn('No requestId found in localStorage, skipping...');
               }
             } else {
-              // requestIdがない場合は旧方式でポーリング（古いコードの互換性）
-              setGeneratingMeal({ dayIndex, mealType });
-              setSelectedDayIndex(dayIndex);
-              // レガシーポーリングは廃止（requestIdがある場合のみRealtime監視）
-              console.warn('No requestId found in localStorage, skipping...');
+              localStorage.removeItem('singleMealGenerating');
             }
-          } else {
+          } catch {
             localStorage.removeItem('singleMealGenerating');
           }
-        } catch {
-          localStorage.removeItem('singleMealGenerating');
         }
+      } finally {
+        // チェック完了をマーク（どのパスを通っても必ず実行）
+        isCheckingPendingRef.current = false;
       }
     };
     
