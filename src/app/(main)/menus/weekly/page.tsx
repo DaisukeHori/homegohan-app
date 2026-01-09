@@ -677,29 +677,67 @@ export default function WeeklyMenuPage() {
         // まだ進行中の場合、UI状態を復元して進捗追跡を再開
         setIsGenerating(true);
 
-        // 現在の進捗をDBの値から復元
+        // 現在の進捗をDBの値から復元（メッセージベースでフェーズを判定）
         const dbProgress = currentStatus?.progress || {};
         const currentStep = dbProgress.currentStep || 1;
         const dbTotalSlots = dbProgress.totalSlots || totalSlots || 1;
         const completedSlots = dbProgress.completedSlots || 0;
+        const dbMessage = dbProgress.message || '';
 
+        // メッセージからフェーズとパーセンテージを判定（リアルタイム更新と同じロジック）
         let initialPhase = 'generating';
         let initialPercentage = 10;
 
-        if (currentStep === 1) {
-          initialPhase = 'generating';
-          initialPercentage = 5 + Math.round((completedSlots / dbTotalSlots) * 35);
+        if (currentStep === 1 || currentStep === 0) {
+          if (dbMessage.includes('ユーザー情報') || dbMessage.includes('コンテキスト')) {
+            initialPhase = 'user_context';
+            initialPercentage = 3;
+          } else if (dbMessage.includes('参考レシピ') || dbMessage.includes('検索中')) {
+            initialPhase = 'search_references';
+            initialPercentage = 8;
+          } else if (dbMessage.includes('生成中') || dbMessage.includes('献立をAIが作成')) {
+            initialPhase = 'generating';
+            initialPercentage = 15 + Math.round((completedSlots / dbTotalSlots) * 25);
+          } else if (dbMessage.includes('生成完了')) {
+            initialPhase = 'step1_complete';
+            initialPercentage = 40;
+          } else {
+            initialPhase = 'generating';
+            initialPercentage = 12;
+          }
         } else if (currentStep === 2) {
-          initialPhase = 'reviewing';
-          initialPercentage = 40 + Math.round((completedSlots / dbTotalSlots) * 40);
+          if (dbMessage.includes('バランス') || dbMessage.includes('チェック中') || dbMessage.includes('重複')) {
+            initialPhase = 'reviewing';
+            initialPercentage = 47;
+          } else if (dbMessage.includes('改善中')) {
+            initialPhase = 'fixing';
+            initialPercentage = 60;
+          } else if (dbMessage.includes('問題なし')) {
+            initialPhase = 'no_issues';
+            initialPercentage = 72;
+          } else if (dbMessage.includes('レビュー完了')) {
+            initialPhase = 'step2_complete';
+            initialPercentage = 75;
+          } else {
+            initialPhase = 'reviewing';
+            initialPercentage = 45;
+          }
         } else if (currentStep === 3) {
-          initialPhase = 'saving';
-          initialPercentage = 85 + Math.round((completedSlots / dbTotalSlots) * 10);
+          if (dbMessage.includes('栄養価') || dbMessage.includes('計算')) {
+            initialPhase = 'calculating';
+            initialPercentage = 80;
+          } else if (dbMessage.includes('保存')) {
+            initialPhase = 'saving';
+            initialPercentage = 85 + Math.round((completedSlots / dbTotalSlots) * 10);
+          } else {
+            initialPhase = 'saving';
+            initialPercentage = 85;
+          }
         }
 
         setGenerationProgress({
           phase: initialPhase,
-          message: dbProgress.message || '生成状況を確認中...',
+          message: dbMessage || '生成状況を確認中...',
           percentage: initialPercentage,
           totalSlots: dbTotalSlots,
           completedSlots,
