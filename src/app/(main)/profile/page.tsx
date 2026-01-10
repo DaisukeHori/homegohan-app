@@ -317,8 +317,8 @@ function ProfilePageContent() {
 
         {/* クイック設定カード */}
         <div className="space-y-4">
-          <h2 className="font-bold text-gray-900 px-2">設定</h2>
-          
+          <h2 className="font-bold text-gray-900 px-2">プロフィール設定</h2>
+
           <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
             {[
               { 
@@ -385,6 +385,29 @@ function ProfilePageContent() {
                 </div>
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* アプリ設定リンク */}
+        <div className="space-y-4 mt-8">
+          <h2 className="font-bold text-gray-900 px-2">アプリ設定</h2>
+
+          <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+            <button
+              onClick={() => router.push('/settings')}
+              className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-xl">
+                ⚙️
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-gray-900 text-sm">設定</p>
+                <p className="text-xs text-gray-400 truncate">通知、週の開始日、データとプライバシー</p>
+              </div>
+              <div className="text-gray-300">
+                <Icons.ChevronRight className="w-5 h-5" />
+              </div>
+            </button>
           </div>
         </div>
       </div>
