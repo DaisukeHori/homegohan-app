@@ -87,6 +87,7 @@ export async function POST(request: Request) {
       updates.cuisine_preferences = prefs
     }
     if (answers.family_size) updates.family_size = parseInt(answers.family_size)
+    if (answers.servings_config) updates.servings_config = answers.servings_config
     if (answers.shopping_frequency) updates.shopping_frequency = answers.shopping_frequency
     if (answers.weekly_food_budget && answers.weekly_food_budget !== 'none') {
       updates.weekly_food_budget = parseInt(answers.weekly_food_budget)

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +11,7 @@ import { toUserProfile } from "@/lib/converter";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
 import { calculateDailyCalories, calculateNutritionTarget } from "@/lib/nutrition-calculator";
+import { ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 
 type TabType = 'basic' | 'goals' | 'health' | 'diet' | 'cooking' | 'lifestyle';
 
@@ -42,7 +44,34 @@ const KITCHEN_APPLIANCES = [
   'ミキサー', 'ホットクック', '低温調理器', 'グリル'
 ];
 
-export default function ProfilePage() {
+// 未入力タブを判定する関数
+function getIncompleteTabs(profile: UserProfile | null): TabType[] {
+  if (!profile) return ['basic', 'goals', 'health'];
+
+  const incomplete: TabType[] = [];
+
+  // 基本情報: 身長・体重・年齢のいずれかが未入力
+  if (!profile.height || !profile.weight || !profile.age) {
+    incomplete.push('basic');
+  }
+
+  // 目標: fitnessGoalsが未設定
+  if (!profile.fitnessGoals || profile.fitnessGoals.length === 0) {
+    incomplete.push('goals');
+  }
+
+  // 健康状態: healthConditionsが未設定（任意だが推奨）
+  // ここは任意とする - コメントアウト
+  // if (!profile.healthConditions || profile.healthConditions.length === 0) {
+  //   incomplete.push('health');
+  // }
+
+  return incomplete;
+}
+
+function ProfilePageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [badgeCount, setBadgeCount] = useState(0);
@@ -50,7 +79,12 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<TabType>('basic');
   const [isSaving, setIsSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<UserProfile>>({});
-  
+
+  // 未入力項目ガイドモード
+  const [isGuidedMode, setIsGuidedMode] = useState(false);
+  const [guidedTabs, setGuidedTabs] = useState<TabType[]>([]);
+  const [guidedStepIndex, setGuidedStepIndex] = useState(0);
+
   const supabase = createClient();
 
   useEffect(() => {
@@ -81,6 +115,23 @@ export default function ProfilePage() {
     getData();
   }, []);
 
+  // ?focus=incomplete パラメータを処理
+  useEffect(() => {
+    const focusParam = searchParams.get('focus');
+    if (focusParam === 'incomplete' && profile) {
+      const incompleteTabs = getIncompleteTabs(profile);
+      if (incompleteTabs.length > 0) {
+        setGuidedTabs(incompleteTabs);
+        setGuidedStepIndex(0);
+        setActiveTab(incompleteTabs[0]);
+        setIsGuidedMode(true);
+        setIsEditing(true);
+      }
+      // URLからパラメータを削除（履歴を置換）
+      router.replace('/profile', { scroll: false });
+    }
+  }, [searchParams, profile, router]);
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -89,22 +140,53 @@ export default function ProfilePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editForm),
       });
-      
+
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || 'Failed to update');
       }
-      
+
       const updatedData = await res.json();
       const domainProfile = toUserProfile(updatedData);
       setProfile(domainProfile);
-      setIsEditing(false);
+      setEditForm(domainProfile);
+
+      // ガイドモードの場合は次のステップへ
+      if (isGuidedMode) {
+        if (guidedStepIndex < guidedTabs.length - 1) {
+          // 次のステップへ
+          const nextIndex = guidedStepIndex + 1;
+          setGuidedStepIndex(nextIndex);
+          setActiveTab(guidedTabs[nextIndex]);
+        } else {
+          // 全ステップ完了
+          setIsGuidedMode(false);
+          setIsEditing(false);
+        }
+      } else {
+        setIsEditing(false);
+      }
     } catch (error: any) {
       console.error('Update error:', error);
       alert(`更新に失敗しました: ${error.message}`);
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // ガイドモード: 前のステップへ
+  const handleGuidedPrev = () => {
+    if (guidedStepIndex > 0) {
+      const prevIndex = guidedStepIndex - 1;
+      setGuidedStepIndex(prevIndex);
+      setActiveTab(guidedTabs[prevIndex]);
+    }
+  };
+
+  // ガイドモード: 閉じる（スキップ）
+  const handleGuidedClose = () => {
+    setIsGuidedMode(false);
+    setIsEditing(false);
   };
 
   const updateField = (field: keyof UserProfile, value: any) => {
@@ -316,7 +398,7 @@ export default function ProfilePage() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
           >
-            <motion.div 
+            <motion.div
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
@@ -324,29 +406,62 @@ export default function ProfilePage() {
             >
               {/* ヘッダー */}
               <div className="flex justify-between items-center p-6 border-b border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900">プロフィール編集</h2>
-                <button onClick={() => setIsEditing(false)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
+                {isGuidedMode ? (
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Sparkles size={18} className="text-orange-500" />
+                      <h2 className="text-lg font-bold text-gray-900">栄養目標の設定</h2>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      プロフィールを完成させて、最適な栄養目標を計算しましょう
+                    </p>
+                  </div>
+                ) : (
+                  <h2 className="text-xl font-bold text-gray-900">プロフィール編集</h2>
+                )}
+                <button
+                  onClick={isGuidedMode ? handleGuidedClose : () => setIsEditing(false)}
+                  className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"
+                >
                   <Icons.Close className="w-5 h-5 text-gray-500" />
                 </button>
               </div>
 
-              {/* タブ */}
-              <div className="flex gap-1 p-2 bg-gray-50 overflow-x-auto">
-                {TABS.map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors ${
-                      activeTab === tab.id
-                        ? 'bg-orange-400 text-white'
-                        : 'text-gray-500 hover:bg-gray-100'
-                    }`}
-                  >
-                    <span>{tab.icon}</span>
-                    <span>{tab.label}</span>
-                  </button>
-                ))}
-              </div>
+              {/* ガイドモード: プログレスバー */}
+              {isGuidedMode && (
+                <div className="px-6 pt-4">
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                    <span>ステップ {guidedStepIndex + 1} / {guidedTabs.length}</span>
+                    <span>{TABS.find(t => t.id === activeTab)?.label}</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full transition-all duration-300"
+                      style={{ width: `${((guidedStepIndex + 1) / guidedTabs.length) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* タブ（ガイドモードでは非表示） */}
+              {!isGuidedMode && (
+                <div className="flex gap-1 p-2 bg-gray-50 overflow-x-auto">
+                  {TABS.map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors ${
+                        activeTab === tab.id
+                          ? 'bg-orange-400 text-white'
+                          : 'text-gray-500 hover:bg-gray-100'
+                      }`}
+                    >
+                      <span>{tab.icon}</span>
+                      <span>{tab.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* コンテンツ */}
               <div className="flex-1 overflow-y-auto p-6">
@@ -741,13 +856,55 @@ export default function ProfilePage() {
 
               {/* フッター */}
               <div className="p-6 border-t border-gray-100">
-                <Button 
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="w-full py-6 rounded-full bg-gray-900 hover:bg-black text-white font-bold"
-                >
-                  {isSaving ? '保存中...' : '変更を保存'}
-                </Button>
+                {isGuidedMode ? (
+                  <div className="space-y-3">
+                    <div className="flex gap-3">
+                      {guidedStepIndex > 0 && (
+                        <Button
+                          onClick={handleGuidedPrev}
+                          variant="outline"
+                          className="flex-1 py-6 rounded-full border-gray-200"
+                        >
+                          <ChevronLeft size={18} className="mr-1" />
+                          戻る
+                        </Button>
+                      )}
+                      <Button
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className="flex-1 py-6 rounded-full bg-orange-500 hover:bg-orange-600 text-white font-bold"
+                      >
+                        {isSaving ? (
+                          '保存中...'
+                        ) : guidedStepIndex < guidedTabs.length - 1 ? (
+                          <>
+                            次へ
+                            <ChevronRight size={18} className="ml-1" />
+                          </>
+                        ) : (
+                          <>
+                            <Check size={18} className="mr-1" />
+                            完了
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    <button
+                      onClick={handleGuidedClose}
+                      className="w-full text-center text-sm text-gray-400 hover:text-gray-600"
+                    >
+                      後で設定する
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="w-full py-6 rounded-full bg-gray-900 hover:bg-black text-white font-bold"
+                  >
+                    {isSaving ? '保存中...' : '変更を保存'}
+                  </Button>
+                )}
               </div>
             </motion.div>
           </motion.div>
@@ -755,5 +912,18 @@ export default function ProfilePage() {
       </AnimatePresence>
 
     </div>
+  );
+}
+
+// Suspense boundary で useSearchParams を wrap
+export default function ProfilePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full" />
+      </div>
+    }>
+      <ProfilePageContent />
+    </Suspense>
   );
 }

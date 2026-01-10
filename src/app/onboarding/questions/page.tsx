@@ -508,7 +508,25 @@ function OnboardingQuestionsContent() {
         <div className="w-full pt-6 sm:pt-8 lg:pt-12">
           <div className="flex items-center justify-between text-xs sm:text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 sm:mb-4">
             <span>Setup Profile {isSaving && <span className="text-orange-400">(保存中...)</span>}</span>
-            <span>{progress.current} / {progress.total}</span>
+            <div className="flex items-center gap-4">
+              <span>{progress.current} / {progress.total}</span>
+              <button
+                onClick={async () => {
+                  if (confirm('後で設定画面から入力できます。スキップしますか？')) {
+                    try {
+                      await fetch('/api/onboarding/complete', { method: 'POST' });
+                      router.push('/menus/weekly');
+                    } catch (e) {
+                      console.error(e);
+                      router.push('/menus/weekly');
+                    }
+                  }
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors underline underline-offset-2"
+              >
+                スキップ
+              </button>
+            </div>
           </div>
           {/* プログレスバー */}
           <div className="w-full h-2 sm:h-2.5 bg-gray-200 rounded-full overflow-hidden">

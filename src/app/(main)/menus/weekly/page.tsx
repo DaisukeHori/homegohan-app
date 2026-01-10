@@ -9,6 +9,7 @@ import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList
 import ReactMarkdown from "react-markdown";
 import { V4GenerateModal } from "@/components/ai-assistant";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
 import { NutritionRadarChart } from "@/components/NutritionRadarChart";
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS } from "@/lib/nutrition-constants";
 import remarkGfm from "remark-gfm";
@@ -3920,6 +3921,9 @@ export default function WeeklyMenuPage() {
           </button>
         </div>
       </div>
+
+      {/* === Profile Reminder Banner === */}
+      <ProfileReminderBanner />
 
       {/* === AI Banner === */}
       {isGenerating ? (
