@@ -152,7 +152,7 @@ export async function generateMealWithLLM(input: {
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${mealTypeJa}の献立を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
-  // 直接REST API呼び出し（Agent SDKよりも高速）
+  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -163,14 +163,12 @@ export async function generateMealWithLLM(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "gpt-5-nano",
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
+        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
       ],
-      temperature: 0.7,
-      max_tokens: 4000,
-      response_format: { type: "json_object" },
+      reasoning_effort: "low",
+      max_completion_tokens: 8000,
     }),
   });
 
@@ -274,7 +272,7 @@ export async function generateDayMealsWithLLM(input: {
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${input.date}の1日分の献立（${mealTypesJa}）を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
-  // 直接REST API呼び出し（Agent SDKよりも高速）
+  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -285,14 +283,12 @@ export async function generateDayMealsWithLLM(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "gpt-5-nano",
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
+        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
       ],
-      temperature: 0.7,
-      max_tokens: 8000,
-      response_format: { type: "json_object" },
+      reasoning_effort: "low",
+      max_completion_tokens: 8000,
     }),
   });
 
@@ -401,7 +397,7 @@ export async function reviewWeeklyMenus(input: {
     `【1週間の献立】\n${mealsText}\n\n` +
     `上記の献立をレビューしてください。`;
 
-  // 直接REST API呼び出し（Agent SDKよりも高速）
+  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -412,14 +408,12 @@ export async function reviewWeeklyMenus(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "gpt-5-nano",
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
+        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
       ],
-      temperature: 0.3,
-      max_tokens: 2000,
-      response_format: { type: "json_object" },
+      reasoning_effort: "low",
+      max_completion_tokens: 4000,
     }),
   });
 
@@ -507,7 +501,7 @@ export async function regenerateMealForIssue(input: {
     `【参考にできる献立例】\n${referenceText}\n\n` +
     `上記の問題点を解決した新しい献立を創造してください。`;
 
-  // 直接REST API呼び出し（Agent SDKよりも高速）
+  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -518,14 +512,12 @@ export async function regenerateMealForIssue(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "gpt-5-nano",
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
+        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
       ],
-      temperature: 0.7,
-      max_tokens: 4000,
-      response_format: { type: "json_object" },
+      reasoning_effort: "low",
+      max_completion_tokens: 8000,
     }),
   });
 

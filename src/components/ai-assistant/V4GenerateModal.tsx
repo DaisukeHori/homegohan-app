@@ -461,11 +461,11 @@ export function V4GenerateModal({
                   onClick={handleGenerate}
                   disabled={!selectedMode || isGenerating || isSubmitting}
                   className={`w-full py-4 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 ${
-                    isSubmitting || isGenerating ? 'opacity-80' : 'hover:opacity-90 active:scale-[0.98]'
+                    !selectedMode ? 'opacity-50 cursor-not-allowed' :
+                    isSubmitting || isGenerating ? 'opacity-80 cursor-not-allowed' : 'hover:opacity-90 active:scale-[0.98]'
                   }`}
-                  style={{ 
+                  style={{
                     backgroundColor: isSubmitting || isGenerating ? colors.purple : colors.accent,
-                    cursor: isSubmitting || isGenerating ? 'not-allowed' : 'pointer',
                   }}
                 >
                   {isSubmitting || isGenerating ? (

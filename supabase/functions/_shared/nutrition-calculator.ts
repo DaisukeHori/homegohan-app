@@ -298,10 +298,10 @@ ${batch.map((m, j) => `${j + 1}. 入力:「${m.inputName}」→ マッチ:「${m
           "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: "gpt-5-mini",
+          model: "gpt-5-nano",
           messages: [{ role: "user", content: prompt }],
+          reasoning_effort: "low",
           max_completion_tokens: 200,
-          reasoning_effort: "minimal",
         }),
       });
 
@@ -370,10 +370,10 @@ ${candidateList}
           "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: "gpt-5-mini",
+          model: "gpt-5-nano",
           messages: [{ role: "user", content: prompt }],
+          reasoning_effort: "low",
           max_completion_tokens: 10,
-          reasoning_effort: "minimal",
         }),
       });
 
