@@ -87,14 +87,14 @@ ${weekSummary}
 \`\`\`json
 {
   "praiseComment": "褒めコメント（80-120文字）。良い点を見つけて褒める。絵文字1-2個使用。批判は含めない。",
-  "advice": "改善アドバイス（100-150文字）。具体的な食材名や料理名を含めて実践的に。",
+  "advice": "改善アドバイス（200-300文字）。不足栄養素を補う具体的な食材・料理名を挙げ、どの食事（朝食/昼食/夕食）で取り入れるべきかを提案。例：「カルシウム不足を補うため、朝食にヨーグルト、夕食に小松菜の炒め物を追加しましょう」のように実践的に。",
   "nutritionTip": "栄養豆知識（40-60文字）。今日の献立や不足栄養素に関連したミニ知識。"
 }
 \`\`\`
 
 ## 重要なルール:
 - praiseCommentは**必ず褒める**。どんな献立でも良い点を見つける
-- 批判的な内容はadviceに書く
+- adviceは**具体的な食材名・料理名・タイミング**を含める（献立改善AIへの指示として使用される）
 - JSONのみを出力（説明文は不要）`;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -112,7 +112,7 @@ ${weekSummary}
         },
         { role: 'user', content: prompt },
       ],
-      max_completion_tokens: 600,
+      max_completion_tokens: 800,
       reasoning_effort: 'none',
     }),
   });
