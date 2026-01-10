@@ -490,6 +490,42 @@ const getDaysUntil = (dateStr: string | null | undefined): number | null => {
   return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 };
 
+// Get calendar grid days for a month (Monday-start)
+const getCalendarDays = (month: Date): Date[] => {
+  const year = month.getFullYear();
+  const m = month.getMonth();
+  const firstDay = new Date(year, m, 1);
+  const lastDay = new Date(year, m + 1, 0);
+
+  // Monday-start adjustment
+  const startPadding = (firstDay.getDay() + 6) % 7;
+  const days: Date[] = [];
+
+  // Previous month padding
+  for (let i = startPadding - 1; i >= 0; i--) {
+    days.push(new Date(year, m, -i));
+  }
+  // Current month
+  for (let i = 1; i <= lastDay.getDate(); i++) {
+    days.push(new Date(year, m, i));
+  }
+  // Next month padding (fill to complete weeks)
+  while (days.length % 7 !== 0) {
+    days.push(new Date(year, m + 1, days.length - lastDay.getDate() - startPadding + 1));
+  }
+  return days;
+};
+
+// Check if date is in the selected week
+const isDateInWeek = (date: Date, weekStartDate: Date): boolean => {
+  const weekEnd = new Date(weekStartDate);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  weekEnd.setHours(23, 59, 59, 999);
+  const dateStart = new Date(date);
+  dateStart.setHours(0, 0, 0, 0);
+  return dateStart >= weekStartDate && dateStart <= weekEnd;
+};
+
 // ============================================
 // Main Component
 // ============================================
@@ -511,6 +547,15 @@ export default function WeeklyMenuPage() {
   const [weekStart, setWeekStart] = useState<Date>(getWeekStart(new Date()));
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
+
+  // Calendar expansion state
+  const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
+  const [displayMonth, setDisplayMonth] = useState<Date>(() => weekStart);
+
+  // Sync displayMonth when weekStart changes
+  useEffect(() => {
+    setDisplayMonth(weekStart);
+  }, [weekStart]);
 
   // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
@@ -1989,6 +2034,41 @@ export default function WeeklyMenuPage() {
     setExpandedMealId(null);
     setIsDayNutritionExpanded(false);
   };
+
+  // Calendar Navigation
+  const goToPreviousMonth = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+  };
+
+  const goToNextMonth = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  };
+
+  const handleCalendarDateClick = (date: Date) => {
+    const newWeekStart = getWeekStart(date);
+    setWeekStart(newWeekStart);
+    const dayOfWeek = (date.getDay() + 6) % 7; // Monday = 0
+    setSelectedDayIndex(dayOfWeek);
+    setIsCalendarExpanded(false);
+    setIsDayNutritionExpanded(false);
+    setExpandedMealId(null);
+    setHasAutoExpanded(false);
+  };
+
+  // Calendar memos
+  const calendarDays = useMemo(() => getCalendarDays(displayMonth), [displayMonth]);
+
+  const mealExistenceMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    currentPlan?.days?.forEach(day => {
+      if (day.meals && day.meals.length > 0) {
+        map.set(day.dayDate, true);
+      }
+    });
+    return map;
+  }, [currentPlan]);
 
   // --- Handlers ---
   
@@ -3866,6 +3946,118 @@ export default function WeeklyMenuPage() {
             <span style={{ fontSize: 11, color: colors.textLight }}>平均 {stats.avgCal}kcal/日</span>
           </div>
         </div>
+
+        {/* Month Bar (tap to expand calendar) */}
+        <div
+          className="flex items-center justify-between px-2 py-2 cursor-pointer rounded-lg mt-1"
+          style={{ background: colors.bg }}
+          onClick={() => setIsCalendarExpanded(!isCalendarExpanded)}
+        >
+          <div className="flex items-center gap-1.5">
+            {isCalendarExpanded ? <ChevronUp size={14} color={colors.textMuted} /> : <ChevronDown size={14} color={colors.textMuted} />}
+            <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
+              {displayMonth.getFullYear()}年{displayMonth.getMonth() + 1}月
+            </span>
+          </div>
+          {isCalendarExpanded && (
+            <div className="flex gap-2">
+              <button
+                onClick={goToPreviousMonth}
+                className="p-1 rounded hover:bg-gray-200 transition-colors"
+              >
+                <ChevronLeft size={14} color={colors.textMuted} />
+              </button>
+              <button
+                onClick={goToNextMonth}
+                className="p-1 rounded hover:bg-gray-200 transition-colors"
+              >
+                <ChevronRight size={14} color={colors.textMuted} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Calendar Grid (expandable) */}
+        <AnimatePresence>
+          {isCalendarExpanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
+              className="overflow-hidden"
+            >
+              <div className="px-2 pb-3 pt-1">
+                {/* Day headers */}
+                <div className="grid grid-cols-7 mb-1">
+                  {['月', '火', '水', '木', '金', '土', '日'].map((dayName, i) => (
+                    <div
+                      key={dayName}
+                      className="text-center py-1"
+                      style={{
+                        fontSize: 10,
+                        color: i >= 5 ? colors.accent : colors.textMuted
+                      }}
+                    >
+                      {dayName}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Date grid */}
+                <div className="grid grid-cols-7 gap-y-0.5">
+                  {calendarDays.map((day, i) => {
+                    const dateStr = formatLocalDate(day);
+                    const isCurrentMonth = day.getMonth() === displayMonth.getMonth();
+                    const isSelected = dateStr === weekDates[selectedDayIndex]?.dateStr;
+                    const isInSelectedWeek = isDateInWeek(day, weekStart);
+                    const isToday = dateStr === todayStr;
+                    const hasMeal = mealExistenceMap.get(dateStr);
+                    const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => handleCalendarDateClick(day)}
+                        className="flex flex-col items-center py-1.5 rounded-lg transition-colors"
+                        style={{
+                          background: isSelected
+                            ? colors.accent
+                            : isInSelectedWeek
+                              ? colors.accentLight
+                              : 'transparent',
+                          opacity: isCurrentMonth ? 1 : 0.3,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 12,
+                            fontWeight: isToday ? 700 : 400,
+                            color: isSelected
+                              ? '#fff'
+                              : isToday
+                                ? colors.accent
+                                : isWeekend
+                                  ? colors.accent
+                                  : colors.text
+                          }}
+                        >
+                          {day.getDate()}
+                        </span>
+                        {hasMeal && (
+                          <div
+                            className="w-1 h-1 rounded-full mt-0.5"
+                            style={{ background: isSelected ? '#fff' : colors.success }}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Day Tabs with Week Navigation */}
         <div className="flex items-center py-0 pb-2.5" style={{ borderBottom: `1px solid ${colors.border}` }}>

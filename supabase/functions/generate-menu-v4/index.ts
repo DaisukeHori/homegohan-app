@@ -7,7 +7,13 @@
  */
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { buildSearchQueryBase, buildUserContextForPrompt, buildUserSummary } from "../_shared/user-context.ts";
+import {
+  buildSearchQueryBase,
+  buildUserContextForPrompt,
+  buildUserSummary,
+  type HealthCheckupForContext,
+  type HealthCheckupGuidance,
+} from "../_shared/user-context.ts";
 import {
   calculateNutritionFromIngredients,
   emptyNutrition,
@@ -798,6 +804,10 @@ type V4GeneratedData = {
   userSummary?: string;
   references?: MenuReference[];
 
+  // Health checkup data (for nutrition guidance in LLM context)
+  healthCheckups?: HealthCheckupForContext[] | null;
+  healthGuidance?: HealthCheckupGuidance | null;
+
   // Generated meals (key: YYYY-MM-DD:mealType)
   generatedMeals?: Record<string, GeneratedMeal>;
 
@@ -983,6 +993,58 @@ async function executeStep1_Generate(
     (await supabase.from("nutrition_goals").select("*").eq("user_id", userId).maybeSingle()).data ??
     null;
 
+  // Fetch health checkup data (last 3 checkups + longitudinal review guidance)
+  let healthCheckups: HealthCheckupForContext[] | null =
+    generatedData.healthCheckups ?? null;
+  let healthGuidance: HealthCheckupGuidance | null =
+    generatedData.healthGuidance ?? null;
+
+  if (!healthCheckups || !healthGuidance) {
+    try {
+      // Fetch recent 3 health checkups
+      const { data: checkupsData } = await supabase
+        .from("health_checkups")
+        .select(`
+          checkup_date,
+          blood_pressure_systolic,
+          blood_pressure_diastolic,
+          hba1c,
+          fasting_glucose,
+          ldl_cholesterol,
+          hdl_cholesterol,
+          triglycerides,
+          uric_acid,
+          gamma_gtp,
+          individual_review
+        `)
+        .eq("user_id", userId)
+        .order("checkup_date", { ascending: false })
+        .limit(3);
+
+      healthCheckups = (checkupsData ?? []) as HealthCheckupForContext[];
+
+      // Fetch longitudinal review for nutrition guidance
+      const { data: reviewData } = await supabase
+        .from("health_checkup_longitudinal_reviews")
+        .select("nutrition_guidance")
+        .eq("user_id", userId)
+        .single();
+
+      healthGuidance = (reviewData?.nutrition_guidance ?? null) as HealthCheckupGuidance | null;
+
+      if (healthCheckups.length > 0) {
+        console.log(`📋 Loaded ${healthCheckups.length} health checkups for context`);
+      }
+      if (healthGuidance) {
+        console.log(`📋 Loaded health guidance: ${healthGuidance.generalDirection ?? "(no guidance)"}`);
+      }
+    } catch (e: any) {
+      console.warn("Failed to fetch health checkup data (non-fatal):", e?.message);
+      healthCheckups = null;
+      healthGuidance = null;
+    }
+  }
+
   const userContext =
     generatedData.userContext ??
     buildUserContextForPrompt({
@@ -990,11 +1052,13 @@ async function executeStep1_Generate(
       nutritionTargets,
       note,
       constraints: constraintsForContext,
+      healthCheckups,
+      healthGuidance,
     });
 
   const userSummary =
     generatedData.userSummary ??
-    buildUserSummary(userProfile, nutritionTargets, note, constraintsForContext);
+    buildUserSummary(userProfile, nutritionTargets, note, constraintsForContext, healthCheckups, healthGuidance);
 
   const references: MenuReference[] =
     generatedData.references ??
@@ -1150,6 +1214,8 @@ async function executeStep1_Generate(
     userContext,
     userSummary,
     references,
+    healthCheckups,
+    healthGuidance,
     generatedMeals,
     step1: { cursor: nextCursor, batchSize: DAY_BATCH },
   };

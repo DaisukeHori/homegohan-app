@@ -108,11 +108,39 @@ export function formatCuisinePreferences(value: unknown): string {
   return entries.slice(0, 6).join("、") || "未設定";
 }
 
+// 健康診断データの型
+export type HealthCheckupForContext = {
+  checkup_date: string;
+  blood_pressure_systolic?: number | null;
+  blood_pressure_diastolic?: number | null;
+  hba1c?: number | null;
+  fasting_glucose?: number | null;
+  ldl_cholesterol?: number | null;
+  hdl_cholesterol?: number | null;
+  triglycerides?: number | null;
+  uric_acid?: number | null;
+  gamma_gtp?: number | null;
+  individual_review?: {
+    summary?: string;
+    concerns?: string[];
+    recommendations?: string[];
+  } | null;
+};
+
+export type HealthCheckupGuidance = {
+  generalDirection?: string;
+  avoidanceHints?: string[];
+  emphasisHints?: string[];
+  specialNotes?: string;
+};
+
 export function buildUserContextForPrompt(input: {
   profile: any;
   nutritionTargets?: any | null;
   note?: string | null;
   constraints?: unknown;
+  healthCheckups?: HealthCheckupForContext[] | null;
+  healthGuidance?: HealthCheckupGuidance | null;
 }) {
   const p = input.profile ?? {};
   const t = input.nutritionTargets ?? null;
@@ -229,6 +257,10 @@ export function buildUserContextForPrompt(input: {
         cheatDay: weeklyCheatDay,
       },
     },
+    health: {
+      recentCheckups: input.healthCheckups ?? null,
+      guidance: input.healthGuidance ?? null,
+    },
   };
 
   return ctx;
@@ -239,8 +271,10 @@ export function buildUserSummary(
   nutritionTargets?: any | null,
   note?: string | null,
   constraints?: unknown,
+  healthCheckups?: HealthCheckupForContext[] | null,
+  healthGuidance?: HealthCheckupGuidance | null,
 ): string {
-  const ctx = buildUserContextForPrompt({ profile, nutritionTargets, note, constraints });
+  const ctx = buildUserContextForPrompt({ profile, nutritionTargets, note, constraints, healthCheckups, healthGuidance });
 
   const lines: string[] = [];
   lines.push(`- ニックネーム: ${ctx.profile.nickname ?? "未設定"}`);
@@ -300,6 +334,39 @@ export function buildUserSummary(
     if (w.familySize != null) wLines.push(`家族人数（今回）: ${w.familySize}人分`);
     if (w.cheatDay) wLines.push(`チートデイ: ${w.cheatDay}`);
     if (wLines.length) lines.push(`- 今回の条件:\n  ${wLines.map((x) => `- ${x}`).join("\n  ")}`);
+  }
+
+  // 健康診断に基づく食事方針
+  const guidance = ctx.health?.guidance;
+  if (guidance && guidance.generalDirection) {
+    lines.push("");
+    lines.push(`【健康診断に基づく食事方針】`);
+    lines.push(`方針: ${guidance.generalDirection}`);
+    if (guidance.avoidanceHints?.length) {
+      lines.push(`控える: ${guidance.avoidanceHints.join("、")}`);
+    }
+    if (guidance.emphasisHints?.length) {
+      lines.push(`意識する: ${guidance.emphasisHints.join("、")}`);
+    }
+    if (guidance.specialNotes) {
+      lines.push(`注記: ${guidance.specialNotes}`);
+    }
+  }
+
+  // 直近の健康診断サマリー（最新1件のみ）
+  const recentCheckups = ctx.health?.recentCheckups;
+  if (recentCheckups && recentCheckups.length > 0) {
+    const latest = recentCheckups[0];
+    const reviewSummary = latest.individual_review?.summary;
+    if (reviewSummary) {
+      lines.push("");
+      lines.push(`【直近の健康診断（${latest.checkup_date}）】`);
+      lines.push(`概要: ${reviewSummary}`);
+      const concerns = latest.individual_review?.concerns ?? [];
+      if (concerns.length > 0) {
+        lines.push(`気になる点: ${concerns.slice(0, 3).join("、")}`);
+      }
+    }
   }
 
   return lines.join("\n");
