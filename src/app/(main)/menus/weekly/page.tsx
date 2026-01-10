@@ -473,13 +473,25 @@ const getWeekDates = (startDate: Date): { date: Date; dayOfWeek: string; dateStr
   return days;
 };
 
-const getWeekStart = (date: Date): Date => {
+// Get week start date based on weekStartDay setting
+const getWeekStart = (date: Date, weekStartDay: WeekStartDay = 'monday'): Date => {
   const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
+  const currentDay = d.getDay(); // 0 = Sunday, 6 = Saturday
+  const targetDay = weekStartDay === 'sunday' ? 0 : 1; // Sunday = 0, Monday = 1
+
+  let diff = currentDay - targetDay;
+  if (diff < 0) diff += 7;
+
+  d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
+};
+
+// Get day labels based on week start day
+const getDayLabels = (weekStartDay: WeekStartDay = 'monday'): string[] => {
+  return weekStartDay === 'sunday'
+    ? ['日', '月', '火', '水', '木', '金', '土']
+    : ['月', '火', '水', '木', '金', '土', '日'];
 };
 
 const getDaysUntil = (dateStr: string | null | undefined): number | null => {
@@ -490,15 +502,19 @@ const getDaysUntil = (dateStr: string | null | undefined): number | null => {
   return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 };
 
-// Get calendar grid days for a month (Monday-start)
-const getCalendarDays = (month: Date): Date[] => {
+// Get calendar grid days for a month
+const getCalendarDays = (month: Date, weekStartDay: WeekStartDay = 'monday'): Date[] => {
   const year = month.getFullYear();
   const m = month.getMonth();
   const firstDay = new Date(year, m, 1);
   const lastDay = new Date(year, m + 1, 0);
 
-  // Monday-start adjustment
-  const startPadding = (firstDay.getDay() + 6) % 7;
+  // Calculate start padding based on week start day
+  const firstDayOfWeek = firstDay.getDay(); // 0 = Sunday
+  const startOffset = weekStartDay === 'sunday' ? 0 : 1;
+  let startPadding = firstDayOfWeek - startOffset;
+  if (startPadding < 0) startPadding += 7;
+
   const days: Date[] = [];
 
   // Previous month padding
@@ -514,6 +530,27 @@ const getCalendarDays = (month: Date): Date[] => {
     days.push(new Date(year, m + 1, days.length - lastDay.getDate() - startPadding + 1));
   }
   return days;
+};
+
+// Japanese holidays cache (year -> { dateStr: holidayName })
+const holidaysCache = new Map<number, Record<string, string>>();
+
+// Fetch Japanese holidays from holidays-jp API
+const fetchJapaneseHolidays = async (year: number): Promise<Record<string, string>> => {
+  if (holidaysCache.has(year)) {
+    return holidaysCache.get(year)!;
+  }
+
+  try {
+    const response = await fetch(`https://holidays-jp.github.io/api/v1/${year}/date.json`);
+    if (!response.ok) throw new Error('Failed to fetch holidays');
+    const data = await response.json();
+    holidaysCache.set(year, data);
+    return data;
+  } catch (error) {
+    console.warn('Failed to fetch Japanese holidays:', error);
+    return {};
+  }
 };
 
 // Check if date is in the selected week
@@ -551,6 +588,49 @@ export default function WeeklyMenuPage() {
   // Calendar expansion state
   const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
   const [displayMonth, setDisplayMonth] = useState<Date>(() => weekStart);
+
+  // Week start day setting & holidays
+  const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>('monday');
+  const [holidays, setHolidays] = useState<Record<string, string>>({});
+
+  // Fetch user's weekStartDay setting
+  useEffect(() => {
+    const fetchWeekStartDay = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('week_start_day')
+        .eq('id', user.id)
+        .single();
+      if (profile?.week_start_day) {
+        setWeekStartDay(profile.week_start_day as WeekStartDay);
+        // Re-calculate week start with new setting
+        setWeekStart(getWeekStart(new Date(), profile.week_start_day as WeekStartDay));
+      }
+    };
+    fetchWeekStartDay();
+  }, []);
+
+  // Fetch holidays for displayed year
+  useEffect(() => {
+    const fetchHolidays = async () => {
+      const year = displayMonth.getFullYear();
+      const data = await fetchJapaneseHolidays(year);
+      setHolidays(prev => ({ ...prev, ...data }));
+      // Also fetch adjacent year if near year boundary
+      const month = displayMonth.getMonth();
+      if (month === 0) {
+        const prevYearData = await fetchJapaneseHolidays(year - 1);
+        setHolidays(prev => ({ ...prev, ...prevYearData }));
+      } else if (month === 11) {
+        const nextYearData = await fetchJapaneseHolidays(year + 1);
+        setHolidays(prev => ({ ...prev, ...nextYearData }));
+      }
+    };
+    fetchHolidays();
+  }, [displayMonth]);
 
   // Sync displayMonth when weekStart changes
   useEffect(() => {
@@ -2047,10 +2127,14 @@ export default function WeeklyMenuPage() {
   };
 
   const handleCalendarDateClick = (date: Date) => {
-    const newWeekStart = getWeekStart(date);
+    const newWeekStart = getWeekStart(date, weekStartDay);
     setWeekStart(newWeekStart);
-    const dayOfWeek = (date.getDay() + 6) % 7; // Monday = 0
-    setSelectedDayIndex(dayOfWeek);
+    // Calculate day index based on week start day
+    const dayOfWeekRaw = date.getDay();
+    const startOffset = weekStartDay === 'sunday' ? 0 : 1;
+    let dayIndex = dayOfWeekRaw - startOffset;
+    if (dayIndex < 0) dayIndex += 7;
+    setSelectedDayIndex(dayIndex);
     setIsCalendarExpanded(false);
     setIsDayNutritionExpanded(false);
     setExpandedMealId(null);
@@ -2058,7 +2142,8 @@ export default function WeeklyMenuPage() {
   };
 
   // Calendar memos
-  const calendarDays = useMemo(() => getCalendarDays(displayMonth), [displayMonth]);
+  const calendarDays = useMemo(() => getCalendarDays(displayMonth, weekStartDay), [displayMonth, weekStartDay]);
+  const dayLabels = useMemo(() => getDayLabels(weekStartDay), [weekStartDay]);
 
   const mealExistenceMap = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -3990,18 +4075,24 @@ export default function WeeklyMenuPage() {
               <div className="px-2 pb-3 pt-1">
                 {/* Day headers */}
                 <div className="grid grid-cols-7 mb-1">
-                  {['月', '火', '水', '木', '金', '土', '日'].map((dayName, i) => (
-                    <div
-                      key={dayName}
-                      className="text-center py-1"
-                      style={{
-                        fontSize: 10,
-                        color: i >= 5 ? colors.accent : colors.textMuted
-                      }}
-                    >
-                      {dayName}
-                    </div>
-                  ))}
+                  {dayLabels.map((dayName, i) => {
+                    // Weekend columns depend on weekStartDay
+                    const isWeekendColumn = weekStartDay === 'sunday'
+                      ? (i === 0 || i === 6) // Sun=0, Sat=6
+                      : (i === 5 || i === 6); // Sat=5, Sun=6 for monday-start
+                    return (
+                      <div
+                        key={dayName}
+                        className="text-center py-1"
+                        style={{
+                          fontSize: 10,
+                          color: isWeekendColumn ? colors.accent : colors.textMuted
+                        }}
+                      >
+                        {dayName}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Date grid */}
@@ -4014,6 +4105,8 @@ export default function WeeklyMenuPage() {
                     const isToday = dateStr === todayStr;
                     const hasMeal = mealExistenceMap.get(dateStr);
                     const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+                    const holidayName = holidays[dateStr];
+                    const isHoliday = !!holidayName;
 
                     return (
                       <button
@@ -4028,6 +4121,7 @@ export default function WeeklyMenuPage() {
                               : 'transparent',
                           opacity: isCurrentMonth ? 1 : 0.3,
                         }}
+                        title={holidayName}
                       >
                         <span
                           style={{
@@ -4035,11 +4129,13 @@ export default function WeeklyMenuPage() {
                             fontWeight: isToday ? 700 : 400,
                             color: isSelected
                               ? '#fff'
-                              : isToday
-                                ? colors.accent
-                                : isWeekend
+                              : isHoliday
+                                ? '#F44336'
+                                : isToday
                                   ? colors.accent
-                                  : colors.text
+                                  : isWeekend
+                                    ? colors.accent
+                                    : colors.text
                           }}
                         >
                           {day.getDate()}

@@ -1,18 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
+type WeekStartDay = 'sunday' | 'monday';
+
 // スイッチコンポーネント
 const Switch = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
-  <button 
+  <button
     onClick={onChange}
     className={`w-12 h-7 rounded-full p-1 transition-colors duration-300 ${checked ? 'bg-[#FF8A65]' : 'bg-gray-200'}`}
   >
-    <motion.div 
+    <motion.div
       layout
       className="w-5 h-5 bg-white rounded-full shadow-sm"
       animate={{ x: checked ? 20 : 0 }}
@@ -25,12 +27,49 @@ export default function SettingsPage() {
   const router = useRouter();
   const supabase = createClient();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-  
+
   const [settings, setSettings] = useState({
     notifications: true,
     dataShare: true,
     autoAnalyze: true
   });
+
+  const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>('monday');
+  const [savingWeekStart, setSavingWeekStart] = useState(false);
+
+  // Fetch current week start day setting
+  useEffect(() => {
+    const fetchSettings = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('week_start_day')
+        .eq('id', user.id)
+        .single();
+      if (profile?.week_start_day) {
+        setWeekStartDay(profile.week_start_day as WeekStartDay);
+      }
+    };
+    fetchSettings();
+  }, [supabase]);
+
+  const handleWeekStartDayChange = async (newValue: WeekStartDay) => {
+    setWeekStartDay(newValue);
+    setSavingWeekStart(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      await supabase
+        .from('user_profiles')
+        .update({ week_start_day: newValue })
+        .eq('id', user.id);
+    } catch (error) {
+      console.error('Failed to save week start day:', error);
+    } finally {
+      setSavingWeekStart(false);
+    }
+  };
 
   const toggle = (key: keyof typeof settings) => {
     setSettings(prev => ({ ...prev, [key]: !prev[key] }));
@@ -63,12 +102,46 @@ export default function SettingsPage() {
                <Switch checked={settings.notifications} onChange={() => toggle('notifications')} />
              </div>
 
-             <div className="flex items-center justify-between p-4">
+             <div className="flex items-center justify-between p-4 border-b border-gray-50">
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500">🤖</div>
                  <span className="font-bold text-gray-700">自動解析</span>
                </div>
                <Switch checked={settings.autoAnalyze} onChange={() => toggle('autoAnalyze')} />
+             </div>
+
+             <div className="flex items-center justify-between p-4">
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-teal-50 flex items-center justify-center text-teal-500">📅</div>
+                 <div>
+                   <span className="font-bold text-gray-700">週の開始日</span>
+                   <p className="text-xs text-gray-400">カレンダーの開始曜日</p>
+                 </div>
+               </div>
+               <div className="flex gap-1">
+                 <button
+                   onClick={() => handleWeekStartDayChange('sunday')}
+                   disabled={savingWeekStart}
+                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                     weekStartDay === 'sunday'
+                       ? 'bg-[#FF8A65] text-white'
+                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                   }`}
+                 >
+                   日曜
+                 </button>
+                 <button
+                   onClick={() => handleWeekStartDayChange('monday')}
+                   disabled={savingWeekStart}
+                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                     weekStartDay === 'monday'
+                       ? 'bg-[#FF8A65] text-white'
+                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                   }`}
+                 >
+                   月曜
+                 </button>
+               </div>
              </div>
 
           </div>
