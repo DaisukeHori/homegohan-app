@@ -306,13 +306,16 @@ export function getSlotDateRange(slots: TargetSlot[]): { start: string; end: str
 
 /**
  * AI生成献立かどうかを判定
- * mode が 'ai_creative' または 'ai' で始まる場合は AI 生成
+ * mode が以下のいずれかの場合は AI 生成:
+ * - 'ai_creative' (週間献立生成)
+ * - 'creative' (単品再生成/単品生成)
+ * - 'ai' で始まる値
  */
 export function isAiGeneratedMeal(meal: PlannedMeal | null | undefined): boolean {
   if (!meal) return false;
   // mode は型定義より広い値を持つことがあるため string として扱う
   const mode = (meal.mode || '') as string;
-  return mode === 'ai_creative' || mode.startsWith('ai');
+  return mode === 'ai_creative' || mode === 'creative' || mode.startsWith('ai');
 }
 
 /**
