@@ -534,12 +534,12 @@ export default function HealthDashboardPage() {
             <motion.div
               whileTap={{ scale: 0.98 }}
               className="p-4 rounded-xl"
-              style={{ 
+              style={{
                 backgroundColor: colors.card,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
               }}
             >
-              <div 
+              <div
                 className="w-10 h-10 rounded-lg flex items-center justify-center mb-2"
                 style={{ backgroundColor: colors.successLight }}
               >
@@ -550,6 +550,48 @@ export default function HealthDashboardPage() {
             </motion.div>
           </Link>
         </div>
+      </div>
+
+      {/* 健康診断 */}
+      <div className="px-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold" style={{ color: colors.text }}>健康診断</h3>
+          <Link
+            href="/health/checkups"
+            className="text-sm flex items-center gap-1"
+            style={{ color: colors.accent }}
+          >
+            すべて見る <ChevronRight size={16} />
+          </Link>
+        </div>
+        <Link href="/health/checkups">
+          <motion.div
+            whileTap={{ scale: 0.98 }}
+            className="p-4 rounded-xl"
+            style={{
+              backgroundColor: colors.card,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+            }}
+          >
+            <div className="flex items-center gap-4">
+              <div
+                className="w-12 h-12 rounded-xl flex items-center justify-center"
+                style={{ backgroundColor: colors.errorLight }}
+              >
+                <Activity size={24} style={{ color: colors.error }} />
+              </div>
+              <div className="flex-1">
+                <p className="font-medium" style={{ color: colors.text }}>
+                  健康診断結果を記録
+                </p>
+                <p className="text-sm" style={{ color: colors.textMuted }}>
+                  検査値をAIが分析・献立に反映
+                </p>
+              </div>
+              <ChevronRight size={20} style={{ color: colors.textMuted }} />
+            </div>
+          </motion.div>
+        </Link>
       </div>
 
       {/* クイック記録モーダル */}
