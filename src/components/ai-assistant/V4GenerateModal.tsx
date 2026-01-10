@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
   Refrigerator, Zap, UtensilsCrossed, Heart,
-  ChevronRight, Loader2, Wand2, AlertTriangle
+  ChevronRight, Loader2, Wand2, AlertTriangle, Crown, Lock
 } from "lucide-react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import {
@@ -469,43 +469,48 @@ export function V4GenerateModal({
                   </div>
                 </div>
 
-                {/* Ultimate Mode Toggle */}
-                <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: ultimateMode ? colors.purpleLight : colors.bg }}>
+                {/* Ultimate Mode Toggle - Premium Feature */}
+                <div className="mb-6 p-4 rounded-xl opacity-60" style={{ backgroundColor: colors.bg }}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div
                         className="w-10 h-10 rounded-full flex items-center justify-center"
-                        style={{ backgroundColor: ultimateMode ? colors.purple : colors.border }}
+                        style={{ backgroundColor: colors.border }}
                       >
-                        <Wand2 size={18} style={{ color: ultimateMode ? 'white' : colors.textMuted }} />
+                        <Wand2 size={18} style={{ color: colors.textMuted }} />
                       </div>
                       <div>
-                        <p className="font-bold" style={{ color: colors.text }}>究極モード</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold" style={{ color: colors.text }}>究極モード</p>
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold"
+                            style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}
+                          >
+                            <Crown size={10} />
+                            Premium
+                          </span>
+                        </div>
                         <p className="text-xs" style={{ color: colors.textLight }}>
                           AIが献立を自動で見直し、より栄養バランスの良い献立に改善
                         </p>
                       </div>
                     </div>
-                    {/* Toggle Switch */}
-                    <button
-                      onClick={() => setUltimateMode(!ultimateMode)}
-                      className="relative w-14 h-8 rounded-full transition-colors flex-shrink-0"
-                      style={{ backgroundColor: ultimateMode ? colors.purple : '#D1D5DB' }}
-                    >
-                      <span
-                        className="absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow-md transition-transform duration-200"
-                        style={{
-                          transform: ultimateMode ? 'translateX(24px)' : 'translateX(0)',
-                        }}
-                      />
-                    </button>
-                  </div>
-                  {ultimateMode && (
-                    <div className="mt-3 flex items-start gap-2 text-xs" style={{ color: colors.warning }}>
-                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                      <span>通常の約3倍の時間がかかります（7日分で約2-4分）</span>
+                    {/* Locked Toggle */}
+                    <div className="flex items-center gap-2">
+                      <Lock size={14} style={{ color: colors.textMuted }} />
+                      <div
+                        className="relative w-14 h-8 rounded-full flex-shrink-0 cursor-not-allowed"
+                        style={{ backgroundColor: '#E5E7EB' }}
+                      >
+                        <span
+                          className="absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow-md"
+                        />
+                      </div>
                     </div>
-                  )}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 text-xs" style={{ color: colors.textMuted }}>
+                    <span>準備中 - プレミアムプランで利用可能になります</span>
+                  </div>
                 </div>
 
                 {/* Free text note */}
