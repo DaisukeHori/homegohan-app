@@ -803,9 +803,13 @@ export default function WeeklyMenuPage() {
     targetSlots: TargetSlot[];
     constraints: MenuGenerationConstraints;
     note: string;
+    ultimateMode?: boolean;
   }) => {
     try {
-      const result = await v4Generation.generate(params);
+      const result = await v4Generation.generate({
+        ...params,
+        ultimateMode: params.ultimateMode ?? false,
+      });
       setShowV4Modal(false);
       
       // 初期進捗を設定（totalSlotsを含める）
@@ -2646,7 +2650,8 @@ export default function WeeklyMenuPage() {
       quick: '時短メニュー',
       buy: 'コンビニ・惣菜',
       out: '外食',
-      skip: 'スキップ'
+      skip: 'スキップ',
+      ai_creative: 'AI献立',
     };
     
     try {
@@ -3203,9 +3208,11 @@ export default function WeeklyMenuPage() {
     currentPlan.days.forEach(day => {
       day.meals?.forEach(meal => {
         const mode = meal.mode || 'cook';
-        if (mode === 'cook' || mode === 'quick') cookCount++;
+        // 自炊系: cook, quick, ai_creative（AI生成も自炊としてカウント）
+        if (mode === 'cook' || mode === 'quick' || mode === 'ai_creative' || mode.startsWith('ai')) cookCount++;
         else if (mode === 'buy') buyCount++;
         else if (mode === 'out') outCount++;
+        else cookCount++; // デフォルトは自炊扱い
         totalCal += meal.caloriesKcal || 0;
         mealCount++;
       });

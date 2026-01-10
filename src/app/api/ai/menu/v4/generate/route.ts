@@ -304,6 +304,7 @@ export async function POST(request: Request) {
         constraints,
         note: body?.note,
         familySize,
+        ultimateMode: body?.ultimateMode ?? false,
       }),
     }).then(async (res) => {
       if (!res.ok) {

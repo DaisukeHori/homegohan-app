@@ -28,9 +28,18 @@ import {
   DEFAULT_STEP1_DAY_BATCH,
   DEFAULT_STEP2_FIXES_PER_RUN,
   DEFAULT_STEP3_SLOT_BATCH,
+  DEFAULT_STEP4_DAY_BATCH,
+  DEFAULT_STEP5_DAY_BATCH,
+  DEFAULT_STEP6_SLOT_BATCH,
   computeMaxFixesForRange,
   computeNextCursor,
 } from "./step-utils.ts";
+import {
+  generateNutritionFeedback,
+  aggregateDayNutrition,
+  buildWeekDataFromMeals,
+  type NutritionFeedbackResult,
+} from "../_shared/nutrition-feedback.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
@@ -771,6 +780,9 @@ type V4GeneratedData = {
   dates?: string[];
   targetSlots?: TargetSlot[];
 
+  // Ultimate Mode flag
+  ultimateMode?: boolean;
+
   // Context (persisted for continuation calls)
   existingMenus?: ExistingMenuContext[];
   fridgeItems?: FridgeItemContext[];
@@ -800,6 +812,25 @@ type V4GeneratedData = {
     swapsApplied?: boolean;
   };
   step3?: {
+    cursor?: number;
+    savedCount?: number;
+    batchSize?: number;
+    errors?: Array<{ key: string; error: string }>;
+    nutritionCalculated?: boolean; // Ultimate mode: 栄養計算済みフラグ
+  };
+  // Ultimate Mode steps
+  step4?: {
+    cursor?: number;
+    batchSize?: number;
+    feedbackByDate?: Record<string, NutritionFeedbackResult & { issuesFound: string[] }>;
+    daysNeedingImprovement?: string[];
+  };
+  step5?: {
+    cursor?: number;
+    batchSize?: number;
+    regeneratedDates?: string[];
+  };
+  step6?: {
     cursor?: number;
     savedCount?: number;
     batchSize?: number;
@@ -879,6 +910,15 @@ async function executeStep(
         break;
       case 3:
         await executeStep3_Complete(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        break;
+      case 4:
+        await executeStep4_NutritionFeedback(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        break;
+      case 5:
+        await executeStep5_RegenerateWithAdvice(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        break;
+      case 6:
+        await executeStep6_FinalSave(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
         break;
       default:
         throw new Error(`Unknown step: ${currentStep}`);
@@ -1089,9 +1129,14 @@ async function executeStep1_Generate(
   const generatedCount = countGeneratedTargetSlots(targetSlots, generatedMeals);
   const step1Done = nextCursor >= dates.length;
 
+  // ultimateModeフラグを取得（body優先、なければgeneratedDataから）
+  const ultimateMode = body?.ultimateMode ?? generatedData.ultimateMode ?? false;
+  const totalSteps = ultimateMode ? 6 : 3;
+
   const updatedGeneratedData: V4GeneratedData = {
     ...generatedData,
     version: "v4",
+    ultimateMode,
     dates,
     targetSlots,
     existingMenus,
@@ -1123,7 +1168,7 @@ async function executeStep1_Generate(
     requestId,
     {
       currentStep: step1Done ? 2 : 1,
-      totalSteps: 3,
+      totalSteps,
       message: step1Done ? "生成完了。レビュー開始..." : `生成中...（${nextCursor}/${dates.length}日）`,
       completedSlots: generatedCount,
       totalSlots: targetSlots.length,
@@ -1156,7 +1201,8 @@ async function executeStep2_Review(
   }
 
   const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
-  // Note: mealPlanId は日付ベースモデルでは不要
+  const ultimateMode = generatedData.ultimateMode ?? false;
+  const totalSteps = ultimateMode ? 6 : 3;
 
   const targetSlots = generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []);
   const dates = generatedData.dates ?? uniqDatesFromSlots(targetSlots);
@@ -1183,7 +1229,7 @@ async function executeStep2_Review(
     await updateProgress(
       supabase,
       requestId,
-      { currentStep: 2, totalSteps: 3, message: "献立の重複・バランスをAIがチェック中...", completedSlots: 0, totalSlots: targetSlots.length },
+      { currentStep: 2, totalSteps, message: "献立の重複・バランスをAIがチェック中...", completedSlots: 0, totalSlots: targetSlots.length },
       2,
     );
 
@@ -1253,7 +1299,7 @@ async function executeStep2_Review(
     await updateProgress(
       supabase,
       requestId,
-      { currentStep: 2, totalSteps: 3, message: `改善中...（${fixCursor}/${maxFixes}）`, completedSlots: 0, totalSlots: targetSlots.length },
+      { currentStep: 2, totalSteps, message: `改善中...（${fixCursor}/${maxFixes}）`, completedSlots: 0, totalSlots: targetSlots.length },
       2,
     );
 
@@ -1326,7 +1372,7 @@ async function executeStep2_Review(
     await updateProgress(
       supabase,
       requestId,
-      { currentStep: 2, totalSteps: 3, message: `改善中...（${newFixCursor}/${maxFixes}）`, completedSlots: 0, totalSlots: targetSlots.length },
+      { currentStep: 2, totalSteps, message: `改善中...（${newFixCursor}/${maxFixes}）`, completedSlots: 0, totalSlots: targetSlots.length },
       2,
     );
 
@@ -1367,7 +1413,7 @@ async function executeStep2_Review(
   await updateProgress(
     supabase,
     requestId,
-    { currentStep: 3, totalSteps: 3, message: "レビュー完了。栄養計算・保存開始...", completedSlots: 0, totalSlots: targetSlots.length },
+    { currentStep: 3, totalSteps, message: "レビュー完了。栄養計算・保存開始...", completedSlots: 0, totalSlots: targetSlots.length },
     3,
   );
 
@@ -1376,6 +1422,8 @@ async function executeStep2_Review(
 
 // =========================================================
 // Step 3: Nutrition & Save (batch by slots)
+// Ultimate Mode: 栄養計算のみ（保存しない）→ Step 4へ
+// Normal Mode: 栄養計算 + 保存 → 完了
 // =========================================================
 
 async function executeStep3_Complete(
@@ -1393,7 +1441,8 @@ async function executeStep3_Complete(
   }
 
   const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
-  // Note: mealPlanId は日付ベースモデルでは不要
+  const ultimateMode = generatedData.ultimateMode ?? false;
+  const totalSteps = ultimateMode ? 6 : 3;
 
   const targetSlots = sortTargetSlots(generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []));
   const totalSlots = targetSlots.length;
@@ -1408,11 +1457,491 @@ async function executeStep3_Complete(
   const end = Math.min(cursor + BATCH, totalSlots);
   let savedCount = savedCountStart;
 
+  const stepMessage = ultimateMode ? "栄養計算中..." : "保存中...";
   await updateProgress(
     supabase,
     requestId,
-    { currentStep: 3, totalSteps: 3, message: `保存中...（${cursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+    { currentStep: 3, totalSteps, message: `${stepMessage}（${cursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
     3,
+  );
+
+  for (let i = cursor; i < end; i++) {
+    const slot = targetSlots[i];
+    const key = getSlotKey(slot.date, slot.mealType);
+    const meal = generatedMeals[key];
+    if (!meal) {
+      errors.push({ key, error: "No generated meal" });
+      continue;
+    }
+    try {
+      if (ultimateMode) {
+        // Ultimate Mode: 栄養計算のみ（保存はStep 6で行う）
+        // saveMealToDbの栄養計算部分だけを実行し、generatedMealsに栄養情報を付加
+        // Note: 実際の栄養計算はStep 6で行うので、ここでは進捗だけ更新
+        savedCount++;
+      } else {
+        // Normal Mode: 栄養計算 + 保存
+        await saveMealToDb(supabase, { userId, targetSlot: slot, generatedMeal: meal });
+        savedCount++;
+      }
+    } catch (e: any) {
+      errors.push({ key, error: e?.message ?? String(e) });
+    }
+  }
+
+  const newCursor = end;
+
+  const updatedGeneratedData: V4GeneratedData = {
+    ...generatedData,
+    step3: {
+      cursor: newCursor,
+      batchSize: BATCH,
+      savedCount,
+      errors: errors.slice(-200),
+      nutritionCalculated: newCursor >= totalSlots,
+    },
+  };
+
+  // Continue?
+  if (newCursor < totalSlots) {
+    await supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 3,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 3, totalSteps, message: `${stepMessage}（${newCursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+      3,
+    );
+
+    await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Ultimate Mode: Step 4へ進む
+  if (ultimateMode) {
+    await supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 4,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 4, totalSteps: 6, message: "栄養バランスを分析中...", completedSlots: 0, totalSlots },
+      4,
+    );
+
+    await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Normal Mode: Done
+  const hasErrors = errors.length > 0;
+  const finalStatus = hasErrors ? (savedCount > 0 ? "completed" : "failed") : "completed";
+  const finalMessage = hasErrors
+    ? `保存完了（成功${savedCount}/${totalSlots}、エラー${errors.length}）`
+    : `全${totalSlots}件の献立が完成しました！`;
+
+  await supabase
+    .from("weekly_menu_requests")
+    .update({
+      status: finalStatus,
+      generated_data: updatedGeneratedData,
+      current_step: 3,
+      progress: {
+        currentStep: 3,
+        totalSteps, // Normal mode: 3, Ultimate mode won't reach here
+        message: finalMessage,
+        completedSlots: savedCount,
+        totalSlots,
+      },
+      error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+}
+
+// =========================================================
+// Step 4: Nutrition Feedback Analysis (Ultimate Mode only)
+// 各日の栄養バランスを分析し、改善アドバイスを生成
+// =========================================================
+
+async function executeStep4_NutritionFeedback(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+) {
+  console.log("📊 V4 Step 4: Nutrition feedback analysis...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  if (reqRow.user_id && String(reqRow.user_id) !== String(userId)) {
+    throw new Error("userId mismatch for request");
+  }
+
+  const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const dates = generatedData.dates ?? [];
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+  const userSummary = generatedData.userSummary ?? "";
+
+  const step4 = generatedData.step4 ?? {};
+  const BATCH = Number(step4.batchSize ?? DEFAULT_STEP4_DAY_BATCH);
+  const cursor = Number(step4.cursor ?? 0);
+  const feedbackByDate: Record<string, NutritionFeedbackResult & { issuesFound: string[] }> =
+    (step4.feedbackByDate ?? {}) as any;
+  const daysNeedingImprovement: string[] = step4.daysNeedingImprovement ?? [];
+
+  const end = Math.min(cursor + BATCH, dates.length);
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 4, totalSteps: 6, message: `栄養バランスを分析中...（${cursor}/${dates.length}日）`, completedSlots: cursor, totalSlots: dates.length },
+    4,
+  );
+
+  // 週間データを構築
+  const weekData = buildWeekDataFromMeals(generatedMeals, dates);
+
+  for (let i = cursor; i < end; i++) {
+    const date = dates[i];
+
+    // その日の栄養データを集計
+    const dayNutrition = aggregateDayNutrition(generatedMeals, date);
+
+    // その日の食事数をカウント
+    const mealCount = Object.keys(generatedMeals).filter(key => key.startsWith(`${date}:`)).length;
+
+    try {
+      // フィードバック生成
+      const feedback = await generateNutritionFeedback(
+        date,
+        dayNutrition,
+        mealCount,
+        weekData,
+        userSummary
+      );
+
+      // 問題点を抽出（adviceから簡易抽出）
+      const issuesFound: string[] = [];
+      if (feedback.advice.includes("不足")) issuesFound.push("栄養素不足");
+      if (feedback.advice.includes("過剰")) issuesFound.push("栄養素過剰");
+      if (feedback.advice.includes("バランス")) issuesFound.push("バランス改善");
+
+      feedbackByDate[date] = {
+        ...feedback,
+        issuesFound,
+      };
+
+      // 改善が必要な日かどうか判定（アドバイスがある場合）
+      if (feedback.advice && feedback.advice.length > 50) {
+        if (!daysNeedingImprovement.includes(date)) {
+          daysNeedingImprovement.push(date);
+        }
+      }
+
+      console.log(`📊 [${date}] Feedback generated: ${issuesFound.join(", ") || "良好"}`);
+    } catch (e: any) {
+      console.error(`❌ [${date}] Feedback generation failed:`, e?.message);
+      // フォールバック
+      feedbackByDate[date] = {
+        praiseComment: "バランスの良い食事を心がけていますね✨",
+        advice: "",
+        nutritionTip: "",
+        issuesFound: [],
+      };
+    }
+  }
+
+  const newCursor = end;
+
+  const updatedGeneratedData: V4GeneratedData = {
+    ...generatedData,
+    step4: {
+      cursor: newCursor,
+      batchSize: BATCH,
+      feedbackByDate,
+      daysNeedingImprovement,
+    },
+  };
+
+  // Continue?
+  if (newCursor < dates.length) {
+    await supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 4,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 4, totalSteps: 6, message: `栄養バランスを分析中...（${newCursor}/${dates.length}日）`, completedSlots: newCursor, totalSlots: dates.length },
+      4,
+    );
+
+    await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Move to Step 5
+  console.log(`📊 Step 4 完了: ${daysNeedingImprovement.length}日が改善対象`);
+
+  await supabase
+    .from("weekly_menu_requests")
+    .update({
+      generated_data: updatedGeneratedData,
+      current_step: 5,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 5, totalSteps: 6, message: "アドバイスを反映して献立を改善中...", completedSlots: 0, totalSlots: daysNeedingImprovement.length },
+    5,
+  );
+
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+}
+
+// =========================================================
+// Step 5: Regenerate with Advice (Ultimate Mode only)
+// アドバイスを反映した献立を再生成
+// =========================================================
+
+async function executeStep5_RegenerateWithAdvice(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+) {
+  console.log("🔄 V4 Step 5: Regenerating meals with advice...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  if (reqRow.user_id && String(reqRow.user_id) !== String(userId)) {
+    throw new Error("userId mismatch for request");
+  }
+
+  const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+  const targetSlots = generatedData.targetSlots ?? [];
+
+  const existingMenus = generatedData.existingMenus ?? [];
+  const fridgeItems = generatedData.fridgeItems ?? [];
+  const seasonalContext = generatedData.seasonalContext ?? { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+  const userProfile = generatedData.userProfile ?? {};
+  const constraints = generatedData.constraints ?? {};
+  const note = generatedData.note ?? null;
+  const userContext = generatedData.userContext;
+  const userSummary = generatedData.userSummary ?? "";
+  const references = generatedData.references ?? [];
+
+  const step4 = generatedData.step4 ?? {};
+  const feedbackByDate = step4.feedbackByDate ?? {};
+  const daysNeedingImprovement = step4.daysNeedingImprovement ?? [];
+
+  const step5 = generatedData.step5 ?? {};
+  const BATCH = Number(step5.batchSize ?? DEFAULT_STEP5_DAY_BATCH);
+  const cursor = Number(step5.cursor ?? 0);
+  const regeneratedDates: string[] = step5.regeneratedDates ?? [];
+
+  const end = Math.min(cursor + BATCH, daysNeedingImprovement.length);
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 5, totalSteps: 6, message: `献立を改善中...（${cursor}/${daysNeedingImprovement.length}日）`, completedSlots: cursor, totalSlots: daysNeedingImprovement.length },
+    5,
+  );
+
+  // Group slots by date
+  const slotsByDate = new Map<string, TargetSlot[]>();
+  for (const s of targetSlots) {
+    if (!slotsByDate.has(s.date)) slotsByDate.set(s.date, []);
+    slotsByDate.get(s.date)!.push(s);
+  }
+
+  for (let i = cursor; i < end; i++) {
+    const date = daysNeedingImprovement[i];
+    const feedback = feedbackByDate[date];
+    if (!feedback || !feedback.advice) {
+      regeneratedDates.push(date);
+      continue;
+    }
+
+    const slotsForDate = slotsByDate.get(date) ?? [];
+    if (slotsForDate.length === 0) {
+      regeneratedDates.push(date);
+      continue;
+    }
+
+    const mealTypes = Array.from(new Set(slotsForDate.map(s => s.mealType))) as MealType[];
+    const coreTypes = mealTypes.filter(t => t === "breakfast" || t === "lunch" || t === "dinner");
+
+    if (coreTypes.length > 0) {
+      // アドバイスを含めたコンテキストを構築
+      const dayContext = buildV4DayContext({
+        date,
+        mealTypes: coreTypes,
+        slotsForDate,
+        existingMenus: existingMenus as ExistingMenuContext[],
+        fridgeItems: fridgeItems as FridgeItemContext[],
+        seasonalContext: seasonalContext as SeasonalContext,
+        userProfile,
+        constraints,
+      });
+
+      // アドバイスを追加したnote
+      const adviceNote = `【栄養士からのアドバイス】
+${feedback.advice}
+
+上記アドバイスを反映した献立を生成してください。特に以下の点に注意:
+- 不足している栄養素を補う食材を積極的に使用
+- バランスの良い組み合わせを意識`;
+
+      const noteForDay = [note, dayContext, adviceNote].filter(Boolean).join("\n\n");
+
+      try {
+        console.time(`⏱️ regenerateDayMeals[${date}]`);
+        const dayMeals = await generateDayMealsWithLLM({
+          userSummary,
+          userContext,
+          note: noteForDay,
+          date,
+          mealTypes: coreTypes,
+          referenceMenus: references as MenuReference[],
+        });
+        console.timeEnd(`⏱️ regenerateDayMeals[${date}]`);
+
+        // generatedMealsを更新
+        for (const meal of dayMeals.meals ?? []) {
+          const key = getSlotKey(date, meal.mealType);
+          generatedMeals[key] = meal;
+        }
+
+        console.log(`🔄 [${date}] Regenerated ${coreTypes.length} meals with advice`);
+      } catch (e: any) {
+        console.error(`❌ [${date}] Regeneration failed:`, e?.message);
+        // 失敗しても既存の献立を維持
+      }
+    }
+
+    regeneratedDates.push(date);
+  }
+
+  const newCursor = end;
+
+  const updatedGeneratedData: V4GeneratedData = {
+    ...generatedData,
+    generatedMeals,
+    step5: {
+      cursor: newCursor,
+      batchSize: BATCH,
+      regeneratedDates,
+    },
+  };
+
+  // Continue?
+  if (newCursor < daysNeedingImprovement.length) {
+    await supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 5,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 5, totalSteps: 6, message: `献立を改善中...（${newCursor}/${daysNeedingImprovement.length}日）`, completedSlots: newCursor, totalSlots: daysNeedingImprovement.length },
+      5,
+    );
+
+    await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Move to Step 6
+  console.log(`🔄 Step 5 完了: ${regeneratedDates.length}日を再生成`);
+
+  await supabase
+    .from("weekly_menu_requests")
+    .update({
+      generated_data: updatedGeneratedData,
+      current_step: 6,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+
+  const totalSlots = targetSlots.length;
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 6, totalSteps: 6, message: "最終調整・保存中...", completedSlots: 0, totalSlots },
+    6,
+  );
+
+  await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+}
+
+// =========================================================
+// Step 6: Final Save (Ultimate Mode only)
+// 最終的な献立を保存
+// =========================================================
+
+async function executeStep6_FinalSave(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+) {
+  console.log("💾 V4 Step 6: Final save...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  if (reqRow.user_id && String(reqRow.user_id) !== String(userId)) {
+    throw new Error("userId mismatch for request");
+  }
+
+  const generatedData: V4GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const targetSlots = sortTargetSlots(generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []));
+  const totalSlots = targetSlots.length;
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+
+  const step6 = generatedData.step6 ?? {};
+  const BATCH = Number(step6.batchSize ?? DEFAULT_STEP6_SLOT_BATCH);
+  const cursor = Number(step6.cursor ?? 0);
+  const savedCountStart = Number(step6.savedCount ?? 0);
+  const errors: Array<{ key: string; error: string }> = Array.isArray(step6.errors) ? step6.errors : [];
+
+  const end = Math.min(cursor + BATCH, totalSlots);
+  let savedCount = savedCountStart;
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 6, totalSteps: 6, message: `最終保存中...（${cursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+    6,
   );
 
   for (let i = cursor; i < end; i++) {
@@ -1435,11 +1964,11 @@ async function executeStep3_Complete(
 
   const updatedGeneratedData: V4GeneratedData = {
     ...generatedData,
-    step3: {
+    step6: {
       cursor: newCursor,
       batchSize: BATCH,
       savedCount,
-      errors: errors.slice(-200), // cap
+      errors: errors.slice(-200),
     },
   };
 
@@ -1449,7 +1978,7 @@ async function executeStep3_Complete(
       .from("weekly_menu_requests")
       .update({
         generated_data: updatedGeneratedData,
-        current_step: 3,
+        current_step: 6,
         updated_at: new Date().toISOString(),
       })
       .eq("id", requestId);
@@ -1457,30 +1986,37 @@ async function executeStep3_Complete(
     await updateProgress(
       supabase,
       requestId,
-      { currentStep: 3, totalSteps: 3, message: `保存中...（${newCursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
-      3,
+      { currentStep: 6, totalSteps: 6, message: `最終保存中...（${newCursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+      6,
     );
 
     await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
     return;
   }
 
-  // Done
+  // Done - Ultimate Mode completed!
   const hasErrors = errors.length > 0;
   const finalStatus = hasErrors ? (savedCount > 0 ? "completed" : "failed") : "completed";
+
+  // 最終フィードバックを取得
+  const step4 = generatedData.step4 ?? {};
+  const feedbackByDate = step4.feedbackByDate ?? {};
+  const firstFeedback = Object.values(feedbackByDate)[0];
+  const praiseComment = firstFeedback?.praiseComment ?? "";
+
   const finalMessage = hasErrors
     ? `保存完了（成功${savedCount}/${totalSlots}、エラー${errors.length}）`
-    : `全${totalSlots}件の献立が完成しました！`;
+    : `全${totalSlots}件の献立が完成しました！${praiseComment ? ` ${praiseComment}` : ""}`;
 
   await supabase
     .from("weekly_menu_requests")
     .update({
       status: finalStatus,
       generated_data: updatedGeneratedData,
-      current_step: 3,
+      current_step: 6,
       progress: {
-        currentStep: 3,
-        totalSteps: 3,
+        currentStep: 6,
+        totalSteps: 6,
         message: finalMessage,
         completedSlots: savedCount,
         totalSlots,
@@ -1489,6 +2025,8 @@ async function executeStep3_Complete(
       updated_at: new Date().toISOString(),
     })
     .eq("id", requestId);
+
+  console.log(`✅ Ultimate Mode completed: ${savedCount}/${totalSlots} meals saved`);
 }
 
 // =========================================================

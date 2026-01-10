@@ -198,9 +198,12 @@ ${JSON.stringify(ingredients, null, 2)}
 1. **quantityVariantsは必ず2つ以上**生成すること（数量不明の場合を除く）
    - 重量(g)と個数(個/本/枚/切れ等)の両方を含める
    - 可能なら「パック」「袋」などの購入単位も追加
-2. 数値がない場合（「適量」「少々」）のみ、variants を1つにしてよい
-3. 入力にない材料を追加しない（ハルシネーション禁止）
-4. JSONのみ出力（説明文不要）`;
+2. **quantityVariantsは同じ量の異なる表現！** 内訳ではない！
+   - ❌ 悪い例: ["約200g（合計）", "120g", "80g"] ← これは内訳なのでNG
+   - ✅ 良い例: ["200g", "約1/4個"] ← これは同じ量の異なる表現でOK
+3. 数値がない場合（「適量」「少々」）のみ、variants を1つにしてよい
+4. 入力にない材料を追加しない（ハルシネーション禁止）
+5. JSONのみ出力（説明文不要）`;
 }
 
 // ============================================
@@ -220,10 +223,10 @@ async function callOpenAI(prompt: string): Promise<NormalizedItem[]> {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-5-mini",
+      model: "gpt-5-nano",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 8000,
-      reasoning_effort: "minimal",
+      reasoning_effort: "low",
       response_format: { type: "json_object" },
     }),
   });

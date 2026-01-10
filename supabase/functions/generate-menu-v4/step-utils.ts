@@ -20,6 +20,11 @@ export const DEFAULT_STEP2_FIXES_PER_WEEK = 2;
 export const DEFAULT_STEP2_MAX_FIXES_CAP = 12;
 export const DEFAULT_STEP3_SLOT_BATCH = 15;
 
+// Ultimate Mode (Steps 4-6)
+export const DEFAULT_STEP4_DAY_BATCH = 5;       // 5日/実行（フィードバック分析）
+export const DEFAULT_STEP5_DAY_BATCH = 3;       // 3日/実行（再生成）
+export const DEFAULT_STEP6_SLOT_BATCH = 15;     // Step 3と同じ
+
 export function getSlotKey(date: string, mealType: MealType): string {
   return `${date}:${mealType}`;
 }

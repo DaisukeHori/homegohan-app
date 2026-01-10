@@ -296,10 +296,70 @@ export function countEmptySlots(params: SlotBuilderParams & {
  */
 export function getSlotDateRange(slots: TargetSlot[]): { start: string; end: string } | null {
   if (slots.length === 0) return null;
-  
+
   const dates = slots.map(s => s.date).sort();
   return {
     start: dates[0],
     end: dates[dates.length - 1],
   };
+}
+
+/**
+ * AI生成献立かどうかを判定
+ * mode が 'ai_creative' または 'ai' で始まる場合は AI 生成
+ */
+export function isAiGeneratedMeal(meal: PlannedMeal | null | undefined): boolean {
+  if (!meal) return false;
+  // mode は型定義より広い値を持つことがあるため string として扱う
+  const mode = (meal.mode || '') as string;
+  return mode === 'ai_creative' || mode.startsWith('ai');
+}
+
+/**
+ * モード: AI生成のみ変更
+ *
+ * 今日以降のAI生成献立スロットのみを targetSlots として返す
+ */
+export function buildAiOnlySlots(params: SlotBuilderParams & {
+  /** 開始日（デフォルト: 今日） */
+  startDate?: string;
+  /** 終了日（デフォルト: 開始日から6日後 = 1週間） */
+  endDate?: string;
+}): TargetSlot[] {
+  const {
+    mealPlanDays,
+    mealTypes = BASE_MEAL_TYPES,
+    startDate = getTodayStr(),
+    endDate = addDays(startDate, 6),
+  } = params;
+
+  const dates = generateDateRange(startDate, endDate);
+  const slots: TargetSlot[] = [];
+
+  for (const date of dates) {
+    for (const mealType of mealTypes) {
+      const existingMeal = getMealAtSlot(date, mealType, mealPlanDays);
+      // AI生成の献立のみを対象
+      if (existingMeal && isAiGeneratedMeal(existingMeal)) {
+        slots.push({
+          date,
+          mealType,
+          plannedMealId: existingMeal.id,
+        });
+      }
+    }
+  }
+
+  return slots;
+}
+
+/**
+ * AI生成献立の数をカウント
+ */
+export function countAiSlots(params: SlotBuilderParams & {
+  startDate: string;
+  endDate: string;
+}): number {
+  const slots = buildAiOnlySlots(params);
+  return slots.length;
 }

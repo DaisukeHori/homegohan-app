@@ -595,7 +595,7 @@ export interface MealPlanDay {
   meals?: PlannedMeal[];
 }
 
-export type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
+export type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip' | 'ai_creative';
 
 /**
  * DishDetail - 料理の詳細情報

@@ -14,6 +14,7 @@ interface GenerateParams {
   targetSlots: TargetSlot[];
   constraints: MenuGenerationConstraints;
   note: string;
+  ultimateMode?: boolean;
 }
 
 export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
@@ -33,6 +34,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           targetSlots: params.targetSlots,
           constraints: params.constraints,
           note: params.note,
+          ultimateMode: params.ultimateMode ?? false,
         }),
       });
 

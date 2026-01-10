@@ -2,16 +2,18 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  X, Sparkles, Calendar, Target,
+import {
+  X, Sparkles, Calendar, Target, RefreshCw,
   Refrigerator, Zap, UtensilsCrossed, Heart,
-  ChevronRight, Loader2
+  ChevronRight, Loader2, Wand2, AlertTriangle
 } from "lucide-react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
-import { 
-  buildEmptySlots, 
-  buildRangeSlots, 
+import {
+  buildEmptySlots,
+  buildRangeSlots,
+  buildAiOnlySlots,
   countEmptySlots,
+  countAiSlots,
   validateSlotCount,
   type MealDay,
 } from "@/lib/slot-builder";
@@ -20,7 +22,7 @@ import {
 // Types
 // ============================================
 
-type GenerateMode = 'empty' | 'selected' | 'range';
+type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range';
 
 // LocalStorage keys for persisting range settings
 const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
@@ -36,6 +38,7 @@ interface V4GenerateModalProps {
     targetSlots: TargetSlot[];
     constraints: MenuGenerationConstraints;
     note: string;
+    ultimateMode?: boolean;
   }) => Promise<void>;
   isGenerating?: boolean;
 }
@@ -180,7 +183,10 @@ export function V4GenerateModal({
   
   // Free text note
   const [note, setNote] = useState("");
-  
+
+  // Ultimate Mode: AIが献立を自動で見直し、栄養バランスを改善
+  const [ultimateMode, setUltimateMode] = useState(false);
+
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -207,6 +213,16 @@ export function V4GenerateModal({
     });
   }, [mealPlanDays, effectiveStartDate, weekEndDate]);
 
+  // Calculate AI-generated slots count for current week (今日以降のみ)
+  const aiOnlySlotCount = useMemo(() => {
+    if (effectiveStartDate > weekEndDate) return 0;
+    return countAiSlots({
+      mealPlanDays,
+      startDate: effectiveStartDate,
+      endDate: weekEndDate,
+    });
+  }, [mealPlanDays, effectiveStartDate, weekEndDate]);
+
   // Build target slots based on selected mode (今日以降のみ対象)
   const buildTargetSlots = useCallback((): TargetSlot[] => {
     switch (selectedMode) {
@@ -214,6 +230,14 @@ export function V4GenerateModal({
         // 今日以降の空欄のみ
         if (effectiveStartDate > weekEndDate) return [];
         return buildEmptySlots({
+          mealPlanDays,
+          startDate: effectiveStartDate,
+          endDate: weekEndDate,
+        });
+      case 'ai_only':
+        // 今日以降のAI生成献立のみ
+        if (effectiveStartDate > weekEndDate) return [];
+        return buildAiOnlySlots({
           mealPlanDays,
           startDate: effectiveStartDate,
           endDate: weekEndDate,
@@ -253,6 +277,7 @@ export function V4GenerateModal({
         targetSlots: slots,
         constraints,
         note,
+        ultimateMode,
       });
     } catch (error) {
       // エラー時はローディングを解除
@@ -287,13 +312,13 @@ export function V4GenerateModal({
       disabled: emptySlotCount === 0,
     },
     {
-      id: 'selected' as const,
-      icon: Target,
-      label: '選択したところだけ',
-      description: '変更したい食事を選んで（準備中）',
-      color: colors.blue,
-      bg: colors.blueLight,
-      disabled: true, // Phase 2で実装
+      id: 'ai_only' as const,
+      icon: RefreshCw,
+      label: 'AI献立だけ変更',
+      description: `手動で設定した献立はそのまま、AI生成分のみ再生成（${aiOnlySlotCount}件）`,
+      color: colors.success,
+      bg: colors.successLight,
+      disabled: aiOnlySlotCount === 0,
     },
     {
       id: 'range' as const,
@@ -442,6 +467,46 @@ export function V4GenerateModal({
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Ultimate Mode Toggle */}
+                <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: ultimateMode ? colors.purpleLight : colors.bg }}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-10 h-10 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: ultimateMode ? colors.purple : colors.border }}
+                      >
+                        <Wand2 size={18} style={{ color: ultimateMode ? 'white' : colors.textMuted }} />
+                      </div>
+                      <div>
+                        <p className="font-bold" style={{ color: colors.text }}>究極モード</p>
+                        <p className="text-xs" style={{ color: colors.textLight }}>
+                          AIが献立を自動で見直し、より栄養バランスの良い献立に改善
+                        </p>
+                      </div>
+                    </div>
+                    {/* Toggle Switch */}
+                    <button
+                      onClick={() => setUltimateMode(!ultimateMode)}
+                      className={`relative w-12 h-7 rounded-full transition-colors ${
+                        ultimateMode ? '' : ''
+                      }`}
+                      style={{ backgroundColor: ultimateMode ? colors.purple : colors.border }}
+                    >
+                      <span
+                        className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                          ultimateMode ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {ultimateMode && (
+                    <div className="mt-3 flex items-start gap-2 text-xs" style={{ color: colors.warning }}>
+                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                      <span>通常の約3倍の時間がかかります（7日分で約2-4分）</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Free text note */}
