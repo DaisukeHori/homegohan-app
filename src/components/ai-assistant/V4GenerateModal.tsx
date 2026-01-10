@@ -489,15 +489,14 @@ export function V4GenerateModal({
                     {/* Toggle Switch */}
                     <button
                       onClick={() => setUltimateMode(!ultimateMode)}
-                      className={`relative w-12 h-7 rounded-full transition-colors ${
-                        ultimateMode ? '' : ''
-                      }`}
-                      style={{ backgroundColor: ultimateMode ? colors.purple : colors.border }}
+                      className="relative w-14 h-8 rounded-full transition-colors flex-shrink-0"
+                      style={{ backgroundColor: ultimateMode ? colors.purple : '#D1D5DB' }}
                     >
                       <span
-                        className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-transform ${
-                          ultimateMode ? 'translate-x-6' : 'translate-x-1'
-                        }`}
+                        className="absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow-md transition-transform duration-200"
+                        style={{
+                          transform: ultimateMode ? 'translateX(24px)' : 'translateX(0)',
+                        }}
                       />
                     </button>
                   </div>
