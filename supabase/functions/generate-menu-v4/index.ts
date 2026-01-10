@@ -972,7 +972,7 @@ async function executeStep1_Generate(
         constraints: constraintsForContext,
       });
       console.time("⏱️ searchMenuCandidates");
-      const result = await searchMenuCandidates(supabase, searchQuery, 30);
+      const result = await searchMenuCandidates(supabase, searchQuery, 150);
       console.timeEnd("⏱️ searchMenuCandidates");
       return result;
     })();

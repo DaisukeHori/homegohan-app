@@ -1189,6 +1189,8 @@ export default function WeeklyMenuPage() {
   const [radarChartNutrients, setRadarChartNutrients] = useState<string[]>(DEFAULT_RADAR_NUTRIENTS);
   const [showNutritionDetailModal, setShowNutritionDetailModal] = useState(false);
   const [nutritionFeedback, setNutritionFeedback] = useState<string | null>(null);
+  const [praiseComment, setPraiseComment] = useState<string | null>(null);
+  const [nutritionTip, setNutritionTip] = useState<string | null>(null);
   const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
   const [isEditingRadarNutrients, setIsEditingRadarNutrients] = useState(false);
   const [tempRadarNutrients, setTempRadarNutrients] = useState<string[]>([]);
@@ -1747,6 +1749,8 @@ export default function WeeklyMenuPage() {
   // AI栄養士フィードバックを取得する関数（Realtime + ポーリングのハイブリッド方式）
   const fetchNutritionFeedback = async (dateStr: string, forceRefresh = false) => {
     setNutritionFeedback(null);
+    setPraiseComment(null);
+    setNutritionTip(null);
     setIsLoadingFeedback(true);
     setFeedbackCacheId(null);
     
@@ -1790,8 +1794,10 @@ export default function WeeklyMenuPage() {
         const data = await res.json();
         
         // キャッシュから即座に取得できた場合
-        if (data.cached && data.feedback) {
-          setNutritionFeedback(data.feedback);
+        if (data.cached && (data.feedback || data.praiseComment)) {
+          setNutritionFeedback(data.advice || data.feedback || '');
+          setPraiseComment(data.praiseComment || null);
+          setNutritionTip(data.nutritionTip || null);
           setIsLoadingFeedback(false);
           console.log('Nutrition feedback loaded from cache');
           return;
@@ -1822,10 +1828,12 @@ export default function WeeklyMenuPage() {
               if (pollRes.ok) {
                 const pollData = await pollRes.json();
                 
-                if (pollData.status === 'completed' && pollData.feedback) {
+                if (pollData.status === 'completed' && (pollData.feedback || pollData.praiseComment)) {
                   if (!isResolved) {
                     isResolved = true;
-                    setNutritionFeedback(pollData.feedback);
+                    setNutritionFeedback(pollData.advice || pollData.feedback || '');
+                    setPraiseComment(pollData.praiseComment || null);
+                    setNutritionTip(pollData.nutritionTip || null);
                     setIsLoadingFeedback(false);
                     clearInterval(pollInterval);
                     console.log('Nutrition feedback received via polling');
@@ -1833,7 +1841,9 @@ export default function WeeklyMenuPage() {
                 } else if (pollData.status === 'error') {
                   if (!isResolved) {
                     isResolved = true;
-                    setNutritionFeedback(pollData.feedback || '分析中にエラーが発生しました。');
+                    setNutritionFeedback(pollData.advice || pollData.feedback || '分析中にエラーが発生しました。');
+                    setPraiseComment(null);
+                    setNutritionTip(null);
                     setIsLoadingFeedback(false);
                     clearInterval(pollInterval);
                   }
@@ -1865,19 +1875,36 @@ export default function WeeklyMenuPage() {
               },
               (payload: any) => {
                 if (isResolved) return;
-                
+
                 const newRecord = payload.new;
                 console.log('Realtime update received:', newRecord.status);
-                
+
                 if (newRecord.status === 'completed' && newRecord.feedback) {
                   isResolved = true;
-                  setNutritionFeedback(newRecord.feedback);
+                  // DBから直接取得したJSONをパース
+                  let feedbackData;
+                  try {
+                    feedbackData = JSON.parse(newRecord.feedback);
+                  } catch {
+                    feedbackData = { praiseComment: '', advice: newRecord.feedback, nutritionTip: '' };
+                  }
+                  setNutritionFeedback(feedbackData.advice || newRecord.feedback);
+                  setPraiseComment(feedbackData.praiseComment || null);
+                  setNutritionTip(feedbackData.nutritionTip || null);
                   setIsLoadingFeedback(false);
                   clearInterval(pollInterval);
                   console.log('Nutrition feedback received via Realtime');
                 } else if (newRecord.status === 'error') {
                   isResolved = true;
-                  setNutritionFeedback(newRecord.feedback || '分析中にエラーが発生しました。');
+                  let feedbackData;
+                  try {
+                    feedbackData = JSON.parse(newRecord.feedback);
+                  } catch {
+                    feedbackData = { advice: newRecord.feedback };
+                  }
+                  setNutritionFeedback(feedbackData.advice || newRecord.feedback || '分析中にエラーが発生しました。');
+                  setPraiseComment(null);
+                  setNutritionTip(null);
                   setIsLoadingFeedback(false);
                   clearInterval(pollInterval);
                 }
@@ -4351,21 +4378,47 @@ export default function WeeklyMenuPage() {
                               />
                             </div>
                             
-                            {/* AI栄養士コメント */}
-                            <div className="mb-3 p-3 rounded-xl" style={{ background: colors.accentLight }}>
-                              <div className="flex items-center gap-2 mb-1">
-                                <Sparkles size={12} color={colors.accent} />
-                                <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>AI栄養士のコメント</span>
-                              </div>
-                              {isLoadingFeedback ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                                  <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
+                            {/* AI栄養士コメント（褒め＋アドバイス） */}
+                            <div className="mb-3 space-y-2">
+                              {/* 褒めコメント */}
+                              <div className="p-3 rounded-xl" style={{ background: colors.successLight }}>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Heart size={12} color={colors.success} fill={colors.success} />
+                                  <span style={{ fontSize: 11, fontWeight: 600, color: colors.success }}>褒めポイント</span>
                                 </div>
-                              ) : nutritionFeedback ? (
-                                <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }}>{nutritionFeedback}</p>
-                              ) : (
-                                <p style={{ fontSize: 11, color: colors.textMuted }}>分析データがありません</p>
+                                {isLoadingFeedback ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.success, borderTopColor: 'transparent' }} />
+                                    <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
+                                  </div>
+                                ) : praiseComment ? (
+                                  <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.5 }}>{praiseComment}</p>
+                                ) : (
+                                  <p style={{ fontSize: 11, color: colors.textMuted }}>分析データがありません</p>
+                                )}
+                              </div>
+
+                              {/* アドバイス */}
+                              {(nutritionFeedback || isLoadingFeedback) && (
+                                <div className="p-3 rounded-xl" style={{ background: colors.accentLight }}>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <Sparkles size={12} color={colors.accent} />
+                                    <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>改善アドバイス</span>
+                                  </div>
+                                  {isLoadingFeedback ? (
+                                    <span style={{ fontSize: 11, color: colors.textMuted }}>...</span>
+                                  ) : (
+                                    <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }}>{nutritionFeedback}</p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* 栄養豆知識 */}
+                              {nutritionTip && (
+                                <div className="p-2 rounded-lg flex items-start gap-2" style={{ background: colors.blueLight }}>
+                                  <span style={{ fontSize: 10 }}>💡</span>
+                                  <p style={{ fontSize: 10, color: colors.blue, lineHeight: 1.4 }}>{nutritionTip}</p>
+                                </div>
                               )}
                             </div>
                             
@@ -6103,39 +6156,71 @@ export default function WeeklyMenuPage() {
                         />
                       </div>
 
-                      {/* AI栄養士のコメント（DBキャッシュ使用、変更時は自動再生成） */}
-                      <div className="mb-4 p-3 rounded-xl" style={{ background: colors.accentLight }}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Sparkles size={14} color={colors.accent} />
-                            <span style={{ fontSize: 12, fontWeight: 600, color: colors.accent }}>AI栄養士のコメント</span>
+                      {/* AI栄養士のコメント（褒め＋アドバイス） */}
+                      <div className="mb-4 space-y-3">
+                        {/* 褒めコメント */}
+                        <div className="p-3 rounded-xl" style={{ background: colors.successLight }}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Heart size={14} color={colors.success} fill={colors.success} />
+                              <span style={{ fontSize: 12, fontWeight: 600, color: colors.success }}>褒めポイント</span>
+                            </div>
+                            {(praiseComment || nutritionFeedback) && !isLoadingFeedback && (
+                              <button
+                                onClick={() => {
+                                  const currentDateStr = weekDates[selectedDayIndex]?.dateStr;
+                                  if (currentDateStr) {
+                                    fetchNutritionFeedback(currentDateStr, true);
+                                  }
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded"
+                                style={{ background: colors.bg, color: colors.textMuted }}
+                              >
+                                再分析
+                              </button>
+                            )}
                           </div>
-                          {nutritionFeedback && !isLoadingFeedback && (
-                            <button
-                              onClick={() => {
-                                // 強制的に再分析（キャッシュをスキップ）
-                                const currentDateStr = weekDates[selectedDayIndex]?.dateStr;
-                                if (currentDateStr) {
-                                  fetchNutritionFeedback(currentDateStr, true);
-                                }
-                              }}
-                              className="text-[10px] px-2 py-0.5 rounded"
-                              style={{ background: colors.bg, color: colors.textMuted }}
-                            >
-                              再分析
-                            </button>
+                          {isLoadingFeedback ? (
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.success, borderTopColor: 'transparent' }} />
+                              <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
+                            </div>
+                          ) : praiseComment ? (
+                            <p style={{ fontSize: 13, color: colors.text, lineHeight: 1.6 }}>{praiseComment}</p>
+                          ) : (
+                            <p style={{ fontSize: 11, color: colors.textMuted }}>分析データがありません</p>
                           )}
                         </div>
-                        {isLoadingFeedback ? (
-                          <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                            <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
+
+                        {/* 改善アドバイス */}
+                        {(nutritionFeedback || isLoadingFeedback) && (
+                          <div className="p-3 rounded-xl" style={{ background: colors.accentLight }}>
+                            <div className="flex items-center gap-2 mb-2">
+                              <Sparkles size={14} color={colors.accent} />
+                              <span style={{ fontSize: 12, fontWeight: 600, color: colors.accent }}>改善アドバイス</span>
+                            </div>
+                            {isLoadingFeedback ? (
+                              <span style={{ fontSize: 11, color: colors.textMuted }}>...</span>
+                            ) : (
+                              <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6 }}>{nutritionFeedback}</p>
+                            )}
                           </div>
-                        ) : nutritionFeedback ? (
+                        )}
+
+                        {/* 栄養豆知識 */}
+                        {nutritionTip && (
+                          <div className="p-3 rounded-lg flex items-start gap-2" style={{ background: colors.blueLight }}>
+                            <span style={{ fontSize: 12 }}>💡</span>
+                            <p style={{ fontSize: 11, color: colors.blue, lineHeight: 1.5 }}>{nutritionTip}</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* この提案で献立を改善ボタン */}
+                      {nutritionFeedback && !isLoadingFeedback ? (
+                        <div className="mb-4">
                           <>
-                            <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6, marginBottom: 12 }}>
-                              {nutritionFeedback}
-                            </p>
+                            <div style={{ marginBottom: 12 }}></div>
                             {/* この提案で献立を改善ボタン */}
                             <button
                               onClick={() => {
@@ -6153,13 +6238,13 @@ export default function WeeklyMenuPage() {
                               この提案で献立を改善
                             </button>
                           </>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                            <span style={{ fontSize: 11, color: colors.textLight }}>分析を準備中...</span>
-                          </div>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 mb-4">
+                          <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
+                          <span style={{ fontSize: 11, color: colors.textLight }}>分析を準備中...</span>
+                        </div>
+                      )}
 
                       {/* 全栄養素一覧 */}
                       <div className="mb-4">

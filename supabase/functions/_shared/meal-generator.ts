@@ -397,7 +397,7 @@ export async function reviewWeeklyMenus(input: {
     `【1週間の献立】\n${mealsText}\n\n` +
     `上記の献立をレビューしてください。`;
 
-  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
+  // GPT-5.2で高品質なレビュー（呼び出し頻度が低いのでコスト許容）
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -408,11 +408,11 @@ export async function reviewWeeklyMenus(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-5-nano",
+      model: "gpt-5.2",
       messages: [
         { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
       ],
-      reasoning_effort: "low",
+      reasoning_effort: "none",
       max_completion_tokens: 4000,
     }),
   });

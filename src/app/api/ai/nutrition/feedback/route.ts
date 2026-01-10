@@ -21,19 +21,25 @@ function generateHash(nutrition: any, weekData: any): string {
   return crypto.createHash('md5').update(nutritionStr + weekStr).digest('hex');
 }
 
-// LLMでフィードバックを生成する関数
+// LLMで褒めコメント＋アドバイスを生成する関数
+interface NutritionFeedbackResult {
+  praiseComment: string;  // 褒めコメント（絵文字あり、ポジティブ）
+  advice: string;         // 改善アドバイス
+  nutritionTip: string;   // 栄養豆知識
+}
+
 async function generateFeedbackWithLLM(
   date: string,
   nutrition: any,
   mealCount: number,
   weekData: any[]
-): Promise<string> {
+): Promise<NutritionFeedbackResult> {
   const mainNutrients = [
-    'caloriesKcal', 'proteinG', 'fatG', 'carbsG', 'fiberG', 
+    'caloriesKcal', 'proteinG', 'fatG', 'carbsG', 'fiberG',
     'sodiumG', 'vitaminCMg', 'calciumMg', 'ironMg', 'vitaminAUg',
     'vitaminB1Mg', 'vitaminB2Mg', 'vitaminDUg', 'zincMg', 'magnesiumMg'
   ];
-  
+
   const nutrientAnalysis = mainNutrients.map(key => {
     const def = getNutrientDefinition(key);
     const value = nutrition[key] ?? 0;
@@ -56,29 +62,40 @@ async function generateFeedbackWithLLM(
     return `${d.date}: ${dayMeals}`;
   }).join('\n') || '';
 
-  const prompt = `あなたはベテランの管理栄養士です。以下の1日の栄養データと1週間の献立を詳細に分析し、具体的で実践的なアドバイスをしてください。
+  // 今日の献立を抽出
+  const todayMeals = weekData?.find((d: any) => d.date === date)?.meals || [];
+  const todayDishes = todayMeals.flatMap((m: any) => m.dishes || [m.title]).filter(Boolean).join('、');
+
+  const prompt = `あなたは「ほめゴハン」のAI栄養士です。ユーザーの1日の栄養データを分析し、以下の3つを生成してください。
 
 ## 対象日: ${date}
 ## 食事数: ${mealCount}食
+## 今日の献立: ${todayDishes || '献立情報なし'}
 
 ## 主要栄養素の摂取状況:
 ${nutrientAnalysis.map(n => `- ${n.name}: ${n.value}${n.unit} (推奨量の${n.percentage}% - ${n.status})`).join('\n')}
 
 ## 栄養バランスサマリー:
 - 適正範囲(80-120%): ${good.length}項目 (${good.map(n => n.name).join('、') || 'なし'})
-- 不足傾向(<50%): ${deficient.length}項目 (${deficient.map(n => n.name).join('、') || 'なし'})  
+- 不足傾向(<50%): ${deficient.length}項目 (${deficient.map(n => n.name).join('、') || 'なし'})
 - 過剰傾向(>150%): ${excess.length}項目 (${excess.map(n => n.name).join('、') || 'なし'})
 
-## 今週の献立（前後含む）:
+## 今週の献立:
 ${weekSummary}
 
-## 出力形式:
-- 3〜4文で簡潔に
-- 良い点を1つ挙げる
-- 具体的な改善提案を1〜2つ（食材名や料理名を含めて）
-- 絵文字は使わない
-- 専門用語は避けてわかりやすく
-- 週間の献立傾向も考慮してコメント`;
+## 出力形式（必ず以下のJSON形式で出力）:
+\`\`\`json
+{
+  "praiseComment": "褒めコメント（80-120文字）。良い点を見つけて褒める。絵文字1-2個使用。批判は含めない。",
+  "advice": "改善アドバイス（100-150文字）。具体的な食材名や料理名を含めて実践的に。",
+  "nutritionTip": "栄養豆知識（40-60文字）。今日の献立や不足栄養素に関連したミニ知識。"
+}
+\`\`\`
+
+## 重要なルール:
+- praiseCommentは**必ず褒める**。どんな献立でも良い点を見つける
+- 批判的な内容はadviceに書く
+- JSONのみを出力（説明文は不要）`;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -91,11 +108,12 @@ ${weekSummary}
       messages: [
         {
           role: 'system',
-          content: 'あなたは親しみやすく経験豊富な管理栄養士です。ユーザーの食生活を優しく、前向きに、かつ具体的にアドバイスします。週間の食事傾向も見ながら、実践しやすいアドバイスを心がけてください。',
+          content: 'あなたは「ほめゴハン」のAI栄養士です。ユーザーの食事を褒めて、やる気を引き出すことが大切です。必ずJSON形式で出力してください。',
         },
         { role: 'user', content: prompt },
       ],
-      max_completion_tokens: 500,
+      max_completion_tokens: 600,
+      reasoning_effort: 'none',
     }),
   });
 
@@ -106,7 +124,29 @@ ${weekSummary}
   }
 
   const data = await response.json();
-  return data.choices?.[0]?.message?.content?.trim() || '分析結果を取得できませんでした。';
+  const content = data.choices?.[0]?.message?.content?.trim() || '';
+
+  // JSONをパース
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        praiseComment: parsed.praiseComment || 'バランスの良い食事を心がけていますね✨',
+        advice: parsed.advice || '',
+        nutritionTip: parsed.nutritionTip || '',
+      };
+    } catch (e) {
+      console.warn('Failed to parse feedback JSON:', e);
+    }
+  }
+
+  // フォールバック
+  return {
+    praiseComment: 'お食事の記録ありがとうございます！毎日の食事管理、素晴らしいですね✨',
+    advice: content || '',
+    nutritionTip: '',
+  };
 }
 
 export async function POST(request: Request) {
@@ -138,8 +178,21 @@ export async function POST(request: Request) {
 
       // キャッシュがあり、ハッシュが一致し、完了状態ならキャッシュを返す
       if (cached && cached.nutrition_hash === nutritionHash && cached.status === 'completed') {
-        return NextResponse.json({ 
-          feedback: cached.feedback, 
+        // JSONとしてパースを試みる（新形式）、失敗したら旧形式として扱う
+        let feedbackData;
+        try {
+          feedbackData = JSON.parse(cached.feedback);
+        } catch {
+          // 旧形式の文字列フィードバック
+          feedbackData = {
+            praiseComment: '',
+            advice: cached.feedback,
+            nutritionTip: '',
+          };
+        }
+        return NextResponse.json({
+          ...feedbackData,
+          feedback: feedbackData.advice || cached.feedback, // 後方互換性
           cached: true,
           status: 'completed'
         });
@@ -184,26 +237,32 @@ export async function POST(request: Request) {
     // Next.jsのwaitUntilを使用
     const backgroundTask = (async () => {
       try {
-        const feedback = await generateFeedbackWithLLM(date, nutrition, mealCount, weekData);
-        
+        const feedbackResult = await generateFeedbackWithLLM(date, nutrition, mealCount, weekData);
+
         // 完了したらDBを更新（Realtimeで自動通知される）
+        // 新形式: JSONとして保存
         await supabase
           .from('nutrition_feedback_cache')
           .update({
-            feedback,
+            feedback: JSON.stringify(feedbackResult),
             status: 'completed',
           })
           .eq('id', cacheId);
-          
+
         console.log(`Nutrition feedback generated for ${date}`);
       } catch (error) {
         console.error('Background LLM task failed:', error);
-        
+
         // エラー時もDBを更新
+        const errorFeedback = {
+          praiseComment: '',
+          advice: '分析中にエラーが発生しました。再分析をお試しください。',
+          nutritionTip: '',
+        };
         await supabase
           .from('nutrition_feedback_cache')
           .update({
-            feedback: '分析中にエラーが発生しました。再分析をお試しください。',
+            feedback: JSON.stringify(errorFeedback),
             status: 'error',
           })
           .eq('id', cacheId);
@@ -268,8 +327,32 @@ export async function GET(request: Request) {
       return NextResponse.json({ status: 'not_found' });
     }
 
+    if (data.status === 'completed' && data.feedback) {
+      // JSONとしてパースを試みる（新形式）
+      let feedbackData;
+      try {
+        feedbackData = JSON.parse(data.feedback);
+      } catch {
+        // 旧形式の文字列フィードバック
+        feedbackData = {
+          praiseComment: '',
+          advice: data.feedback,
+          nutritionTip: '',
+        };
+      }
+      return NextResponse.json({
+        ...feedbackData,
+        feedback: feedbackData.advice || data.feedback, // 後方互換性
+        status: data.status,
+        cacheId: data.id
+      });
+    }
+
     return NextResponse.json({
-      feedback: data.status === 'completed' ? data.feedback : null,
+      feedback: null,
+      praiseComment: null,
+      advice: null,
+      nutritionTip: null,
       status: data.status,
       cacheId: data.id
     });

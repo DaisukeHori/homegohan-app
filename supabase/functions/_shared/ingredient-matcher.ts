@@ -185,10 +185,10 @@ ${candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 10
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-5-mini',
+        model: 'gpt-5-nano',
         messages: [{ role: 'user', content: prompt }],
         max_completion_tokens: 10,
-        reasoning_effort: "minimal",
+        reasoning_effort: "low",
       }),
     })
 
