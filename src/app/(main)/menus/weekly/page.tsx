@@ -837,7 +837,7 @@ export default function WeeklyMenuPage() {
     completedSlots?: number;
   } | null>(null);
 
-  // Meal Plan再取得関数
+  // Meal Plan再取得関数（キャッシュも更新）
   const refreshMealPlan = useCallback(async () => {
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
@@ -846,11 +846,17 @@ export default function WeeklyMenuPage() {
       if (res.ok) {
         const { dailyMeals, shoppingList: shoppingListData } = await res.json();
         if (dailyMeals && dailyMeals.length > 0) {
-          setCurrentPlan({ days: dailyMeals });
-          if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+          const newPlan = { days: dailyMeals };
+          const newShoppingList = shoppingListData?.items || [];
+          setCurrentPlan(newPlan);
+          if (newShoppingList.length > 0) setShoppingList(newShoppingList);
           updateCalendarMealDatesFromDailyMeals(dailyMeals);
+          // キャッシュも更新
+          weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
         } else {
           setCurrentPlan(null);
+          // 空の場合もキャッシュを更新
+          weekDataCache.current.set(targetDate, { plan: null, shoppingList: [], fetchedAt: Date.now() });
         }
       }
     } catch (e) {
@@ -1839,9 +1845,13 @@ export default function WeeklyMenuPage() {
           if (planRes.ok) {
             const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
             if (dailyMeals && dailyMeals.length > 0) {
-              setCurrentPlan({ days: dailyMeals });
-              if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+              const newPlan = { days: dailyMeals };
+              const newShoppingList = shoppingListData?.items || [];
+              setCurrentPlan(newPlan);
+              if (newShoppingList.length > 0) setShoppingList(newShoppingList);
               updateCalendarMealDatesFromDailyMeals(dailyMeals);
+              // キャッシュも更新
+              weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
             }
           }
           setIsGenerating(false);
@@ -1934,9 +1944,13 @@ export default function WeeklyMenuPage() {
                 if (planRes.ok) {
                   const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
                   if (dailyMeals && dailyMeals.length > 0) {
-                    setCurrentPlan({ days: dailyMeals });
-                    if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                    const newPlan = { days: dailyMeals };
+                    const newShoppingList = shoppingListData?.items || [];
+                    setCurrentPlan(newPlan);
+                    if (newShoppingList.length > 0) setShoppingList(newShoppingList);
                     updateCalendarMealDatesFromDailyMeals(dailyMeals);
+                    // キャッシュも更新（リアルタイム反映）
+                    weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
                   }
                 }
               } catch (fetchErr) {
@@ -3032,10 +3046,14 @@ export default function WeeklyMenuPage() {
         const endDate = addDaysStr(targetDate, 6);
         const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
-          const { dailyMeals } = await refreshRes.json();
+          const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
           if (dailyMeals && dailyMeals.length > 0) {
-            setCurrentPlan({ days: dailyMeals });
+            const newPlan = { days: dailyMeals };
+            const newShoppingList = shoppingListData?.items || [];
+            setCurrentPlan(newPlan);
             updateCalendarMealDatesFromDailyMeals(dailyMeals);
+            // キャッシュも更新
+            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
           }
         }
         setActiveModal(null);
@@ -3149,9 +3167,13 @@ export default function WeeklyMenuPage() {
             if (planRes.ok) {
               const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
               if (dailyMeals && dailyMeals.length > 0) {
-                setCurrentPlan({ days: dailyMeals });
-                if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                const newPlan = { days: dailyMeals };
+                const newShoppingList = shoppingListData?.items || [];
+                setCurrentPlan(newPlan);
+                if (newShoppingList.length > 0) setShoppingList(newShoppingList);
                 updateCalendarMealDatesFromDailyMeals(dailyMeals);
+                // キャッシュも更新
+                weekDataCache.current.set(weekStartDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
               }
             }
             setIsRegenerating(false);
@@ -3251,13 +3273,15 @@ export default function WeeklyMenuPage() {
         const endDate = addDaysStr(targetDate, 6);
         const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
-          const { dailyMeals } = await refreshRes.json();
+          const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
+          const newPlan = dailyMeals && dailyMeals.length > 0 ? { days: dailyMeals } : null;
+          const newShoppingList = shoppingListData?.items || [];
+          setCurrentPlan(newPlan);
           if (dailyMeals && dailyMeals.length > 0) {
-            setCurrentPlan({ days: dailyMeals });
             syncCalendarMealDatesFromDailyMeals(dailyMeals);
-          } else {
-            setCurrentPlan(null);
           }
+          // キャッシュも更新
+          weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
         }
       } else {
         alert('削除に失敗しました');
@@ -3399,7 +3423,7 @@ export default function WeeklyMenuPage() {
         setPhotoEditMeal(null);
         setPhotoFiles([]);
         setPhotoPreviews([]);
-        
+
         // 写真解析は同期的に行われるので、すぐにデータを再取得
         const targetDate = formatLocalDate(weekStart);
         const endDate = addDaysStr(targetDate, 6);
@@ -3407,9 +3431,13 @@ export default function WeeklyMenuPage() {
         if (pollRes.ok) {
           const { dailyMeals, shoppingList: shoppingListData } = await pollRes.json();
           if (dailyMeals && dailyMeals.length > 0) {
-            setCurrentPlan({ days: dailyMeals });
-            if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+            const newPlan = { days: dailyMeals };
+            const newShoppingList = shoppingListData?.items || [];
+            setCurrentPlan(newPlan);
+            if (newShoppingList.length > 0) setShoppingList(newShoppingList);
             updateCalendarMealDatesFromDailyMeals(dailyMeals);
+            // キャッシュも更新
+            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
           }
         }
         setIsAnalyzingPhoto(false);
@@ -3456,9 +3484,13 @@ export default function WeeklyMenuPage() {
         const endDate = addDaysStr(targetDate, 6);
         const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
-          const { dailyMeals } = await refreshRes.json();
+          const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
           if (dailyMeals && dailyMeals.length > 0) {
-            setCurrentPlan({ days: dailyMeals });
+            const newPlan = { days: dailyMeals };
+            const newShoppingList = shoppingListData?.items || [];
+            setCurrentPlan(newPlan);
+            // キャッシュも更新
+            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
           }
         }
       } else if (data.message) {
@@ -7229,9 +7261,13 @@ export default function WeeklyMenuPage() {
                                       if (refreshRes.ok) {
                                         const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
                                         if (dailyMeals && dailyMeals.length > 0) {
-                                          setCurrentPlan({ days: dailyMeals });
-                                          if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                                          const newPlan = { days: dailyMeals };
+                                          const newShoppingList = shoppingListData?.items || [];
+                                          setCurrentPlan(newPlan);
+                                          if (newShoppingList.length > 0) setShoppingList(newShoppingList);
                                           updateCalendarMealDatesFromDailyMeals(dailyMeals);
+                                          // キャッシュも更新
+                                          weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
                                         }
                                       }
                                     }
