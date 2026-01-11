@@ -7,15 +7,18 @@ import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { AlertCircle } from "lucide-react";
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const supabase = createClient();
 
   const handleGoogleLogin = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -25,7 +28,7 @@ export default function LoginPage() {
       if (error) throw error;
     } catch (error) {
       console.error('Error logging in with Google:', error);
-      alert('Googleログインに失敗しました。');
+      setError('Googleログインに失敗しました。しばらくしてからお試しください。');
     } finally {
       setIsLoading(false);
     }
@@ -34,6 +37,7 @@ export default function LoginPage() {
   const handleEmailLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
+    setError(null);
     const formData = new FormData(e.currentTarget);
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
@@ -45,7 +49,14 @@ export default function LoginPage() {
       });
 
       if (error) {
-        alert('ログインに失敗しました。メールアドレスとパスワードを確認してください。');
+        // エラーコードに応じたメッセージ
+        if (error.message.includes('Invalid login credentials')) {
+          setError('メールアドレスまたはパスワードが正しくありません。');
+        } else if (error.message.includes('Email not confirmed')) {
+          setError('メールアドレスが確認されていません。確認メールをご確認ください。');
+        } else {
+          setError('ログインに失敗しました。入力内容をご確認ください。');
+        }
         return;
       }
 
@@ -76,7 +87,7 @@ export default function LoginPage() {
       }
     } catch (error) {
       console.error('Login error:', error);
-      alert('予期せぬエラーが発生しました。');
+      setError('予期せぬエラーが発生しました。しばらくしてからお試しください。');
     } finally {
       setIsLoading(false);
     }
@@ -88,6 +99,25 @@ export default function LoginPage() {
         <h1 className="text-3xl font-bold tracking-tight text-gray-900">おかえりなさい</h1>
         <p className="text-gray-500">アカウントにログインして、今日の食事を記録しましょう。</p>
       </div>
+
+      {/* エラーメッセージ表示 */}
+      {error && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 border border-red-200 animate-shake">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-red-800">{error}</p>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            className="text-red-400 hover:text-red-600 transition-colors"
+          >
+            <span className="sr-only">閉じる</span>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <div className="space-y-4">
         <Button 

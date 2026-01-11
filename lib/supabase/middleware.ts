@@ -75,10 +75,45 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  if (user && request.nextUrl.pathname === '/') {
-    const url = request.nextUrl.clone()
-    url.pathname = '/home'
-    return NextResponse.redirect(url)
+  // 認証済みユーザーがルートにアクセスした場合、またはホームにアクセスした場合
+  // オンボーディング状態に応じてリダイレクト
+  if (user && (request.nextUrl.pathname === '/' || request.nextUrl.pathname === '/home')) {
+    // user_profiles からオンボーディング状態を取得
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('roles, onboarding_started_at, onboarding_completed_at')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    const roles = profile?.roles || []
+
+    // 管理者の場合は管理画面へ
+    if (roles.includes('admin') || roles.includes('super_admin')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/admin'
+      return NextResponse.redirect(url)
+    }
+    // オンボーディング未完了の場合はオンボーディングへ
+    else if (!profile?.onboarding_completed_at) {
+      // オンボーディング進行中 → 再開ページへ
+      if (profile?.onboarding_started_at) {
+        const url = request.nextUrl.clone()
+        url.pathname = '/onboarding/resume'
+        return NextResponse.redirect(url)
+      }
+      // 未開始 → ウェルカムページへ
+      else {
+        const url = request.nextUrl.clone()
+        url.pathname = '/onboarding/welcome'
+        return NextResponse.redirect(url)
+      }
+    }
+    // オンボーディング完了済みでルートにアクセスした場合はホームへ
+    else if (request.nextUrl.pathname === '/') {
+      const url = request.nextUrl.clone()
+      url.pathname = '/home'
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse
