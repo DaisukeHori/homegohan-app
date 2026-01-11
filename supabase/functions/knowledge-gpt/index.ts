@@ -215,6 +215,7 @@ async function runChat(
     messages: openaiMessages,
     ...(useTools ? { tools } : {}),
     max_completion_tokens: 4000,
+    reasoning_effort: "low",  // 推論時間を短縮
   } as any);
 
   let result = response.choices[0];
@@ -245,6 +246,7 @@ async function runChat(
       model: "gpt-5-mini",
       messages: openaiMessages,
       max_completion_tokens: 4000,
+      reasoning_effort: "low",  // 推論時間を短縮
     } as any);
 
     result = followUpResponse.choices[0];
