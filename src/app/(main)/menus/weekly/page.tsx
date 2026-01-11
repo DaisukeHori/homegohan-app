@@ -637,6 +637,45 @@ export default function WeeklyMenuPage() {
     setDisplayMonth(weekStart);
   }, [weekStart]);
 
+  // Calendar meal dates - 月カレンダー用の献立存在日マップ
+  const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
+
+  // Fetch meal dates for displayed month (for calendar dots)
+  useEffect(() => {
+    const fetchCalendarMealDates = async () => {
+      const year = displayMonth.getFullYear();
+      const month = displayMonth.getMonth();
+      // Get first and last day of the displayed month (with padding for calendar grid)
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      // Add padding for previous/next month days shown in calendar
+      const startDate = new Date(firstDay);
+      startDate.setDate(startDate.getDate() - 7); // 1 week before
+      const endDate = new Date(lastDay);
+      endDate.setDate(endDate.getDate() + 7); // 1 week after
+
+      const formatDate = (d: Date) => d.toISOString().split('T')[0];
+
+      try {
+        const res = await fetch(`/api/meal-plans?startDate=${formatDate(startDate)}&endDate=${formatDate(endDate)}`);
+        if (res.ok) {
+          const { dailyMeals } = await res.json();
+          const datesWithMeals = new Set<string>();
+          dailyMeals?.forEach((day: any) => {
+            if (day.meals && day.meals.length > 0) {
+              datesWithMeals.add(day.dayDate);
+            }
+          });
+          setCalendarMealDates(datesWithMeals);
+        }
+      } catch (error) {
+        console.error('Failed to fetch calendar meal dates:', error);
+      }
+    };
+
+    fetchCalendarMealDates();
+  }, [displayMonth]);
+
   // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
@@ -2147,13 +2186,18 @@ export default function WeeklyMenuPage() {
 
   const mealExistenceMap = useMemo(() => {
     const map = new Map<string, boolean>();
+    // 現在の週のデータ
     currentPlan?.days?.forEach(day => {
       if (day.meals && day.meals.length > 0) {
         map.set(day.dayDate, true);
       }
     });
+    // カレンダー月全体のデータ（他の週も含む）
+    calendarMealDates.forEach(dateStr => {
+      map.set(dateStr, true);
+    });
     return map;
-  }, [currentPlan]);
+  }, [currentPlan, calendarMealDates]);
 
   // --- Handlers ---
   
