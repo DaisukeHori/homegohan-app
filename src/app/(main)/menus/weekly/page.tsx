@@ -201,10 +201,11 @@ const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: {
 };
 
 // 進捗ToDoカード（タップで展開）
+// 通常モード用（3ステップ）
 const PROGRESS_PHASES = [
   { phase: 'user_context', label: 'ユーザー情報を取得', threshold: 5 },
   { phase: 'search_references', label: '参考レシピを検索', threshold: 10 },
-  { phase: 'generating', label: '献立をAIが作成', threshold: 15 },  // 日数は動的に設定
+  { phase: 'generating', label: '献立をAIが作成', threshold: 15 },
   { phase: 'step1_complete', label: '献立生成完了', threshold: 40 },
   { phase: 'reviewing', label: '献立のバランスをチェック', threshold: 45 },
   { phase: 'review_done', label: '改善点を発見', threshold: 55 },
@@ -214,6 +215,26 @@ const PROGRESS_PHASES = [
   { phase: 'calculating', label: '栄養価を計算', threshold: 80 },
   { phase: 'saving', label: '献立を保存', threshold: 88 },
   { phase: 'completed', label: '完了！', threshold: 100 },
+];
+
+// 究極モード用（6ステップ）
+const ULTIMATE_PROGRESS_PHASES = [
+  { phase: 'user_context', label: 'ユーザー情報を取得', threshold: 3 },
+  { phase: 'search_references', label: '参考レシピを検索', threshold: 6 },
+  { phase: 'generating', label: '献立をAIが作成', threshold: 10 },
+  { phase: 'step1_complete', label: '献立生成完了', threshold: 25 },
+  { phase: 'reviewing', label: '献立のバランスをチェック', threshold: 28 },
+  { phase: 'fixing', label: '改善点を修正', threshold: 32 },
+  { phase: 'step2_complete', label: 'レビュー完了', threshold: 38 },
+  { phase: 'calculating', label: '栄養価を計算', threshold: 42 },
+  { phase: 'step3_complete', label: '栄養計算完了', threshold: 48 },
+  // 究極モード専用フェーズ
+  { phase: 'nutrition_analyzing', label: '栄養バランスを詳細分析', threshold: 55 },
+  { phase: 'nutrition_feedback', label: '改善アドバイスを生成', threshold: 62 },
+  { phase: 'improving', label: '献立を改善中', threshold: 70 },
+  { phase: 'step5_complete', label: '改善完了', threshold: 82 },
+  { phase: 'final_saving', label: '最終保存中', threshold: 90 },
+  { phase: 'completed', label: '究極の献立が完成！', threshold: 100 },
 ];
 
 // 買い物リスト再生成の進捗フェーズ
@@ -829,12 +850,13 @@ export default function WeeklyMenuPage() {
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
-  const [generationProgress, setGenerationProgress] = useState<{ 
-    phase: string; 
-    message: string; 
+  const [generationProgress, setGenerationProgress] = useState<{
+    phase: string;
+    message: string;
     percentage: number;
     totalSlots?: number;
     completedSlots?: number;
+    isUltimateMode?: boolean;
   } | null>(null);
 
   // Meal Plan再取得関数（キャッシュも更新）
@@ -1736,79 +1758,172 @@ export default function WeeklyMenuPage() {
     if (progress.currentStep !== undefined && progress.totalSteps !== undefined) {
       const message = progress.message || 'AIが献立を生成中...';
       const currentStep = progress.currentStep;
-      
+      const isUltimateMode = progress.totalSteps === 6;
+
       let phase = 'generating';
       let percentage = 0;
-      
-      // Step 1 (0-40%): 生成フェーズ
-      if (currentStep === 1 || currentStep === 0) {
-        if (message.includes('ユーザー情報') || message.includes('取得中')) {
-          phase = 'user_context';
-          percentage = 5;
-        } else if (message.includes('参考') || message.includes('検索中')) {
-          phase = 'search_references';
-          percentage = 10;
-        } else {
-          phase = 'generating';
-          percentage = 12 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 28);
+
+      if (isUltimateMode) {
+        // 究極モード（6ステップ）
+        // Step 1 (0-25%): 生成フェーズ
+        if (currentStep === 1 || currentStep === 0) {
+          if (message.includes('ユーザー情報') || message.includes('取得中')) {
+            phase = 'user_context';
+            percentage = 3;
+          } else if (message.includes('参考') || message.includes('検索中')) {
+            phase = 'search_references';
+            percentage = 6;
+          } else if (message.includes('生成完了')) {
+            phase = 'step1_complete';
+            percentage = 25;
+          } else {
+            phase = 'generating';
+            percentage = 8 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 15);
+          }
         }
-      }
-      // Step 2 (40-75%): レビューフェーズ
-      else if (currentStep === 2) {
-        if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
-          phase = 'reviewing';
-          percentage = 47;
-        } else if (message.includes('改善中')) {
-          phase = 'fixing';
+        // Step 2 (25-38%): レビューフェーズ
+        else if (currentStep === 2) {
+          if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
+            phase = 'reviewing';
+            percentage = 28;
+          } else if (message.includes('改善中')) {
+            phase = 'fixing';
+            percentage = 32;
+          } else if (message.includes('レビュー完了')) {
+            phase = 'step2_complete';
+            percentage = 38;
+          } else {
+            phase = 'reviewing';
+            percentage = 30;
+          }
+        }
+        // Step 3 (38-48%): 栄養計算フェーズ（究極モードでは保存しない）
+        else if (currentStep === 3) {
+          if (message.includes('栄養計算') || message.includes('栄養')) {
+            phase = 'calculating';
+            percentage = 42;
+          } else if (message.includes('完了')) {
+            phase = 'step3_complete';
+            percentage = 48;
+          } else {
+            phase = 'calculating';
+            percentage = 45;
+          }
+        }
+        // Step 4 (48-62%): 栄養バランス詳細分析
+        else if (currentStep === 4) {
+          phase = 'nutrition_analyzing';
           const match = message.match(/(\d+)\/(\d+)/);
           if (match) {
             const current = parseInt(match[1]);
             const total = parseInt(match[2]);
-            percentage = 58 + Math.round((current / Math.max(total, 1)) * 12);
+            percentage = 50 + Math.round((current / Math.max(total, 1)) * 12);
           } else {
-            percentage = 60;
+            percentage = 55;
           }
-        } else if (message.includes('問題なし')) {
-          phase = 'no_issues';
-          percentage = 72;
-        } else if (message.includes('レビュー完了')) {
-          phase = 'step2_complete';
-          percentage = 75;
-        } else {
-          phase = 'reviewing';
-          percentage = 50;
         }
-      }
-      // Step 3 (75-100%): 保存フェーズ
-      else if (currentStep === 3) {
-        if (message.includes('栄養計算') || message.includes('栄養')) {
-          phase = 'calculating';
-          percentage = 80;
-        } else if (message.includes('保存中')) {
-          phase = 'saving';
+        // Step 5 (62-82%): 献立改善
+        else if (currentStep === 5) {
+          phase = 'improving';
           const match = message.match(/(\d+)\/(\d+)/);
           if (match) {
             const current = parseInt(match[1]);
             const total = parseInt(match[2]);
-            percentage = 88 + Math.round((current / Math.max(total, 1)) * 10);
+            percentage = 65 + Math.round((current / Math.max(total, 1)) * 17);
           } else {
-            percentage = 90;
+            percentage = 70;
           }
-        } else if (message.includes('完了') || message.includes('保存しました')) {
-          phase = 'completed';
-          percentage = 100;
-        } else {
-          phase = 'saving';
-          percentage = 88;
+        }
+        // Step 6 (82-100%): 最終保存
+        else if (currentStep === 6) {
+          if (message.includes('完了') || message.includes('完成')) {
+            phase = 'completed';
+            percentage = 100;
+          } else {
+            phase = 'final_saving';
+            const match = message.match(/(\d+)\/(\d+)/);
+            if (match) {
+              const current = parseInt(match[1]);
+              const total = parseInt(match[2]);
+              percentage = 85 + Math.round((current / Math.max(total, 1)) * 13);
+            } else {
+              percentage = 90;
+            }
+          }
+        }
+      } else {
+        // 通常モード（3ステップ）
+        // Step 1 (0-40%): 生成フェーズ
+        if (currentStep === 1 || currentStep === 0) {
+          if (message.includes('ユーザー情報') || message.includes('取得中')) {
+            phase = 'user_context';
+            percentage = 5;
+          } else if (message.includes('参考') || message.includes('検索中')) {
+            phase = 'search_references';
+            percentage = 10;
+          } else {
+            phase = 'generating';
+            percentage = 12 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 28);
+          }
+        }
+        // Step 2 (40-75%): レビューフェーズ
+        else if (currentStep === 2) {
+          if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
+            phase = 'reviewing';
+            percentage = 47;
+          } else if (message.includes('改善中')) {
+            phase = 'fixing';
+            const match = message.match(/(\d+)\/(\d+)/);
+            if (match) {
+              const current = parseInt(match[1]);
+              const total = parseInt(match[2]);
+              percentage = 58 + Math.round((current / Math.max(total, 1)) * 12);
+            } else {
+              percentage = 60;
+            }
+          } else if (message.includes('問題なし')) {
+            phase = 'no_issues';
+            percentage = 72;
+          } else if (message.includes('レビュー完了')) {
+            phase = 'step2_complete';
+            percentage = 75;
+          } else {
+            phase = 'reviewing';
+            percentage = 50;
+          }
+        }
+        // Step 3 (75-100%): 保存フェーズ
+        else if (currentStep === 3) {
+          if (message.includes('栄養計算') || message.includes('栄養')) {
+            phase = 'calculating';
+            percentage = 80;
+          } else if (message.includes('保存中')) {
+            phase = 'saving';
+            const match = message.match(/(\d+)\/(\d+)/);
+            if (match) {
+              const current = parseInt(match[1]);
+              const total = parseInt(match[2]);
+              percentage = 88 + Math.round((current / Math.max(total, 1)) * 10);
+            } else {
+              percentage = 90;
+            }
+          } else if (message.includes('完了') || message.includes('保存しました')) {
+            phase = 'completed';
+            percentage = 100;
+          } else {
+            phase = 'saving';
+            percentage = 88;
+          }
         }
       }
-      
+
       return {
         phase,
         message,
         percentage: Math.round(percentage),
         totalSlots,
         completedSlots,
+        isUltimateMode,
       };
     }
     
@@ -4447,6 +4562,7 @@ export default function WeeklyMenuPage() {
         <ProgressTodoCard
           progress={generationProgress}
           colors={colors}
+          phases={(generationProgress as any)?.isUltimateMode ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
         />
       ) : (
         <button
