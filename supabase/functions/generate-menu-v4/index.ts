@@ -1875,13 +1875,27 @@ async function executeStep5_RegenerateWithAdvice(
         constraints,
       });
 
-      // アドバイスを追加したnote
-      const adviceNote = `【栄養士からのアドバイス】
+      // アドバイスを追加したnote（置換指示を優先）
+      const mealTypeLabels: Record<string, string> = {
+        breakfast: '朝食',
+        lunch: '昼食',
+        dinner: '夕食',
+      };
+      const replacementInstructions = feedback.replacements?.map(r =>
+        `- ${mealTypeLabels[r.meal] || r.meal}の「${r.target}」→「${r.replacement}」${r.nutrientGain ? `（${r.nutrientGain}）` : ''}`
+      ).join('\n');
+
+      const adviceNote = replacementInstructions
+        ? `【献立改善指示】
+以下の置換を反映した献立を生成してください。カロリーは現状を維持すること。
+
+${replacementInstructions}
+
+重要: 上記の置換指示に従い、カロリーを増やさずに栄養バランスを改善してください。`
+        : `【栄養士からのアドバイス】
 ${feedback.advice}
 
-上記アドバイスを反映した献立を生成してください。特に以下の点に注意:
-- 不足している栄養素を補う食材を積極的に使用
-- バランスの良い組み合わせを意識`;
+上記アドバイスを反映した献立を生成してください。カロリーを増やさないように注意。`;
 
       const noteForDay = [note, dayContext, adviceNote].filter(Boolean).join("\n\n");
 
