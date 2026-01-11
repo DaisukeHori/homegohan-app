@@ -117,89 +117,252 @@ export async function POST(
     switch (action.action_type) {
       // ==================== 献立関連 ====================
       case 'generate_day_menu': {
-        const { date } = action.action_params;
-        // NOTE:
-        // - 1日分の献立生成には generate-weekly-menu-v3 を startDate = date として使用
-        // - generate-single-meal-v3 は単一食事（朝/昼/夜のいずれか）用
-        const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu-v3', {
+        // 1日分の献立を生成（generate-menu-v4を使用）
+        const { date, ultimateMode } = action.action_params;
+
+        if (!date) {
+          result = { error: 'date は必須です' };
+          break;
+        }
+
+        // 1日分のスロット（朝・昼・夜）を生成
+        const targetSlots = [
+          { date, mealType: 'breakfast' },
+          { date, mealType: 'lunch' },
+          { date, mealType: 'dinner' },
+        ];
+
+        // リクエストを記録
+        const { data: requestData, error: requestError } = await supabase
+          .from('weekly_menu_requests')
+          .insert({
+            user_id: user.id,
+            start_date: date,
+            mode: 'v4',
+            status: 'processing',
+            target_slots: targetSlots.map(s => ({ date: s.date, meal_type: s.mealType })),
+            progress: {
+              currentStep: 0,
+              totalSteps: 3,
+              message: '1日分の献立を生成中...',
+            },
+          })
+          .select('id')
+          .single();
+
+        if (requestError) {
+          console.error('Failed to create request:', requestError);
+          result = { error: 'リクエストの作成に失敗しました' };
+          break;
+        }
+
+        // ユーザープロフィールから家族人数を取得
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('family_size')
+          .eq('id', user.id)
+          .single();
+
+        const { error: invokeError } = await supabase.functions.invoke('generate-menu-v4', {
           body: {
-            startDate: date,
             userId: user.id,
+            requestId: requestData.id,
+            targetSlots,
+            existingMenus: [],
+            fridgeItems: [],
+            userProfile: {},
+            seasonalContext: {},
+            constraints: {},
+            familySize: profile?.family_size || 1,
+            ultimateMode: ultimateMode ?? false,
           },
         });
+
+        if (invokeError) {
+          console.error('Failed to invoke generate-menu-v4:', invokeError);
+          await supabase
+            .from('weekly_menu_requests')
+            .update({ status: 'failed', error_message: invokeError.message })
+            .eq('id', requestData.id);
+        }
+
         success = !invokeError;
-        result = { date, status: success ? 'started' : 'failed' };
+        result = { date, requestId: requestData.id, status: success ? 'processing' : 'failed' };
         break;
       }
 
       case 'generate_week_menu': {
-        const { startDate } = action.action_params;
-        // NOTE:
-        // - Edge Function名の `*-v3` は「献立生成ロジックの世代（dataset駆動・日付ベースモデル）」を表します。
-        // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2/v3とは別です。
-        const { error: invokeError } = await supabase.functions.invoke('generate-weekly-menu-v3', {
-          body: {
-            startDate,
-            userId: user.id,
-            // 日付ベースモデルでは mealPlanId は不要
-          },
-        });
-        success = !invokeError;
-        result = { startDate, status: success ? 'started' : 'failed' };
-        break;
-      }
+        // 1週間分の献立を生成（generate-menu-v4を使用）
+        const { startDate, ultimateMode } = action.action_params;
 
-      case 'create_meal': {
-        // 新規食事を登録
-        const { date, mealType, dishName, mode, calories, protein, fat, carbs, memo, dishes } = action.action_params;
-        
-        // user_daily_meals を取得または作成（日付ベースモデル）
-        const dailyMeal = await getOrCreateDailyMeal(supabase, user.id, date);
-        if (!dailyMeal) {
-          result = { error: 'daily_meals の作成に失敗しました' };
+        if (!startDate) {
+          result = { error: 'startDate は必須です' };
           break;
         }
 
-        // dishes配列の処理
-        let dishesData = null;
-        let isSimple = true;
-        
-        if (dishes && Array.isArray(dishes) && dishes.length > 0) {
-          dishesData = dishes;
-          isSimple = dishes.length === 1;
-        } else if (dishName) {
-          // dishesが提供されていない場合は単品として作成
-          dishesData = [{
-            name: dishName,
-            role: 'main',
-            cal: calories || null,
-            ingredient: '',
-          }];
+        // 1週間分のスロットを生成
+        const targetSlots: { date: string; mealType: string }[] = [];
+        const start = new Date(startDate);
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(start);
+          d.setDate(start.getDate() + i);
+          const dateStr = d.toISOString().split('T')[0];
+          targetSlots.push({ date: dateStr, mealType: 'breakfast' });
+          targetSlots.push({ date: dateStr, mealType: 'lunch' });
+          targetSlots.push({ date: dateStr, mealType: 'dinner' });
         }
 
-        const { data: newMeal, error: insertError } = await supabase
-          .from('planned_meals')
+        // リクエストを記録
+        const { data: requestData, error: requestError } = await supabase
+          .from('weekly_menu_requests')
           .insert({
-            daily_meal_id: dailyMeal.id,
             user_id: user.id,
-            meal_type: mealType || 'dinner',
-            dish_name: dishName,
-            mode: mode || 'cook',
-            calories_kcal: calories,
-            protein_g: protein,
-            fat_g: fat,
-            carbs_g: carbs,
-            memo,
-            dishes: dishesData,
-            is_simple: isSimple,
+            start_date: startDate,
+            mode: 'v4',
+            status: 'processing',
+            target_slots: targetSlots.map(s => ({ date: s.date, meal_type: s.mealType })),
+            progress: {
+              currentStep: 0,
+              totalSteps: 21,
+              message: '1週間分の献立を生成中...',
+            },
           })
           .select('id')
           .single();
-        success = !insertError;
-        if (insertError) {
-          console.error('Failed to create meal:', insertError);
+
+        if (requestError) {
+          console.error('Failed to create request:', requestError);
+          result = { error: 'リクエストの作成に失敗しました' };
+          break;
         }
-        result = { mealId: newMeal?.id, created: success };
+
+        // ユーザープロフィールから家族人数を取得
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('family_size')
+          .eq('id', user.id)
+          .single();
+
+        const { error: invokeError } = await supabase.functions.invoke('generate-menu-v4', {
+          body: {
+            userId: user.id,
+            requestId: requestData.id,
+            targetSlots,
+            existingMenus: [],
+            fridgeItems: [],
+            userProfile: {},
+            seasonalContext: {},
+            constraints: {},
+            familySize: profile?.family_size || 1,
+            ultimateMode: ultimateMode ?? false,
+          },
+        });
+
+        if (invokeError) {
+          console.error('Failed to invoke generate-menu-v4:', invokeError);
+          await supabase
+            .from('weekly_menu_requests')
+            .update({ status: 'failed', error_message: invokeError.message })
+            .eq('id', requestData.id);
+        }
+
+        success = !invokeError;
+        result = { startDate, requestId: requestData.id, status: success ? 'processing' : 'failed' };
+        break;
+      }
+
+      case 'generate_single_meal': {
+        // AIが栄養計算付きで1食を生成（generate-menu-v4を1スロットで呼び出し）
+        const {
+          date,
+          mealType,
+          specificDish,
+          recipeId,           // レシピDBのUUID（search_recipesで取得）
+          recipeExternalId,   // レシピDBの外部ID
+          excludeIngredients,
+          preferIngredients,
+          note,
+          ultimateMode
+        } = action.action_params;
+
+        if (!date || !mealType) {
+          result = { error: 'date と mealType は必須です' };
+          break;
+        }
+
+        // 1. weekly_menu_requests に記録
+        const { data: requestData, error: requestError } = await supabase
+          .from('weekly_menu_requests')
+          .insert({
+            user_id: user.id,
+            start_date: date,
+            mode: 'v4',
+            status: 'processing',
+            target_slots: [{ date, meal_type: mealType }],
+            constraints: { specificDish, recipeId, recipeExternalId, excludeIngredients, preferIngredients },
+            prompt: note || '',
+            progress: {
+              currentStep: 0,
+              totalSteps: 1,
+              message: '献立を生成中...',
+            },
+          })
+          .select('id')
+          .single();
+
+        if (requestError) {
+          console.error('Failed to create request:', requestError);
+          result = { error: 'リクエストの作成に失敗しました' };
+          break;
+        }
+
+        // 2. ユーザープロフィールから家族人数を取得
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('family_size')
+          .eq('id', user.id)
+          .single();
+        const familySize = profile?.family_size || 1;
+
+        // 3. generate-menu-v4 を呼び出し
+        const { error: invokeError } = await supabase.functions.invoke('generate-menu-v4', {
+          body: {
+            userId: user.id,
+            requestId: requestData.id,
+            targetSlots: [{ date, mealType }],
+            existingMenus: [],  // v4内部で取得
+            fridgeItems: [],    // v4内部で取得
+            userProfile: {},    // v4内部で取得
+            seasonalContext: {}, // v4内部で計算
+            constraints: {
+              specificDish,
+              recipeId,
+              recipeExternalId,
+              excludeIngredients,
+              preferIngredients,
+            },
+            note,
+            familySize,
+            ultimateMode: ultimateMode ?? false,
+          },
+        });
+
+        if (invokeError) {
+          console.error('Failed to invoke generate-menu-v4:', invokeError);
+          await supabase
+            .from('weekly_menu_requests')
+            .update({ status: 'failed', error_message: invokeError.message })
+            .eq('id', requestData.id);
+          result = { error: '献立生成の開始に失敗しました' };
+          break;
+        }
+
+        success = true;
+        result = {
+          requestId: requestData.id,
+          status: 'processing',
+          message: `${date}の${mealType}を生成中...`,
+        };
         break;
       }
 

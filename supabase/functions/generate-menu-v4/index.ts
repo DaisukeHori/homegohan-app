@@ -297,6 +297,115 @@ async function searchMenuCandidates(
 }
 
 // =========================================================
+// Resolve recipe from dataset_recipes DB
+// =========================================================
+
+interface ResolvedRecipeResult {
+  meal: GeneratedMeal;
+  nutrition: NutritionTotals;
+  source: { type: "dataset_recipe"; id: string; externalId: string };
+}
+
+/**
+ * レシピDBから直接レシピを取得し、GeneratedMeal形式に変換
+ * AIアドバイザーがsearch_recipesで見つけたレシピを使う際に使用
+ */
+async function resolveRecipeFromDB(
+  supabase: any,
+  constraints: { recipeId?: string; recipeExternalId?: string },
+  mealType: MealType,
+): Promise<ResolvedRecipeResult | null> {
+  if (!constraints.recipeId && !constraints.recipeExternalId) return null;
+
+  try {
+    let query = supabase.from("dataset_recipes").select("*");
+    if (constraints.recipeId) {
+      query = query.eq("id", constraints.recipeId);
+    } else {
+      query = query.eq("external_id", constraints.recipeExternalId);
+    }
+
+    const { data, error } = await query.single();
+    if (error || !data) {
+      console.warn(`Recipe not found: ${constraints.recipeId ?? constraints.recipeExternalId}`);
+      return null;
+    }
+
+    console.log(`📖 Resolved recipe from DB: ${data.name} (${data.id})`);
+
+    // ingredients_text をパース（改行区切り、"食材名 数量g" 形式）
+    const ingredients: Array<{ name: string; amount_g: number; note?: string }> = [];
+    if (data.ingredients_text) {
+      const lines = data.ingredients_text.split("\n").filter((l: string) => l.trim());
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // "玉ねぎ 50g" または "玉ねぎ" のパターン
+        const match = trimmed.match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*g$/);
+        if (match) {
+          ingredients.push({ name: match[1].trim(), amount_g: parseFloat(match[2]) });
+        } else {
+          // 数量なしの場合
+          ingredients.push({ name: trimmed, amount_g: 0 });
+        }
+      }
+    }
+
+    // instructions_text をパース（改行区切りで手順）
+    const instructions: string[] = data.instructions_text
+      ? data.instructions_text.split("\n").filter((l: string) => l.trim()).map((l: string) => l.trim())
+      : [];
+
+    // GeneratedMeal を構築（主菜として1品のみ）
+    const meal: GeneratedMeal = {
+      mealType,
+      dishes: [
+        {
+          name: data.name,
+          role: "main", // dataset_recipes は主に主菜
+          ingredients,
+          instructions,
+        },
+      ],
+      advice: `レシピDB「${data.name}」より。`,
+    };
+
+    // 栄養データを構築（emptyNutritionをベースに利用可能なデータで上書き）
+    const nutrition: NutritionTotals = {
+      ...emptyNutrition(),
+      calories_kcal: data.calories_kcal ?? 0,
+      protein_g: data.protein_g ?? 0,
+      fat_g: data.fat_g ?? 0,
+      carbs_g: data.carbs_g ?? 0,
+      fiber_g: data.fiber_g ?? 0,
+      sodium_g: data.sodium_g ?? 0,
+      potassium_mg: data.potassium_mg ?? 0,
+      calcium_mg: data.calcium_mg ?? 0,
+      magnesium_mg: data.magnesium_mg ?? 0,
+      iron_mg: data.iron_mg ?? 0,
+      zinc_mg: data.zinc_mg ?? 0,
+      vitamin_a_ug: data.vitamin_a_ug ?? 0,
+      vitamin_b1_mg: data.vitamin_b1_mg ?? 0,
+      vitamin_b2_mg: data.vitamin_b2_mg ?? 0,
+      vitamin_c_mg: data.vitamin_c_mg ?? 0,
+      vitamin_d_ug: data.vitamin_d_ug ?? 0,
+    };
+
+    return {
+      meal,
+      nutrition,
+      source: {
+        type: "dataset_recipe",
+        id: data.id,
+        externalId: data.external_id ?? "",
+      },
+    };
+  } catch (e) {
+    console.error("Failed to resolve recipe from DB:", e);
+    return null;
+  }
+}
+
+// =========================================================
 // Build context for LLM
 // =========================================================
 
@@ -580,15 +689,26 @@ async function saveMealToDb(
   const round1 = (v: number | null | undefined) => (v != null ? Math.round(v * 10) / 10 : null);
   const round2 = (v: number | null | undefined) => (v != null ? Math.round(v * 100) / 100 : null);
 
+  // レシピDBから解決された栄養データがある場合はそれを使用
+  const resolvedNutrition = (generatedMeal as any)._resolvedNutrition as NutritionTotals | undefined;
+  const recipeSource = (generatedMeal as any)._recipeSource as { type: string; id: string; externalId: string } | undefined;
+
   for (let idx = 0; idx < generatedMeal.dishes.length; idx++) {
     const dish = generatedMeal.dishes[idx];
 
     let nutrition: NutritionTotals = emptyNutrition();
-    try {
-      nutrition = await calculateNutritionFromIngredients(supabase, dish.ingredients);
-    } catch (e) {
-      console.warn(`Nutrition calc failed for ${dish.name}:`, e);
-      nutrition = emptyNutrition();
+
+    // レシピDBからの事前計算済み栄養データがある場合はそれを使用
+    if (resolvedNutrition && idx === 0) {
+      nutrition = resolvedNutrition;
+      console.log(`📊 Using pre-calculated nutrition from recipe DB for ${dish.name}`);
+    } else {
+      try {
+        nutrition = await calculateNutritionFromIngredients(supabase, dish.ingredients);
+      } catch (e) {
+        console.warn(`Nutrition calc failed for ${dish.name}:`, e);
+        nutrition = emptyNutrition();
+      }
     }
 
     // V3同様: 低カロリーなど怪しい料理のみ参照レシピで検証・補正
@@ -679,6 +799,9 @@ async function saveMealToDb(
       saturated_fat_g: round1(nutrition?.saturated_fat_g),
       monounsaturated_fat_g: round1(nutrition?.monounsaturated_fat_g),
       polyunsaturated_fat_g: round1(nutrition?.polyunsaturated_fat_g),
+
+      // レシピDBソース（AIアドバイザーからの検索時）
+      recipe_source: idx === 0 && recipeSource ? recipeSource : undefined,
     });
   }
 
@@ -1108,6 +1231,25 @@ async function executeStep1_Generate(
     },
     1,
   );
+
+  // ===== レシピDB直接指定の場合: LLM生成をスキップ =====
+  // AIアドバイザーの search_recipes で見つけたレシピを直接使用
+  if (constraintsForContext.recipeId || constraintsForContext.recipeExternalId) {
+    console.log("📖 Recipe ID specified, resolving from database...");
+    for (const slot of targetSlots) {
+      const key = getSlotKey(slot.date, slot.mealType);
+      if (generatedMeals[key]) continue; // 既に生成済み
+
+      const resolved = await resolveRecipeFromDB(supabase, constraintsForContext, slot.mealType as MealType);
+      if (resolved) {
+        generatedMeals[key] = resolved.meal;
+        // 栄養データとソース情報を拡張プロパティとして保存
+        (generatedMeals[key] as any)._resolvedNutrition = resolved.nutrition;
+        (generatedMeals[key] as any)._recipeSource = resolved.source;
+        console.log(`✅ Resolved ${slot.date} ${slot.mealType}: ${resolved.meal.dishes[0]?.name ?? "(unknown)"}`);
+      }
+    }
+  }
 
   const CONCURRENCY = 4; // 高速化: 2→4日並列
   for (let i = cursor; i < nextCursor; i += CONCURRENCY) {
