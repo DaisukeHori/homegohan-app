@@ -3,10 +3,11 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight, 
+import {
+  Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
   Sparkles, Check, Calendar, Clock, Sun, Coffee, Moon,
-  Utensils, Plus, Minus
+  Utensils, Plus, Minus, Refrigerator, FileHeart, Wand2,
+  AlertCircle, Save, RefreshCw
 } from 'lucide-react';
 
 // カラーパレット
@@ -31,7 +32,49 @@ const colors = {
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 type DishDetail = { name: string; cal: number; calories_kcal?: number; role: string; ingredient?: string };
-type Step = 'capture' | 'analyzing' | 'result' | 'select-date';
+type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result';
+type PhotoMode = 'auto' | 'meal' | 'fridge' | 'health_checkup';
+
+// 写真モード設定
+const PHOTO_MODES: Record<PhotoMode, { icon: any; label: string; description: string; color: string; bg: string }> = {
+  auto: { icon: Wand2, label: 'オート', description: 'AIが写真の種類を自動判別', color: colors.purple, bg: colors.purpleLight },
+  meal: { icon: Utensils, label: '食事', description: '食事の写真を記録', color: colors.accent, bg: colors.accentLight },
+  fridge: { icon: Refrigerator, label: '冷蔵庫', description: '冷蔵庫の中身を登録', color: colors.blue, bg: colors.blueLight },
+  health_checkup: { icon: FileHeart, label: '健診', description: '健康診断結果を読み取り', color: colors.success, bg: colors.successLight },
+};
+
+// 冷蔵庫解析結果
+interface FridgeIngredient {
+  name: string;
+  category: string;
+  quantity: string;
+  freshness: 'fresh' | 'good' | 'expiring_soon' | 'expired';
+  daysRemaining: number;
+}
+
+// 健康診断解析結果
+interface HealthCheckupData {
+  checkupDate?: string;
+  facilityName?: string;
+  height?: number;
+  weight?: number;
+  bmi?: number;
+  bloodPressureSystolic?: number;
+  bloodPressureDiastolic?: number;
+  hemoglobin?: number;
+  hba1c?: number;
+  fastingGlucose?: number;
+  totalCholesterol?: number;
+  ldlCholesterol?: number;
+  hdlCholesterol?: number;
+  triglycerides?: number;
+  ast?: number;
+  alt?: number;
+  gammaGtp?: number;
+  creatinine?: number;
+  egfr?: number;
+  uricAcid?: number;
+}
 
 const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; bg: string }> = {
   breakfast: { icon: Coffee, label: '朝食', color: colors.warning, bg: colors.warningLight },
@@ -79,12 +122,29 @@ export default function MealCaptureModal() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  
-  const [step, setStep] = useState<Step>('capture');
+
+  const [step, setStep] = useState<Step>('mode-select');
+  const [photoMode, setPhotoMode] = useState<PhotoMode>('auto');
   // 複数枚対応
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // 冷蔵庫解析結果
+  const [fridgeIngredients, setFridgeIngredients] = useState<FridgeIngredient[]>([]);
+  const [fridgeSummary, setFridgeSummary] = useState('');
+  const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
+  const [isSavingFridge, setIsSavingFridge] = useState(false);
+
+  // 健康診断解析結果
+  const [healthData, setHealthData] = useState<HealthCheckupData>({});
+  const [healthConfidence, setHealthConfidence] = useState(0);
+  const [healthNotes, setHealthNotes] = useState('');
+  const [isSavingHealth, setIsSavingHealth] = useState(false);
+
+  // オートモード判別結果
+  const [detectedType, setDetectedType] = useState<string | null>(null);
+  const [detectedConfidence, setDetectedConfidence] = useState(0);
   
   // 解析結果
   const [analyzedDishes, setAnalyzedDishes] = useState<DishDetail[]>([]);
@@ -191,6 +251,230 @@ export default function MealCaptureModal() {
     }
   };
 
+  // 写真タイプを判別（オートモード）
+  const classifyPhoto = async (base64: string, mimeType: string): Promise<PhotoMode> => {
+    try {
+      const res = await fetch('/api/ai/classify-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setDetectedType(data.type);
+        setDetectedConfidence(data.confidence);
+        if (data.type === 'meal' || data.type === 'fridge' || data.type === 'health_checkup') {
+          return data.type as PhotoMode;
+        }
+      }
+    } catch (error) {
+      console.error('Classification error:', error);
+    }
+    return 'meal'; // デフォルトは食事モード
+  };
+
+  // 冷蔵庫写真解析
+  const analyzeFridge = async () => {
+    if (photoFiles.length === 0) return;
+
+    setStep('analyzing');
+    setIsAnalyzing(true);
+
+    try {
+      const file = photoFiles[0];
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch('/api/ai/analyze-fridge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType: file.type }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setFridgeIngredients(data.detailedIngredients || []);
+        setFridgeSummary(data.summary || '');
+        setFridgeSuggestions(data.suggestions || []);
+        setStep('fridge-result');
+      } else {
+        alert('冷蔵庫の解析に失敗しました。');
+        setStep('capture');
+      }
+    } catch (error) {
+      console.error('Fridge analysis error:', error);
+      alert('エラーが発生しました。');
+      setStep('capture');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // 健康診断写真解析
+  const analyzeHealthCheckup = async () => {
+    if (photoFiles.length === 0) return;
+
+    setStep('analyzing');
+    setIsAnalyzing(true);
+
+    try {
+      const file = photoFiles[0];
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch('/api/ai/analyze-health-checkup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType: file.type }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setHealthData(data.extractedData || {});
+        setHealthConfidence(data.confidence || 0);
+        setHealthNotes(data.notes || '');
+        setStep('health-result');
+      } else {
+        alert('健康診断結果の解析に失敗しました。');
+        setStep('capture');
+      }
+    } catch (error) {
+      console.error('Health checkup analysis error:', error);
+      alert('エラーが発生しました。');
+      setStep('capture');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // 統合解析（モードに応じて分岐）
+  const analyzeByMode = async () => {
+    if (photoFiles.length === 0) return;
+
+    let targetMode = photoMode;
+
+    // オートモードの場合は先に判別
+    if (photoMode === 'auto') {
+      setStep('analyzing');
+      setIsAnalyzing(true);
+
+      const file = photoFiles[0];
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(file);
+      });
+
+      targetMode = await classifyPhoto(base64, file.type);
+      setIsAnalyzing(false);
+    }
+
+    // 判別結果に応じて解析
+    switch (targetMode) {
+      case 'fridge':
+        await analyzeFridge();
+        break;
+      case 'health_checkup':
+        await analyzeHealthCheckup();
+        break;
+      case 'meal':
+      default:
+        await analyzePhoto();
+        break;
+    }
+  };
+
+  // 冷蔵庫データを保存
+  const saveFridgeItems = async (mode: 'append' | 'replace') => {
+    setIsSavingFridge(true);
+
+    try {
+      const res = await fetch('/api/pantry/from-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ingredients: fridgeIngredients.map(i => ({
+            name: i.name,
+            amount: i.quantity,
+            category: i.category,
+            daysRemaining: i.daysRemaining,
+          })),
+          mode,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        alert(`冷蔵庫に${data.results.created + data.results.updated}件の食材を保存しました。`);
+        router.push('/menus/weekly');
+      } else {
+        alert('保存に失敗しました。');
+      }
+    } catch (error) {
+      console.error('Fridge save error:', error);
+      alert('エラーが発生しました。');
+    } finally {
+      setIsSavingFridge(false);
+    }
+  };
+
+  // 健康診断データを保存
+  const saveHealthCheckup = async () => {
+    setIsSavingHealth(true);
+
+    try {
+      // 健康診断APIにPOST
+      const res = await fetch('/api/health/checkups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkup_date: healthData.checkupDate || new Date().toISOString().split('T')[0],
+          facility_name: healthData.facilityName,
+          height: healthData.height,
+          weight: healthData.weight,
+          bmi: healthData.bmi,
+          blood_pressure_systolic: healthData.bloodPressureSystolic,
+          blood_pressure_diastolic: healthData.bloodPressureDiastolic,
+          hemoglobin: healthData.hemoglobin,
+          hba1c: healthData.hba1c,
+          fasting_glucose: healthData.fastingGlucose,
+          total_cholesterol: healthData.totalCholesterol,
+          ldl_cholesterol: healthData.ldlCholesterol,
+          hdl_cholesterol: healthData.hdlCholesterol,
+          triglycerides: healthData.triglycerides,
+          ast: healthData.ast,
+          alt: healthData.alt,
+          gamma_gtp: healthData.gammaGtp,
+          creatinine: healthData.creatinine,
+          egfr: healthData.egfr,
+          uric_acid: healthData.uricAcid,
+          ocr_extracted_data: healthData,
+          ocr_extraction_timestamp: new Date().toISOString(),
+          ocr_model_used: 'gpt-4o',
+        }),
+      });
+
+      if (res.ok) {
+        alert('健康診断結果を保存しました。');
+        router.push('/health/checkups');
+      } else {
+        alert('保存に失敗しました。');
+      }
+    } catch (error) {
+      console.error('Health checkup save error:', error);
+      alert('エラーが発生しました。');
+    } finally {
+      setIsSavingHealth(false);
+    }
+  };
+
   // 献立表に保存
   const saveToMealPlan = async () => {
     setIsSaving(true);
@@ -271,16 +555,76 @@ export default function MealCaptureModal() {
         <div className="flex items-center gap-2">
           <Camera size={20} color={colors.accent} />
           <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
-            {step === 'capture' && '食事を撮影'}
+            {step === 'mode-select' && 'モード選択'}
+            {step === 'capture' && (photoMode === 'meal' ? '食事を撮影' : photoMode === 'fridge' ? '冷蔵庫を撮影' : photoMode === 'health_checkup' ? '健診結果を撮影' : '写真を撮影')}
             {step === 'analyzing' && 'AI解析中...'}
             {step === 'result' && '解析結果'}
             {step === 'select-date' && '日時を選択'}
+            {step === 'fridge-result' && '冷蔵庫の中身'}
+            {step === 'health-result' && '健康診断結果'}
           </span>
         </div>
         <div className="w-10" />
       </div>
 
       <AnimatePresence mode="wait">
+        {/* ステップ0: モード選択 */}
+        {step === 'mode-select' && (
+          <motion.div
+            key="mode-select"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 p-4"
+          >
+            <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 16, textAlign: 'center' }}>
+              撮影するものを選んでください
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              {(Object.entries(PHOTO_MODES) as [PhotoMode, typeof PHOTO_MODES.auto][]).map(([mode, config]) => {
+                const isSelected = photoMode === mode;
+                const Icon = config.icon;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setPhotoMode(mode)}
+                    className="p-4 rounded-2xl flex flex-col items-center gap-2 transition-all"
+                    style={{
+                      background: isSelected ? config.bg : colors.card,
+                      border: isSelected ? `2px solid ${config.color}` : `1px solid ${colors.border}`,
+                    }}
+                  >
+                    <div
+                      className="w-12 h-12 rounded-xl flex items-center justify-center"
+                      style={{ background: isSelected ? config.color : colors.bg }}
+                    >
+                      <Icon size={24} color={isSelected ? '#fff' : config.color} />
+                    </div>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: isSelected ? config.color : colors.text }}>
+                      {config.label}
+                    </span>
+                    <span style={{ fontSize: 10, color: colors.textMuted, textAlign: 'center' }}>
+                      {config.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setStep('capture')}
+              className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+              style={{ background: PHOTO_MODES[photoMode].color }}
+            >
+              <Camera size={20} color="#fff" />
+              <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+                撮影へ進む
+              </span>
+            </button>
+          </motion.div>
+        )}
+
         {/* ステップ1: 撮影/選択 */}
         {step === 'capture' && (
           <motion.div
@@ -291,8 +635,10 @@ export default function MealCaptureModal() {
             className="flex-1 p-4"
           >
             <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 16, textAlign: 'center' }}>
-              食事の写真を撮影またはアップロードすると、<br/>AIが料理を認識して栄養素を推定します。<br/>
-              <strong>複数枚の写真をまとめて追加できます。</strong>
+              {photoMode === 'auto' && 'AIが写真の種類を自動判別します。'}
+              {photoMode === 'meal' && '食事の写真を撮影してください。AIが料理を認識します。'}
+              {photoMode === 'fridge' && '冷蔵庫の中を撮影してください。食材を認識します。'}
+              {photoMode === 'health_checkup' && '健康診断結果を撮影してください。数値を読み取ります。'}
             </p>
             
             {/* 選択済み写真のプレビュー */}
@@ -380,13 +726,13 @@ export default function MealCaptureModal() {
             
             {photoPreviews.length > 0 && (
               <button
-                onClick={analyzePhoto}
+                onClick={analyzeByMode}
                 className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
-                style={{ background: colors.accent }}
+                style={{ background: PHOTO_MODES[photoMode].color }}
               >
                 <Sparkles size={20} color="#fff" />
                 <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
-                  {photoFiles.length > 1 ? `${photoFiles.length}枚をAIで解析` : 'AIで解析する'}
+                  {photoMode === 'auto' ? 'AIが判別して解析' : photoFiles.length > 1 ? `${photoFiles.length}枚をAIで解析` : 'AIで解析する'}
                 </span>
               </button>
             )}
@@ -694,6 +1040,347 @@ export default function MealCaptureModal() {
               style={{ background: colors.bg }}
             >
               <span style={{ fontSize: 14, color: colors.textLight }}>戻る</span>
+            </button>
+          </motion.div>
+        )}
+
+        {/* 冷蔵庫解析結果 */}
+        {step === 'fridge-result' && (
+          <motion.div
+            key="fridge-result"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 p-4 overflow-auto"
+          >
+            {/* 写真プレビュー */}
+            {photoPreviews.length > 0 && (
+              <div className="relative mb-4">
+                <img src={photoPreviews[0]} alt="Fridge" className="w-full h-32 rounded-2xl object-cover" />
+              </div>
+            )}
+
+            {/* サマリー */}
+            {fridgeSummary && (
+              <div className="p-4 rounded-2xl mb-4" style={{ background: colors.blueLight }}>
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: colors.blue }}>
+                    <Refrigerator size={16} color="#fff" />
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: colors.blue, margin: '0 0 4px 0' }}>冷蔵庫の中身</p>
+                    <p style={{ fontSize: 13, color: colors.text, margin: 0, lineHeight: 1.6 }}>{fridgeSummary}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 検出された食材 */}
+            <div className="mb-4">
+              <p style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, marginBottom: 8 }}>
+                検出された食材 ({fridgeIngredients.length}件)
+              </p>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {fridgeIngredients.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 rounded-xl flex items-center justify-between"
+                    style={{ background: colors.card }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center"
+                        style={{
+                          background: item.freshness === 'fresh' ? colors.successLight
+                            : item.freshness === 'good' ? colors.blueLight
+                            : item.freshness === 'expiring_soon' ? colors.warningLight
+                            : colors.accentLight
+                        }}
+                      >
+                        <span style={{ fontSize: 18 }}>
+                          {item.category === '野菜' ? '🥬' : item.category === '肉類' ? '🥩' : item.category === '魚介類' ? '🐟' : item.category === '乳製品' ? '🧀' : '🍴'}
+                        </span>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: 14, fontWeight: 500, color: colors.text, margin: 0 }}>{item.name}</p>
+                        <p style={{ fontSize: 11, color: colors.textMuted, margin: 0 }}>
+                          {item.quantity} • {item.category}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: item.freshness === 'fresh' ? colors.successLight
+                            : item.freshness === 'good' ? colors.blueLight
+                            : item.freshness === 'expiring_soon' ? colors.warningLight
+                            : colors.accentLight,
+                          color: item.freshness === 'fresh' ? colors.success
+                            : item.freshness === 'good' ? colors.blue
+                            : item.freshness === 'expiring_soon' ? colors.warning
+                            : colors.accent,
+                        }}
+                      >
+                        {item.freshness === 'fresh' ? '新鮮' : item.freshness === 'good' ? '良好' : item.freshness === 'expiring_soon' ? '早めに' : '要確認'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 料理提案 */}
+            {fridgeSuggestions.length > 0 && (
+              <div className="p-4 rounded-xl mb-4" style={{ background: colors.purpleLight }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: colors.purple, marginBottom: 8 }}>💡 この食材で作れる料理</p>
+                <div className="flex flex-wrap gap-2">
+                  {fridgeSuggestions.map((s, idx) => (
+                    <span key={idx} style={{ fontSize: 12, color: colors.text, background: colors.card, padding: '4px 8px', borderRadius: 6 }}>
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 保存ボタン */}
+            <div className="flex gap-3 mb-3">
+              <button
+                onClick={() => saveFridgeItems('append')}
+                disabled={isSavingFridge}
+                className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
+                style={{ background: colors.blue }}
+              >
+                <Plus size={18} color="#fff" />
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>追記する</span>
+              </button>
+              <button
+                onClick={() => saveFridgeItems('replace')}
+                disabled={isSavingFridge}
+                className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
+                style={{ background: colors.accent }}
+              >
+                <RefreshCw size={18} color="#fff" />
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>入れ替える</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); }}
+              className="w-full py-3 rounded-xl"
+              style={{ background: colors.bg }}
+            >
+              <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
+            </button>
+          </motion.div>
+        )}
+
+        {/* 健康診断解析結果 */}
+        {step === 'health-result' && (
+          <motion.div
+            key="health-result"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 p-4 overflow-auto"
+          >
+            {/* 写真プレビュー */}
+            {photoPreviews.length > 0 && (
+              <div className="relative mb-4">
+                <img src={photoPreviews[0]} alt="Health Checkup" className="w-full h-32 rounded-2xl object-cover" />
+                {healthConfidence > 0 && (
+                  <div className="absolute bottom-2 right-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(0,0,0,0.6)' }}>
+                    <span style={{ fontSize: 10, color: '#fff' }}>読み取り精度: {Math.round(healthConfidence * 100)}%</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 注意事項 */}
+            {healthNotes && (
+              <div className="p-3 rounded-xl mb-4 flex items-start gap-2" style={{ background: colors.warningLight }}>
+                <AlertCircle size={16} color={colors.warning} className="flex-shrink-0 mt-0.5" />
+                <p style={{ fontSize: 11, color: colors.text, margin: 0 }}>{healthNotes}</p>
+              </div>
+            )}
+
+            {/* 解析結果 */}
+            <div className="space-y-3 mb-4">
+              {/* 身体測定 */}
+              {(healthData.height || healthData.weight || healthData.bmi) && (
+                <div className="p-3 rounded-xl" style={{ background: colors.card }}>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, marginBottom: 8 }}>身体測定</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {healthData.height && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 16, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.height}</p>
+                        <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>身長 cm</p>
+                      </div>
+                    )}
+                    {healthData.weight && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 16, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.weight}</p>
+                        <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>体重 kg</p>
+                      </div>
+                    )}
+                    {healthData.bmi && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 16, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.bmi}</p>
+                        <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>BMI</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 血圧 */}
+              {(healthData.bloodPressureSystolic || healthData.bloodPressureDiastolic) && (
+                <div className="p-3 rounded-xl" style={{ background: colors.card }}>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, marginBottom: 8 }}>血圧</p>
+                  <p style={{ fontSize: 18, fontWeight: 700, color: colors.text, margin: 0, textAlign: 'center' }}>
+                    {healthData.bloodPressureSystolic || '-'} / {healthData.bloodPressureDiastolic || '-'} <span style={{ fontSize: 12, fontWeight: 400 }}>mmHg</span>
+                  </p>
+                </div>
+              )}
+
+              {/* 血糖 */}
+              {(healthData.hba1c || healthData.fastingGlucose) && (
+                <div className="p-3 rounded-xl" style={{ background: colors.card }}>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, marginBottom: 8 }}>血糖</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {healthData.hba1c && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 16, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.hba1c}</p>
+                        <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>HbA1c %</p>
+                      </div>
+                    )}
+                    {healthData.fastingGlucose && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 16, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.fastingGlucose}</p>
+                        <p style={{ fontSize: 10, color: colors.textMuted, margin: 0 }}>空腹時血糖</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 脂質 */}
+              {(healthData.totalCholesterol || healthData.ldlCholesterol || healthData.hdlCholesterol || healthData.triglycerides) && (
+                <div className="p-3 rounded-xl" style={{ background: colors.card }}>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, marginBottom: 8 }}>脂質</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {healthData.ldlCholesterol && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.ldlCholesterol}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>LDL</p>
+                      </div>
+                    )}
+                    {healthData.hdlCholesterol && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.hdlCholesterol}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>HDL</p>
+                      </div>
+                    )}
+                    {healthData.triglycerides && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.triglycerides}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>中性脂肪</p>
+                      </div>
+                    )}
+                    {healthData.totalCholesterol && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.totalCholesterol}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>総コレステロール</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 肝機能 */}
+              {(healthData.ast || healthData.alt || healthData.gammaGtp) && (
+                <div className="p-3 rounded-xl" style={{ background: colors.card }}>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, marginBottom: 8 }}>肝機能</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {healthData.ast && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.ast}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>AST</p>
+                      </div>
+                    )}
+                    {healthData.alt && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.alt}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>ALT</p>
+                      </div>
+                    )}
+                    {healthData.gammaGtp && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.gammaGtp}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>γ-GTP</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 腎機能 */}
+              {(healthData.creatinine || healthData.egfr || healthData.uricAcid) && (
+                <div className="p-3 rounded-xl" style={{ background: colors.card }}>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: colors.textMuted, marginBottom: 8 }}>腎機能</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {healthData.creatinine && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.creatinine}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>クレアチニン</p>
+                      </div>
+                    )}
+                    {healthData.egfr && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.egfr}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>eGFR</p>
+                      </div>
+                    )}
+                    {healthData.uricAcid && (
+                      <div className="text-center">
+                        <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.uricAcid}</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>尿酸</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 保存ボタン */}
+            <button
+              onClick={saveHealthCheckup}
+              disabled={isSavingHealth}
+              className="w-full py-4 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60 mb-3"
+              style={{ background: colors.success }}
+            >
+              {isSavingHealth ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>保存中...</span>
+                </>
+              ) : (
+                <>
+                  <Save size={18} color="#fff" />
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>健康診断記録を保存</span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); }}
+              className="w-full py-3 rounded-xl"
+              style={{ background: colors.bg }}
+            >
+              <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
           </motion.div>
         )}
