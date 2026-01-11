@@ -33,8 +33,9 @@ const colors = {
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 type DishDetail = { name: string; cal: number; calories_kcal?: number; role: string; ingredient?: string };
-type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result' | 'weight-result';
+type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result' | 'weight-result' | 'classify-failed';
 type PhotoMode = 'auto' | 'meal' | 'fridge' | 'health_checkup' | 'weight_scale';
+type ClassifyResult = PhotoMode | 'unknown';
 
 // 写真モード設定
 const PHOTO_MODES: Record<PhotoMode, { icon: any; label: string; description: string; color: string; bg: string }> = {
@@ -277,7 +278,7 @@ export default function MealCaptureModal() {
   };
 
   // 写真タイプを判別（オートモード）
-  const classifyPhoto = async (base64: string, mimeType: string): Promise<PhotoMode> => {
+  const classifyPhoto = async (base64: string, mimeType: string): Promise<ClassifyResult> => {
     try {
       const res = await fetch('/api/ai/classify-photo', {
         method: 'POST',
@@ -289,14 +290,15 @@ export default function MealCaptureModal() {
         const data = await res.json();
         setDetectedType(data.type);
         setDetectedConfidence(data.confidence);
-        if (data.type === 'meal' || data.type === 'fridge' || data.type === 'health_checkup') {
-          return data.type as PhotoMode;
+        // 有効なタイプならそのまま返す
+        if (['meal', 'fridge', 'health_checkup', 'weight_scale', 'unknown'].includes(data.type)) {
+          return data.type as ClassifyResult;
         }
       }
     } catch (error) {
       console.error('Classification error:', error);
     }
-    return 'meal'; // デフォルトは食事モード
+    return 'unknown'; // デフォルトは unknown（判別失敗画面を表示）
   };
 
   // 冷蔵庫写真解析
@@ -484,7 +486,7 @@ export default function MealCaptureModal() {
   const analyzeByMode = async () => {
     if (photoFiles.length === 0) return;
 
-    let targetMode = photoMode;
+    let targetMode: ClassifyResult = photoMode;
 
     // オートモードの場合は先に判別
     if (photoMode === 'auto') {
@@ -514,8 +516,12 @@ export default function MealCaptureModal() {
         await analyzeWeightScale();
         break;
       case 'meal':
-      default:
         await analyzePhoto();
+        break;
+      case 'unknown':
+      default:
+        // 判別失敗時は専用画面を表示
+        setStep('classify-failed');
         break;
     }
   };
@@ -692,6 +698,7 @@ export default function MealCaptureModal() {
             {step === 'fridge-result' && '冷蔵庫の中身'}
             {step === 'health-result' && '健康診断結果'}
             {step === 'weight-result' && '体重計読み取り結果'}
+            {step === 'classify-failed' && '判別できませんでした'}
           </span>
         </div>
         <div className="w-10" />
@@ -1683,6 +1690,52 @@ export default function MealCaptureModal() {
             >
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
+          </motion.div>
+        )}
+
+        {/* 判別失敗画面 */}
+        {step === 'classify-failed' && (
+          <motion.div
+            key="classify-failed"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 flex flex-col items-center justify-center p-6"
+          >
+            <div className="text-6xl mb-4">🤔</div>
+            <h2 className="text-xl font-bold mb-2 text-center" style={{ color: colors.text }}>
+              写真の種類を判別できませんでした
+            </h2>
+            <p className="text-center mb-8" style={{ color: colors.textLight, fontSize: 14 }}>
+              食事・冷蔵庫・健診結果・体重計の写真を撮影してください
+            </p>
+
+            <div className="w-full max-w-xs space-y-3">
+              <button
+                onClick={() => {
+                  setPhotoFiles([]);
+                  setPhotoPreviews([]);
+                  setStep('capture');
+                }}
+                className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+                style={{ background: colors.accent }}
+              >
+                <Camera size={18} color="#fff" />
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+                  撮り直す
+                </span>
+              </button>
+
+              <button
+                onClick={() => setStep('mode-select')}
+                className="w-full py-4 rounded-xl"
+                style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+              >
+                <span style={{ fontSize: 15, fontWeight: 500, color: colors.textLight }}>
+                  モードを選び直す
+                </span>
+              </button>
+            </div>
           </motion.div>
         )}
 
