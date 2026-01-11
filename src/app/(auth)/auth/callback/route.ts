@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -8,7 +9,13 @@ export async function GET(request: Request) {
   console.log('[auth/callback] ========== AUTH CALLBACK START ==========')
   console.log('[auth/callback] Full URL:', requestUrl.toString())
   console.log('[auth/callback] All params:', Object.fromEntries(requestUrl.searchParams.entries()))
-  console.log('[auth/callback] Headers:', Object.fromEntries(request.headers.entries()))
+
+  // クッキー情報をログ（PKCE code verifier の確認）
+  const cookieStore = cookies()
+  const allCookies = cookieStore.getAll()
+  console.log('[auth/callback] Cookies:', allCookies.map(c => ({ name: c.name, hasValue: !!c.value })))
+  const codeVerifier = allCookies.find(c => c.name.includes('code_verifier'))
+  console.log('[auth/callback] PKCE code_verifier cookie present:', !!codeVerifier)
 
   // Supabase からのエラーパラメータをチェック
   const error_param = requestUrl.searchParams.get('error')
