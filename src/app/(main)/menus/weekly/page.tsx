@@ -637,44 +637,78 @@ export default function WeeklyMenuPage() {
     setDisplayMonth(weekStart);
   }, [weekStart]);
 
-  // Calendar meal dates - 月カレンダー用の献立存在日マップ
+  // Calendar meal dates - 月カレンダー用の献立存在日マップ（キャッシュ）
   const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
+  const fetchedRangesRef = useRef<Set<string>>(new Set()); // 既にフェッチした範囲を記録
 
-  // Fetch meal dates for displayed month (for calendar dots)
-  useEffect(() => {
-    const fetchCalendarMealDates = async () => {
-      const year = displayMonth.getFullYear();
-      const month = displayMonth.getMonth();
-      // Get first and last day of the displayed month (with padding for calendar grid)
-      const firstDay = new Date(year, month, 1);
-      const lastDay = new Date(year, month + 1, 0);
-      // Add padding for previous/next month days shown in calendar
-      const startDate = new Date(firstDay);
-      startDate.setDate(startDate.getDate() - 7); // 1 week before
-      const endDate = new Date(lastDay);
-      endDate.setDate(endDate.getDate() + 7); // 1 week after
+  // Fetch meal dates for a range and accumulate (helper function)
+  const fetchAndCacheMealDates = useCallback(async (startDate: Date, endDate: Date) => {
+    const formatDate = (d: Date) => d.toISOString().split('T')[0];
+    const rangeKey = `${formatDate(startDate)}_${formatDate(endDate)}`;
 
-      const formatDate = (d: Date) => d.toISOString().split('T')[0];
+    // 既にフェッチ済みの範囲はスキップ
+    if (fetchedRangesRef.current.has(rangeKey)) return;
+    fetchedRangesRef.current.add(rangeKey);
 
-      try {
-        const res = await fetch(`/api/meal-plans?startDate=${formatDate(startDate)}&endDate=${formatDate(endDate)}`);
-        if (res.ok) {
-          const { dailyMeals } = await res.json();
-          const datesWithMeals = new Set<string>();
-          dailyMeals?.forEach((day: any) => {
-            if (day.meals && day.meals.length > 0) {
-              datesWithMeals.add(day.dayDate);
-            }
-          });
-          setCalendarMealDates(datesWithMeals);
-        }
-      } catch (error) {
-        console.error('Failed to fetch calendar meal dates:', error);
+    try {
+      const res = await fetch(`/api/meal-plans?startDate=${formatDate(startDate)}&endDate=${formatDate(endDate)}`);
+      if (res.ok) {
+        const { dailyMeals } = await res.json();
+        const newDates = new Set<string>();
+        dailyMeals?.forEach((day: any) => {
+          if (day.meals && day.meals.length > 0) {
+            newDates.add(day.dayDate);
+          }
+        });
+        // 既存のデータに追加（置き換えではなく累積）
+        setCalendarMealDates(prev => {
+          const merged = new Set(prev);
+          newDates.forEach(d => merged.add(d));
+          return merged;
+        });
       }
+    } catch (error) {
+      console.error('Failed to fetch calendar meal dates:', error);
+      // エラー時はキャッシュをクリアして再試行可能に
+      fetchedRangesRef.current.delete(rangeKey);
+    }
+  }, []);
+
+  // 週が変わるタイミングで前後2週間をプリフェッチ
+  useEffect(() => {
+    const prefetchAdjacentWeeks = async () => {
+      const currentWeekStart = new Date(weekStart);
+
+      // 前後2週間 = 合計5週間分をフェッチ
+      const startDate = new Date(currentWeekStart);
+      startDate.setDate(startDate.getDate() - 14); // 2週間前
+      const endDate = new Date(currentWeekStart);
+      endDate.setDate(endDate.getDate() + 28); // 4週間後（現在週含む）
+
+      await fetchAndCacheMealDates(startDate, endDate);
     };
 
-    fetchCalendarMealDates();
-  }, [displayMonth]);
+    prefetchAdjacentWeeks();
+  }, [weekStart, fetchAndCacheMealDates]);
+
+  // displayMonth が変わったときも追加でフェッチ（月移動時）
+  useEffect(() => {
+    const fetchMonthMealDates = async () => {
+      const year = displayMonth.getFullYear();
+      const month = displayMonth.getMonth();
+      // 表示月の前後1週間を含む範囲
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const startDate = new Date(firstDay);
+      startDate.setDate(startDate.getDate() - 7);
+      const endDate = new Date(lastDay);
+      endDate.setDate(endDate.getDate() + 7);
+
+      await fetchAndCacheMealDates(startDate, endDate);
+    };
+
+    fetchMonthMealDates();
+  }, [displayMonth, fetchAndCacheMealDates]);
 
   // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
