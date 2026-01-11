@@ -591,6 +591,7 @@ export default function WeeklyMenuPage() {
 
   // Week start day setting & holidays
   const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>('monday');
+  const [weekStartDayLoaded, setWeekStartDayLoaded] = useState(false);
   const [holidays, setHolidays] = useState<Record<string, string>>({});
 
   // Fetch user's weekStartDay setting
@@ -598,7 +599,10 @@ export default function WeeklyMenuPage() {
     const fetchWeekStartDay = async () => {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) {
+        setWeekStartDayLoaded(true);
+        return;
+      }
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('week_start_day')
@@ -609,6 +613,7 @@ export default function WeeklyMenuPage() {
         // Re-calculate week start with new setting
         setWeekStart(getWeekStart(new Date(), profile.week_start_day as WeekStartDay));
       }
+      setWeekStartDayLoaded(true);
     };
     fetchWeekStartDay();
   }, []);
@@ -1553,6 +1558,9 @@ export default function WeeklyMenuPage() {
 
   // Fetch Plan & Check for pending generation requests
   useEffect(() => {
+    // weekStartDay の設定が確定するまで待機（二重フェッチ防止）
+    if (!weekStartDayLoaded) return;
+
     const fetchPlan = async () => {
       setLoading(true);
       try {
@@ -1592,7 +1600,7 @@ export default function WeeklyMenuPage() {
       }
     };
     fetchPlan();
-  }, [weekStart]);
+  }, [weekStart, weekStartDayLoaded]);
   
   // Fetch servings config and radar chart nutrients from user profile
   useEffect(() => {
@@ -2241,13 +2249,23 @@ export default function WeeklyMenuPage() {
 
   const handleCalendarDateClick = (date: Date) => {
     const newWeekStart = getWeekStart(date, weekStartDay);
-    setWeekStart(newWeekStart);
-    // Calculate day index based on week start day
+
+    // 同一週かどうかを日付文字列で比較（Date オブジェクト参照比較による不要な再フェッチを防止）
+    const currentWeekStartStr = formatLocalDate(weekStart);
+    const newWeekStartStr = formatLocalDate(newWeekStart);
+
+    if (currentWeekStartStr !== newWeekStartStr) {
+      // 異なる週の場合のみ weekStart を更新（fetchPlan がトリガーされる）
+      setWeekStart(newWeekStart);
+    }
+
+    // selectedDayIndex は常に更新（同一週内でも日付切り替え）
     const dayOfWeekRaw = date.getDay();
     const startOffset = weekStartDay === 'sunday' ? 0 : 1;
     let dayIndex = dayOfWeekRaw - startOffset;
     if (dayIndex < 0) dayIndex += 7;
     setSelectedDayIndex(dayIndex);
+
     setIsCalendarExpanded(false);
     setIsDayNutritionExpanded(false);
     setExpandedMealId(null);
