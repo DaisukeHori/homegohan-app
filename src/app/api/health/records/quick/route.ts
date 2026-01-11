@@ -11,17 +11,20 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { 
-    weight, 
-    mood_score, 
+  const {
+    weight,
+    bodyFat,       // 体脂肪率（写真からの記録用）
+    muscleMass,    // 筋肉量（写真からの記録用）
+    mood_score,
     sleep_quality,
+    source,        // 'manual' | 'photo' - データソース
     record_date = new Date().toISOString().split('T')[0]
   } = body;
 
   // 少なくとも1つのデータが必要
   if (!weight && !mood_score && !sleep_quality) {
-    return NextResponse.json({ 
-      error: 'At least one field (weight, mood_score, or sleep_quality) is required' 
+    return NextResponse.json({
+      error: 'At least one field (weight, mood_score, or sleep_quality) is required'
     }, { status: 400 });
   }
 
@@ -34,11 +37,13 @@ export async function POST(request: NextRequest) {
     .single();
 
   const updateData: Record<string, any> = {
-    data_source: 'quick',
+    data_source: source === 'photo' ? 'photo' : 'quick',
     updated_at: new Date().toISOString(),
   };
 
   if (weight !== undefined) updateData.weight = weight;
+  if (bodyFat !== undefined) updateData.body_fat_percentage = bodyFat;
+  if (muscleMass !== undefined) updateData.muscle_mass = muscleMass;
   if (mood_score !== undefined) updateData.mood_score = mood_score;
   if (sleep_quality !== undefined) updateData.sleep_quality = sleep_quality;
 
@@ -98,13 +103,18 @@ export async function POST(request: NextRequest) {
     .eq('streak_type', 'daily_record')
     .single();
 
-  // user_profilesの体重も更新
-  if (weight) {
-    const today = new Date().toISOString().split('T')[0];
-    if (record_date === today) {
+  // user_profilesの体重・体組成も更新（今日の記録の場合）
+  const today = new Date().toISOString().split('T')[0];
+  if (record_date === today) {
+    const profileUpdate: Record<string, any> = {};
+    if (weight) profileUpdate.weight = weight;
+    if (bodyFat) profileUpdate.body_fat_percentage = bodyFat;
+    if (muscleMass) profileUpdate.muscle_mass = muscleMass;
+
+    if (Object.keys(profileUpdate).length > 0) {
       await supabase
         .from('user_profiles')
-        .update({ weight })
+        .update(profileUpdate)
         .eq('id', user.id);
     }
   }

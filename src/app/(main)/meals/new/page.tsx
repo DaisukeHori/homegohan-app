@@ -7,8 +7,9 @@ import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
   Sparkles, Check, Calendar, Clock, Sun, Coffee, Moon,
   Utensils, Plus, Minus, Refrigerator, FileHeart, Wand2,
-  AlertCircle, Save, RefreshCw
+  AlertCircle, Save, RefreshCw, Scale
 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 // カラーパレット
 const colors = {
@@ -32,8 +33,8 @@ const colors = {
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 type DishDetail = { name: string; cal: number; calories_kcal?: number; role: string; ingredient?: string };
-type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result';
-type PhotoMode = 'auto' | 'meal' | 'fridge' | 'health_checkup';
+type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result' | 'weight-result';
+type PhotoMode = 'auto' | 'meal' | 'fridge' | 'health_checkup' | 'weight_scale';
 
 // 写真モード設定
 const PHOTO_MODES: Record<PhotoMode, { icon: any; label: string; description: string; color: string; bg: string }> = {
@@ -41,6 +42,7 @@ const PHOTO_MODES: Record<PhotoMode, { icon: any; label: string; description: st
   meal: { icon: Utensils, label: '食事', description: '食事の写真を記録', color: colors.accent, bg: colors.accentLight },
   fridge: { icon: Refrigerator, label: '冷蔵庫', description: '冷蔵庫の中身を登録', color: colors.blue, bg: colors.blueLight },
   health_checkup: { icon: FileHeart, label: '健診', description: '健康診断結果を読み取り', color: colors.success, bg: colors.successLight },
+  weight_scale: { icon: Scale, label: '体重計', description: '体重計の写真を読み取り', color: colors.warning, bg: colors.warningLight },
 };
 
 // 冷蔵庫解析結果
@@ -74,6 +76,21 @@ interface HealthCheckupData {
   creatinine?: number;
   egfr?: number;
   uricAcid?: number;
+}
+
+// 体重計解析結果
+interface WeightScaleData {
+  weight: number;
+  bodyFat?: number;
+  muscleMass?: number;
+  confidence: number;
+  rawText?: string;
+}
+
+// 体重履歴データ
+interface WeightHistoryItem {
+  record_date: string;
+  weight: number;
 }
 
 const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; bg: string }> = {
@@ -141,6 +158,14 @@ export default function MealCaptureModal() {
   const [healthConfidence, setHealthConfidence] = useState(0);
   const [healthNotes, setHealthNotes] = useState('');
   const [isSavingHealth, setIsSavingHealth] = useState(false);
+
+  // 体重計解析結果
+  const [weightData, setWeightData] = useState<WeightScaleData | null>(null);
+  const [weightHistory, setWeightHistory] = useState<WeightHistoryItem[]>([]);
+  const [previousWeight, setPreviousWeight] = useState<number | null>(null);
+  const [isSavingWeight, setIsSavingWeight] = useState(false);
+  const [showWeightSuccessModal, setShowWeightSuccessModal] = useState(false);
+  const [savedWeight, setSavedWeight] = useState<number | null>(null);
 
   // オートモード判別結果
   const [detectedType, setDetectedType] = useState<string | null>(null);
@@ -354,6 +379,107 @@ export default function MealCaptureModal() {
     }
   };
 
+  // 体重履歴を取得
+  const fetchWeightHistory = async () => {
+    try {
+      const res = await fetch('/api/health/records/history?days=7');
+      if (res.ok) {
+        const data = await res.json();
+        setWeightHistory(data || []);
+        // 直近の体重を取得
+        if (data && data.length > 0) {
+          setPreviousWeight(data[data.length - 1].weight);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch weight history:', error);
+    }
+  };
+
+  // 体重計写真解析
+  const analyzeWeightScale = async () => {
+    if (photoFiles.length === 0) return;
+
+    setStep('analyzing');
+    setIsAnalyzing(true);
+
+    try {
+      const file = photoFiles[0];
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch('/api/ai/analyze-weight-scale', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64, mimeType: file.type }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setWeightData(data);
+        // 履歴も取得
+        await fetchWeightHistory();
+        setStep('weight-result');
+      } else {
+        alert('体重計の読み取りに失敗しました。');
+        setStep('capture');
+      }
+    } catch (error) {
+      console.error('Weight scale analysis error:', error);
+      alert('エラーが発生しました。');
+      setStep('capture');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // 体重を保存
+  const saveWeightRecord = async () => {
+    if (!weightData) return;
+
+    setIsSavingWeight(true);
+
+    try {
+      const res = await fetch('/api/health/records/quick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weight: weightData.weight,
+          bodyFat: weightData.bodyFat,
+          muscleMass: weightData.muscleMass,
+          recordedAt: new Date().toISOString(),
+          source: 'photo',
+        }),
+      });
+
+      if (res.ok) {
+        setSavedWeight(weightData.weight);
+        setShowWeightSuccessModal(true);
+      } else {
+        alert('体重の保存に失敗しました。');
+      }
+    } catch (error) {
+      console.error('Failed to save weight:', error);
+      alert('エラーが発生しました。');
+    } finally {
+      setIsSavingWeight(false);
+    }
+  };
+
+  // 成功モーダルを閉じてリセット
+  const handleWeightSuccessClose = () => {
+    setShowWeightSuccessModal(false);
+    setStep('mode-select');
+    setWeightData(null);
+    setPhotoPreviews([]);
+    setPhotoFiles([]);
+    setPreviousWeight(null);
+    setWeightHistory([]);
+  };
+
   // 統合解析（モードに応じて分岐）
   const analyzeByMode = async () => {
     if (photoFiles.length === 0) return;
@@ -383,6 +509,9 @@ export default function MealCaptureModal() {
         break;
       case 'health_checkup':
         await analyzeHealthCheckup();
+        break;
+      case 'weight_scale':
+        await analyzeWeightScale();
         break;
       case 'meal':
       default:
@@ -556,12 +685,13 @@ export default function MealCaptureModal() {
           <Camera size={20} color={colors.accent} />
           <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
             {step === 'mode-select' && 'モード選択'}
-            {step === 'capture' && (photoMode === 'meal' ? '食事を撮影' : photoMode === 'fridge' ? '冷蔵庫を撮影' : photoMode === 'health_checkup' ? '健診結果を撮影' : '写真を撮影')}
+            {step === 'capture' && (photoMode === 'meal' ? '食事を撮影' : photoMode === 'fridge' ? '冷蔵庫を撮影' : photoMode === 'health_checkup' ? '健診結果を撮影' : photoMode === 'weight_scale' ? '体重計を撮影' : '写真を撮影')}
             {step === 'analyzing' && 'AI解析中...'}
             {step === 'result' && '解析結果'}
             {step === 'select-date' && '日時を選択'}
             {step === 'fridge-result' && '冷蔵庫の中身'}
             {step === 'health-result' && '健康診断結果'}
+            {step === 'weight-result' && '体重計読み取り結果'}
           </span>
         </div>
         <div className="w-10" />
@@ -581,7 +711,7 @@ export default function MealCaptureModal() {
               撮影するものを選んでください
             </p>
 
-            <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="grid grid-cols-2 gap-3 mb-6" style={{ gridTemplateRows: 'repeat(3, 1fr)' }}>
               {(Object.entries(PHOTO_MODES) as [PhotoMode, typeof PHOTO_MODES.auto][]).map(([mode, config]) => {
                 const isSelected = photoMode === mode;
                 const Icon = config.icon;
@@ -639,6 +769,7 @@ export default function MealCaptureModal() {
               {photoMode === 'meal' && '食事の写真を撮影してください。AIが料理を認識します。'}
               {photoMode === 'fridge' && '冷蔵庫の中を撮影してください。食材を認識します。'}
               {photoMode === 'health_checkup' && '健康診断結果を撮影してください。数値を読み取ります。'}
+              {photoMode === 'weight_scale' && '体重計のディスプレイを撮影してください。体重を読み取ります。'}
             </p>
             
             {/* 選択済み写真のプレビュー */}
@@ -1382,6 +1513,208 @@ export default function MealCaptureModal() {
             >
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
+          </motion.div>
+        )}
+
+        {/* 体重計結果 */}
+        {step === 'weight-result' && weightData && (
+          <motion.div
+            key="weight-result"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 p-4 overflow-y-auto"
+          >
+            {/* 信頼度表示 */}
+            <div className="flex items-center justify-center gap-2 mb-4">
+              <div
+                className="px-3 py-1 rounded-full text-sm"
+                style={{
+                  background: weightData.confidence >= 0.8 ? colors.successLight : colors.warningLight,
+                  color: weightData.confidence >= 0.8 ? colors.success : colors.warning,
+                }}
+              >
+                信頼度: {(weightData.confidence * 100).toFixed(0)}%
+              </div>
+            </div>
+
+            {/* 体重表示（メイン） */}
+            <div
+              className="rounded-2xl p-6 mb-4 text-center"
+              style={{ background: colors.warningLight }}
+            >
+              <Scale size={32} color={colors.warning} className="mx-auto mb-2" />
+              <div className="text-5xl font-bold mb-1" style={{ color: colors.text }}>
+                {weightData.weight.toFixed(1)}
+                <span className="text-2xl ml-1">kg</span>
+              </div>
+              {previousWeight && (
+                <div
+                  className="text-lg"
+                  style={{
+                    color: weightData.weight <= previousWeight ? colors.success : colors.accent,
+                  }}
+                >
+                  {weightData.weight === previousWeight ? (
+                    '前回と同じ'
+                  ) : weightData.weight < previousWeight ? (
+                    `${(previousWeight - weightData.weight).toFixed(1)} kg 減`
+                  ) : (
+                    `+${(weightData.weight - previousWeight).toFixed(1)} kg`
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 体組成データ（あれば） */}
+            {(weightData.bodyFat || weightData.muscleMass) && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {weightData.bodyFat && (
+                  <div
+                    className="rounded-xl p-4 text-center"
+                    style={{ background: colors.card, border: `1px solid ${colors.border}` }}
+                  >
+                    <div className="text-sm mb-1" style={{ color: colors.textMuted }}>
+                      体脂肪率
+                    </div>
+                    <div className="text-2xl font-bold" style={{ color: colors.text }}>
+                      {weightData.bodyFat.toFixed(1)}
+                      <span className="text-sm ml-1">%</span>
+                    </div>
+                  </div>
+                )}
+                {weightData.muscleMass && (
+                  <div
+                    className="rounded-xl p-4 text-center"
+                    style={{ background: colors.card, border: `1px solid ${colors.border}` }}
+                  >
+                    <div className="text-sm mb-1" style={{ color: colors.textMuted }}>
+                      筋肉量
+                    </div>
+                    <div className="text-2xl font-bold" style={{ color: colors.text }}>
+                      {weightData.muscleMass.toFixed(1)}
+                      <span className="text-sm ml-1">kg</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 7日間グラフ */}
+            {weightHistory.length > 0 && (
+              <div
+                className="rounded-xl p-4 mb-4"
+                style={{ background: colors.card, border: `1px solid ${colors.border}` }}
+              >
+                <div className="text-sm font-semibold mb-3" style={{ color: colors.text }}>
+                  直近7日間の推移
+                </div>
+                <ResponsiveContainer width="100%" height={120}>
+                  <LineChart
+                    data={weightHistory.map((h) => ({
+                      date: new Date(h.record_date).getDate() + '日',
+                      weight: h.weight,
+                    }))}
+                  >
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 10, fill: colors.textMuted }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      domain={['dataMin - 1', 'dataMax + 1']}
+                      tick={{ fontSize: 10, fill: colors.textMuted }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={35}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="weight"
+                      stroke={colors.accent}
+                      strokeWidth={2}
+                      dot={{ fill: colors.accent, strokeWidth: 0, r: 4 }}
+                    />
+                    <ReferenceLine
+                      y={weightData.weight}
+                      stroke={colors.warning}
+                      strokeDasharray="3 3"
+                      label={{
+                        value: '今日',
+                        position: 'right',
+                        fill: colors.warning,
+                        fontSize: 10,
+                      }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* 保存ボタン */}
+            <button
+              onClick={saveWeightRecord}
+              disabled={isSavingWeight}
+              className="w-full py-4 rounded-xl flex items-center justify-center gap-2 mb-3"
+              style={{ background: colors.warning, opacity: isSavingWeight ? 0.7 : 1 }}
+            >
+              {isSavingWeight ? (
+                <span className="animate-spin">⏳</span>
+              ) : (
+                <>
+                  <Save size={18} color="#fff" />
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+                    この体重を記録
+                  </span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                setStep('mode-select');
+                setPhotoFiles([]);
+                setPhotoPreviews([]);
+                setWeightData(null);
+              }}
+              className="w-full py-3 rounded-xl"
+              style={{ background: colors.bg }}
+            >
+              <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
+            </button>
+          </motion.div>
+        )}
+
+        {/* 体重保存成功モーダル */}
+        {showWeightSuccessModal && savedWeight && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={handleWeightSuccessClose}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-white rounded-2xl p-6 mx-4 text-center max-w-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-5xl mb-3">✅</div>
+              <h3 className="text-lg font-bold mb-2" style={{ color: colors.text }}>
+                記録しました！
+              </h3>
+              <p className="text-3xl font-bold mb-4" style={{ color: colors.warning }}>
+                {savedWeight.toFixed(1)} kg
+              </p>
+              <button
+                onClick={handleWeightSuccessClose}
+                className="w-full py-3 rounded-xl"
+                style={{ background: colors.warning }}
+              >
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>OK</span>
+              </button>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
-export type PhotoType = 'meal' | 'fridge' | 'health_checkup' | 'unknown';
+export type PhotoType = 'meal' | 'fridge' | 'health_checkup' | 'weight_scale' | 'unknown';
 
 interface ClassifyResult {
   type: PhotoType;
@@ -30,21 +30,24 @@ export async function POST(request: Request) {
 
     const prompt = `この画像の種類を判別してください。
 
-以下の3つのカテゴリから最も適切なものを選んでください：
+以下の4つのカテゴリから最も適切なものを選んでください：
 
 1. "meal" - 食事・料理の写真（お皿に盛られた料理、調理済みの食べ物、レストランでの食事など）
 2. "fridge" - 冷蔵庫の中身の写真（冷蔵庫内部、食材が並んでいる棚、買い物した食材など）
-3. "health_checkup" - 健康診断結果の写真（血液検査結果、健康診断票、検査数値が記載された書類など）
+3. "health_checkup" - 健康診断結果の写真（血液検査結果、健康診断票、検査数値が記載された書類など紙の書類）
+4. "weight_scale" - 体重計・体組成計の写真（体重計のディスプレイ、デジタル表示の数値、体脂肪率表示など）
 
 以下のJSON形式で回答してください：
 {
-  "type": "meal" または "fridge" または "health_checkup" または "unknown",
+  "type": "meal" または "fridge" または "health_checkup" または "weight_scale" または "unknown",
   "confidence": 0.0〜1.0の信頼度,
   "description": "判別理由を20文字程度で"
 }
 
 注意：
-- 上記3つに明らかに該当しない場合は "unknown" としてください
+- 上記4つに明らかに該当しない場合は "unknown" としてください
+- 体重計のディスプレイ写真は必ず "weight_scale" としてください
+- 紙の健康診断結果と体重計ディスプレイを区別してください
 - JSONのみを出力してください`;
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GOOGLE_AI_API_KEY}`;
@@ -94,7 +97,7 @@ export async function POST(request: Request) {
     const result: ClassifyResult = JSON.parse(jsonMatch[0]);
 
     // typeのバリデーション
-    const validTypes: PhotoType[] = ['meal', 'fridge', 'health_checkup', 'unknown'];
+    const validTypes: PhotoType[] = ['meal', 'fridge', 'health_checkup', 'weight_scale', 'unknown'];
     if (!validTypes.includes(result.type)) {
       result.type = 'unknown';
     }
