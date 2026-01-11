@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
   Refrigerator, Zap, UtensilsCrossed, Heart,
-  ChevronRight, Loader2, Wand2, AlertTriangle, Crown, Lock
+  ChevronRight, Loader2, Wand2, AlertTriangle, Crown
 } from "lucide-react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import {
@@ -469,15 +469,15 @@ export function V4GenerateModal({
                   </div>
                 </div>
 
-                {/* Ultimate Mode Toggle - Premium Feature */}
-                <div className="mb-6 p-4 rounded-xl opacity-60" style={{ backgroundColor: colors.bg }}>
+                {/* Ultimate Mode Toggle */}
+                <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: ultimateMode ? colors.accentLight : colors.bg }}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div
                         className="w-10 h-10 rounded-full flex items-center justify-center"
-                        style={{ backgroundColor: colors.border }}
+                        style={{ backgroundColor: ultimateMode ? colors.accent : colors.border }}
                       >
-                        <Wand2 size={18} style={{ color: colors.textMuted }} />
+                        <Wand2 size={18} style={{ color: ultimateMode ? '#fff' : colors.textMuted }} />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
@@ -495,22 +495,24 @@ export function V4GenerateModal({
                         </p>
                       </div>
                     </div>
-                    {/* Locked Toggle */}
-                    <div className="flex items-center gap-2">
-                      <Lock size={14} style={{ color: colors.textMuted }} />
-                      <div
-                        className="relative w-14 h-8 rounded-full flex-shrink-0 cursor-not-allowed"
-                        style={{ backgroundColor: '#E5E7EB' }}
-                      >
-                        <span
-                          className="absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow-md"
-                        />
-                      </div>
+                    {/* Toggle */}
+                    <button
+                      onClick={() => setUltimateMode(!ultimateMode)}
+                      className="relative w-14 h-8 rounded-full flex-shrink-0 transition-colors duration-200"
+                      style={{ backgroundColor: ultimateMode ? colors.accent : '#E5E7EB' }}
+                    >
+                      <span
+                        className="absolute top-1 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-200"
+                        style={{ left: ultimateMode ? 'calc(100% - 28px)' : '4px' }}
+                      />
+                    </button>
+                  </div>
+                  {ultimateMode && (
+                    <div className="mt-3 flex items-center gap-2 text-xs" style={{ color: colors.accent }}>
+                      <Sparkles size={12} />
+                      <span>生成後にAIが栄養バランスをチェックして自動改善します</span>
                     </div>
-                  </div>
-                  <div className="mt-3 flex items-center gap-2 text-xs" style={{ color: colors.textMuted }}>
-                    <span>準備中 - プレミアムプランで利用可能になります</span>
-                  </div>
+                  )}
                 </div>
 
                 {/* Free text note */}

@@ -1561,37 +1561,90 @@ export default function WeeklyMenuPage() {
     // weekStartDay の設定が確定するまで待機（二重フェッチ防止）
     if (!weekStartDayLoaded) return;
 
+    const CACHE_TTL = 5 * 60 * 1000; // 5分間キャッシュ有効
+
+    // 週データを取得する共通関数
+    const fetchWeekData = async (weekStartDate: Date): Promise<{ plan: WeekPlan | null; shoppingList: ShoppingListItem[] }> => {
+      const targetDate = formatLocalDate(weekStartDate);
+      const endDate = addDaysStr(targetDate, 6);
+      const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+      if (res.ok) {
+        const { dailyMeals, shoppingList: shoppingListData } = await res.json();
+        if (dailyMeals && dailyMeals.length > 0) {
+          return { plan: { days: dailyMeals }, shoppingList: shoppingListData?.items || [] };
+        }
+      }
+      return { plan: null, shoppingList: [] };
+    };
+
+    // 前後の週をバックグラウンドでプリフェッチ
+    const prefetchAdjacentWeeks = async (currentWeekStart: Date) => {
+      const prevWeekStart = new Date(currentWeekStart);
+      prevWeekStart.setDate(currentWeekStart.getDate() - 7);
+      const nextWeekStart = new Date(currentWeekStart);
+      nextWeekStart.setDate(currentWeekStart.getDate() + 7);
+
+      const prevKey = formatLocalDate(prevWeekStart);
+      const nextKey = formatLocalDate(nextWeekStart);
+      const now = Date.now();
+
+      // 前の週をプリフェッチ
+      const prevCache = weekDataCache.current.get(prevKey);
+      if (!prevCache || (now - prevCache.fetchedAt > CACHE_TTL)) {
+        fetchWeekData(prevWeekStart).then(data => {
+          weekDataCache.current.set(prevKey, { ...data, fetchedAt: Date.now() });
+        }).catch(() => {});
+      }
+
+      // 次の週をプリフェッチ
+      const nextCache = weekDataCache.current.get(nextKey);
+      if (!nextCache || (now - nextCache.fetchedAt > CACHE_TTL)) {
+        fetchWeekData(nextWeekStart).then(data => {
+          weekDataCache.current.set(nextKey, { ...data, fetchedAt: Date.now() });
+        }).catch(() => {});
+      }
+    };
+
     const fetchPlan = async () => {
+      const targetDateStr = formatLocalDate(weekStart);
+      const now = Date.now();
+
+      // キャッシュをチェック
+      const cached = weekDataCache.current.get(targetDateStr);
+      if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
+        // キャッシュヒット - 即座に反映
+        setCurrentPlan(cached.plan);
+        if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);
+        if (cached.plan) autoExpandNextMeal(cached.plan, weekDates);
+        // バックグラウンドで前後の週をプリフェッチ
+        prefetchAdjacentWeeks(weekStart);
+        return;
+      }
+
+      // キャッシュミス - APIから取得
       setLoading(true);
       try {
-        const targetDate = formatLocalDate(weekStart);
-        const endDate = addDaysStr(targetDate, 6);
-        const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-        if (res.ok) {
-          const { dailyMeals, shoppingList: shoppingListData } = await res.json();
-          if (dailyMeals && dailyMeals.length > 0) {
-            const plan = { days: dailyMeals };
-            setCurrentPlan(plan);
-            if (shoppingListData?.items) setShoppingList(shoppingListData.items);
-            // 直近の食事を自動展開
-            autoExpandNextMeal(plan, weekDates);
-          } else {
-            setCurrentPlan(null);
-          }
-        } else {
-          setCurrentPlan(null);
-        }
-        
+        const data = await fetchWeekData(weekStart);
+        // キャッシュに保存
+        weekDataCache.current.set(targetDateStr, { ...data, fetchedAt: Date.now() });
+
+        setCurrentPlan(data.plan);
+        if (data.shoppingList.length > 0) setShoppingList(data.shoppingList);
+        if (data.plan) autoExpandNextMeal(data.plan, weekDates);
+
         // DBで生成中のリクエストがあるか確認
-        const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
+        const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
         if (pendingRes.ok) {
           const { hasPending, requestId } = await pendingRes.json();
           if (hasPending && requestId) {
             // 生成中状態を復元してポーリング開始
             setIsGenerating(true);
-            subscribeToRequestStatus(targetDate, requestId);
+            subscribeToRequestStatus(targetDateStr, requestId);
           }
         }
+
+        // バックグラウンドで前後の週をプリフェッチ
+        prefetchAdjacentWeeks(weekStart);
       } catch (e) {
         console.error("Failed to fetch meal plan", e);
         setCurrentPlan(null);
@@ -1637,6 +1690,9 @@ export default function WeeklyMenuPage() {
   
   // フォールバックポーリング用の参照
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 週データキャッシュ（前後の週をプリフェッチして高速化）
+  const weekDataCache = useRef<Map<string, { plan: WeekPlan | null; shoppingList: ShoppingListItem[]; fetchedAt: number }>>(new Map());
   
   // ポーリングをクリーンアップする関数
   const cleanupPolling = useCallback(() => {
