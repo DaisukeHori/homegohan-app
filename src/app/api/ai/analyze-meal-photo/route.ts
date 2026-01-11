@@ -176,9 +176,9 @@ export async function POST(request: Request) {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'text-embedding-3-large',
+                model: 'text-embedding-3-small',
                 input: ingredient.name,
-                dimensions: 1536,
+                dimensions: 384,
               }),
             });
 
