@@ -2325,7 +2325,8 @@ export default function WeeklyMenuPage() {
     setIsCalendarExpanded(false);
     setIsDayNutritionExpanded(false);
     setExpandedMealId(null);
-    setHasAutoExpanded(false);
+    // ユーザーが明示的に日付を選択した場合は autoExpandNextMeal をスキップ
+    setHasAutoExpanded(true);
   };
 
   // Calendar memos
