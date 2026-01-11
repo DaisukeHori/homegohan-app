@@ -674,6 +674,43 @@ export default function WeeklyMenuPage() {
     }
   }, []);
 
+  // dailyMeals から献立存在日を calendarMealDates に追加
+  const updateCalendarMealDatesFromDailyMeals = useCallback((dailyMeals: any[]) => {
+    if (!dailyMeals || dailyMeals.length === 0) return;
+
+    const newDates = new Set<string>();
+    dailyMeals.forEach((day: any) => {
+      if (day.meals && day.meals.length > 0) {
+        newDates.add(day.dayDate);
+      }
+    });
+
+    if (newDates.size > 0) {
+      setCalendarMealDates(prev => {
+        const merged = new Set(prev);
+        newDates.forEach(d => merged.add(d));
+        return merged;
+      });
+    }
+  }, []);
+
+  // dailyMeals から献立存在日を同期（献立がない日は削除）
+  const syncCalendarMealDatesFromDailyMeals = useCallback((dailyMeals: any[]) => {
+    if (!dailyMeals) return;
+
+    setCalendarMealDates(prev => {
+      const updated = new Set(prev);
+      dailyMeals.forEach((day: any) => {
+        if (day.meals && day.meals.length > 0) {
+          updated.add(day.dayDate);
+        } else {
+          updated.delete(day.dayDate);
+        }
+      });
+      return updated;
+    });
+  }, []);
+
   // 週が変わるタイミングで前後2週間をプリフェッチ
   useEffect(() => {
     const prefetchAdjacentWeeks = async () => {
@@ -806,6 +843,7 @@ export default function WeeklyMenuPage() {
         if (dailyMeals && dailyMeals.length > 0) {
           setCurrentPlan({ days: dailyMeals });
           if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+          updateCalendarMealDatesFromDailyMeals(dailyMeals);
         } else {
           setCurrentPlan(null);
         }
@@ -813,7 +851,7 @@ export default function WeeklyMenuPage() {
     } catch (e) {
       console.error('Failed to refresh meal plan:', e);
     }
-  }, [weekStart]);
+  }, [weekStart, updateCalendarMealDatesFromDailyMeals]);
 
   // V4 Menu Generation Hook
   const v4Generation = useV4MenuGeneration({
@@ -1739,6 +1777,7 @@ export default function WeeklyMenuPage() {
             if (dailyMeals && dailyMeals.length > 0) {
               setCurrentPlan({ days: dailyMeals });
               if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+              updateCalendarMealDatesFromDailyMeals(dailyMeals);
             }
           }
           setIsGenerating(false);
@@ -1833,6 +1872,7 @@ export default function WeeklyMenuPage() {
                   if (dailyMeals && dailyMeals.length > 0) {
                     setCurrentPlan({ days: dailyMeals });
                     if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                    updateCalendarMealDatesFromDailyMeals(dailyMeals);
                   }
                 }
               } catch (fetchErr) {
@@ -2920,6 +2960,7 @@ export default function WeeklyMenuPage() {
           const { dailyMeals } = await refreshRes.json();
           if (dailyMeals && dailyMeals.length > 0) {
             setCurrentPlan({ days: dailyMeals });
+            updateCalendarMealDatesFromDailyMeals(dailyMeals);
           }
         }
         setActiveModal(null);
@@ -3035,6 +3076,7 @@ export default function WeeklyMenuPage() {
               if (dailyMeals && dailyMeals.length > 0) {
                 setCurrentPlan({ days: dailyMeals });
                 if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                updateCalendarMealDatesFromDailyMeals(dailyMeals);
               }
             }
             setIsRegenerating(false);
@@ -3137,6 +3179,7 @@ export default function WeeklyMenuPage() {
           const { dailyMeals } = await refreshRes.json();
           if (dailyMeals && dailyMeals.length > 0) {
             setCurrentPlan({ days: dailyMeals });
+            syncCalendarMealDatesFromDailyMeals(dailyMeals);
           } else {
             setCurrentPlan(null);
           }
@@ -3291,6 +3334,7 @@ export default function WeeklyMenuPage() {
           if (dailyMeals && dailyMeals.length > 0) {
             setCurrentPlan({ days: dailyMeals });
             if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+            updateCalendarMealDatesFromDailyMeals(dailyMeals);
           }
         }
         setIsAnalyzingPhoto(false);
@@ -7112,6 +7156,7 @@ export default function WeeklyMenuPage() {
                                         if (dailyMeals && dailyMeals.length > 0) {
                                           setCurrentPlan({ days: dailyMeals });
                                           if (shoppingListData?.items) setShoppingList(shoppingListData.items);
+                                          updateCalendarMealDatesFromDailyMeals(dailyMeals);
                                         }
                                       }
                                     }
