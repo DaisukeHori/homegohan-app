@@ -354,7 +354,7 @@ export default function AIChatBubble() {
     }
   };
 
-  // メッセージ送信
+  // メッセージ送信（リアルストリーミング対応）
   const sendMessage = async () => {
     if (!inputText.trim() || !currentSessionId || isSending) return;
 
@@ -362,82 +362,146 @@ export default function AIChatBubble() {
     setInputText('');
     setIsSending(true);
 
-    // 楽観的UI更新
-    const tempUserMsg: Message = {
-      id: `temp-${Date.now()}`,
-      role: 'user',
-      content: userMessage,
-      createdAt: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, tempUserMsg]);
+    // 楽観的UI更新：ユーザーメッセージを即時表示
+    const tempUserMsgId = `temp-user-${Date.now()}`;
+    const tempAiMsgId = `temp-ai-${Date.now()}`;
+
+    setMessages(prev => [
+      ...prev,
+      {
+        id: tempUserMsgId,
+        role: 'user',
+        content: userMessage,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: tempAiMsgId,
+        role: 'assistant',
+        content: '',
+        createdAt: new Date().toISOString(),
+        isStreaming: true,
+      },
+    ]);
 
     try {
-      const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages`, {
+      // ストリーミングモードでAPI呼び出し
+      const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const aiMessageContent = data.aiMessage.content;
-        
-        // 一時メッセージを実際のメッセージに置き換え（AI応答は空で開始）
-        const userMsg: Message = {
-          id: data.userMessage.id,
-          role: 'user',
-          content: data.userMessage.content,
-          isImportant: data.userMessage.isImportant || false,
-          createdAt: data.userMessage.createdAt,
-        };
-        
-        const aiMsg: Message = {
-          id: data.aiMessage.id,
-          role: 'assistant',
-          content: '', // ストリーミング用に空で開始
-          proposedActions: data.aiMessage.proposedActions ? {
-            ...data.aiMessage.proposedActions,
-            actionId: data.aiMessage.id,
-          } : null,
-          createdAt: data.aiMessage.createdAt,
-          isStreaming: true,
-        };
-        
-        setMessages(prev => {
-          const filtered = prev.filter(m => m.id !== tempUserMsg.id);
-          return [...filtered, userMsg, aiMsg];
-        });
-        
-        // ストリーミング表示を開始
-        setTimeout(() => {
-          startStreaming(data.aiMessage.id, aiMessageContent);
-        }, 100);
-        
-        // アクションが自動実行された場合、ストリーミング完了後に成功メッセージを追加
-        if (data.actionExecuted && data.actionResult) {
-          const streamDuration = Math.ceil(aiMessageContent.length / 3) * 20 + 500;
+      if (!res.ok) {
+        throw new Error(`HTTP error: ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new Error('No reader available');
+      }
+
+      const decoder = new TextDecoder();
+      let accumulatedContent = '';
+      let finalData: any = null;
+
+      // SSEストリームを読み取り
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+
+            if (data === '[DONE]') {
+              // ストリーム完了
+              continue;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+
+              // 最終データ（メタ情報含む）
+              if (parsed.userMessage && parsed.aiMessage) {
+                finalData = parsed;
+                continue;
+              }
+
+              // コンテンツチャンク
+              if (parsed.choices?.[0]?.delta?.content) {
+                accumulatedContent += parsed.choices[0].delta.content;
+
+                // UIをリアルタイム更新
+                setMessages(prev => prev.map(m =>
+                  m.id === tempAiMsgId
+                    ? { ...m, content: accumulatedContent }
+                    : m
+                ));
+              }
+            } catch {
+              // JSONパースエラーは無視
+            }
+          }
+        }
+      }
+
+      // ストリーム完了後：メッセージを最終状態に更新
+      if (finalData) {
+        setMessages(prev => prev.map(m => {
+          if (m.id === tempUserMsgId) {
+            return {
+              ...m,
+              id: finalData.userMessage.id,
+              isImportant: finalData.userMessage.isImportant || false,
+            };
+          }
+          if (m.id === tempAiMsgId) {
+            return {
+              ...m,
+              id: finalData.aiMessage.id,
+              content: accumulatedContent || finalData.aiMessage.content,
+              proposedActions: finalData.aiMessage.proposedActions ? {
+                ...finalData.aiMessage.proposedActions,
+                actionId: finalData.aiMessage.id,
+              } : null,
+              isStreaming: false,
+            };
+          }
+          return m;
+        }));
+
+        // アクション自動実行結果を表示
+        if (finalData.actionExecuted && finalData.actionResult) {
           setTimeout(() => {
             setMessages(prev => [...prev, {
               id: `action-result-${Date.now()}`,
               role: 'assistant',
-              content: `✅ ${ACTION_LABELS[data.actionResult.actionType]?.label || 'アクション'}を実行しました！`,
+              content: `✅ ${ACTION_LABELS[finalData.actionResult.actionType]?.label || 'アクション'}を実行しました！`,
               createdAt: new Date().toISOString(),
             }]);
-            
-            // 他のコンポーネントにデータ更新を通知
-            window.dispatchEvent(new CustomEvent('mealPlanUpdated', { 
-              detail: { actionType: data.actionResult.actionType, result: data.actionResult.result }
+
+            window.dispatchEvent(new CustomEvent('mealPlanUpdated', {
+              detail: { actionType: finalData.actionResult.actionType, result: finalData.actionResult.result }
             }));
-          }, streamDuration);
+          }, 300);
         }
       } else {
-        // エラー時は一時メッセージを削除
-        setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
-        alert('メッセージの送信に失敗しました');
+        // finalDataがない場合（フォールバック）
+        setMessages(prev => prev.map(m =>
+          m.id === tempAiMsgId
+            ? { ...m, content: accumulatedContent, isStreaming: false }
+            : m
+        ));
       }
+
     } catch (e) {
       console.error('Failed to send message:', e);
-      setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
+      // エラー時は一時メッセージを削除してエラー表示
+      setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAiMsgId));
+      alert('メッセージの送信に失敗しました');
     } finally {
       setIsSending(false);
     }

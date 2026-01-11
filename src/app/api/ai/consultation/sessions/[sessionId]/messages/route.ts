@@ -55,193 +55,154 @@ export async function GET(
 
 // ユーザーの詳細情報を取得してシステムプロンプトを構築
 async function buildSystemPrompt(supabase: any, userId: string): Promise<string> {
-  // 1. ユーザープロフィール取得
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  // 2. 今日の日付を取得
+  // 日付計算を先に行う
   const today = new Date().toISOString().split('T')[0];
-
-  // 3. 今日の献立を取得（日付ベースモデル）
-  let todayMeals: any[] = [];
-  const { data: dailyMeal } = await supabase
-    .from('user_daily_meals')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('day_date', today)
-    .single();
-
-  if (dailyMeal) {
-    const { data } = await supabase
-      .from('planned_meals')
-      .select(`
-        id,
-        meal_type,
-        dish_name,
-        dishes,
-        calories_kcal,
-        protein_g,
-        fat_g,
-        carbs_g,
-        is_completed,
-        mode,
-        memo,
-        user_daily_meals!inner(day_date)
-      `)
-      .eq('daily_meal_id', dailyMeal.id);
-    todayMeals = data || [];
-  }
-
-  // 4. 明日〜1週間の献立も取得（日付ベースモデル）
   const oneWeekLater = new Date();
   oneWeekLater.setDate(oneWeekLater.getDate() + 7);
-  let upcomingMeals: any[] = [];
-  const { data: upcomingData } = await supabase
-    .from('planned_meals')
-    .select(`
-      id,
-      meal_type,
-      dish_name,
-      calories_kcal,
-      is_completed,
-      mode,
-      user_daily_meals!inner(day_date)
-    `)
-    .eq('user_id', userId)
-    .gt('user_daily_meals.day_date', today)
-    .lte('user_daily_meals.day_date', oneWeekLater.toISOString().split('T')[0])
-    .limit(30);
-  upcomingMeals = upcomingData || [];
-
-  // 5. 最近の食事データ（過去14日分）
   const fourteenDaysAgo = new Date();
   fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
-  
-  let recentMeals: any[] = [];
-  const { data: recentData } = await supabase
-    .from('planned_meals')
-    .select(`
-      id,
-      meal_type,
-      dish_name,
-      dishes,
-      calories_kcal,
-      protein_g,
-      fat_g,
-      carbs_g,
-      is_completed,
-      mode,
+
+  // ===== 並列クエリ実行（レイテンシー改善） =====
+  const [
+    profileResult,
+    dailyMealResult,
+    upcomingResult,
+    recentResult,
+    healthRecordsResult,
+    healthGoalsResult,
+    nutritionTargetsResult,
+    badgesResult,
+    insightsResult,
+    shoppingListResult,
+    pantryResult,
+    collectionsResult,
+    pastSessionsResult,
+    importantMessagesResult,
+  ] = await Promise.all([
+    // 1. ユーザープロフィール
+    supabase.from('user_profiles').select('*').eq('id', userId).single(),
+
+    // 2. 今日のdaily_meal ID
+    supabase.from('user_daily_meals').select('id').eq('user_id', userId).eq('day_date', today).single(),
+
+    // 3. 明日〜1週間の献立
+    supabase.from('planned_meals').select(`
+      id, meal_type, dish_name, calories_kcal, is_completed, mode,
       user_daily_meals!inner(day_date)
-    `)
-    .eq('user_id', userId)
-    .gte('user_daily_meals.day_date', fourteenDaysAgo.toISOString().split('T')[0])
-    .lt('user_daily_meals.day_date', today)
-    .limit(50);
-  recentMeals = recentData || [];
+    `).eq('user_id', userId)
+      .gt('user_daily_meals.day_date', today)
+      .lte('user_daily_meals.day_date', oneWeekLater.toISOString().split('T')[0])
+      .limit(30),
 
-  // 3. 健康記録（過去14日分）
-  const { data: healthRecords } = await supabase
-    .from('health_records')
-    .select('*')
-    .eq('user_id', userId)
-    .gte('record_date', fourteenDaysAgo.toISOString().split('T')[0])
-    .order('record_date', { ascending: false })
-    .limit(14);
+    // 4. 過去14日の食事
+    supabase.from('planned_meals').select(`
+      id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode,
+      user_daily_meals!inner(day_date)
+    `).eq('user_id', userId)
+      .gte('user_daily_meals.day_date', fourteenDaysAgo.toISOString().split('T')[0])
+      .lt('user_daily_meals.day_date', today)
+      .limit(50),
 
-  // 5. 健康目標（IDを含める）
-  const { data: healthGoals } = await supabase
-    .from('health_goals')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'active');
+    // 5. 健康記録（過去14日）
+    supabase.from('health_records').select('*')
+      .eq('user_id', userId)
+      .gte('record_date', fourteenDaysAgo.toISOString().split('T')[0])
+      .order('record_date', { ascending: false })
+      .limit(14),
 
-  // 6. 栄養目標
-  const { data: nutritionTargets } = await supabase
-    .from('nutrition_targets')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
+    // 6. 健康目標
+    supabase.from('health_goals').select('*').eq('user_id', userId).eq('status', 'active'),
 
-  // 7. 獲得バッジ
-  const { data: badges } = await supabase
-    .from('user_badges')
-    .select(`
-      obtained_at,
-      badges(name, description)
-    `)
-    .eq('user_id', userId)
-    .order('obtained_at', { ascending: false })
-    .limit(10);
+    // 7. 栄養目標
+    supabase.from('nutrition_targets').select('*').eq('user_id', userId).single(),
 
-  // 8. AIインサイト（最新のもの）
-  const { data: insights } = await supabase
-    .from('health_insights')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(5);
+    // 8. 獲得バッジ
+    supabase.from('user_badges').select('obtained_at, badges(name, description)')
+      .eq('user_id', userId)
+      .order('obtained_at', { ascending: false })
+      .limit(10),
 
-  // 9. 買い物リスト（IDを含める）- アクティブな買い物リストを使用
+    // 9. AIインサイト
+    supabase.from('health_insights').select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5),
+
+    // 10. アクティブな買い物リスト
+    supabase.from('shopping_lists').select('id').eq('user_id', userId).eq('status', 'active').maybeSingle(),
+
+    // 11. 冷蔵庫/パントリー
+    supabase.from('pantry_items').select('id, name, amount, category, expiration_date, added_at')
+      .eq('user_id', userId)
+      .order('expiration_date', { ascending: true, nullsFirst: false }),
+
+    // 12. レシピコレクション
+    supabase.from('recipe_collections').select('id, name, recipe_ids').eq('user_id', userId).limit(10),
+
+    // 13. 過去のセッション要約
+    supabase.from('ai_consultation_sessions').select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+      .eq('user_id', userId)
+      .eq('status', 'closed')
+      .not('summary', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(5),
+
+    // 14. 重要メッセージ
+    supabase.from('ai_consultation_messages').select(`
+      content, importance_reason, created_at, role, metadata,
+      ai_consultation_sessions!inner(user_id, title)
+    `).eq('is_important', true)
+      .eq('ai_consultation_sessions.user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(20),
+  ]);
+
+  // 結果を変数に展開
+  const profile = profileResult.data;
+  const dailyMeal = dailyMealResult.data;
+  const upcomingMeals = upcomingResult.data || [];
+  const recentMeals = recentResult.data || [];
+  const healthRecords = healthRecordsResult.data;
+  const healthGoals = healthGoalsResult.data;
+  const nutritionTargets = nutritionTargetsResult.data;
+  const badges = badgesResult.data;
+  const insights = insightsResult.data;
+  const activeShoppingList = shoppingListResult.data;
+  const pantryItems = pantryResult.data || [];
+  const recipeCollections = collectionsResult.data;
+  const pastSessions = pastSessionsResult.data;
+  const importantMessages = importantMessagesResult.data;
+
+  // ===== 依存クエリ（並列実行後） =====
+  // 今日の献立（daily_meal IDが必要）
+  let todayMeals: any[] = [];
+  // 買い物リストアイテム（shopping_list IDが必要）
   let shoppingList: any[] = [];
-  const { data: activeShoppingList } = await supabase
-    .from('shopping_lists')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .maybeSingle();
 
-  if (activeShoppingList) {
-    const { data: shoppingData } = await supabase
-      .from('shopping_list_items')
-      .select('id, item_name, quantity, category, is_checked')
-      .eq('shopping_list_id', activeShoppingList.id)
-      .order('category', { ascending: true });
-    shoppingList = shoppingData || [];
+  const dependentQueries = [];
+
+  if (dailyMeal) {
+    dependentQueries.push(
+      supabase.from('planned_meals').select(`
+        id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode, memo,
+        user_daily_meals!inner(day_date)
+      `).eq('daily_meal_id', dailyMeal.id).then((r: any) => { todayMeals = r.data || []; })
+    );
   }
 
-  // 10. 冷蔵庫/パントリー（IDを含める）- user_idで取得
-  const { data: pantryData } = await supabase
-    .from('pantry_items')
-    .select('id, name, amount, category, expiration_date, added_at')
-    .eq('user_id', userId)
-    .order('expiration_date', { ascending: true, nullsFirst: false });
-  const pantryItems = pantryData || [];
+  if (activeShoppingList) {
+    dependentQueries.push(
+      supabase.from('shopping_list_items').select('id, item_name, quantity, category, is_checked')
+        .eq('shopping_list_id', activeShoppingList.id)
+        .order('category', { ascending: true })
+        .then((r: any) => { shoppingList = r.data || []; })
+    );
+  }
 
-  // 11. レシピコレクション
-  const { data: recipeCollections } = await supabase
-    .from('recipe_collections')
-    .select('id, name, recipe_ids')
-    .eq('user_id', userId)
-    .limit(10);
-
-  // 12. 過去のセッション要約（最新5件）
-  const { data: pastSessions } = await supabase
-    .from('ai_consultation_sessions')
-    .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
-    .eq('user_id', userId)
-    .eq('status', 'closed')
-    .not('summary', 'is', null)
-    .order('updated_at', { ascending: false })
-    .limit(5);
-
-  // 13. 重要メッセージ（最新20件）
-  const { data: importantMessages } = await supabase
-    .from('ai_consultation_messages')
-    .select(`
-      content,
-      importance_reason,
-      created_at,
-      role,
-      metadata,
-      ai_consultation_sessions!inner(user_id, title)
-    `)
-    .eq('is_important', true)
-    .eq('ai_consultation_sessions.user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(20);
+  // 依存クエリを並列実行
+  if (dependentQueries.length > 0) {
+    await Promise.all(dependentQueries);
+  }
 
   // プロフィール情報を整形
   const profileInfo = profile ? `
@@ -966,13 +927,193 @@ export async function POST(
         })),
     ];
 
+    // ストリーミングモードかどうかを確認
+    const url = new URL(request.url);
+    const useStreaming = url.searchParams.get('stream') === 'true';
+
     // knowledge-gpt（ナレッジベース付きAI）で応答生成
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+    // ストリーミングモード
+    if (useStreaming) {
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          let aiContent = '';
+
+          try {
+            // knowledge-gptをストリーミングで呼び出し
+            const knowledgeGptRes = await fetch(`${supabaseUrl}/functions/v1/knowledge-gpt`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${serviceRoleKey}`,
+              },
+              body: JSON.stringify({
+                messages,
+                mode: 'chat',
+                stream: true,
+              }),
+            });
+
+            if (!knowledgeGptRes.ok || !knowledgeGptRes.body) {
+              throw new Error('knowledge-gpt streaming failed');
+            }
+
+            // SSEを読み取って転送
+            const reader = knowledgeGptRes.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const data = line.slice(6);
+                  if (data === '[DONE]') {
+                    continue;
+                  }
+                  try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    if (content) {
+                      aiContent += content;
+                      // クライアントに転送（フロントエンドが期待する形式）
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                        choices: [{ delta: { content } }]
+                      })}\n\n`));
+                    }
+                  } catch {
+                    // JSON parse error, skip
+                  }
+                }
+              }
+            }
+
+            // ストリーミング完了後、DB保存とアクション実行
+            const actionMatch = aiContent.match(/```action\s*([\s\S]*?)```/);
+            let proposedActions = null;
+            if (actionMatch) {
+              try {
+                proposedActions = JSON.parse(actionMatch[1]);
+              } catch {
+                // parse error
+              }
+            }
+
+            // 重要度チェック（非同期）
+            const checkImportanceAsync = async () => {
+              try {
+                const importanceCheck = await openai.chat.completions.create({
+                  model: 'gpt-5-mini',
+                  messages: [
+                    { role: 'system', content: 'ユーザーメッセージが重要かどうかをJSON形式で判断: {"isImportant": true/false, "reason": "理由", "category": "カテゴリ"}' },
+                    { role: 'user', content: userMessage }
+                  ],
+                  max_completion_tokens: 200,
+                  response_format: { type: 'json_object' },
+                } as any);
+                const result = JSON.parse(importanceCheck.choices[0]?.message?.content || '{}');
+                if (result.isImportant) {
+                  await supabase.from('ai_consultation_messages').update({
+                    is_important: true,
+                    importance_reason: result.reason,
+                    metadata: { autoMarked: true, category: result.category },
+                  }).eq('id', savedUserMessage.id);
+                }
+              } catch { /* ignore */ }
+            };
+            checkImportanceAsync();
+
+            // AI応答を保存
+            const { data: savedAiMessage } = await supabase
+              .from('ai_consultation_messages')
+              .insert({
+                session_id: params.sessionId,
+                role: 'assistant',
+                content: aiContent.replace(/```action[\s\S]*?```/g, '').trim(),
+                proposed_actions: proposedActions,
+              })
+              .select()
+              .single();
+
+            // アクション自動実行
+            let actionResult = null;
+            if (proposedActions && savedAiMessage) {
+              await supabase.from('ai_action_logs').insert({
+                session_id: params.sessionId,
+                message_id: savedAiMessage.id,
+                action_type: proposedActions.type,
+                action_params: proposedActions.params || {},
+                status: 'pending',
+              });
+
+              try {
+                const executeRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/ai/consultation/actions/${savedAiMessage.id}/execute`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Cookie': request.headers.get('cookie') || '',
+                  },
+                });
+                if (executeRes.ok) {
+                  actionResult = await executeRes.json();
+                }
+              } catch { /* ignore */ }
+            }
+
+            // セッション更新
+            await supabase.from('ai_consultation_sessions').update({ updated_at: new Date().toISOString() }).eq('id', params.sessionId);
+
+            // 完了メッセージを送信（フロントエンドが期待する形式）
+            const finalData = {
+              userMessage: {
+                id: savedUserMessage.id,
+                content: savedUserMessage.content,
+                isImportant: savedUserMessage.is_important || false,
+                createdAt: savedUserMessage.created_at,
+              },
+              aiMessage: {
+                id: savedAiMessage?.id,
+                content: aiContent.replace(/```action[\s\S]*?```/g, '').trim(),
+                proposedActions: proposedActions,
+                createdAt: savedAiMessage?.created_at,
+              },
+              actionExecuted: actionResult?.success || false,
+              actionResult,
+            };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalData)}\n\n`));
+
+          } catch (error: any) {
+            console.error('Streaming error:', error);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\n\n`));
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // 非ストリーミングモード（従来通り）
     let aiContent = 'すみません、応答を生成できませんでした。';
-    
+
     try {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-      
       // NOTE:
       // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンです。
       //   これは献立生成ロジックの v1/v2（legacy/dataset）とは別の概念です。
@@ -1023,13 +1164,16 @@ export async function POST(
       }
     }
 
-    // ユーザーメッセージの重要度をAIに判断させる
-    const importanceCheck = await openai.chat.completions.create({
-      model: 'gpt-5-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `あなたはユーザーのメッセージが「重要な情報」を含むかどうかを判断するアシスタントです。
+    // ユーザーメッセージの重要度をAIに判断させる（非同期・バックグラウンド実行）
+    // レスポンス時間を改善するため、重要度チェックはawaitしない
+    const checkImportanceAsync = async () => {
+      try {
+        const importanceCheck = await openai.chat.completions.create({
+          model: 'gpt-5-mini',
+          messages: [
+            {
+              role: 'system',
+              content: `あなたはユーザーのメッセージが「重要な情報」を含むかどうかを判断するアシスタントです。
 
 以下の情報は「重要」と判断してください：
 1. 具体的な数値データ（体重、カロリー、血圧、目標値など）
@@ -1052,43 +1196,38 @@ JSONで回答してください：
   "reason": "重要と判断した理由（重要な場合のみ）",
   "category": "体重|カロリー|目標|健康状態|好み|決定事項|その他"
 }`
-        },
-        {
-          role: 'user',
-          content: userMessage
+            },
+            {
+              role: 'user',
+              content: userMessage
+            }
+          ],
+          max_completion_tokens: 200,
+          response_format: { type: 'json_object' },
+        } as any);
+
+        const importanceResult = JSON.parse(importanceCheck.choices[0]?.message?.content || '{}');
+        if (importanceResult.isImportant) {
+          await supabase
+            .from('ai_consultation_messages')
+            .update({
+              is_important: true,
+              importance_reason: importanceResult.reason || null,
+              metadata: {
+                ...savedUserMessage.metadata,
+                autoMarked: true,
+                category: importanceResult.category || null,
+              },
+            })
+            .eq('id', savedUserMessage.id);
         }
-      ],
-      max_completion_tokens: 200,
-      response_format: { type: 'json_object' },
-    } as any);
+      } catch (e) {
+        console.error('Importance check failed (async):', e);
+      }
+    };
 
-    let userMessageImportance = { isImportant: false, reason: null as string | null, category: null as string | null };
-    try {
-      const importanceResult = JSON.parse(importanceCheck.choices[0]?.message?.content || '{}');
-      userMessageImportance = {
-        isImportant: importanceResult.isImportant || false,
-        reason: importanceResult.reason || null,
-        category: importanceResult.category || null,
-      };
-    } catch (e) {
-      console.error('Failed to parse importance check:', e);
-    }
-
-    // ユーザーメッセージが重要な場合、更新
-    if (userMessageImportance.isImportant) {
-      await supabase
-        .from('ai_consultation_messages')
-        .update({
-          is_important: true,
-          importance_reason: userMessageImportance.reason,
-          metadata: { 
-            ...savedUserMessage.metadata,
-            autoMarked: true,
-            category: userMessageImportance.category,
-          },
-        })
-        .eq('id', savedUserMessage.id);
-    }
+    // バックグラウンドで実行（awaitしない）
+    checkImportanceAsync();
 
     // AI応答を保存
     const { data: savedAiMessage, error: aiMsgError } = await supabase
@@ -1154,8 +1293,8 @@ JSONで回答してください：
         id: savedUserMessage.id,
         role: 'user',
         content: userMessage,
-        isImportant: userMessageImportance.isImportant,
-        importanceReason: userMessageImportance.reason,
+        isImportant: false, // 重要度チェックは非同期で後から更新される
+        importanceReason: null,
         createdAt: savedUserMessage.created_at,
       },
       aiMessage: {

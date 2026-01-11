@@ -99,6 +99,7 @@ interface ChatCompletionRequest {
   temperature?: number;
   response_format?: { type: string };
   mode?: 'json' | 'chat';
+  stream?: boolean;  // ストリーミングモード
 }
 
 interface ChatCompletionResponse {
@@ -261,6 +262,104 @@ async function runChat(
   return content;
 }
 
+// ===== ストリーミングチャット実行 =====
+async function* runChatStream(
+  messages: ChatMessage[],
+  mode: string = 'chat',
+  supabase?: SupabaseClient
+): AsyncGenerator<string, void, unknown> {
+  const openai = getOpenAI();
+
+  // メッセージをOpenAI形式に変換
+  const openaiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = messages.map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  console.log("[runChatStream] Starting stream with", openaiMessages.length, "messages");
+
+  // ツールを使用可能にするかどうか（chatモードのみ）
+  const useTools = mode === 'chat' && supabase;
+
+  // ストリーミング呼び出し
+  const stream = await openai.chat.completions.create({
+    model: "gpt-5-mini",
+    messages: openaiMessages,
+    ...(useTools ? { tools } : {}),
+    max_completion_tokens: 4000,
+    reasoning_effort: "low",
+    stream: true,
+  } as any) as unknown as AsyncIterable<any>;
+
+  const toolCalls: any[] = [];
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices?.[0]?.delta;
+
+    // テキストコンテンツがあれば出力
+    if (delta?.content) {
+      yield delta.content;
+    }
+
+    // ツール呼び出しの蓄積
+    if (delta?.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        if (tc.index !== undefined) {
+          if (!toolCalls[tc.index]) {
+            toolCalls[tc.index] = { id: '', function: { name: '', arguments: '' } };
+          }
+          if (tc.id) toolCalls[tc.index].id = tc.id;
+          if (tc.function?.name) toolCalls[tc.index].function.name = tc.function.name;
+          if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments;
+        }
+      }
+    }
+  }
+
+  // ツール呼び出しがあった場合は実行して再度ストリーム
+  if (toolCalls.length > 0 && supabase) {
+    console.log("[runChatStream] Tool calls detected:", toolCalls.length);
+
+    // アシスタントメッセージ（ツール呼び出し含む）を追加
+    openaiMessages.push({
+      role: "assistant",
+      content: null,
+      tool_calls: toolCalls,
+    } as any);
+
+    // 各ツールを実行
+    for (const toolCall of toolCalls) {
+      if (!toolCall.function.name) continue;
+      const args = JSON.parse(toolCall.function.arguments || '{}');
+      console.log(`[runChatStream] Executing tool: ${toolCall.function.name}`, args);
+
+      const toolResult = await executeTool(toolCall.function.name, args, supabase);
+
+      openaiMessages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: toolResult,
+      } as any);
+    }
+
+    // 再度ストリーミング呼び出し
+    const followUpStream = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: openaiMessages,
+      max_completion_tokens: 4000,
+      reasoning_effort: "low",
+      stream: true,
+    } as any) as unknown as AsyncIterable<any>;
+
+    for await (const chunk of followUpStream) {
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (content) {
+        yield content;
+      }
+    }
+  }
+}
+
 // ===== Edge Function HTTP ハンドラ =====
 Deno.serve(async (req) => {
   // CORS preflight
@@ -313,10 +412,11 @@ Deno.serve(async (req) => {
     }
 
     const mode = body.mode || 'json';
+    const isStreaming = body.stream === true;
 
     console.log("Knowledge-GPT received request");
     console.log("Messages count:", body.messages.length);
-    console.log("Mode:", mode);
+    console.log("Mode:", mode, "Streaming:", isStreaming);
 
     // LLMトークン使用量計測
     const executionId = generateExecutionId();
@@ -325,6 +425,69 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
+    // ストリーミングモード
+    if (isStreaming) {
+      const chatId = `chatcmpl-${crypto.randomUUID()}`;
+      const created = Math.floor(Date.now() / 1000);
+
+      // ReadableStreamを作成してSSEを返す
+      const stream = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder();
+
+          try {
+            for await (const chunk of runChatStream(body.messages, mode, supabase)) {
+              // OpenAI互換のSSE形式
+              const data = {
+                id: chatId,
+                object: "chat.completion.chunk",
+                created,
+                model: "knowledge-gpt-1",
+                choices: [{
+                  index: 0,
+                  delta: { content: chunk },
+                  finish_reason: null,
+                }],
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+            }
+
+            // 終了メッセージ
+            const doneData = {
+              id: chatId,
+              object: "chat.completion.chunk",
+              created,
+              model: "knowledge-gpt-1",
+              choices: [{
+                index: 0,
+                delta: {},
+                finish_reason: "stop",
+              }],
+            };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneData)}\n\n`));
+            controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+          } catch (e: any) {
+            console.error("Streaming error:", e);
+            const errorData = { error: { message: e?.message ?? String(e) } };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorData)}\n\n`));
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      });
+    }
+
+    // 非ストリーミングモード（従来通り）
     const output = await withOpenAIUsageContext({
       functionName: "knowledge-gpt",
       executionId,
