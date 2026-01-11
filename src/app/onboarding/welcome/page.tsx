@@ -1,10 +1,29 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { motion } from "framer-motion";
 
 // 初回ウェルカム画面 (OB-UI-03)
 export default function OnboardingWelcomePage() {
+  const router = useRouter();
+  const [isSkipping, setIsSkipping] = useState(false);
+
+  const handleSkip = async () => {
+    if (isSkipping) return;
+    setIsSkipping(true);
+    try {
+      // オンボーディングを完了としてマークしてからリダイレクト
+      await fetch('/api/onboarding/complete', { method: 'POST' });
+      router.push('/home');
+    } catch (error) {
+      console.error('Failed to skip onboarding:', error);
+      // エラーでもホームに遷移
+      router.push('/home');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-8 sm:py-12 text-center overflow-hidden relative">
 
@@ -99,12 +118,13 @@ export default function OnboardingWelcomePage() {
           animate={{ opacity: 1 }}
           transition={{ delay: 1.2 }}
         >
-          <Link
-            href="/home"
-            className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          <button
+            onClick={handleSkip}
+            disabled={isSkipping}
+            className="text-sm text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
           >
-            あとで設定する
-          </Link>
+            {isSkipping ? 'しばらくお待ちください...' : 'あとで設定する'}
+          </button>
         </motion.div>
 
       </motion.div>
