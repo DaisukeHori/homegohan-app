@@ -5,43 +5,93 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
 
   // 全パラメータをログ出力（デバッグ用）
+  console.log('[auth/callback] ========== AUTH CALLBACK START ==========')
   console.log('[auth/callback] Full URL:', requestUrl.toString())
   console.log('[auth/callback] All params:', Object.fromEntries(requestUrl.searchParams.entries()))
+  console.log('[auth/callback] Headers:', Object.fromEntries(request.headers.entries()))
+
+  // Supabase からのエラーパラメータをチェック
+  const error_param = requestUrl.searchParams.get('error')
+  const error_description = requestUrl.searchParams.get('error_description')
+  const error_code = requestUrl.searchParams.get('error_code')
+
+  if (error_param) {
+    console.error('[auth/callback] Supabase returned error:', {
+      error: error_param,
+      description: error_description,
+      code: error_code
+    })
+    // エラーページにリダイレクト（エラー情報付き）
+    const loginUrl = new URL('/login', requestUrl.origin)
+    loginUrl.searchParams.set('error', error_description || error_param || 'Authentication failed')
+    return NextResponse.redirect(loginUrl)
+  }
 
   const code = requestUrl.searchParams.get('code')
   const token_hash = requestUrl.searchParams.get('token_hash')
+  const token = requestUrl.searchParams.get('token') // PKCE token
   const type = requestUrl.searchParams.get('type')
   let next = requestUrl.searchParams.get('next') ?? '/home'
+
+  console.log('[auth/callback] Auth params:', { code: !!code, token_hash: !!token_hash, token: !!token, type })
 
   const supabase = createClient()
   let authSuccess = false
 
-  // OAuth コールバック（code パラメータ）
+  // OAuth/PKCE コールバック（code パラメータ）
   if (code) {
-    console.log('[auth/callback] Processing OAuth code')
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
-    authSuccess = !error
-    if (error) {
-      console.error('[auth/callback] OAuth code exchange error:', error)
-    } else {
-      console.log('[auth/callback] OAuth code exchange successful')
+    console.log('[auth/callback] Processing code exchange (PKCE/OAuth)')
+    try {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+      authSuccess = !error
+      if (error) {
+        console.error('[auth/callback] Code exchange error:', error.message, error)
+      } else {
+        console.log('[auth/callback] Code exchange successful, user:', data.user?.email)
+      }
+    } catch (e) {
+      console.error('[auth/callback] Code exchange exception:', e)
     }
   }
   // メール確認コールバック（token_hash パラメータ）
   else if (token_hash && type) {
-    console.log('[auth/callback] Processing email verification, type:', type)
-    const { error } = await supabase.auth.verifyOtp({
-      token_hash,
-      type: type as 'signup' | 'email' | 'recovery' | 'invite',
-    })
-    authSuccess = !error
-    if (error) {
-      console.error('[auth/callback] Email verification error:', error)
-    } else {
-      console.log('[auth/callback] Email verification successful')
+    console.log('[auth/callback] Processing email verification with token_hash, type:', type)
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash,
+        type: type as 'signup' | 'email' | 'recovery' | 'invite',
+      })
+      authSuccess = !error
+      if (error) {
+        console.error('[auth/callback] Email verification error:', error.message, error)
+      } else {
+        console.log('[auth/callback] Email verification successful, user:', data.user?.email)
+      }
+    } catch (e) {
+      console.error('[auth/callback] Email verification exception:', e)
+    }
+  }
+  // PKCE token パラメータ（Supabase が直接渡す場合）
+  else if (token && type) {
+    console.log('[auth/callback] Processing PKCE token, type:', type)
+    try {
+      // token パラメータは通常 Supabase サーバーが処理するが、
+      // フォールバックとして verifyOtp を試行
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash: token,
+        type: type as 'signup' | 'email' | 'recovery' | 'invite',
+      })
+      authSuccess = !error
+      if (error) {
+        console.error('[auth/callback] PKCE token verification error:', error.message, error)
+      } else {
+        console.log('[auth/callback] PKCE token verification successful, user:', data.user?.email)
+      }
+    } catch (e) {
+      console.error('[auth/callback] PKCE token verification exception:', e)
     }
   } else {
-    console.log('[auth/callback] No code or token_hash found, checking for existing session')
+    console.log('[auth/callback] No auth params found, checking for existing session')
   }
 
   // authSuccessでなくても、既存セッションがあるかチェック
