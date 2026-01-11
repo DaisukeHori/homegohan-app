@@ -85,6 +85,24 @@ const QUESTIONS = [
     ]
   },
   {
+    id: 'target_weight',
+    text: '目標体重を教えてください',
+    type: 'number',
+    placeholder: '例: 55',
+    min: 30,
+    max: 200,
+    showIf: (answers: Record<string, any>) =>
+      answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
+  },
+  {
+    id: 'target_date',
+    text: 'いつまでに達成したいですか？',
+    type: 'date',
+    showIf: (answers: Record<string, any>) =>
+      answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
+    allowSkip: true,
+  },
+  {
     id: 'weight_change_rate',
     text: 'どのくらいのペースで変えたいですか？',
     type: 'choice',
@@ -179,8 +197,61 @@ const QUESTIONS = [
       { label: '🦴 骨粗しょう症', value: '骨粗しょう症' },
       { label: '🩺 貧血', value: '貧血' },
       { label: '🦶 痛風', value: '痛風' },
+      { label: '🌿 便秘・下痢', value: '消化器系' },
+      { label: '😪 不眠・睡眠障害', value: '睡眠障害' },
+      { label: '🤧 花粉症・アレルギー', value: 'アレルギー' },
+      { label: '🌡️ 甲状腺疾患', value: '甲状腺疾患' },
+      { label: '🧠 自律神経失調', value: '自律神経' },
+      { label: '😰 うつ・不安障害', value: 'メンタル' },
     ],
     allowSkip: true,
+  },
+  {
+    id: 'body_concerns',
+    text: '体の悩みはありますか？\n（複数選択可、なければスキップ）',
+    type: 'multi_choice',
+    allowSkip: true,
+    options: [
+      { label: '🥶 冷え性', value: 'cold_sensitivity' },
+      { label: '🦵 むくみやすい', value: 'swelling_prone' },
+      { label: '💤 疲れやすい', value: 'fatigue' },
+      { label: '🤕 肩こり・腰痛', value: 'stiff_shoulders' },
+      { label: '😵 頭痛持ち', value: 'headache' },
+      { label: '🌡️ 汗をかきにくい', value: 'low_sweating' },
+      { label: '🍂 肌荒れ', value: 'skin_trouble' },
+      { label: '💇 髪のパサつき', value: 'dry_hair' },
+    ],
+  },
+  {
+    id: 'sleep_quality',
+    text: '睡眠の質はいかがですか？',
+    type: 'choice',
+    options: [
+      { label: '😴 良好', value: 'good', description: 'よく眠れている' },
+      { label: '😐 普通', value: 'average', description: '特に問題なし' },
+      { label: '😫 悪い', value: 'poor', description: '睡眠に問題がある' },
+    ]
+  },
+  {
+    id: 'stress_level',
+    text: '日々のストレスレベルは？',
+    type: 'choice',
+    options: [
+      { label: '😌 低い', value: 'low', description: 'リラックスできている' },
+      { label: '😐 普通', value: 'medium', description: '日常的なストレス' },
+      { label: '😰 高い', value: 'high', description: 'ストレスを感じている' },
+    ]
+  },
+  {
+    id: 'pregnancy_status',
+    text: '妊娠・授乳の状況を教えてください',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => answers.gender === 'female',
+    options: [
+      { label: '🙅‍♀️ 該当なし', value: 'none', description: '妊娠・授乳中ではない' },
+      { label: '🤰 妊娠中', value: 'pregnant', description: '現在妊娠中' },
+      { label: '🤱 授乳中', value: 'nursing', description: '現在授乳中' },
+    ]
   },
   {
     id: 'medications',
@@ -198,11 +269,41 @@ const QUESTIONS = [
   },
   {
     id: 'allergies',
-    text: '食物アレルギーや苦手な食材は？\n（なければスキップ）',
+    text: '食物アレルギーはありますか？\n（なければスキップ）',
     type: 'tags',
-    placeholder: '例: 卵、エビ、ピーマン',
+    placeholder: '例: 卵、エビ、小麦',
     suggestions: ['卵', 'エビ', 'カニ', '小麦', '乳製品', 'そば', '落花生', 'ナッツ類', '貝類', '魚卵', '大豆'],
     allowSkip: true,
+  },
+  {
+    id: 'dislikes',
+    text: '苦手な食材はありますか？\n（アレルギー以外で避けたいもの）',
+    type: 'tags',
+    placeholder: '例: ピーマン、セロリ、レバー',
+    suggestions: ['ピーマン', 'セロリ', 'パクチー', 'レバー', 'ホルモン', 'なす', 'ゴーヤ', 'しいたけ', '納豆', 'グリンピース', 'にんじん', 'トマト'],
+    allowSkip: true,
+  },
+  {
+    id: 'favorite_ingredients',
+    text: '好きな食材を教えてください\n（献立に積極的に入れます）',
+    type: 'tags',
+    placeholder: '例: 鶏肉、ブロッコリー、アボカド',
+    suggestions: ['鶏肉', '豚肉', '牛肉', '魚', 'エビ', '豆腐', '卵', 'ブロッコリー', 'ほうれん草', 'トマト', 'アボカド', 'きのこ', 'さつまいも', 'キャベツ'],
+    allowSkip: true,
+  },
+  {
+    id: 'diet_style',
+    text: '食事スタイルを教えてください',
+    type: 'choice',
+    allowSkip: true,
+    options: [
+      { label: '🍽️ 通常', value: 'normal', description: '特に制限なし' },
+      { label: '🥬 ベジタリアン', value: 'vegetarian', description: '肉を食べない' },
+      { label: '🌱 ヴィーガン', value: 'vegan', description: '動物性食品を食べない' },
+      { label: '🐟 ペスカタリアン', value: 'pescatarian', description: '魚は食べる' },
+      { label: '🌾 グルテンフリー', value: 'gluten_free', description: '小麦を避ける' },
+      { label: '🥑 ケトジェニック', value: 'keto', description: '低糖質・高脂質' },
+    ]
   },
   {
     id: 'cooking_experience',
@@ -298,6 +399,14 @@ const QUESTIONS = [
       { label: '🔥 ガスコンロ', value: 'stove:gas' },
       { label: '⚡ IHコンロ', value: 'stove:ih' },
     ],
+  },
+  {
+    id: 'hobbies',
+    text: '趣味を教えてください\n（献立提案の参考にします）',
+    type: 'tags',
+    placeholder: '例: 読書、ヨガ、ランニング',
+    suggestions: ['読書', '料理', 'ヨガ', 'ランニング', '筋トレ', 'サイクリング', '登山', '映画', 'ゲーム', '旅行', '音楽', 'カフェ巡り', '釣り', 'キャンプ'],
+    allowSkip: true,
   },
 ];
 
@@ -643,6 +752,37 @@ function OnboardingQuestionsContent() {
                     <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
                   </Button>
                 </form>
+              )}
+
+              {/* 日付入力 */}
+              {currentQuestion.type === 'date' && (
+                <div className="space-y-3 sm:space-y-4">
+                  <Input
+                    type="date"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                    className="py-5 sm:py-6 text-base sm:text-lg rounded-xl sm:rounded-2xl border-gray-200 focus:border-orange-400 focus:ring-orange-400/20 text-center"
+                  />
+                  <div className="flex gap-2 sm:gap-3">
+                    {currentQuestion.allowSkip && (
+                      <Button
+                        variant="ghost"
+                        onClick={handleSkip}
+                        className="flex-1 py-4 sm:py-5 rounded-xl sm:rounded-2xl text-gray-400 hover:text-gray-600 text-sm sm:text-base"
+                      >
+                        スキップ
+                      </Button>
+                    )}
+                    <Button
+                      onClick={() => handleAnswer(inputValue)}
+                      disabled={!inputValue}
+                      className="flex-1 py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold text-sm sm:text-base"
+                    >
+                      次へ
+                    </Button>
+                  </div>
+                </div>
               )}
 
               {/* 単一選択 */}

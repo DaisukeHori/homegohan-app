@@ -66,7 +66,7 @@ async function withRetry<T>(
 // Embeddings / Search
 // =========================================================
 
-async function embedText(text: string, dimensions = 1536): Promise<number[]> {
+async function embedText(text: string, dimensions = 384): Promise<number[]> {
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -80,7 +80,7 @@ async function embedText(text: string, dimensions = 1536): Promise<number[]> {
         },
         body: JSON.stringify({
           input: text,
-          model: "text-embedding-3-large",
+          model: "text-embedding-3-small",
           dimensions,
         }),
       });

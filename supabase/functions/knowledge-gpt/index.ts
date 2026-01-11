@@ -18,7 +18,7 @@ function getOpenAI(): OpenAI {
 async function embedText(text: string, dimensions: number = 384): Promise<number[]> {
   const openai = getOpenAI();
   const response = await openai.embeddings.create({
-    model: "text-embedding-3-large",
+    model: "text-embedding-3-small",
     input: text,
     dimensions,
   });

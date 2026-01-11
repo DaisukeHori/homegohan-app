@@ -31,12 +31,43 @@ export async function POST() {
       return NextResponse.json({ error: fetchError.message }, { status: 500 })
     }
 
-    // 完了フラグを設定
+    // ===== 自動変換処理 =====
+    // nutrition_goal → fitness_goals への変換
+    const goalToFitnessMapping: Record<string, string[]> = {
+      'lose_weight': ['lose_weight'],
+      'gain_muscle': ['build_muscle'],
+      'maintain': ['improve_energy'],
+      'athlete_performance': ['build_muscle', 'improve_energy'],
+    }
+    const fitnessGoals = profile.nutrition_goal
+      ? goalToFitnessMapping[profile.nutrition_goal] || []
+      : []
+
+    // nutrition_goal → goal_text への変換
+    const goalToTextMapping: Record<string, string> = {
+      'lose_weight': '健康的に減量する',
+      'gain_muscle': '筋肉をつける',
+      'maintain': '現在の体型を維持する',
+      'athlete_performance': 'アスリートとしてパフォーマンスを向上させる',
+    }
+    const goalText = profile.nutrition_goal
+      ? goalToTextMapping[profile.nutrition_goal] || ''
+      : ''
+
+    // exercise_frequency × exercise_duration_per_session → weekly_exercise_minutes
+    const weeklyExerciseMinutes =
+      (profile.exercise_frequency || 0) * (profile.exercise_duration_per_session || 30)
+
+    // 完了フラグを設定（自動変換データも同時に保存）
     const { error: updateError } = await supabase
       .from('user_profiles')
       .update({
         onboarding_completed_at: now,
         updated_at: now,
+        // 自動変換データ
+        fitness_goals: fitnessGoals,
+        goal_text: goalText,
+        weekly_exercise_minutes: weeklyExerciseMinutes,
       })
       .eq('id', user.id)
 

@@ -414,7 +414,7 @@ ${candidateList}
 }
 
 // Embedding API を呼び出す
-export async function embedTexts(texts: string[], dimensions = 1536): Promise<number[][]> {
+export async function embedTexts(texts: string[], dimensions = 384): Promise<number[][]> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OpenAI API Key is missing");
 
@@ -425,7 +425,7 @@ export async function embedTexts(texts: string[], dimensions = 1536): Promise<nu
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "text-embedding-3-large",
+      model: "text-embedding-3-small",
       input: texts,
       dimensions,
     }),

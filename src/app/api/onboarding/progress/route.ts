@@ -57,6 +57,8 @@ export async function POST(request: Request) {
     if (answers.height) updates.height = parseFloat(answers.height)
     if (answers.weight) updates.weight = parseFloat(answers.weight)
     if (answers.nutrition_goal) updates.nutrition_goal = answers.nutrition_goal
+    if (answers.target_weight) updates.target_weight = parseFloat(answers.target_weight)
+    if (answers.target_date) updates.target_date = answers.target_date
     if (answers.weight_change_rate) updates.weight_change_rate = answers.weight_change_rate
     if (answers.exercise_types && !answers.exercise_types.includes('none')) {
       updates.exercise_types = answers.exercise_types
@@ -68,15 +70,30 @@ export async function POST(request: Request) {
     if (answers.health_conditions && !answers.health_conditions.includes('none')) {
       updates.health_conditions = answers.health_conditions
     }
+    // 体の悩み（個別フラグに展開）
+    if (answers.body_concerns?.length) {
+      updates.cold_sensitivity = answers.body_concerns.includes('cold_sensitivity')
+      updates.swelling_prone = answers.body_concerns.includes('swelling_prone')
+      // 将来的に他のフラグも追加可能
+    }
+    if (answers.sleep_quality) updates.sleep_quality = answers.sleep_quality
+    if (answers.stress_level) updates.stress_level = answers.stress_level
+    if (answers.pregnancy_status) updates.pregnancy_status = answers.pregnancy_status
     if (answers.medications && !answers.medications.includes('none')) {
       updates.medications = answers.medications
     }
-    if (answers.allergies?.length) {
+    // diet_flags（アレルギーと苦手な食材）
+    if (answers.allergies?.length || answers.dislikes?.length) {
       updates.diet_flags = {
-        allergies: answers.allergies,
-        dislikes: [],
+        allergies: answers.allergies || [],
+        dislikes: answers.dislikes || [],
       }
     }
+    // 好きな食材
+    if (answers.favorite_ingredients?.length) {
+      updates.favorite_ingredients = answers.favorite_ingredients
+    }
+    if (answers.diet_style) updates.diet_style = answers.diet_style
     if (answers.cooking_experience) updates.cooking_experience = answers.cooking_experience
     if (answers.cooking_time) updates.weekday_cooking_minutes = parseInt(answers.cooking_time)
     if (answers.cuisine_preference?.length) {
@@ -97,6 +114,10 @@ export async function POST(request: Request) {
     if (answers.kitchen_appliances?.length) appliances.push(...answers.kitchen_appliances)
     if (answers.stove_type) appliances.push(answers.stove_type)
     if (appliances.length > 0) updates.kitchen_appliances = appliances
+    // 趣味
+    if (answers.hobbies?.length) {
+      updates.hobbies = answers.hobbies
+    }
 
     // デフォルト値の補完
     if (!updates.nickname) updates.nickname = 'Guest'

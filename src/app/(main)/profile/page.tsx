@@ -79,6 +79,7 @@ function ProfilePageContent() {
   const [activeTab, setActiveTab] = useState<TabType>('basic');
   const [isSaving, setIsSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<UserProfile>>({});
+  const [isLoading, setIsLoading] = useState(true);
 
   // 未入力項目ガイドモード
   const [isGuidedMode, setIsGuidedMode] = useState(false);
@@ -89,13 +90,43 @@ function ProfilePageContent() {
 
   useEffect(() => {
     const getData = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      setIsLoading(true);
+
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
       setUser(user);
-      
+
       if (user) {
-        const { data } = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        console.log('[Profile] Fetch result:', {
+          hasData: !!data,
+          error: error?.message,
+          dataKeys: data ? Object.keys(data).length : 0
+        });
+
+        if (error) {
+          console.error('[Profile] Error fetching profile:', error);
+        }
+
         if (data) {
+          console.log('[Profile] Raw data sample:', {
+            age: data.age,
+            height: data.height,
+            weight: data.weight,
+            nickname: data.nickname
+          });
           const domainProfile = toUserProfile(data);
+          console.log('[Profile] Converted profile:', {
+            age: domainProfile.age,
+            height: domainProfile.height,
+            weight: domainProfile.weight,
+            nickname: domainProfile.nickname
+          });
           setProfile(domainProfile);
           setEditForm(domainProfile);
         }
@@ -111,6 +142,8 @@ function ProfilePageContent() {
           console.error("Badge fetch error", e);
         }
       }
+
+      setIsLoading(false);
     };
     getData();
   }, []);
@@ -204,6 +237,14 @@ function ProfilePageContent() {
 
   // 栄養目標の計算
   const nutritionTarget = profile ? calculateNutritionTarget(profile) : null;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
