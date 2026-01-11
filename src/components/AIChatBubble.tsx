@@ -2,13 +2,14 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  MessageCircle, X, Send, Sparkles, ChevronDown, 
-  Check, XCircle, Loader2, Calendar, ShoppingCart, 
+import {
+  MessageCircle, X, Send, Sparkles, ChevronDown,
+  Check, XCircle, Loader2, Calendar, ShoppingCart,
   Target, UtensilsCrossed, BookOpen, Star, Archive, MoreVertical,
   Plus, Trash2, CheckCircle, Refrigerator, Heart, FolderPlus,
-  Activity, User, Edit
+  Activity, User, Edit, CalendarDays
 } from "lucide-react";
+import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 
 // シンプルなマークダウンパーサー
 const parseMarkdown = (text: string): string => {
@@ -151,7 +152,41 @@ export default function AIChatBubble() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [showMessageMenu, setShowMessageMenu] = useState<string | null>(null);
   const [isClosingSession, setIsClosingSession] = useState(false);
-  
+  const [showDayMenuModal, setShowDayMenuModal] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [v4Progress, setV4Progress] = useState<string | null>(null);
+
+  // V4 献立生成フック
+  const {
+    isGenerating: isGeneratingDayMenu,
+    generate: generateV4,
+    subscribeToProgress,
+  } = useV4MenuGeneration({
+    onGenerationComplete: () => {
+      setV4Progress(null);
+      // 成功メッセージをチャットに追加
+      setMessages(prev => [...prev, {
+        id: `v4-success-${Date.now()}`,
+        role: 'assistant',
+        content: '✅ 献立の作成が完了しました！献立表で確認できます。',
+        createdAt: new Date().toISOString(),
+      }]);
+      // 他のコンポーネントに通知
+      window.dispatchEvent(new CustomEvent('mealPlanUpdated', {
+        detail: { actionType: 'generate_day_menu' }
+      }));
+    },
+    onError: (error) => {
+      setV4Progress(null);
+      setMessages(prev => [...prev, {
+        id: `v4-error-${Date.now()}`,
+        role: 'assistant',
+        content: `❌ 献立の作成に失敗しました: ${error}`,
+        createdAt: new Date().toISOString(),
+      }]);
+    },
+  });
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const streamingRef = useRef<{ messageId: string; fullContent: string; currentIndex: number } | null>(null);
@@ -502,21 +537,21 @@ export default function AIChatBubble() {
   // セッションを終了して要約を生成
   const closeSession = async () => {
     if (!currentSessionId || isClosingSession) return;
-    
+
     setIsClosingSession(true);
     try {
       const res = await fetch(
         `/api/ai/consultation/sessions/${currentSessionId}/close`,
         { method: 'POST' }
       );
-      
+
       if (res.ok) {
         const data = await res.json();
         // セッション一覧を更新
         await fetchSessions();
         // 新しいセッションを作成
         await createNewSession();
-        
+
         if (data.summary) {
           // 要約完了メッセージを表示
           setMessages(prev => [
@@ -534,6 +569,53 @@ export default function AIChatBubble() {
       console.error('Failed to close session:', e);
     } finally {
       setIsClosingSession(false);
+    }
+  };
+
+  // 1日献立変更を実行（V4直接呼び出し）
+  const generateDayMenu = async () => {
+    if (isGeneratingDayMenu) return;
+
+    setShowDayMenuModal(false);
+
+    // 日付をフォーマット
+    const dateObj = new Date(selectedDate);
+    const formattedDate = `${dateObj.getMonth() + 1}月${dateObj.getDate()}日`;
+
+    // 開始メッセージをチャットに追加
+    setMessages(prev => [...prev, {
+      id: `v4-start-${Date.now()}`,
+      role: 'assistant',
+      content: `🍳 ${formattedDate}の献立を作成中...`,
+      createdAt: new Date().toISOString(),
+    }]);
+
+    try {
+      // V4 API を直接呼び出し
+      const targetSlots = [
+        { date: selectedDate, mealType: 'breakfast' as const },
+        { date: selectedDate, mealType: 'lunch' as const },
+        { date: selectedDate, mealType: 'dinner' as const },
+      ];
+
+      const result = await generateV4({
+        targetSlots,
+        constraints: {},
+        note: `${formattedDate}の献立を作成`,
+        ultimateMode: false,
+      });
+
+      // 進捗を購読
+      if (result?.requestId) {
+        subscribeToProgress(result.requestId, (progress) => {
+          if (progress.message) {
+            setV4Progress(progress.message);
+          }
+        });
+      }
+    } catch (e: any) {
+      console.error('Failed to generate day menu:', e);
+      // エラーはフックのonErrorで処理される
     }
   };
 
@@ -876,9 +958,29 @@ export default function AIChatBubble() {
               )}
             </div>
 
+            {/* クイックアクションバー */}
+            {isAuthenticated !== false && currentSessionId && (
+              <div
+                className="px-3 pt-2 pb-1 border-t flex gap-2 overflow-x-auto"
+                style={{ background: colors.card, borderColor: colors.border }}
+              >
+                <button
+                  onClick={() => setShowDayMenuModal(true)}
+                  disabled={isSending || isGeneratingDayMenu}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border whitespace-nowrap hover:bg-gray-50 transition-colors"
+                  style={{ borderColor: colors.primary, opacity: (isSending || isGeneratingDayMenu) ? 0.5 : 1 }}
+                >
+                  <CalendarDays size={14} color={colors.primary} />
+                  <span style={{ fontSize: 12, color: colors.primary, fontWeight: 500 }}>
+                    1日献立変更
+                  </span>
+                </button>
+              </div>
+            )}
+
             {/* 入力エリア */}
             {isAuthenticated !== false && (
-              <div 
+              <div
                 className="p-3 border-t"
                 style={{ background: colors.card, borderColor: colors.border }}
               >
@@ -898,8 +1000,8 @@ export default function AIChatBubble() {
                     }}
                     placeholder="メッセージを入力..."
                     className="flex-1 px-4 py-2 rounded-full border-none outline-none"
-                    style={{ 
-                      background: colors.bg, 
+                    style={{
+                      background: colors.bg,
                       fontSize: 14,
                       color: colors.text,
                     }}
@@ -909,7 +1011,7 @@ export default function AIChatBubble() {
                     onClick={sendMessage}
                     disabled={!inputText.trim() || isSending || !currentSessionId}
                     className="w-10 h-10 rounded-full flex items-center justify-center"
-                    style={{ 
+                    style={{
                       background: inputText.trim() ? colors.primary : colors.border,
                       opacity: isSending ? 0.7 : 1,
                     }}
@@ -922,7 +1024,95 @@ export default function AIChatBubble() {
           </motion.div>
         )}
       </AnimatePresence>
-      
+
+      {/* 1日献立変更モーダル */}
+      <AnimatePresence>
+        {showDayMenuModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-[50]"
+            onClick={() => setShowDayMenuModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl p-5 mx-4 w-full max-w-[320px] shadow-xl"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center"
+                  style={{ background: colors.primaryLight }}
+                >
+                  <CalendarDays size={20} color={colors.primary} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>
+                    1日献立変更
+                  </h3>
+                  <p style={{ fontSize: 12, color: colors.textMuted, margin: 0 }}>
+                    選択した日の献立を作り直します
+                  </p>
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <label style={{ fontSize: 13, color: colors.textLight, marginBottom: 6, display: 'block' }}>
+                  日付を選択
+                </label>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  max={(() => {
+                    const maxDate = new Date();
+                    maxDate.setDate(maxDate.getDate() + 14);
+                    return maxDate.toISOString().split('T')[0];
+                  })()}
+                  className="w-full px-4 py-3 rounded-xl border text-center"
+                  style={{
+                    borderColor: colors.border,
+                    fontSize: 16,
+                    color: colors.text,
+                    background: colors.bg,
+                  }}
+                />
+                <p style={{ fontSize: 11, color: colors.textMuted, marginTop: 6, textAlign: 'center' }}>
+                  今日から2週間先まで選択できます
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDayMenuModal(false)}
+                  className="flex-1 py-3 rounded-xl"
+                  style={{ background: colors.border, color: colors.textLight, fontSize: 14, fontWeight: 500 }}
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={generateDayMenu}
+                  disabled={isGeneratingDayMenu}
+                  className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2"
+                  style={{ background: colors.primary, color: '#fff', fontSize: 14, fontWeight: 500, opacity: isGeneratingDayMenu ? 0.7 : 1 }}
+                >
+                  {isGeneratingDayMenu ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Check size={16} />
+                  )}
+                  作成する
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* マークダウン用スタイル */}
       <style jsx global>{`
         .markdown-body {

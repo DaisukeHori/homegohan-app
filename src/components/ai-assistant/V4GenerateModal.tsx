@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
   Refrigerator, Zap, UtensilsCrossed, Heart,
-  ChevronRight, Loader2, Wand2, AlertTriangle, Crown
+  ChevronRight, Loader2, Wand2, AlertTriangle, Crown, CalendarDays
 } from "lucide-react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import {
@@ -22,7 +22,7 @@ import {
 // Types
 // ============================================
 
-type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range';
+type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range' | 'single_day';
 
 // LocalStorage keys for persisting range settings
 const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
@@ -88,6 +88,9 @@ export function V4GenerateModal({
   const [rangeStart, setRangeStart] = useState(weekStartDate);
   const [rangeEnd, setRangeEnd] = useState(weekEndDate);
   const [includeExisting, setIncludeExisting] = useState(false);
+
+  // Single day mode state
+  const [singleDayDate, setSingleDayDate] = useState(() => new Date().toISOString().split('T')[0]);
   
   // 今日の日付を取得（他のhooksより先に定義）
   const todayStr = useMemo(() => {
@@ -251,10 +254,17 @@ export function V4GenerateModal({
           endDate: rangeEnd,
           includeExisting,
         });
+      case 'single_day':
+        // 1日分の献立を作り直す（朝・昼・夜）
+        return [
+          { date: singleDayDate, mealType: 'breakfast' as const },
+          { date: singleDayDate, mealType: 'lunch' as const },
+          { date: singleDayDate, mealType: 'dinner' as const },
+        ];
       default:
         return [];
     }
-  }, [selectedMode, mealPlanDays, effectiveStartDate, weekEndDate, rangeStart, rangeEnd, includeExisting]);
+  }, [selectedMode, mealPlanDays, effectiveStartDate, weekEndDate, rangeStart, rangeEnd, includeExisting, singleDayDate]);
 
   // Handle generate
   const handleGenerate = async () => {
@@ -302,6 +312,15 @@ export function V4GenerateModal({
 
   // Mode selection buttons
   const modes = [
+    {
+      id: 'single_day' as const,
+      icon: CalendarDays,
+      label: '1日献立変更',
+      description: '選択した日の朝・昼・夜を作り直す',
+      color: colors.warning,
+      bg: colors.warningLight,
+      disabled: false,
+    },
     {
       id: 'empty' as const,
       icon: Sparkles,
@@ -403,6 +422,29 @@ export function V4GenerateModal({
                     </button>
                   ))}
                 </div>
+
+                {/* Single day mode options */}
+                {selectedMode === 'single_day' && (
+                  <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: colors.warningLight }}>
+                    <p className="text-sm font-bold mb-3" style={{ color: colors.warning }}>日付を選択</p>
+                    <input
+                      type="date"
+                      value={singleDayDate}
+                      min={todayStr}
+                      max={(() => {
+                        const maxDate = new Date();
+                        maxDate.setDate(maxDate.getDate() + 30);
+                        return maxDate.toISOString().split('T')[0];
+                      })()}
+                      onChange={(e) => setSingleDayDate(e.target.value < todayStr ? todayStr : e.target.value)}
+                      className="w-full p-3 rounded-lg border text-center"
+                      style={{ borderColor: colors.border, fontSize: 16 }}
+                    />
+                    <p className="text-xs mt-2 text-center" style={{ color: colors.textLight }}>
+                      今日から1ヶ月先まで選択できます
+                    </p>
+                  </div>
+                )}
 
                 {/* Range mode options */}
                 {selectedMode === 'range' && (
