@@ -4,9 +4,7 @@
     "strict": true
   },
   "imports": {
-    "@openai/agents": "npm:@openai/agents",
     "openai": "npm:openai",
     "zod": "npm:zod"
   }
 }
-
