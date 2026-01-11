@@ -3,16 +3,12 @@
 -- trigram + vector の組み合わせで高精度な検索を実現
 -- ============================================================
 
--- 必要な拡張機能を有効化（extensionsスキーマに作成）
-CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
-CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions;
-
--- search_path を設定してextensionsスキーマを参照
+-- search_path を設定してextensionsスキーマを参照（vector型を使用可能にする）
 SET search_path TO public, extensions;
 
 CREATE OR REPLACE FUNCTION search_recipes_hybrid(
   query_text text,
-  query_embedding extensions.vector(384) DEFAULT NULL,
+  query_embedding vector(384) DEFAULT NULL,
   match_count int DEFAULT 5,
   similarity_threshold numeric DEFAULT 0.15
 )
