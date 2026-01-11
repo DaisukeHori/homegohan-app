@@ -388,6 +388,29 @@ function ProfilePageContent() {
           </div>
         </div>
 
+        {/* 健康管理セクション */}
+        <div className="space-y-4 mt-8">
+          <h2 className="font-bold text-gray-900 px-2">健康管理</h2>
+
+          <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+            <button
+              onClick={() => router.push('/health/checkups')}
+              className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center text-xl">
+                🩺
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-gray-900 text-sm">健康診断記録</p>
+                <p className="text-xs text-gray-400 truncate">検査結果の記録・分析・献立への反映</p>
+              </div>
+              <div className="text-gray-300">
+                <Icons.ChevronRight className="w-5 h-5" />
+              </div>
+            </button>
+          </div>
+        </div>
+
         {/* アプリ設定リンク */}
         <div className="space-y-4 mt-8">
           <h2 className="font-bold text-gray-900 px-2">アプリ設定</h2>
