@@ -58,6 +58,34 @@ export async function POST() {
     const weeklyExerciseMinutes =
       (profile.exercise_frequency || 0) * (profile.exercise_duration_per_session || 30)
 
+    // Performance OS v3: performance_profile を完成させる
+    let finalPerformanceProfile = profile.performance_profile || {}
+
+    if (profile.nutrition_goal === 'athlete_performance' && finalPerformanceProfile?.sport?.id) {
+      const sportId = finalPerformanceProfile.sport.id
+
+      // プリセットスポーツの場合、demand_vectorを取得
+      if (sportId !== 'custom') {
+        const { data: sportPreset } = await supabase
+          .from('sport_presets')
+          .select('demand_vector, roles, name_ja')
+          .eq('id', sportId)
+          .single()
+
+        if (sportPreset) {
+          finalPerformanceProfile = {
+            ...finalPerformanceProfile,
+            sport: {
+              ...finalPerformanceProfile.sport,
+              name: sportPreset.name_ja,
+              demandVector: sportPreset.demand_vector,
+              availableRoles: sportPreset.roles, // 選択可能なロール一覧を保存
+            },
+          }
+        }
+      }
+    }
+
     // 完了フラグを設定（自動変換データも同時に保存）
     const { error: updateError } = await supabase
       .from('user_profiles')
@@ -68,6 +96,8 @@ export async function POST() {
         fitness_goals: fitnessGoals,
         goal_text: goalText,
         weekly_exercise_minutes: weeklyExerciseMinutes,
+        // Performance OS v3
+        performance_profile: finalPerformanceProfile,
       })
       .eq('id', user.id)
 
@@ -94,6 +124,8 @@ export async function POST() {
         health_conditions: profile.health_conditions,
         medications: profile.medications,
         pregnancy_status: profile.pregnancy_status,
+        // Performance OS v3: performance_profile を渡す
+        performance_profile: finalPerformanceProfile,
       }
 
       const { targetData } = calculateNutritionTargets(calculatorInput)

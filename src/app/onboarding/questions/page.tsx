@@ -94,6 +94,66 @@ const QUESTIONS = [
     showIf: (answers: Record<string, any>) =>
       answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
   },
+  // Performance OS v3: アスリート向け追加質問
+  {
+    id: 'sport_type',
+    text: '主に取り組んでいる競技は？',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => answers.nutrition_goal === 'athlete_performance',
+    options: [
+      { label: '⚽ サッカー', value: 'soccer' },
+      { label: '🏀 バスケットボール', value: 'basketball' },
+      { label: '🏐 バレーボール', value: 'volleyball' },
+      { label: '⚾ 野球', value: 'baseball' },
+      { label: '🎾 テニス', value: 'tennis' },
+      { label: '🏊 水泳', value: 'swimming' },
+      { label: '🏃 陸上競技', value: 'track_and_field' },
+      { label: '🚴 自転車', value: 'road_cycling' },
+      { label: '🥊 格闘技', value: 'martial_arts_general' },
+      { label: '🏋️ ウェイトリフティング', value: 'weightlifting' },
+      { label: '🎯 その他', value: 'custom' },
+    ]
+  },
+  {
+    id: 'sport_custom_name',
+    text: '競技名を入力してください',
+    type: 'text',
+    placeholder: '例: トライアスロン',
+    showIf: (answers: Record<string, any>) =>
+      answers.nutrition_goal === 'athlete_performance' && answers.sport_type === 'custom',
+  },
+  {
+    id: 'sport_experience',
+    text: '競技経験はどのくらいですか？',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => answers.nutrition_goal === 'athlete_performance',
+    options: [
+      { label: '🔰 初心者（1年未満）', value: 'beginner', description: '始めたばかり' },
+      { label: '📈 中級者（1〜3年）', value: 'intermediate', description: '基礎は身についている' },
+      { label: '🏆 上級者（3年以上）', value: 'advanced', description: '競技会・大会出場レベル' },
+    ]
+  },
+  {
+    id: 'training_phase',
+    text: '現在のトレーニング期は？',
+    type: 'choice',
+    showIf: (answers: Record<string, any>) => answers.nutrition_goal === 'athlete_performance',
+    options: [
+      { label: '🏋️ トレーニング期', value: 'training', description: '体力・技術向上中' },
+      { label: '🏆 試合期', value: 'competition', description: '大会・試合シーズン' },
+      { label: '⚖️ 減量期', value: 'cut', description: '体重調整中（階級制など）' },
+      { label: '🛌 回復期', value: 'recovery', description: 'オフシーズン・ケガからの復帰' },
+    ]
+  },
+  {
+    id: 'competition_date',
+    text: '次の大会・試合はいつですか？',
+    type: 'date',
+    showIf: (answers: Record<string, any>) =>
+      answers.nutrition_goal === 'athlete_performance' &&
+      (answers.training_phase === 'competition' || answers.training_phase === 'cut'),
+    allowSkip: true,
+  },
   {
     id: 'target_date',
     text: 'いつまでに達成したいですか？',

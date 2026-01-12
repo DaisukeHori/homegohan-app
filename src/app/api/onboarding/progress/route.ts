@@ -119,6 +119,43 @@ export async function POST(request: Request) {
       updates.hobbies = answers.hobbies
     }
 
+    // Performance OS v3: performance_profile 構築
+    if (answers.nutrition_goal === 'athlete_performance') {
+      const sportId = answers.sport_type === 'custom' ? 'custom' : answers.sport_type
+      const sportName = answers.sport_type === 'custom' ? answers.sport_custom_name : null
+
+      // 基本的なperformance_profileを構築
+      const performanceProfile: Record<string, any> = {
+        sport: {
+          id: sportId || null,
+          name: sportName || null,
+          role: null, // ロールはプロフィール画面で設定可能
+          experience: answers.sport_experience || 'intermediate',
+          phase: answers.training_phase || 'training',
+          demandVector: null, // complete時にプリセットから取得
+        },
+        growth: {
+          isUnder18: answers.age ? parseInt(answers.age) < 18 : false,
+          heightChangeRecent: null,
+          growthProtectionEnabled: answers.age ? parseInt(answers.age) < 18 : false,
+        },
+        cut: {
+          enabled: answers.training_phase === 'cut',
+          targetWeight: answers.target_weight ? parseFloat(answers.target_weight) : null,
+          targetDate: answers.competition_date || answers.target_date || null,
+          strategy: 'gradual',
+        },
+        priorities: {
+          protein: 'high',
+          carbs: answers.training_phase === 'competition' ? 'high' : 'moderate',
+          fat: 'moderate',
+          hydration: 'high',
+        },
+      }
+
+      updates.performance_profile = performanceProfile
+    }
+
     // デフォルト値の補完
     if (!updates.nickname) updates.nickname = 'Guest'
     if (!updates.age_group && !updates.age) updates.age_group = 'unspecified'

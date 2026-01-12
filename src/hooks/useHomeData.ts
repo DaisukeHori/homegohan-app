@@ -118,6 +118,23 @@ export const useHomeData = () => {
     loading: false,
   });
 
+  // Performance OS v3: パフォーマンス分析データ
+  const [performanceAnalysis, setPerformanceAnalysis] = useState<{
+    eligible: boolean;
+    eligibilityReason: string | null;
+    nextAction: { actionType: string; reason: string } | null;
+    recommendations: any[];
+    todayCheckin: any | null;
+    loading: boolean;
+  }>({
+    eligible: false,
+    eligibilityReason: null,
+    nextAction: null,
+    recommendations: [],
+    todayCheckin: null,
+    loading: false,
+  });
+
   const supabase = createClient();
   const todayStr = formatLocalDate(new Date());
 
@@ -257,6 +274,9 @@ export const useHomeData = () => {
 
       // 栄養分析は重いので非同期で後から取得（UIはloadingなしで先に表示）
       fetchNutritionAnalysis();
+
+      // Performance OS v3: パフォーマンス分析も非同期で取得
+      fetchPerformanceAnalysis(authUser.id);
 
     } else {
       setUser(null);
@@ -712,6 +732,96 @@ export const useHomeData = () => {
     }
   };
 
+  // Performance OS v3: パフォーマンス分析を取得
+  const fetchPerformanceAnalysis = async (userId: string) => {
+    try {
+      setPerformanceAnalysis(prev => ({ ...prev, loading: true }));
+
+      // 今日のチェックインを取得
+      const { data: todayCheckin } = await supabase
+        .from('user_performance_checkins')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('checkin_date', todayStr)
+        .maybeSingle();
+
+      // 7日分析を取得
+      const response = await fetch(`/api/performance/analyze?date=${todayStr}`);
+
+      if (response.ok) {
+        const data = await response.json();
+
+        setPerformanceAnalysis({
+          eligible: data.eligible || false,
+          eligibilityReason: data.eligibilityReason || null,
+          nextAction: data.analysis?.nextAction || null,
+          recommendations: data.analysis?.recommendations || [],
+          todayCheckin,
+          loading: false,
+        });
+      } else {
+        setPerformanceAnalysis(prev => ({
+          ...prev,
+          todayCheckin,
+          loading: false
+        }));
+      }
+    } catch (e) {
+      console.error('Performance analysis fetch error:', e);
+      setPerformanceAnalysis(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  // Performance OS v3: 30秒チェックインを保存
+  const submitPerformanceCheckin = async (checkinData: {
+    sleepHours?: number;
+    sleepQuality?: number;
+    fatigue?: number;
+    focus?: number;
+    hunger?: number;
+    trainingLoadRpe?: number;
+    trainingMinutes?: number;
+    weight?: number;
+    note?: string;
+  }) => {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return { success: false, error: 'Not authenticated' };
+
+      const { data, error } = await supabase
+        .from('user_performance_checkins')
+        .upsert({
+          user_id: authUser.id,
+          checkin_date: todayStr,
+          sleep_hours: checkinData.sleepHours,
+          sleep_quality: checkinData.sleepQuality,
+          fatigue: checkinData.fatigue,
+          focus: checkinData.focus,
+          hunger: checkinData.hunger,
+          training_load_rpe: checkinData.trainingLoadRpe,
+          training_minutes: checkinData.trainingMinutes,
+          weight: checkinData.weight,
+          note: checkinData.note,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id, checkin_date' })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Checkin save error:', error);
+        return { success: false, error: error.message };
+      }
+
+      // チェックイン後に分析を再取得
+      await fetchPerformanceAnalysis(authUser.id);
+
+      return { success: true, data };
+    } catch (e) {
+      console.error('Checkin submit error:', e);
+      return { success: false, error: 'Unknown error' };
+    }
+  };
+
   // AIが提案した献立変更を実行
   const executeNutritionSuggestion = async () => {
     // suggestionがなくても、issuesがあれば献立変更を提案
@@ -853,12 +963,15 @@ export const useHomeData = () => {
     bestMealThisWeek,
     healthSummary,
     nutritionAnalysis,
+    // Performance OS v3
+    performanceAnalysis,
     // 関数
     toggleMealCompletion,
     updateActivityLevel,
     setAnnouncement,
     setSuggestion,
     executeNutritionSuggestion,
+    submitPerformanceCheckin,
     refetch: fetchHomeData,
   };
 };

@@ -13,15 +13,45 @@ import { Icons } from "@/components/icons";
 import { calculateDailyCalories, calculateNutritionTarget } from "@/lib/nutrition-calculator";
 import { ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 
-type TabType = 'basic' | 'goals' | 'health' | 'diet' | 'cooking' | 'lifestyle';
+type TabType = 'basic' | 'goals' | 'sports' | 'health' | 'diet' | 'cooking' | 'lifestyle';
 
 const TABS: { id: TabType; label: string; icon: string }[] = [
   { id: 'basic', label: '基本', icon: '👤' },
   { id: 'goals', label: '目標', icon: '🎯' },
+  { id: 'sports', label: '競技', icon: '🏆' },
   { id: 'health', label: '健康', icon: '❤️' },
   { id: 'diet', label: '食事', icon: '🍽️' },
   { id: 'cooking', label: '調理', icon: '👨‍🍳' },
   { id: 'lifestyle', label: '生活', icon: '🏠' },
+];
+
+// Performance OS v3: スポーツ/競技関連オプション
+const SPORT_OPTIONS = [
+  { value: 'soccer', label: 'サッカー', icon: '⚽' },
+  { value: 'basketball', label: 'バスケットボール', icon: '🏀' },
+  { value: 'volleyball', label: 'バレーボール', icon: '🏐' },
+  { value: 'baseball', label: '野球', icon: '⚾' },
+  { value: 'tennis', label: 'テニス', icon: '🎾' },
+  { value: 'swimming', label: '水泳', icon: '🏊' },
+  { value: 'track_and_field', label: '陸上競技', icon: '🏃' },
+  { value: 'road_cycling', label: '自転車', icon: '🚴' },
+  { value: 'martial_arts_general', label: '格闘技', icon: '🥊' },
+  { value: 'weightlifting', label: 'ウェイトリフティング', icon: '🏋️' },
+  { value: 'custom', label: 'その他', icon: '🎯' },
+  { value: 'none', label: '特になし', icon: '❌' },
+];
+
+const EXPERIENCE_OPTIONS = [
+  { value: 'beginner', label: '初心者（1年未満）', icon: '🔰' },
+  { value: 'intermediate', label: '中級者（1〜3年）', icon: '📈' },
+  { value: 'advanced', label: '上級者（3年以上）', icon: '🏆' },
+];
+
+const PHASE_OPTIONS = [
+  { value: 'training', label: 'トレーニング期', icon: '🏋️', desc: '体力・技術向上中' },
+  { value: 'competition', label: '試合期', icon: '🏆', desc: '大会・試合シーズン' },
+  { value: 'cut', label: '減量期', icon: '⚖️', desc: '体重調整中' },
+  { value: 'recovery', label: '回復期', icon: '🛌', desc: 'オフシーズン' },
 ];
 
 const FITNESS_GOALS: { value: FitnessGoal; label: string; icon: string }[] = [
@@ -233,6 +263,27 @@ function ProfilePageContent() {
     } else {
       updateField(field, [...current, value]);
     }
+  };
+
+  // Performance OS v3: performanceProfileのネストされたフィールドを更新
+  const updatePerformanceProfile = (path: string, value: any) => {
+    const current = editForm.performanceProfile || {
+      sport: { id: null, name: null, role: null, experience: 'intermediate', phase: 'training', demandVector: null },
+      growth: { isUnder18: false, heightChangeRecent: null, growthProtectionEnabled: false },
+      cut: { enabled: false, targetWeight: null, targetDate: null, strategy: 'gradual' },
+      priorities: { protein: 'moderate', carbs: 'moderate', fat: 'moderate', hydration: 'moderate' },
+    };
+
+    const paths = path.split('.');
+    const newProfile = JSON.parse(JSON.stringify(current)); // Deep copy
+    let obj: any = newProfile;
+    for (let i = 0; i < paths.length - 1; i++) {
+      if (!obj[paths[i]]) obj[paths[i]] = {};
+      obj = obj[paths[i]];
+    }
+    obj[paths[paths.length - 1]] = value;
+
+    updateField('performanceProfile', newProfile);
   };
 
   // 栄養目標の計算
@@ -673,6 +724,119 @@ function ProfilePageContent() {
                           className="rounded-xl"
                         />
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Performance OS v3: 競技タブ */}
+                {activeTab === 'sports' && (
+                  <div className="space-y-6">
+                    {/* スポーツ選択 */}
+                    <div className="space-y-3">
+                      <Label>主に取り組んでいる競技</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {SPORT_OPTIONS.map(sport => {
+                          const currentSportId = editForm.performanceProfile?.sport?.id;
+                          return (
+                            <button
+                              key={sport.value}
+                              onClick={() => updatePerformanceProfile('sport.id', sport.value === 'none' ? null : sport.value)}
+                              className={`p-3 rounded-xl border-2 text-center transition-colors ${
+                                currentSportId === sport.value || (sport.value === 'none' && !currentSportId)
+                                  ? 'border-purple-400 bg-purple-50'
+                                  : 'border-gray-200 hover:border-purple-200'
+                              }`}
+                            >
+                              <span className="text-lg">{sport.icon}</span>
+                              <p className="text-xs font-bold mt-1">{sport.label}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* カスタム競技名（その他選択時） */}
+                    {editForm.performanceProfile?.sport?.id === 'custom' && (
+                      <div className="space-y-2">
+                        <Label>競技名を入力</Label>
+                        <Input
+                          value={editForm.performanceProfile?.sport?.name || ''}
+                          onChange={(e) => updatePerformanceProfile('sport.name', e.target.value)}
+                          className="rounded-xl"
+                          placeholder="例: トライアスロン"
+                        />
+                      </div>
+                    )}
+
+                    {/* 競技経験 */}
+                    {editForm.performanceProfile?.sport?.id && editForm.performanceProfile?.sport?.id !== 'none' && (
+                      <>
+                        <div className="space-y-3">
+                          <Label>競技経験</Label>
+                          <div className="grid grid-cols-3 gap-2">
+                            {EXPERIENCE_OPTIONS.map(exp => (
+                              <button
+                                key={exp.value}
+                                onClick={() => updatePerformanceProfile('sport.experience', exp.value)}
+                                className={`p-3 rounded-xl border-2 text-center transition-colors ${
+                                  editForm.performanceProfile?.sport?.experience === exp.value
+                                    ? 'border-purple-400 bg-purple-50'
+                                    : 'border-gray-200 hover:border-purple-200'
+                                }`}
+                              >
+                                <span className="text-lg">{exp.icon}</span>
+                                <p className="text-xs font-bold mt-1">{exp.label}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* トレーニング期 */}
+                        <div className="space-y-3">
+                          <Label>現在のトレーニング期</Label>
+                          <div className="grid grid-cols-2 gap-2">
+                            {PHASE_OPTIONS.map(phase => (
+                              <button
+                                key={phase.value}
+                                onClick={() => updatePerformanceProfile('sport.phase', phase.value)}
+                                className={`p-3 rounded-xl border-2 text-left transition-colors ${
+                                  editForm.performanceProfile?.sport?.phase === phase.value
+                                    ? 'border-purple-400 bg-purple-50'
+                                    : 'border-gray-200 hover:border-purple-200'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="text-lg">{phase.icon}</span>
+                                  <div>
+                                    <p className="text-sm font-bold">{phase.label}</p>
+                                    <p className="text-xs text-gray-500">{phase.desc}</p>
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 次の大会（試合期・減量期の場合） */}
+                        {(editForm.performanceProfile?.sport?.phase === 'competition' ||
+                          editForm.performanceProfile?.sport?.phase === 'cut') && (
+                          <div className="space-y-2">
+                            <Label>次の大会・試合日</Label>
+                            <Input
+                              type="date"
+                              value={editForm.performanceProfile?.cut?.targetDate || ''}
+                              onChange={(e) => updatePerformanceProfile('cut.targetDate', e.target.value || null)}
+                              className="rounded-xl"
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* 説明 */}
+                    <div className="bg-purple-50 rounded-xl p-4 text-sm text-purple-700">
+                      <p className="font-bold mb-1">🏆 競技プロフィールとは？</p>
+                      <p>競技に取り組んでいる方向けの機能です。トレーニング期や競技特性に合わせて、最適な栄養提案を行います。</p>
                     </div>
                   </div>
                 )}
