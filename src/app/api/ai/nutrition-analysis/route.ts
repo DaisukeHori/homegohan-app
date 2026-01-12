@@ -362,24 +362,46 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Meal not found' }, { status: 404 });
     }
 
-    // regenerate-meal-directを呼び出す
+    // generate-menu-v4を呼び出す（同期呼び出し）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    // NOTE:
-    // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンであり、
-    //   献立生成ロジックの v1/v2（legacy/dataset）とは無関係です。
-    // - 当アプリの献立再生成は `regenerate-meal-direct-v3`（LLM Creative）を使用します。
-    const regenerateRes = await fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v3`, {
+    // リクエストを作成
+    const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];
+    const { data: requestData, error: requestError } = await supabase
+      .from('weekly_menu_requests')
+      .insert({
+        user_id: user.id,
+        start_date: targetDate,
+        target_date: targetDate,
+        target_meal_type: targetMealType,
+        target_meal_id: meal.id,
+        mode: 'v4',
+        status: 'processing',
+        prompt: prompt,
+        target_slots: targetSlots,
+        current_step: 1,
+      })
+      .select('id')
+      .single();
+
+    if (requestError || !requestData) {
+      console.error('Failed to create request:', requestError);
+      return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
+    }
+
+    const regenerateRes = await fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${serviceRoleKey}`,
       },
       body: JSON.stringify({
-        mealId: meal.id,
-        prompt,
         userId: user.id,
+        requestId: requestData.id,
+        targetSlots,
+        note: prompt,
+        constraints: {},
       }),
     });
 

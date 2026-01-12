@@ -56,36 +56,62 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: mealsError.message }, { status: 500 });
     }
 
-    // NOTE:
-    // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
-    // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
-    //
-    // 4. 各食事を個別に再生成
-    const regenerationPromises = (meals || []).map(async (meal) => {
-      const { error: invokeError } = await supabase.functions.invoke('regenerate-meal-direct-v3', {
-        body: {
-          mealId: meal.id,
-          dayDate: dailyMeal.day_date,
-          mealType: meal.meal_type,
-          userId: user.id,
-          preferences: preferences || {},
-          note: '',
-        },
-      });
-
-      if (invokeError) {
-        console.error(`Failed to regenerate meal ${meal.id}:`, invokeError);
-      }
+    // 4. target_slotsを生成（その日の全食事）
+    const mealTypes = ['breakfast', 'lunch', 'dinner'];
+    const targetSlots = mealTypes.map(mealType => {
+      const existingMeal = (meals || []).find(m => m.meal_type === mealType);
+      return {
+        date: dailyMeal.day_date,
+        mealType,
+        plannedMealId: existingMeal?.id || undefined,
+      };
     });
 
-    // 全ての再生成を開始（非同期で実行されるため、すぐに返す）
-    Promise.all(regenerationPromises).catch(console.error);
+    // 5. リクエストを作成
+    const { data: requestData, error: insertError } = await supabase
+      .from('weekly_menu_requests')
+      .insert({
+        user_id: user.id,
+        start_date: dailyMeal.day_date,
+        target_date: dailyMeal.day_date,
+        mode: 'v4',
+        status: 'processing',
+        target_slots: targetSlots,
+        constraints: preferences || {},
+        current_step: 1,
+      })
+      .select('id')
+      .single();
 
-    return NextResponse.json({ 
+    if (insertError || !requestData) {
+      console.error('Failed to create request:', insertError);
+      return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
+    }
+
+    // 6. generate-menu-v4を呼び出し
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+    fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
+        userId: user.id,
+        requestId: requestData.id,
+        targetSlots,
+        constraints: preferences || {},
+      }),
+    }).catch(console.error);
+
+    return NextResponse.json({
       success: true,
       message: 'Day regeneration started in background',
       status: 'processing',
-      mealsCount: meals?.length || 0
+      requestId: requestData.id,
+      mealsCount: targetSlots.length
     });
 
   } catch (error: any) {

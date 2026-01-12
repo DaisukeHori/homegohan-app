@@ -78,13 +78,26 @@ export async function POST(request: Request) {
 
     console.log(`📝 Request created for ${dayDate} ${mealType}, requestId: ${requestData?.id}`);
 
-    // 4. Edge Function を非同期で呼び出し（完了を待たない）
+    // 4. target_slotsを生成（1スロット）
+    const targetSlots = [{ date: dayDate, mealType }];
+
+    // target_slotsをリクエストに保存
+    await supabase
+      .from('weekly_menu_requests')
+      .update({
+        target_slots: targetSlots,
+        mode: 'v4',
+        current_step: 1,
+      })
+      .eq('id', requestData.id);
+
+    // 5. Edge Function generate-menu-v4 を非同期で呼び出し
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    console.log('🚀 Calling Edge Function generate-single-meal-v3...');
+    console.log('🚀 Calling Edge Function generate-menu-v4...');
 
-    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-single-meal-v3`, {
+    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -92,17 +105,11 @@ export async function POST(request: Request) {
         'apikey': supabaseServiceKey,
       },
       body: JSON.stringify({
-        target_date: dayDate,
-        date: dayDate,
-        meal_type: mealType,
-        mealType,
-        mealTypes: [mealType],
         userId: user.id,
-        preferences: preferences || {},
-        note: note || '',
-        request_id: requestData.id,
         requestId: requestData.id,
-        dailyMealId: dailyMeal.id,
+        targetSlots,
+        note: note || '',
+        constraints: preferences || {},
       }),
     }).then(async (res) => {
       if (!res.ok) {

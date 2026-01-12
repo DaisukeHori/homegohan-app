@@ -47,17 +47,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
     }
 
-    // NOTE:
-    // - Edge Function名の `*-v2` は「献立生成ロジックの世代（dataset駆動）」を表します。
-    // - `/functions/v1/...` の "v1" は Supabase側のHTTPパスのバージョンで、ロジックのv1/v2とは別です。
-    //
-    // 5. Edge Function を非同期で呼び出し（完了を待たない）
+    // 4. target_slotsを生成（再生成用: plannedMealId付き）
+    const targetSlots = [{ date: dayDate, mealType, plannedMealId: mealId }];
+
+    // target_slotsをリクエストに保存
+    await supabase
+      .from('weekly_menu_requests')
+      .update({
+        target_slots: targetSlots,
+        mode: 'v4',
+        current_step: 1,
+      })
+      .eq('id', requestData.id);
+
+    // 5. Edge Function generate-menu-v4 を非同期で呼び出し
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    console.log('🚀 Calling Edge Function regenerate-meal-direct-v3...');
+    console.log('🚀 Calling Edge Function generate-menu-v4...');
 
-    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/regenerate-meal-direct-v3`, {
+    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -65,13 +74,11 @@ export async function POST(request: Request) {
         'apikey': supabaseServiceKey,
       },
       body: JSON.stringify({
-        mealId,
-        dayDate,
-        mealType,
         userId: user.id,
-        preferences: preferences || {},
-        note: note || '',
         requestId: requestData.id,
+        targetSlots,
+        note: note || '',
+        constraints: preferences || {},
       }),
     }).then(async (res) => {
       if (!res.ok) {

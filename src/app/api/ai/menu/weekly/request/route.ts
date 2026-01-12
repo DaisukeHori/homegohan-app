@@ -169,18 +169,34 @@ export async function POST(request: Request) {
       throw new Error(`Failed to create request: ${insertError.message}`);
     }
 
-    // 4. プレースホルダーのIDを即座に返す（Edge Functionは非同期で呼び出し）
+    // 4. target_slotsを生成（7日間 × 3食 = 21スロット）
+    const targetSlots: Array<{ date: string; mealType: string }> = [];
+    const mealTypes = ['breakfast', 'lunch', 'dinner'];
+    for (let i = 0; i < 7; i++) {
+      const dateStr = addDays(startDate, i);
+      for (const mealType of mealTypes) {
+        targetSlots.push({ date: dateStr, mealType });
+      }
+    }
+
+    // target_slotsをリクエストに保存
+    await supabase
+      .from('weekly_menu_requests')
+      .update({
+        target_slots: targetSlots,
+        mode: 'v4',
+        current_step: 1,
+      })
+      .eq('id', requestData.id);
+
+    // 5. Edge Function generate-menu-v4 をバックグラウンドで呼び出し
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    
-    console.log('🚀 Calling Edge Function generate-weekly-menu-v3...');
-    
-    // NOTE:
-    // - `/functions/v1/...` の "v1" は Supabase Edge Functions のHTTPパスのバージョンであり、
-    //   献立生成ロジックの v1/v2（legacy/dataset）とは無関係です。
-    // - 当アプリの献立生成は `generate-weekly-menu-v3`（LLM Creative + 3-Step）を使用します。
+
+    console.log('🚀 Calling Edge Function generate-menu-v4...');
+
     // Edge Functionをバックグラウンドで呼び出し（waitUntilで接続を維持）
-    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-weekly-menu-v3`, {
+    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -188,13 +204,11 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         userId: user.id,
-        startDate,
+        requestId: requestData.id,
+        targetSlots,
         note: noteForAi,
         familySize,
-        cheatDay,
-        preferences: constraints,
-        constraints, // 将来の呼び出し元互換のため残す
-        requestId: requestData.id,
+        constraints,
       }),
     }).then(async (res) => {
       if (!res.ok) {
