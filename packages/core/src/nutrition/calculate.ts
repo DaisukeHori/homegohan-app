@@ -18,6 +18,8 @@ import {
   type NutritionGoal,
   type WeightChangeRate,
   type PregnancyStatus,
+  type PerformanceProfile,
+  type GuardrailResult,
 } from './types';
 
 import {
@@ -153,7 +155,28 @@ export function calculateNutritionTargets(
     medications,
     calories: energyCalc.final_kcal,
   });
-  
+
+  // ================================================
+  // 4.5. Performance OS v3 ガードレール適用
+  // ================================================
+  const performanceProfile = profile.performance_profile ?? null;
+  const guardrailResult = applyPerformanceGuardrails({
+    age,
+    gender,
+    weight,
+    calories: energyCalc.final_kcal,
+    protein: macrosCalc.values.protein,
+    fat: macrosCalc.values.fat,
+    carbs: macrosCalc.values.carbs,
+    performanceProfile,
+  });
+
+  // ガードレールで調整された値を反映
+  const finalCalories = guardrailResult.calories;
+  const finalProtein = guardrailResult.protein;
+  const finalFat = guardrailResult.fat;
+  const finalCarbs = guardrailResult.carbs;
+
   // ================================================
   // 5. 計算根拠の構築
   // ================================================
@@ -181,17 +204,19 @@ export function calculateNutritionTargets(
     references: micronutrients.references,
     upper_limits: micronutrients.upperLimits,
     health_adjustments: micronutrients.healthAdjustments,
+    guardrails: guardrailResult.guardrails.length > 0 ? guardrailResult.guardrails : undefined,
+    performance_profile: performanceProfile ?? undefined,
   };
   
   // ================================================
-  // 6. 出力データの構築
+  // 6. 出力データの構築（ガードレール適用後の値を使用）
   // ================================================
   const targetData: NutritionTargetData = {
     user_id: profile.id,
-    daily_calories: energyCalc.final_kcal,
-    protein_g: macrosCalc.values.protein,
-    fat_g: macrosCalc.values.fat,
-    carbs_g: macrosCalc.values.carbs,
+    daily_calories: finalCalories,
+    protein_g: finalProtein,
+    fat_g: finalFat,
+    carbs_g: finalCarbs,
     fiber_g: micronutrients.values.fiber_g,
     fiber_soluble_g: Math.round(micronutrients.values.fiber_g / 3),
     fiber_insoluble_g: Math.round(micronutrients.values.fiber_g * 2 / 3),
@@ -223,10 +248,10 @@ export function calculateNutritionTargets(
   };
   
   const summary: NutritionTargetSummary = {
-    calories: energyCalc.final_kcal,
-    protein: macrosCalc.values.protein,
-    fat: macrosCalc.values.fat,
-    carbs: macrosCalc.values.carbs,
+    calories: finalCalories,
+    protein: finalProtein,
+    fat: finalFat,
+    carbs: finalCarbs,
     fiber: micronutrients.values.fiber_g,
     sodium: micronutrients.values.sodium_g,
     bmr: energyCalc.bmr.result_kcal,
@@ -951,6 +976,235 @@ function calculateMicronutrients(input: MicronutrientsInput): MicronutrientsResu
     values,
     references,
     healthAdjustments: healthAdjustments.length > 0 ? healthAdjustments : undefined,
+  };
+}
+
+// ================================================
+// Performance OS v3 ガードレール
+// ================================================
+
+interface GuardrailInput {
+  age: number;
+  gender: Gender;
+  weight: number;
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  performanceProfile?: PerformanceProfile | null;
+}
+
+interface GuardrailOutput {
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  guardrails: GuardrailResult[];
+}
+
+/**
+ * Performance OS v3 ガードレールを適用
+ *
+ * 安全性を担保するための制限:
+ * 1. growth_protection: 18歳未満の成長期保護
+ * 2. cut_safety: 減量時の安全制限
+ * 3. fat_floor: 脂質下限（ホルモン・細胞膜維持）
+ * 4. calorie_minimum: カロリー下限
+ * 5. sport_specific: スポーツ特有調整
+ */
+function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
+  const { age, gender, weight, performanceProfile } = input;
+  let { calories, protein, fat, carbs } = input;
+  const guardrails: GuardrailResult[] = [];
+
+  // ================================================
+  // 1. 成長期保護（18歳未満）
+  // ================================================
+  if (performanceProfile?.growth?.isUnder18 || age < 18) {
+    // 成長期は最低でもTDEE - 300kcalまで
+    const minGrowthCalories = gender === 'male' ? 2000 : 1800;
+    if (calories < minGrowthCalories) {
+      guardrails.push({
+        applied: true,
+        type: 'growth_protection',
+        original: calories,
+        adjusted: minGrowthCalories,
+        reason: `18歳未満の成長期保護: 最低${minGrowthCalories}kcalを確保`,
+        severity: 'critical',
+      });
+      calories = minGrowthCalories;
+    }
+
+    // 成長期はカット（減量）禁止
+    if (performanceProfile?.cut?.enabled) {
+      guardrails.push({
+        applied: true,
+        type: 'growth_protection',
+        original: 1, // cut enabled
+        adjusted: 0, // cut disabled
+        reason: '18歳未満の成長期は減量プログラムを推奨しません',
+        severity: 'critical',
+      });
+    }
+  }
+
+  // ================================================
+  // 2. 減量安全性（Cut Safety）
+  // ================================================
+  if (performanceProfile?.cut?.enabled && performanceProfile?.sport?.phase === 'cut') {
+    // 急速減量の場合、体重の1%/週を超えない
+    const strategy = performanceProfile.cut.strategy;
+
+    if (strategy === 'rapid') {
+      // 急速減量: 最大週1kg減（7700kcal/週 = 1100kcal/日の赤字）
+      const maxDeficit = 1100;
+      // BMR * 1.2 を基準として赤字を計算（仮定）
+      const estimatedTDEE = calories + maxDeficit; // 逆算
+      const minCutCalories = Math.max(gender === 'male' ? 1500 : 1200, estimatedTDEE - maxDeficit);
+
+      if (calories < minCutCalories) {
+        guardrails.push({
+          applied: true,
+          type: 'cut_safety',
+          original: calories,
+          adjusted: minCutCalories,
+          reason: `急速減量でも最大1kg/週まで: 最低${minCutCalories}kcalを確保`,
+          severity: 'warning',
+        });
+        calories = minCutCalories;
+      }
+    }
+
+    // タンパク質を体重×2.0g以上に確保（筋量維持）
+    const minProteinCut = Math.round(weight * 2.0);
+    if (protein < minProteinCut) {
+      guardrails.push({
+        applied: true,
+        type: 'cut_safety',
+        original: protein,
+        adjusted: minProteinCut,
+        reason: `減量時の筋量維持: タンパク質${minProteinCut}g（体重×2.0g）を確保`,
+        severity: 'warning',
+      });
+      protein = minProteinCut;
+    }
+  }
+
+  // ================================================
+  // 3. 脂質下限（Fat Floor）
+  // ================================================
+  // ホルモン・細胞膜維持のため最低15%は確保
+  const fatCalories = fat * 9;
+  const fatRatio = fatCalories / calories;
+  const minFatRatio = 0.15;
+
+  if (fatRatio < minFatRatio) {
+    const minFatG = Math.round((calories * minFatRatio) / 9);
+    guardrails.push({
+      applied: true,
+      type: 'fat_floor',
+      original: fat,
+      adjusted: minFatG,
+      reason: `ホルモン・細胞膜維持のため脂質15%以上を確保: ${minFatG}g`,
+      severity: 'warning',
+    });
+    fat = minFatG;
+
+    // 脂質を増やした分、炭水化物を減らす
+    const fatDelta = (minFatG - input.fat) * 9; // kcal差
+    const carbsDelta = Math.round(fatDelta / 4);
+    carbs = Math.max(50, carbs - carbsDelta); // 最低50gは確保
+  }
+
+  // ================================================
+  // 4. スポーツ特有調整
+  // ================================================
+  if (performanceProfile?.sport) {
+    const demandVector = performanceProfile.sport.demandVector;
+
+    // 持久系スポーツ: 炭水化物を増加
+    if (demandVector.endurance > 0.7) {
+      const minCarbsRatio = 0.55;
+      const carbsCalories = carbs * 4;
+      const currentCarbsRatio = carbsCalories / calories;
+
+      if (currentCarbsRatio < minCarbsRatio) {
+        const minCarbsG = Math.round((calories * minCarbsRatio) / 4);
+        guardrails.push({
+          applied: true,
+          type: 'sport_specific',
+          original: carbs,
+          adjusted: minCarbsG,
+          reason: `持久系競技: 炭水化物55%以上を推奨（${minCarbsG}g）`,
+          severity: 'info',
+        });
+        carbs = minCarbsG;
+      }
+    }
+
+    // パワー系・筋力系スポーツ: タンパク質を増加
+    if (demandVector.power > 0.7 || demandVector.strength > 0.7) {
+      const minProteinByWeight = Math.round(weight * 1.8);
+      if (protein < minProteinByWeight) {
+        guardrails.push({
+          applied: true,
+          type: 'sport_specific',
+          original: protein,
+          adjusted: minProteinByWeight,
+          reason: `パワー/筋力系競技: タンパク質${minProteinByWeight}g（体重×1.8g）を推奨`,
+          severity: 'info',
+        });
+        protein = minProteinByWeight;
+      }
+    }
+
+    // 体重階級スポーツ: 注意喚起のみ
+    if (demandVector.weightClass > 0.8) {
+      guardrails.push({
+        applied: false,
+        type: 'sport_specific',
+        original: 0,
+        adjusted: 0,
+        reason: '体重階級競技: 急激な減量は避け、専門家と相談してください',
+        severity: 'info',
+      });
+    }
+
+    // 暑熱環境: 水分・電解質の注意喚起
+    if (demandVector.heat > 0.7) {
+      guardrails.push({
+        applied: false,
+        type: 'sport_specific',
+        original: 0,
+        adjusted: 0,
+        reason: '暑熱環境競技: 水分・電解質補給を十分に行ってください',
+        severity: 'info',
+      });
+    }
+  }
+
+  // ================================================
+  // 5. 絶対最低カロリー
+  // ================================================
+  const absoluteMinCalories = gender === 'male' ? 1200 : 1000;
+  if (calories < absoluteMinCalories) {
+    guardrails.push({
+      applied: true,
+      type: 'calorie_minimum',
+      original: calories,
+      adjusted: absoluteMinCalories,
+      reason: `健康維持のため絶対最低${absoluteMinCalories}kcalを確保`,
+      severity: 'critical',
+    });
+    calories = absoluteMinCalories;
+  }
+
+  return {
+    calories,
+    protein,
+    fat,
+    carbs,
+    guardrails,
   };
 }
 

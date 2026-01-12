@@ -62,6 +62,26 @@ const MEDICATION_LABELS: Record<string, string> = {
   none: "特になし",
 };
 
+// Performance OS v3 ラベル
+const TRAINING_PHASE_LABELS: Record<string, string> = {
+  training: "トレーニング期",
+  competition: "試合期",
+  cut: "減量期（計量）",
+  recovery: "リカバリー期",
+};
+
+const EXPERIENCE_LABELS: Record<string, string> = {
+  beginner: "初級",
+  intermediate: "中級",
+  advanced: "上級",
+};
+
+const PRIORITY_LABELS: Record<string, string> = {
+  high: "高",
+  moderate: "中",
+  low: "低",
+};
+
 function toOptionalString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const s = value.trim();
@@ -199,6 +219,31 @@ export function buildUserContextForPrompt(input: {
   const effectiveWeekdayCookingMinutes = weeklyWeekdayCookingMinutes ?? profileWeekdayCookingMinutes;
   const effectiveWeekendCookingMinutes = weeklyWeekendCookingMinutes ?? profileWeekendCookingMinutes;
 
+  // Performance OS v3 情報を抽出
+  const perfProfile = p?.performance_profile ?? null;
+  const sportInfo = perfProfile?.sport ?? null;
+  const growthInfo = perfProfile?.growth ?? null;
+  const cutInfo = perfProfile?.cut ?? null;
+  const priorities = perfProfile?.priorities ?? null;
+
+  const performance = sportInfo ? {
+    sport_name: sportInfo?.name ?? sportInfo?.id ?? null,
+    sport_role: sportInfo?.role ?? null,
+    experience: sportInfo?.experience ? (EXPERIENCE_LABELS[sportInfo.experience] ?? sportInfo.experience) : null,
+    phase: sportInfo?.phase ? (TRAINING_PHASE_LABELS[sportInfo.phase] ?? sportInfo.phase) : null,
+    demand_vector: sportInfo?.demandVector ?? null,
+    is_growth_protection: Boolean(growthInfo?.growthProtectionEnabled),
+    is_cutting: Boolean(cutInfo?.enabled),
+    cut_target_weight: cutInfo?.targetWeight ?? null,
+    cut_target_date: cutInfo?.targetDate ?? null,
+    priorities: priorities ? {
+      protein: priorities.protein ? (PRIORITY_LABELS[priorities.protein] ?? priorities.protein) : null,
+      carbs: priorities.carbs ? (PRIORITY_LABELS[priorities.carbs] ?? priorities.carbs) : null,
+      fat: priorities.fat ? (PRIORITY_LABELS[priorities.fat] ?? priorities.fat) : null,
+      hydration: priorities.hydration ? (PRIORITY_LABELS[priorities.hydration] ?? priorities.hydration) : null,
+    } : null,
+  } : null;
+
   const ctx = {
     hard: {
       allergies, // 絶対除外
@@ -214,6 +259,7 @@ export function buildUserContextForPrompt(input: {
           }
         : null,
     },
+    performance, // Performance OS v3
     feasibility: {
       cooking_experience: cookingExperience,
       weekday_cooking_minutes: effectiveWeekdayCookingMinutes,
@@ -301,6 +347,43 @@ export function buildUserSummary(
   if (ctx.lifestyle.exercise_intensity) activityParts.push(`運動強度: ${ctx.lifestyle.exercise_intensity}`);
   if (ctx.lifestyle.exercise_duration_minutes_per_session != null) activityParts.push(`運動時間: ${ctx.lifestyle.exercise_duration_minutes_per_session}分/回`);
   if (activityParts.length) lines.push(`- 活動量: ${activityParts.join(" / ")}`);
+
+  // Performance OS v3 情報
+  const perf = ctx.performance;
+  if (perf) {
+    const perfParts: string[] = [];
+    if (perf.sport_name) perfParts.push(`競技: ${perf.sport_name}`);
+    if (perf.sport_role) perfParts.push(`ポジション/役割: ${perf.sport_role}`);
+    if (perf.experience) perfParts.push(`経験: ${perf.experience}`);
+    if (perf.phase) perfParts.push(`フェーズ: ${perf.phase}`);
+    if (perfParts.length) {
+      lines.push(`- 競技情報: ${perfParts.join(" / ")}`);
+    }
+
+    // 優先栄養素
+    if (perf.priorities) {
+      const prioLines: string[] = [];
+      if (perf.priorities.protein) prioLines.push(`タンパク質: ${perf.priorities.protein}`);
+      if (perf.priorities.carbs) prioLines.push(`炭水化物: ${perf.priorities.carbs}`);
+      if (perf.priorities.fat) prioLines.push(`脂質: ${perf.priorities.fat}`);
+      if (perf.priorities.hydration) prioLines.push(`水分: ${perf.priorities.hydration}`);
+      if (prioLines.length) {
+        lines.push(`- 優先栄養素: ${prioLines.join(" / ")}`);
+      }
+    }
+
+    // 減量期（計量）情報
+    if (perf.is_cutting && perf.cut_target_weight) {
+      const cutInfo = `目標${perf.cut_target_weight}kg`;
+      const dateInfo = perf.cut_target_date ? `（${perf.cut_target_date}まで）` : "";
+      lines.push(`- 減量計画: ${cutInfo}${dateInfo}`);
+    }
+
+    // 成長期保護
+    if (perf.is_growth_protection) {
+      lines.push(`- 注意: 成長期のため過度な減量は推奨しません`);
+    }
+  }
 
   if (ctx.feasibility.family_size != null) lines.push(`- 家族人数: ${ctx.feasibility.family_size}人分`);
   if (ctx.feasibility.cooking_experience) lines.push(`- 料理経験: ${ctx.feasibility.cooking_experience}`);
@@ -437,6 +520,34 @@ export function deriveSearchKeywords(input: {
 
   // constraints (allergy/dislikes)
   if ((ctx.hard.allergies ?? []).length) kws.push("アレルギー除外");
+
+  // Performance OS v3
+  const perf = ctx.performance;
+  if (perf) {
+    // 競技名
+    if (perf.sport_name) kws.push(perf.sport_name);
+
+    // フェーズに応じたキーワード
+    if (perf.phase) {
+      if (perf.phase.includes("試合")) kws.push("高炭水化物", "エネルギー", "パフォーマンス");
+      else if (perf.phase.includes("減量") || perf.is_cutting) kws.push("低カロリー", "高タンパク", "減量");
+      else if (perf.phase.includes("リカバリー")) kws.push("回復", "抗酸化", "タンパク質");
+      else kws.push("バランス", "トレーニング");
+    }
+
+    // 優先栄養素
+    if (perf.priorities?.protein === "高") kws.push("高タンパク");
+    if (perf.priorities?.carbs === "高") kws.push("高炭水化物");
+    if (perf.priorities?.hydration === "高") kws.push("水分補給", "電解質");
+
+    // 需要ベクトルに基づくキーワード
+    const dv = perf.demand_vector;
+    if (dv) {
+      if (dv.endurance > 0.7) kws.push("持久力", "複合炭水化物");
+      if (dv.power > 0.7 || dv.strength > 0.7) kws.push("筋力", "高タンパク");
+      if (dv.heat > 0.7) kws.push("暑熱対策", "電解質");
+    }
+  }
 
   // weekly note
   const note = toOptionalString(input.note);

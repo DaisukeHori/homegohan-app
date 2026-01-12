@@ -293,6 +293,9 @@ export interface UserProfile {
   lastProfileUpdate: ISODateTimeString | null;
   aiLearningEnabled: boolean;
 
+  // === Performance OS v3 ===
+  performanceProfile: PerformanceProfile | null;
+
   createdAt: ISODateTimeString;
   updatedAt: ISODateTimeString;
 }
@@ -974,4 +977,180 @@ export interface HealthFocusItem {
   actions: string[];
   excludeIngredients?: string[];
   preferIngredients?: string[];
+}
+
+// ============================================
+// Performance OS v3 Types
+// ============================================
+
+// --- Sport & Activity Types ---
+
+export type SportExperience = 'beginner' | 'intermediate' | 'advanced';
+export type TrainingPhase = 'training' | 'competition' | 'cut' | 'recovery';
+export type CutStrategy = 'gradual' | 'rapid';
+export type NutrientPriority = 'high' | 'moderate' | 'low';
+
+// 要求特性ベクトル（0-1）
+export interface DemandVector {
+  endurance: number;    // 持久力
+  power: number;        // 瞬発力
+  strength: number;     // 筋力
+  technique: number;    // 技術
+  weightClass: number;  // 体重階級の重要度
+  heat: number;         // 暑熱環境
+  altitude: number;     // 高地適応
+}
+
+// スポーツロール定義
+export interface SportRole {
+  id: string;
+  nameJa: string;
+  nameEn: string;
+}
+
+// スポーツプリセット
+export interface SportPreset {
+  id: string;
+  nameJa: string;
+  nameEn: string;
+  category: string;  // ball, cycling, combat, running, swimming, etc.
+  roles: SportRole[];
+  demandVector: DemandVector;
+  phaseDescriptions?: {
+    training?: string;
+    competition?: string;
+    cut?: string;
+    recovery?: string;
+  };
+  isWeightClass: boolean;
+  isTeamSport: boolean;
+  typicalCompetitionDuration?: string;
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+}
+
+// パフォーマンスプロファイル（静的設定）
+export interface PerformanceProfile {
+  sport?: {
+    id: string;              // 'tennis', 'custom', etc.
+    name?: string;           // 自由入力の場合の表示名
+    role?: string;           // ロール/ポジション
+    experience: SportExperience;
+    phase: TrainingPhase;
+    demandVector: DemandVector;
+  };
+  growth?: {
+    isUnder18: boolean;
+    heightChangeRecent?: number;  // 直近の身長変化 (cm)
+    growthProtectionEnabled: boolean;
+  };
+  cut?: {
+    enabled: boolean;
+    targetWeight?: number;
+    targetDate?: ISODateString;
+    strategy: CutStrategy;
+  };
+  priorities?: {
+    protein: NutrientPriority;
+    carbs: NutrientPriority;
+    fat: NutrientPriority;
+    hydration: NutrientPriority;
+  };
+}
+
+// --- Daily Check-in Types ---
+
+// パフォーマンスチェックイン（日次観測データ）
+export interface PerformanceCheckin {
+  id: string;
+  userId: string;
+  checkinDate: ISODateString;
+
+  // 基本項目（30秒チェックイン）
+  sleepHours?: number;
+  sleepQuality?: number;     // 1-5
+  fatigue?: number;          // 1-5
+  focus?: number;            // 1-5
+  hunger?: number;           // 1-5
+
+  // トレーニング負荷
+  trainingLoadRpe?: number;  // RPE 1-10
+  trainingMinutes?: number;
+
+  // 任意項目
+  weight?: number;
+  bodyFatPercentage?: number;
+  restingHeartRate?: number;
+  mood?: number;             // 1-5
+  soreness?: number;         // 1-5
+
+  // メモ
+  note?: string;
+
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
+}
+
+// 7日移動平均の結果
+export interface CheckinAverages {
+  avgSleepHours?: number;
+  avgSleepQuality?: number;
+  avgFatigue?: number;
+  avgFocus?: number;
+  avgHunger?: number;
+  avgTrainingRpe?: number;
+  totalTrainingMinutes: number;
+  weightStart?: number;
+  weightEnd?: number;
+  weightDelta?: number;
+  checkinCount: number;
+}
+
+// --- Performance Plan Types ---
+
+export type PlanStatus = 'active' | 'superseded' | 'archived';
+export type AdjustmentType =
+  | 'calorie_up'
+  | 'calorie_down'
+  | 'carb_timing'
+  | 'fat_floor'
+  | 'protein_boost'
+  | 'hydration_focus'
+  | 'recovery_mode'
+  | 'competition_prep'
+  | 'adaptive_loop'; // 7日ループ調整
+
+// パフォーマンス調整計画
+export interface PerformancePlan {
+  id: string;
+  userId: string;
+
+  // 有効期間
+  startDate: ISODateString;
+  endDate?: ISODateString;
+  status: PlanStatus;
+
+  // 調整内容
+  adjustmentType: AdjustmentType;
+  adjustmentValue: {
+    deltaKcal?: number;       // カロリー調整値
+    fatRatioMin?: number;     // 脂質下限比率
+    carbTiming?: string;      // 炭水化物タイミング
+    proteinMultiplier?: number; // タンパク質係数
+    [key: string]: unknown;   // その他の調整値
+  };
+
+  // 根拠
+  rationale: string;
+  triggerData?: {
+    weightDelta7d?: number;
+    avgFatigue?: number;
+    avgSleepQuality?: number;
+    checkinCount?: number;
+    [key: string]: unknown;
+  };
+  evidenceUrls?: string[];
+
+  createdAt: ISODateTimeString;
+  updatedAt: ISODateTimeString;
 }

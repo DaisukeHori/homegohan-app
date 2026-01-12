@@ -1,10 +1,13 @@
-import type { 
-  UserProfile, Meal, MealNutritionEstimate, WeeklyMenuRequest, 
+import type {
+  UserProfile, Meal, MealNutritionEstimate, WeeklyMenuRequest,
   Announcement, OrgDailyStats, Organization, DailyActivityLog, Badge,
   MealPlan, MealPlanDay, PlannedMeal, ShoppingListItem, WeeklyMenuResult,
   FitnessGoal, WorkStyle, CookingExperience, DietStyle, Frequency, QualityLevel, StressLevel,
   TargetSlot, MenuRequestMode, MenuGenerationProgress, MealType, ShoppingFrequency,
-  ServingsConfig, WeekStartDay, DailyMeal, ShoppingList, ShoppingListRequest
+  ServingsConfig, WeekStartDay, DailyMeal, ShoppingList, ShoppingListRequest,
+  // Performance OS v3
+  PerformanceProfile, PerformanceCheckin, PerformancePlan, SportPreset,
+  CheckinAverages, PlanStatus, AdjustmentType
 } from '@/types/domain';
 import type { 
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
@@ -139,6 +142,9 @@ export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   lastProfileUpdate: db.last_profile_update ?? null,
   aiLearningEnabled: db.ai_learning_enabled ?? true,
 
+  // === Performance OS v3 ===
+  performanceProfile: db.performance_profile ?? null,
+
   createdAt: db.created_at,
   updatedAt: db.updated_at,
 });
@@ -269,7 +275,10 @@ export const fromUserProfile = (profile: Partial<UserProfile>): Record<string, a
   if (profile.profileCompleteness !== undefined) result.profile_completeness = profile.profileCompleteness;
   if (profile.lastProfileUpdate !== undefined) result.last_profile_update = profile.lastProfileUpdate;
   if (profile.aiLearningEnabled !== undefined) result.ai_learning_enabled = profile.aiLearningEnabled;
-  
+
+  // Performance OS v3
+  if (profile.performanceProfile !== undefined) result.performance_profile = profile.performanceProfile;
+
   return result;
 };
 
@@ -551,3 +560,139 @@ export const toShoppingListRequest = (data: any): ShoppingListRequest => ({
   createdAt: data.created_at,
   updatedAt: data.updated_at,
 });
+
+// ============================================
+// Performance OS v3 Converters
+// ============================================
+
+// Performance Checkin (DB -> Domain)
+export const toPerformanceCheckin = (data: any): PerformanceCheckin => ({
+  id: data.id,
+  userId: data.user_id,
+  checkinDate: data.checkin_date,
+  sleepHours: data.sleep_hours ?? undefined,
+  sleepQuality: data.sleep_quality ?? undefined,
+  fatigue: data.fatigue ?? undefined,
+  focus: data.focus ?? undefined,
+  hunger: data.hunger ?? undefined,
+  trainingLoadRpe: data.training_load_rpe ?? undefined,
+  trainingMinutes: data.training_minutes ?? undefined,
+  weight: data.weight ?? undefined,
+  bodyFatPercentage: data.body_fat_percentage ?? undefined,
+  restingHeartRate: data.resting_heart_rate ?? undefined,
+  mood: data.mood ?? undefined,
+  soreness: data.soreness ?? undefined,
+  note: data.note ?? undefined,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+});
+
+// Performance Checkin (Domain -> DB)
+export const fromPerformanceCheckin = (checkin: Partial<PerformanceCheckin>): Record<string, any> => {
+  const result: Record<string, any> = {};
+
+  if (checkin.userId !== undefined) result.user_id = checkin.userId;
+  if (checkin.checkinDate !== undefined) result.checkin_date = checkin.checkinDate;
+  if (checkin.sleepHours !== undefined) result.sleep_hours = checkin.sleepHours;
+  if (checkin.sleepQuality !== undefined) result.sleep_quality = checkin.sleepQuality;
+  if (checkin.fatigue !== undefined) result.fatigue = checkin.fatigue;
+  if (checkin.focus !== undefined) result.focus = checkin.focus;
+  if (checkin.hunger !== undefined) result.hunger = checkin.hunger;
+  if (checkin.trainingLoadRpe !== undefined) result.training_load_rpe = checkin.trainingLoadRpe;
+  if (checkin.trainingMinutes !== undefined) result.training_minutes = checkin.trainingMinutes;
+  if (checkin.weight !== undefined) result.weight = checkin.weight;
+  if (checkin.bodyFatPercentage !== undefined) result.body_fat_percentage = checkin.bodyFatPercentage;
+  if (checkin.restingHeartRate !== undefined) result.resting_heart_rate = checkin.restingHeartRate;
+  if (checkin.mood !== undefined) result.mood = checkin.mood;
+  if (checkin.soreness !== undefined) result.soreness = checkin.soreness;
+  if (checkin.note !== undefined) result.note = checkin.note;
+
+  return result;
+};
+
+// Checkin Averages (RPC result -> Domain)
+export const toCheckinAverages = (data: any): CheckinAverages => ({
+  avgSleepHours: data.avg_sleep_hours ?? undefined,
+  avgSleepQuality: data.avg_sleep_quality ?? undefined,
+  avgFatigue: data.avg_fatigue ?? undefined,
+  avgFocus: data.avg_focus ?? undefined,
+  avgHunger: data.avg_hunger ?? undefined,
+  avgTrainingRpe: data.avg_training_rpe ?? undefined,
+  totalTrainingMinutes: data.total_training_minutes ?? 0,
+  weightStart: data.weight_start ?? undefined,
+  weightEnd: data.weight_end ?? undefined,
+  weightDelta: data.weight_delta ?? undefined,
+  checkinCount: data.checkin_count ?? 0,
+});
+
+// Performance Plan (DB -> Domain)
+export const toPerformancePlan = (data: any): PerformancePlan => ({
+  id: data.id,
+  userId: data.user_id,
+  startDate: data.start_date,
+  endDate: data.end_date ?? undefined,
+  status: data.status as PlanStatus,
+  adjustmentType: data.adjustment_type as AdjustmentType,
+  adjustmentValue: data.adjustment_value ?? {},
+  rationale: data.rationale,
+  triggerData: data.trigger_data ?? undefined,
+  evidenceUrls: data.evidence_urls ?? undefined,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+});
+
+// Performance Plan (Domain -> DB)
+export const fromPerformancePlan = (plan: Partial<PerformancePlan>): Record<string, any> => {
+  const result: Record<string, any> = {};
+
+  if (plan.userId !== undefined) result.user_id = plan.userId;
+  if (plan.startDate !== undefined) result.start_date = plan.startDate;
+  if (plan.endDate !== undefined) result.end_date = plan.endDate;
+  if (plan.status !== undefined) result.status = plan.status;
+  if (plan.adjustmentType !== undefined) result.adjustment_type = plan.adjustmentType;
+  if (plan.adjustmentValue !== undefined) result.adjustment_value = plan.adjustmentValue;
+  if (plan.rationale !== undefined) result.rationale = plan.rationale;
+  if (plan.triggerData !== undefined) result.trigger_data = plan.triggerData;
+  if (plan.evidenceUrls !== undefined) result.evidence_urls = plan.evidenceUrls;
+
+  return result;
+};
+
+// Sport Preset (DB -> Domain)
+export const toSportPreset = (data: any): SportPreset => ({
+  id: data.id,
+  nameJa: data.name_ja,
+  nameEn: data.name_en,
+  category: data.category,
+  roles: (data.roles || []).map((r: any) => ({
+    id: r.id,
+    nameJa: r.name_ja,
+    nameEn: r.name_en,
+  })),
+  demandVector: data.demand_vector ?? {
+    endurance: 0.5,
+    power: 0.5,
+    strength: 0.5,
+    technique: 0.5,
+    weightClass: 0,
+    heat: 0,
+    altitude: 0,
+  },
+  phaseDescriptions: data.phase_descriptions ?? undefined,
+  isWeightClass: data.is_weight_class ?? false,
+  isTeamSport: data.is_team_sport ?? false,
+  typicalCompetitionDuration: data.typical_competition_duration ?? undefined,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+});
+
+// Performance Profile (JSONB field -> Domain)
+export const toPerformanceProfile = (data: any): PerformanceProfile | null => {
+  if (!data || Object.keys(data).length === 0) return null;
+  return data as PerformanceProfile;
+};
+
+// Performance Profile (Domain -> JSONB field)
+export const fromPerformanceProfile = (profile: PerformanceProfile | null): any => {
+  return profile ?? {};
+};

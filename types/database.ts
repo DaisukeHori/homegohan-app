@@ -130,6 +130,9 @@ export interface DbUserProfile {
   profile_completeness: number | null;
   last_profile_update: string | null;
   ai_learning_enabled: boolean | null;
+
+  // === Performance OS v3 ===
+  performance_profile: any | null;
 }
 
 export interface DbMeal {

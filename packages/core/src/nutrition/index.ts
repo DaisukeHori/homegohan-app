@@ -38,3 +38,12 @@ export {
 
 // メイン計算関数
 export { calculateNutritionTargets } from './calculate';
+
+// 7日ループ調整ロジック
+export {
+  analyzeCheckinLoop,
+  applyRecommendations,
+  type CheckinAverages,
+  type AdjustmentRecommendation,
+  type LoopAnalysisResult,
+} from './adaptive-loop';

@@ -26,33 +26,99 @@ export type ExerciseIntensity = 'light' | 'moderate' | 'intense' | 'athlete';
 
 export type PregnancyStatus = 'none' | 'pregnant' | 'nursing';
 
+// ================================================
+// Performance OS v3 Types
+// ================================================
+
+export type TrainingPhase = 'training' | 'competition' | 'cut' | 'recovery';
+export type CutStrategy = 'gradual' | 'rapid';
+
+/**
+ * スポーツ要求特性ベクトル（0-1）
+ */
+export interface DemandVector {
+  endurance: number;    // 持久力
+  power: number;        // 瞬発力
+  strength: number;     // 筋力
+  technique: number;    // 技術
+  weightClass: number;  // 体重階級の重要度
+  heat: number;         // 暑熱環境
+  altitude: number;     // 高地適応
+}
+
+/**
+ * パフォーマンスプロファイル（静的設定）
+ */
+export interface PerformanceProfile {
+  sport?: {
+    id: string;
+    name?: string;
+    role?: string;
+    experience: 'beginner' | 'intermediate' | 'advanced';
+    phase: TrainingPhase;
+    demandVector: DemandVector;
+  };
+  growth?: {
+    isUnder18: boolean;
+    heightChangeRecent?: number;
+    growthProtectionEnabled: boolean;
+  };
+  cut?: {
+    enabled: boolean;
+    targetWeight?: number;
+    targetDate?: string;
+    strategy: CutStrategy;
+  };
+  priorities?: {
+    protein: 'high' | 'moderate' | 'low';
+    carbs: 'high' | 'moderate' | 'low';
+    fat: 'high' | 'moderate' | 'low';
+    hydration: 'high' | 'moderate' | 'low';
+  };
+}
+
+/**
+ * ガードレール適用結果
+ */
+export interface GuardrailResult {
+  applied: boolean;
+  type: 'growth_protection' | 'cut_safety' | 'fat_floor' | 'calorie_minimum' | 'sport_specific';
+  original: number;
+  adjusted: number;
+  reason: string;
+  severity: 'info' | 'warning' | 'critical';
+}
+
 /**
  * 計算に必要な入力プロフィール
  */
 export interface NutritionCalculatorInput {
   // 必須
   id: string;
-  
+
   // 基本情報（欠損可能）
   age?: number | null;
   gender?: Gender | null;
   height?: number | null;
   weight?: number | null;
-  
+
   // 活動情報
   work_style?: WorkStyle | null;
   exercise_intensity?: ExerciseIntensity | null;
   exercise_frequency?: number | null;
   exercise_duration_per_session?: number | null;
-  
+
   // 目標
   nutrition_goal?: NutritionGoal | null;
   weight_change_rate?: WeightChangeRate | null;
-  
+
   // 健康状態
   health_conditions?: string[] | null;
   medications?: string[] | null;
   pregnancy_status?: PregnancyStatus | null;
+
+  // Performance OS v3
+  performance_profile?: PerformanceProfile | null;
 }
 
 // ================================================
@@ -231,6 +297,10 @@ export interface CalculationBasis {
       source_url?: string;
     }[];
   }[];
+
+  // Performance OS v3 guardrails
+  guardrails?: GuardrailResult[];
+  performance_profile?: PerformanceProfile;
 }
 
 // ================================================
