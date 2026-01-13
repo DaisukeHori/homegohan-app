@@ -44,10 +44,11 @@ jobs:
             echo "PR already exists: $PR_URL"
           fi
 
-          # 即マージ（squash）- 承認不要の場合
-          # 注意: ブランチ保護で承認必須の場合は Settings > Actions > General で
-          # "Allow GitHub Actions to create and approve pull requests" を有効にしてください
-          gh pr merge --squash "$PR_URL" --delete-branch || echo "Merge failed - may need manual approval"
+          # 自動承認
+          gh pr review --approve "$PR_URL"
+
+          # 即マージ（squash）
+          gh pr merge --squash "$PR_URL" --delete-branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   # Dependabotの場合は承認不要で自動マージ（patch/minor のみ）
