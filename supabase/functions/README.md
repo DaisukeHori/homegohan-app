@@ -2,6 +2,23 @@
 
 このディレクトリには Supabase Edge Functions（Deno ランタイム）が格納されています。
 
+## 接続情報
+
+| 項目 | 値 |
+|------|-----|
+| Project ID | `flmeolcfutuwwbjmzyoz` |
+| URL | `https://flmeolcfutuwwbjmzyoz.supabase.co` |
+| ANON_KEY | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU` |
+
+### Functions呼び出し例
+
+```bash
+curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-name>" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "value"}'
+```
+
 ## デプロイ方法
 
 ### 自動デプロイ（推奨）
