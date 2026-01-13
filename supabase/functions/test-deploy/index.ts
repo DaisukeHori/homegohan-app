@@ -58,8 +58,8 @@ serve(async (req) => {
         result = {
           message: 'GitHub Actions auto-deploy test function',
           availableActions: ['create', 'read', 'update', 'delete'],
-          deployedAt: '2026-01-13T00:00:00Z',
-          version: '1.1.0'
+          deployedAt: '2026-01-13T12:00:00Z',
+          version: '1.2.0'
         }
     }
 
