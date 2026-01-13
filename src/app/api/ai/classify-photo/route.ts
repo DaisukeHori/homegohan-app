@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 - 紙の健康診断結果と体重計ディスプレイを区別してください
 - JSONのみを出力してください`;
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GOOGLE_AI_API_KEY}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_AI_API_KEY}`;
 
     const response = await fetch(apiUrl, {
       method: 'POST',
