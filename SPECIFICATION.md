@@ -163,7 +163,7 @@
 ```
 
 **パラメータ:**
-- `model`: gemini-2.0-flash-exp
+- `model`: gemini-2.0-flash
 - `temperature`: 0.4
 - `maxOutputTokens`: 2048-4096
 
@@ -885,7 +885,7 @@ const mealCalorieRatio = {
 **トリガー:** `/api/ai/analyze-meal-photo` からの呼び出し（mealId指定時）
 
 **処理フロー:**
-1. Gemini Vision（gemini-2.0-flash-exp）で画像分析
+1. Gemini Vision（gemini-2.0-flash）で画像分析
 2. 料理名、カロリー、栄養素をLLMが直接推定
 3. `planned_meals` の `dishes`, `calories_kcal` フィールドを更新
 
@@ -2487,8 +2487,8 @@ GOOGLE_GEN_AI_API_KEY=xxx
 # 画像生成モデル（デフォルト: gemini-3-pro-image-preview）
 GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
 
-# 分析モデル（デフォルト: gemini-2.0-flash-exp）
-GEMINI_ANALYSIS_MODEL=gemini-2.0-flash-exp
+# 分析モデル（デフォルト: gemini-2.0-flash）
+GEMINI_ANALYSIS_MODEL=gemini-2.0-flash
 ```
 
 ---

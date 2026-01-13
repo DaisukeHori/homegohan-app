@@ -45,7 +45,7 @@ export async function POST(request: Request) {
 - 量は見た目からおおよそで推定してください
 - JSONのみを出力してください`;
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GOOGLE_AI_API_KEY}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_AI_API_KEY}`;
     
     // 画像データの準備
     let imagePart: any;
