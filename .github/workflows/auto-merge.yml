@@ -38,13 +38,34 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ラベル "auto-merge" が付いたPRは承認後に自動マージ
-  labeled-auto-merge:
+  # claude/* ブランチからのPRは自動承認・自動マージ
+  claude-auto-merge:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'pull_request_review' &&
-      github.event.review.state == 'approved' &&
-      contains(github.event.pull_request.labels.*.name, 'auto-merge')
+      github.event_name == 'pull_request' &&
+      github.event.action == 'opened' &&
+      startsWith(github.head_ref, 'claude/')
+    steps:
+      - name: Auto-approve Claude PR
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for Claude PR
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 全てのPRを自動マージ（PR作成時に auto-merge を有効化）
+  auto-merge-all:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'opened' &&
+      !startsWith(github.head_ref, 'claude/') &&
+      github.actor != 'dependabot[bot]'
     steps:
       - name: Enable auto-merge
         run: gh pr merge --auto --squash "$PR_URL"
