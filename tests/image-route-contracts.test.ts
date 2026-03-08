@@ -5,11 +5,17 @@ const mockInvoke = vi.fn();
 const mockUpload = vi.fn();
 const mockGetPublicUrl = vi.fn();
 const mockGenerateContent = vi.fn();
+const mockFrom = vi.fn();
+const mockUpdate = vi.fn();
+const mockEq = vi.fn();
+const mockSelect = vi.fn();
+const mockSingle = vi.fn();
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(() => ({
     auth: { getUser: mockGetUser },
     functions: { invoke: mockInvoke },
+    from: mockFrom,
     storage: {
       from: vi.fn(() => ({
         upload: mockUpload,
@@ -41,6 +47,11 @@ describe('image route contracts', () => {
     mockUpload.mockResolvedValue({ error: null });
     mockGetPublicUrl.mockReturnValue({ data: { publicUrl: 'https://example.com/generated.png' } });
     mockGenerateContent.mockReset();
+    mockSingle.mockResolvedValue({ data: { id: 'meal-1' }, error: null });
+    mockSelect.mockReturnValue({ single: mockSingle });
+    mockEq.mockReturnValue({ select: mockSelect });
+    mockUpdate.mockReturnValue({ eq: mockEq });
+    mockFrom.mockReturnValue({ update: mockUpdate });
     process.env.GOOGLE_AI_STUDIO_API_KEY = 'test-key';
     delete process.env.GEMINI_IMAGE_MODEL;
     delete process.env.GEMINI_VISION_MODEL;
@@ -210,6 +221,35 @@ describe('image route contracts', () => {
       modelUsed: 'gemini-3.1-flash-image-preview',
       referenceImageCount: 2,
       text: 'generated',
+    });
+  });
+
+  it('meal-plans PATCH persists imageUrl to the planned_meals image_url column', async () => {
+    const storedMeal = {
+      id: 'meal-1',
+      image_url: 'https://example.com/generated.png',
+    };
+    mockSingle.mockResolvedValue({ data: storedMeal, error: null });
+
+    const { PATCH } = await import('../src/app/api/meal-plans/meals/[id]/route');
+    const response = await PATCH(
+      new Request('http://localhost/api/meal-plans/meals/meal-1', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          imageUrl: 'https://example.com/generated.png',
+        }),
+      }),
+      { params: { id: 'meal-1' } },
+    );
+
+    expect(mockFrom).toHaveBeenCalledWith('planned_meals');
+    expect(mockUpdate).toHaveBeenCalledWith({
+      image_url: 'https://example.com/generated.png',
+    });
+    expect(mockEq).toHaveBeenCalledWith('id', 'meal-1');
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      meal: storedMeal,
     });
   });
 });

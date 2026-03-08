@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -27,7 +28,7 @@ import {
 // ============================================
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
-type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'addMealSlot' | 'confirmDelete' | 'shoppingRange' | null;
+type ModalType = 'ai' | 'aiPreview' | 'aiMeal' | 'fridge' | 'shopping' | 'stats' | 'recipe' | 'add' | 'addFridge' | 'addShopping' | 'editMeal' | 'regenerateMeal' | 'manualEdit' | 'photoEdit' | 'imageGenerate' | 'addMealSlot' | 'confirmDelete' | 'shoppingRange' | null;
 
 // 日付ベースモデル用のローカル型定義
 interface MealPlanDay {
@@ -1583,6 +1584,14 @@ export default function WeeklyMenuPage() {
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Image generation state（参照画像対応）
+  const [imageGenerateMeal, setImageGenerateMeal] = useState<PlannedMeal | null>(null);
+  const [imageGenerationPrompt, setImageGenerationPrompt] = useState('');
+  const [imageReferenceFiles, setImageReferenceFiles] = useState<File[]>([]);
+  const [imageReferencePreviews, setImageReferencePreviews] = useState<string[]>([]);
+  const [isGeneratingMealImage, setIsGeneratingMealImage] = useState(false);
+  const imageGenerateInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch Plan & Check for pending generation requests
   useEffect(() => {
@@ -3565,6 +3574,153 @@ export default function WeeklyMenuPage() {
       console.error('Photo analysis error:', error);
       alert('エラーが発生しました');
       setIsAnalyzingPhoto(false);
+    }
+  };
+
+  const closeImageGenerateModal = (returnToManualEdit = true) => {
+    setImageGenerateMeal(null);
+    setImageGenerationPrompt('');
+    setImageReferenceFiles([]);
+    setImageReferencePreviews([]);
+    if (imageGenerateInputRef.current) {
+      imageGenerateInputRef.current.value = '';
+    }
+    setActiveModal(returnToManualEdit && manualEditMeal ? 'manualEdit' : null);
+  };
+
+  const openImageGenerate = () => {
+    if (!manualEditMeal) return;
+
+    const promptSource = manualDishes
+      .map((dish) => dish.name.trim())
+      .filter(Boolean)
+      .join('、');
+
+    setImageGenerateMeal(manualEditMeal);
+    setImageGenerationPrompt(promptSource || manualEditMeal.dishName || `${MEAL_LABELS[manualEditMeal.mealType]}の料理`);
+    setImageReferenceFiles([]);
+    setImageReferencePreviews([]);
+    if (imageGenerateInputRef.current) {
+      imageGenerateInputRef.current.value = '';
+    }
+    setActiveModal('imageGenerate');
+  };
+
+  const handleImageReferenceSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newFiles = Array.from(files);
+    setImageReferenceFiles((prev) => [...prev, ...newFiles]);
+
+    newFiles.forEach((file) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImageReferencePreviews((prev) => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    e.target.value = '';
+  };
+
+  const removeImageReference = (index: number) => {
+    setImageReferenceFiles((prev) => prev.filter((_, i) => i !== index));
+    setImageReferencePreviews((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const generateMealImage = async () => {
+    if (!imageGenerateMeal || !currentPlan) return;
+
+    const prompt = imageGenerationPrompt.trim();
+    if (!prompt) {
+      alert('生成したい料理の説明を入力してください');
+      return;
+    }
+
+    setIsGeneratingMealImage(true);
+
+    try {
+      const referenceImages = await Promise.all(
+        imageReferenceFiles.map(async (file) => new Promise<{ base64: string; mimeType: string }>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve({
+              base64: result.split(',')[1],
+              mimeType: file.type || 'image/png',
+            });
+          };
+          reader.readAsDataURL(file);
+        }))
+      );
+
+      const generateResponse = await fetch('/api/ai/image/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          images: referenceImages,
+        }),
+      });
+
+      const generatePayload = await generateResponse.json();
+      if (!generateResponse.ok) {
+        throw new Error(generatePayload.error || '画像生成に失敗しました');
+      }
+
+      if (!generatePayload.imageUrl) {
+        throw new Error('画像URLを取得できませんでした');
+      }
+
+      const saveResponse = await fetch(`/api/meal-plans/meals/${imageGenerateMeal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrl: generatePayload.imageUrl,
+        }),
+      });
+
+      const savePayload = await saveResponse.json();
+      if (!saveResponse.ok) {
+        throw new Error(savePayload.error || '画像の保存に失敗しました');
+      }
+
+      const updatedDays = currentPlan.days.map((day) => ({
+        ...day,
+        meals: day.meals?.map((meal) =>
+          meal.id === imageGenerateMeal.id
+            ? { ...meal, imageUrl: generatePayload.imageUrl }
+            : meal
+        ),
+      }));
+      const updatedPlan = { ...currentPlan, days: updatedDays };
+      const targetDate = formatLocalDate(weekStart);
+
+      setCurrentPlan(updatedPlan);
+      weekDataCache.current.set(targetDate, {
+        plan: updatedPlan,
+        shoppingList,
+        fetchedAt: Date.now(),
+      });
+      setManualEditMeal((prev) => (
+        prev && prev.id === imageGenerateMeal.id
+          ? { ...prev, imageUrl: generatePayload.imageUrl }
+          : prev
+      ));
+
+      closeImageGenerateModal(true);
+      setSuccessMessage({
+        title: '画像を生成しました',
+        message: referenceImages.length > 0
+          ? '参照画像を反映して料理画像を更新しました。'
+          : '料理画像を更新しました。',
+      });
+    } catch (error) {
+      console.error('Meal image generation error:', error);
+      alert(error instanceof Error ? error.message : '画像生成に失敗しました');
+    } finally {
+      setIsGeneratingMealImage(false);
     }
   };
 
@@ -6527,19 +6683,43 @@ export default function WeeklyMenuPage() {
                       </div>
                     ))}
                   </div>
+
+                  {manualEditMeal.imageUrl && (
+                    <div className="mb-4">
+                      <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>現在の画像</label>
+                      <div className="relative h-40 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
+                        <Image
+                          src={manualEditMeal.imageUrl}
+                          alt={manualEditMeal.dishName || 'Meal image'}
+                          fill
+                          sizes="(max-width: 1024px) 100vw, 50vw"
+                          className="object-cover"
+                        />
+                      </div>
+                    </div>
+                  )}
                   
-                  {/* Photo input option */}
-                  <button
-                    onClick={() => {
-                      setActiveModal('photoEdit');
-                      setPhotoEditMeal(manualEditMeal);
-                    }}
-                    className="w-full p-3 rounded-xl flex items-center justify-center gap-2 mb-3"
-                    style={{ background: colors.blueLight, border: `1px solid ${colors.blue}` }}
-                  >
-                    <Camera size={16} color={colors.blue} />
-                    <span style={{ fontSize: 13, color: colors.blue }}>写真から入力（AI解析）</span>
-                  </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <button
+                      onClick={() => {
+                        setActiveModal('photoEdit');
+                        setPhotoEditMeal(manualEditMeal);
+                      }}
+                      className="w-full p-3 rounded-xl flex items-center justify-center gap-2"
+                      style={{ background: colors.blueLight, border: `1px solid ${colors.blue}` }}
+                    >
+                      <Camera size={16} color={colors.blue} />
+                      <span style={{ fontSize: 13, color: colors.blue }}>写真から入力</span>
+                    </button>
+                    <button
+                      onClick={openImageGenerate}
+                      className="w-full p-3 rounded-xl flex items-center justify-center gap-2"
+                      style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
+                    >
+                      <ImageIcon size={16} color={colors.accent} />
+                      <span style={{ fontSize: 13, color: colors.accent }}>AIで画像生成</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
                   <button 
@@ -6549,6 +6729,147 @@ export default function WeeklyMenuPage() {
                   >
                     <Check size={16} color="#fff" />
                     <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>保存する</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {activeModal === 'imageGenerate' && imageGenerateMeal && (
+              <motion.div
+                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                style={{ background: colors.card, maxHeight: '78vh' }}
+              >
+                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <ImageIcon size={18} color={colors.accent} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>AIで料理画像を生成</span>
+                    {imageReferencePreviews.length > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.accentLight, color: colors.accent }}>
+                        参照 {imageReferencePreviews.length}枚
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => closeImageGenerateModal(true)}
+                    disabled={isGeneratingMealImage}
+                    className="w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-50"
+                    style={{ background: colors.bg }}
+                  >
+                    <X size={14} color={colors.textLight} />
+                  </button>
+                </div>
+                <div className="flex-1 p-4 overflow-auto">
+                  {imageGenerateMeal.imageUrl && (
+                    <div className="mb-4">
+                      <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>現在の画像</label>
+                      <div className="relative h-40 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
+                        <Image
+                          src={imageGenerateMeal.imageUrl}
+                          alt={imageGenerateMeal.dishName || 'Meal image'}
+                          fill
+                          sizes="(max-width: 1024px) 100vw, 50vw"
+                          className="object-cover"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mb-4">
+                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>生成したい画像の説明</label>
+                    <textarea
+                      value={imageGenerationPrompt}
+                      onChange={(e) => setImageGenerationPrompt(e.target.value)}
+                      placeholder="例: 彩りの良い和風ハンバーグ定食、湯気のある自然光、木のテーブル"
+                      rows={4}
+                      className="w-full p-3 rounded-2xl text-[13px] outline-none resize-none"
+                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                    />
+                    <p style={{ fontSize: 11, color: colors.textMuted, marginTop: 8 }}>
+                      料理名だけでも生成できます。盛り付け、雰囲気、器の指定も追加できます。
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label style={{ fontSize: 12, color: colors.textMuted }}>参照画像（任意・複数可）</label>
+                      <button
+                        onClick={() => imageGenerateInputRef.current?.click()}
+                        className="text-[12px] flex items-center gap-1"
+                        style={{ color: colors.accent }}
+                      >
+                        <Plus size={12} /> 追加
+                      </button>
+                    </div>
+
+                    <input
+                      type="file"
+                      ref={imageGenerateInputRef}
+                      accept="image/*"
+                      multiple
+                      onChange={handleImageReferenceSelect}
+                      className="hidden"
+                    />
+
+                    {imageReferencePreviews.length > 0 ? (
+                      <div className="grid grid-cols-3 gap-2">
+                        {imageReferencePreviews.map((preview, idx) => (
+                          <div key={idx} className="relative aspect-square">
+                            <Image
+                              src={preview}
+                              alt={`Reference ${idx + 1}`}
+                              fill
+                              sizes="(max-width: 768px) 33vw, 120px"
+                              unoptimized
+                              className="rounded-lg object-cover"
+                            />
+                            <button
+                              onClick={() => removeImageReference(idx)}
+                              className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center"
+                              style={{ background: 'rgba(0,0,0,0.6)' }}
+                            >
+                              <X size={12} color="#fff" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => imageGenerateInputRef.current?.click()}
+                        className="w-full p-6 rounded-2xl flex flex-col items-center gap-2"
+                        style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
+                      >
+                        <ImageIcon size={32} color={colors.textMuted} />
+                        <span style={{ fontSize: 13, color: colors.textMuted }}>参考画像を追加する</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="p-3 rounded-xl" style={{ background: colors.accentLight }}>
+                    <p style={{ fontSize: 11, color: colors.accent, margin: 0 }}>
+                      AIが料理画像を新規生成します。参照画像を追加すると、盛り付けや色味を寄せやすくなります。
+                    </p>
+                  </div>
+                </div>
+                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+                  <button
+                    onClick={generateMealImage}
+                    disabled={!imageGenerationPrompt.trim() || isGeneratingMealImage}
+                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
+                    style={{ background: colors.accent }}
+                  >
+                    {isGeneratingMealImage ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>画像を生成中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} color="#fff" />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>料理画像を生成する</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </motion.div>
@@ -6598,7 +6919,14 @@ export default function WeeklyMenuPage() {
                       <div className="grid grid-cols-3 gap-2">
                         {photoPreviews.map((preview, idx) => (
                           <div key={idx} className="relative aspect-square">
-                            <img src={preview} alt={`Preview ${idx + 1}`} className="w-full h-full rounded-lg object-cover" />
+                            <Image
+                              src={preview}
+                              alt={`Preview ${idx + 1}`}
+                              fill
+                              sizes="(max-width: 768px) 33vw, 120px"
+                              unoptimized
+                              className="rounded-lg object-cover"
+                            />
                             <button
                               onClick={() => removePhoto(idx)}
                               className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center"
