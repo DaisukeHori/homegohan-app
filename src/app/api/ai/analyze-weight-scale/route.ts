@@ -1,13 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
+import { extractWeightScaleResult } from '../../../../lib/ai/image-recognition';
 import { NextResponse } from 'next/server';
-
-interface WeightScaleResult {
-  weight: number;
-  bodyFat?: number;
-  muscleMass?: number;
-  confidence: number;
-  rawText?: string;
-}
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -18,7 +11,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { image, mimeType } = body;
+    const { image } = body;
 
     if (!image) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
@@ -39,13 +32,7 @@ export async function POST(request: Request) {
     }
 
     // 結果を整形
-    const result: WeightScaleResult = {
-      weight: data.values?.weight || 0,
-      bodyFat: data.values?.body_fat_percentage,
-      muscleMass: data.values?.muscle_mass,
-      confidence: data.confidence || 0,
-      rawText: data.raw_text,
-    };
+    const result = extractWeightScaleResult(data);
 
     // 体重が取得できなかった場合
     if (!result.weight || result.weight <= 0) {

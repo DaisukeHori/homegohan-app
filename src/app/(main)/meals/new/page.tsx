@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { AUTO_CLASSIFY_CONFIDENCE_THRESHOLD } from "@/lib/ai/image-recognition";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
@@ -94,6 +95,19 @@ interface WeightHistoryItem {
   weight: number;
 }
 
+interface ClassificationCandidate {
+  type: ClassifyResult;
+  confidence: number;
+}
+
+interface ClassificationResponse {
+  type: ClassifyResult;
+  confidence: number;
+  description: string;
+  candidates: ClassificationCandidate[];
+  modelUsed?: string;
+}
+
 const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; bg: string }> = {
   breakfast: { icon: Coffee, label: '朝食', color: colors.warning, bg: colors.warningLight },
   lunch: { icon: Sun, label: '昼食', color: colors.accent, bg: colors.accentLight },
@@ -158,6 +172,7 @@ export default function MealCaptureModal() {
   const [healthData, setHealthData] = useState<HealthCheckupData>({});
   const [healthConfidence, setHealthConfidence] = useState(0);
   const [healthNotes, setHealthNotes] = useState('');
+  const [healthModelUsed, setHealthModelUsed] = useState('');
   const [isSavingHealth, setIsSavingHealth] = useState(false);
 
   // 体重計解析結果
@@ -171,6 +186,8 @@ export default function MealCaptureModal() {
   // オートモード判別結果
   const [detectedType, setDetectedType] = useState<string | null>(null);
   const [detectedConfidence, setDetectedConfidence] = useState(0);
+  const [detectedDescription, setDetectedDescription] = useState('');
+  const [classificationCandidates, setClassificationCandidates] = useState<ClassificationCandidate[]>([]);
   
   // 解析結果
   const [analyzedDishes, setAnalyzedDishes] = useState<DishDetail[]>([]);
@@ -277,28 +294,53 @@ export default function MealCaptureModal() {
     }
   };
 
+  const fileToImagePayload = async (file: File): Promise<{ base64: string; mimeType: string }> => {
+    const base64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+      reader.readAsDataURL(file);
+    });
+
+    return {
+      base64,
+      mimeType: file.type || 'image/jpeg',
+    };
+  };
+
   // 写真タイプを判別（オートモード）
-  const classifyPhoto = async (base64: string, mimeType: string): Promise<ClassifyResult> => {
+  const classifyPhoto = async (files: File[]): Promise<ClassificationResponse> => {
     try {
+      const images = await Promise.all(files.map(fileToImagePayload));
       const res = await fetch('/api/ai/classify-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
+        body: JSON.stringify({ images }),
       });
 
       if (res.ok) {
         const data = await res.json();
         setDetectedType(data.type);
         setDetectedConfidence(data.confidence);
-        // 有効なタイプならそのまま返す
-        if (['meal', 'fridge', 'health_checkup', 'weight_scale', 'unknown'].includes(data.type)) {
-          return data.type as ClassifyResult;
-        }
+        setDetectedDescription(data.description || '');
+        setClassificationCandidates(Array.isArray(data.candidates) ? data.candidates : []);
+
+        return {
+          type: ['meal', 'fridge', 'health_checkup', 'weight_scale', 'unknown'].includes(data.type) ? data.type as ClassifyResult : 'unknown',
+          confidence: Number(data.confidence) || 0,
+          description: data.description || '',
+          candidates: Array.isArray(data.candidates) ? data.candidates : [],
+          modelUsed: data.modelUsed,
+        };
       }
     } catch (error) {
       console.error('Classification error:', error);
     }
-    return 'unknown'; // デフォルトは unknown（判別失敗画面を表示）
+
+    setDetectedType('unknown');
+    setDetectedConfidence(0);
+    setDetectedDescription('');
+    setClassificationCandidates([]);
+    return { type: 'unknown', confidence: 0, description: '', candidates: [] };
   };
 
   // 冷蔵庫写真解析
@@ -367,6 +409,7 @@ export default function MealCaptureModal() {
         setHealthData(data.extractedData || {});
         setHealthConfidence(data.confidence || 0);
         setHealthNotes(data.notes || '');
+        setHealthModelUsed(data.modelUsed || '');
         setStep('health-result');
       } else {
         alert('健康診断結果の解析に失敗しました。');
@@ -483,28 +526,7 @@ export default function MealCaptureModal() {
   };
 
   // 統合解析（モードに応じて分岐）
-  const analyzeByMode = async () => {
-    if (photoFiles.length === 0) return;
-
-    let targetMode: ClassifyResult = photoMode;
-
-    // オートモードの場合は先に判別
-    if (photoMode === 'auto') {
-      setStep('analyzing');
-      setIsAnalyzing(true);
-
-      const file = photoFiles[0];
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(file);
-      });
-
-      targetMode = await classifyPhoto(base64, file.type);
-      setIsAnalyzing(false);
-    }
-
-    // 判別結果に応じて解析
+  const analyzeResolvedMode = async (targetMode: Exclude<ClassifyResult, 'unknown'>) => {
     switch (targetMode) {
       case 'fridge':
         await analyzeFridge();
@@ -516,14 +538,39 @@ export default function MealCaptureModal() {
         await analyzeWeightScale();
         break;
       case 'meal':
+      default:
         await analyzePhoto();
         break;
-      case 'unknown':
-      default:
-        // 判別失敗時は専用画面を表示
-        setStep('classify-failed');
-        break;
     }
+  };
+
+  const analyzeByMode = async () => {
+    if (photoFiles.length === 0) return;
+
+    let targetMode: ClassifyResult = photoMode as ClassifyResult;
+
+    // オートモードの場合は先に判別
+    if (photoMode === 'auto') {
+      setStep('analyzing');
+      setIsAnalyzing(true);
+
+      const classification = await classifyPhoto(photoFiles);
+      setIsAnalyzing(false);
+
+      if (classification.type === 'unknown' || classification.confidence < AUTO_CLASSIFY_CONFIDENCE_THRESHOLD) {
+        setStep('classify-failed');
+        return;
+      }
+
+      targetMode = classification.type;
+    }
+
+    if (targetMode === 'unknown') {
+      setStep('classify-failed');
+      return;
+    }
+
+    await analyzeResolvedMode(targetMode);
   };
 
   // 冷蔵庫データを保存
@@ -592,7 +639,7 @@ export default function MealCaptureModal() {
           uric_acid: healthData.uricAcid,
           ocr_extracted_data: healthData,
           ocr_extraction_timestamp: new Date().toISOString(),
-          ocr_model_used: 'gpt-4o',
+          ocr_model_used: healthModelUsed || 'gemini-3-pro-preview',
         }),
       });
 
@@ -1709,6 +1756,51 @@ export default function MealCaptureModal() {
             <p className="text-center mb-8" style={{ color: colors.textLight, fontSize: 14 }}>
               食事・冷蔵庫・健診結果・体重計の写真を撮影してください
             </p>
+
+            {detectedType && (
+              <div
+                className="w-full max-w-xs rounded-2xl p-4 mb-4"
+                style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+              >
+                <div className="text-sm font-semibold mb-1" style={{ color: colors.text }}>
+                  AI判定
+                </div>
+                <div className="text-sm mb-1" style={{ color: colors.textLight }}>
+                  {detectedType === 'unknown' ? '判別不可' : PHOTO_MODES[detectedType as PhotoMode]?.label}
+                  {' '}({Math.round(detectedConfidence * 100)}%)
+                </div>
+                {detectedDescription && (
+                  <div className="text-xs" style={{ color: colors.textMuted }}>
+                    {detectedDescription}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {classificationCandidates.filter((candidate) => candidate.type !== 'unknown').length > 0 && (
+              <div className="w-full max-w-xs space-y-2 mb-6">
+                {classificationCandidates
+                  .filter((candidate) => candidate.type !== 'unknown')
+                  .map((candidate) => (
+                    <button
+                      key={`${candidate.type}-${candidate.confidence}`}
+                      onClick={() => {
+                        setPhotoMode(candidate.type as PhotoMode);
+                        void analyzeResolvedMode(candidate.type as Exclude<ClassifyResult, 'unknown'>);
+                      }}
+                      className="w-full py-3 rounded-xl flex items-center justify-between px-4"
+                      style={{ background: colors.card, border: `1px solid ${colors.border}` }}
+                    >
+                      <span style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
+                        {PHOTO_MODES[candidate.type as PhotoMode]?.label}として解析
+                      </span>
+                      <span style={{ fontSize: 12, color: colors.textLight }}>
+                        {Math.round(candidate.confidence * 100)}%
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            )}
 
             <div className="w-full max-w-xs space-y-3">
               <button
