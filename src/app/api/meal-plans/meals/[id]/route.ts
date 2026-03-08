@@ -11,7 +11,7 @@ export async function PATCH(
 
   try {
     const json = await request.json();
-    const { isCompleted, dishName, mode, dishes, isSimple, caloriesKcal, description } = json;
+    const { isCompleted, dishName, mode, dishes, isSimple, caloriesKcal, description, imageUrl } = json;
 
     const updateData: Record<string, any> = {};
     
@@ -25,6 +25,7 @@ export async function PATCH(
     if (isSimple !== undefined) updateData.is_simple = isSimple;
     if (caloriesKcal !== undefined) updateData.calories_kcal = caloriesKcal;
     if (description !== undefined) updateData.description = description;
+    if (imageUrl !== undefined) updateData.image_url = imageUrl;
 
     const { data, error } = await supabase
       .from('planned_meals')
@@ -62,5 +63,4 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-
 
