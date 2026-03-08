@@ -185,7 +185,7 @@ export async function POST(request: Request) {
           user_id: user.id,
           image_url: imageUrl || null,
           extracted_ingredients: ingredients,
-          model_used: 'gemini-2.0-flash-exp',
+          model_used: process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-preview',
         });
     }
 

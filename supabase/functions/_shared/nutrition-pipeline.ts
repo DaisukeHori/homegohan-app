@@ -2,7 +2,7 @@
  * 栄養分析パイプライン（nutrition-pipeline.ts）
  * 
  * 食事写真分析の全ステップを統合:
- * 1. Gemini 3 Pro で画像認識
+ * 1. Gemini 3 Pro Preview で画像認識
  * 2. 材料マッチング
  * 3. 栄養計算
  * 4. エビデンス検証
@@ -30,6 +30,7 @@ import {
   MatchedIngredientInfo,
   searchSimilarRecipes
 } from './evidence-verifier.ts'
+import { generateGeminiJson } from './gemini-json.ts'
 
 // ============================================
 // 型定義
@@ -110,19 +111,88 @@ export interface NutritionPipelineResult {
 }
 
 // ============================================
-// Gemini 3 Pro 画像認識
+// Gemini 3 Pro Preview 画像認識
 // ============================================
+
+const mealRecognitionSchema = {
+  type: 'object',
+  required: ['dishes'],
+  properties: {
+    dishes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'role', 'estimatedIngredients'],
+        properties: {
+          name: { type: 'string' },
+          role: { type: 'string', enum: ['main', 'side', 'soup', 'rice', 'salad', 'dessert'] },
+          estimatedIngredients: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['name', 'amount_g'],
+              properties: {
+                name: { type: 'string' },
+                amount_g: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const
+
+const praiseSchema = {
+  type: 'object',
+  required: ['praiseComment', 'nutritionTip', 'overallScore', 'vegScore'],
+  properties: {
+    praiseComment: { type: 'string' },
+    nutritionTip: { type: 'string' },
+    overallScore: { type: 'number' },
+    vegScore: { type: 'number' },
+  },
+} as const
+
+function toOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+function normalizeGeminiAnalysisResult(raw: unknown): GeminiAnalysisResult {
+  const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {}
+  const dishesInput = Array.isArray(input.dishes) ? input.dishes : []
+
+  return {
+    dishes: dishesInput.map((dish) => {
+      const item = typeof dish === 'object' && dish !== null ? dish as Record<string, unknown> : {}
+      const estimatedIngredientsInput = Array.isArray(item.estimatedIngredients) ? item.estimatedIngredients : []
+
+      return {
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '不明な料理',
+        role: typeof item.role === 'string' && item.role.trim() ? item.role.trim() : 'main',
+        estimatedIngredients: estimatedIngredientsInput
+          .map((ingredient) => {
+            const candidate = typeof ingredient === 'object' && ingredient !== null ? ingredient as Record<string, unknown> : {}
+            const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : null
+            const amount = toOptionalNumber(candidate.amount_g)
+            if (!name || amount === undefined) return null
+            return { name, amount_g: Math.max(0, amount) }
+          })
+          .filter((ingredient): ingredient is EstimatedIngredient => ingredient !== null),
+      }
+    }).filter((dish) => dish.estimatedIngredients.length > 0),
+  }
+}
 
 async function analyzeImageWithGemini(
   images: ImageInput[],
   mealType: string
 ): Promise<GeminiAnalysisResult> {
-  const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
-  
-  if (!GOOGLE_AI_API_KEY) {
-    throw new Error('Google AI API Key is missing')
-  }
-
   const mealTypeJa = mealType === 'breakfast' ? '朝食'
     : mealType === 'lunch' ? '昼食'
     : mealType === 'dinner' ? '夕食'
@@ -157,39 +227,17 @@ async function analyzeImageWithGemini(
 - 分量は1人前として推定してください
 - 調味料（塩、砂糖、しょうゆ等）も含めてください
 - roleは料理の種類に応じて設定（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート=dessert）
-- JSONのみを出力してください`
+- 構造化 JSON で返してください`
 
-  // Gemini 3 Pro を使用
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${GOOGLE_AI_API_KEY}`
-
-  const parts: any[] = images.map((img) => ({
-    inlineData: { mimeType: img.mimeType, data: img.base64 }
-  }))
-  parts.push({ text: prompt })
-
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
-    })
+  const { data } = await generateGeminiJson<GeminiAnalysisResult>({
+    prompt,
+    schema: mealRecognitionSchema as unknown as Record<string, unknown>,
+    images,
+    temperature: 0.4,
+    maxOutputTokens: 4096,
   })
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Gemini API error: ${errorText}`)
-  }
-
-  const data = await response.json()
-  const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-  const jsonMatch = textContent.match(/\{[\s\S]*\}/)
-  
-  if (!jsonMatch) {
-    throw new Error('Failed to parse Gemini response')
-  }
-
-  return JSON.parse(jsonMatch[0])
+  return normalizeGeminiAnalysisResult(data)
 }
 
 // ============================================
@@ -202,7 +250,6 @@ async function generatePraiseAndTip(
   mealType: string
 ): Promise<{ praiseComment: string; nutritionTip: string; overallScore: number; vegScore: number }> {
   const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
-  
   if (!GOOGLE_AI_API_KEY) {
     // フォールバック
     return {
@@ -241,36 +288,26 @@ async function generatePraiseAndTip(
 注意：
 - praiseCommentは必ずポジティブ。批判や改善提案は含めない
 - overallScoreは厳しすぎず、普通の食事でも75以上
-- JSONのみを出力`
-
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${GOOGLE_AI_API_KEY}`
+- 構造化 JSON で返してください`
 
   try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 512 },
-      })
+    const { data } = await generateGeminiJson<{
+      praiseComment?: string
+      nutritionTip?: string
+      overallScore?: number
+      vegScore?: number
+    }>({
+      prompt,
+      schema: praiseSchema as unknown as Record<string, unknown>,
+      temperature: 0.7,
+      maxOutputTokens: 512,
     })
 
-    if (!response.ok) {
-      throw new Error('Gemini API error')
-    }
-
-    const data = await response.json()
-    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-    const jsonMatch = textContent.match(/\{[\s\S]*\}/)
-    
-    if (jsonMatch) {
-      const result = JSON.parse(jsonMatch[0])
-      return {
-        praiseComment: result.praiseComment || 'おいしそうな食事ですね！',
-        nutritionTip: result.nutritionTip || '',
-        overallScore: result.overallScore || 80,
-        vegScore: result.vegScore || 50,
-      }
+    return {
+      praiseComment: typeof data.praiseComment === 'string' && data.praiseComment.trim() ? data.praiseComment.trim() : 'おいしそうな食事ですね！',
+      nutritionTip: typeof data.nutritionTip === 'string' ? data.nutritionTip.trim() : '',
+      overallScore: Math.max(70, Math.min(95, Math.round(toOptionalNumber(data.overallScore) ?? 80))),
+      vegScore: Math.max(0, Math.min(100, Math.round(toOptionalNumber(data.vegScore) ?? 50))),
     }
   } catch (error) {
     console.error('Praise generation error:', error)
@@ -294,7 +331,7 @@ export async function analyzeWithEvidence(
   mealType: string,
   supabase: SupabaseClient
 ): Promise<NutritionPipelineResult> {
-  console.log('Step 1: Image recognition with Gemini 3 Pro...')
+  console.log('Step 1: Image recognition with Gemini 3 Pro Preview...')
   
   // Step 1: 画像認識
   const geminiResult = await analyzeImageWithGemini(images, mealType)

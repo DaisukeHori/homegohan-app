@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { generateGeminiJson } from "../_shared/gemini-json.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,14 +23,72 @@ interface AnalysisResult {
   raw_text?: string;
 }
 
+const analysisSchema = {
+  type: 'object',
+  required: ['type', 'values', 'confidence', 'raw_text'],
+  properties: {
+    type: { type: 'string', enum: ['weight_scale', 'blood_pressure', 'thermometer', 'unknown'] },
+    values: {
+      type: 'object',
+      properties: {
+        weight: { type: ['number', 'null'] },
+        body_fat_percentage: { type: ['number', 'null'] },
+        muscle_mass: { type: ['number', 'null'] },
+        systolic_bp: { type: ['number', 'null'] },
+        diastolic_bp: { type: ['number', 'null'] },
+        heart_rate: { type: ['number', 'null'] },
+        body_temp: { type: ['number', 'null'] },
+      },
+    },
+    confidence: { type: 'number' },
+    raw_text: { type: 'string' },
+  },
+} as const;
+
+function toOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function clampConfidence(value: unknown): number {
+  const numeric = toOptionalNumber(value);
+  if (numeric === undefined) return 0;
+  return Math.max(0, Math.min(1, Math.round(numeric * 100) / 100));
+}
+
+function normalizeAnalysisResult(raw: unknown): AnalysisResult {
+  const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
+  const values = typeof input.values === 'object' && input.values !== null ? input.values as Record<string, unknown> : {};
+  const type = ['weight_scale', 'blood_pressure', 'thermometer', 'unknown'].includes(input.type as string)
+    ? input.type as AnalysisResult['type']
+    : 'unknown';
+
+  return {
+    type,
+    values: {
+      weight: toOptionalNumber(values.weight),
+      body_fat_percentage: toOptionalNumber(values.body_fat_percentage),
+      muscle_mass: toOptionalNumber(values.muscle_mass),
+      systolic_bp: toOptionalNumber(values.systolic_bp),
+      diastolic_bp: toOptionalNumber(values.diastolic_bp),
+      heart_rate: toOptionalNumber(values.heart_rate),
+      body_temp: toOptionalNumber(values.body_temp),
+    },
+    confidence: clampConfidence(input.confidence),
+    raw_text: typeof input.raw_text === 'string' ? input.raw_text.trim() : undefined,
+  };
+}
+
 Deno.serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // JWT認証
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
@@ -52,22 +111,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // リクエストボディを取得
     const formData = await req.formData();
     const imageFile = formData.get("image") as File | null;
     const imageBase64 = formData.get("image_base64") as string | null;
-    const deviceType = formData.get("device_type") as string || "auto"; // weight_scale, blood_pressure, thermometer, auto
+    const deviceType = formData.get("device_type") as string || "auto";
 
     let base64Image: string;
     let mimeType: string;
 
     if (imageFile) {
-      // ファイルからBase64に変換
       const buffer = await imageFile.arrayBuffer();
       base64Image = btoa(String.fromCharCode(...new Uint8Array(buffer)));
       mimeType = imageFile.type || "image/jpeg";
     } else if (imageBase64) {
-      // 既にBase64の場合
       base64Image = imageBase64.replace(/^data:image\/\w+;base64,/, "");
       mimeType = "image/jpeg";
     } else {
@@ -77,68 +133,25 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Gemini APIで画像を分析
-    const geminiApiKey = Deno.env.get("GOOGLE_AI_STUDIO_API_KEY") || Deno.env.get("GOOGLE_GEN_AI_API_KEY");
-    if (!geminiApiKey) {
-      return new Response(
-        JSON.stringify({ error: "Gemini API key not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const { data, model, rawText } = await generateGeminiJson<AnalysisResult>({
+      prompt: buildAnalysisPrompt(deviceType),
+      schema: analysisSchema as unknown as Record<string, unknown>,
+      images: [{ base64: base64Image, mimeType }],
+      temperature: 0.1,
+      maxOutputTokens: 1024,
+    });
 
-    const prompt = buildAnalysisPrompt(deviceType);
-
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: mimeType,
-                    data: base64Image,
-                  },
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 1024,
-          },
-        }),
-      }
-    );
-
-    if (!geminiResponse.ok) {
-      const errorText = await geminiResponse.text();
-      console.error("Gemini API error:", errorText);
-      return new Response(
-        JSON.stringify({ error: "Failed to analyze image" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const geminiData = await geminiResponse.json();
-    const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    // JSONを抽出
-    const result = parseAnalysisResult(responseText);
+    const result = normalizeAnalysisResult(data);
 
     return new Response(
       JSON.stringify({
         success: true,
         result,
-        raw_response: responseText,
+        raw_response: rawText,
+        model_used: model,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-
   } catch (error) {
     console.error("Error:", error);
     return new Response(
@@ -152,70 +165,32 @@ function buildAnalysisPrompt(deviceType: string): string {
   const basePrompt = `あなたは健康機器の画面を読み取る専門家です。
 画像に表示されている数値を正確に読み取ってください。
 
-以下のJSON形式で回答してください：
-{
-  "type": "weight_scale" | "blood_pressure" | "thermometer" | "unknown",
-  "values": {
-    "weight": 数値（kg単位、体重計の場合）,
-    "body_fat_percentage": 数値（%、体脂肪率が表示されている場合）,
-    "muscle_mass": 数値（kg、筋肉量が表示されている場合）,
-    "systolic_bp": 数値（mmHg、収縮期血圧）,
-    "diastolic_bp": 数値（mmHg、拡張期血圧）,
-    "heart_rate": 数値（bpm、脈拍）,
-    "body_temp": 数値（℃、体温）
-  },
-  "confidence": 0.0〜1.0の信頼度,
-  "raw_text": "画面に表示されている全てのテキスト"
-}
-
-注意事項：
-- 数値が読み取れない項目はnullにしてください
-- 単位は必ず変換してください（例：65.2kgなら65.2）
-- 小数点以下は元の表示を維持してください
-- 信頼度は読み取りの確実性を示します（はっきり読める: 0.9以上、やや不鮮明: 0.7-0.9、不鮮明: 0.7未満）
-`;
+方針:
+- 数値が読み取れない項目は null にしてください
+- 単位は含めず純粋な数値だけを返してください
+- 小数点は表示どおりに維持してください
+- raw_text には画面上で読めた主要テキストをそのまま入れてください
+- confidence は読み取り確実性を 0.0 から 1.0 で返してください`;
 
   if (deviceType === "weight_scale") {
-    return basePrompt + "\n\nこの画像は体重計の画面です。体重、体脂肪率、筋肉量などを読み取ってください。";
-  } else if (deviceType === "blood_pressure") {
-    return basePrompt + "\n\nこの画像は血圧計の画面です。収縮期血圧、拡張期血圧、脈拍を読み取ってください。";
-  } else if (deviceType === "thermometer") {
-    return basePrompt + "\n\nこの画像は体温計の画面です。体温を読み取ってください。";
-  } else {
-    return basePrompt + "\n\n画像の種類を自動判定し、適切な数値を読み取ってください。";
-  }
-}
+    return `${basePrompt}
 
-function parseAnalysisResult(responseText: string): AnalysisResult {
-  try {
-    // JSONブロックを抽出
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        type: parsed.type || "unknown",
-        values: {
-          weight: parsed.values?.weight ?? null,
-          body_fat_percentage: parsed.values?.body_fat_percentage ?? null,
-          muscle_mass: parsed.values?.muscle_mass ?? null,
-          systolic_bp: parsed.values?.systolic_bp ?? null,
-          diastolic_bp: parsed.values?.diastolic_bp ?? null,
-          heart_rate: parsed.values?.heart_rate ?? null,
-          body_temp: parsed.values?.body_temp ?? null,
-        },
-        confidence: parsed.confidence ?? 0.5,
-        raw_text: parsed.raw_text,
-      };
-    }
-  } catch (e) {
-    console.error("Failed to parse response:", e);
+この画像は体重計または体組成計の画面です。体重、体脂肪率、筋肉量などを読み取ってください。`;
   }
 
-  return {
-    type: "unknown",
-    values: {},
-    confidence: 0,
-    raw_text: responseText,
-  };
-}
+  if (deviceType === "blood_pressure") {
+    return `${basePrompt}
 
+この画像は血圧計の画面です。収縮期血圧、拡張期血圧、脈拍を読み取ってください。`;
+  }
+
+  if (deviceType === "thermometer") {
+    return `${basePrompt}
+
+この画像は体温計の画面です。体温を読み取ってください。`;
+  }
+
+  return `${basePrompt}
+
+画像の種類を自動判定し、適切な健康機器カテゴリを選んだ上で数値を読み取ってください。`;
+}
