@@ -12,7 +12,7 @@ interface GenerateGeminiJsonOptions {
   model?: string
 }
 
-export const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3-pro-preview'
+export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3-pro-preview'
 
 export async function generateGeminiJson<T>({
   prompt,
@@ -20,7 +20,7 @@ export async function generateGeminiJson<T>({
   images = [],
   temperature = 0.1,
   maxOutputTokens = 2048,
-  model = Deno.env.get('GEMINI_IMAGE_MODEL') || DEFAULT_GEMINI_IMAGE_MODEL,
+  model = Deno.env.get('GEMINI_VISION_MODEL') || DEFAULT_GEMINI_VISION_MODEL,
 }: GenerateGeminiJsonOptions): Promise<{ data: T; model: string; rawText: string }> {
   const apiKey = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
   if (!apiKey) {

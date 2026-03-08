@@ -1,4 +1,4 @@
-export const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3-pro-preview';
+export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3-pro-preview';
 export const AUTO_CLASSIFY_CONFIDENCE_THRESHOLD = 0.75;
 
 export type PhotoType = 'meal' | 'fridge' | 'health_checkup' | 'weight_scale' | 'unknown';
