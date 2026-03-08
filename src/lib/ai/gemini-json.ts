@@ -1,4 +1,4 @@
-import { DEFAULT_GEMINI_IMAGE_MODEL } from './image-recognition';
+import { DEFAULT_GEMINI_VISION_MODEL } from './image-recognition';
 
 export interface GeminiImageInput {
   base64: string;
@@ -42,7 +42,7 @@ export async function generateGeminiJson<T>({
   images = [],
   temperature = 0.1,
   maxOutputTokens = 2048,
-  model = process.env.GEMINI_IMAGE_MODEL || DEFAULT_GEMINI_IMAGE_MODEL,
+  model = process.env.GEMINI_VISION_MODEL || DEFAULT_GEMINI_VISION_MODEL,
 }: GenerateGeminiJsonOptions): Promise<{ data: T; model: string; rawText: string }> {
   const apiKey = getGoogleAiApiKey();
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {

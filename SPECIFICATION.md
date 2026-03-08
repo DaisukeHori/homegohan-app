@@ -200,11 +200,10 @@
 - `temperature`: 0.4
 - `maxOutputTokens`: 4096
 
-### 3.3 Google Gemini 3 Pro Image Preview (画像生成 / Nano Banana Pro)
+### 3.3 Google Gemini 3.1 Flash Image Preview (画像生成 / Nano Banana 2)
 
 **使用箇所:**
-- `generate-weekly-menu` Edge Function
-- `generate-single-meal` Edge Function
+- `src/app/api/ai/image/generate/route.ts`
 
 **プロンプト:**
 ```
@@ -213,8 +212,8 @@ Natural lighting, high resolution, minimalist plating, Japanese cuisine style.
 ```
 
 **パラメータ:**
-- `model`: gemini-3-pro-image-preview
-- `responseModalities`: ['IMAGE']
+- `model`: gemini-3.1-flash-image-preview
+- `responseModalities`: ['TEXT', 'IMAGE']
 - `imageConfig`: { aspectRatio: '1:1' }
 
 ---
@@ -2484,11 +2483,11 @@ GOOGLE_GEN_AI_API_KEY=xxx
 
 ### オプション
 ```env
-# 画像生成モデル（デフォルト: gemini-3-pro-image-preview）
-GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
+# 画像生成モデル（デフォルト: gemini-3.1-flash-image-preview / Nano Banana 2）
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image-preview
 
-# 分析モデル（デフォルト: gemini-2.0-flash）
-GEMINI_ANALYSIS_MODEL=gemini-2.0-flash
+# 画像認識・構造化抽出モデル（デフォルト: gemini-3-pro-preview）
+GEMINI_VISION_MODEL=gemini-3-pro-preview
 ```
 
 ---
@@ -2685,4 +2684,3 @@ homegohan/
 
 **更新日:** 2026年1月3日
 **バージョン:** 0.3.0 (V4汎用献立生成エンジン追加)
-

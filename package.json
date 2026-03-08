@@ -17,7 +17,7 @@
     "mobile:android": "npm --workspace apps/mobile run android"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^1.44.0",
     "@supabase/ssr": "^0.1.0",
     "@supabase/supabase-js": "^2.78.0",
     "@vercel/functions": "^3.3.4",
