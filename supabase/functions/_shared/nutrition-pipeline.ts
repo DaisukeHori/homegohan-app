@@ -2,7 +2,7 @@
  * 栄養分析パイプライン（nutrition-pipeline.ts）
  * 
  * 食事写真分析の全ステップを統合:
- * 1. Gemini 3 Flash Preview で画像認識
+ * 1. Gemini 3.1 Flash-Lite Preview で画像認識
  * 2. 材料マッチング
  * 3. 栄養計算
  * 4. エビデンス検証
@@ -119,10 +119,10 @@ export interface NutritionPipelineResult {
 }
 
 // ============================================
-// Gemini 3 Flash Preview 画像認識
+// Gemini 3.1 Flash-Lite Preview 画像認識
 // ============================================
 
-const GEMINI_MEAL_ANALYSIS_MODEL = Deno.env.get('GEMINI_MEAL_ANALYSIS_MODEL') || 'gemini-3-flash-preview'
+const GEMINI_MEAL_ANALYSIS_MODEL = Deno.env.get('GEMINI_MEAL_ANALYSIS_MODEL') || 'gemini-3.1-flash-lite-preview'
 
 const mealRecognitionSchema = {
   type: 'object',
@@ -302,7 +302,7 @@ export async function analyzeWithEvidence(
   let nutritionCalculationMs = 0
   let evidenceVerificationMs = 0
   let praiseGenerationMs = 0
-  console.log('Step 1: Image recognition with Gemini 3 Flash Preview...', {
+  console.log('Step 1: Image recognition with Gemini 3.1 Flash-Lite Preview...', {
     model: GEMINI_MEAL_ANALYSIS_MODEL,
   })
   

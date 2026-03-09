@@ -1,5 +1,6 @@
-export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3-pro-preview';
-export const DEFAULT_GEMINI_FLASH_MODEL = 'gemini-3-flash-preview';
+export const DEFAULT_GEMINI_FLASH_LITE_MODEL = 'gemini-3.1-flash-lite-preview';
+export const DEFAULT_GEMINI_VISION_MODEL = DEFAULT_GEMINI_FLASH_LITE_MODEL;
+export const DEFAULT_GEMINI_FLASH_MODEL = DEFAULT_GEMINI_FLASH_LITE_MODEL;
 export const DEFAULT_GEMINI_CLASSIFY_MODEL = DEFAULT_GEMINI_FLASH_MODEL;
 export const AUTO_CLASSIFY_CONFIDENCE_THRESHOLD = 0.6;
 export const AUTO_CLASSIFY_CANDIDATE_FALLBACK_THRESHOLD = 0.45;
@@ -99,24 +100,27 @@ const stringField = { type: ['string', 'null'] };
 
 export const classifyPhotoSchema = {
   type: 'object',
-  required: ['type', 'confidence', 'description', 'candidates'],
+  required: ['type', 'confidence'],
   properties: {
     type: { type: 'string', enum: PHOTO_TYPES },
     confidence: { type: 'number' },
-    description: { type: 'string' },
-    candidates: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['type', 'confidence'],
-        properties: {
-          type: { type: 'string', enum: PHOTO_TYPES },
-          confidence: { type: 'number' },
-        },
-      },
-    },
   },
 } as const;
+
+export function getClassifyPhotoDescription(type: PhotoType): string {
+  switch (type) {
+    case 'meal':
+      return '食事の写真と判定しました';
+    case 'fridge':
+      return '冷蔵庫の写真と判定しました';
+    case 'health_checkup':
+      return '健康診断結果の写真と判定しました';
+    case 'weight_scale':
+      return '体重計や健康機器の写真と判定しました';
+    default:
+      return 'AIが画像を判定しました';
+  }
+}
 
 export const fridgeAnalysisSchema = {
   type: 'object',
@@ -234,7 +238,7 @@ export function normalizeClassifyPhotoResult(raw: unknown): ClassifyPhotoResult 
   const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
   const primaryType = PHOTO_TYPES.includes(input.type as PhotoType) ? input.type as PhotoType : 'unknown';
   const confidence = clampConfidence(input.confidence);
-  const description = toOptionalString(input.description) ?? 'AIが画像を判定しました';
+  const description = toOptionalString(input.description) ?? getClassifyPhotoDescription(primaryType);
   const candidatesInput = Array.isArray(input.candidates) ? input.candidates : [];
 
   const candidates = uniqueCandidates(
@@ -251,7 +255,7 @@ export function normalizeClassifyPhotoResult(raw: unknown): ClassifyPhotoResult 
       .sort((a, b) => b.confidence - a.confidence),
   );
 
-  if (!candidates.some((candidate) => candidate.type === primaryType)) {
+  if (!candidates.some((candidate) => candidate.type === primaryType) && (primaryType !== 'unknown' || confidence > 0)) {
     candidates.unshift({ type: primaryType, confidence });
   }
 

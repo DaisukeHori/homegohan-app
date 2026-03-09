@@ -135,11 +135,6 @@ describe('image route contracts', () => {
                 text: JSON.stringify({
                   type: 'fridge',
                   confidence: 0.88,
-                  description: '冷蔵庫の棚',
-                  candidates: [
-                    { type: 'fridge', confidence: 0.88 },
-                    { type: 'meal', confidence: 0.33 },
-                  ],
                 }),
               },
             ],
@@ -164,12 +159,11 @@ describe('image route contracts', () => {
     expect(payload).toMatchObject({
       type: 'fridge',
       confidence: 0.88,
-      description: '冷蔵庫の棚',
-      modelUsed: 'gemini-3-flash-preview',
+      description: '冷蔵庫の写真と判定しました',
+      modelUsed: 'gemini-3.1-flash-lite-preview',
     });
     expect(payload.candidates).toEqual([
       { type: 'fridge', confidence: 0.88 },
-      { type: 'meal', confidence: 0.33 },
     ]);
 
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
@@ -188,11 +182,6 @@ describe('image route contracts', () => {
                   text: JSON.stringify({
                     type: 'unknown',
                     confidence: 0.18,
-                    description: '判別困難',
-                    candidates: [
-                      { type: 'meal', confidence: 0.34 },
-                      { type: 'fridge', confidence: 0.29 },
-                    ],
                   }),
                 },
               ],
@@ -209,8 +198,6 @@ describe('image route contracts', () => {
                   text: JSON.stringify({
                     type: 'meal',
                     confidence: 0.81,
-                    description: '食事写真',
-                    candidates: [{ type: 'meal', confidence: 0.81 }],
                   }),
                 },
               ],
@@ -227,8 +214,6 @@ describe('image route contracts', () => {
                   text: JSON.stringify({
                     type: 'meal',
                     confidence: 0.74,
-                    description: '食事写真',
-                    candidates: [{ type: 'meal', confidence: 0.74 }],
                   }),
                 },
               ],
@@ -279,7 +264,7 @@ describe('image route contracts', () => {
             content: {
               parts: [
                 {
-                  text: '{"type":"meal","confidence":0.99,"description":"食事写真","candidates":[{"type":"meal","confidence":0.99}',
+                  text: '{"type":"meal","confidence":0.99',
                 },
               ],
             },
@@ -299,7 +284,7 @@ describe('image route contracts', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       type: 'meal',
-      confidence: 0.99,
+      confidence: 1,
       recovered: true,
     });
   });

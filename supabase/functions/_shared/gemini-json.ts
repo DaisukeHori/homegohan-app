@@ -12,7 +12,7 @@ interface GenerateGeminiJsonOptions {
   model?: string
 }
 
-export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3-pro-preview'
+export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3.1-flash-lite-preview'
 
 const STRICT_JSON_INSTRUCTIONS = [
   '出力は厳密なJSONのみを返してください。',

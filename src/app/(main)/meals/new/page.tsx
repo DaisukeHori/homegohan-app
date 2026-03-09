@@ -836,7 +836,7 @@ export default function MealCaptureModal() {
           uric_acid: healthData.uricAcid,
           ocr_extracted_data: healthData,
           ocr_extraction_timestamp: new Date().toISOString(),
-          ocr_model_used: healthModelUsed || 'gemini-3-pro-preview',
+          ocr_model_used: healthModelUsed || 'gemini-3.1-flash-lite-preview',
         }),
       });
 

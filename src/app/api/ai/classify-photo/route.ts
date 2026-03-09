@@ -21,20 +21,13 @@ const CLASSIFY_MODEL = process.env.GEMINI_CLASSIFY_MODEL || DEFAULT_GEMINI_CLASS
 export type { PhotoType };
 
 function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult | null {
-  const pairRegex = /"type"\s*:\s*"(meal|fridge|health_checkup|weight_scale|unknown)"[\s\S]{0,160}?"confidence"\s*:\s*([01](?:\.\d+)?)/g;
-  const pairs = [...rawText.matchAll(pairRegex)].map((match) => ({
-    type: match[1] as PhotoType,
-    confidence: Number(match[2]),
-  }));
+  const pairRegex = /"type"\s*:\s*"(meal|fridge|health_checkup|weight_scale|unknown)"[\s\S]{0,120}?"confidence"\s*:\s*([01](?:\.\d+)?)/;
+  const pair = rawText.match(pairRegex);
 
-  const description = rawText.match(/"description"\s*:\s*"([^"]{1,120})/);
-
-  if (pairs.length > 0) {
+  if (pair) {
     return normalizeClassifyPhotoResult({
-      type: pairs[0].type,
-      confidence: pairs[0].confidence,
-      description: description?.[1] || 'AIが画像を判定しました',
-      candidates: pairs.slice(0, 3),
+      type: pair[1] as PhotoType,
+      confidence: Number(pair[2]),
     });
   }
 
@@ -46,10 +39,6 @@ function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult 
   return normalizeClassifyPhotoResult({
     type: typeOnly[1] as PhotoType,
     confidence: 0.7,
-    description: description?.[1] || 'AIが画像を判定しました',
-    candidates: [
-      { type: typeOnly[1] as PhotoType, confidence: 0.7 },
-    ],
   });
 }
 
@@ -71,7 +60,11 @@ function buildPrompt(imageCount: number): string {
 - 紙の健康診断結果と体重計ディスプレイは厳密に区別してください
 - 判断が難しい場合のみ "unknown" を選んでください
 
-JSONで返してください。candidates には有力候補を高い順に最大3件まで入れてください。description は20文字程度で簡潔にしてください。`;
+JSON では次の2項目だけ返してください:
+- "type": 上記4カテゴリのいずれか
+- "confidence": 0.0 から 1.0 の小数
+
+説明文や候補配列は返さないでください。`;
 }
 
 async function requestClassification(images: ImageInput[]): Promise<{ result: ClassifyPhotoResult; model: string }> {
@@ -80,8 +73,9 @@ async function requestClassification(images: ImageInput[]): Promise<{ result: Cl
     schema: classifyPhotoSchema as unknown as Record<string, unknown>,
     images,
     temperature: 0.1,
-    maxOutputTokens: 512,
+    maxOutputTokens: 96,
     model: CLASSIFY_MODEL,
+    retryOnParseFailure: false,
   });
 
   return {

@@ -12,6 +12,7 @@ interface GenerateGeminiJsonOptions {
   temperature?: number;
   maxOutputTokens?: number;
   model?: string;
+  retryOnParseFailure?: boolean;
 }
 
 const STRICT_JSON_INSTRUCTIONS = [
@@ -94,7 +95,14 @@ async function requestGeminiRawText({
   temperature,
   maxOutputTokens,
   model,
-}: Required<GenerateGeminiJsonOptions>): Promise<string> {
+}: {
+  prompt: string;
+  schema: Record<string, unknown>;
+  images: GeminiImageInput[];
+  temperature: number;
+  maxOutputTokens: number;
+  model: string;
+}): Promise<string> {
   const apiKey = getGoogleAiApiKey();
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
@@ -170,6 +178,7 @@ export async function generateGeminiJson<T>({
   temperature = 0.1,
   maxOutputTokens = 2048,
   model = process.env.GEMINI_VISION_MODEL || DEFAULT_GEMINI_VISION_MODEL,
+  retryOnParseFailure = true,
 }: GenerateGeminiJsonOptions): Promise<{ data: T; model: string; rawText: string }> {
   const effectiveOptions = {
     prompt,
@@ -189,6 +198,10 @@ export async function generateGeminiJson<T>({
       rawText,
     };
   } catch (firstError) {
+    if (!retryOnParseFailure) {
+      throw firstError;
+    }
+
     const retryRawText = await requestGeminiRawText({
       ...effectiveOptions,
       prompt: `${prompt}\n\n前回の応答は壊れたJSONでした。今度は厳密なJSONのみを返してください。`,
