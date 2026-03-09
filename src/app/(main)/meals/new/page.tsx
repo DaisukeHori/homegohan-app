@@ -47,6 +47,56 @@ const PHOTO_MODES: Record<PhotoMode, { icon: any; label: string; description: st
   weight_scale: { icon: Scale, label: '体重計', description: '体重計の写真を読み取り', color: colors.warning, bg: colors.warningLight },
 };
 
+const PHOTO_MODE_COPY: Record<PhotoMode, {
+  captureDescription: string;
+  cameraLabel: string;
+  galleryLabel: string;
+  hint: string;
+  analyzingTitle: string;
+  analyzingDescription: string;
+}> = {
+  auto: {
+    captureDescription: 'AIが写真の種類を自動判別します。食事・冷蔵庫・健診結果・体重計のいずれかがはっきり写る写真を選んでください。',
+    cameraLabel: '撮影する',
+    galleryLabel: '写真を選ぶ',
+    hint: '対象が1つに絞られた写真だと、オート判定が安定します。',
+    analyzingTitle: 'AIが写真の種類を確認中...',
+    analyzingDescription: '画像の内容を見て、最適な解析モードを選んでいます',
+  },
+  meal: {
+    captureDescription: '食事の写真を撮影してください。AIが料理を認識して栄養を推定します。',
+    cameraLabel: '食事を撮影',
+    galleryLabel: '食事写真を選ぶ',
+    hint: '複数の料理がある場合は、それぞれ別の写真で撮影するとより正確に解析できます。',
+    analyzingTitle: 'AIが食事を解析中...',
+    analyzingDescription: '料理を認識して栄養素を推定しています',
+  },
+  fridge: {
+    captureDescription: '冷蔵庫の中や買ってきた食材を撮影してください。AIが食材と鮮度の目安を読み取ります。',
+    cameraLabel: '冷蔵庫を撮影',
+    galleryLabel: '冷蔵庫写真を選ぶ',
+    hint: '棚全体と食材名が見えるように撮ると、食材の抽出精度が上がります。',
+    analyzingTitle: 'AIが冷蔵庫を解析中...',
+    analyzingDescription: '写っている食材や鮮度の目安を読み取っています',
+  },
+  health_checkup: {
+    captureDescription: '健康診断結果や検査票を撮影してください。AIが検査項目と数値を読み取ります。',
+    cameraLabel: '健診結果を撮影',
+    galleryLabel: '健診結果を選ぶ',
+    hint: '紙全体が入り、文字や数値がぼやけていない写真を使うと読み取りが安定します。',
+    analyzingTitle: 'AIが健診結果を解析中...',
+    analyzingDescription: '検査項目と数値を読み取っています',
+  },
+  weight_scale: {
+    captureDescription: '体重計や体組成計のディスプレイを撮影してください。AIが表示値を読み取ります。',
+    cameraLabel: '体重計を撮影',
+    galleryLabel: '体重計写真を選ぶ',
+    hint: '数字だけでなく単位や体脂肪率の表示も写るように撮ると、読み取り精度が安定します。',
+    analyzingTitle: 'AIが体重計を解析中...',
+    analyzingDescription: '体重や体組成の表示値を読み取っています',
+  },
+};
+
 // 冷蔵庫解析結果
 interface FridgeIngredient {
   name: string;
@@ -157,6 +207,7 @@ export default function MealCaptureModal() {
 
   const [step, setStep] = useState<Step>('mode-select');
   const [photoMode, setPhotoMode] = useState<PhotoMode>('auto');
+  const modeCopy = PHOTO_MODE_COPY[photoMode];
   // 複数枚対応
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
@@ -750,7 +801,7 @@ export default function MealCaptureModal() {
           <span style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
             {step === 'mode-select' && 'モード選択'}
             {step === 'capture' && (photoMode === 'meal' ? '食事を撮影' : photoMode === 'fridge' ? '冷蔵庫を撮影' : photoMode === 'health_checkup' ? '健診結果を撮影' : photoMode === 'weight_scale' ? '体重計を撮影' : '写真を撮影')}
-            {step === 'analyzing' && 'AI解析中...'}
+            {step === 'analyzing' && modeCopy.analyzingTitle}
             {step === 'result' && '解析結果'}
             {step === 'select-date' && '日時を選択'}
             {step === 'fridge-result' && '冷蔵庫の中身'}
@@ -830,11 +881,7 @@ export default function MealCaptureModal() {
             className="flex-1 p-4"
           >
             <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 16, textAlign: 'center' }}>
-              {photoMode === 'auto' && 'AIが写真の種類を自動判別します。'}
-              {photoMode === 'meal' && '食事の写真を撮影してください。AIが料理を認識します。'}
-              {photoMode === 'fridge' && '冷蔵庫の中を撮影してください。食材を認識します。'}
-              {photoMode === 'health_checkup' && '健康診断結果を撮影してください。数値を読み取ります。'}
-              {photoMode === 'weight_scale' && '体重計のディスプレイを撮影してください。体重を読み取ります。'}
+              {modeCopy.captureDescription}
             </p>
             
             {/* 選択済み写真のプレビュー */}
@@ -888,7 +935,7 @@ export default function MealCaptureModal() {
                   <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: colors.accentLight }}>
                     <Camera size={32} color={colors.accent} />
                   </div>
-                  <span style={{ fontSize: 14, fontWeight: 500, color: colors.text }}>撮影する</span>
+                  <span style={{ fontSize: 14, fontWeight: 500, color: colors.text }}>{modeCopy.cameraLabel}</span>
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -898,7 +945,7 @@ export default function MealCaptureModal() {
                   <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: colors.blueLight }}>
                     <ImageIcon size={32} color={colors.blue} />
                   </div>
-                  <span style={{ fontSize: 14, fontWeight: 500, color: colors.text }}>ギャラリーから</span>
+                  <span style={{ fontSize: 14, fontWeight: 500, color: colors.text }}>{modeCopy.galleryLabel}</span>
                 </button>
               </div>
             )}
@@ -935,7 +982,7 @@ export default function MealCaptureModal() {
             
             <div className="mt-6 p-4 rounded-xl" style={{ background: colors.blueLight }}>
               <p style={{ fontSize: 12, color: colors.blue, margin: 0 }}>
-                💡 ヒント: 複数の料理がある場合は、それぞれ別の写真で撮影するとより正確に解析できます。
+                💡 ヒント: {modeCopy.hint}
               </p>
             </div>
           </motion.div>
@@ -973,8 +1020,8 @@ export default function MealCaptureModal() {
               </div>
             )}
             <div className="w-12 h-12 border-4 rounded-full animate-spin mb-4" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-            <p style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>AIが解析中...</p>
-            <p style={{ fontSize: 13, color: colors.textMuted, marginTop: 8 }}>料理を認識して栄養素を推定しています</p>
+            <p style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>{modeCopy.analyzingTitle}</p>
+            <p style={{ fontSize: 13, color: colors.textMuted, marginTop: 8 }}>{modeCopy.analyzingDescription}</p>
           </motion.div>
         )}
 
