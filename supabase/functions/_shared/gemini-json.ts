@@ -14,14 +14,87 @@ interface GenerateGeminiJsonOptions {
 
 export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3-pro-preview'
 
-export async function generateGeminiJson<T>({
+const STRICT_JSON_INSTRUCTIONS = [
+  '出力は厳密なJSONのみを返してください。',
+  'Markdownのコードブロックや説明文は返さないでください。',
+  'キーは必ずダブルクォートで囲んでください。',
+  'JSONは1つのオブジェクトまたは配列のみを返してください。',
+].join('\n')
+
+function stripJsonCodeFence(text: string): string {
+  return text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+}
+
+function extractJsonBlock(text: string): string | null {
+  const objectStart = text.indexOf('{')
+  const objectEnd = text.lastIndexOf('}')
+  if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
+    return text.slice(objectStart, objectEnd + 1).trim()
+  }
+
+  const arrayStart = text.indexOf('[')
+  const arrayEnd = text.lastIndexOf(']')
+  if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+    return text.slice(arrayStart, arrayEnd + 1).trim()
+  }
+
+  return null
+}
+
+function repairCommonJsonIssues(text: string): string {
+  return text
+    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/([}\]"0-9eE.\-])(\s*)("([^"\\]|\\.)*"\s*:)/g, '$1,$2$3')
+    .replace(/\n/g, ' ')
+    .trim()
+}
+
+function parseGeminiJsonText<T>(rawText: string): T {
+  const attempts = new Set<string>()
+  const candidates = [
+    rawText.trim(),
+    stripJsonCodeFence(rawText),
+    extractJsonBlock(stripJsonCodeFence(rawText)) ?? '',
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    if (attempts.has(candidate)) continue
+    attempts.add(candidate)
+
+    try {
+      return JSON.parse(candidate) as T
+    } catch {
+      // Fall through to repaired attempt.
+    }
+
+    const repaired = repairCommonJsonIssues(candidate)
+    if (!repaired || attempts.has(repaired)) continue
+    attempts.add(repaired)
+
+    try {
+      return JSON.parse(repaired) as T
+    } catch {
+      // Keep trying candidates.
+    }
+  }
+
+  const preview = rawText.slice(0, 240)
+  const error = new Error(`Gemini API returned invalid JSON: ${preview}`) as Error & { rawText?: string }
+  error.rawText = rawText
+  throw error
+}
+
+async function requestGeminiRawText({
   prompt,
   schema,
   images = [],
-  temperature = 0.1,
-  maxOutputTokens = 2048,
-  model = Deno.env.get('GEMINI_VISION_MODEL') || DEFAULT_GEMINI_VISION_MODEL,
-}: GenerateGeminiJsonOptions): Promise<{ data: T; model: string; rawText: string }> {
+  temperature,
+  maxOutputTokens,
+  model,
+}: Required<GenerateGeminiJsonOptions>): Promise<string> {
   const apiKey = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
   if (!apiKey) {
     throw new Error('Google AI API Key is missing')
@@ -36,7 +109,7 @@ export async function generateGeminiJson<T>({
     body: JSON.stringify({
       contents: [{
         parts: [
-          { text: prompt },
+          { text: `${prompt}\n\n${STRICT_JSON_INSTRUCTIONS}` },
           ...images.map((image) => ({
             inlineData: {
               mimeType: image.mimeType || 'image/jpeg',
@@ -69,9 +142,65 @@ export async function generateGeminiJson<T>({
     throw new Error('Gemini API returned no JSON content')
   }
 
-  return {
-    data: JSON.parse(rawText) as T,
+  return rawText
+}
+
+export async function generateGeminiJson<T>({
+  prompt,
+  schema,
+  images = [],
+  temperature = 0.1,
+  maxOutputTokens = 2048,
+  model = Deno.env.get('GEMINI_VISION_MODEL') || DEFAULT_GEMINI_VISION_MODEL,
+}: GenerateGeminiJsonOptions): Promise<{ data: T; model: string; rawText: string }> {
+  const effectiveOptions = {
+    prompt,
+    schema,
+    images,
+    temperature,
+    maxOutputTokens,
     model,
-    rawText,
+  }
+
+  const rawText = await requestGeminiRawText(effectiveOptions)
+
+  try {
+    return {
+      data: parseGeminiJsonText<T>(rawText),
+      model,
+      rawText,
+    }
+  } catch (firstError) {
+    const retryRawText = await requestGeminiRawText({
+      ...effectiveOptions,
+      prompt: `${prompt}\n\n前回の応答は壊れたJSONでした。今度は厳密なJSONのみを返してください。`,
+      temperature: 0,
+      maxOutputTokens,
+      model,
+      schema,
+      images,
+    })
+
+    try {
+      return {
+        data: parseGeminiJsonText<T>(retryRawText),
+        model,
+        rawText: retryRawText,
+      }
+    } catch (retryError) {
+      const message = retryError instanceof Error ? retryError.message : String(retryError)
+      const originalMessage = firstError instanceof Error ? firstError.message : String(firstError)
+      const error = new Error(`${message} (first attempt: ${originalMessage})`) as Error & {
+        rawText?: string
+        firstRawText?: string
+      }
+      error.rawText = retryError instanceof Error && 'rawText' in retryError
+        ? (retryError as Error & { rawText?: string }).rawText ?? retryRawText
+        : retryRawText
+      error.firstRawText = firstError instanceof Error && 'rawText' in firstError
+        ? (firstError as Error & { rawText?: string }).rawText ?? rawText
+        : rawText
+      throw error
+    }
   }
 }

@@ -82,7 +82,9 @@ function parseGeminiJsonText<T>(rawText: string): T {
   }
 
   const preview = rawText.slice(0, 240);
-  throw new Error(`Gemini API returned invalid JSON: ${preview}`);
+  const error = new Error(`Gemini API returned invalid JSON: ${preview}`) as Error & { rawText?: string };
+  error.rawText = rawText;
+  throw error;
 }
 
 async function requestGeminiRawText({
@@ -206,7 +208,17 @@ export async function generateGeminiJson<T>({
     } catch (retryError) {
       const message = retryError instanceof Error ? retryError.message : String(retryError);
       const originalMessage = firstError instanceof Error ? firstError.message : String(firstError);
-      throw new Error(`${message} (first attempt: ${originalMessage})`);
+      const error = new Error(`${message} (first attempt: ${originalMessage})`) as Error & {
+        rawText?: string;
+        firstRawText?: string;
+      };
+      error.rawText = retryError instanceof Error && 'rawText' in retryError
+        ? (retryError as Error & { rawText?: string }).rawText ?? retryRawText
+        : retryRawText;
+      error.firstRawText = firstError instanceof Error && 'rawText' in firstError
+        ? (firstError as Error & { rawText?: string }).rawText ?? rawText
+        : rawText;
+      throw error;
     }
   }
 }

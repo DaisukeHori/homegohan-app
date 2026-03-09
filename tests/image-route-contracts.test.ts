@@ -258,6 +258,52 @@ describe('image route contracts', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('classify-photo recovers when Gemini returns malformed JSON', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: '{"type":"meal","confidence":1.0',
+                },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: '{"type":"meal","confidence":0.99,"description":"食事写真","candidates":[{"type":"meal","confidence":0.99}',
+                },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { POST } = await import('../src/app/api/ai/classify-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/classify-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      type: 'meal',
+      confidence: 0.99,
+      recovered: true,
+    });
+  });
+
   it('image-generate uses Nano Banana 2 and accepts multiple reference images', async () => {
     mockGenerateContent.mockResolvedValue({
       candidates: [

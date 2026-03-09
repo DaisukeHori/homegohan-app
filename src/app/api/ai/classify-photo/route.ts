@@ -17,6 +17,39 @@ interface ImageInput {
 
 export type { PhotoType };
 
+function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult | null {
+  const pairRegex = /"type"\s*:\s*"(meal|fridge|health_checkup|weight_scale|unknown)"[\s\S]{0,160}?"confidence"\s*:\s*([01](?:\.\d+)?)/g;
+  const pairs = [...rawText.matchAll(pairRegex)].map((match) => ({
+    type: match[1] as PhotoType,
+    confidence: Number(match[2]),
+  }));
+
+  const description = rawText.match(/"description"\s*:\s*"([^"]{1,120})/);
+
+  if (pairs.length > 0) {
+    return normalizeClassifyPhotoResult({
+      type: pairs[0].type,
+      confidence: pairs[0].confidence,
+      description: description?.[1] || 'AIが画像を判定しました',
+      candidates: pairs.slice(0, 3),
+    });
+  }
+
+  const typeOnly = rawText.match(/"type"\s*:\s*"(meal|fridge|health_checkup|weight_scale|unknown)"/);
+  if (!typeOnly) {
+    return null;
+  }
+
+  return normalizeClassifyPhotoResult({
+    type: typeOnly[1] as PhotoType,
+    confidence: 0.7,
+    description: description?.[1] || 'AIが画像を判定しました',
+    candidates: [
+      { type: typeOnly[1] as PhotoType, confidence: 0.7 },
+    ],
+  });
+}
+
 function buildPrompt(imageCount: number): string {
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
 
@@ -91,6 +124,26 @@ export async function POST(request: Request) {
       modelUsed: model,
     });
   } catch (error: any) {
+    const rawTexts = [
+      typeof error?.rawText === 'string' ? error.rawText : '',
+      typeof error?.firstRawText === 'string' ? error.firstRawText : '',
+    ].filter(Boolean);
+
+    for (const rawText of rawTexts) {
+      const recovered = recoverClassificationFromRawText(rawText);
+      if (recovered) {
+        console.warn('Photo Classification: recovered from malformed JSON', {
+          recovered,
+          preview: rawText.slice(0, 160),
+        });
+        return NextResponse.json({
+          ...recovered,
+          modelUsed: process.env.GEMINI_VISION_MODEL,
+          recovered: true,
+        });
+      }
+    }
+
     console.error('Photo Classification Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
