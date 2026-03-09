@@ -45,6 +45,7 @@ export async function POST(request: Request) {
       mealType: mealType ?? null,
       sync: !mealId,
       elapsedMs: Date.now() - startedAt,
+      timings: data?.timings ?? null,
     });
 
     if (mealId) {

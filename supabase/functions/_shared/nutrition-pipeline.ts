@@ -108,6 +108,14 @@ export interface NutritionPipelineResult {
   praiseComment: string
   nutritionTip: string
   imageUrl?: string | null
+  timings?: {
+    imageRecognitionMs: number
+    ingredientMatchingMs: number
+    nutritionCalculationMs: number
+    evidenceVerificationMs: number
+    praiseGenerationMs: number
+    totalMs: number
+  }
 }
 
 // ============================================
@@ -332,13 +340,19 @@ export async function analyzeWithEvidence(
   supabase: SupabaseClient
 ): Promise<NutritionPipelineResult> {
   const pipelineStartedAt = Date.now()
+  let imageRecognitionMs = 0
+  let ingredientMatchingMs = 0
+  let nutritionCalculationMs = 0
+  let evidenceVerificationMs = 0
+  let praiseGenerationMs = 0
   console.log('Step 1: Image recognition with Gemini 3 Pro Preview...')
   
   // Step 1: 画像認識
   const step1StartedAt = Date.now()
   const geminiResult = await analyzeImageWithGemini(images, mealType)
+  imageRecognitionMs = Date.now() - step1StartedAt
   console.log(`Recognized ${geminiResult.dishes.length} dishes`, {
-    elapsedMs: Date.now() - step1StartedAt,
+    elapsedMs: imageRecognitionMs,
   })
 
   // Step 2-4: 各料理を処理
@@ -355,6 +369,7 @@ export async function analyzeWithEvidence(
     const matchStartedAt = Date.now()
     const matchResults = await matchIngredients(supabase, dish.estimatedIngredients)
     const stats = calculateMatchingStats(matchResults)
+    ingredientMatchingMs += Date.now() - matchStartedAt
     console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
       dish: dish.name,
       elapsedMs: Date.now() - matchStartedAt,
@@ -365,7 +380,9 @@ export async function analyzeWithEvidence(
 
     // Step 3: 栄養計算
     console.log(`Step 3: Calculating nutrition for "${dish.name}"...`)
+    const nutritionStartedAt = Date.now()
     const dishNutrition = calculateDishNutrition(dish.name, dish.role, matchResults)
+    nutritionCalculationMs += Date.now() - nutritionStartedAt
 
     // 材料情報を収集
     for (const ing of dishNutrition.ingredients) {
@@ -437,8 +454,9 @@ export async function analyzeWithEvidence(
   const verificationStartedAt = Date.now()
   const mainDish = analyzedDishes.find(d => d.role === 'main') || analyzedDishes[0]
   const verification = await verifyNutrition(supabase, mainDish?.name || '食事', mealTotals)
+  evidenceVerificationMs = Date.now() - verificationStartedAt
   console.log('Step 4 completed', {
-    elapsedMs: Date.now() - verificationStartedAt,
+    elapsedMs: evidenceVerificationMs,
     referenceCount: verification.allReferences.length,
   })
   
@@ -462,12 +480,14 @@ export async function analyzeWithEvidence(
     mealTotals,
     mealType
   )
+  praiseGenerationMs = Date.now() - praiseStartedAt
   console.log('Step 5 completed', {
-    elapsedMs: Date.now() - praiseStartedAt,
+    elapsedMs: praiseGenerationMs,
   })
 
+  const totalMs = Date.now() - pipelineStartedAt
   console.log('Pipeline completed successfully', {
-    totalElapsedMs: Date.now() - pipelineStartedAt,
+    totalElapsedMs: totalMs,
     dishCount: analyzedDishes.length,
     ingredientCount: totalIngredientCount,
   })
@@ -509,5 +529,13 @@ export async function analyzeWithEvidence(
     vegScore,
     praiseComment,
     nutritionTip,
+    timings: {
+      imageRecognitionMs,
+      ingredientMatchingMs,
+      nutritionCalculationMs,
+      evidenceVerificationMs,
+      praiseGenerationMs,
+      totalMs,
+    },
   }
 }
