@@ -1203,7 +1203,7 @@ export default function MealCaptureModal() {
               </div>
             </div>
 
-            {/* AIからの褒めコメント */}
+            {/* 記録コメント */}
             {praiseComment && (
               <div className="p-4 rounded-2xl mb-4" style={{ background: colors.accentLight }}>
                 <div className="flex items-start gap-3">
@@ -1211,7 +1211,7 @@ export default function MealCaptureModal() {
                     <Sparkles size={16} color="#fff" />
                   </div>
                   <div>
-                    <p style={{ fontSize: 12, fontWeight: 600, color: colors.accent, margin: '0 0 4px 0' }}>AIからのコメント</p>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: colors.accent, margin: '0 0 4px 0' }}>記録コメント</p>
                     <p style={{ fontSize: 13, color: colors.text, margin: 0, lineHeight: 1.6 }}>{praiseComment}</p>
                   </div>
                 </div>
@@ -1235,12 +1235,12 @@ export default function MealCaptureModal() {
               ))}
             </div>
 
-            {/* 豆知識 */}
+            {/* 栄養メモ */}
             {nutritionTip && (
               <div className="p-3 rounded-xl mb-4 flex items-start gap-2" style={{ background: colors.warningLight }}>
                 <span style={{ fontSize: 14 }}>💡</span>
                 <p style={{ fontSize: 11, color: colors.text, margin: 0, lineHeight: 1.5 }}>
-                  <strong style={{ color: colors.warning }}>豆知識:</strong> {nutritionTip}
+                  <strong style={{ color: colors.warning }}>栄養メモ:</strong> {nutritionTip}
                 </p>
               </div>
             )}
