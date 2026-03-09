@@ -123,7 +123,6 @@ export interface NutritionPipelineResult {
 // ============================================
 
 const GEMINI_MEAL_ANALYSIS_MODEL = Deno.env.get('GEMINI_MEAL_ANALYSIS_MODEL') || 'gemini-3-flash-preview'
-const GEMINI_PRAISE_MODEL = Deno.env.get('GEMINI_PRAISE_MODEL') || 'gemini-3-flash-preview'
 
 const mealRecognitionSchema = {
   type: 'object',
@@ -151,17 +150,6 @@ const mealRecognitionSchema = {
         },
       },
     },
-  },
-} as const
-
-const praiseSchema = {
-  type: 'object',
-  required: ['praiseComment', 'nutritionTip', 'overallScore', 'vegScore'],
-  properties: {
-    praiseComment: { type: 'string' },
-    nutritionTip: { type: 'string' },
-    overallScore: { type: 'number' },
-    vegScore: { type: 'number' },
   },
 } as const
 
@@ -256,82 +244,46 @@ async function analyzeImageWithGemini(
 // 褒めコメント・豆知識生成
 // ============================================
 
-async function generatePraiseAndTip(
+function toMealTypeLabel(mealType: string): string {
+  return mealType === 'breakfast' ? '朝食'
+    : mealType === 'lunch' ? '昼食'
+    : mealType === 'dinner' ? '夕食'
+    : mealType === 'snack' ? 'おやつ'
+    : mealType === 'midnight_snack' ? '夜食'
+    : '食事'
+}
+
+function buildTemplatePraiseAndTip(
   dishes: AnalyzedDish[],
   totalNutrition: NutritionTotals,
   mealType: string
-): Promise<{ praiseComment: string; nutritionTip: string; overallScore: number; vegScore: number }> {
-  const GOOGLE_AI_API_KEY = Deno.env.get('GOOGLE_AI_STUDIO_API_KEY') || Deno.env.get('GOOGLE_GEN_AI_API_KEY')
-  if (!GOOGLE_AI_API_KEY) {
-    // フォールバック
-    return {
-      praiseComment: 'おいしそうな食事ですね！バランスの良い食事を心がけていて素晴らしいです✨',
-      nutritionTip: '食事を楽しむことも健康の大切な要素です。',
-      overallScore: 80,
-      vegScore: 50,
-    }
+): { praiseComment: string; nutritionTip: string; overallScore: number; vegScore: number } {
+  const mealTypeJa = toMealTypeLabel(mealType)
+  const topDishes = dishes
+    .map((dish) => dish.name.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('、')
+
+  const dishPhrase = topDishes ? `${topDishes}の記録` : `${mealTypeJa}の記録`
+  const proteinScore = Math.min(10, totalNutrition.protein_g / 3)
+  const fiberScore = Math.min(8, totalNutrition.fiber_g * 1.6)
+  const caloriesScore = totalNutrition.calories_kcal >= 250 && totalNutrition.calories_kcal <= 900 ? 5 : 2
+  const overallScore = Math.max(70, Math.min(95, Math.round(70 + proteinScore + fiberScore + caloriesScore)))
+  const vegScore = Math.max(0, Math.min(100, Math.round(Math.min(100, totalNutrition.fiber_g * 12 + dishes.length * 6))))
+
+  let nutritionTip = '食事を記録して振り返ること自体が、バランス改善の近道です。'
+  if (totalNutrition.protein_g >= 25) {
+    nutritionTip = 'たんぱく質がしっかり取れる食事は、満足感の維持や体づくりに役立ちます。'
+  } else if (totalNutrition.fiber_g >= 6) {
+    nutritionTip = '食物繊維を含む食事は、食生活のリズムづくりや満足感の維持に役立ちます。'
   }
 
-  const dishNames = dishes.map(d => d.name).join('、')
-  const mealTypeJa = mealType === 'breakfast' ? '朝食'
-    : mealType === 'lunch' ? '昼食'
-    : mealType === 'dinner' ? '夕食'
-    : '食事'
-
-  const prompt = `あなたは「ほめゴハン」の褒め上手なAIです。
-この${mealTypeJa}を分析して、褒めコメントと豆知識を生成してください。
-
-料理: ${dishNames}
-カロリー: ${totalNutrition.calories_kcal}kcal
-タンパク質: ${totalNutrition.protein_g}g
-脂質: ${totalNutrition.fat_g}g
-炭水化物: ${totalNutrition.carbs_g}g
-食物繊維: ${totalNutrition.fiber_g}g
-ビタミンC: ${totalNutrition.vitamin_c_mg}mg
-
-以下のJSON形式で回答：
-{
-  "praiseComment": "良いところを見つけて褒めるコメント（80-120文字、絵文字1-2個使用）",
-  "nutritionTip": "この食事に関連する豆知識（40-60文字）",
-  "overallScore": 総合スコア（70-95の数値）,
-  "vegScore": 野菜スコア（0-100の数値）
-}
-
-注意：
-- praiseCommentは必ずポジティブ。批判や改善提案は含めない
-- overallScoreは厳しすぎず、普通の食事でも75以上
-- 構造化 JSON で返してください`
-
-  try {
-    const { data } = await generateGeminiJson<{
-      praiseComment?: string
-      nutritionTip?: string
-      overallScore?: number
-      vegScore?: number
-    }>({
-      prompt,
-      schema: praiseSchema as unknown as Record<string, unknown>,
-      temperature: 0.7,
-      maxOutputTokens: 512,
-      model: GEMINI_PRAISE_MODEL,
-    })
-
-    return {
-      praiseComment: typeof data.praiseComment === 'string' && data.praiseComment.trim() ? data.praiseComment.trim() : 'おいしそうな食事ですね！',
-      nutritionTip: typeof data.nutritionTip === 'string' ? data.nutritionTip.trim() : '',
-      overallScore: Math.max(70, Math.min(95, Math.round(toOptionalNumber(data.overallScore) ?? 80))),
-      vegScore: Math.max(0, Math.min(100, Math.round(toOptionalNumber(data.vegScore) ?? 50))),
-    }
-  } catch (error) {
-    console.error('Praise generation error:', error)
-  }
-
-  // フォールバック
   return {
-    praiseComment: 'おいしそうな食事ですね！バランスの良い食事を心がけていて素晴らしいです✨',
-    nutritionTip: '食事を楽しむことも健康の大切な要素です。',
-    overallScore: 80,
-    vegScore: 50,
+    praiseComment: `${dishPhrase}がしっかりできていて素晴らしいです。${mealTypeJa}を丁寧に残せていて、とても良い流れです✨`,
+    nutritionTip,
+    overallScore,
+    vegScore,
   }
 }
 
@@ -479,10 +431,10 @@ export async function analyzeWithEvidence(
     false
   )
 
-  // Step 5: 褒めコメント・豆知識生成
-  console.log('Step 5: Generating praise and tips...')
+  // Step 5: テンプレート文言生成
+  console.log('Step 5: Building template praise and tips...')
   const praiseStartedAt = Date.now()
-  const { praiseComment, nutritionTip, overallScore, vegScore } = await generatePraiseAndTip(
+  const { praiseComment, nutritionTip, overallScore, vegScore } = buildTemplatePraiseAndTip(
     analyzedDishes,
     mealTotals,
     mealType
