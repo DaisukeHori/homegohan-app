@@ -293,6 +293,76 @@ export function resolveClassifyPhotoType(
   };
 }
 
+export function aggregateClassifyPhotoResults(
+  results: Array<Pick<ClassifyPhotoResult, 'type' | 'confidence' | 'candidates'>>,
+): ClassifyPhotoResult {
+  const scoreByType = new Map<Exclude<PhotoType, 'unknown'>, number>();
+  const voteByType = new Map<Exclude<PhotoType, 'unknown'>, number>();
+
+  for (const type of PHOTO_TYPES) {
+    if (type === 'unknown') continue;
+    scoreByType.set(type, 0);
+    voteByType.set(type, 0);
+  }
+
+  for (const result of results) {
+    const resolved = resolveClassifyPhotoType(result);
+    if (resolved.type) {
+      scoreByType.set(resolved.type, (scoreByType.get(resolved.type) ?? 0) + resolved.confidence);
+      voteByType.set(resolved.type, (voteByType.get(resolved.type) ?? 0) + 1);
+      continue;
+    }
+
+    const seenFallbackTypes = new Set<Exclude<PhotoType, 'unknown'>>();
+    for (const candidate of result.candidates) {
+      if (candidate.type === 'unknown' || seenFallbackTypes.has(candidate.type)) continue;
+      seenFallbackTypes.add(candidate.type);
+      scoreByType.set(candidate.type, (scoreByType.get(candidate.type) ?? 0) + candidate.confidence * 0.5);
+    }
+  }
+
+  const ranked = [...scoreByType.entries()]
+    .map(([type, score]) => ({
+      type,
+      score,
+      votes: voteByType.get(type) ?? 0,
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => {
+      if (b.votes !== a.votes) return b.votes - a.votes;
+      return b.score - a.score;
+    });
+
+  if (ranked.length === 0) {
+    return {
+      type: 'unknown',
+      confidence: 0,
+      description: '複数画像を確認しましたが判別できませんでした',
+      candidates: [],
+    };
+  }
+
+  const top = ranked[0];
+  const normalizedCandidates = ranked.slice(0, 3).map((entry) => ({
+    type: entry.type,
+    confidence: clampConfidence(entry.score / Math.max(results.length, 1)),
+  }));
+
+  const topConfidence = normalizedCandidates[0]?.confidence ?? 0;
+  const nextConfidence = normalizedCandidates[1]?.confidence ?? 0;
+  const isConsensus =
+    top.votes >= Math.ceil(results.length / 2) ||
+    topConfidence >= AUTO_CLASSIFY_CONFIDENCE_THRESHOLD ||
+    (topConfidence >= AUTO_CLASSIFY_CANDIDATE_FALLBACK_THRESHOLD && topConfidence - nextConfidence >= 0.15);
+
+  return {
+    type: isConsensus ? top.type : 'unknown',
+    confidence: topConfidence,
+    description: `${results.length}枚を個別確認した結果`,
+    candidates: normalizedCandidates,
+  };
+}
+
 export function normalizeFridgeAnalysisResult(raw: unknown): FridgeAnalysisResult {
   const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
   const ingredientsInput = Array.isArray(input.ingredients) ? input.ingredients : [];

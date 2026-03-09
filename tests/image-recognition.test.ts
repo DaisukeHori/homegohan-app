@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  aggregateClassifyPhotoResults,
   countExtractedHealthFields,
   extractWeightScaleResult,
   normalizeClassifyPhotoResult,
@@ -129,6 +130,33 @@ describe('image recognition normalization', () => {
       type: null,
       confidence: 0,
       source: 'none',
+    });
+  });
+
+  it('aggregates per-image classification results when batch classification is weak', () => {
+    expect(aggregateClassifyPhotoResults([
+      {
+        type: 'meal',
+        confidence: 0.82,
+        candidates: [{ type: 'meal', confidence: 0.82 }],
+      },
+      {
+        type: 'unknown',
+        confidence: 0.12,
+        candidates: [{ type: 'meal', confidence: 0.71 }],
+      },
+      {
+        type: 'meal',
+        confidence: 0.76,
+        candidates: [{ type: 'meal', confidence: 0.76 }],
+      },
+    ])).toEqual({
+      type: 'meal',
+      confidence: 0.76,
+      description: '3枚を個別確認した結果',
+      candidates: [
+        { type: 'meal', confidence: 0.76 },
+      ],
     });
   });
 });

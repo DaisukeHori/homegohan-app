@@ -177,6 +177,87 @@ describe('image route contracts', () => {
     expect(requestBody.generationConfig.responseMimeType).toBe('application/json');
   });
 
+  it('classify-photo falls back to per-image classification when the batch result is weak', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    type: 'unknown',
+                    confidence: 0.18,
+                    description: '判別困難',
+                    candidates: [
+                      { type: 'meal', confidence: 0.34 },
+                      { type: 'fridge', confidence: 0.29 },
+                    ],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    type: 'meal',
+                    confidence: 0.81,
+                    description: '食事写真',
+                    candidates: [{ type: 'meal', confidence: 0.81 }],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    type: 'meal',
+                    confidence: 0.74,
+                    description: '食事写真',
+                    candidates: [{ type: 'meal', confidence: 0.74 }],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { POST } = await import('../src/app/api/ai/classify-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/classify-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [
+          { base64: 'abc', mimeType: 'image/jpeg' },
+          { base64: 'def', mimeType: 'image/jpeg' },
+        ],
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      type: 'meal',
+      confidence: 0.78,
+      description: '2枚を個別確認した結果',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('image-generate uses Nano Banana 2 and accepts multiple reference images', async () => {
     mockGenerateContent.mockResolvedValue({
       candidates: [

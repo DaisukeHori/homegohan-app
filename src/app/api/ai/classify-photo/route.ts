@@ -1,7 +1,9 @@
 import { generateGeminiJson } from '../../../../lib/ai/gemini-json';
 import {
+  aggregateClassifyPhotoResults,
   classifyPhotoSchema,
   normalizeClassifyPhotoResult,
+  resolveClassifyPhotoType,
   type ClassifyPhotoResult,
   type PhotoType,
 } from '../../../../lib/ai/image-recognition';
@@ -36,6 +38,21 @@ function buildPrompt(imageCount: number): string {
 JSONで返してください。candidates には有力候補を高い順に最大3件まで入れてください。description は20文字程度で簡潔にしてください。`;
 }
 
+async function requestClassification(images: ImageInput[]): Promise<{ result: ClassifyPhotoResult; model: string }> {
+  const { data, model } = await generateGeminiJson<ClassifyPhotoResult>({
+    prompt: buildPrompt(images.length),
+    schema: classifyPhotoSchema as unknown as Record<string, unknown>,
+    images,
+    temperature: 0.1,
+    maxOutputTokens: 512,
+  });
+
+  return {
+    result: normalizeClassifyPhotoResult(data),
+    model,
+  };
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -53,15 +70,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image Base64 is required' }, { status: 400 });
     }
 
-    const { data, model } = await generateGeminiJson<ClassifyPhotoResult>({
-      prompt: buildPrompt(images.length),
-      schema: classifyPhotoSchema as unknown as Record<string, unknown>,
-      images,
-      temperature: 0.1,
-      maxOutputTokens: 512,
-    });
+    const { result: initialResult, model } = await requestClassification(images);
+    let result = initialResult;
 
-    const result = normalizeClassifyPhotoResult(data);
+    if (images.length > 1 && !resolveClassifyPhotoType(initialResult).type) {
+      const perImageResults = await Promise.all(
+        images.map(async (image) => (await requestClassification([image])).result),
+      );
+      const aggregatedResult = aggregateClassifyPhotoResults(perImageResults);
+      console.info('Photo Classification: fell back to per-image aggregation', {
+        imageCount: images.length,
+        initial: initialResult,
+        aggregated: aggregatedResult,
+      });
+      result = aggregatedResult;
+    }
 
     return NextResponse.json({
       ...result,
