@@ -82,6 +82,22 @@ const PRIORITY_LABELS: Record<string, string> = {
   low: "低",
 };
 
+const SHOPPING_FREQUENCY_LABELS: Record<string, string> = {
+  daily: "ほぼ毎日",
+  every_2_3_days: "2〜3日に1回",
+  weekly: "週1回",
+  biweekly: "2週間に1回",
+  monthly: "月1回",
+};
+
+const PREGNANCY_STATUS_LABELS: Record<string, string> = {
+  none: "該当なし",
+  pregnant_early: "妊娠初期",
+  pregnant_middle: "妊娠中期",
+  pregnant_late: "妊娠後期",
+  breastfeeding: "授乳中",
+};
+
 function toOptionalString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const s = value.trim();
@@ -213,6 +229,17 @@ export function buildUserContextForPrompt(input: {
   const profileWeekdayCookingMinutes = toOptionalNumber(p?.weekday_cooking_minutes);
   const profileWeekendCookingMinutes = toOptionalNumber(p?.weekend_cooking_minutes);
   const profileFamilySize = toOptionalNumber(p?.family_size);
+  const favoriteIngredients = toStringArray(p?.favorite_ingredients, { max: 20 });
+  const kitchenAppliances = toStringArray(p?.kitchen_appliances, { max: 20 });
+  const weeklyFoodBudget = toOptionalNumber(p?.weekly_food_budget);
+  const shoppingFrequencyCode = toOptionalString(p?.shopping_frequency);
+  const shoppingFrequency = shoppingFrequencyCode
+    ? (SHOPPING_FREQUENCY_LABELS[shoppingFrequencyCode] ?? shoppingFrequencyCode)
+    : null;
+  const pregnancyStatusCode = toOptionalString(p?.pregnancy_status);
+  const pregnancyStatus = pregnancyStatusCode
+    ? (PREGNANCY_STATUS_LABELS[pregnancyStatusCode] ?? pregnancyStatusCode)
+    : null;
 
   // request constraints override profile where relevant
   const effectiveFamilySize = weeklyFamilySize ?? profileFamilySize;
@@ -268,6 +295,7 @@ export function buildUserContextForPrompt(input: {
     },
     preferences: {
       cuisine_preferences: cuisinePrefsText,
+      favorite_ingredients: favoriteIngredients,
       dislikes, // できれば避ける
     },
     lifestyle: {
@@ -288,6 +316,12 @@ export function buildUserContextForPrompt(input: {
       height_cm: p?.height ?? null,
       weight_kg: p?.weight ?? null,
       diet_style: p?.diet_style ?? null,
+      pregnancy_status: pregnancyStatus,
+    },
+    logistics: {
+      kitchen_appliances: kitchenAppliances,
+      weekly_food_budget: weeklyFoodBudget,
+      shopping_frequency: shoppingFrequency,
     },
     weekly: {
       note: input.note ?? null,
@@ -333,8 +367,12 @@ export function buildUserSummary(
 
   lines.push(`- アレルギー（絶対除外）: ${(ctx.hard.allergies ?? []).join(", ") || "なし"}`);
   lines.push(`- 苦手なもの（避ける）: ${(ctx.preferences.dislikes ?? []).join(", ") || "なし"}`);
+  lines.push(`- 好きな食材: ${(ctx.preferences.favorite_ingredients ?? []).join(", ") || "未設定"}`);
   lines.push(`- 食事スタイル: ${ctx.profile.diet_style ?? "未設定"}`);
   lines.push(`- 好みの料理ジャンル: ${ctx.preferences.cuisine_preferences ?? "未設定"}`);
+  if (ctx.profile.pregnancy_status && ctx.profile.pregnancy_status !== "該当なし") {
+    lines.push(`- 妊娠・授乳状況: ${ctx.profile.pregnancy_status}`);
+  }
 
   if (ctx.goals.nutrition_goal) {
     lines.push(`- 栄養目標: ${ctx.goals.nutrition_goal}${ctx.goals.weight_change_rate ? `（ペース: ${ctx.goals.weight_change_rate}）` : ""}`);
@@ -391,6 +429,15 @@ export function buildUserSummary(
     lines.push(
       `- 調理時間目安: 平日${ctx.feasibility.weekday_cooking_minutes ?? "未設定"}分 / 休日${ctx.feasibility.weekend_cooking_minutes ?? "未設定"}分`,
     );
+  }
+  if ((ctx.logistics.kitchen_appliances ?? []).length) {
+    lines.push(`- キッチン家電: ${ctx.logistics.kitchen_appliances.join(", ")}`);
+  }
+  if (ctx.logistics.weekly_food_budget != null) {
+    lines.push(`- 週間食費予算: ${ctx.logistics.weekly_food_budget}円`);
+  }
+  if (ctx.logistics.shopping_frequency) {
+    lines.push(`- 買い物頻度: ${ctx.logistics.shopping_frequency}`);
   }
 
   if (ctx.goals.nutrition_targets) {
@@ -506,6 +553,20 @@ export function deriveSearchKeywords(input: {
   if (ctx.preferences.cuisine_preferences && ctx.preferences.cuisine_preferences !== "未設定") {
     kws.push(ctx.preferences.cuisine_preferences);
   }
+  for (const fav of (ctx.preferences.favorite_ingredients ?? []).slice(0, 8)) {
+    kws.push(fav);
+  }
+
+  if (ctx.logistics.weekly_food_budget != null) {
+    if (ctx.logistics.weekly_food_budget <= 5000) kws.push("節約", "家計にやさしい");
+    else if (ctx.logistics.weekly_food_budget >= 12000) kws.push("バランス", "食材の幅");
+  }
+  if ((ctx.logistics.kitchen_appliances ?? []).length) {
+    kws.push(...ctx.logistics.kitchen_appliances.slice(0, 6));
+  }
+  if (ctx.profile.pregnancy_status && ctx.profile.pregnancy_status !== "該当なし") {
+    kws.push(ctx.profile.pregnancy_status);
+  }
 
   // weekly/action constraints (explicit)
   const w = ctx.weekly?.constraints ?? null;
@@ -580,4 +641,3 @@ export function buildSearchQueryBase(input: {
   if (note) lines.push(`要望: ${note.slice(0, 800)}`);
   return lines.join("\n");
 }
-

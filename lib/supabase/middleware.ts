@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 
 export async function updateSession(request: NextRequest) {
   // APIルートの場合は、セッション更新のみ行い、リダイレクトはしない
@@ -75,9 +76,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 認証済みユーザーがルートにアクセスした場合、またはホームにアクセスした場合
-  // オンボーディング状態に応じてリダイレクト
-  if (user && (request.nextUrl.pathname === '/' || request.nextUrl.pathname === '/home')) {
+  if (user) {
     // user_profiles からオンボーディング状態を取得
     const { data: profile } = await supabase
       .from('user_profiles')
@@ -85,33 +84,16 @@ export async function updateSession(request: NextRequest) {
       .eq('id', user.id)
       .maybeSingle()
 
-    const roles = profile?.roles || []
+    const redirectPath = resolveOnboardingRedirect({
+      pathname: request.nextUrl.pathname,
+      roles: profile?.roles || [],
+      onboardingStartedAt: profile?.onboarding_started_at ?? null,
+      onboardingCompletedAt: profile?.onboarding_completed_at ?? null,
+    })
 
-    // 管理者の場合は管理画面へ
-    if (roles.includes('admin') || roles.includes('super_admin')) {
+    if (redirectPath && redirectPath !== request.nextUrl.pathname) {
       const url = request.nextUrl.clone()
-      url.pathname = '/admin'
-      return NextResponse.redirect(url)
-    }
-    // オンボーディング未完了の場合はオンボーディングへ
-    else if (!profile?.onboarding_completed_at) {
-      // オンボーディング進行中 → 再開ページへ
-      if (profile?.onboarding_started_at) {
-        const url = request.nextUrl.clone()
-        url.pathname = '/onboarding/resume'
-        return NextResponse.redirect(url)
-      }
-      // 未開始 → ウェルカムページへ
-      else {
-        const url = request.nextUrl.clone()
-        url.pathname = '/onboarding/welcome'
-        return NextResponse.redirect(url)
-      }
-    }
-    // オンボーディング完了済みでルートにアクセスした場合はホームへ
-    else if (request.nextUrl.pathname === '/') {
-      const url = request.nextUrl.clone()
-      url.pathname = '/home'
+      url.pathname = redirectPath
       return NextResponse.redirect(url)
     }
   }
