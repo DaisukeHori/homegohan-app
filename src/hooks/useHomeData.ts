@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { toAnnouncement } from "@/lib/converter";
+import { resolveDisplayName } from "@/lib/user-display";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 
 // 今日の献立データ
@@ -182,15 +183,23 @@ export const useHomeData = () => {
     const authUser = await resolveAuthUser();
     
     if (authUser) {
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('nickname')
         .eq('id', authUser.id)
-        .single();
+        .maybeSingle();
+
+      if (profileError) {
+        console.error('Home profile fetch error:', profileError);
+      }
       
       setUser({
         ...authUser,
-        nickname: profile?.nickname || null,
+        nickname: resolveDisplayName({
+          nickname: profile?.nickname || null,
+          email: authUser.email || null,
+          userMetadata: authUser.user_metadata ?? null,
+        }),
       });
 
       // 2. Activity Log
