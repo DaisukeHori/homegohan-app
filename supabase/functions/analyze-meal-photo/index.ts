@@ -5,7 +5,7 @@
  */
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { analyzeWithEvidence, ImageInput } from '../_shared/nutrition-pipeline.ts'
+import { analyzeWithEvidence, ImageInput, GeminiAnalysisResult } from '../_shared/nutrition-pipeline.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,12 +43,13 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json()
-    const { images, imageBase64, mimeType, mealId, mealType } = body as {
+    const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult } = body as {
       images?: ImageInput[];
       imageBase64?: string;
       mimeType?: string;
       mealId?: string;
       mealType?: string;
+      prefetchedGeminiResult?: GeminiAnalysisResult;
     }
 
     const imageDataArray: ImageInput[] =
@@ -72,7 +73,7 @@ Deno.serve(async (req) => {
       )
 
       // v2パイプラインで解析
-      const result = await analyzeWithEvidence(imageDataArray, mealType || 'lunch', supabase)
+      const result = await analyzeWithEvidence(imageDataArray, mealType || 'lunch', supabase, prefetchedGeminiResult)
 
       // 画像をStorageへアップロード
       let imageUrl: string | null = null
@@ -106,6 +107,7 @@ Deno.serve(async (req) => {
       images: imageDataArray,
       mealId,
       mealType,
+      prefetchedGeminiResult,
       userId: user.id,
       authHeader
     }).catch((error) => {
@@ -130,12 +132,14 @@ async function analyzeMealPhotoBackgroundTask({
   images,
   mealId,
   mealType,
+  prefetchedGeminiResult,
   userId,
   authHeader
 }: {
   images: ImageInput[];
   mealId: string;
   mealType?: string;
+  prefetchedGeminiResult?: GeminiAnalysisResult;
   userId: string;
   authHeader: string;
 }) {
@@ -149,7 +153,7 @@ async function analyzeMealPhotoBackgroundTask({
 
   try {
     // v2パイプラインで解析
-    const result = await analyzeWithEvidence(images, mealType || 'lunch', supabase)
+    const result = await analyzeWithEvidence(images, mealType || 'lunch', supabase, prefetchedGeminiResult)
     console.log('Analysis result:', {
       dishes: result.dishes.length,
       totalCalories: result.totalCalories,

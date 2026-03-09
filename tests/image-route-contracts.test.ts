@@ -123,6 +123,53 @@ describe('image route contracts', () => {
     });
   });
 
+  it('analyze-meal-photo forwards prefetched Gemini meal analysis when provided', async () => {
+    const prefetchedGeminiResult = {
+      dishes: [
+        {
+          name: '親子丼',
+          role: 'main',
+          estimatedIngredients: [
+            { name: '鶏もも肉', amount_g: 120 },
+            { name: '卵', amount_g: 60 },
+          ],
+        },
+      ],
+    };
+
+    mockInvoke.mockResolvedValue({
+      data: {
+        dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
+        totalCalories: 640,
+      },
+      error: null,
+    });
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+        mealType: 'dinner',
+        prefetchedGeminiResult,
+      }),
+    }));
+
+    expect(mockInvoke).toHaveBeenCalledWith('analyze-meal-photo', {
+      body: {
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+        mealId: undefined,
+        mealType: 'dinner',
+        prefetchedGeminiResult,
+        userId: 'user-1',
+      },
+    });
+    await expect(response.json()).resolves.toEqual({
+      dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
+      totalCalories: 640,
+    });
+  });
+
   it('classify-photo accepts multiple images and returns normalized output', async () => {
     process.env.GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
@@ -169,6 +216,70 @@ describe('image route contracts', () => {
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(requestBody.contents[0].parts).toHaveLength(3);
     expect(requestBody.generationConfig.responseMimeType).toBe('application/json');
+  });
+
+  it('classify-photo can return prefetched meal analysis for auto mode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({
+                  type: 'meal',
+                  confidence: 0.93,
+                  mealAnalysis: {
+                    dishes: [
+                      {
+                        name: '牛ステーキ',
+                        role: 'main',
+                        estimatedIngredients: [
+                          { name: '牛肉', amount_g: 180 },
+                          { name: '赤ワイン', amount_g: 20 },
+                        ],
+                      },
+                    ],
+                  },
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { POST } = await import('../src/app/api/ai/classify-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/classify-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+        includeMealAnalysis: true,
+        mealType: 'dinner',
+      }),
+    }));
+
+    const payload = await response.json();
+    expect(payload).toMatchObject({
+      type: 'meal',
+      confidence: 0.93,
+      modelUsed: 'gemini-3.1-flash-lite-preview',
+      mealAnalysis: {
+        dishes: [
+          {
+            name: '牛ステーキ',
+            role: 'main',
+            estimatedIngredients: [
+              { name: '牛肉', amount_g: 180 },
+              { name: '赤ワイン', amount_g: 20 },
+            ],
+          },
+        ],
+      },
+    });
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.generationConfig.responseJsonSchema.properties.mealAnalysis).toBeDefined();
   });
 
   it('classify-photo falls back to per-image classification when the batch result is weak', async () => {

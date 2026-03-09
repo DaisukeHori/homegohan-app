@@ -157,6 +157,16 @@ interface ClassificationResponse {
   description: string;
   candidates: ClassificationCandidate[];
   modelUsed?: string;
+  mealAnalysis?: {
+    dishes: Array<{
+      name: string;
+      role: 'main' | 'side' | 'soup' | 'rice' | 'salad' | 'dessert';
+      estimatedIngredients: Array<{
+        name: string;
+        amount_g: number;
+      }>;
+    }>;
+  };
 }
 
 interface ImagePayloadConfig {
@@ -399,7 +409,7 @@ export default function MealCaptureModal() {
   );
 
   // AI解析（複数枚対応）
-  const analyzePhoto = async () => {
+  const analyzePhoto = async (prefetchedGeminiResult?: ClassificationResponse['mealAnalysis']) => {
     if (photoFiles.length === 0) return;
     
     setStep('analyzing');
@@ -410,6 +420,7 @@ export default function MealCaptureModal() {
       void logToServer('info', 'meal-photo analysis started', {
         photoCount: photoFiles.length,
         mealType: selectedMealType,
+        usedPrefetchedGeminiResult: Boolean(prefetchedGeminiResult?.dishes?.length),
       });
       const imageDataArray = await buildImagePayloads(photoFiles, IMAGE_PAYLOAD_CONFIG.meal);
 
@@ -419,6 +430,7 @@ export default function MealCaptureModal() {
         body: JSON.stringify({
           images: imageDataArray,
           mealType: selectedMealType,
+          prefetchedGeminiResult,
         }),
       });
       
@@ -427,8 +439,10 @@ export default function MealCaptureModal() {
         void logToServer('info', 'meal-photo analysis succeeded', {
           photoCount: photoFiles.length,
           mealType: selectedMealType,
+          usedPrefetchedGeminiResult: Boolean(prefetchedGeminiResult?.dishes?.length),
           elapsedMs: Date.now() - startedAt,
           dishCount: Array.isArray(data.dishes) ? data.dishes.length : 0,
+          timings: data.timings ?? null,
         });
         setAnalyzedDishes(data.dishes || []);
         setTotalCalories(data.totalCalories || 0);
@@ -476,7 +490,11 @@ export default function MealCaptureModal() {
       const res = await fetch('/api/ai/classify-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images }),
+        body: JSON.stringify({
+          images,
+          includeMealAnalysis: photoMode === 'auto',
+          mealType: selectedMealType,
+        }),
       });
 
       if (res.ok) {
@@ -487,6 +505,7 @@ export default function MealCaptureModal() {
           elapsedMs: Date.now() - startedAt,
           detectedType: data.type,
           confidence: data.confidence,
+          mealAnalysisDishCount: Array.isArray(data.mealAnalysis?.dishes) ? data.mealAnalysis.dishes.length : 0,
         });
         setDetectedType(data.type);
         setDetectedConfidence(data.confidence);
@@ -501,6 +520,7 @@ export default function MealCaptureModal() {
           description: data.description || '',
           candidates: Array.isArray(data.candidates) ? data.candidates : [],
           modelUsed: data.modelUsed,
+          mealAnalysis: data.mealAnalysis,
         };
       }
 
@@ -703,7 +723,10 @@ export default function MealCaptureModal() {
   };
 
   // 統合解析（モードに応じて分岐）
-  const analyzeResolvedMode = async (targetMode: Exclude<ClassifyResult, 'unknown'>) => {
+  const analyzeResolvedMode = async (
+    targetMode: Exclude<ClassifyResult, 'unknown'>,
+    classification?: ClassificationResponse,
+  ) => {
     switch (targetMode) {
       case 'fridge':
         await analyzeFridge();
@@ -716,7 +739,7 @@ export default function MealCaptureModal() {
         break;
       case 'meal':
       default:
-        await analyzePhoto();
+        await analyzePhoto(classification?.mealAnalysis);
         break;
     }
   };
@@ -725,6 +748,7 @@ export default function MealCaptureModal() {
     if (photoFiles.length === 0) return;
 
     let targetMode: ClassifyResult = photoMode as ClassifyResult;
+    let classification: ClassificationResponse | undefined;
     void logToServer('info', 'photo flow started', {
       photoMode,
       photoCount: photoFiles.length,
@@ -735,7 +759,7 @@ export default function MealCaptureModal() {
       setStep('analyzing');
       setIsAnalyzing(true);
 
-      const classification = await classifyPhoto(photoFiles);
+      classification = await classifyPhoto(photoFiles);
       setIsAnalyzing(false);
 
       const resolvedClassification = resolveClassifyPhotoType(classification);
@@ -767,7 +791,7 @@ export default function MealCaptureModal() {
       photoMode,
       targetMode,
     });
-    await analyzeResolvedMode(targetMode);
+    await analyzeResolvedMode(targetMode, photoMode === 'auto' ? classification : undefined);
   };
 
   // 冷蔵庫データを保存

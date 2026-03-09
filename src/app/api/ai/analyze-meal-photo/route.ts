@@ -6,6 +6,17 @@ interface ImageInput {
   mimeType: string;
 }
 
+interface PrefetchedGeminiResult {
+  dishes: Array<{
+    name: string;
+    role: 'main' | 'side' | 'soup' | 'rice' | 'salad' | 'dessert';
+    estimatedIngredients: Array<{
+      name: string;
+      amount_g: number;
+    }>;
+  }>;
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -14,7 +25,14 @@ export async function POST(request: Request) {
   try {
     const startedAt = Date.now();
     const body = await request.json();
-    const { images, imageBase64, mimeType, mealType, mealId } = body;
+    const { images, imageBase64, mimeType, mealType, mealId, prefetchedGeminiResult } = body as {
+      images?: ImageInput[];
+      imageBase64?: string;
+      mimeType?: string;
+      mealType?: string;
+      mealId?: string;
+      prefetchedGeminiResult?: PrefetchedGeminiResult;
+    };
 
     const imageDataArray: ImageInput[] = Array.isArray(images) && images.length > 0
       ? images
@@ -31,6 +49,7 @@ export async function POST(request: Request) {
         images: imageDataArray,
         mealId,
         mealType,
+        prefetchedGeminiResult,
         userId: user.id,
       },
     });
@@ -44,6 +63,7 @@ export async function POST(request: Request) {
       mealId: mealId ?? null,
       mealType: mealType ?? null,
       sync: !mealId,
+      usedPrefetchedGeminiResult: Boolean(prefetchedGeminiResult?.dishes?.length),
       elapsedMs: Date.now() - startedAt,
       timings: data?.timings ?? null,
     });

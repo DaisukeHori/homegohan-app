@@ -20,6 +20,25 @@ export interface ClassifyPhotoResult {
   candidates: ClassificationCandidate[];
 }
 
+export interface MealRecognitionIngredient {
+  name: string;
+  amount_g: number;
+}
+
+export interface MealRecognitionDish {
+  name: string;
+  role: 'main' | 'side' | 'soup' | 'rice' | 'salad' | 'dessert';
+  estimatedIngredients: MealRecognitionIngredient[];
+}
+
+export interface MealRecognitionResult {
+  dishes: MealRecognitionDish[];
+}
+
+export interface ClassifyPhotoWithMealAnalysisResult extends ClassifyPhotoResult {
+  mealAnalysis?: MealRecognitionResult;
+}
+
 export interface ResolvedClassifyPhotoType {
   type: Exclude<PhotoType, 'unknown'> | null;
   confidence: number;
@@ -104,6 +123,35 @@ export const classifyPhotoSchema = {
   properties: {
     type: { type: 'string', enum: PHOTO_TYPES },
     confidence: { type: 'number' },
+  },
+} as const;
+
+export const mealRecognitionSchema = {
+  type: 'object',
+  required: ['dishes'],
+  properties: {
+    dishes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'role', 'estimatedIngredients'],
+        properties: {
+          name: { type: 'string' },
+          role: { type: 'string', enum: ['main', 'side', 'soup', 'rice', 'salad', 'dessert'] },
+          estimatedIngredients: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['name', 'amount_g'],
+              properties: {
+                name: { type: 'string' },
+                amount_g: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 } as const;
 
@@ -219,6 +267,40 @@ function toOptionalNumber(value: unknown): number | undefined {
 
 function toOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+export function normalizeMealRecognitionResult(raw: unknown): MealRecognitionResult {
+  const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
+  const dishesInput = Array.isArray(input.dishes) ? input.dishes : [];
+
+  return {
+    dishes: dishesInput
+      .map((dish) => {
+        const item = typeof dish === 'object' && dish !== null ? dish as Record<string, unknown> : {};
+        const estimatedIngredientsInput = Array.isArray(item.estimatedIngredients) ? item.estimatedIngredients : [];
+
+        const estimatedIngredients = estimatedIngredientsInput
+          .map((ingredient) => {
+            const candidate = typeof ingredient === 'object' && ingredient !== null ? ingredient as Record<string, unknown> : {};
+            const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : null;
+            const amount = toOptionalNumber(candidate.amount_g);
+            if (!name || amount === undefined) return null;
+            return { name, amount_g: Math.max(0, amount) };
+          })
+          .filter((ingredient): ingredient is MealRecognitionIngredient => ingredient !== null);
+
+        const role = typeof item.role === 'string' && ['main', 'side', 'soup', 'rice', 'salad', 'dessert'].includes(item.role)
+          ? item.role as MealRecognitionDish['role']
+          : 'main';
+
+        return {
+          name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '不明な料理',
+          role,
+          estimatedIngredients,
+        };
+      })
+      .filter((dish) => dish.estimatedIngredients.length > 0),
+  };
 }
 
 function uniqueCandidates(candidates: ClassificationCandidate[]): ClassificationCandidate[] {

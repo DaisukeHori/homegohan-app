@@ -9,6 +9,7 @@ import { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { EXACT_NAME_NORM_MAP, INGREDIENT_ALIASES, normalizeIngredientNameJs, isWaterishIngredient } from './nutrition-calculator.ts'
 import {
   DATASET_EMBEDDING_API_KEY_ENV,
+  fetchDatasetEmbeddings,
   fetchSingleDatasetEmbedding,
 } from '../../../shared/dataset-embedding.mjs'
 import {
@@ -68,6 +69,14 @@ export interface IngredientMatchResult {
   matchMethod: 'exact_map' | 'alias_map' | 'exact_name_norm' | 'alias_name_norm' | 'embedding_llm' | 'embedding' | 'text_similarity' | 'none'
 }
 
+interface IngredientMatchMemo {
+  matched: MatchedIngredientData | null
+  confidence: IngredientMatchResult['confidence']
+  matchMethod: IngredientMatchResult['matchMethod']
+}
+
+const MAX_INGREDIENT_MATCH_CONCURRENCY = 4
+
 // ============================================
 // Dataset embedding 生成
 // ============================================
@@ -80,6 +89,30 @@ async function generateEmbedding(text: string): Promise<number[]> {
   return await fetchSingleDatasetEmbedding(text, { apiKey, inputType: 'query' }) as number[]
 }
 
+async function generateEmbeddingsBatch(texts: string[]): Promise<Map<string, number[]>> {
+  const uniqueTexts = [...new Set(texts.map((text) => text.trim()).filter(Boolean))]
+  if (uniqueTexts.length === 0) {
+    return new Map()
+  }
+
+  const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV)
+  if (!apiKey) {
+    throw new Error(`${DATASET_EMBEDDING_API_KEY_ENV} is not set`)
+  }
+
+  const embeddings = await fetchDatasetEmbeddings(uniqueTexts, { apiKey, inputType: 'query' }) as number[][]
+  const map = new Map<string, number[]>()
+
+  uniqueTexts.forEach((text, index) => {
+    const embedding = embeddings[index]
+    if (Array.isArray(embedding)) {
+      map.set(text, embedding)
+    }
+  })
+
+  return map
+}
+
 // ============================================
 // ベクトル検索による材料マッチング
 // ============================================
@@ -87,10 +120,11 @@ async function generateEmbedding(text: string): Promise<number[]> {
 async function searchByEmbedding(
   supabase: SupabaseClient,
   ingredientName: string,
-  matchCount: number = 5
+  matchCount: number = 5,
+  precomputedEmbedding?: number[]
 ): Promise<MatchedIngredientData[]> {
   try {
-    const embedding = await generateEmbedding(ingredientName)
+    const embedding = precomputedEmbedding ?? await generateEmbedding(ingredientName)
     
     const { data, error } = await supabase.rpc('search_ingredients_full_by_embedding', {
       query_embedding: embedding,
@@ -204,6 +238,51 @@ ${candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 10
   return 0
 }
 
+function selectBestCandidateWithoutLLM(
+  inputName: string,
+  candidates: Array<{
+    id: string
+    name: string
+    name_norm: string
+    similarity?: number | null
+    vectorSimilarity?: number | null
+    textSignal?: number
+    combinedScore?: number
+    calories_kcal?: number | null
+  }>,
+): { candidate: typeof candidates[number]; confidence: 'high' | 'medium' | 'low'; matchMethod: IngredientMatchResult['matchMethod'] } | null {
+  const bestCandidate = candidates[0]
+  if (!bestCandidate) return null
+
+  if (shouldSelectIngredientWithoutLLM(inputName, bestCandidate)) {
+    const textSignal = bestCandidate.textSignal ?? 0
+    return {
+      candidate: bestCandidate,
+      confidence: textSignal >= 0.95 ? 'high' : 'medium',
+      matchMethod: textSignal > 0 ? 'text_similarity' : 'embedding',
+    }
+  }
+
+  const secondCandidate = candidates[1]
+  const bestScore = bestCandidate.combinedScore ?? bestCandidate.vectorSimilarity ?? bestCandidate.textSignal ?? bestCandidate.similarity ?? 0
+  const secondScore = secondCandidate?.combinedScore ?? secondCandidate?.vectorSimilarity ?? secondCandidate?.textSignal ?? secondCandidate?.similarity ?? 0
+  const scoreGap = bestScore - secondScore
+  const textSignal = bestCandidate.textSignal ?? 0
+
+  if (
+    (bestScore >= 0.82 && scoreGap >= 0.08) ||
+    (bestScore >= 0.72 && textSignal >= 0.55 && scoreGap >= 0.05)
+  ) {
+    return {
+      candidate: bestCandidate,
+      confidence: bestScore >= 0.9 ? 'high' : 'medium',
+      matchMethod: textSignal > 0.4 ? 'text_similarity' : 'embedding',
+    }
+  }
+
+  return null
+}
+
 // ============================================
 // name_normでの完全一致検索
 // ============================================
@@ -231,7 +310,10 @@ async function searchByExactNameNorm(
 
 export async function matchSingleIngredient(
   supabase: SupabaseClient,
-  ingredient: EstimatedIngredient
+  ingredient: EstimatedIngredient,
+  options: {
+    precomputedEmbedding?: number[]
+  } = {},
 ): Promise<IngredientMatchResult> {
   const inputName = ingredient.name
   
@@ -342,7 +424,7 @@ export async function matchSingleIngredient(
   // ============================================
   // 3. ベクトル検索 + テキスト候補統合
   // ============================================
-  const embeddingResults = await searchByEmbedding(supabase, inputName, 10)
+  const embeddingResults = await searchByEmbedding(supabase, inputName, 10, options.precomputedEmbedding)
   const mergedCandidates = mergeIngredientCandidates(
     inputName,
     textResults.map((row) => ({
@@ -360,18 +442,18 @@ export async function matchSingleIngredient(
     .slice(0, 5)
 
   if (llmCandidates.length > 0) {
-    const bestCandidate = llmCandidates[0]
-    if (shouldSelectIngredientWithoutLLM(inputName, bestCandidate)) {
-      const confidence = (bestCandidate.textSignal ?? 0) >= 0.95 ? 'high' : 'medium'
-      console.log(`[ingredient-matcher] ✅ merged_direct: "${inputName}" → "${bestCandidate.name}"`)
+    const deterministicMatch = selectBestCandidateWithoutLLM(inputName, llmCandidates)
+    if (deterministicMatch) {
+      const { candidate, confidence, matchMethod } = deterministicMatch
+      console.log(`[ingredient-matcher] ✅ merged_direct: "${inputName}" → "${candidate.name}"`)
       return {
         input: ingredient,
         matched: {
-          ...bestCandidate,
-          similarity: bestCandidate.textSignal ?? bestCandidate.vectorSimilarity ?? bestCandidate.similarity ?? 0,
+          ...candidate,
+          similarity: candidate.combinedScore ?? candidate.textSignal ?? candidate.vectorSimilarity ?? candidate.similarity ?? 0,
         },
         confidence,
-        matchMethod: bestCandidate.textSignal ? 'text_similarity' : 'embedding',
+        matchMethod,
       }
     }
 
@@ -429,12 +511,57 @@ export async function matchIngredients(
   supabase: SupabaseClient,
   ingredients: EstimatedIngredient[]
 ): Promise<IngredientMatchResult[]> {
-  const results: IngredientMatchResult[] = []
+  const results = new Array<IngredientMatchResult>(ingredients.length)
+  const memo = new Map<string, IngredientMatchMemo>()
+  const uniqueEmbeddingInputs = [...new Set(
+    ingredients
+      .map((ingredient) => ingredient.name.trim())
+      .filter((name) => name && !isWaterishIngredient(name))
+  )]
 
-  for (const ingredient of ingredients) {
-    const result = await matchSingleIngredient(supabase, ingredient)
-    results.push(result)
+  let embeddingMap = new Map<string, number[]>()
+  try {
+    embeddingMap = await generateEmbeddingsBatch(uniqueEmbeddingInputs)
+  } catch (error) {
+    console.warn('[ingredient-matcher] batch embedding generation failed, falling back to per-ingredient embeddings:', error)
   }
+
+  let cursor = 0
+  const workerCount = Math.min(MAX_INGREDIENT_MATCH_CONCURRENCY, Math.max(1, ingredients.length))
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = cursor++
+      if (index >= ingredients.length) return
+
+      const ingredient = ingredients[index]
+      const memoKey = normalizeIngredientNameJs(ingredient.name) || ingredient.name.trim()
+      const cached = memo.get(memoKey)
+
+      if (cached) {
+        results[index] = {
+          input: ingredient,
+          matched: cached.matched,
+          confidence: cached.confidence,
+          matchMethod: cached.matchMethod,
+        }
+        continue
+      }
+
+      const result = await matchSingleIngredient(supabase, ingredient, {
+        precomputedEmbedding: embeddingMap.get(ingredient.name.trim()),
+      })
+
+      memo.set(memoKey, {
+        matched: result.matched,
+        confidence: result.confidence,
+        matchMethod: result.matchMethod,
+      })
+      results[index] = result
+    }
+  })
+
+  await Promise.all(workers)
 
   return results
 }

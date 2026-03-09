@@ -294,7 +294,8 @@ function buildTemplatePraiseAndTip(
 export async function analyzeWithEvidence(
   images: ImageInput[],
   mealType: string,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  prefetchedGeminiResult?: GeminiAnalysisResult
 ): Promise<NutritionPipelineResult> {
   const pipelineStartedAt = Date.now()
   let imageRecognitionMs = 0
@@ -304,106 +305,118 @@ export async function analyzeWithEvidence(
   let praiseGenerationMs = 0
   console.log('Step 1: Image recognition with Gemini 3.1 Flash-Lite Preview...', {
     model: GEMINI_MEAL_ANALYSIS_MODEL,
+    prefetched: Boolean(prefetchedGeminiResult),
   })
-  
-  // Step 1: 画像認識
+
   const step1StartedAt = Date.now()
-  const geminiResult = await analyzeImageWithGemini(images, mealType)
-  imageRecognitionMs = Date.now() - step1StartedAt
+  const geminiResult = prefetchedGeminiResult
+    ? normalizeGeminiAnalysisResult(prefetchedGeminiResult)
+    : await analyzeImageWithGemini(images, mealType)
+  imageRecognitionMs = prefetchedGeminiResult ? 0 : (Date.now() - step1StartedAt)
   console.log(`Recognized ${geminiResult.dishes.length} dishes`, {
     elapsedMs: imageRecognitionMs,
+    prefetched: Boolean(prefetchedGeminiResult),
   })
 
   // Step 2-4: 各料理を処理
+  const processedDishes = await Promise.all(
+    geminiResult.dishes.map(async (dish) => {
+      console.log(`Step 2: Matching ingredients for "${dish.name}"...`)
+
+      const matchStartedAt = Date.now()
+      const matchResults = await matchIngredients(supabase, dish.estimatedIngredients)
+      const stats = calculateMatchingStats(matchResults)
+      const dishIngredientMatchingMs = Date.now() - matchStartedAt
+      console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
+        dish: dish.name,
+        elapsedMs: dishIngredientMatchingMs,
+      })
+
+      console.log(`Step 3: Calculating nutrition for "${dish.name}"...`)
+      const nutritionStartedAt = Date.now()
+      const dishNutrition = calculateDishNutrition(dish.name, dish.role, matchResults)
+      const dishNutritionCalculationMs = Date.now() - nutritionStartedAt
+
+      const matchedIngredients: MatchedIngredientInfo[] = dishNutrition.ingredients.map((ing) => ({
+        input: ing.name,
+        matchedName: ing.matchedName,
+        matchedId: ing.matchedId,
+        similarity: ing.similarity,
+        amount_g: ing.amount_g,
+      }))
+
+      const analyzedDish: AnalyzedDish = {
+        name: dish.name,
+        role: dish.role,
+        calories_kcal: dishNutrition.totals.calories_kcal,
+        protein_g: dishNutrition.totals.protein_g,
+        fat_g: dishNutrition.totals.fat_g,
+        carbs_g: dishNutrition.totals.carbs_g,
+        ingredient: dish.estimatedIngredients.map(i => i.name).slice(0, 3).join('、'),
+        ingredients: matchResults.map((mr: IngredientMatchResult) => ({
+          name: mr.input.name,
+          amount_g: mr.input.amount_g,
+          matched: mr.matched ? {
+            id: mr.matched.id,
+            name: mr.matched.name,
+            similarity: mr.matched.similarity,
+          } : null,
+        })),
+      }
+
+      return {
+        analyzedDish,
+        stats,
+        totals: dishNutrition.totals,
+        matchedIngredients,
+        ingredientMatchingMs: dishIngredientMatchingMs,
+        nutritionCalculationMs: dishNutritionCalculationMs,
+      }
+    }),
+  )
+
   const analyzedDishes: AnalyzedDish[] = []
   let mealTotals = initNutritionTotals()
   const allMatchedIngredients: MatchedIngredientInfo[] = []
   let totalIngredientCount = 0
   let matchedIngredientCount = 0
 
-  for (const dish of geminiResult.dishes) {
-    console.log(`Step 2: Matching ingredients for "${dish.name}"...`)
-    
-    // Step 2: 材料マッチング
-    const matchStartedAt = Date.now()
-    const matchResults = await matchIngredients(supabase, dish.estimatedIngredients)
-    const stats = calculateMatchingStats(matchResults)
-    ingredientMatchingMs += Date.now() - matchStartedAt
-    console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
-      dish: dish.name,
-      elapsedMs: Date.now() - matchStartedAt,
-    })
+  for (const processed of processedDishes) {
+    analyzedDishes.push(processed.analyzedDish)
+    ingredientMatchingMs += processed.ingredientMatchingMs
+    nutritionCalculationMs += processed.nutritionCalculationMs
+    totalIngredientCount += processed.stats.total
+    matchedIngredientCount += processed.stats.matched
+    allMatchedIngredients.push(...processed.matchedIngredients)
 
-    totalIngredientCount += stats.total
-    matchedIngredientCount += stats.matched
-
-    // Step 3: 栄養計算
-    console.log(`Step 3: Calculating nutrition for "${dish.name}"...`)
-    const nutritionStartedAt = Date.now()
-    const dishNutrition = calculateDishNutrition(dish.name, dish.role, matchResults)
-    nutritionCalculationMs += Date.now() - nutritionStartedAt
-
-    // 材料情報を収集
-    for (const ing of dishNutrition.ingredients) {
-      allMatchedIngredients.push({
-        input: ing.name,
-        matchedName: ing.matchedName,
-        matchedId: ing.matchedId,
-        similarity: ing.similarity,
-        amount_g: ing.amount_g,
-      })
-    }
-
-    // 料理を構築
-    const analyzedDish: AnalyzedDish = {
-      name: dish.name,
-      role: dish.role,
-      calories_kcal: dishNutrition.totals.calories_kcal,
-      protein_g: dishNutrition.totals.protein_g,
-      fat_g: dishNutrition.totals.fat_g,
-      carbs_g: dishNutrition.totals.carbs_g,
-      ingredient: dish.estimatedIngredients.map(i => i.name).slice(0, 3).join('、'),
-      ingredients: matchResults.map((mr: IngredientMatchResult) => ({
-        name: mr.input.name,
-        amount_g: mr.input.amount_g,
-        matched: mr.matched ? {
-          id: mr.matched.id,
-          name: mr.matched.name,
-          similarity: mr.matched.similarity,
-        } : null,
-      })),
-    }
-    analyzedDishes.push(analyzedDish)
-
-    // 合計に加算
-    mealTotals.calories_kcal += dishNutrition.totals.calories_kcal
-    mealTotals.protein_g += dishNutrition.totals.protein_g
-    mealTotals.fat_g += dishNutrition.totals.fat_g
-    mealTotals.carbs_g += dishNutrition.totals.carbs_g
-    mealTotals.fiber_g += dishNutrition.totals.fiber_g
-    mealTotals.sodium_mg += dishNutrition.totals.sodium_mg
-    mealTotals.potassium_mg += dishNutrition.totals.potassium_mg
-    mealTotals.calcium_mg += dishNutrition.totals.calcium_mg
-    mealTotals.magnesium_mg += dishNutrition.totals.magnesium_mg
-    mealTotals.phosphorus_mg += dishNutrition.totals.phosphorus_mg
-    mealTotals.iron_mg += dishNutrition.totals.iron_mg
-    mealTotals.zinc_mg += dishNutrition.totals.zinc_mg
-    mealTotals.iodine_ug += dishNutrition.totals.iodine_ug
-    mealTotals.cholesterol_mg += dishNutrition.totals.cholesterol_mg
-    mealTotals.vitamin_a_ug += dishNutrition.totals.vitamin_a_ug
-    mealTotals.vitamin_d_ug += dishNutrition.totals.vitamin_d_ug
-    mealTotals.vitamin_e_mg += dishNutrition.totals.vitamin_e_mg
-    mealTotals.vitamin_k_ug += dishNutrition.totals.vitamin_k_ug
-    mealTotals.vitamin_b1_mg += dishNutrition.totals.vitamin_b1_mg
-    mealTotals.vitamin_b2_mg += dishNutrition.totals.vitamin_b2_mg
-    mealTotals.niacin_mg += dishNutrition.totals.niacin_mg
-    mealTotals.vitamin_b6_mg += dishNutrition.totals.vitamin_b6_mg
-    mealTotals.vitamin_b12_ug += dishNutrition.totals.vitamin_b12_ug
-    mealTotals.folic_acid_ug += dishNutrition.totals.folic_acid_ug
-    mealTotals.pantothenic_acid_mg += dishNutrition.totals.pantothenic_acid_mg
-    mealTotals.biotin_ug += dishNutrition.totals.biotin_ug
-    mealTotals.vitamin_c_mg += dishNutrition.totals.vitamin_c_mg
-    mealTotals.salt_eq_g += dishNutrition.totals.salt_eq_g
+    mealTotals.calories_kcal += processed.totals.calories_kcal
+    mealTotals.protein_g += processed.totals.protein_g
+    mealTotals.fat_g += processed.totals.fat_g
+    mealTotals.carbs_g += processed.totals.carbs_g
+    mealTotals.fiber_g += processed.totals.fiber_g
+    mealTotals.sodium_mg += processed.totals.sodium_mg
+    mealTotals.potassium_mg += processed.totals.potassium_mg
+    mealTotals.calcium_mg += processed.totals.calcium_mg
+    mealTotals.magnesium_mg += processed.totals.magnesium_mg
+    mealTotals.phosphorus_mg += processed.totals.phosphorus_mg
+    mealTotals.iron_mg += processed.totals.iron_mg
+    mealTotals.zinc_mg += processed.totals.zinc_mg
+    mealTotals.iodine_ug += processed.totals.iodine_ug
+    mealTotals.cholesterol_mg += processed.totals.cholesterol_mg
+    mealTotals.vitamin_a_ug += processed.totals.vitamin_a_ug
+    mealTotals.vitamin_d_ug += processed.totals.vitamin_d_ug
+    mealTotals.vitamin_e_mg += processed.totals.vitamin_e_mg
+    mealTotals.vitamin_k_ug += processed.totals.vitamin_k_ug
+    mealTotals.vitamin_b1_mg += processed.totals.vitamin_b1_mg
+    mealTotals.vitamin_b2_mg += processed.totals.vitamin_b2_mg
+    mealTotals.niacin_mg += processed.totals.niacin_mg
+    mealTotals.vitamin_b6_mg += processed.totals.vitamin_b6_mg
+    mealTotals.vitamin_b12_ug += processed.totals.vitamin_b12_ug
+    mealTotals.folic_acid_ug += processed.totals.folic_acid_ug
+    mealTotals.pantothenic_acid_mg += processed.totals.pantothenic_acid_mg
+    mealTotals.biotin_ug += processed.totals.biotin_ug
+    mealTotals.vitamin_c_mg += processed.totals.vitamin_c_mg
+    mealTotals.salt_eq_g += processed.totals.salt_eq_g
   }
 
   mealTotals = roundNutrition(mealTotals)
