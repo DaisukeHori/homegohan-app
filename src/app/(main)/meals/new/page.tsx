@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
+import { logToServer } from "@/lib/db-logger";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
@@ -405,6 +406,11 @@ export default function MealCaptureModal() {
     setIsAnalyzing(true);
     
     try {
+      const startedAt = Date.now();
+      void logToServer('info', 'meal-photo analysis started', {
+        photoCount: photoFiles.length,
+        mealType: selectedMealType,
+      });
       const imageDataArray = await buildImagePayloads(photoFiles, IMAGE_PAYLOAD_CONFIG.meal);
 
       const res = await fetch('/api/ai/analyze-meal-photo', {
@@ -418,6 +424,12 @@ export default function MealCaptureModal() {
       
       if (res.ok) {
         const data = await res.json();
+        void logToServer('info', 'meal-photo analysis succeeded', {
+          photoCount: photoFiles.length,
+          mealType: selectedMealType,
+          elapsedMs: Date.now() - startedAt,
+          dishCount: Array.isArray(data.dishes) ? data.dishes.length : 0,
+        });
         setAnalyzedDishes(data.dishes || []);
         setTotalCalories(data.totalCalories || 0);
         setTotalProtein(data.totalProtein || 0);
@@ -430,11 +442,21 @@ export default function MealCaptureModal() {
         setNutritionalAdvice(data.nutritionalAdvice || '');
         setStep('result');
       } else {
+        void logToServer('warn', 'meal-photo analysis failed', {
+          photoCount: photoFiles.length,
+          mealType: selectedMealType,
+          status: res.status,
+        });
         alert('解析に失敗しました。もう一度お試しください。');
         setStep('capture');
       }
     } catch (error) {
       console.error('Analysis error:', error);
+      void logToServer('error', 'meal-photo analysis threw', {
+        photoCount: photoFiles.length,
+        mealType: selectedMealType,
+        error: error instanceof Error ? error.message : String(error),
+      });
       alert('エラーが発生しました。');
       setStep('capture');
     } finally {
@@ -445,6 +467,11 @@ export default function MealCaptureModal() {
   // 写真タイプを判別（オートモード）
   const classifyPhoto = async (files: File[]): Promise<ClassificationResponse> => {
     try {
+      const startedAt = Date.now();
+      void logToServer('info', 'photo classification started', {
+        photoCount: files.length,
+        photoMode,
+      });
       const images = await buildImagePayloads(files, IMAGE_PAYLOAD_CONFIG.classify);
       const res = await fetch('/api/ai/classify-photo', {
         method: 'POST',
@@ -454,6 +481,13 @@ export default function MealCaptureModal() {
 
       if (res.ok) {
         const data = await res.json();
+        void logToServer('info', 'photo classification succeeded', {
+          photoCount: files.length,
+          photoMode,
+          elapsedMs: Date.now() - startedAt,
+          detectedType: data.type,
+          confidence: data.confidence,
+        });
         setDetectedType(data.type);
         setDetectedConfidence(data.confidence);
         setDetectedDescription(data.description || '');
@@ -472,6 +506,12 @@ export default function MealCaptureModal() {
 
       const errorText = await res.text();
       console.error('Classification request failed:', res.status, errorText);
+      void logToServer('warn', 'photo classification failed', {
+        photoCount: files.length,
+        photoMode,
+        status: res.status,
+        errorText: errorText.slice(0, 500),
+      });
       setDetectedDescription(
         res.status === 401
           ? 'ログイン状態が切れている可能性があります。再読み込み後にもう一度お試しください'
@@ -481,6 +521,11 @@ export default function MealCaptureModal() {
       );
     } catch (error) {
       console.error('Classification error:', error);
+      void logToServer('error', 'photo classification threw', {
+        photoCount: files.length,
+        photoMode,
+        error: error instanceof Error ? error.message : String(error),
+      });
       setDetectedDescription('AI判定に失敗したため、手動で種類を選択してください');
     }
 
@@ -680,6 +725,10 @@ export default function MealCaptureModal() {
     if (photoFiles.length === 0) return;
 
     let targetMode: ClassifyResult = photoMode as ClassifyResult;
+    void logToServer('info', 'photo flow started', {
+      photoMode,
+      photoCount: photoFiles.length,
+    });
 
     // オートモードの場合は先に判別
     if (photoMode === 'auto') {
@@ -691,6 +740,12 @@ export default function MealCaptureModal() {
 
       const resolvedClassification = resolveClassifyPhotoType(classification);
       if (!resolvedClassification.type) {
+        void logToServer('warn', 'photo flow classification unresolved', {
+          photoCount: photoFiles.length,
+          detectedType: classification.type,
+          confidence: classification.confidence,
+          candidates: classification.candidates,
+        });
         setStep('classify-failed');
         return;
       }
@@ -699,10 +754,19 @@ export default function MealCaptureModal() {
     }
 
     if (targetMode === 'unknown') {
+      void logToServer('warn', 'photo flow target mode unknown', {
+        photoCount: photoFiles.length,
+        photoMode,
+      });
       setStep('classify-failed');
       return;
     }
 
+    void logToServer('info', 'photo flow resolved mode', {
+      photoCount: photoFiles.length,
+      photoMode,
+      targetMode,
+    });
     await analyzeResolvedMode(targetMode);
   };
 
