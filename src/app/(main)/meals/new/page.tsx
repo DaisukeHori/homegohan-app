@@ -158,12 +158,28 @@ interface ClassificationResponse {
   modelUsed?: string;
 }
 
+interface ImagePayloadConfig {
+  maxWidth: number;
+  maxHeight: number;
+  quality: number;
+  maxBytes: number;
+}
+
 const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; bg: string }> = {
   breakfast: { icon: Coffee, label: '朝食', color: colors.warning, bg: colors.warningLight },
   lunch: { icon: Sun, label: '昼食', color: colors.accent, bg: colors.accentLight },
   dinner: { icon: Moon, label: '夕食', color: colors.purple, bg: colors.purpleLight },
   snack: { icon: Utensils, label: 'おやつ', color: colors.success, bg: colors.successLight },
   midnight_snack: { icon: Moon, label: '夜食', color: colors.blue, bg: colors.blueLight },
+};
+
+const IMAGE_PAYLOAD_CONFIG: Record<PhotoMode | 'classify', ImagePayloadConfig> = {
+  classify: { maxWidth: 1280, maxHeight: 1280, quality: 0.72, maxBytes: 450 * 1024 },
+  auto: { maxWidth: 1600, maxHeight: 1600, quality: 0.8, maxBytes: 900 * 1024 },
+  meal: { maxWidth: 1600, maxHeight: 1600, quality: 0.82, maxBytes: 900 * 1024 },
+  fridge: { maxWidth: 1600, maxHeight: 1600, quality: 0.8, maxBytes: 900 * 1024 },
+  health_checkup: { maxWidth: 1800, maxHeight: 2400, quality: 0.88, maxBytes: 1400 * 1024 },
+  weight_scale: { maxWidth: 1600, maxHeight: 1600, quality: 0.86, maxBytes: 900 * 1024 },
 };
 
 // Helper: ローカル日付文字列
@@ -198,6 +214,32 @@ const getWeekStart = (date: Date): Date => {
   d.setDate(diff);
   d.setHours(0, 0, 0, 0);
   return d;
+};
+
+const estimateBase64Bytes = (base64: string): number => Math.ceil((base64.length * 3) / 4);
+
+const loadImageElement = (dataUrl: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => resolve(image);
+  image.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+  image.src = dataUrl;
+});
+
+const scaleDimensions = (
+  width: number,
+  height: number,
+  maxWidth: number,
+  maxHeight: number,
+): { width: number; height: number } => {
+  if (width <= maxWidth && height <= maxHeight) {
+    return { width, height };
+  }
+
+  const ratio = Math.min(maxWidth / width, maxHeight / height);
+  return {
+    width: Math.max(1, Math.round(width * ratio)),
+    height: Math.max(1, Math.round(height * ratio)),
+  };
 };
 
 export default function MealCaptureModal() {
@@ -287,6 +329,74 @@ export default function MealCaptureModal() {
     setPhotoPreviews(prev => prev.filter((_, i) => i !== index));
   };
 
+  const fileToDataUrl = async (file: File): Promise<string> => (
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          resolve(reader.result);
+          return;
+        }
+        reject(new Error('画像の読み込みに失敗しました'));
+      };
+      reader.onerror = () => reject(reader.error ?? new Error('画像の読み込みに失敗しました'));
+      reader.readAsDataURL(file);
+    })
+  );
+
+  const fileToImagePayload = async (
+    file: File,
+    config: ImagePayloadConfig,
+  ): Promise<{ base64: string; mimeType: string }> => {
+    const dataUrl = await fileToDataUrl(file);
+    const fallbackMimeType = file.type || 'image/jpeg';
+    const fallbackBase64 = dataUrl.split(',')[1];
+
+    if (typeof window === 'undefined') {
+      return { base64: fallbackBase64, mimeType: fallbackMimeType };
+    }
+
+    try {
+      const image = await loadImageElement(dataUrl);
+      const { width, height } = scaleDimensions(image.naturalWidth, image.naturalHeight, config.maxWidth, config.maxHeight);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        return { base64: fallbackBase64, mimeType: fallbackMimeType };
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+
+      const outputMimeType = 'image/jpeg';
+      const qualitySteps = [config.quality, 0.82, 0.72, 0.62, 0.52]
+        .filter((value, index, array) => array.indexOf(value) === index);
+
+      for (const quality of qualitySteps) {
+        const compressedDataUrl = canvas.toDataURL(outputMimeType, quality);
+        const compressedBase64 = compressedDataUrl.split(',')[1];
+        if (estimateBase64Bytes(compressedBase64) <= config.maxBytes) {
+          return { base64: compressedBase64, mimeType: outputMimeType };
+        }
+      }
+
+      const finalDataUrl = canvas.toDataURL(outputMimeType, 0.45);
+      return {
+        base64: finalDataUrl.split(',')[1],
+        mimeType: outputMimeType,
+      };
+    } catch (error) {
+      console.warn('Image compression skipped, using original payload', error);
+      return { base64: fallbackBase64, mimeType: fallbackMimeType };
+    }
+  };
+
+  const buildImagePayloads = async (files: File[], config: ImagePayloadConfig) => Promise.all(
+    files.map((file) => fileToImagePayload(file, config)),
+  );
+
   // AI解析（複数枚対応）
   const analyzePhoto = async () => {
     if (photoFiles.length === 0) return;
@@ -295,21 +405,8 @@ export default function MealCaptureModal() {
     setIsAnalyzing(true);
     
     try {
-      // 複数枚をBase64に変換
-      const imageDataArray = await Promise.all(photoFiles.map(async (file) => {
-        return new Promise<{ base64: string; mimeType: string }>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const result = reader.result as string;
-            resolve({
-              base64: result.split(',')[1],
-              mimeType: file.type
-            });
-          };
-          reader.readAsDataURL(file);
-        });
-      }));
-      
+      const imageDataArray = await buildImagePayloads(photoFiles, IMAGE_PAYLOAD_CONFIG.meal);
+
       const res = await fetch('/api/ai/analyze-meal-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -345,23 +442,10 @@ export default function MealCaptureModal() {
     }
   };
 
-  const fileToImagePayload = async (file: File): Promise<{ base64: string; mimeType: string }> => {
-    const base64 = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-      reader.readAsDataURL(file);
-    });
-
-    return {
-      base64,
-      mimeType: file.type || 'image/jpeg',
-    };
-  };
-
   // 写真タイプを判別（オートモード）
   const classifyPhoto = async (files: File[]): Promise<ClassificationResponse> => {
     try {
-      const images = await Promise.all(files.map(fileToImagePayload));
+      const images = await buildImagePayloads(files, IMAGE_PAYLOAD_CONFIG.classify);
       const res = await fetch('/api/ai/classify-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -391,6 +475,8 @@ export default function MealCaptureModal() {
       setDetectedDescription(
         res.status === 401
           ? 'ログイン状態が切れている可能性があります。再読み込み後にもう一度お試しください'
+          : res.status === 413
+            ? '画像サイズが大きすぎました。枚数を減らすか、撮り直してもう一度お試しください'
           : 'AI判定に失敗したため、手動で種類を選択してください',
       );
     } catch (error) {
@@ -412,17 +498,12 @@ export default function MealCaptureModal() {
     setIsAnalyzing(true);
 
     try {
-      const file = photoFiles[0];
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(file);
-      });
+      const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.fridge);
 
       const res = await fetch('/api/ai/analyze-fridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType: file.type }),
+        body: JSON.stringify({ imageBase64: base64, mimeType }),
       });
 
       if (res.ok) {
@@ -452,17 +533,12 @@ export default function MealCaptureModal() {
     setIsAnalyzing(true);
 
     try {
-      const file = photoFiles[0];
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(file);
-      });
+      const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.health_checkup);
 
       const res = await fetch('/api/ai/analyze-health-checkup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType: file.type }),
+        body: JSON.stringify({ imageBase64: base64, mimeType }),
       });
 
       if (res.ok) {
@@ -510,17 +586,12 @@ export default function MealCaptureModal() {
     setIsAnalyzing(true);
 
     try {
-      const file = photoFiles[0];
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(file);
-      });
+      const [{ base64, mimeType }] = await buildImagePayloads([photoFiles[0]], IMAGE_PAYLOAD_CONFIG.weight_scale);
 
       const res = await fetch('/api/ai/analyze-weight-scale', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64, mimeType: file.type }),
+        body: JSON.stringify({ image: base64, mimeType }),
       });
 
       if (res.ok) {
