@@ -4,6 +4,7 @@ import {
   classifyPhotoSchema,
   normalizeClassifyPhotoResult,
   resolveClassifyPhotoType,
+  DEFAULT_GEMINI_CLASSIFY_MODEL,
   type ClassifyPhotoResult,
   type PhotoType,
 } from '../../../../lib/ai/image-recognition';
@@ -14,6 +15,8 @@ interface ImageInput {
   base64: string;
   mimeType?: string;
 }
+
+const CLASSIFY_MODEL = process.env.GEMINI_CLASSIFY_MODEL || DEFAULT_GEMINI_CLASSIFY_MODEL;
 
 export type { PhotoType };
 
@@ -78,6 +81,7 @@ async function requestClassification(images: ImageInput[]): Promise<{ result: Cl
     images,
     temperature: 0.1,
     maxOutputTokens: 512,
+    model: CLASSIFY_MODEL,
   });
 
   return {
@@ -151,7 +155,7 @@ export async function POST(request: Request) {
         });
         return NextResponse.json({
           ...recovered,
-          modelUsed: process.env.GEMINI_VISION_MODEL,
+          modelUsed: CLASSIFY_MODEL,
           recovered: true,
         });
       }

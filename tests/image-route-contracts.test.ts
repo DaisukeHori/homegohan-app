@@ -165,7 +165,7 @@ describe('image route contracts', () => {
       type: 'fridge',
       confidence: 0.88,
       description: '冷蔵庫の棚',
-      modelUsed: 'gemini-3-pro-preview',
+      modelUsed: 'gemini-3-flash-preview',
     });
     expect(payload.candidates).toEqual([
       { type: 'fridge', confidence: 0.88 },

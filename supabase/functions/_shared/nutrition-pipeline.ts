@@ -2,7 +2,7 @@
  * 栄養分析パイプライン（nutrition-pipeline.ts）
  * 
  * 食事写真分析の全ステップを統合:
- * 1. Gemini 3 Pro Preview で画像認識
+ * 1. Gemini 3 Flash Preview で画像認識
  * 2. 材料マッチング
  * 3. 栄養計算
  * 4. エビデンス検証
@@ -119,8 +119,11 @@ export interface NutritionPipelineResult {
 }
 
 // ============================================
-// Gemini 3 Pro Preview 画像認識
+// Gemini 3 Flash Preview 画像認識
 // ============================================
+
+const GEMINI_MEAL_ANALYSIS_MODEL = Deno.env.get('GEMINI_MEAL_ANALYSIS_MODEL') || 'gemini-3-flash-preview'
+const GEMINI_PRAISE_MODEL = Deno.env.get('GEMINI_PRAISE_MODEL') || 'gemini-3-flash-preview'
 
 const mealRecognitionSchema = {
   type: 'object',
@@ -243,6 +246,7 @@ async function analyzeImageWithGemini(
     images,
     temperature: 0.4,
     maxOutputTokens: 4096,
+    model: GEMINI_MEAL_ANALYSIS_MODEL,
   })
 
   return normalizeGeminiAnalysisResult(data)
@@ -309,6 +313,7 @@ async function generatePraiseAndTip(
       schema: praiseSchema as unknown as Record<string, unknown>,
       temperature: 0.7,
       maxOutputTokens: 512,
+      model: GEMINI_PRAISE_MODEL,
     })
 
     return {
@@ -345,7 +350,9 @@ export async function analyzeWithEvidence(
   let nutritionCalculationMs = 0
   let evidenceVerificationMs = 0
   let praiseGenerationMs = 0
-  console.log('Step 1: Image recognition with Gemini 3 Pro Preview...')
+  console.log('Step 1: Image recognition with Gemini 3 Flash Preview...', {
+    model: GEMINI_MEAL_ANALYSIS_MODEL,
+  })
   
   // Step 1: 画像認識
   const step1StartedAt = Date.now()
