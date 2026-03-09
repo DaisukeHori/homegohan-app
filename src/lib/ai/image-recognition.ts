@@ -1,5 +1,6 @@
 export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3-pro-preview';
-export const AUTO_CLASSIFY_CONFIDENCE_THRESHOLD = 0.75;
+export const AUTO_CLASSIFY_CONFIDENCE_THRESHOLD = 0.6;
+export const AUTO_CLASSIFY_CANDIDATE_FALLBACK_THRESHOLD = 0.45;
 
 export type PhotoType = 'meal' | 'fridge' | 'health_checkup' | 'weight_scale' | 'unknown';
 export type HealthPhotoType = 'weight_scale' | 'blood_pressure' | 'thermometer' | 'unknown';
@@ -14,6 +15,12 @@ export interface ClassifyPhotoResult {
   confidence: number;
   description: string;
   candidates: ClassificationCandidate[];
+}
+
+export interface ResolvedClassifyPhotoType {
+  type: Exclude<PhotoType, 'unknown'> | null;
+  confidence: number;
+  source: 'primary' | 'candidate' | 'none';
 }
 
 export interface FridgeIngredientRecognition {
@@ -251,6 +258,38 @@ export function normalizeClassifyPhotoResult(raw: unknown): ClassifyPhotoResult 
     confidence,
     description,
     candidates: uniqueCandidates(candidates).slice(0, 3),
+  };
+}
+
+export function resolveClassifyPhotoType(
+  result: Pick<ClassifyPhotoResult, 'type' | 'confidence' | 'candidates'>,
+): ResolvedClassifyPhotoType {
+  if (result.type !== 'unknown' && result.confidence >= AUTO_CLASSIFY_CONFIDENCE_THRESHOLD) {
+    return {
+      type: result.type,
+      confidence: result.confidence,
+      source: 'primary',
+    };
+  }
+
+  const bestCandidate = [...result.candidates]
+    .filter((candidate): candidate is ClassificationCandidate & { type: Exclude<PhotoType, 'unknown'> } => (
+      candidate.type !== 'unknown'
+    ))
+    .sort((a, b) => b.confidence - a.confidence)[0];
+
+  if (bestCandidate && bestCandidate.confidence >= AUTO_CLASSIFY_CANDIDATE_FALLBACK_THRESHOLD) {
+    return {
+      type: bestCandidate.type,
+      confidence: bestCandidate.confidence,
+      source: 'candidate',
+    };
+  }
+
+  return {
+    type: null,
+    confidence: 0,
+    source: 'none',
   };
 }
 

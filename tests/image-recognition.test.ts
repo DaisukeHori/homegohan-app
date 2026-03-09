@@ -6,6 +6,7 @@ import {
   normalizeClassifyPhotoResult,
   normalizeFridgeAnalysisResult,
   normalizeHealthCheckupExtractedData,
+  resolveClassifyPhotoType,
 } from '../src/lib/ai/image-recognition';
 
 describe('image recognition normalization', () => {
@@ -87,5 +88,47 @@ describe('image recognition normalization', () => {
     });
 
     expect(countExtractedHealthFields(extracted)).toBe(3);
+  });
+
+  it('resolves auto classification from a strong primary result', () => {
+    expect(resolveClassifyPhotoType({
+      type: 'meal',
+      confidence: 0.82,
+      candidates: [{ type: 'meal', confidence: 0.82 }],
+    })).toEqual({
+      type: 'meal',
+      confidence: 0.82,
+      source: 'primary',
+    });
+  });
+
+  it('falls back to the best non-unknown candidate when primary is unknown', () => {
+    expect(resolveClassifyPhotoType({
+      type: 'unknown',
+      confidence: 0.12,
+      candidates: [
+        { type: 'fridge', confidence: 0.68 },
+        { type: 'meal', confidence: 0.41 },
+      ],
+    })).toEqual({
+      type: 'fridge',
+      confidence: 0.68,
+      source: 'candidate',
+    });
+  });
+
+  it('returns none when both primary and candidates are too weak', () => {
+    expect(resolveClassifyPhotoType({
+      type: 'unknown',
+      confidence: 0.21,
+      candidates: [
+        { type: 'meal', confidence: 0.31 },
+        { type: 'fridge', confidence: 0.18 },
+      ],
+    })).toEqual({
+      type: null,
+      confidence: 0,
+      source: 'none',
+    });
   });
 });

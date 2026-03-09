@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { AUTO_CLASSIFY_CONFIDENCE_THRESHOLD } from "@/lib/ai/image-recognition";
+import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
@@ -96,12 +96,12 @@ interface WeightHistoryItem {
 }
 
 interface ClassificationCandidate {
-  type: ClassifyResult;
+  type: Exclude<ClassifyResult, 'auto'>;
   confidence: number;
 }
 
 interface ClassificationResponse {
-  type: ClassifyResult;
+  type: Exclude<ClassifyResult, 'auto'>;
   confidence: number;
   description: string;
   candidates: ClassificationCandidate[];
@@ -325,20 +325,30 @@ export default function MealCaptureModal() {
         setClassificationCandidates(Array.isArray(data.candidates) ? data.candidates : []);
 
         return {
-          type: ['meal', 'fridge', 'health_checkup', 'weight_scale', 'unknown'].includes(data.type) ? data.type as ClassifyResult : 'unknown',
+          type: ['meal', 'fridge', 'health_checkup', 'weight_scale', 'unknown'].includes(data.type)
+            ? data.type as Exclude<ClassifyResult, 'auto'>
+            : 'unknown',
           confidence: Number(data.confidence) || 0,
           description: data.description || '',
           candidates: Array.isArray(data.candidates) ? data.candidates : [],
           modelUsed: data.modelUsed,
         };
       }
+
+      const errorText = await res.text();
+      console.error('Classification request failed:', res.status, errorText);
+      setDetectedDescription(
+        res.status === 401
+          ? 'ログイン状態が切れている可能性があります。再読み込み後にもう一度お試しください'
+          : 'AI判定に失敗したため、手動で種類を選択してください',
+      );
     } catch (error) {
       console.error('Classification error:', error);
+      setDetectedDescription('AI判定に失敗したため、手動で種類を選択してください');
     }
 
     setDetectedType('unknown');
     setDetectedConfidence(0);
-    setDetectedDescription('');
     setClassificationCandidates([]);
     return { type: 'unknown', confidence: 0, description: '', candidates: [] };
   };
@@ -557,12 +567,13 @@ export default function MealCaptureModal() {
       const classification = await classifyPhoto(photoFiles);
       setIsAnalyzing(false);
 
-      if (classification.type === 'unknown' || classification.confidence < AUTO_CLASSIFY_CONFIDENCE_THRESHOLD) {
+      const resolvedClassification = resolveClassifyPhotoType(classification);
+      if (!resolvedClassification.type) {
         setStep('classify-failed');
         return;
       }
 
-      targetMode = classification.type;
+      targetMode = resolvedClassification.type;
     }
 
     if (targetMode === 'unknown') {
@@ -1801,6 +1812,27 @@ export default function MealCaptureModal() {
                   ))}
               </div>
             )}
+
+            <div className="w-full max-w-xs space-y-2 mb-6">
+              {(['meal', 'fridge', 'health_checkup', 'weight_scale'] as const).map((mode) => (
+                <button
+                  key={`manual-${mode}`}
+                  onClick={() => {
+                    setPhotoMode(mode as PhotoMode);
+                    void analyzeResolvedMode(mode as Exclude<ClassifyResult, 'unknown'>);
+                  }}
+                  className="w-full py-3 rounded-xl flex items-center justify-between px-4"
+                  style={{ background: colors.card, border: `1px dashed ${colors.border}` }}
+                >
+                  <span style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
+                    {PHOTO_MODES[mode as PhotoMode]?.label}として続ける
+                  </span>
+                  <span style={{ fontSize: 12, color: colors.textLight }}>
+                    手動
+                  </span>
+                </button>
+              ))}
+            </div>
 
             <div className="w-full max-w-xs space-y-3">
               <button

@@ -138,11 +138,26 @@ export const useHomeData = () => {
   const supabase = createClient();
   const todayStr = formatLocalDate(new Date());
 
+  const resolveAuthUser = async () => {
+    const sessionResult = await supabase.auth.getSession();
+    if (sessionResult.data.session?.user) {
+      return sessionResult.data.session.user;
+    }
+
+    const refreshResult = await supabase.auth.refreshSession();
+    if (refreshResult.data.session?.user) {
+      return refreshResult.data.session.user;
+    }
+
+    const userResult = await supabase.auth.getUser();
+    return userResult.data.user ?? null;
+  };
+
   const fetchHomeData = async () => {
     setLoading(true);
     
     // 1. ユーザー情報取得
-    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const authUser = await resolveAuthUser();
     
     if (authUser) {
       const { data: profile } = await supabase
@@ -917,7 +932,17 @@ export const useHomeData = () => {
   };
 
   useEffect(() => {
-    fetchHomeData();
+    void fetchHomeData();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      void fetchHomeData();
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const updateActivityLevel = async (level: string) => {
