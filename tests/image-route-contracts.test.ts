@@ -219,16 +219,30 @@ describe('image route contracts', () => {
   });
 
   it('classify-photo can return prefetched meal analysis for auto mode', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      candidates: [
-        {
-          content: {
-            parts: [
-              {
-                text: JSON.stringify({
-                  type: 'meal',
-                  confidence: 0.93,
-                  mealAnalysis: {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    type: 'meal',
+                    confidence: 0.93,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
                     dishes: [
                       {
                         name: '牛ステーキ',
@@ -239,14 +253,13 @@ describe('image route contracts', () => {
                         ],
                       },
                     ],
-                  },
-                }),
-              },
-            ],
+                  }),
+                },
+              ],
+            },
           },
-        },
-      ],
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
 
     const { POST } = await import('../src/app/api/ai/classify-photo/route');
@@ -278,8 +291,14 @@ describe('image route contracts', () => {
       },
     });
 
-    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(requestBody.generationConfig.responseJsonSchema.properties.mealAnalysis).toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const classifyRequestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(classifyRequestBody.generationConfig.responseJsonSchema.properties.type).toBeDefined();
+    expect(classifyRequestBody.generationConfig.responseJsonSchema.properties.mealAnalysis).toBeUndefined();
+
+    const mealAnalysisRequestBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(mealAnalysisRequestBody.generationConfig.responseJsonSchema.properties.dishes).toBeDefined();
   });
 
   it('classify-photo falls back to per-image classification when the batch result is weak', async () => {

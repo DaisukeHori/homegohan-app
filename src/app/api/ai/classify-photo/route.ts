@@ -22,16 +22,6 @@ interface ImageInput {
 
 const CLASSIFY_MODEL = process.env.GEMINI_CLASSIFY_MODEL || DEFAULT_GEMINI_CLASSIFY_MODEL;
 
-const classifyPhotoWithMealSchema = {
-  type: 'object',
-  required: ['type', 'confidence'],
-  properties: {
-    type: classifyPhotoSchema.properties.type,
-    confidence: classifyPhotoSchema.properties.confidence,
-    mealAnalysis: mealRecognitionSchema,
-  },
-} as const;
-
 export type { PhotoType };
 
 function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult | null {
@@ -56,44 +46,8 @@ function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult 
   });
 }
 
-function buildPrompt(imageCount: number, includeMealAnalysis: boolean, mealType?: string): string {
+function buildPrompt(imageCount: number): string {
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
-  const mealTypeLabel = mealType === 'breakfast' ? '朝食'
-    : mealType === 'lunch' ? '昼食'
-    : mealType === 'dinner' ? '夕食'
-    : mealType === 'snack' ? 'おやつ'
-    : mealType === 'midnight_snack' ? '夜食'
-    : '食事';
-
-  if (includeMealAnalysis) {
-    return `この${imageCountText}画像セットの主な用途を判別してください。
-
-以下の4つのカテゴリから最も適切なものを選んでください：
-
-1. "meal" - 食事・料理の写真
-2. "fridge" - 冷蔵庫の中身や買い物食材の写真
-3. "health_checkup" - 健康診断結果や検査票など紙の書類
-4. "weight_scale" - 体重計や体組成計のディスプレイ写真
-
-判定ルール:
-- 複数枚ある場合は、画像全体を見て最も一貫したカテゴリを選んでください
-- 体重計ディスプレイ写真は必ず "weight_scale" を最優先で判定してください
-- 紙の健康診断結果と体重計ディスプレイは厳密に区別してください
-- 判断が難しい場合のみ "unknown" を選んでください
-
-JSON では少なくとも次の2項目を返してください:
-- "type": 上記4カテゴリのいずれか
-- "confidence": 0.0 から 1.0 の小数
-
-さらに、type が "meal" の場合だけ "mealAnalysis" も返してください。
-- "mealAnalysis.dishes": ${mealTypeLabel}として写っている料理の配列
-- 各料理には "name"、"role"、"estimatedIngredients" を含める
-- "estimatedIngredients" には一般的な食材名と 1 人前の推定量(g)を入れる
-- type が meal 以外なら mealAnalysis は省略してください
-
-説明文や候補配列は返さないでください。`;
-  }
-
   return `この${imageCountText}画像セットの主な用途を判別してください。
 
 以下の4つのカテゴリから最も適切なものを選んでください：
@@ -116,33 +70,79 @@ JSON では次の2項目だけ返してください:
 説明文や候補配列は返さないでください。`;
 }
 
+function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): string {
+  const mealTypeLabel = mealType === 'breakfast' ? '朝食'
+    : mealType === 'lunch' ? '昼食'
+    : mealType === 'dinner' ? '夕食'
+    : mealType === 'snack' ? 'おやつ'
+    : mealType === 'midnight_snack' ? '夜食'
+    : '食事';
+
+  const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
+
+  return `あなたは「ほめゴハン」という食事記録アプリの分析AIです。
+この${imageCountText}${mealTypeLabel}の写真に写っている料理を、栄養計算用に保守的に抽出してください。
+
+重要ルール:
+- 写っている料理だけを数えてください。見えていない料理や調味料を想像で増やさないでください
+- 料理名は一般的な名前で、盛り付け由来の推測や高級そうな表現を避けてください
+- 定食なら、ご飯・汁物・主菜・副菜/サラダを分けてください
+- amount_g は 1人前として、見た目から無理のない保守的な量にしてください
+- ソース・ドレッシング・薬味は、明確に見える場合だけ入れてください
+- ご飯は炊いた後の量として見積もり、通常は 80g〜220g の範囲で考えてください
+- 汁物は器1杯として見積もり、全体量は通常 120g〜220g の範囲で考えてください
+- 千切りキャベツなど付け合わせ野菜は、通常 20g〜100g の範囲で考えてください
+- JSON 以外は返さないでください
+
+返却形式:
+{
+  "dishes": [
+    {
+      "name": "料理名",
+      "role": "main または side または soup または rice または salad または dessert",
+      "estimatedIngredients": [
+        { "name": "一般的な食材名", "amount_g": 推定量(g) }
+      ]
+    }
+  ]
+}`;
+}
+
 async function requestClassification(
   images: ImageInput[],
-  options: { includeMealAnalysis?: boolean; mealType?: string } = {},
-): Promise<{ result: ClassifyPhotoWithMealAnalysisResult; model: string }> {
-  const { includeMealAnalysis = false, mealType } = options;
-  const { data, model } = await generateGeminiJson<ClassifyPhotoWithMealAnalysisResult>({
-    prompt: buildPrompt(images.length, includeMealAnalysis, mealType),
-    schema: (includeMealAnalysis ? classifyPhotoWithMealSchema : classifyPhotoSchema) as unknown as Record<string, unknown>,
+): Promise<{ result: ClassifyPhotoResult; model: string }> {
+  const { data, model } = await generateGeminiJson<ClassifyPhotoResult>({
+    prompt: buildPrompt(images.length),
+    schema: classifyPhotoSchema as unknown as Record<string, unknown>,
     images,
     temperature: 0.1,
-    maxOutputTokens: includeMealAnalysis ? 768 : 96,
+    maxOutputTokens: 96,
     model: CLASSIFY_MODEL,
     retryOnParseFailure: false,
   });
 
-  const normalized = normalizeClassifyPhotoResult(data);
-  const mealAnalysis = includeMealAnalysis && normalized.type === 'meal'
-    ? normalizeMealRecognitionResult((data as { mealAnalysis?: unknown }).mealAnalysis)
-    : undefined;
-
   return {
-    result: {
-      ...normalized,
-      mealAnalysis: mealAnalysis && mealAnalysis.dishes.length > 0 ? mealAnalysis : undefined,
-    },
+    result: normalizeClassifyPhotoResult(data),
     model,
   };
+}
+
+async function requestMealAnalysis(
+  images: ImageInput[],
+  mealType?: string,
+): Promise<MealRecognitionResult | undefined> {
+  const { data } = await generateGeminiJson<MealRecognitionResult>({
+    prompt: buildMealAnalysisPrompt(mealType, images.length),
+    schema: mealRecognitionSchema as unknown as Record<string, unknown>,
+    images,
+    temperature: 0.1,
+    maxOutputTokens: 1024,
+    model: CLASSIFY_MODEL,
+    retryOnParseFailure: false,
+  });
+
+  const normalized = normalizeMealRecognitionResult(data);
+  return normalized.dishes.length > 0 ? normalized : undefined;
 }
 
 export async function POST(request: Request) {
@@ -166,12 +166,9 @@ export async function POST(request: Request) {
     }
 
     const classifyStartedAt = Date.now();
-    const { result: initialResult, model } = await requestClassification(images, {
-      includeMealAnalysis,
-      mealType,
-    });
+    const { result: initialResult, model } = await requestClassification(images);
     const classifyElapsedMs = Date.now() - classifyStartedAt;
-    let result = initialResult;
+    let result: ClassifyPhotoResult | ClassifyPhotoWithMealAnalysisResult = initialResult;
 
     if (images.length > 1 && !resolveClassifyPhotoType(initialResult).type) {
       const fallbackStartedAt = Date.now();
@@ -188,12 +185,24 @@ export async function POST(request: Request) {
       result = aggregatedResult;
     }
 
+    let mealAnalysisElapsedMs = 0;
+    if (includeMealAnalysis && result.type === 'meal') {
+      const mealAnalysisStartedAt = Date.now();
+      const mealAnalysis = await requestMealAnalysis(images, mealType);
+      mealAnalysisElapsedMs = Date.now() - mealAnalysisStartedAt;
+      result = {
+        ...result,
+        mealAnalysis,
+      };
+    }
+
     console.info('Photo Classification: completed', {
       imageCount: images.length,
       resolvedType: result.type,
       model,
       classifyElapsedMs,
-      mealAnalysisDishCount: result.mealAnalysis?.dishes.length ?? 0,
+      mealAnalysisElapsedMs,
+      mealAnalysisDishCount: 'mealAnalysis' in result ? (result.mealAnalysis?.dishes.length ?? 0) : 0,
       totalElapsedMs: Date.now() - startedAt,
     });
 

@@ -162,6 +162,114 @@ function toOptionalNumber(value: unknown): number | undefined {
   return undefined
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function normalizeIngredientName(name: string): string {
+  return String(name ?? '').replace(/[\s　]+/g, '').trim()
+}
+
+function getIngredientAmountCap(name: string, role: string): number {
+  const normalized = normalizeIngredientName(name)
+
+  if (/ご飯|白米|白ご飯|ライス|米飯|麦ご飯|玄米ご飯/.test(normalized)) return 220
+  if (/うどん|そば|パスタ|ラーメン|中華麺|焼きそば/.test(normalized)) return 240
+  if (/味噌汁|みそ汁|スープ|汁|だし|出汁/.test(normalized) || role === 'soup') return 220
+  if (/味噌|みそ/.test(normalized)) return role === 'soup' ? 18 : 25
+  if (/ドレッシング|マヨネーズ|ソース|たれ|タレ|ケチャップ/.test(normalized)) return 25
+  if (/油|オイル|バター/.test(normalized)) return 18
+  if (/片栗粉|小麦粉|薄力粉|強力粉|パン粉|衣/.test(normalized)) return 35
+  if (/鶏|牛|豚|ひき肉|挽肉|ハム|ベーコン|ソーセージ|魚|鮭|さば|ぶり|まぐろ|えび|海老|いか|イカ|たこ|タコ|卵|豆腐/.test(normalized)) {
+    return role === 'main' ? 220 : 120
+  }
+  if (/キャベツ|レタス|サラダ菜|きゅうり|胡瓜|トマト|ブロッコリー|にんじん|人参|もやし|ほうれん草|小松菜|白菜|玉ねぎ|たまねぎ|ねぎ|ネギ|しめじ|きのこ|舞茸|まいたけ|えのき|ピーマン/.test(normalized)) {
+    return role === 'salad' ? 120 : 90
+  }
+
+  return role === 'main' ? 160 : role === 'rice' ? 220 : role === 'soup' ? 180 : 120
+}
+
+function getDishTotalCap(role: string): number {
+  switch (role) {
+    case 'rice':
+      return 240
+    case 'soup':
+      return 220
+    case 'salad':
+      return 140
+    case 'side':
+      return 160
+    case 'dessert':
+      return 140
+    case 'main':
+    default:
+      return 280
+  }
+}
+
+function normalizeDishForNutrition(dish: GeminiDish): GeminiDish {
+  const merged = new Map<string, EstimatedIngredient>()
+
+  for (const ingredient of dish.estimatedIngredients) {
+    const normalizedName = normalizeIngredientName(ingredient.name)
+    if (!normalizedName) continue
+
+    const cappedAmount = clamp(
+      ingredient.amount_g,
+      1,
+      getIngredientAmountCap(normalizedName, dish.role),
+    )
+
+    const existing = merged.get(normalizedName)
+    if (existing) {
+      existing.amount_g += cappedAmount
+    } else {
+      merged.set(normalizedName, {
+        name: normalizedName,
+        amount_g: cappedAmount,
+      })
+    }
+  }
+
+  let estimatedIngredients = [...merged.values()]
+  const totalAmount = estimatedIngredients.reduce((sum, ingredient) => sum + ingredient.amount_g, 0)
+  const totalCap = getDishTotalCap(dish.role)
+
+  if (totalAmount > totalCap && totalAmount > 0) {
+    const scale = totalCap / totalAmount
+    estimatedIngredients = estimatedIngredients.map((ingredient) => ({
+      ...ingredient,
+      amount_g: Math.max(1, Math.round(ingredient.amount_g * scale)),
+    }))
+  } else {
+    estimatedIngredients = estimatedIngredients.map((ingredient) => ({
+      ...ingredient,
+      amount_g: Math.max(1, Math.round(ingredient.amount_g)),
+    }))
+  }
+
+  return {
+    ...dish,
+    estimatedIngredients,
+  }
+}
+
+function isVegetableIngredient(name: string, matchedName?: string | null): boolean {
+  const text = `${name} ${matchedName ?? ''}`
+  return /キャベツ|レタス|サラダ菜|きゅうり|胡瓜|トマト|ブロッコリー|にんじん|人参|もやし|ほうれん草|小松菜|白菜|玉ねぎ|たまねぎ|ねぎ|ネギ|しめじ|きのこ|舞茸|まいたけ|えのき|ピーマン|なす|茄子|大根|ごぼう|れんこん|蓮根/.test(text)
+}
+
+function estimateVegetableScore(dishes: AnalyzedDish[]): number {
+  const vegetableGrams = dishes.reduce((sum, dish) => (
+    sum + dish.ingredients.reduce((dishSum, ingredient) => (
+      dishSum + (isVegetableIngredient(ingredient.name, ingredient.matched?.name) ? ingredient.amount_g : 0)
+    ), 0)
+  ), 0)
+
+  return clamp(Math.round((vegetableGrams / 120) * 100), 0, 100)
+}
+
 function normalizeGeminiAnalysisResult(raw: unknown): GeminiAnalysisResult {
   const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {}
   const dishesInput = Array.isArray(input.dishes) ? input.dishes : []
@@ -221,11 +329,14 @@ async function analyzeImageWithGemini(
 }
 
 注意：
-- 全ての写真に写っている全ての料理を含めてください
-- 材料名は「鶏もも肉」「白米」「味噌」など一般的な食材名で記載
-- 分量は1人前として推定してください
-- 調味料（塩、砂糖、しょうゆ等）も含めてください
-- roleは料理の種類に応じて設定（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート=dessert）
+- 写っている料理だけを数えてください。見えていない小鉢や調味料を想像で増やさないでください
+- 材料名は「鶏もも肉」「白米」「味噌」など一般的な食材名で記載してください
+- 分量は1人前として、見た目から無理のない保守的な量にしてください
+- 定食なら、ご飯・汁物・主菜・副菜/サラダを分けてください
+- ご飯は炊いた後の量として見積もり、通常は80g〜220gの範囲で考えてください
+- 汁物は器1杯として見積もり、全体量は通常120g〜220gの範囲で考えてください
+- 千切りキャベツなど付け合わせ野菜は、通常20g〜100gの範囲で考えてください
+- roleは料理の種類に応じて設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート=dessert）
 - 構造化 JSON で返してください`
 
   const { data } = await generateGeminiJson<GeminiAnalysisResult>({
@@ -257,7 +368,7 @@ function buildTemplatePraiseAndTip(
   dishes: AnalyzedDish[],
   totalNutrition: NutritionTotals,
   mealType: string
-): { praiseComment: string; nutritionTip: string; overallScore: number; vegScore: number } {
+): { praiseComment: string; nutritionTip: string; overallScore: number } {
   const mealTypeJa = toMealTypeLabel(mealType)
   const topDishes = dishes
     .map((dish) => dish.name.trim())
@@ -270,7 +381,6 @@ function buildTemplatePraiseAndTip(
   const fiberScore = Math.min(8, totalNutrition.fiber_g * 1.6)
   const caloriesScore = totalNutrition.calories_kcal >= 250 && totalNutrition.calories_kcal <= 900 ? 5 : 2
   const overallScore = Math.max(70, Math.min(95, Math.round(70 + proteinScore + fiberScore + caloriesScore)))
-  const vegScore = Math.max(0, Math.min(100, Math.round(Math.min(100, totalNutrition.fiber_g * 12 + dishes.length * 6))))
 
   let nutritionTip = '食事を記録して振り返ること自体が、バランス改善の近道です。'
   if (totalNutrition.protein_g >= 25) {
@@ -283,7 +393,6 @@ function buildTemplatePraiseAndTip(
     praiseComment: `${dishPhrase}がしっかりできていて素晴らしいです。${mealTypeJa}を丁寧に残せていて、とても良い流れです✨`,
     nutritionTip,
     overallScore,
-    vegScore,
   }
 }
 
@@ -312,15 +421,16 @@ export async function analyzeWithEvidence(
   const geminiResult = prefetchedGeminiResult
     ? normalizeGeminiAnalysisResult(prefetchedGeminiResult)
     : await analyzeImageWithGemini(images, mealType)
+  const normalizedDishes = geminiResult.dishes.map(normalizeDishForNutrition)
   imageRecognitionMs = prefetchedGeminiResult ? 0 : (Date.now() - step1StartedAt)
-  console.log(`Recognized ${geminiResult.dishes.length} dishes`, {
+  console.log(`Recognized ${normalizedDishes.length} dishes`, {
     elapsedMs: imageRecognitionMs,
     prefetched: Boolean(prefetchedGeminiResult),
   })
 
   // Step 2-4: 各料理を処理
   const processedDishes = await Promise.all(
-    geminiResult.dishes.map(async (dish) => {
+    normalizedDishes.map(async (dish) => {
       console.log(`Step 2: Matching ingredients for "${dish.name}"...`)
 
       const matchStartedAt = Date.now()
@@ -447,7 +557,8 @@ export async function analyzeWithEvidence(
   // Step 5: テンプレート文言生成
   console.log('Step 5: Building template praise and tips...')
   const praiseStartedAt = Date.now()
-  const { praiseComment, nutritionTip, overallScore, vegScore } = buildTemplatePraiseAndTip(
+  const vegScore = estimateVegetableScore(analyzedDishes)
+  const { praiseComment, nutritionTip, overallScore } = buildTemplatePraiseAndTip(
     analyzedDishes,
     mealTotals,
     mealType
