@@ -149,6 +149,28 @@ export const useHomeData = () => {
       return refreshResult.data.session.user;
     }
 
+    try {
+      const syncResponse = await fetch('/api/auth/session-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+      });
+
+      if (syncResponse.ok) {
+        const syncData = await syncResponse.json();
+        const synced = await supabase.auth.setSession({
+          access_token: syncData.accessToken,
+          refresh_token: syncData.refreshToken,
+        });
+
+        if (synced.data.session?.user) {
+          return synced.data.session.user;
+        }
+      }
+    } catch (error) {
+      console.error('Session sync error:', error);
+    }
+
     const userResult = await supabase.auth.getUser();
     return userResult.data.user ?? null;
   };
