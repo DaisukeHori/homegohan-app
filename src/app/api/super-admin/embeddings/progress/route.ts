@@ -1,17 +1,26 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+export const dynamic = "force-dynamic";
 
 function getServiceClient() {
-  return createServiceClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) return null;
+  return createServiceClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }
 
 export async function GET() {
   try {
     const supabase = getServiceClient();
+    if (!supabase) {
+      return NextResponse.json({
+        status: "idle",
+        message: "SUPABASE_SERVICE_ROLE_KEY が未設定のため進捗を取得できません",
+      });
+    }
     
     // 最新のジョブを取得
     const { data, error } = await supabase
