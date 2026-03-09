@@ -50,6 +50,8 @@ const getDayOfWeek = (dateStr: string): string => {
   return days[new Date(dateStr).getDay()];
 };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [todayPlan, setTodayPlan] = useState<TodayMealPlan | null>(null);
@@ -139,10 +141,40 @@ export const useHomeData = () => {
   const supabase = createClient();
   const todayStr = formatLocalDate(new Date());
 
-  const resolveAuthUser = async () => {
+  const syncSessionFromServer = async () => {
+    const syncResponse = await fetch('/api/auth/session-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      cache: 'no-store',
+    });
+
+    if (!syncResponse.ok) {
+      return null;
+    }
+
+    const syncData = await syncResponse.json();
+    const synced = await supabase.auth.setSession({
+      access_token: syncData.accessToken,
+      refresh_token: syncData.refreshToken,
+    });
+
+    return synced.data.session?.user ?? null;
+  };
+
+  const resolveAuthUserOnce = async () => {
     const sessionResult = await supabase.auth.getSession();
     if (sessionResult.data.session?.user) {
       return sessionResult.data.session.user;
+    }
+
+    try {
+      const syncedUser = await syncSessionFromServer();
+      if (syncedUser) {
+        return syncedUser;
+      }
+    } catch (error) {
+      console.error('Session sync error:', error);
     }
 
     const refreshResult = await supabase.auth.refreshSession();
@@ -150,30 +182,23 @@ export const useHomeData = () => {
       return refreshResult.data.session.user;
     }
 
-    try {
-      const syncResponse = await fetch('/api/auth/session-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-      });
-
-      if (syncResponse.ok) {
-        const syncData = await syncResponse.json();
-        const synced = await supabase.auth.setSession({
-          access_token: syncData.accessToken,
-          refresh_token: syncData.refreshToken,
-        });
-
-        if (synced.data.session?.user) {
-          return synced.data.session.user;
-        }
-      }
-    } catch (error) {
-      console.error('Session sync error:', error);
-    }
-
     const userResult = await supabase.auth.getUser();
     return userResult.data.user ?? null;
+  };
+
+  const resolveAuthUser = async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const user = await resolveAuthUserOnce();
+      if (user) {
+        return user;
+      }
+
+      if (attempt === 0) {
+        await wait(300);
+      }
+    }
+
+    return null;
   };
 
   const fetchHomeData = async () => {
