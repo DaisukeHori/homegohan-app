@@ -1,3 +1,17 @@
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  fetchDatasetEmbeddings,
+} from "../../../shared/dataset-embedding.mjs";
+
+function readDenoEnv(name: string): string | undefined {
+  const denoLike = (globalThis as typeof globalThis & {
+    Deno?: { env?: { get?: (key: string) => string | undefined } };
+  }).Deno;
+  return denoLike?.env?.get?.(name);
+}
+
 // 栄養計算の共通ロジック
 
 // 栄養計算用の型
@@ -270,7 +284,7 @@ async function validateMatchesWithLLM(
 ): Promise<Set<number>> {
   if (matches.length === 0) return new Set();
   
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  const apiKey = readDenoEnv("OPENAI_API_KEY");
   if (!apiKey) {
     console.warn("[nutrition] No API key for LLM validation, skipping");
     return new Set();
@@ -334,7 +348,7 @@ async function selectBestMatchWithLLM(
   if (candidates.length === 0) return -1;
   if (candidates.length === 1) return 0; // 1件なら選択の余地なし
   
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  const apiKey = readDenoEnv("OPENAI_API_KEY");
   if (!apiKey) {
     console.warn("[nutrition] No API key for LLM selection, using first candidate");
     return 0;
@@ -414,32 +428,17 @@ ${candidateList}
 }
 
 // Embedding API を呼び出す
-export async function embedTexts(texts: string[], dimensions = 384): Promise<number[][]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OpenAI API Key is missing");
-
-  const res = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "text-embedding-3-small",
-      input: texts,
-      dimensions,
-    }),
+export async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[][]> {
+  const apiKey = readDenoEnv(DATASET_EMBEDDING_API_KEY_ENV);
+  if (!apiKey) throw new Error(`Embedding API Key is missing (${DATASET_EMBEDDING_API_KEY_ENV})`);
+  const embeddings = await fetchDatasetEmbeddings(texts, {
+    apiKey,
+    inputType: "document",
   });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Embeddings API error: ${t}`);
-  }
-  const json = await res.json();
-  const data = json?.data;
-  if (!Array.isArray(data) || data.length !== texts.length) {
+  if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
     throw new Error("Embeddings API returned invalid data");
   }
-  return data.map((d: any) => d?.embedding) as number[][];
+  return embeddings as number[][];
 }
 
 // DBに実際に存在するカラムのみを選択
@@ -1117,7 +1116,7 @@ export async function calculateNutritionFromIngredients(
     console.log(`[nutrition] === Phase 2: Vector search + LLM selection for ${stillUnmatched.length} ingredients ===`);
     try {
       const texts = stillUnmatched.map(u => u.ing.name);
-      const embeddings = await embedTexts(texts, 1536);
+      const embeddings = await embedTexts(texts, DATASET_EMBEDDING_DIMENSIONS);
       
       // 並列でベクトル検索を実行
       const searchResults = await Promise.all(
@@ -1229,7 +1228,8 @@ export async function calculateNutritionFromIngredients(
           supabase
             .from("ingredient_match_cache")
             .upsert(cacheInserts, { onConflict: "input_name" })
-            .then(({ error }) => {
+            .then((result: { error: { message: string } | null }) => {
+              const { error } = result;
               if (error) {
                 console.warn(`[nutrition] Cache save failed: ${error.message}`);
               } else {

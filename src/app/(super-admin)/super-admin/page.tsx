@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import {
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  DATASET_EMBEDDING_MODELS,
+} from "@/shared/dataset-embedding.mjs";
 
 interface DbStats {
   tableCounts: Record<string, number>;
@@ -24,14 +29,8 @@ const EMBEDDING_TABLES = [
   { name: "dataset_menu_sets", label: "献立セットデータセット", description: "献立セット内容の埋め込みベクトル" },
 ];
 
-const EMBEDDING_MODELS = [
-  { value: "text-embedding-3-small", label: "text-embedding-3-small", dimensions: [512, 1536] },
-  { value: "text-embedding-3-large", label: "text-embedding-3-large", dimensions: [256, 1024, 3072] },
-  { value: "text-embedding-ada-002", label: "text-embedding-ada-002", dimensions: [1536] },
-];
-
-// デフォルトの次元を設定（text-embedding-3-largeの最初の次元）
-const DEFAULT_DIMENSIONS = 256;
+const EMBEDDING_MODELS = DATASET_EMBEDDING_MODELS;
+const DEFAULT_DIMENSIONS = DATASET_EMBEDDING_DIMENSIONS;
 
 interface EmbeddingProgress {
   jobId?: string;
@@ -53,8 +52,8 @@ interface EmbeddingProgress {
 export default function SuperAdminDashboard() {
   const [dbStats, setDbStats] = useState<DbStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedModel, setSelectedModel] = useState("text-embedding-3-large");
-  const [selectedDimensions, setSelectedDimensions] = useState(256);
+  const [selectedModel, setSelectedModel] = useState(DATASET_EMBEDDING_MODEL);
+  const [selectedDimensions, setSelectedDimensions] = useState(DEFAULT_DIMENSIONS);
   const [progress, setProgress] = useState<EmbeddingProgress>({ status: "idle" });
   const [progressInterval, setProgressInterval] = useState<NodeJS.Timeout | null>(null);
 
@@ -377,4 +376,3 @@ export default function SuperAdminDashboard() {
     </div>
   );
 }
-

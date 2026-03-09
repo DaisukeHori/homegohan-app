@@ -4,6 +4,9 @@
  * 埋め込み再生成を途中から再開（エラー自動リトライ機能付き）
  */
 
+import { DATASET_EMBEDDING_DIMENSIONS, DATASET_EMBEDDING_MODEL } from "../shared/dataset-embedding.mjs";
+import { buildProgressSnapshot } from "../shared/progress-reporting.mjs";
+
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://flmeolcfutuwwbjmzyoz.supabase.co";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -78,7 +81,7 @@ async function fetchWithRetry(url, options) {
   }
 }
 
-async function processTable(tableName, startOffset = 0, model = "text-embedding-3-large", dimensions = 1536, jobId = null, onlyMissing = false) {
+async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDING_MODEL, dimensions = DATASET_EMBEDDING_DIMENSIONS, jobId = null, onlyMissing = false) {
   console.log(`\n📊 Processing ${tableName} from offset ${startOffset}...`);
   if (onlyMissing) {
     console.log(`   Mode: 埋め込みベクトルがNULLのレコードのみを処理`);
@@ -180,8 +183,17 @@ async function processTable(tableName, startOffset = 0, model = "text-embedding-
       const pct = data.totalCount > 0 
         ? ((offset / data.totalCount) * 100).toFixed(1)
         : "100";
-      
-      process.stdout.write(`\r   Progress: ${offset}/${data.totalCount} (${pct}%)`);
+
+      console.log(
+        `   ${buildProgressSnapshot({
+          label: "Progress",
+          processed: totalProcessed,
+          total: data.totalCount,
+          startedAt: startTime,
+          cursor: `${offset}/${data.totalCount}`,
+          extra: `apiPct=${pct}%`,
+        })}`,
+      );
       
       // 進捗を保存
       const elapsedMinutes = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
@@ -215,8 +227,8 @@ async function main() {
   // 環境変数からパラメータを取得
   const table = process.env.EMBEDDING_TABLE || "dataset_menu_sets";
   const startOffset = parseInt(process.env.EMBEDDING_START_OFFSET || "0", 10);
-  const model = process.env.EMBEDDING_MODEL || "text-embedding-3-large";
-  const dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || "1536", 10);
+  const model = process.env.EMBEDDING_MODEL || DATASET_EMBEDDING_MODEL;
+  const dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || String(DATASET_EMBEDDING_DIMENSIONS), 10);
   const jobId = process.env.EMBEDDING_JOB_ID || null;
   const onlyMissing = process.env.EMBEDDING_ONLY_MISSING === "true";
   

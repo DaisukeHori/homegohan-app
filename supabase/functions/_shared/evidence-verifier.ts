@@ -22,6 +22,7 @@ export interface ReferenceRecipe {
   protein_g: number | null
   fat_g: number | null
   carbs_g: number | null
+  sodium_g: number | null
   similarity: number
 }
 
@@ -83,6 +84,7 @@ export async function searchSimilarRecipes(
     protein_g: r.protein_g,
     fat_g: r.fat_g,
     carbs_g: r.carbs_g,
+    sodium_g: r.sodium_g,
     similarity: r.similarity,
   }))
 }

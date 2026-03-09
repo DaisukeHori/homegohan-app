@@ -153,7 +153,8 @@ supabase functions serve <function-name>
 Supabase Dashboard → Edge Functions → 対象関数 → Settings で設定。
 
 主な環境変数：
-- `OPENAI_API_KEY` - OpenAI API キー
+- `OPENAI_API_KEY` - OpenAI API キー（LLM補助処理用）
+- `AIMLAPI_API_KEY` - dataset embeddings 用 Voyage API キー
 - `GOOGLE_AI_API_KEY` - Gemini API キー
 
 ## 注意事項

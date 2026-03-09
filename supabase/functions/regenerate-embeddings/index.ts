@@ -1,5 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  buildMenuSetEmbeddingText,
+  fetchDatasetEmbeddings,
+  isDatasetEmbeddingConfig,
+} from "../../../shared/dataset-embedding.mjs";
 
 /**
  * 埋め込みベクトル再生成 Edge Function
@@ -12,44 +20,47 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // SERVICE_ROLE_JWT を優先し、なければ SUPABASE_SERVICE_ROLE_KEY を使用
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+const DATASET_EMBEDDING_API_KEY = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV) ?? "";
 
-const DEFAULT_DIMENSIONS = 1536;
-const DEFAULT_MODEL = "text-embedding-3-large";
-const BATCH_SIZE = 50; // OpenAI API に送るバッチサイズ
+const DEFAULT_DIMENSIONS = DATASET_EMBEDDING_DIMENSIONS;
+const DEFAULT_MODEL = DATASET_EMBEDDING_MODEL;
+const BATCH_SIZE = 50;
 
 interface TableConfig {
-  textColumn: string;
   embeddingColumn: string;
+  selectColumns: string;
+  buildText(row: Record<string, unknown>): string;
 }
 
 const TABLE_CONFIGS: Record<string, TableConfig> = {
-  dataset_ingredients: { textColumn: "name", embeddingColumn: "name_embedding" },
-  dataset_recipes: { textColumn: "name", embeddingColumn: "name_embedding" },
-  dataset_menu_sets: { textColumn: "title", embeddingColumn: "content_embedding" },
+  dataset_ingredients: {
+    embeddingColumn: "name_embedding",
+    selectColumns: "id, name",
+    buildText: (row) => String(row.name ?? ""),
+  },
+  dataset_recipes: {
+    embeddingColumn: "name_embedding",
+    selectColumns: "id, name",
+    buildText: (row) => String(row.name ?? ""),
+  },
+  dataset_menu_sets: {
+    embeddingColumn: "content_embedding",
+    selectColumns: "id, title, theme_tags, dishes, calories_kcal, protein_g, fat_g, carbs_g, sodium_g",
+    buildText: (row) => buildMenuSetEmbeddingText(row),
+  },
 };
 
 async function embedBatch(texts: string[], model: string, dimensions: number): Promise<number[][]> {
-  const res = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      input: texts,
-      dimensions,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenAI API error: ${err}`);
+  if (!DATASET_EMBEDDING_API_KEY) {
+    throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
   }
-
-  const json = await res.json();
-  return json.data.map((d: any) => d.embedding);
+  if (!isDatasetEmbeddingConfig(model, dimensions)) {
+    throw new Error(`Invalid embedding config. Use ${DATASET_EMBEDDING_MODEL} with ${DATASET_EMBEDDING_DIMENSIONS} dimensions.`);
+  }
+  return await fetchDatasetEmbeddings(texts, {
+    apiKey: DATASET_EMBEDDING_API_KEY,
+    inputType: "document",
+  }) as number[][];
 }
 
 Deno.serve(async (req) => {
@@ -70,6 +81,15 @@ Deno.serve(async (req) => {
     const limit = body.limit ?? 100;
     const model = body.model ?? DEFAULT_MODEL;
     const dimensions = body.dimensions ?? DEFAULT_DIMENSIONS;
+
+    if (!isDatasetEmbeddingConfig(model, dimensions)) {
+      return new Response(
+        JSON.stringify({
+          error: `Invalid embedding config. Use ${DATASET_EMBEDDING_MODEL} with ${DATASET_EMBEDDING_DIMENSIONS} dimensions.`,
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     if (!tableName || !TABLE_CONFIGS[tableName]) {
       return new Response(
@@ -99,7 +119,7 @@ Deno.serve(async (req) => {
     // 埋め込みベクトルがNULLのレコードのみを取得（offset指定がある場合は従来通り）
     let query = supabase
       .from(tableName)
-      .select(`id, ${config.textColumn}`);
+      .select(config.selectColumns);
     
     // onlyMissingパラメータがtrueの場合、NULLのレコードのみを取得
     if (onlyMissing) {
@@ -160,7 +180,7 @@ Deno.serve(async (req) => {
     let processed = 0;
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const batch = rows.slice(i, i + BATCH_SIZE);
-      const texts = batch.map((r: any) => r[config.textColumn] || "");
+      const texts = batch.map((r: any) => config.buildText(r));
 
       const embeddings = await embedBatch(texts, model, dimensions);
 

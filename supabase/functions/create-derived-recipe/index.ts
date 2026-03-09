@@ -1,6 +1,12 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { Agent, type AgentInputItem, Runner } from "npm:@openai/agents";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  fetchDatasetEmbeddings,
+} from "../../../shared/dataset-embedding.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -268,40 +274,16 @@ async function withRetry<T>(
   throw lastErr;
 }
 
-async function embedTexts(texts: string[], dimensions = 384): Promise<number[][]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OpenAI API Key is missing (OPENAI_API_KEY)");
+async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[][]> {
+  const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV);
+  if (!apiKey) throw new Error(`Embedding API Key is missing (${DATASET_EMBEDDING_API_KEY_ENV})`);
 
   const res = await withRetry(
-    async () => {
-      const r = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "text-embedding-3-small",
-          input: texts,
-          dimensions,
-        }),
-      });
-      if (!r.ok) {
-        const t = await r.text();
-        const err: any = new Error(`Embeddings API error: ${t}`);
-        err.status = r.status;
-        throw err;
-      }
-      return await r.json();
-    },
+    async () => await fetchDatasetEmbeddings(texts, { apiKey, inputType: "document" }),
     { label: "embeddings" },
   );
 
-  const data = res?.data;
-  if (!Array.isArray(data) || data.length !== texts.length) {
-    throw new Error(`Embeddings API returned invalid data length: ${Array.isArray(data) ? data.length : "null"}`);
-  }
-  const embeddings = data.map((d: any) => d?.embedding);
+  const embeddings = res;
   if (!embeddings.every((e: any) => Array.isArray(e) && e.length === dimensions)) {
     throw new Error("Embeddings API returned invalid embedding vectors");
   }
@@ -749,7 +731,7 @@ Deno.serve(async (req) => {
     const unresolved = matches.filter((x) => !x.matched && !x.skip);
     if (unresolved.length > 0) {
       const qTexts = unresolved.map((u) => u.search_query);
-      const qEmbeddings = await embedTexts(qTexts, 384);
+      const qEmbeddings = await embedTexts(qTexts, DATASET_EMBEDDING_DIMENSIONS);
       for (let i = 0; i < unresolved.length; i++) {
         const u = unresolved[i];
         const emb = qEmbeddings[i];
@@ -824,7 +806,7 @@ Deno.serve(async (req) => {
     const mappingRate = effective.length > 0 ? matchedCount / effective.length : 1;
 
     // 4) derived recipe save
-    const nameEmbedding = (await embedTexts([llmName], 384))[0];
+    const nameEmbedding = (await embedTexts([llmName], DATASET_EMBEDDING_DIMENSIONS))[0];
 
     const { data: saved, error: saveErr } = await supabaseAdmin
       .from("derived_recipes")
@@ -906,5 +888,3 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, error: e?.message ?? String(e) }, 500);
   }
 });
-
-

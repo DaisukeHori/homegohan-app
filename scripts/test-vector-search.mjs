@@ -1,8 +1,8 @@
 /**
- * pgvector 動作確認（OpenAI Embeddings → Supabase RPC → search_menu_examples）
+ * pgvector 動作確認（dataset embeddings → Supabase RPC → search_menu_examples）
  *
  * 例:
- *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... OPENAI_API_KEY=... \\
+ *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... AIMLAPI_API_KEY=... \\
  *   node scripts/test-vector-search.mjs "塩分控えめのカレー" --meal dinner --count 5
  */
 
@@ -11,8 +11,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  fetchSingleDatasetEmbedding,
+} from "../shared/dataset-embedding.mjs";
 
 function mustGetEnv(name) {
   const v = process.env[name];
@@ -66,7 +70,7 @@ function parseArgs(argv) {
     count: 10,
     maxSodium: null,
     themes: null, // comma separated
-    dimensions: 384,
+    dimensions: DATASET_EMBEDDING_DIMENSIONS,
   };
 
   if (argv.length === 0) return args;
@@ -94,13 +98,13 @@ Options:
   --count <N>                            取得件数 (default: 10)
   --max-sodium <g>                       sodium_g 上限で絞り込み
   --themes <tag1,tag2>                   theme_tags で絞り込み（AND）
-  --dimensions <N>                       embeddings次元 (default: 384)
+  --dimensions <N>                       embeddings次元 (default: ${DATASET_EMBEDDING_DIMENSIONS})
   -h, --help
 
 必須環境変数:
   SUPABASE_URL
   SUPABASE_SERVICE_ROLE_KEY
-  OPENAI_API_KEY
+  ${DATASET_EMBEDDING_API_KEY_ENV}
 `);
 }
 
@@ -117,14 +121,10 @@ async function main() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const openai = new OpenAI({ apiKey: mustGetEnv("OPENAI_API_KEY") });
-
-  const embRes = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: args.query,
-    dimensions: args.dimensions,
+  const embedding = await fetchSingleDatasetEmbedding(args.query, {
+    apiKey: mustGetEnv(DATASET_EMBEDDING_API_KEY_ENV),
+    inputType: "query",
   });
-  const embedding = embRes.data[0]?.embedding;
   if (!embedding) throw new Error("embedding生成に失敗しました");
 
   const filterThemeTags = args.themes ? args.themes.split(",").map((s) => s.trim()).filter(Boolean) : null;
@@ -152,5 +152,3 @@ main().catch((e) => {
   console.error("❌ vector search failed:", e?.message ?? e);
   process.exitCode = 1;
 });
-
-

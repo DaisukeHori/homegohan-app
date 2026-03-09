@@ -9,6 +9,10 @@ import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  fetchSingleDatasetEmbedding,
+} from '../shared/dataset-embedding.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -18,7 +22,7 @@ dotenv.config({ path: join(__dirname, '..', '.env.local') })
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+const DATASET_EMBEDDING_API_KEY = process.env[DATASET_EMBEDDING_API_KEY_ENV]
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error('Missing environment variables')
@@ -61,8 +65,8 @@ async function testTextSimilaritySearch() {
 async function testVectorSearch() {
   console.log('\n=== テスト2: ベクトル検索 ===')
   
-  if (!OPENAI_API_KEY) {
-    console.log('  OPENAI_API_KEY がないためスキップ')
+  if (!DATASET_EMBEDDING_API_KEY) {
+    console.log(`  ${DATASET_EMBEDDING_API_KEY_ENV} がないためスキップ`)
     return
   }
   
@@ -71,26 +75,10 @@ async function testVectorSearch() {
   for (const name of testCases) {
     try {
       // Embedding生成
-      const embResponse = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'text-embedding-3-large',
-          input: name,
-          dimensions: 1536,
-        }),
+      const embedding = await fetchSingleDatasetEmbedding(name, {
+        apiKey: DATASET_EMBEDDING_API_KEY,
+        inputType: 'query',
       })
-      
-      if (!embResponse.ok) {
-        console.error(`  ${name}: Embedding生成エラー`)
-        continue
-      }
-      
-      const embData = await embResponse.json()
-      const embedding = embData.data[0].embedding
       
       // ベクトル検索
       const { data, error } = await supabase.rpc('search_ingredients_full_by_embedding', {

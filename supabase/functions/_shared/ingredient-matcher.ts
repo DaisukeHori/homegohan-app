@@ -6,7 +6,15 @@
  */
 
 import { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { EXACT_NAME_NORM_MAP, normalizeIngredientNameJs, isWaterishIngredient } from './nutrition-calculator.ts'
+import { EXACT_NAME_NORM_MAP, INGREDIENT_ALIASES, normalizeIngredientNameJs, isWaterishIngredient } from './nutrition-calculator.ts'
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  fetchSingleDatasetEmbedding,
+} from '../../../shared/dataset-embedding.mjs'
+import {
+  mergeIngredientCandidates,
+  shouldSelectIngredientWithoutLLM,
+} from './ingredient-search-utils.ts'
 
 // ============================================
 // 型定義
@@ -57,39 +65,19 @@ export interface IngredientMatchResult {
   input: EstimatedIngredient
   matched: MatchedIngredientData | null
   confidence: 'high' | 'medium' | 'low' | 'none'
-  matchMethod: 'exact_map' | 'embedding_llm' | 'embedding' | 'text_similarity' | 'none'
+  matchMethod: 'exact_map' | 'alias_map' | 'exact_name_norm' | 'alias_name_norm' | 'embedding_llm' | 'embedding' | 'text_similarity' | 'none'
 }
 
 // ============================================
-// OpenAI Embedding生成
+// Dataset embedding 生成
 // ============================================
 
 async function generateEmbedding(text: string): Promise<number[]> {
-  const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
-  if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not set')
+  const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV)
+  if (!apiKey) {
+    throw new Error(`${DATASET_EMBEDDING_API_KEY_ENV} is not set`)
   }
-
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'text-embedding-3-small',
-      input: text,
-      dimensions: 384,
-    }),
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`OpenAI Embedding API error: ${errorText}`)
-  }
-
-  const data = await response.json()
-  return data.data[0].embedding
+  return await fetchSingleDatasetEmbedding(text, { apiKey, inputType: 'query' }) as number[]
 }
 
 // ============================================
@@ -278,60 +266,146 @@ export async function matchSingleIngredient(
   }
 
   // ============================================
-  // 2. ベクトル検索で10件取得 → LLMが最適なものを選択
+  // 1.5. 正規化後 name_norm の完全一致
   // ============================================
-  const embeddingResults = await searchByEmbedding(supabase, inputName, 10)
-
-  if (embeddingResults.length > 0) {
-    // 類似度0.2以上の候補のみ
-    const validCandidates = embeddingResults.filter(r => r.similarity >= 0.2)
-    
-    if (validCandidates.length > 0) {
-      console.log(`[ingredient-matcher] "${inputName}": ${validCandidates.length} candidates - ${validCandidates.slice(0, 5).map(c => `${c.name.substring(0, 20)}(${(c.similarity * 100).toFixed(0)}%)`).join(', ')}`)
-      
-      // LLMに最適な候補を選んでもらう
-      const selectedIdx = await selectBestMatchWithLLM(inputName, validCandidates)
-      
-      if (selectedIdx >= 0) {
-        const selected = validCandidates[selectedIdx]
-        
-        // confidenceは類似度に基づく
-        let confidence: 'high' | 'medium' | 'low' = 'medium'
-        if (selected.similarity >= 0.7) {
-          confidence = 'high'
-        } else if (selected.similarity >= 0.5) {
-          confidence = 'medium'
-        } else {
-          confidence = 'low'
-        }
-        
-        console.log(`[ingredient-matcher] ✅ embedding_llm: "${inputName}" → "${selected.name}" (similarity: ${(selected.similarity * 100).toFixed(0)}%, ${selected.calories_kcal}kcal/100g)`)
-        return {
-          input: ingredient,
-          matched: selected,
-          confidence,
-          matchMethod: 'embedding_llm',
-        }
+  const normalizedNameNorm = normalizeIngredientNameJs(inputName)
+  if (normalizedNameNorm) {
+    const exactNormalizedMatch = await searchByExactNameNorm(supabase, normalizedNameNorm)
+    if (exactNormalizedMatch) {
+      console.log(`[ingredient-matcher] ✅ exact_name_norm: "${inputName}" → "${exactNormalizedMatch.name}"`)
+      return {
+        input: ingredient,
+        matched: exactNormalizedMatch,
+        confidence: 'high',
+        matchMethod: 'exact_name_norm',
       }
     }
   }
 
   // ============================================
-  // 3. フォールバック: テキスト類似度検索
+  // 1.75. 旧 resolver の alias 辞書を利用した完全一致
+  // ============================================
+  const aliases = INGREDIENT_ALIASES[inputName] ?? []
+  for (const alias of aliases) {
+    const aliasExactNameNorm = EXACT_NAME_NORM_MAP[alias]
+    if (aliasExactNameNorm) {
+      const aliasExactMatch = await searchByExactNameNorm(supabase, aliasExactNameNorm)
+      if (aliasExactMatch) {
+        console.log(`[ingredient-matcher] ✅ alias_map: "${inputName}" → "${aliasExactMatch.name}" (via "${alias}")`)
+        return {
+          input: ingredient,
+          matched: aliasExactMatch,
+          confidence: 'high',
+          matchMethod: 'alias_map',
+        }
+      }
+    }
+
+    const aliasNormalizedNameNorm = normalizeIngredientNameJs(alias)
+    if (!aliasNormalizedNameNorm) continue
+
+    const aliasNormalizedMatch = await searchByExactNameNorm(supabase, aliasNormalizedNameNorm)
+    if (aliasNormalizedMatch) {
+      console.log(`[ingredient-matcher] ✅ alias_name_norm: "${inputName}" → "${aliasNormalizedMatch.name}" (via "${alias}")`)
+      return {
+        input: ingredient,
+        matched: aliasNormalizedMatch,
+        confidence: 'high',
+        matchMethod: 'alias_name_norm',
+      }
+    }
+  }
+
+  // ============================================
+  // 2. テキスト類似度検索を先に実行
   // ============================================
   const textResults = await searchByTextSimilarity(supabase, inputName, 0.2, 5)
 
   if (textResults.length > 0) {
-    const best = textResults[0]
-    
-    const confidence = best.similarity >= 0.5 ? 'medium' : 'low'
-    console.log(`[ingredient-matcher] ✅ text_similarity: "${inputName}" → "${best.name}" (similarity: ${(best.similarity * 100).toFixed(0)}%)`)
-    
-    return {
-      input: ingredient,
-      matched: best,
-      confidence,
-      matchMethod: 'text_similarity',
+    const bestTextCandidate = {
+      ...textResults[0],
+      textSignal: textResults[0].similarity,
+    }
+
+    if (shouldSelectIngredientWithoutLLM(inputName, bestTextCandidate)) {
+      const confidence = (bestTextCandidate.textSignal ?? 0) >= 0.95 ? 'high' : 'medium'
+      console.log(`[ingredient-matcher] ✅ text_similarity: "${inputName}" → "${bestTextCandidate.name}" (similarity: ${(bestTextCandidate.similarity * 100).toFixed(0)}%)`)
+      return {
+        input: ingredient,
+        matched: textResults[0],
+        confidence,
+        matchMethod: 'text_similarity',
+      }
+    }
+  }
+
+  // ============================================
+  // 3. ベクトル検索 + テキスト候補統合
+  // ============================================
+  const embeddingResults = await searchByEmbedding(supabase, inputName, 10)
+  const mergedCandidates = mergeIngredientCandidates(
+    inputName,
+    textResults.map((row) => ({
+      ...row,
+      textSimilarity: row.similarity,
+    })),
+    embeddingResults.map((row) => ({
+      ...row,
+      vectorSimilarity: row.similarity,
+    })),
+  )
+
+  const llmCandidates = mergedCandidates
+    .filter((candidate) => (candidate.textSignal ?? 0) >= 0.25 || (candidate.vectorSimilarity ?? 0) >= 0.1)
+    .slice(0, 5)
+
+  if (llmCandidates.length > 0) {
+    const bestCandidate = llmCandidates[0]
+    if (shouldSelectIngredientWithoutLLM(inputName, bestCandidate)) {
+      const confidence = (bestCandidate.textSignal ?? 0) >= 0.95 ? 'high' : 'medium'
+      console.log(`[ingredient-matcher] ✅ merged_direct: "${inputName}" → "${bestCandidate.name}"`)
+      return {
+        input: ingredient,
+        matched: {
+          ...bestCandidate,
+          similarity: bestCandidate.textSignal ?? bestCandidate.vectorSimilarity ?? bestCandidate.similarity ?? 0,
+        },
+        confidence,
+        matchMethod: bestCandidate.textSignal ? 'text_similarity' : 'embedding',
+      }
+    }
+
+    console.log(`[ingredient-matcher] "${inputName}": ${llmCandidates.length} merged candidates - ${llmCandidates.map(c => `${c.name.substring(0, 20)}(text=${((c.textSignal ?? 0) * 100).toFixed(0)}%, vec=${((c.vectorSimilarity ?? 0) * 100).toFixed(0)}%)`).join(', ')}`)
+
+    const selectedIdx = await selectBestMatchWithLLM(
+      inputName,
+      llmCandidates.map((candidate) => ({
+        id: candidate.id,
+        name: candidate.name,
+        name_norm: candidate.name_norm,
+        similarity: candidate.combinedScore,
+        calories_kcal: candidate.calories_kcal ?? null,
+      })),
+    )
+
+    if (selectedIdx >= 0) {
+      const selected = llmCandidates[selectedIdx]
+      const selectedSimilarity = selected.combinedScore ?? selected.vectorSimilarity ?? selected.textSignal ?? selected.similarity ?? 0
+      const confidence: 'high' | 'medium' | 'low' =
+        selectedSimilarity >= 0.9 ? 'high' :
+        selectedSimilarity >= 0.5 ? 'medium' :
+        'low'
+
+      console.log(`[ingredient-matcher] ✅ embedding_llm: "${inputName}" → "${selected.name}" (combined: ${(selectedSimilarity * 100).toFixed(0)}%)`)
+      return {
+        input: ingredient,
+        matched: {
+          ...selected,
+          similarity: selectedSimilarity,
+        },
+        confidence,
+        matchMethod: selected.textSignal ? 'text_similarity' : 'embedding_llm',
+      }
     }
   }
 

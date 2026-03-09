@@ -18,7 +18,7 @@
  *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/import-dataset-v2.mjs --import menu_sets
  *
  * embedding も入れる場合:
- *   OPENAI_API_KEY=... node scripts/import-dataset-v2.mjs --import all --with-embeddings
+ *   AIMLAPI_API_KEY=... node scripts/import-dataset-v2.mjs --import all --with-embeddings
  */
 
 import fs from "node:fs";
@@ -26,8 +26,16 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  buildMenuSetEmbeddingText,
+  fetchDatasetEmbeddings,
+  isDatasetEmbeddingConfig,
+} from "../shared/dataset-embedding.mjs";
+import { buildProgressSnapshot } from "../shared/progress-reporting.mjs";
 
 const DEFAULT_MENUS_CSV = "data/raw/Menus_combined.csv";
 const DEFAULT_RECIPES_CSV = "data/raw/recipies.csv";
@@ -52,8 +60,9 @@ function parseArgs(argv) {
     limit: null,
     withEmbeddings: false,
     datasetVersion: `oishi-kenko-${new Date().toISOString().slice(0, 10)}`,
-    embeddingDimensions: 384,
+    embeddingDimensions: DATASET_EMBEDDING_DIMENSIONS,
     batchSize: 200,
+    progressEvery: 100,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -69,6 +78,7 @@ function parseArgs(argv) {
     else if (a === "--dataset-version" && argv[i + 1]) args.datasetVersion = argv[++i];
     else if (a === "--embedding-dimensions" && argv[i + 1]) args.embeddingDimensions = Number(argv[++i]);
     else if (a === "--batch-size" && argv[i + 1]) args.batchSize = Number(argv[++i]);
+    else if (a === "--progress-every" && argv[i + 1]) args.progressEvery = Number(argv[++i]);
     else {
       throw new Error(`不明な引数: ${a}`);
     }
@@ -82,6 +92,9 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(args.batchSize) || args.batchSize < 1 || args.batchSize > 2000) {
     throw new Error(`--batch-size は 1〜2000 の範囲で指定してください: ${args.batchSize}`);
+  }
+  if (!Number.isFinite(args.progressEvery) || args.progressEvery < 1 || args.progressEvery > 100000) {
+    throw new Error(`--progress-every は 1〜100000 の範囲で指定してください: ${args.progressEvery}`);
   }
   if (!Number.isFinite(args.embeddingDimensions) || args.embeddingDimensions < 64 || args.embeddingDimensions > 3072) {
     throw new Error(`--embedding-dimensions が不正です: ${args.embeddingDimensions}`);
@@ -104,8 +117,9 @@ Options:
   --dry-run                        DBへ書き込まず、パースと変換だけ実行
   --limit <N>                      先頭N行のみ処理（テスト用）
   --batch-size <N>                 DBへ送るバッチサイズ（default: 200）
-  --with-embeddings                OpenAI Embeddings を生成して格納
-  --embedding-dimensions <N>        埋め込み次元（default: 384）
+  --progress-every <N>             進捗ログを出す件数間隔（default: 100）
+  --with-embeddings                dataset embeddings を生成して格納
+  --embedding-dimensions <N>        埋め込み次元（default: ${DATASET_EMBEDDING_DIMENSIONS})
   -h, --help                       ヘルプ表示
 
 必須環境変数:
@@ -113,7 +127,7 @@ Options:
   SUPABASE_SERVICE_ROLE_KEY
 
 --with-embeddings の場合:
-  OPENAI_API_KEY
+  ${DATASET_EMBEDDING_API_KEY_ENV}
 `);
 }
 
@@ -381,26 +395,42 @@ async function withRetry(fn, { retries = 5, baseDelayMs = 800 } = {}) {
 
 async function createEmbeddingClientIfNeeded(args) {
   if (!args.withEmbeddings) return null;
-  const apiKey = mustGetEnv("OPENAI_API_KEY");
-  return new OpenAI({ apiKey });
+  if (!isDatasetEmbeddingConfig(DATASET_EMBEDDING_MODEL, args.embeddingDimensions)) {
+    throw new Error(`--embedding-dimensions は ${DATASET_EMBEDDING_DIMENSIONS} のみ使用できます`);
+  }
+  return mustGetEnv(DATASET_EMBEDDING_API_KEY_ENV);
 }
 
-async function embedTexts(openai, texts, dimensions) {
-  const res = await withRetry(() =>
-    openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: texts,
-      dimensions,
+async function embedTexts(apiKey, texts, dimensions) {
+  if (!isDatasetEmbeddingConfig(DATASET_EMBEDDING_MODEL, dimensions)) {
+    throw new Error(`Invalid dataset embedding config: ${DATASET_EMBEDDING_MODEL} / ${DATASET_EMBEDDING_DIMENSIONS}`);
+  }
+  return withRetry(() =>
+    fetchDatasetEmbeddings(texts, {
+      apiKey,
+      inputType: "document",
     })
   );
-  return res.data.map((d) => d.embedding);
 }
 
-function buildMenuEmbeddingText(menu) {
-  const theme = (menu.theme_tags ?? []).join(" ");
-  const dishLines = (menu.dishes ?? []).map((d) => `${d.name}(${d.class_raw})`).join(" / ");
-  const macro = `kcal=${menu.calories_kcal ?? "?"},P=${menu.protein_g ?? "?"},F=${menu.fat_g ?? "?"},C=${menu.carbs_g ?? "?"},salt=${menu.sodium_g ?? "?"}`;
-  return `テーマ: ${theme}\n料理: ${dishLines}\n栄養: ${macro}`;
+function createSectionProgressLogger(label, every, targetTotal = null) {
+  const startedAt = Date.now();
+  let lastLogged = 0;
+
+  return (processed, totalRead) => {
+    if (processed === 0 || processed - lastLogged < every) return;
+    lastLogged = processed;
+
+    console.log(
+      `   ${buildProgressSnapshot({
+        label: `${label} Progress`,
+        processed,
+        total: Number.isFinite(targetTotal) ? targetTotal : null,
+        startedAt,
+        extra: `read=${totalRead}`,
+      })}`,
+    );
+  };
 }
 
 function guessMealTypeHint(menu) {
@@ -444,6 +474,7 @@ async function main() {
   console.log("withEmbeddings:", args.withEmbeddings);
   console.log("embeddingDimensions:", args.embeddingDimensions);
   console.log("batchSize:", args.batchSize);
+  console.log("progressEvery:", args.progressEvery);
   console.log("menusCsv:", menusCsvPath);
   console.log("recipesCsv:", recipesCsvPath);
   console.log("ingredientsCsv:", ingredientsCsvPath);
@@ -492,6 +523,7 @@ async function main() {
       console.log("\n### Import: dataset_recipes");
       const batch = [];
       const embedTextsBatch = [];
+      const logRecipeProgress = createSectionProgressLogger("recipes", args.progressEvery, args.limit);
 
       for await (const row of csvObjects(recipesCsvPath)) {
         recipesTotal++;
@@ -571,9 +603,7 @@ async function main() {
           }
 
           recipesInserted += batch.length;
-          if (recipesInserted % 2000 === 0 || recipesInserted < 1000) {
-            console.log(`recipes: inserted ${recipesInserted} (read ${recipesTotal})`);
-          }
+          logRecipeProgress(recipesInserted, recipesTotal);
           batch.length = 0;
           embedTextsBatch.length = 0;
         }
@@ -592,6 +622,7 @@ async function main() {
           if (error) throw error;
         }
         recipesInserted += batch.length;
+        logRecipeProgress(recipesInserted, recipesTotal);
       }
 
       console.log(`✅ dataset_recipes done: inserted=${recipesInserted}, read=${recipesTotal}`);
@@ -606,6 +637,7 @@ async function main() {
       console.log("\n### Import: dataset_menu_sets");
       const batch = [];
       const embedBatch = [];
+      const logMenuSetProgress = createSectionProgressLogger("menu_sets", args.progressEvery, args.limit);
 
       for await (const row of csvObjects(menusCsvPath)) {
         menuSetsTotal++;
@@ -692,7 +724,7 @@ async function main() {
 
         menu.meal_type_hint = guessMealTypeHint(menu);
 
-        if (args.withEmbeddings) embedBatch.push(buildMenuEmbeddingText(menu));
+        if (args.withEmbeddings) embedBatch.push(buildMenuSetEmbeddingText(menu));
         batch.push(menu);
 
         if (batch.length >= args.batchSize) {
@@ -710,9 +742,7 @@ async function main() {
           }
 
           menuSetsInserted += batch.length;
-          if (menuSetsInserted % 5000 === 0 || menuSetsInserted < 2000) {
-            console.log(`menu_sets: inserted ${menuSetsInserted} (read ${menuSetsTotal})`);
-          }
+          logMenuSetProgress(menuSetsInserted, menuSetsTotal);
           batch.length = 0;
           embedBatch.length = 0;
         }
@@ -731,6 +761,7 @@ async function main() {
           if (error) throw error;
         }
         menuSetsInserted += batch.length;
+        logMenuSetProgress(menuSetsInserted, menuSetsTotal);
       }
 
       console.log(`✅ dataset_menu_sets done: inserted=${menuSetsInserted}, read=${menuSetsTotal}`);
@@ -745,6 +776,7 @@ async function main() {
       console.log("\n### Import: dataset_ingredients");
       const batch = [];
       const embedBatch = [];
+      const logIngredientProgress = createSectionProgressLogger("ingredients", args.progressEvery, args.limit);
 
       const KEY_B6 = "ビタミン\nＢ6(mg)";
 
@@ -836,9 +868,7 @@ async function main() {
           }
 
           ingredientsInserted += batch.length;
-          if (ingredientsInserted % 1000 === 0 || ingredientsInserted < 1000) {
-            console.log(`ingredients: inserted ${ingredientsInserted} (read ${ingredientsTotal})`);
-          }
+          logIngredientProgress(ingredientsInserted, ingredientsTotal);
           batch.length = 0;
           embedBatch.length = 0;
         }
@@ -857,6 +887,7 @@ async function main() {
           if (error) throw error;
         }
         ingredientsInserted += batch.length;
+        logIngredientProgress(ingredientsInserted, ingredientsTotal);
       }
 
       console.log(`✅ dataset_ingredients done: inserted=${ingredientsInserted}, read=${ingredientsTotal}`);
@@ -904,5 +935,3 @@ main().catch((e) => {
   console.error("❌ import failed:", e?.message ?? e);
   process.exitCode = 1;
 });
-
-

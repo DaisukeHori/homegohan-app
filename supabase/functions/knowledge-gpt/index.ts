@@ -6,6 +6,11 @@ import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import OpenAI from "openai";
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  fetchSingleDatasetEmbedding,
+} from "../../../shared/dataset-embedding.mjs";
 
 console.log("Knowledge-GPT Function loaded (Fallback Mode)")
 
@@ -15,14 +20,14 @@ function getOpenAI(): OpenAI {
 }
 
 // ===== テキスト埋め込み生成 =====
-async function embedText(text: string, dimensions: number = 384): Promise<number[]> {
-  const openai = getOpenAI();
-  const response = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: text,
-    dimensions,
-  });
-  return response.data[0].embedding;
+async function embedText(text: string, dimensions: number = DATASET_EMBEDDING_DIMENSIONS): Promise<number[]> {
+  const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV);
+  if (!apiKey) throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+  const embedding = await fetchSingleDatasetEmbedding(text, { apiKey, inputType: "query" });
+  if (!Array.isArray(embedding) || embedding.length !== dimensions) {
+    throw new Error("Dataset embedding API returned invalid vector");
+  }
+  return embedding as number[];
 }
 
 // ===== レシピ検索結果の型 =====
@@ -50,8 +55,7 @@ async function executeRecipeSearch(
 ): Promise<RecipeSearchResult[]> {
   console.log(`[search_recipes] Searching for: "${query}", maxResults: ${maxResults}`);
 
-  // クエリの埋め込みを生成（384次元）
-  const embedding = await embedText(query, 384);
+  const embedding = await embedText(query, DATASET_EMBEDDING_DIMENSIONS);
 
   // ハイブリッド検索を実行
   const { data, error } = await supabase.rpc("search_recipes_hybrid", {

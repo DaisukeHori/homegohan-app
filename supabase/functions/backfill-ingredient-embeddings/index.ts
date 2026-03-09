@@ -1,4 +1,10 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  fetchDatasetEmbeddings,
+} from "../../../shared/dataset-embedding.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -77,42 +83,16 @@ async function withRetry<T>(
   throw lastErr;
 }
 
-async function embedTexts(texts: string[], dimensions = 384): Promise<number[][]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OpenAI API Key is missing (OPENAI_API_KEY)");
+async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[][]> {
+  const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV);
+  if (!apiKey) throw new Error(`Embedding API Key is missing (${DATASET_EMBEDDING_API_KEY_ENV})`);
 
   const res = await withRetry(
-    async () => {
-      const r = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "text-embedding-3-small",
-          input: texts,
-          dimensions,
-        }),
-      });
-
-      if (!r.ok) {
-        const t = await r.text();
-        const err: any = new Error(`Embeddings API error: ${t}`);
-        err.status = r.status;
-        throw err;
-      }
-
-      return await r.json();
-    },
+    async () => await fetchDatasetEmbeddings(texts, { apiKey, inputType: "document" }),
     { label: "embeddings" },
   );
 
-  const data = res?.data;
-  if (!Array.isArray(data) || data.length !== texts.length) {
-    throw new Error(`Embeddings API returned invalid data length: ${Array.isArray(data) ? data.length : "null"}`);
-  }
-  const embeddings = data.map((d: any) => d?.embedding);
+  const embeddings = res;
   if (!embeddings.every((e: any) => Array.isArray(e) && e.length === dimensions)) {
     throw new Error("Embeddings API returned invalid embedding vectors");
   }
@@ -186,7 +166,7 @@ Deno.serve(async (req) => {
         throw new Error("Invalid ingredient name found (empty)");
       }
 
-      const embeddings = await embedTexts(names, 384);
+      const embeddings = await embedTexts(names, DATASET_EMBEDDING_DIMENSIONS);
 
       if (!dryRun) {
         // NOTE:
@@ -245,5 +225,3 @@ Deno.serve(async (req) => {
     );
   }
 });
-
-

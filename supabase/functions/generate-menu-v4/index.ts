@@ -15,11 +15,13 @@ import {
   type HealthCheckupGuidance,
 } from "../_shared/user-context.ts";
 import {
-  calculateNutritionFromIngredients,
   emptyNutrition,
-  validateAndAdjustNutrition,
   type NutritionTotals,
 } from "../_shared/nutrition-calculator.ts";
+import {
+  calculateNutritionFromIngredientsV4,
+  validateAndAdjustNutritionV4,
+} from "../_shared/v4-nutrition-adapter.ts";
 import {
   generateMealWithLLM,
   generateDayMealsWithLLM,
@@ -47,6 +49,18 @@ import {
   type NutritionFeedbackResult,
 } from "../_shared/nutrition-feedback.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
+import {
+  DATASET_EMBEDDING_API_KEY_ENV,
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  fetchSingleDatasetEmbedding,
+} from "../../../shared/dataset-embedding.mjs";
+import {
+  extractReferenceSearchKeywords,
+  mapMenuReferenceCandidates,
+  rerankMenuReferenceCandidates,
+  shouldSkipReferenceMenuSearch,
+} from "./reference-menu-utils.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -234,36 +248,17 @@ async function triggerNextStep(
 // Search reference menus
 // =========================================================
 
-async function embedText(text: string, dimensions = 384): Promise<number[]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-
-  const res = await withRetry(
-    async () => {
-      const r = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          input: text,
-          model: "text-embedding-3-small",
-          dimensions,
-        }),
-      });
-      if (!r.ok) {
-        const err = new Error(`Embedding failed: ${r.statusText}`) as any;
-        err.status = r.status;
-        throw err;
-      }
-      return r;
-    },
+async function embedText(text: string, dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[]> {
+  const apiKey = Deno.env.get(DATASET_EMBEDDING_API_KEY_ENV) ?? "";
+  if (!apiKey) throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
+  const embedding = await withRetry(
+    async () => await fetchSingleDatasetEmbedding(text, { apiKey, inputType: "query" }),
     { retries: 3, label: "embedText" },
   );
-
-  const json = await res.json();
-  return json.data?.[0]?.embedding ?? [];
+  if (!Array.isArray(embedding) || embedding.length !== dimensions) {
+    throw new Error("Dataset embedding API returned invalid vector");
+  }
+  return embedding as number[];
 }
 
 async function searchMenuCandidates(
@@ -272,24 +267,29 @@ async function searchMenuCandidates(
   matchCount: number,
 ): Promise<MenuReference[]> {
   try {
-    const emb = await embedText(queryText, 1536);
+    const { count, error: countError } = await supabase
+      .from("dataset_menu_sets")
+      .select("id", { count: "exact", head: true });
+    if (countError) {
+      console.warn("Failed to count dataset_menu_sets before reference search:", countError.message);
+    } else if (shouldSkipReferenceMenuSearch(count)) {
+      console.log("ℹ️ Reference-menu RAG skipped: dataset_menu_sets is empty");
+      return [];
+    }
+
+    const emb = await embedText(queryText, DATASET_EMBEDDING_DIMENSIONS);
+    const expandedMatchCount = Math.min(Math.max(matchCount * 4, 20), 60)
     const { data, error } = await supabase.rpc("search_menu_examples", {
       query_embedding: emb,
-      match_count: matchCount,
+      match_count: expandedMatchCount,
       filter_meal_type_hint: null,
       filter_max_sodium: null,
       filter_theme_tags: null,
     });
     if (error) throw new Error(`search_menu_examples failed: ${error.message}`);
-    return (data ?? []).map((c: any) => ({
-      title: c.title,
-      dishes: Array.isArray(c.dishes)
-        ? c.dishes.map((d: any) => ({
-            name: String(d?.name ?? ""),
-            role: String(d?.role ?? d?.class_raw ?? "other"),
-          }))
-        : [],
-    }));
+    const reranked = rerankMenuReferenceCandidates(queryText, data ?? [], matchCount);
+    console.log(`🔎 search_menu_examples: requested=${matchCount} vector=${data?.length ?? 0} reranked=${reranked.length} keywords=${extractReferenceSearchKeywords(queryText).join("|")}`);
+    return mapMenuReferenceCandidates(reranked);
   } catch (e) {
     console.error("Failed to search menu candidates:", e);
     return [];
@@ -704,7 +704,7 @@ async function saveMealToDb(
       console.log(`📊 Using pre-calculated nutrition from recipe DB for ${dish.name}`);
     } else {
       try {
-        nutrition = await calculateNutritionFromIngredients(supabase, dish.ingredients);
+        nutrition = await calculateNutritionFromIngredientsV4(supabase, dish.name, dish.ingredients);
       } catch (e) {
         console.warn(`Nutrition calc failed for ${dish.name}:`, e);
         nutrition = emptyNutrition();
@@ -716,7 +716,7 @@ async function saveMealToDb(
     if ((nutrition.calories_kcal ?? 0) < minExpectedCal) {
       try {
         const before = nutrition.calories_kcal ?? 0;
-        const validation = await validateAndAdjustNutrition(
+        const validation = await validateAndAdjustNutritionV4(
           supabase,
           dish.name,
           nutrition,

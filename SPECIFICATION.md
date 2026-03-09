@@ -86,7 +86,7 @@
 | Gemini 2.0 Flash | Google | 画像分析（食事・冷蔵庫・健康機器）※v1レガシー |
 | Gemini 3 Pro | Google | 画像分析（食事写真）※v2エビデンスベース |
 | Gemini 3 Pro Image Preview | Google | 料理画像生成（Nano Banana Pro） |
-| text-embedding-3-large | OpenAI | 材料名ベクトル埋め込み（1536次元） |
+| voyage-multilingual-2 | AIMLAPI / Voyage | データセット検索用ベクトル埋め込み（1024次元） |
 
 ### 設計原則（必ず遵守）
 
@@ -861,7 +861,7 @@ const mealCalorieRatio = {
 
 ### 7.2.4 `backfill-ingredient-embeddings`（食材embeddingバックフィル）
 
-**目的:** `dataset_ingredients.name_embedding`（vector(1536)）を埋めて、食材名の表記揺れ検索（pgvector）を有効化する
+**目的:** `dataset_ingredients.name_embedding`（vector(1024)）を埋めて、食材名の表記揺れ検索（pgvector）を有効化する
 
 **認証:** service role JWT のみ
 
@@ -869,15 +869,15 @@ const mealCalorieRatio = {
 - `batchSize`（1..500, default 200）
 - `maxRows`（任意）
 - `dryRun`（任意）
-- `model`（任意、デフォルト: `text-embedding-3-large`）
-- `dimensions`（任意、デフォルト: 1536）
+- `model`（任意、デフォルト: `voyage-multilingual-2`）
+- `dimensions`（任意、デフォルト: 1024）
 
 **処理フロー:**
 1. `name_embedding is null` の食材をバッチ取得
-2. OpenAI Embeddings（`text-embedding-3-large`, dimensions=1536）で埋め込み生成
+2. AIMLAPI 経由の Voyage Embeddings（`voyage-multilingual-2`, dimensions=1024）で埋め込み生成
 3. `dataset_ingredients` を upsert して埋め込みを保存
 
-**注意:** 全ての埋め込みベクトルカラム（`dataset_ingredients.name_embedding`, `dataset_recipes.name_embedding`, `dataset_menu_sets.content_embedding`）は統一して `text-embedding-3-large` モデルと 1536次元を使用します。
+**注意:** 全ての埋め込みベクトルカラム（`dataset_ingredients.name_embedding`, `dataset_recipes.name_embedding`, `dataset_menu_sets.content_embedding`）は統一して `voyage-multilingual-2` モデルと 1024次元を使用します。
 
 ### 7.3 `analyze-meal-photo`（v1 / レガシー）
 
@@ -905,7 +905,7 @@ Step 1: 画像認識（Gemini 3 Pro）
            │
 Step 2: 材料マッチング
     │
-    ├─→ 各材料名をEmbedding生成（text-embedding-3-large, 1536次元）
+    ├─→ 各材料名をEmbedding生成（voyage-multilingual-2, 1024次元）
     ├─→ dataset_ingredients をベクトル検索（上位5件）
     └─→ LLMが最適候補を選択
            │
@@ -1516,7 +1516,7 @@ SELECT * FROM dataset_recipes
 WHERE name_norm = normalize_name($dish_name);
 
 -- 2. 類似検索（pg_trgm + pgvector のハイブリッド）
--- 埋め込みベクトルは text-embedding-3-large (1536次元) を使用
+-- 埋め込みベクトルは voyage-multilingual-2 (1024次元) を使用
 SELECT
   id, name, name_norm,
   (0.4 * similarity(name_norm, $query_norm)
@@ -1878,7 +1878,7 @@ async function matchIngredient(
 ): Promise<IngredientMatch> {
   // 1. 材料名をEmbedding生成
   const embedding = await generateEmbedding(ingredientName);
-  // モデル: text-embedding-3-large, 次元: 1536
+  // モデル: voyage-multilingual-2, 次元: 1024
   
   // 2. ベクトル検索（上位5件）
   const candidates = await supabase.rpc(
@@ -1983,7 +1983,7 @@ async function verifyWithRecipes(
 ```sql
 -- 材料マッチング用（全栄養素を返す）
 CREATE OR REPLACE FUNCTION search_ingredients_full_by_embedding(
-  query_embedding vector(1536),
+  query_embedding vector(1024),
   match_count integer DEFAULT 5
 ) RETURNS TABLE (
   id uuid,
@@ -2475,6 +2475,9 @@ SUPABASE_SERVICE_ROLE_KEY=xxx
 # OpenAI
 OPENAI_API_KEY=sk-xxx
 
+# AIMLAPI / Voyage embeddings
+AIMLAPI_API_KEY=aimlapi-xxx
+
 # Google AI
 GOOGLE_AI_STUDIO_API_KEY=xxx
 # または
@@ -2497,7 +2500,7 @@ GEMINI_VISION_MODEL=gemini-3-pro-preview
 ### 11.1 方針（Store公開前提）
 - **iOS/Android を Expo + EAS で配布**する（App Store / Google Play）
 - **モノレポ**で Web と Mobile を同一リポジトリで管理し、型や共通ロジックを段階的に共有する
-- クライアント（モバイル）に **秘密鍵（`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `GOOGLE_*_API_KEY`）は絶対に置かない**
+- クライアント（モバイル）に **秘密鍵（`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `AIMLAPI_API_KEY`, `GOOGLE_*_API_KEY`）は絶対に置かない**
 
 ### 11.2 モノレポ構成（段階移行）
 当面は既存Webをルートのまま維持しつつ、`apps/mobile` と `packages/core` を追加する。

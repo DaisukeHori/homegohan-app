@@ -3,6 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { spawn } from "child_process";
 import { join } from "path";
+import {
+  DATASET_EMBEDDING_DIMENSIONS,
+  DATASET_EMBEDDING_MODEL,
+  isDatasetEmbeddingConfig,
+} from "@/shared/dataset-embedding.mjs";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -280,7 +285,13 @@ export async function POST(request: NextRequest) {
     }
     
     const body = await request.json();
-    const { table, startOffset = 0, model = "text-embedding-3-large", dimensions = 1536, onlyMissing = true } = body;
+    const {
+      table,
+      startOffset = 0,
+      model = DATASET_EMBEDDING_MODEL,
+      dimensions = DATASET_EMBEDDING_DIMENSIONS,
+      onlyMissing = true,
+    } = body;
     
     if (!table || !["dataset_ingredients", "dataset_recipes", "dataset_menu_sets"].includes(table)) {
       return NextResponse.json(
@@ -290,25 +301,11 @@ export async function POST(request: NextRequest) {
     }
     
     // モデルと次元のバリデーション
-    const validModels = ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"];
-    if (!validModels.includes(model)) {
+    if (!isDatasetEmbeddingConfig(model, dimensions)) {
       return NextResponse.json(
-        { error: `Invalid model. Use: ${validModels.join(", ")}` },
-        { status: 400 }
-      );
-    }
-    
-    // モデルごとの有効な次元をチェック
-    const modelDimensions: Record<string, number[]> = {
-      "text-embedding-3-small": [512, 1536],
-      "text-embedding-3-large": [256, 1024, 3072],
-      "text-embedding-ada-002": [1536],
-    };
-    
-    const validDimensions = modelDimensions[model] || [];
-    if (!validDimensions.includes(dimensions)) {
-      return NextResponse.json(
-        { error: `Invalid dimensions for ${model}. Use: ${validDimensions.join(", ")}` },
+        {
+          error: `Invalid embedding config. Use ${DATASET_EMBEDDING_MODEL} with ${DATASET_EMBEDDING_DIMENSIONS} dimensions.`,
+        },
         { status: 400 }
       );
     }
