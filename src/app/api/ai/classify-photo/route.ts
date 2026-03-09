@@ -92,6 +92,7 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
+    const startedAt = Date.now();
     const body = await request.json();
     const images: ImageInput[] = Array.isArray(body.images) && body.images.length > 0
       ? body.images
@@ -103,10 +104,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image Base64 is required' }, { status: 400 });
     }
 
+    const classifyStartedAt = Date.now();
     const { result: initialResult, model } = await requestClassification(images);
+    const classifyElapsedMs = Date.now() - classifyStartedAt;
     let result = initialResult;
 
     if (images.length > 1 && !resolveClassifyPhotoType(initialResult).type) {
+      const fallbackStartedAt = Date.now();
       const perImageResults = await Promise.all(
         images.map(async (image) => (await requestClassification([image])).result),
       );
@@ -115,9 +119,18 @@ export async function POST(request: Request) {
         imageCount: images.length,
         initial: initialResult,
         aggregated: aggregatedResult,
+        fallbackElapsedMs: Date.now() - fallbackStartedAt,
       });
       result = aggregatedResult;
     }
+
+    console.info('Photo Classification: completed', {
+      imageCount: images.length,
+      resolvedType: result.type,
+      model,
+      classifyElapsedMs,
+      totalElapsedMs: Date.now() - startedAt,
+    });
 
     return NextResponse.json({
       ...result,

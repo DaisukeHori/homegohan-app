@@ -12,6 +12,7 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
+    const startedAt = Date.now();
     const body = await request.json();
     const { images, imageBase64, mimeType, mealType, mealId } = body;
 
@@ -37,6 +38,14 @@ export async function POST(request: Request) {
     if (error) {
       throw new Error(`Edge Function invoke failed: ${error.message}`);
     }
+
+    console.info('Analyze Meal Photo: completed', {
+      imageCount: imageDataArray.length,
+      mealId: mealId ?? null,
+      mealType: mealType ?? null,
+      sync: !mealId,
+      elapsedMs: Date.now() - startedAt,
+    });
 
     if (mealId) {
       return NextResponse.json({

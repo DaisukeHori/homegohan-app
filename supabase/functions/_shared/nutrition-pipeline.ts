@@ -331,11 +331,15 @@ export async function analyzeWithEvidence(
   mealType: string,
   supabase: SupabaseClient
 ): Promise<NutritionPipelineResult> {
+  const pipelineStartedAt = Date.now()
   console.log('Step 1: Image recognition with Gemini 3 Pro Preview...')
   
   // Step 1: 画像認識
+  const step1StartedAt = Date.now()
   const geminiResult = await analyzeImageWithGemini(images, mealType)
-  console.log(`Recognized ${geminiResult.dishes.length} dishes`)
+  console.log(`Recognized ${geminiResult.dishes.length} dishes`, {
+    elapsedMs: Date.now() - step1StartedAt,
+  })
 
   // Step 2-4: 各料理を処理
   const analyzedDishes: AnalyzedDish[] = []
@@ -348,9 +352,13 @@ export async function analyzeWithEvidence(
     console.log(`Step 2: Matching ingredients for "${dish.name}"...`)
     
     // Step 2: 材料マッチング
+    const matchStartedAt = Date.now()
     const matchResults = await matchIngredients(supabase, dish.estimatedIngredients)
     const stats = calculateMatchingStats(matchResults)
-    console.log(`Matched ${stats.matched}/${stats.total} ingredients`)
+    console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
+      dish: dish.name,
+      elapsedMs: Date.now() - matchStartedAt,
+    })
 
     totalIngredientCount += stats.total
     matchedIngredientCount += stats.matched
@@ -426,8 +434,13 @@ export async function analyzeWithEvidence(
 
   // Step 4: エビデンス検証（代表料理で）
   console.log('Step 4: Verifying with reference recipes...')
+  const verificationStartedAt = Date.now()
   const mainDish = analyzedDishes.find(d => d.role === 'main') || analyzedDishes[0]
   const verification = await verifyNutrition(supabase, mainDish?.name || '食事', mealTotals)
+  console.log('Step 4 completed', {
+    elapsedMs: Date.now() - verificationStartedAt,
+    referenceCount: verification.allReferences.length,
+  })
   
   // 全料理の参照レシピを収集
   const allReferences = verification.allReferences
@@ -443,13 +456,21 @@ export async function analyzeWithEvidence(
 
   // Step 5: 褒めコメント・豆知識生成
   console.log('Step 5: Generating praise and tips...')
+  const praiseStartedAt = Date.now()
   const { praiseComment, nutritionTip, overallScore, vegScore } = await generatePraiseAndTip(
     analyzedDishes,
     mealTotals,
     mealType
   )
+  console.log('Step 5 completed', {
+    elapsedMs: Date.now() - praiseStartedAt,
+  })
 
-  console.log('Pipeline completed successfully')
+  console.log('Pipeline completed successfully', {
+    totalElapsedMs: Date.now() - pipelineStartedAt,
+    dishCount: analyzedDishes.length,
+    ingredientCount: totalIngredientCount,
+  })
 
   return {
     dishes: analyzedDishes,
