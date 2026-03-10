@@ -170,6 +170,26 @@ function normalizeIngredientName(name: string): string {
   return String(name ?? '').replace(/[\s　]+/g, '').trim()
 }
 
+function isProteinIngredientName(name: string): boolean {
+  const normalized = normalizeIngredientName(name)
+  return /鶏|牛|豚|ひき肉|挽肉|ハム|ベーコン|ソーセージ|魚|鮭|さば|ぶり|まぐろ|えび|海老|いか|イカ|たこ|タコ|卵|豆腐/.test(normalized)
+}
+
+function isOilIngredientName(name: string): boolean {
+  const normalized = normalizeIngredientName(name)
+  return /油|オイル|バター/.test(normalized)
+}
+
+function isBreadingIngredientName(name: string): boolean {
+  const normalized = normalizeIngredientName(name)
+  return /片栗粉|小麦粉|薄力粉|強力粉|パン粉|衣/.test(normalized)
+}
+
+function isKaraageDishName(name: string): boolean {
+  const normalized = normalizeIngredientName(name)
+  return /唐揚げ|から揚げ|竜田揚げ|竜田あげ/.test(normalized)
+}
+
 function getIngredientAmountCap(name: string, role: string): number {
   const normalized = normalizeIngredientName(name)
 
@@ -190,7 +210,82 @@ function getIngredientAmountCap(name: string, role: string): number {
   return role === 'main' ? 160 : role === 'rice' ? 220 : role === 'soup' ? 180 : 120
 }
 
-function getDishTotalCap(role: string): number {
+function addOrRaiseIngredient(
+  merged: Map<string, EstimatedIngredient>,
+  name: string,
+  amountG: number,
+  role: string,
+  mode: 'minimum' | 'increment' = 'minimum',
+): void {
+  const normalizedName = normalizeIngredientName(name)
+  if (!normalizedName) return
+
+  const cap = getIngredientAmountCap(normalizedName, role)
+  const existing = merged.get(normalizedName)
+
+  if (existing) {
+    existing.amount_g = mode === 'increment'
+      ? clamp(existing.amount_g + amountG, 1, cap)
+      : Math.max(existing.amount_g, clamp(amountG, 1, cap))
+    return
+  }
+
+  merged.set(normalizedName, {
+    name: normalizedName,
+    amount_g: clamp(amountG, 1, cap),
+  })
+}
+
+function ensureGroupMinimum(
+  merged: Map<string, EstimatedIngredient>,
+  predicate: (name: string) => boolean,
+  minimumTotalG: number,
+  role: string,
+  fallbackName?: string,
+): void {
+  const entries = [...merged.values()].filter((ingredient) => predicate(ingredient.name))
+  const currentTotal = entries.reduce((sum, ingredient) => sum + ingredient.amount_g, 0)
+
+  if (currentTotal >= minimumTotalG) return
+
+  if (entries.length === 0) {
+    if (fallbackName) addOrRaiseIngredient(merged, fallbackName, minimumTotalG, role)
+    return
+  }
+
+  const scale = minimumTotalG / Math.max(currentTotal, 1)
+  for (const ingredient of entries) {
+    ingredient.amount_g = clamp(
+      Math.round(ingredient.amount_g * scale),
+      1,
+      getIngredientAmountCap(ingredient.name, role),
+    )
+  }
+
+  const adjustedTotal = entries.reduce((sum, ingredient) => sum + ingredient.amount_g, 0)
+  const shortfall = minimumTotalG - adjustedTotal
+  if (shortfall > 0 && fallbackName) {
+    addOrRaiseIngredient(merged, fallbackName, shortfall, role, 'increment')
+  }
+}
+
+function applyFriedDishHeuristics(
+  dish: GeminiDish,
+  merged: Map<string, EstimatedIngredient>,
+): void {
+  if (dish.role !== 'main') return
+  if (!isKaraageDishName(dish.name)) return
+
+  ensureGroupMinimum(merged, isProteinIngredientName, 140, dish.role, '鶏もも肉')
+  ensureGroupMinimum(merged, isBreadingIngredientName, 18, dish.role, '片栗粉')
+  ensureGroupMinimum(merged, isOilIngredientName, 14, dish.role, 'サラダ油')
+}
+
+function getDishTotalCap(role: string, dishName?: string): number {
+  if (role === 'main' && dishName && isKaraageDishName(dishName)) {
+    return 340
+  }
+
   switch (role) {
     case 'rice':
       return 240
@@ -232,9 +327,11 @@ function normalizeDishForNutrition(dish: GeminiDish): GeminiDish {
     }
   }
 
+  applyFriedDishHeuristics(dish, merged)
+
   let estimatedIngredients = [...merged.values()]
   const totalAmount = estimatedIngredients.reduce((sum, ingredient) => sum + ingredient.amount_g, 0)
-  const totalCap = getDishTotalCap(dish.role)
+  const totalCap = getDishTotalCap(dish.role, dish.name)
 
   if (totalAmount > totalCap && totalAmount > 0) {
     const scale = totalCap / totalAmount
