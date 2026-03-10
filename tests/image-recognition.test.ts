@@ -7,6 +7,7 @@ import {
   normalizeClassifyPhotoResult,
   normalizeFridgeAnalysisResult,
   normalizeHealthCheckupExtractedData,
+  normalizeMealRecognitionResult,
   resolveClassifyPhotoType,
 } from '../src/lib/ai/image-recognition';
 
@@ -156,6 +157,60 @@ describe('image recognition normalization', () => {
       description: '3枚を個別確認した結果',
       candidates: [
         { type: 'meal', confidence: 0.76 },
+      ],
+    });
+  });
+
+  it('normalizes meal recognition with estimated nutrition', () => {
+    const result = normalizeMealRecognitionResult({
+      dishes: [
+        {
+          name: '味噌汁',
+          role: 'soup',
+          cookingMethod: 'soup',
+          visiblePortionWeightG: '180',
+          visibleIngredients: [
+            { name: '味噌', amount_g: '12' },
+            { name: 'ねぎ', amount_g: 5 },
+          ],
+          estimatedNutrition: {
+            calories_kcal: '42',
+            protein_g: 2.9,
+            fat_g: 1.2,
+            carbs_g: 4.6,
+            fiber_g: 0.7,
+            salt_eq_g: 1.5,
+            confidence: 'high',
+          },
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      dishes: [
+        {
+          name: '味噌汁',
+          role: 'soup',
+          cookingMethod: 'soup',
+          visiblePortionWeightG: 180,
+          visibleIngredients: [
+            { name: '味噌', amount_g: 12 },
+            { name: 'ねぎ', amount_g: 5 },
+          ],
+          estimatedIngredients: [
+            { name: '味噌', amount_g: 12 },
+            { name: 'ねぎ', amount_g: 5 },
+          ],
+          estimatedNutrition: {
+            calories_kcal: 42,
+            protein_g: 2.9,
+            fat_g: 1.2,
+            carbs_g: 4.6,
+            fiber_g: 0.7,
+            salt_eq_g: 1.5,
+            confidence: 'high',
+          },
+        },
       ],
     });
   });

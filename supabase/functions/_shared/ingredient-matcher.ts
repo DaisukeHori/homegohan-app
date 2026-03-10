@@ -77,6 +77,11 @@ interface IngredientMatchMemo {
 
 const MAX_INGREDIENT_MATCH_CONCURRENCY = 4
 
+function isGenericSoupOrDishWord(inputName: string): boolean {
+  const normalized = normalizeIngredientNameJs(inputName)
+  return /^(味噌汁|みそ汁|汁物|汁|スープ|お吸い物|吸い物|みそスープ)$/.test(normalized)
+}
+
 // ============================================
 // Dataset embedding 生成
 // ============================================
@@ -361,6 +366,19 @@ export async function matchSingleIngredient(
         confidence: 'high',
         matchMethod: 'exact_name_norm',
       }
+    }
+  }
+
+  // ============================================
+  // 1.6. 汁物や料理名そのものは食材ベクトル検索に流さない
+  // ============================================
+  if (isGenericSoupOrDishWord(inputName)) {
+    console.log(`[ingredient-matcher] Skip generic dish-like ingredient term: "${inputName}"`)
+    return {
+      input: ingredient,
+      matched: null,
+      confidence: 'none',
+      matchMethod: 'none',
     }
   }
 

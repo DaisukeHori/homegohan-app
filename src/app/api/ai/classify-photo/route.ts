@@ -86,9 +86,10 @@ function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): str
 重要ルール:
 - 写っている料理だけを数えてください。見えていない小鉢や調味料を想像で増やさないでください
 - 料理名は一般的な名前にしてください
-- 1皿ごとに「見えている量」と「見えている主要材料」を返してください
+- 1皿ごとに「見えている量」と「見えている主要材料」と「皿全体の推定栄養」を返してください
 - visiblePortionWeightG は、その皿全体の見た目量を 1人前として推定してください
 - visibleIngredients は、写真から見えている主要材料だけを返してください
+- estimatedNutrition は、見えていない油・衣・汁の塩分・ルーなども含めた皿全体の現実的な栄養推定にしてください
 - 油、衣、吸油、隠れた調味料など、写真から明確に見えない要素は visibleIngredients に入れないでください
 - cookingMethod は fried / grilled / stir_fried / simmered / steamed / boiled / raw / rice / soup / baked / other の中から最も近いものを選んでください
 - 定食なら、ご飯・汁物・主菜・副菜/サラダを分けてください
@@ -106,7 +107,16 @@ function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): str
       "visiblePortionWeightG": 皿全体の見た目量(g),
       "visibleIngredients": [
         { "name": "写真から見える主要材料名", "amount_g": 推定量(g) }
-      ]
+      ],
+      "estimatedNutrition": {
+        "calories_kcal": 推定カロリー,
+        "protein_g": 推定たんぱく質,
+        "fat_g": 推定脂質,
+        "carbs_g": 推定炭水化物,
+        "fiber_g": 推定食物繊維,
+        "salt_eq_g": 推定食塩相当量,
+        "confidence": "high または medium または low"
+      }
     }
   ]
 }`;

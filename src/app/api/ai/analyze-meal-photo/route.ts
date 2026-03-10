@@ -20,6 +20,15 @@ interface PrefetchedGeminiResult {
       name: string;
       amount_g: number;
     }>;
+    estimatedNutrition?: {
+      calories_kcal: number;
+      protein_g: number;
+      fat_g: number;
+      carbs_g: number;
+      fiber_g: number;
+      salt_eq_g: number;
+      confidence: 'high' | 'medium' | 'low';
+    };
   }>;
 }
 

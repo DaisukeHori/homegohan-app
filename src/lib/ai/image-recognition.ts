@@ -25,6 +25,18 @@ export interface MealRecognitionIngredient {
   amount_g: number;
 }
 
+export type MealNutritionConfidence = 'high' | 'medium' | 'low';
+
+export interface MealRecognitionNutritionEstimate {
+  calories_kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carbs_g: number;
+  fiber_g: number;
+  salt_eq_g: number;
+  confidence: MealNutritionConfidence;
+}
+
 export type MealCookingMethod =
   | 'fried'
   | 'grilled'
@@ -45,6 +57,7 @@ export interface MealRecognitionDish {
   visiblePortionWeightG: number;
   visibleIngredients: MealRecognitionIngredient[];
   estimatedIngredients: MealRecognitionIngredient[];
+  estimatedNutrition?: MealRecognitionNutritionEstimate;
 }
 
 export interface MealRecognitionResult {
@@ -150,7 +163,7 @@ export const mealRecognitionSchema = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['name', 'role', 'cookingMethod', 'visiblePortionWeightG', 'visibleIngredients'],
+        required: ['name', 'role', 'cookingMethod', 'visiblePortionWeightG', 'visibleIngredients', 'estimatedNutrition'],
         properties: {
           name: { type: 'string' },
           role: { type: 'string', enum: ['main', 'side', 'soup', 'rice', 'salad', 'dessert'] },
@@ -168,6 +181,19 @@ export const mealRecognitionSchema = {
                 name: { type: 'string' },
                 amount_g: { type: 'number' },
               },
+            },
+          },
+          estimatedNutrition: {
+            type: 'object',
+            required: ['calories_kcal', 'protein_g', 'fat_g', 'carbs_g', 'fiber_g', 'salt_eq_g', 'confidence'],
+            properties: {
+              calories_kcal: { type: 'number' },
+              protein_g: { type: 'number' },
+              fat_g: { type: 'number' },
+              carbs_g: { type: 'number' },
+              fiber_g: { type: 'number' },
+              salt_eq_g: { type: 'number' },
+              confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
             },
           },
         },
@@ -290,6 +316,41 @@ function toOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function normalizeMealNutritionConfidence(value: unknown): MealNutritionConfidence {
+  return value === 'high' || value === 'medium' || value === 'low' ? value : 'low';
+}
+
+function normalizeMealNutritionEstimate(raw: unknown): MealRecognitionNutritionEstimate | undefined {
+  const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
+  const calories_kcal = toOptionalNumber(input.calories_kcal);
+  const protein_g = toOptionalNumber(input.protein_g);
+  const fat_g = toOptionalNumber(input.fat_g);
+  const carbs_g = toOptionalNumber(input.carbs_g);
+  const fiber_g = toOptionalNumber(input.fiber_g);
+  const salt_eq_g = toOptionalNumber(input.salt_eq_g);
+
+  if (
+    calories_kcal === undefined ||
+    protein_g === undefined ||
+    fat_g === undefined ||
+    carbs_g === undefined ||
+    fiber_g === undefined ||
+    salt_eq_g === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    calories_kcal: Math.max(0, calories_kcal),
+    protein_g: Math.max(0, protein_g),
+    fat_g: Math.max(0, fat_g),
+    carbs_g: Math.max(0, carbs_g),
+    fiber_g: Math.max(0, fiber_g),
+    salt_eq_g: Math.max(0, salt_eq_g),
+    confidence: normalizeMealNutritionConfidence(input.confidence),
+  };
+}
+
 export function normalizeMealRecognitionResult(raw: unknown): MealRecognitionResult {
   const input = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
   const dishesInput = Array.isArray(input.dishes) ? input.dishes : [];
@@ -351,6 +412,7 @@ export function normalizeMealRecognitionResult(raw: unknown): MealRecognitionRes
           visiblePortionWeightG,
           visibleIngredients,
           estimatedIngredients: visibleIngredients,
+          estimatedNutrition: normalizeMealNutritionEstimate(item.estimatedNutrition),
         };
       })
       .filter((dish) => dish.visibleIngredients.length > 0),
