@@ -10,7 +10,13 @@ interface PrefetchedGeminiResult {
   dishes: Array<{
     name: string;
     role: 'main' | 'side' | 'soup' | 'rice' | 'salad' | 'dessert';
-    estimatedIngredients: Array<{
+    cookingMethod?: 'fried' | 'grilled' | 'stir_fried' | 'simmered' | 'steamed' | 'boiled' | 'raw' | 'rice' | 'soup' | 'baked' | 'other';
+    visiblePortionWeightG?: number;
+    visibleIngredients?: Array<{
+      name: string;
+      amount_g: number;
+    }>;
+    estimatedIngredients?: Array<{
       name: string;
       amount_g: number;
     }>;

@@ -129,7 +129,9 @@ describe('image route contracts', () => {
         {
           name: '親子丼',
           role: 'main',
-          estimatedIngredients: [
+          cookingMethod: 'simmered',
+          visiblePortionWeightG: 260,
+          visibleIngredients: [
             { name: '鶏もも肉', amount_g: 120 },
             { name: '卵', amount_g: 60 },
           ],
@@ -247,7 +249,9 @@ describe('image route contracts', () => {
                       {
                         name: '牛ステーキ',
                         role: 'main',
-                        estimatedIngredients: [
+                        cookingMethod: 'grilled',
+                        visiblePortionWeightG: 220,
+                        visibleIngredients: [
                           { name: '牛肉', amount_g: 180 },
                           { name: '赤ワイン', amount_g: 20 },
                         ],
@@ -282,6 +286,12 @@ describe('image route contracts', () => {
           {
             name: '牛ステーキ',
             role: 'main',
+            cookingMethod: 'grilled',
+            visiblePortionWeightG: 220,
+            visibleIngredients: [
+              { name: '牛肉', amount_g: 180 },
+              { name: '赤ワイン', amount_g: 20 },
+            ],
             estimatedIngredients: [
               { name: '牛肉', amount_g: 180 },
               { name: '赤ワイン', amount_g: 20 },

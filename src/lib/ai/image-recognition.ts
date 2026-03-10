@@ -25,9 +25,25 @@ export interface MealRecognitionIngredient {
   amount_g: number;
 }
 
+export type MealCookingMethod =
+  | 'fried'
+  | 'grilled'
+  | 'stir_fried'
+  | 'simmered'
+  | 'steamed'
+  | 'boiled'
+  | 'raw'
+  | 'rice'
+  | 'soup'
+  | 'baked'
+  | 'other';
+
 export interface MealRecognitionDish {
   name: string;
   role: 'main' | 'side' | 'soup' | 'rice' | 'salad' | 'dessert';
+  cookingMethod: MealCookingMethod;
+  visiblePortionWeightG: number;
+  visibleIngredients: MealRecognitionIngredient[];
   estimatedIngredients: MealRecognitionIngredient[];
 }
 
@@ -134,11 +150,16 @@ export const mealRecognitionSchema = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['name', 'role', 'estimatedIngredients'],
+        required: ['name', 'role', 'cookingMethod', 'visiblePortionWeightG', 'visibleIngredients'],
         properties: {
           name: { type: 'string' },
           role: { type: 'string', enum: ['main', 'side', 'soup', 'rice', 'salad', 'dessert'] },
-          estimatedIngredients: {
+          cookingMethod: {
+            type: 'string',
+            enum: ['fried', 'grilled', 'stir_fried', 'simmered', 'steamed', 'boiled', 'raw', 'rice', 'soup', 'baked', 'other'],
+          },
+          visiblePortionWeightG: { type: 'number' },
+          visibleIngredients: {
             type: 'array',
             items: {
               type: 'object',
@@ -277,9 +298,13 @@ export function normalizeMealRecognitionResult(raw: unknown): MealRecognitionRes
     dishes: dishesInput
       .map((dish) => {
         const item = typeof dish === 'object' && dish !== null ? dish as Record<string, unknown> : {};
-        const estimatedIngredientsInput = Array.isArray(item.estimatedIngredients) ? item.estimatedIngredients : [];
+        const visibleIngredientsInput = Array.isArray(item.visibleIngredients)
+          ? item.visibleIngredients
+          : Array.isArray(item.estimatedIngredients)
+            ? item.estimatedIngredients
+            : [];
 
-        const estimatedIngredients = estimatedIngredientsInput
+        const visibleIngredients = visibleIngredientsInput
           .map((ingredient) => {
             const candidate = typeof ingredient === 'object' && ingredient !== null ? ingredient as Record<string, unknown> : {};
             const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : null;
@@ -292,14 +317,43 @@ export function normalizeMealRecognitionResult(raw: unknown): MealRecognitionRes
         const role = typeof item.role === 'string' && ['main', 'side', 'soup', 'rice', 'salad', 'dessert'].includes(item.role)
           ? item.role as MealRecognitionDish['role']
           : 'main';
+        const cookingMethod = typeof item.cookingMethod === 'string' && [
+          'fried',
+          'grilled',
+          'stir_fried',
+          'simmered',
+          'steamed',
+          'boiled',
+          'raw',
+          'rice',
+          'soup',
+          'baked',
+          'other',
+        ].includes(item.cookingMethod)
+          ? item.cookingMethod as MealRecognitionDish['cookingMethod']
+          : role === 'rice'
+            ? 'rice'
+            : role === 'soup'
+              ? 'soup'
+              : role === 'salad'
+                ? 'raw'
+                : 'other';
+        const visiblePortionWeightG = Math.max(
+          0,
+          toOptionalNumber(item.visiblePortionWeightG)
+            ?? visibleIngredients.reduce((sum, ingredient) => sum + ingredient.amount_g, 0),
+        );
 
         return {
           name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '不明な料理',
           role,
-          estimatedIngredients,
+          cookingMethod,
+          visiblePortionWeightG,
+          visibleIngredients,
+          estimatedIngredients: visibleIngredients,
         };
       })
-      .filter((dish) => dish.estimatedIngredients.length > 0),
+      .filter((dish) => dish.visibleIngredients.length > 0),
   };
 }
 

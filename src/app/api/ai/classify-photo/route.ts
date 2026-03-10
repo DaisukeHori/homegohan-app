@@ -81,17 +81,19 @@ function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): str
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
 
   return `あなたは「ほめゴハン」という食事記録アプリの分析AIです。
-この${imageCountText}${mealTypeLabel}の写真に写っている料理を、栄養計算用に保守的に抽出してください。
+この${imageCountText}${mealTypeLabel}の写真に写っている料理を、栄養計算の下準備として構造化してください。
 
 重要ルール:
-- 写っている料理だけを数えてください。見えていない料理や調味料を想像で増やさないでください
-- 料理名は一般的な名前で、盛り付け由来の推測や高級そうな表現を避けてください
+- 写っている料理だけを数えてください。見えていない小鉢や調味料を想像で増やさないでください
+- 料理名は一般的な名前にしてください
+- 1皿ごとに「見えている量」と「見えている主要材料」を返してください
+- visiblePortionWeightG は、その皿全体の見た目量を 1人前として推定してください
+- visibleIngredients は、写真から見えている主要材料だけを返してください
+- 油、衣、吸油、隠れた調味料など、写真から明確に見えない要素は visibleIngredients に入れないでください
+- cookingMethod は fried / grilled / stir_fried / simmered / steamed / boiled / raw / rice / soup / baked / other の中から最も近いものを選んでください
 - 定食なら、ご飯・汁物・主菜・副菜/サラダを分けてください
-- amount_g は 1人前として、見た目から無理のない保守的な量にしてください
-- ソース・ドレッシング・薬味は、明確に見える場合だけ入れてください
 - ご飯は炊いた後の量として見積もり、通常は 80g〜220g の範囲で考えてください
-- 汁物は器1杯として見積もり、全体量は通常 120g〜220g の範囲で考えてください
-- 千切りキャベツなど付け合わせ野菜は、通常 20g〜100g の範囲で考えてください
+- 汁物は器1杯として見積もり、通常は 120g〜220g の範囲で考えてください
 - JSON 以外は返さないでください
 
 返却形式:
@@ -100,8 +102,10 @@ function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): str
     {
       "name": "料理名",
       "role": "main または side または soup または rice または salad または dessert",
-      "estimatedIngredients": [
-        { "name": "一般的な食材名", "amount_g": 推定量(g) }
+      "cookingMethod": "fried など",
+      "visiblePortionWeightG": 皿全体の見た目量(g),
+      "visibleIngredients": [
+        { "name": "写真から見える主要材料名", "amount_g": 推定量(g) }
       ]
     }
   ]

@@ -18,7 +18,7 @@ import {
 } from './ingredient-matcher.ts'
 import { 
   calculateDishNutrition, 
-  calculateMealNutrition,
+  DishNutrition,
   NutritionTotals,
   initNutritionTotals,
   roundNutrition
@@ -27,8 +27,7 @@ import {
   verifyNutrition, 
   createEvidenceInfo, 
   EvidenceInfo,
-  MatchedIngredientInfo,
-  searchSimilarRecipes
+  MatchedIngredientInfo
 } from './evidence-verifier.ts'
 import { generateGeminiJson } from './gemini-json.ts'
 
@@ -44,6 +43,9 @@ export interface ImageInput {
 export interface GeminiDish {
   name: string
   role: string
+  cookingMethod: MealCookingMethod
+  visiblePortionWeightG: number
+  visibleIngredients: EstimatedIngredient[]
   estimatedIngredients: EstimatedIngredient[]
 }
 
@@ -51,13 +53,29 @@ export interface GeminiAnalysisResult {
   dishes: GeminiDish[]
 }
 
+export type MealCookingMethod =
+  | 'fried'
+  | 'grilled'
+  | 'stir_fried'
+  | 'simmered'
+  | 'steamed'
+  | 'boiled'
+  | 'raw'
+  | 'rice'
+  | 'soup'
+  | 'baked'
+  | 'other'
+
 export interface AnalyzedDish {
   name: string
   role: string
+  cookingMethod: MealCookingMethod
+  visiblePortionWeightG: number
   calories_kcal: number
   protein_g: number
   fat_g: number
   carbs_g: number
+  nutritionAdjustmentFactor: number
   ingredient: string
   ingredients: {
     name: string
@@ -132,11 +150,16 @@ const mealRecognitionSchema = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['name', 'role', 'estimatedIngredients'],
+        required: ['name', 'role', 'cookingMethod', 'visiblePortionWeightG', 'visibleIngredients'],
         properties: {
           name: { type: 'string' },
           role: { type: 'string', enum: ['main', 'side', 'soup', 'rice', 'salad', 'dessert'] },
-          estimatedIngredients: {
+          cookingMethod: {
+            type: 'string',
+            enum: ['fried', 'grilled', 'stir_fried', 'simmered', 'steamed', 'boiled', 'raw', 'rice', 'soup', 'baked', 'other'],
+          },
+          visiblePortionWeightG: { type: 'number' },
+          visibleIngredients: {
             type: 'array',
             items: {
               type: 'object',
@@ -170,24 +193,42 @@ function normalizeIngredientName(name: string): string {
   return String(name ?? '').replace(/[\s　]+/g, '').trim()
 }
 
-function isProteinIngredientName(name: string): boolean {
-  const normalized = normalizeIngredientName(name)
-  return /鶏|牛|豚|ひき肉|挽肉|ハム|ベーコン|ソーセージ|魚|鮭|さば|ぶり|まぐろ|えび|海老|いか|イカ|たこ|タコ|卵|豆腐/.test(normalized)
-}
-
-function isOilIngredientName(name: string): boolean {
-  const normalized = normalizeIngredientName(name)
-  return /油|オイル|バター/.test(normalized)
-}
-
-function isBreadingIngredientName(name: string): boolean {
-  const normalized = normalizeIngredientName(name)
-  return /片栗粉|小麦粉|薄力粉|強力粉|パン粉|衣/.test(normalized)
-}
-
 function isKaraageDishName(name: string): boolean {
   const normalized = normalizeIngredientName(name)
   return /唐揚げ|から揚げ|竜田揚げ|竜田あげ/.test(normalized)
+}
+
+function getDefaultCookingMethodForRole(role: string): MealCookingMethod {
+  switch (role) {
+    case 'rice':
+      return 'rice'
+    case 'soup':
+      return 'soup'
+    case 'salad':
+      return 'raw'
+    default:
+      return 'other'
+  }
+}
+
+function normalizeCookingMethod(method: unknown, role: string): MealCookingMethod {
+  if (typeof method === 'string' && [
+    'fried',
+    'grilled',
+    'stir_fried',
+    'simmered',
+    'steamed',
+    'boiled',
+    'raw',
+    'rice',
+    'soup',
+    'baked',
+    'other',
+  ].includes(method)) {
+    return method as MealCookingMethod
+  }
+
+  return getDefaultCookingMethodForRole(role)
 }
 
 function getIngredientAmountCap(name: string, role: string): number {
@@ -210,82 +251,7 @@ function getIngredientAmountCap(name: string, role: string): number {
   return role === 'main' ? 160 : role === 'rice' ? 220 : role === 'soup' ? 180 : 120
 }
 
-function addOrRaiseIngredient(
-  merged: Map<string, EstimatedIngredient>,
-  name: string,
-  amountG: number,
-  role: string,
-  mode: 'minimum' | 'increment' = 'minimum',
-): void {
-  const normalizedName = normalizeIngredientName(name)
-  if (!normalizedName) return
-
-  const cap = getIngredientAmountCap(normalizedName, role)
-  const existing = merged.get(normalizedName)
-
-  if (existing) {
-    existing.amount_g = mode === 'increment'
-      ? clamp(existing.amount_g + amountG, 1, cap)
-      : Math.max(existing.amount_g, clamp(amountG, 1, cap))
-    return
-  }
-
-  merged.set(normalizedName, {
-    name: normalizedName,
-    amount_g: clamp(amountG, 1, cap),
-  })
-}
-
-function ensureGroupMinimum(
-  merged: Map<string, EstimatedIngredient>,
-  predicate: (name: string) => boolean,
-  minimumTotalG: number,
-  role: string,
-  fallbackName?: string,
-): void {
-  const entries = [...merged.values()].filter((ingredient) => predicate(ingredient.name))
-  const currentTotal = entries.reduce((sum, ingredient) => sum + ingredient.amount_g, 0)
-
-  if (currentTotal >= minimumTotalG) return
-
-  if (entries.length === 0) {
-    if (fallbackName) addOrRaiseIngredient(merged, fallbackName, minimumTotalG, role)
-    return
-  }
-
-  const scale = minimumTotalG / Math.max(currentTotal, 1)
-  for (const ingredient of entries) {
-    ingredient.amount_g = clamp(
-      Math.round(ingredient.amount_g * scale),
-      1,
-      getIngredientAmountCap(ingredient.name, role),
-    )
-  }
-
-  const adjustedTotal = entries.reduce((sum, ingredient) => sum + ingredient.amount_g, 0)
-  const shortfall = minimumTotalG - adjustedTotal
-  if (shortfall > 0 && fallbackName) {
-    addOrRaiseIngredient(merged, fallbackName, shortfall, role, 'increment')
-  }
-}
-
-function applyFriedDishHeuristics(
-  dish: GeminiDish,
-  merged: Map<string, EstimatedIngredient>,
-): void {
-  if (dish.role !== 'main') return
-  if (!isKaraageDishName(dish.name)) return
-
-  ensureGroupMinimum(merged, isProteinIngredientName, 140, dish.role, '鶏もも肉')
-  ensureGroupMinimum(merged, isBreadingIngredientName, 18, dish.role, '片栗粉')
-  ensureGroupMinimum(merged, isOilIngredientName, 14, dish.role, 'サラダ油')
-}
-
-function getDishTotalCap(role: string, dishName?: string): number {
-  if (role === 'main' && dishName && isKaraageDishName(dishName)) {
-    return 340
-  }
-
+function getDishTotalCap(role: string): number {
   switch (role) {
     case 'rice':
       return 240
@@ -303,10 +269,61 @@ function getDishTotalCap(role: string, dishName?: string): number {
   }
 }
 
+function getDefaultVisiblePortionWeightG(role: string, cookingMethod: MealCookingMethod): number {
+  switch (role) {
+    case 'rice':
+      return 160
+    case 'soup':
+      return 160
+    case 'salad':
+      return 70
+    case 'side':
+      return 90
+    case 'dessert':
+      return 100
+    case 'main':
+    default:
+      return cookingMethod === 'fried' ? 180 : 160
+  }
+}
+
+function getVisiblePortionWeightG(
+  dish: GeminiDish,
+  visibleIngredientWeightG: number,
+): number {
+  const fallback = Math.max(
+    visibleIngredientWeightG,
+    getDefaultVisiblePortionWeightG(dish.role, dish.cookingMethod),
+  )
+
+  return clamp(
+    dish.visiblePortionWeightG || fallback,
+    Math.max(40, Math.min(fallback, 120)),
+    getDishTotalCap(dish.role),
+  )
+}
+
+function getDishCalorieDensityRange(dish: GeminiDish): { min: number; max: number } {
+  if (dish.role === 'rice') return { min: 130, max: 210 }
+  if (dish.role === 'soup') return { min: 20, max: 90 }
+  if (dish.role === 'salad') return { min: 15, max: 120 }
+  if (dish.role === 'dessert') return { min: 120, max: 360 }
+
+  if (dish.cookingMethod === 'fried') {
+    return isKaraageDishName(dish.name) ? { min: 220, max: 340 } : { min: 180, max: 320 }
+  }
+  if (dish.cookingMethod === 'grilled') return { min: 120, max: 280 }
+  if (dish.cookingMethod === 'stir_fried') return { min: 110, max: 240 }
+  if (dish.cookingMethod === 'simmered') return { min: 80, max: 220 }
+  if (dish.cookingMethod === 'steamed' || dish.cookingMethod === 'boiled') return { min: 60, max: 200 }
+
+  return dish.role === 'main' ? { min: 100, max: 260 } : { min: 40, max: 200 }
+}
+
 function normalizeDishForNutrition(dish: GeminiDish): GeminiDish {
   const merged = new Map<string, EstimatedIngredient>()
 
-  for (const ingredient of dish.estimatedIngredients) {
+  for (const ingredient of dish.visibleIngredients) {
     const normalizedName = normalizeIngredientName(ingredient.name)
     if (!normalizedName) continue
 
@@ -327,11 +344,9 @@ function normalizeDishForNutrition(dish: GeminiDish): GeminiDish {
     }
   }
 
-  applyFriedDishHeuristics(dish, merged)
-
   let estimatedIngredients = [...merged.values()]
   const totalAmount = estimatedIngredients.reduce((sum, ingredient) => sum + ingredient.amount_g, 0)
-  const totalCap = getDishTotalCap(dish.role, dish.name)
+  const totalCap = getDishTotalCap(dish.role)
 
   if (totalAmount > totalCap && totalAmount > 0) {
     const scale = totalCap / totalAmount
@@ -346,9 +361,82 @@ function normalizeDishForNutrition(dish: GeminiDish): GeminiDish {
     }))
   }
 
+  const normalizedVisibleIngredientWeight = estimatedIngredients.reduce(
+    (sum, ingredient) => sum + ingredient.amount_g,
+    0,
+  )
+
   return {
     ...dish,
+    visiblePortionWeightG: getVisiblePortionWeightG(dish, normalizedVisibleIngredientWeight),
+    visibleIngredients: estimatedIngredients,
     estimatedIngredients,
+  }
+}
+
+function scaleNutritionTotals(totals: NutritionTotals, factor: number): NutritionTotals {
+  return roundNutrition({
+    calories_kcal: totals.calories_kcal * factor,
+    protein_g: totals.protein_g * factor,
+    fat_g: totals.fat_g * factor,
+    carbs_g: totals.carbs_g * factor,
+    fiber_g: totals.fiber_g * factor,
+    sodium_mg: totals.sodium_mg * factor,
+    potassium_mg: totals.potassium_mg * factor,
+    calcium_mg: totals.calcium_mg * factor,
+    magnesium_mg: totals.magnesium_mg * factor,
+    phosphorus_mg: totals.phosphorus_mg * factor,
+    iron_mg: totals.iron_mg * factor,
+    zinc_mg: totals.zinc_mg * factor,
+    iodine_ug: totals.iodine_ug * factor,
+    cholesterol_mg: totals.cholesterol_mg * factor,
+    vitamin_a_ug: totals.vitamin_a_ug * factor,
+    vitamin_d_ug: totals.vitamin_d_ug * factor,
+    vitamin_e_mg: totals.vitamin_e_mg * factor,
+    vitamin_k_ug: totals.vitamin_k_ug * factor,
+    vitamin_b1_mg: totals.vitamin_b1_mg * factor,
+    vitamin_b2_mg: totals.vitamin_b2_mg * factor,
+    niacin_mg: totals.niacin_mg * factor,
+    vitamin_b6_mg: totals.vitamin_b6_mg * factor,
+    vitamin_b12_ug: totals.vitamin_b12_ug * factor,
+    folic_acid_ug: totals.folic_acid_ug * factor,
+    pantothenic_acid_mg: totals.pantothenic_acid_mg * factor,
+    biotin_ug: totals.biotin_ug * factor,
+    vitamin_c_mg: totals.vitamin_c_mg * factor,
+    salt_eq_g: totals.salt_eq_g * factor,
+  })
+}
+
+function applyDishNutritionCalibration(
+  dish: GeminiDish,
+  dishNutrition: DishNutrition,
+): { dishNutrition: DishNutrition; factor: number } {
+  const portionWeight = Math.max(dish.visiblePortionWeightG, 1)
+  if (dishNutrition.totals.calories_kcal <= 0) {
+    return { dishNutrition, factor: 1 }
+  }
+
+  const currentDensity = (dishNutrition.totals.calories_kcal / portionWeight) * 100
+  const { min, max } = getDishCalorieDensityRange(dish)
+
+  let factor = 1
+  if (currentDensity < min) {
+    factor = min / currentDensity
+  } else if (currentDensity > max) {
+    factor = max / currentDensity
+  }
+
+  factor = clamp(factor, 0.8, 1.9)
+  if (Math.abs(factor - 1) < 0.05) {
+    return { dishNutrition, factor: 1 }
+  }
+
+  return {
+    dishNutrition: {
+      ...dishNutrition,
+      totals: scaleNutritionTotals(dishNutrition.totals, factor),
+    },
+    factor,
   }
 }
 
@@ -374,12 +462,27 @@ function normalizeGeminiAnalysisResult(raw: unknown): GeminiAnalysisResult {
   return {
     dishes: dishesInput.map((dish) => {
       const item = typeof dish === 'object' && dish !== null ? dish as Record<string, unknown> : {}
-      const estimatedIngredientsInput = Array.isArray(item.estimatedIngredients) ? item.estimatedIngredients : []
+      const visibleIngredientsInput = Array.isArray(item.visibleIngredients)
+        ? item.visibleIngredients
+        : Array.isArray(item.estimatedIngredients)
+          ? item.estimatedIngredients
+          : []
 
       return {
         name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '不明な料理',
         role: typeof item.role === 'string' && item.role.trim() ? item.role.trim() : 'main',
-        estimatedIngredients: estimatedIngredientsInput
+        cookingMethod: normalizeCookingMethod(item.cookingMethod, typeof item.role === 'string' ? item.role : 'main'),
+        visiblePortionWeightG: Math.max(0, toOptionalNumber(item.visiblePortionWeightG) ?? 0),
+        visibleIngredients: visibleIngredientsInput
+          .map((ingredient) => {
+            const candidate = typeof ingredient === 'object' && ingredient !== null ? ingredient as Record<string, unknown> : {}
+            const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : null
+            const amount = toOptionalNumber(candidate.amount_g)
+            if (!name || amount === undefined) return null
+            return { name, amount_g: Math.max(0, amount) }
+          })
+          .filter((ingredient): ingredient is EstimatedIngredient => ingredient !== null),
+        estimatedIngredients: visibleIngredientsInput
           .map((ingredient) => {
             const candidate = typeof ingredient === 'object' && ingredient !== null ? ingredient as Record<string, unknown> : {}
             const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : null
@@ -389,7 +492,7 @@ function normalizeGeminiAnalysisResult(raw: unknown): GeminiAnalysisResult {
           })
           .filter((ingredient): ingredient is EstimatedIngredient => ingredient !== null),
       }
-    }).filter((dish) => dish.estimatedIngredients.length > 0),
+    }).filter((dish) => dish.visibleIngredients.length > 0),
   }
 }
 
@@ -409,7 +512,7 @@ async function analyzeImageWithGemini(
   const prompt = `あなたは「ほめゴハン」という食事管理アプリのAIアシスタントです。
 この${imageCountText}${mealTypeJa}の写真を分析してください。
 
-各料理について、**材料と分量を推定**してください。
+各料理について、見えている料理の名前・見えている量・調理法・見えている主要材料だけを返してください。
 
 以下のJSON形式で回答してください：
 
@@ -418,8 +521,10 @@ async function analyzeImageWithGemini(
     {
       "name": "料理名",
       "role": "main または side または soup または rice または salad または dessert",
-      "estimatedIngredients": [
-        { "name": "材料名（一般的な食材名で）", "amount_g": 推定量(g) }
+      "cookingMethod": "fried / grilled / stir_fried / simmered / steamed / boiled / raw / rice / soup / baked / other",
+      "visiblePortionWeightG": 皿全体の見た目量(g),
+      "visibleIngredients": [
+        { "name": "写真から見える主要材料名", "amount_g": 推定量(g) }
       ]
     }
   ]
@@ -428,12 +533,14 @@ async function analyzeImageWithGemini(
 注意：
 - 写っている料理だけを数えてください。見えていない小鉢や調味料を想像で増やさないでください
 - 材料名は「鶏もも肉」「白米」「味噌」など一般的な食材名で記載してください
-- 分量は1人前として、見た目から無理のない保守的な量にしてください
+- 油、衣、吸油、隠れた調味料など、写真から明確に見えない要素は visibleIngredients に含めないでください
+- visiblePortionWeightG は、その皿全体の見た目量を1人前として推定してください
+- 分量は見た目から無理のない保守的な量にしてください
 - 定食なら、ご飯・汁物・主菜・副菜/サラダを分けてください
 - ご飯は炊いた後の量として見積もり、通常は80g〜220gの範囲で考えてください
-- 汁物は器1杯として見積もり、全体量は通常120g〜220gの範囲で考えてください
+- 汁物は器1杯として見積もり、通常は120g〜220gの範囲で考えてください
 - 千切りキャベツなど付け合わせ野菜は、通常20g〜100gの範囲で考えてください
-- roleは料理の種類に応じて設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート=dessert）
+- role は料理の種類に応じて設定してください（主菜=main, 副菜=side, 汁物=soup, ご飯類=rice, サラダ=salad, デザート=dessert）
 - 構造化 JSON で返してください`
 
   const { data } = await generateGeminiJson<GeminiAnalysisResult>({
@@ -541,7 +648,11 @@ export async function analyzeWithEvidence(
 
       console.log(`Step 3: Calculating nutrition for "${dish.name}"...`)
       const nutritionStartedAt = Date.now()
-      const dishNutrition = calculateDishNutrition(dish.name, dish.role, matchResults)
+      const rawDishNutrition = calculateDishNutrition(dish.name, dish.role, matchResults)
+      const {
+        dishNutrition,
+        factor: nutritionAdjustmentFactor,
+      } = applyDishNutritionCalibration(dish, rawDishNutrition)
       const dishNutritionCalculationMs = Date.now() - nutritionStartedAt
 
       const matchedIngredients: MatchedIngredientInfo[] = dishNutrition.ingredients.map((ing) => ({
@@ -555,11 +666,14 @@ export async function analyzeWithEvidence(
       const analyzedDish: AnalyzedDish = {
         name: dish.name,
         role: dish.role,
+        cookingMethod: dish.cookingMethod,
+        visiblePortionWeightG: dish.visiblePortionWeightG,
         calories_kcal: dishNutrition.totals.calories_kcal,
         protein_g: dishNutrition.totals.protein_g,
         fat_g: dishNutrition.totals.fat_g,
         carbs_g: dishNutrition.totals.carbs_g,
-        ingredient: dish.estimatedIngredients.map(i => i.name).slice(0, 3).join('、'),
+        nutritionAdjustmentFactor,
+        ingredient: dish.visibleIngredients.map((ingredient) => ingredient.name).slice(0, 3).join('、'),
         ingredients: matchResults.map((mr: IngredientMatchResult) => ({
           name: mr.input.name,
           amount_g: mr.input.amount_g,
