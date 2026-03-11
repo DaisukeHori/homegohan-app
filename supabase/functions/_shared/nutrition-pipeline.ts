@@ -31,6 +31,10 @@ import {
   MatchedIngredientInfo
 } from './evidence-verifier.ts'
 import { generateGeminiJson } from './gemini-json.ts'
+import {
+  estimateNutritionWithPerplexity,
+  isPerplexityNutritionCandidate,
+} from './perplexity-nutrition.ts'
 
 // ============================================
 // 型定義
@@ -776,6 +780,11 @@ export async function analyzeWithEvidence(
   const processedDishes = await Promise.all(
     normalizedDishes.map(async (dish) => {
       const useEstimatedNutrition = Boolean(dish.estimatedNutrition && shouldUseEstimatedNutrition(dish))
+      const shouldUsePerplexityNutrition = Boolean(
+        !useEstimatedNutrition &&
+        dish.estimatedNutrition &&
+        isPerplexityNutritionCandidate(dish, dish.estimatedNutrition.confidence),
+      )
       let matchResults: IngredientMatchResult[] = []
       let stats = {
         total: dish.visibleIngredients.length,
@@ -787,6 +796,7 @@ export async function analyzeWithEvidence(
         matchRate: 0,
       }
       let dishIngredientMatchingMs = 0
+      let perplexityEstimate: MealNutritionEstimate | null = null
 
       if (useEstimatedNutrition) {
         console.log(`Step 2: Skipping ingredient search for "${dish.name}"`, {
@@ -802,6 +812,40 @@ export async function analyzeWithEvidence(
           noMatch: 0,
           matchRate: dish.visibleIngredients.length > 0 ? 1 : 0,
         }
+      } else if (shouldUsePerplexityNutrition) {
+        const perplexityStartedAt = Date.now()
+        perplexityEstimate = await estimateNutritionWithPerplexity({
+          name: dish.name,
+          role: dish.role,
+          cookingMethod: dish.cookingMethod,
+          visiblePortionWeightG: dish.visiblePortionWeightG,
+          visibleIngredients: dish.visibleIngredients,
+        })
+        dishIngredientMatchingMs = Date.now() - perplexityStartedAt
+
+        if (perplexityEstimate) {
+          console.log(`Step 2: Using Perplexity nutrition fallback for "${dish.name}"`, {
+            confidence: dish.estimatedNutrition?.confidence,
+            fallbackConfidence: perplexityEstimate.confidence,
+            role: dish.role,
+            elapsedMs: dishIngredientMatchingMs,
+          })
+          stats = {
+            total: dish.visibleIngredients.length,
+            matched: dish.visibleIngredients.length,
+            highConfidence: perplexityEstimate.confidence === 'high' ? dish.visibleIngredients.length : 0,
+            mediumConfidence: perplexityEstimate.confidence === 'medium' ? dish.visibleIngredients.length : 0,
+            lowConfidence: perplexityEstimate.confidence === 'low' ? dish.visibleIngredients.length : 0,
+            noMatch: 0,
+            matchRate: dish.visibleIngredients.length > 0 ? 1 : 0,
+          }
+        } else {
+          console.log(`Step 2: Perplexity fallback unavailable for "${dish.name}", using ingredient search`, {
+            confidence: dish.estimatedNutrition?.confidence,
+            role: dish.role,
+            elapsedMs: dishIngredientMatchingMs,
+          })
+        }
       } else {
         console.log(`Step 2: Matching ingredients for "${dish.name}"...`)
         const matchStartedAt = Date.now()
@@ -814,10 +858,24 @@ export async function analyzeWithEvidence(
         })
       }
 
+      if (shouldUsePerplexityNutrition && !perplexityEstimate) {
+        console.log(`Step 2: Matching ingredients for "${dish.name}" after Perplexity miss...`)
+        const matchStartedAt = Date.now()
+        matchResults = await matchIngredients(supabase, dish.estimatedIngredients)
+        stats = calculateMatchingStats(matchResults)
+        dishIngredientMatchingMs += Date.now() - matchStartedAt
+        console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
+          dish: dish.name,
+          elapsedMs: dishIngredientMatchingMs,
+        })
+      }
+
       console.log(`Step 3: Calculating nutrition for "${dish.name}"...`)
       const nutritionStartedAt = Date.now()
       const rawDishNutrition = useEstimatedNutrition && dish.estimatedNutrition
         ? buildEstimatedDishNutrition(dish, dish.estimatedNutrition)
+        : perplexityEstimate
+          ? buildEstimatedDishNutrition(dish, perplexityEstimate)
         : calculateDishNutrition(dish.name, dish.role, matchResults)
       const {
         dishNutrition,
@@ -827,9 +885,9 @@ export async function analyzeWithEvidence(
 
       const matchedIngredients: MatchedIngredientInfo[] = dish.visibleIngredients.map((ingredient, index) => ({
         input: ingredient.name,
-        matchedName: useEstimatedNutrition ? null : (dishNutrition.ingredients[index]?.matchedName ?? null),
-        matchedId: useEstimatedNutrition ? null : (dishNutrition.ingredients[index]?.matchedId ?? null),
-        similarity: useEstimatedNutrition ? 0 : (dishNutrition.ingredients[index]?.similarity ?? 0),
+        matchedName: useEstimatedNutrition || perplexityEstimate ? null : (dishNutrition.ingredients[index]?.matchedName ?? null),
+        matchedId: useEstimatedNutrition || perplexityEstimate ? null : (dishNutrition.ingredients[index]?.matchedId ?? null),
+        similarity: useEstimatedNutrition || perplexityEstimate ? 0 : (dishNutrition.ingredients[index]?.similarity ?? 0),
         amount_g: ingredient.amount_g,
       }))
 
@@ -849,6 +907,8 @@ export async function analyzeWithEvidence(
           amount_g: ingredient.amount_g,
           matched: useEstimatedNutrition
             ? null
+            : perplexityEstimate
+            ? null
             : (matchResults[index]?.matched ? {
                 id: matchResults[index].matched!.id,
                 name: matchResults[index].matched!.name,
@@ -864,7 +924,7 @@ export async function analyzeWithEvidence(
         matchedIngredients,
         ingredientMatchingMs: dishIngredientMatchingMs,
         nutritionCalculationMs: dishNutritionCalculationMs,
-        usedEstimatedNutrition: useEstimatedNutrition,
+        usedEstimatedNutrition: useEstimatedNutrition || Boolean(perplexityEstimate),
       }
     }),
   )
