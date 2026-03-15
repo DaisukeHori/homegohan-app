@@ -15,6 +15,9 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # claude/* ブランチへのプッシュ時に自動でPR作成＆即マージ
   claude-auto-pr-and-merge:
@@ -22,7 +25,7 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/claude/')
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -55,21 +58,76 @@ jobs:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
     steps:
-      - name: Dependabot metadata
+      - name: Classify Dependabot update
         id: metadata
-        uses: dependabot/fetch-metadata@v2
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          python - <<'PY'
+          import os
+          import re
+
+          title = os.environ.get("PR_TITLE", "")
+          body = os.environ.get("PR_BODY", "")
+
+          old_version = None
+          new_version = None
+          patterns = [
+              r' from v?([0-9][0-9A-Za-z.\-+]*) to v?([0-9][0-9A-Za-z.\-+]*)',
+              r' Bump .* to v?([0-9][0-9A-Za-z.\-+]*) from v?([0-9][0-9A-Za-z.\-+]*)',
+          ]
+
+          for pattern in patterns:
+              match = re.search(pattern, title)
+              if match:
+                  groups = match.groups()
+                  if " to " in pattern and " from " in pattern and pattern.index("to") < pattern.index("from"):
+                      new_version, old_version = groups[0], groups[1]
+                  else:
+                      old_version, new_version = groups[0], groups[1]
+                  break
+
+          def parse_major(version):
+              if not version:
+                  return None
+              match = re.match(r'([0-9]+)', version)
+              return int(match.group(1)) if match else None
+
+          update_type = "version-update:unknown"
+          old_major = parse_major(old_version)
+          new_major = parse_major(new_version)
+          if old_major is not None and new_major is not None:
+              update_type = "version-update:semver-major" if new_major != old_major else "version-update:semver-non-major"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"update-type={update_type}\n")
+              fh.write(f"parsed-old-version={old_version or ''}\n")
+              fh.write(f"parsed-new-version={new_version or ''}\n")
+
+          summary = [
+              f"title: {title}",
+              f"old_version: {old_version or '(not parsed)'}",
+              f"new_version: {new_version or '(not parsed)'}",
+              f"update_type: {update_type}",
+          ]
+          if not old_version or not new_version:
+              summary.append("body_excerpt: " + (body[:200].replace("\n", " ") if body else "(empty)"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("## Dependabot update classification\n\n")
+              for line in summary:
+                  fh.write(f"- {line}\n")
+          PY
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
 
       - name: Auto-approve patch/minor updates
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        if: steps.metadata.outputs.update-type == 'version-update:semver-non-major'
         run: gh pr review --approve "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        if: steps.metadata.outputs.update-type == 'version-update:semver-non-major'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

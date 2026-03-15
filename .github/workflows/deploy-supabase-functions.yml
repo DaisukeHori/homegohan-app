@@ -9,6 +9,7 @@ on:
   workflow_dispatch: # 手動トリガー可能
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   SUPABASE_PROJECT_ID: flmeolcfutuwwbjmzyoz
 
 jobs:
@@ -17,12 +18,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: 2.62.10
+        uses: actions/checkout@v6
 
       - name: Verify Edge Function dependency pinning
         run: |
@@ -31,15 +27,19 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Supabase CLI version
+        run: |
+          npx --yes supabase@2.62.10 --version
+
       - name: Deploy all functions
         run: |
-          supabase functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+          npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
       - name: Verify deployment
         run: |
           echo "Supabase Functions deployed successfully"
-          supabase functions list --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+          npx --yes supabase@2.62.10 functions list --project-ref ${{ env.SUPABASE_PROJECT_ID }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
