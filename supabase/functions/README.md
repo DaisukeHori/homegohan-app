@@ -57,6 +57,8 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 ワークフロー: `.github/workflows/deploy-supabase-functions.yml`
 
+この README を含む `supabase/functions/**` 配下の更新は、自動デプロイのトリガー対象です。
+
 ### 手動デプロイ
 
 ローカルから手動でデプロイする場合：
