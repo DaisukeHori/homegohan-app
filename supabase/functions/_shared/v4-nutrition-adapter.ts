@@ -1,4 +1,4 @@
-import { SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { SupabaseClient } from "@supabase/supabase-js";
 
 import { searchSimilarRecipes } from "./evidence-verifier.ts";
 import { matchIngredients } from "./ingredient-matcher.ts";

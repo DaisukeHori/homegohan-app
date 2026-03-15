@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 
 // 特定日の健康記録を取得
 export async function GET(
@@ -57,7 +58,18 @@ export async function PUT(
   }
 
   const { date } = await params;
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  const { data: recordData, errors } = sanitizeHealthRecordPayload(body, {
+    acceptLegacyNotes: true,
+  });
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  if (Object.keys(recordData).length === 0) {
+    return NextResponse.json({ error: 'No valid health record fields were provided' }, { status: 400 });
+  }
 
   // 既存レコードを確認
   const { data: existing } = await supabase
@@ -73,7 +85,7 @@ export async function PUT(
     result = await supabase
       .from('health_records')
       .update({
-        ...body,
+        ...recordData,
         updated_at: new Date().toISOString(),
       })
       .eq('id', existing.id)
@@ -85,7 +97,7 @@ export async function PUT(
       .insert({
         user_id: user.id,
         record_date: date,
-        ...body,
+        ...recordData,
       })
       .select()
       .single();
@@ -124,4 +136,3 @@ export async function DELETE(
 
   return NextResponse.json({ success: true });
 }
-

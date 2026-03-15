@@ -12,7 +12,7 @@ const compat = new FlatCompat({
   recommendedConfig: js.configs.recommended,
 });
 
-export default [
+const config = [
   ...compat.extends("next/core-web-vitals"),
   {
     ignores: [
@@ -20,10 +20,15 @@ export default [
       "out/**",
       "build/**",
       "next-env.d.ts",
-      "apps/mobile/**",
-      "packages/**",
     ],
+  },
+  {
+    files: ["apps/mobile/**/*.{ts,tsx}"],
+    rules: {
+      "react-hooks/exhaustive-deps": "off",
+      "jsx-a11y/alt-text": "off",
+    },
   },
 ];
 
-
+export default config;

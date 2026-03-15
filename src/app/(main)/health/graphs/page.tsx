@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -47,11 +47,7 @@ export default function HealthGraphsPage() {
   const [metric, setMetric] = useState<Metric>('weight');
   const [targetWeight, setTargetWeight] = useState<number | null>(null);
 
-  useEffect(() => {
-    fetchData();
-  }, [period]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     
     // 期間に応じた日数を計算
@@ -79,7 +75,11 @@ export default function HealthGraphsPage() {
       console.error('Failed to fetch data:', error);
     }
     setLoading(false);
-  };
+  }, [period]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   // グラフデータを生成
   const getGraphData = () => {
@@ -441,4 +441,3 @@ export default function HealthGraphsPage() {
     </div>
   );
 }
-

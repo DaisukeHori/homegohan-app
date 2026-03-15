@@ -80,7 +80,6 @@ interface PlannedMealDetail {
 
 export default function MealDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
-  const supabase = createClient();
   const [meal, setMeal] = useState<PlannedMealDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
@@ -88,6 +87,7 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     const fetchData = async () => {
+      const supabase = createClient();
       setLoading(true);
       
       // planned_mealsとuser_daily_mealsをJOINして取得
@@ -132,12 +132,13 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
       setLoading(false);
     };
 
-    fetchData();
+    void fetchData();
   }, [params.id]);
 
   const toggleCompletion = async () => {
     if (!meal) return;
     const newStatus = !meal.isCompleted;
+    const supabase = createClient();
     
     setMeal({ ...meal, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null });
 
@@ -152,6 +153,7 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
 
   const handleDelete = async () => {
     try {
+      const supabase = createClient();
       const { error } = await supabase
         .from('planned_meals')
         .delete()

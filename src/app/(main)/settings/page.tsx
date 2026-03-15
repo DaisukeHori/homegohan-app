@@ -241,7 +241,7 @@ export default function SettingsPage() {
              </button>
 
              <a 
-               href="mailto:support@homegohan.example.com"
+               href="mailto:support@homegohan.jp"
                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
              >
                <div className="flex items-center gap-3">

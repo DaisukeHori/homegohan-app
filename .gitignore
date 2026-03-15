@@ -52,3 +52,7 @@ apps/mobile/.eas*
 
 # データセット（CSVは大きいのでGitに含めない）
 data/raw/
+
+# Supabase Edge Functions
+/deno.lock
+supabase/functions/deno.lock

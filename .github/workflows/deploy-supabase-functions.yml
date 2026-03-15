@@ -22,7 +22,14 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.62.10
+
+      - name: Verify Edge Function dependency pinning
+        run: |
+          if rg -n '^\s*import(?:.+from\s+)?["'"'"'](?:jsr:|npm:)' supabase/functions --glob '*.ts'; then
+            echo "Supabase Functions では raw jsr:/npm: import を使わず、supabase/functions/deno.json の exact pin alias を使ってください。"
+            exit 1
+          fi
 
       - name: Deploy all functions
         run: |

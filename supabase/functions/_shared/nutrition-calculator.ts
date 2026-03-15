@@ -23,6 +23,8 @@ export type NutritionTotals = {
   fat_g: number;
   carbs_g: number;
   fiber_g: number;
+  fiber_soluble_g: number;
+  fiber_insoluble_g: number;
   sugar_g: number;           // 糖質
   sodium_g: number;          // 塩分相当量 (g単位)
   
@@ -62,6 +64,8 @@ export function emptyNutrition(): NutritionTotals {
     fat_g: 0,
     carbs_g: 0,
     fiber_g: 0,
+    fiber_soluble_g: 0,
+    fiber_insoluble_g: 0,
     sugar_g: 0,
     sodium_g: 0,
     

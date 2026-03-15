@@ -244,7 +244,7 @@ CREATE TABLE user_profiles (
   favorite_ingredients TEXT[],
   cuisine_preferences JSONB,
   family_size INTEGER DEFAULT 1,
-  role TEXT DEFAULT 'user',  -- 'user', 'admin', 'org_admin'
+  roles JSONB DEFAULT '["user"]'::jsonb,  -- 例: ['user'], ['user', 'admin'], ['user', 'org_admin']
   ...
 );
 ```
@@ -316,7 +316,7 @@ CREATE TABLE health_records (
   overall_condition INTEGER,  -- 1-5
   water_intake INTEGER,  -- ml
   step_count INTEGER,
-  notes TEXT,
+  daily_note TEXT,
   UNIQUE(user_id, record_date)
 );
 ```

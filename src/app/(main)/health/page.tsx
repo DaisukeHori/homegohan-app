@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
@@ -83,11 +83,7 @@ export default function HealthDashboardPage() {
 
   const today = new Date().toISOString().split('T')[0];
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -124,7 +120,11 @@ export default function HealthDashboardPage() {
     }
 
     setLoading(false);
-  };
+  }, [today]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const handleQuickSave = async () => {
     if (!quickWeight && quickMood === null && quickSleep === null) {
@@ -149,7 +149,7 @@ export default function HealthDashboardPage() {
         setTodayRecord(data.record);
         setMessage(data.message);
         setShowQuickRecord(false);
-        fetchData(); // 再取得
+        void fetchData(); // 再取得
         
         // メッセージを3秒後に消す
         setTimeout(() => setMessage(null), 5000);
@@ -717,4 +717,3 @@ export default function HealthDashboardPage() {
     </div>
   );
 }
-

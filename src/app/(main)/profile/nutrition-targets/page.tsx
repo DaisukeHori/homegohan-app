@@ -120,10 +120,9 @@ export default function NutritionTargetsExplainPage() {
   const [error, setError] = useState<string | null>(null);
   const [showRawJson, setShowRawJson] = useState(false);
 
-  const supabase = createClient();
-
   useEffect(() => {
     const fetchData = async () => {
+      const supabase = createClient();
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
@@ -165,11 +164,12 @@ export default function NutritionTargetsExplainPage() {
       }
     };
 
-    fetchData();
+    void fetchData();
   }, []);
 
   const handleRecalculate = async () => {
     setLoading(true);
+    const supabase = createClient();
     try {
       const res = await fetch('/api/nutrition-targets/calculate', {
         method: 'POST',

@@ -21,6 +21,14 @@ curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-na
 
 ## デプロイ方法
 
+### 依存関係の固定ルール
+
+- `supabase/functions/deno.json` を Edge Functions 用の共有設定として使います
+- `deno.lock` は Supabase 側が lockfile v5 を読めないため commit しません
+- 依存関係は `supabase/functions/deno.json` の `imports` に exact version で固定します
+- 関数ファイルの中で `jsr:` や `npm:` を直接 import しません
+- 関数ごとの `deno.json` は、共有設定で表現できない事情があるときだけ追加します
+
 ### 自動デプロイ（推奨）
 
 **GitHub Actions による自動デプロイが設定されています。**

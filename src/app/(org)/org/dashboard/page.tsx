@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { toOrgDailyStats } from "@/lib/converter";
@@ -28,9 +28,9 @@ export default function OrgDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<OrgDailyStats | null>(null);
-  const supabase = createClient();
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
+    const supabase = createClient();
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -67,14 +67,15 @@ export default function OrgDashboardPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchStats();
-  }, []);
+    void fetchStats();
+  }, [fetchStats]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    const supabase = createClient();
     try {
       // 1. 自分の組織ID取得
       const { data: { user } } = await supabase.auth.getUser();

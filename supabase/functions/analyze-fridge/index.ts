@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.178.0/http/server.ts';
-import OpenAI from 'npm:openai';
+import OpenAI from "openai";
 import { corsHeaders } from '../_shared/cors.ts';
 
 const openai = new OpenAI({
@@ -69,6 +69,5 @@ serve(async (req) => {
     });
   }
 });
-
 
 

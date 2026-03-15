@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -70,11 +70,7 @@ export default function HealthInsightsPage() {
   const [filter, setFilter] = useState<'all' | 'unread' | 'alerts'>('all');
   const [selectedInsight, setSelectedInsight] = useState<Insight | null>(null);
 
-  useEffect(() => {
-    fetchInsights();
-  }, [filter]);
-
-  const fetchInsights = async () => {
+  const fetchInsights = useCallback(async () => {
     setLoading(true);
     try {
       let url = '/api/health/insights?limit=50';
@@ -92,7 +88,11 @@ export default function HealthInsightsPage() {
       console.error('Failed to fetch insights:', error);
     }
     setLoading(false);
-  };
+  }, [filter]);
+
+  useEffect(() => {
+    void fetchInsights();
+  }, [fetchInsights]);
 
   const markAsRead = async (id: string) => {
     try {
@@ -330,4 +330,3 @@ export default function HealthInsightsPage() {
     </div>
   );
 }
-

@@ -5,7 +5,7 @@
  * 妥当性を検証する
  */
 
-import { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { SupabaseClient } from "@supabase/supabase-js";
 import { NutritionTotals } from './nutrition-calculator-v2.ts'
 
 // ============================================

@@ -7,8 +7,8 @@
  * - Supabase Realtimeでクライアントに進捗通知
  */
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import "@supabase/functions-js/edge-runtime.d.ts";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 // ============================================

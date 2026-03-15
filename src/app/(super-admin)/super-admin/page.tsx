@@ -63,7 +63,7 @@ export default function SuperAdminDashboard() {
     if (model && !model.dimensions.includes(selectedDimensions)) {
       setSelectedDimensions(model.dimensions[0]);
     }
-  }, [selectedModel]);
+  }, [selectedDimensions, selectedModel]);
 
   // 進捗を取得
   const fetchProgress = async () => {

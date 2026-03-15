@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 
 // 健康記録の取得
 export async function GET(request: NextRequest) {
@@ -47,11 +48,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+  }
+
   const { record_date, ...recordData } = body;
 
-  if (!record_date) {
+  if (typeof record_date !== 'string' || !record_date.trim()) {
     return NextResponse.json({ error: 'record_date is required' }, { status: 400 });
+  }
+
+  const { data: sanitizedRecordData, errors } = sanitizeHealthRecordPayload(recordData, {
+    acceptLegacyNotes: true,
+  });
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  if (Object.keys(sanitizedRecordData).length === 0) {
+    return NextResponse.json({ error: 'No valid health record fields were provided' }, { status: 400 });
   }
 
   // 既存レコードを確認
@@ -69,7 +86,7 @@ export async function POST(request: NextRequest) {
     result = await supabase
       .from('health_records')
       .update({
-        ...recordData,
+        ...sanitizedRecordData,
         updated_at: new Date().toISOString(),
       })
       .eq('id', existing.id)
@@ -82,7 +99,7 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: user.id,
         record_date,
-        ...recordData,
+        ...sanitizedRecordData,
       })
       .select()
       .single();
@@ -96,12 +113,12 @@ export async function POST(request: NextRequest) {
   await updateStreak(supabase, user.id, record_date);
 
   // user_profilesの体重も更新（最新の記録の場合）
-  if (recordData.weight) {
+  if ('weight' in sanitizedRecordData && sanitizedRecordData.weight !== null) {
     const today = new Date().toISOString().split('T')[0];
     if (record_date === today) {
       await supabase
         .from('user_profiles')
-        .update({ weight: recordData.weight })
+        .update({ weight: sanitizedRecordData.weight })
         .eq('id', user.id);
     }
   }
@@ -187,4 +204,3 @@ async function updateStreak(supabase: any, userId: string, recordDate: string) {
       });
   }
 }
-

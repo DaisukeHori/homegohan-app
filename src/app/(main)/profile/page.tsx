@@ -116,10 +116,9 @@ function ProfilePageContent() {
   const [guidedTabs, setGuidedTabs] = useState<TabType[]>([]);
   const [guidedStepIndex, setGuidedStepIndex] = useState(0);
 
-  const supabase = createClient();
-
   useEffect(() => {
     const getData = async () => {
+      const supabase = createClient();
       setIsLoading(true);
 
       const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -175,7 +174,7 @@ function ProfilePageContent() {
 
       setIsLoading(false);
     };
-    getData();
+    void getData();
   }, []);
 
   // ?focus=incomplete パラメータを処理

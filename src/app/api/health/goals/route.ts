@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
 
 // 目標一覧の取得
 export async function GET(request: NextRequest) {
@@ -41,25 +42,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await request.json();
-  const { goal_type, target_value, target_unit, target_date, note } = body;
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+  }
 
-  if (!goal_type || target_value === undefined || !target_unit) {
+  const goalType = typeof body.goal_type === 'string' ? body.goal_type.trim() : '';
+  const { data: goalData, errors } = sanitizeHealthGoalUpdate({
+    target_value: body.target_value,
+    target_unit: body.target_unit,
+    target_date: body.target_date,
+    note: body.note,
+  });
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  if (!goalType || goalData.target_value === undefined || goalData.target_value === null || !goalData.target_unit) {
     return NextResponse.json({ 
       error: 'goal_type, target_value, and target_unit are required' 
     }, { status: 400 });
   }
 
+  const targetValue = goalData.target_value;
+  const targetUnit = goalData.target_unit;
+  const targetDate = goalData.target_date === undefined ? null : goalData.target_date;
+  const note = goalData.note === undefined ? null : goalData.note;
+
   // 現在値を取得（体重の場合）
   let startValue = null;
-  if (goal_type === 'weight') {
+  if (goalType === 'weight') {
     const { data: profile } = await supabase
       .from('user_profiles')
       .select('weight')
       .eq('id', user.id)
       .single();
     startValue = profile?.weight;
-  } else if (goal_type === 'body_fat') {
+  } else if (goalType === 'body_fat') {
     const { data: profile } = await supabase
       .from('user_profiles')
       .select('body_fat_percentage')
@@ -70,8 +90,8 @@ export async function POST(request: NextRequest) {
 
   // 進捗率を計算
   let progressPercentage = 0;
-  if (startValue !== null && target_value !== null) {
-    const totalChange = Math.abs(target_value - startValue);
+  if (startValue !== null) {
+    const totalChange = Math.abs(targetValue - startValue);
     if (totalChange > 0) {
       progressPercentage = 0;
     }
@@ -81,10 +101,10 @@ export async function POST(request: NextRequest) {
     .from('health_goals')
     .insert({
       user_id: user.id,
-      goal_type,
-      target_value,
-      target_unit,
-      target_date,
+      goal_type: goalType,
+      target_value: targetValue,
+      target_unit: targetUnit,
+      target_date: targetDate,
       start_value: startValue,
       current_value: startValue,
       progress_percentage: progressPercentage,
@@ -99,18 +119,17 @@ export async function POST(request: NextRequest) {
   }
 
   // user_profilesの目標も更新
-  if (goal_type === 'weight') {
+  if (goalType === 'weight') {
     await supabase
       .from('user_profiles')
-      .update({ target_weight: target_value, target_date })
+      .update({ target_weight: targetValue, target_date: targetDate })
       .eq('id', user.id);
-  } else if (goal_type === 'body_fat') {
+  } else if (goalType === 'body_fat') {
     await supabase
       .from('user_profiles')
-      .update({ target_body_fat: target_value, target_date })
+      .update({ target_body_fat: targetValue, target_date: targetDate })
       .eq('id', user.id);
   }
 
   return NextResponse.json({ goal: data });
 }
-

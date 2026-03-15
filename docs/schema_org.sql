@@ -11,8 +11,7 @@ CREATE TABLE IF NOT EXISTS organizations (
 ALTER TABLE user_profiles
 ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL;
 
--- 既存の role チェック制約があれば更新が必要だが、今回はTEXT型なのでそのまま 'org_admin' を使用可能
--- role の想定: 'user', 'admin', 'org_admin'
+-- roles(JSONB配列) の想定: ['user'], ['user','admin'], ['user','org_admin'] など
 
 -- RLS Policies for Organizations
 
@@ -24,7 +23,7 @@ CREATE POLICY "Org admins can view own organization" ON organizations
     EXISTS (
       SELECT 1 FROM user_profiles
       WHERE user_profiles.id = auth.uid()
-      AND user_profiles.role = 'org_admin'
+      AND user_profiles.roles ? 'org_admin'
       AND user_profiles.organization_id = organizations.id
     )
   );
@@ -37,13 +36,12 @@ CREATE POLICY "Org admins can view org members" ON user_profiles
     EXISTS (
       SELECT 1 FROM user_profiles AS viewer
       WHERE viewer.id = auth.uid()
-      AND viewer.role = 'org_admin'
+      AND viewer.roles ? 'org_admin'
       AND viewer.organization_id = user_profiles.organization_id
     )
   );
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_user_profiles_org_id ON user_profiles(organization_id);
-
 
 

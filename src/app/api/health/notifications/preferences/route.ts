@@ -1,5 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import {
+  mergeNotificationPreferences,
+  sanitizeNotificationPreferences,
+} from '@/lib/health-payloads';
+
+const PREFERENCE_COLUMNS = [
+  'enabled',
+  'quiet_hours_start',
+  'quiet_hours_end',
+  'record_mode',
+  'personality_type',
+  'morning_reminder_enabled',
+  'morning_reminder_time',
+  'evening_reminder_enabled',
+  'evening_reminder_time',
+  'vacation_mode',
+  'vacation_until',
+].join(', ');
 
 // 通知設定の取得
 export async function GET(request: NextRequest) {
@@ -12,7 +30,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('notification_preferences')
-    .select('*')
+    .select(PREFERENCE_COLUMNS)
     .eq('user_id', user.id)
     .single();
 
@@ -20,23 +38,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // デフォルト設定
-  const defaultPreferences = {
-    enabled: true,
-    quiet_hours_start: '22:00',
-    quiet_hours_end: '07:00',
-    record_mode: 'standard',
-    personality_type: 'positive',
-    morning_reminder_enabled: true,
-    morning_reminder_time: '07:30',
-    evening_reminder_enabled: false,
-    evening_reminder_time: '21:00',
-    vacation_mode: false,
-    vacation_until: null,
-  };
-
   return NextResponse.json({ 
-    preferences: data || defaultPreferences,
+    preferences: mergeNotificationPreferences(data),
     isDefault: !data,
   });
 }
@@ -50,7 +53,16 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  const { data: preferences, errors } = sanitizeNotificationPreferences(body);
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  if (Object.keys(preferences).length === 0) {
+    return NextResponse.json({ error: 'No valid preference fields were provided' }, { status: 400 });
+  }
 
   // 既存設定を確認
   const { data: existing } = await supabase
@@ -65,20 +77,20 @@ export async function PUT(request: NextRequest) {
     result = await supabase
       .from('notification_preferences')
       .update({
-        ...body,
+        ...preferences,
         updated_at: new Date().toISOString(),
       })
       .eq('id', existing.id)
-      .select()
+      .select(PREFERENCE_COLUMNS)
       .single();
   } else {
     result = await supabase
       .from('notification_preferences')
       .insert({
         user_id: user.id,
-        ...body,
+        ...preferences,
       })
-      .select()
+      .select(PREFERENCE_COLUMNS)
       .single();
   }
 
@@ -86,6 +98,5 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: result.error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ preferences: result.data });
+  return NextResponse.json({ preferences: mergeNotificationPreferences(result.data) });
 }
-

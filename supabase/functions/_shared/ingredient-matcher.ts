@@ -5,7 +5,7 @@
  * LLMが最適な材料を選択する
  */
 
-import { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { SupabaseClient } from "@supabase/supabase-js";
 import { EXACT_NAME_NORM_MAP, INGREDIENT_ALIASES, normalizeIngredientNameJs, isWaterishIngredient } from './nutrition-calculator.ts'
 import {
   DATASET_EMBEDDING_API_KEY_ENV,

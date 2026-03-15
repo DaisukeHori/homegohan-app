@@ -6,7 +6,7 @@
  * - 季節・イベント・冷蔵庫情報を考慮したLLM生成
  */
 
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "@supabase/supabase-js";
 import {
   buildSearchQueryBase,
   buildUserContextForPrompt,

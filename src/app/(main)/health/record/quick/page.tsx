@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useState, useRef } from "react";
@@ -400,4 +401,3 @@ export default function QuickRecordPage() {
     </div>
   );
 }
-

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
 
 // 目標の取得
 export async function GET(
@@ -42,7 +43,24 @@ export async function PUT(
   }
 
   const { id } = await params;
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  const { data: updates, errors } = sanitizeHealthGoalUpdate(body);
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: 'No valid goal fields were provided' }, { status: 400 });
+  }
+
+  if (updates.target_value === null) {
+    return NextResponse.json({ error: 'target_value cannot be null' }, { status: 400 });
+  }
+
+  if (updates.target_unit === null) {
+    return NextResponse.json({ error: 'target_unit cannot be null' }, { status: 400 });
+  }
 
   // 目標の所有者確認
   const { data: existing } = await supabase
@@ -57,52 +75,67 @@ export async function PUT(
   }
 
   // current_valueが更新された場合、進捗率を再計算
+  const targetValue =
+    updates.target_value !== undefined ? updates.target_value : existing.target_value;
+  const currentValue =
+    updates.current_value !== undefined ? updates.current_value : existing.current_value;
+
   let progressPercentage = existing.progress_percentage;
-  if (body.current_value !== undefined && existing.start_value !== null) {
-    const totalChange = Math.abs(existing.target_value - existing.start_value);
-    const currentChange = Math.abs(body.current_value - existing.start_value);
+  if (currentValue !== null && existing.start_value !== null && targetValue !== null) {
+    const totalChange = Math.abs(targetValue - existing.start_value);
+    const currentChange = Math.abs(currentValue - existing.start_value);
     if (totalChange > 0) {
       progressPercentage = Math.min(100, (currentChange / totalChange) * 100);
     }
   }
 
   // マイルストーン達成チェック
-  let milestones = existing.milestones || [];
-  if (body.current_value !== undefined) {
-    const milestoneValues = calculateMilestones(existing.start_value, existing.target_value);
-    for (const milestone of milestoneValues) {
-      const achieved = milestones.find((m: any) => m.value === milestone);
-      if (!achieved) {
-        // 減量目標の場合
-        if (existing.target_value < existing.start_value && body.current_value <= milestone) {
-          milestones.push({ value: milestone, achieved_at: new Date().toISOString() });
-        }
-        // 増量目標の場合
-        else if (existing.target_value > existing.start_value && body.current_value >= milestone) {
-          milestones.push({ value: milestone, achieved_at: new Date().toISOString() });
-        }
-      }
-    }
+  let milestones = Array.isArray(existing.milestones) ? existing.milestones : [];
+  if (
+    existing.start_value !== null &&
+    targetValue !== null &&
+    currentValue !== null &&
+    (updates.current_value !== undefined || updates.target_value !== undefined)
+  ) {
+    const previousMilestones = new Map(
+      milestones
+        .filter((milestone: any) => milestone?.value != null && milestone?.achieved_at)
+        .map((milestone: any) => [milestone.value, milestone.achieved_at])
+    );
+
+    milestones = calculateMilestones(existing.start_value, targetValue)
+      .filter((milestone) => isGoalAchieved(existing.start_value, targetValue, currentValue, milestone))
+      .map((value) => ({
+        value,
+        achieved_at: previousMilestones.get(value) || new Date().toISOString(),
+      }));
   }
 
   // 目標達成チェック
-  let status = body.status || existing.status;
+  let status = existing.status;
   let achievedAt = existing.achieved_at;
-  if (body.current_value !== undefined) {
-    const isAchieved = existing.target_value < existing.start_value
-      ? body.current_value <= existing.target_value
-      : body.current_value >= existing.target_value;
-    
-    if (isAchieved && status === 'active') {
+
+  if (
+    existing.status !== 'cancelled' &&
+    existing.start_value !== null &&
+    targetValue !== null &&
+    currentValue !== null
+  ) {
+    const achieved = isGoalAchieved(existing.start_value, targetValue, currentValue, targetValue);
+
+    if (achieved) {
       status = 'achieved';
-      achievedAt = new Date().toISOString();
+      achievedAt = achievedAt || new Date().toISOString();
+    } else if (updates.current_value !== undefined || updates.target_value !== undefined) {
+      status = 'active';
+      achievedAt = null;
     }
   }
 
   const { data, error } = await supabase
     .from('health_goals')
     .update({
-      ...body,
+      ...updates,
       progress_percentage: progressPercentage,
       milestones,
       status,
@@ -161,3 +194,6 @@ function calculateMilestones(start: number, target: number): number[] {
   return milestones;
 }
 
+function isGoalAchieved(start: number, target: number, current: number, threshold: number): boolean {
+  return target < start ? current <= threshold : current >= threshold;
+}

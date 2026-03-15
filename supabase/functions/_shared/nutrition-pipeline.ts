@@ -9,7 +9,7 @@
  * 5. 結果統合
  */
 
-import { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { SupabaseClient } from "@supabase/supabase-js";
 import { 
   matchIngredients, 
   EstimatedIngredient, 

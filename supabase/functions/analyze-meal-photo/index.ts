@@ -4,7 +4,7 @@
  * Gemini 3 Pro で画像認識 → 材料マッチング → 栄養計算 → エビデンス検証
  */
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient } from "@supabase/supabase-js";
 import { analyzeWithEvidence, ImageInput, GeminiAnalysisResult } from '../_shared/nutrition-pipeline.ts'
 
 const corsHeaders = {

@@ -12,10 +12,9 @@ export default function AdminDashboard() {
     pendingFlags: 0,
     cookRate: 0,
   });
-  const supabase = createClient();
-
   useEffect(() => {
     const fetchStats = async () => {
+      const supabase = createClient();
       const today = new Date().toISOString().split('T')[0];
       
       // 並列でカウント取得
@@ -59,7 +58,7 @@ export default function AdminDashboard() {
         cookRate: cookRate,
       });
     };
-    fetchStats();
+    void fetchStats();
   }, []);
 
   return (

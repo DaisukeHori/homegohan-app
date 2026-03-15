@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
@@ -83,11 +83,7 @@ export default function HealthRecordPage() {
     daily_note: '',
   });
 
-  useEffect(() => {
-    fetchRecord();
-  }, [recordDate]);
-
-  const fetchRecord = async () => {
+  const fetchRecord = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/health/records/${recordDate}`);
@@ -118,7 +114,11 @@ export default function HealthRecordPage() {
       console.error('Failed to fetch record:', error);
     }
     setLoading(false);
-  };
+  }, [recordDate]);
+
+  useEffect(() => {
+    void fetchRecord();
+  }, [fetchRecord]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -515,4 +515,3 @@ export default function HealthRecordPage() {
     </div>
   );
 }
-

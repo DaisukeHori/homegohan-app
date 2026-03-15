@@ -13,10 +13,10 @@ export default function AdminLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(true);
-  const supabase = createClient();
 
   useEffect(() => {
     const checkAdmin = async () => {
+      const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         router.push("/login");
@@ -39,8 +39,8 @@ export default function AdminLayout({
 
       setIsLoading(false);
     };
-    checkAdmin();
-  }, []);
+    void checkAdmin();
+  }, [router]);
 
   if (isLoading) {
     return (
@@ -109,6 +109,5 @@ export default function AdminLayout({
     </div>
   );
 }
-
 
 

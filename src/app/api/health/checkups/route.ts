@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import OpenAI from 'openai';
+import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 
 // Lazy initialization to avoid build-time errors
 let openaiClient: OpenAI | null = null;
@@ -58,49 +59,48 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await request.json();
-  const {
-    checkup_date,
-    image_url,
-    facility_name,
-    checkup_type,
-    // 手動入力データ（画像解析結果を上書き可能）
-    ...manualData
-  } = body;
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+  }
 
-  if (!checkup_date) {
+  const rawBody = body as Record<string, unknown>;
+  const imageUrl = typeof rawBody.image_url === 'string' ? rawBody.image_url.trim() : '';
+
+  if (typeof rawBody.checkup_date !== 'string' || !rawBody.checkup_date.trim()) {
     return NextResponse.json({ error: 'checkup_date is required' }, { status: 400 });
   }
 
-  let extractedData = {};
+  let extractedData: Record<string, unknown> = {};
 
   // 画像がある場合、GPT-5.2 Visionでデータを抽出
-  if (image_url) {
+  if (imageUrl) {
     try {
-      extractedData = await extractDataFromImage(image_url);
+      extractedData = await extractDataFromImage(imageUrl);
     } catch (err) {
       console.error('Image extraction failed:', err);
       // エラーでも続行（手動データがあれば使用）
     }
   }
 
-  // 手動データで上書き（nullや未定義は除外）
-  const checkupData = {
+  const { data: checkupData, errors } = sanitizeHealthCheckupPayload({
     ...extractedData,
-    ...Object.fromEntries(
-      Object.entries(manualData).filter(([_, v]) => v !== null && v !== undefined)
-    ),
-  };
+    ...rawBody,
+  });
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  if (!checkupData.checkup_date) {
+    return NextResponse.json({ error: 'checkup_date is required' }, { status: 400 });
+  }
 
   // 健康診断を保存
   const { data: checkup, error: insertError } = await supabase
     .from('health_checkups')
     .insert({
       user_id: user.id,
-      checkup_date,
-      image_url,
-      facility_name,
-      checkup_type,
       ...checkupData,
     })
     .select()
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
 }
 
 // 画像からデータを抽出（GPT-5.2 Vision）
-async function extractDataFromImage(imageUrl: string): Promise<Record<string, any>> {
+async function extractDataFromImage(imageUrl: string): Promise<Record<string, unknown>> {
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5.2',
     messages: [{

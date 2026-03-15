@@ -1,5 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import {
+  sanitizeHealthGoalUpdate,
+  sanitizeHealthRecordPayload,
+} from '@/lib/health-payloads';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -872,9 +876,19 @@ export async function POST(
           break;
         }
 
+        const { data: safeUpdates, errors } = sanitizeHealthGoalUpdate(updates);
+        if (errors.length > 0) {
+          result = { error: errors.join(', ') };
+          break;
+        }
+        if (Object.keys(safeUpdates).length === 0) {
+          result = { error: '更新可能な目標項目がありません' };
+          break;
+        }
+
         const { error: updateError } = await supabase
           .from('health_goals')
-          .update(updates)
+          .update(safeUpdates)
           .eq('id', goalId);
         success = !updateError;
         result = { goalId, updated: success };
@@ -941,10 +955,22 @@ export async function POST(
 
       case 'update_health_record': {
         const { date, updates } = action.action_params;
+        const { data: safeUpdates, errors } = sanitizeHealthRecordPayload(updates, {
+          acceptLegacyNotes: true,
+        });
+        if (errors.length > 0) {
+          result = { error: errors.join(', ') };
+          break;
+        }
+        if (Object.keys(safeUpdates).length === 0) {
+          result = { error: '更新可能な健康記録項目がありません' };
+          break;
+        }
+
         // セキュリティチェック（user_idで自動的に制限）
         const { error: updateError } = await supabase
           .from('health_records')
-          .update(updates)
+          .update(safeUpdates)
           .eq('user_id', user.id)
           .eq('record_date', date);
         success = !updateError;

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
-import { spawn } from "child_process";
-import { join } from "path";
+import { waitUntil } from "@vercel/functions";
 import {
   DATASET_EMBEDDING_DIMENSIONS,
   DATASET_EMBEDDING_MODEL,
@@ -13,6 +12,8 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const BATCH_LIMIT = 100;
 const RETRY_DELAY = 5000; // リトライ間隔（5秒）
+
+export const maxDuration = 300;
 
 function getServiceClient() {
   return createServiceClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -119,7 +120,8 @@ async function processTable(
   model: string,
   dimensions: number,
   supabaseAnonKey: string,
-  jobId: string
+  jobId: string,
+  onlyMissing: boolean
 ): Promise<void> {
   let offset = startOffset;
   let hasMore = true;
@@ -156,6 +158,7 @@ async function processTable(
           limit: BATCH_LIMIT,
           model,
           dimensions,
+          onlyMissing,
         }),
       });
       
@@ -202,7 +205,11 @@ async function processTable(
       }
       
       totalProcessed += data.processed;
-      offset = data.nextOffset;
+      if (onlyMissing && data.nextOffset === 0 && typeof data.message === "string" && data.message.includes("Restart from offset=0")) {
+        offset = 0;
+      } else {
+        offset = data.nextOffset;
+      }
       hasMore = data.hasMore;
       totalCount = data.totalCount || 0;
       
@@ -313,30 +320,6 @@ export async function POST(request: NextRequest) {
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
     const jobId = `embedding-${table}-${Date.now()}`;
     
-    // スクリプトを別プロセスで実行
-    const scriptPath = join(process.cwd(), "scripts", "resume-embedding-regeneration.mjs");
-    const env = {
-      ...process.env,
-      EMBEDDING_TABLE: table,
-      EMBEDDING_START_OFFSET: startOffset.toString(),
-      EMBEDDING_MODEL: model,
-      EMBEDDING_DIMENSIONS: dimensions.toString(),
-      EMBEDDING_JOB_ID: jobId,
-      EMBEDDING_ONLY_MISSING: onlyMissing ? "true" : "false",
-      SUPABASE_URL: SUPABASE_URL,
-      SUPABASE_ANON_KEY: supabaseAnonKey,
-      SUPABASE_SERVICE_ROLE_KEY: SUPABASE_SERVICE_ROLE_KEY,
-    };
-    
-    // バックグラウンドでスクリプトを実行
-    const child = spawn("node", [scriptPath], {
-      env,
-      detached: true,
-      stdio: "ignore",
-    });
-    
-    child.unref(); // 親プロセスが終了しても子プロセスを続行
-    
     // 初期進捗を保存
     await saveProgress({
       jobId,
@@ -351,6 +334,26 @@ export async function POST(request: NextRequest) {
       totalCount: 0,
       percentage: 0,
     });
+
+    waitUntil(
+      processTable(table, startOffset, model, dimensions, supabaseAnonKey, jobId, onlyMissing).catch(async (error: unknown) => {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        await saveProgress({
+          jobId,
+          status: "error",
+          table,
+          model,
+          dimensions,
+          startOffset,
+          startTime: Date.now(),
+          currentOffset: startOffset,
+          totalProcessed: 0,
+          totalCount: 0,
+          percentage: 0,
+          error: message,
+        });
+      })
+    );
     
     return NextResponse.json({
       success: true,

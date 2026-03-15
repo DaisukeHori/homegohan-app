@@ -1,6 +1,7 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useCallback, useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -89,11 +90,7 @@ export default function HealthCheckupDetailPage({ params }: { params: Promise<{ 
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  useEffect(() => {
-    fetchCheckup();
-  }, [id]);
-
-  const fetchCheckup = async () => {
+  const fetchCheckup = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/health/checkups/${id}`);
@@ -105,7 +102,11 @@ export default function HealthCheckupDetailPage({ params }: { params: Promise<{ 
       console.error('Failed to fetch checkup:', error);
     }
     setLoading(false);
-  };
+  }, [id]);
+
+  useEffect(() => {
+    void fetchCheckup();
+  }, [fetchCheckup]);
 
   const handleDelete = async () => {
     setDeleting(true);

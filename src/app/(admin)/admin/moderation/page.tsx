@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { ChefHat, Store, UtensilsCrossed, Zap, Check, X } from 'lucide-react';
@@ -40,9 +40,9 @@ const MODE_COLORS: Record<string, string> = {
 export default function ModerationPage() {
   const [meals, setMeals] = useState<PlannedMealWithUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
 
-  const fetchMeals = async () => {
+  const fetchMeals = useCallback(async () => {
+    const supabase = createClient();
     setLoading(true);
     
     // planned_mealsをJOINして取得（日付ベースモデル）
@@ -70,15 +70,15 @@ export default function ModerationPage() {
       setMeals(data as unknown as PlannedMealWithUser[]);
     }
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    fetchMeals();
-  }, []);
+    void fetchMeals();
+  }, [fetchMeals]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("本当に削除しますか？この操作は取り消せません。")) return;
-    
+    const supabase = createClient();
     const { error } = await supabase.from('planned_meals').delete().eq('id', id);
     if (error) {
       alert("削除に失敗しました");

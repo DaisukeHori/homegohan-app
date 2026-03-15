@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 // クイック記録（体重・気分・睡眠のみ）
 export async function POST(request: NextRequest) {
@@ -10,21 +13,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await request.json();
-  const {
-    weight,
-    bodyFat,       // 体脂肪率（写真からの記録用）
-    muscleMass,    // 筋肉量（写真からの記録用）
-    mood_score,
-    sleep_quality,
-    source,        // 'manual' | 'photo' - データソース
-    record_date = new Date().toISOString().split('T')[0]
-  } = body;
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+  }
 
-  // 少なくとも1つのデータが必要
-  if (!weight && !mood_score && !sleep_quality) {
+  const recordDate =
+    typeof body.record_date === 'string' && body.record_date.trim()
+      ? body.record_date.trim()
+      : new Date().toISOString().split('T')[0];
+
+  if (!DATE_PATTERN.test(recordDate)) {
+    return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
+  }
+
+  if (body.source !== undefined && typeof body.source !== 'string') {
+    return NextResponse.json({ error: 'source must be a string' }, { status: 400 });
+  }
+
+  const dataSource = body.source === 'photo' ? 'photo' : 'quick';
+  const { data: sanitizedRecord, errors } = sanitizeHealthRecordPayload({
+    weight: body.weight,
+    body_fat_percentage: body.bodyFat ?? body.body_fat_percentage,
+    muscle_mass: body.muscleMass ?? body.muscle_mass,
+    mood_score: body.mood_score,
+    sleep_quality: body.sleep_quality,
+  });
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  const hasMetric = ['weight', 'body_fat_percentage', 'muscle_mass', 'mood_score', 'sleep_quality'].some(
+    (field) => field in sanitizedRecord,
+  );
+
+  if (!hasMetric) {
     return NextResponse.json({
-      error: 'At least one field (weight, mood_score, or sleep_quality) is required'
+      error: 'At least one quick health metric is required'
     }, { status: 400 });
   }
 
@@ -33,19 +59,14 @@ export async function POST(request: NextRequest) {
     .from('health_records')
     .select('*')
     .eq('user_id', user.id)
-    .eq('record_date', record_date)
+    .eq('record_date', recordDate)
     .single();
 
-  const updateData: Record<string, any> = {
-    data_source: source === 'photo' ? 'photo' : 'quick',
+  const updateData: Record<string, unknown> = {
+    ...sanitizedRecord,
+    data_source: dataSource,
     updated_at: new Date().toISOString(),
   };
-
-  if (weight !== undefined) updateData.weight = weight;
-  if (bodyFat !== undefined) updateData.body_fat_percentage = bodyFat;
-  if (muscleMass !== undefined) updateData.muscle_mass = muscleMass;
-  if (mood_score !== undefined) updateData.mood_score = mood_score;
-  if (sleep_quality !== undefined) updateData.sleep_quality = sleep_quality;
 
   let result;
   
@@ -63,7 +84,7 @@ export async function POST(request: NextRequest) {
       .from('health_records')
       .insert({
         user_id: user.id,
-        record_date,
+        record_date: recordDate,
         ...updateData,
       })
       .select()
@@ -75,10 +96,10 @@ export async function POST(request: NextRequest) {
   }
 
   // 連続記録を更新
-  await updateStreak(supabase, user.id, record_date);
+  await updateStreak(supabase, user.id, recordDate);
 
   // 前日との比較データを取得
-  const yesterday = new Date(record_date);
+  const yesterday = new Date(recordDate);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
 
@@ -91,8 +112,8 @@ export async function POST(request: NextRequest) {
 
   // 変化を計算
   const changes: Record<string, number | null> = {};
-  if (weight && previousRecord?.weight) {
-    changes.weight = parseFloat((weight - previousRecord.weight).toFixed(2));
+  if (typeof sanitizedRecord.weight === 'number' && typeof previousRecord?.weight === 'number') {
+    changes.weight = parseFloat((sanitizedRecord.weight - previousRecord.weight).toFixed(2));
   }
 
   // 連続記録情報を取得
@@ -105,11 +126,15 @@ export async function POST(request: NextRequest) {
 
   // user_profilesの体重・体組成も更新（今日の記録の場合）
   const today = new Date().toISOString().split('T')[0];
-  if (record_date === today) {
-    const profileUpdate: Record<string, any> = {};
-    if (weight) profileUpdate.weight = weight;
-    if (bodyFat) profileUpdate.body_fat_percentage = bodyFat;
-    if (muscleMass) profileUpdate.muscle_mass = muscleMass;
+  if (recordDate === today) {
+    const profileUpdate: Record<string, number> = {};
+    if (typeof sanitizedRecord.weight === 'number') profileUpdate.weight = sanitizedRecord.weight;
+    if (typeof sanitizedRecord.body_fat_percentage === 'number') {
+      profileUpdate.body_fat_percentage = sanitizedRecord.body_fat_percentage;
+    }
+    if (typeof sanitizedRecord.muscle_mass === 'number') {
+      profileUpdate.muscle_mass = sanitizedRecord.muscle_mass;
+    }
 
     if (Object.keys(profileUpdate).length > 0) {
       await supabase
@@ -229,4 +254,3 @@ function getEncouragementMessage(changes: Record<string, number | null>, streak:
 
   return messages.join(' ') || '今日も記録ありがとうございます！';
 }
-

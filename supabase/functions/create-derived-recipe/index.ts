@@ -1,5 +1,5 @@
-import { createClient } from "jsr:@supabase/supabase-js@2";
-import { Agent, type AgentInputItem, Runner } from "npm:@openai/agents";
+import { Agent, type AgentInputItem, Runner } from "@openai/agents";
+import { createClient } from "@supabase/supabase-js";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import {
   DATASET_EMBEDDING_API_KEY_ENV,
@@ -316,7 +316,7 @@ async function agentJson(userPrompt: string): Promise<any> {
     name: "derived-recipe-generator",
     instructions: systemPrompt,
     model: "gpt-5-mini",
-    modelSettings: { reasoningEffort: "minimal" },
+    modelSettings: { reasoning: { effort: "minimal" } },
     tools: [],
   });
 
@@ -335,12 +335,12 @@ async function agentJson(userPrompt: string): Promise<any> {
 
   let outputText = "";
   if (!result.finalOutput) {
-    const lastAssistantItem = result.newItems.find((item) =>
-      item.rawItem.role === "assistant" && item.rawItem.content
-    );
-    if (lastAssistantItem && Array.isArray(lastAssistantItem.rawItem.content)) {
-      const textContent = lastAssistantItem.rawItem.content.find((c: any) => c.type === "output_text" || c.type === "text");
-      if (textContent && (textContent as any).text) outputText = String((textContent as any).text);
+    const lastAssistantItem = [...result.newItems]
+      .reverse()
+      .find((item) => item.type === "message_output_item");
+    if (lastAssistantItem) {
+      const textContent = lastAssistantItem.rawItem.content.find((contentItem) => contentItem.type === "output_text");
+      if (textContent) outputText = textContent.text;
     }
   } else if (typeof result.finalOutput === "object") {
     outputText = JSON.stringify(result.finalOutput);

@@ -2,7 +2,7 @@
 // OpenAI Chat Completions API 互換のエンドポイント
 // Agent SDK がDenoで動作しない場合のフォールバック版
 
-import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import OpenAI from "openai";
@@ -234,6 +234,11 @@ async function runChat(
 
     // 各ツールを実行
     for (const toolCall of result.message.tool_calls) {
+      if (!("function" in toolCall)) {
+        console.warn("[runChat] Skipping unsupported non-function tool call", toolCall);
+        continue;
+      }
+
       const args = JSON.parse(toolCall.function.arguments);
       console.log(`[runChat] Executing tool: ${toolCall.function.name}`, args);
 

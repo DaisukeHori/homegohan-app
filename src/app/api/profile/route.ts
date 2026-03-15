@@ -206,10 +206,8 @@ function checkShouldRecalculateNutrition(body: Record<string, unknown>): boolean
  * 栄養目標を再計算する（auto_calculate=true の場合のみ）
  */
 async function recalculateNutritionTargetsIfNeeded(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   userId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   profile: any
 ): Promise<void> {
   try {
@@ -269,7 +267,6 @@ async function recalculateNutritionTargetsIfNeeded(
 }
 
 // プロファイル完成度を計算
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function calculateProfileCompleteness(profile: any): number {
   const fields = [
     // 基本情報 (20%)

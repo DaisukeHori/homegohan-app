@@ -2,7 +2,7 @@
 
 -- 1. ユーザーロールの追加
 -- 既存テーブルへのカラム追加
-ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user';
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS roles JSONB DEFAULT '["user"]'::jsonb;
 
 -- 2. お知らせ（Announcements）テーブル
 CREATE TABLE IF NOT EXISTS announcements (
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 );
 
 -- 4. RLSポリシー（管理者のみアクセス可能）
--- ※ Supabaseのダッシュボード等で、特定ユーザーの role を 'admin' に設定する必要があります
+-- ※ Supabaseのダッシュボード等で、対象ユーザーの roles に 'admin' を含める必要があります
 
 -- お知らせ: 全員閲覧可（公開のみ）、管理者は全権限
 ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
@@ -39,7 +39,7 @@ CREATE POLICY "Admins can manage announcements" ON announcements
   FOR ALL USING (
     EXISTS (
       SELECT 1 FROM user_profiles
-      WHERE id = auth.uid() AND role = 'admin'
+      WHERE id = auth.uid() AND roles ? 'admin'
     )
   );
 
@@ -50,7 +50,7 @@ CREATE POLICY "Admins can view audit logs" ON admin_audit_logs
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM user_profiles
-      WHERE id = auth.uid() AND role = 'admin'
+      WHERE id = auth.uid() AND roles ? 'admin'
     )
   );
 
@@ -58,9 +58,8 @@ CREATE POLICY "Admins can create audit logs" ON admin_audit_logs
   FOR INSERT WITH CHECK (
     EXISTS (
       SELECT 1 FROM user_profiles
-      WHERE id = auth.uid() AND role = 'admin'
+      WHERE id = auth.uid() AND roles ? 'admin'
     )
   );
-
 
 

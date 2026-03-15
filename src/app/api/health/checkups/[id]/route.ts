@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 
 // 健康診断の詳細取得
 export async function GET(
@@ -46,7 +47,20 @@ export async function PUT(
   }
 
   const { id } = await params;
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  const { data: checkupData, errors } = sanitizeHealthCheckupPayload(body);
+
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
+
+  if (Object.keys(checkupData).length === 0) {
+    return NextResponse.json({ error: 'No valid checkup fields were provided' }, { status: 400 });
+  }
+
+  if (checkupData.checkup_date === null) {
+    return NextResponse.json({ error: 'checkup_date cannot be null' }, { status: 400 });
+  }
 
   // 所有権確認
   const { data: existing } = await supabase
@@ -64,7 +78,7 @@ export async function PUT(
   const { data, error } = await supabase
     .from('health_checkups')
     .update({
-      ...body,
+      ...checkupData,
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
