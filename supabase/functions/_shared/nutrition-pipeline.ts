@@ -19,7 +19,6 @@ import {
 import { 
   calculateDishNutrition, 
   DishNutrition,
-  IngredientNutrition,
   NutritionTotals,
   initNutritionTotals,
   roundNutrition
@@ -552,23 +551,41 @@ function totalsFromEstimatedNutrition(estimate: MealNutritionEstimate): Nutritio
   })
 }
 
-function buildEstimatedDishNutrition(dish: GeminiDish, estimate: MealNutritionEstimate): DishNutrition {
-  const ingredients: IngredientNutrition[] = dish.visibleIngredients.map((ingredient) => ({
-    name: ingredient.name,
-    amount_g: ingredient.amount_g,
-    matchedName: null,
-    matchedId: null,
-    similarity: 0,
-    confidence: estimate.confidence,
-    nutrition: initNutritionTotals(),
-  }))
+function overlayEstimatedTopLineNutrition(
+  dishNutrition: DishNutrition,
+  estimate: MealNutritionEstimate,
+): DishNutrition {
+  const estimatedTotals = totalsFromEstimatedNutrition(estimate)
 
   return {
-    name: dish.name,
-    role: dish.role,
-    ingredients,
-    totals: totalsFromEstimatedNutrition(estimate),
+    ...dishNutrition,
+    totals: roundNutrition({
+      ...dishNutrition.totals,
+      calories_kcal: estimatedTotals.calories_kcal,
+      protein_g: estimatedTotals.protein_g,
+      fat_g: estimatedTotals.fat_g,
+      carbs_g: estimatedTotals.carbs_g,
+      fiber_g: estimatedTotals.fiber_g,
+      sodium_mg: estimatedTotals.sodium_mg,
+      salt_eq_g: estimatedTotals.salt_eq_g,
+    }),
   }
+}
+
+function mergeFallbackConfidence(
+  current: MealNutritionConfidence | undefined,
+  next: MealNutritionConfidence | undefined,
+): MealNutritionConfidence | undefined {
+  if (!next) return current
+  if (!current) return next
+
+  const rank: Record<MealNutritionConfidence, number> = {
+    low: 0,
+    medium: 1,
+    high: 2,
+  }
+
+  return rank[next] < rank[current] ? next : current
 }
 
 function isVegetableIngredient(name: string, matchedName?: string | null): boolean {
@@ -798,85 +815,72 @@ export async function analyzeWithEvidence(
       let dishIngredientMatchingMs = 0
       let perplexityEstimate: MealNutritionEstimate | null = null
 
-      if (useEstimatedNutrition) {
-        console.log(`Step 2: Skipping ingredient search for "${dish.name}"`, {
-          confidence: dish.estimatedNutrition?.confidence,
-          role: dish.role,
-        })
-        stats = {
-          total: dish.visibleIngredients.length,
-          matched: dish.visibleIngredients.length,
-          highConfidence: dish.estimatedNutrition?.confidence === 'high' ? dish.visibleIngredients.length : 0,
-          mediumConfidence: dish.estimatedNutrition?.confidence === 'medium' ? dish.visibleIngredients.length : 0,
-          lowConfidence: dish.estimatedNutrition?.confidence === 'low' ? dish.visibleIngredients.length : 0,
-          noMatch: 0,
-          matchRate: dish.visibleIngredients.length > 0 ? 1 : 0,
-        }
-      } else if (shouldUsePerplexityNutrition) {
-        const perplexityStartedAt = Date.now()
-        perplexityEstimate = await estimateNutritionWithPerplexity({
-          name: dish.name,
-          role: dish.role,
-          cookingMethod: dish.cookingMethod,
-          visiblePortionWeightG: dish.visiblePortionWeightG,
-          visibleIngredients: dish.visibleIngredients,
-        })
-        dishIngredientMatchingMs = Date.now() - perplexityStartedAt
+      console.log(`Step 2: Matching ingredients for "${dish.name}"...`, {
+        role: dish.role,
+        geminiEstimateConfidence: useEstimatedNutrition ? dish.estimatedNutrition?.confidence : null,
+        perplexityCandidate: shouldUsePerplexityNutrition,
+      })
+      const matchStartedAt = Date.now()
+      const perplexityPromise = shouldUsePerplexityNutrition
+        ? estimateNutritionWithPerplexity({
+            name: dish.name,
+            role: dish.role,
+            cookingMethod: dish.cookingMethod,
+            visiblePortionWeightG: dish.visiblePortionWeightG,
+            visibleIngredients: dish.visibleIngredients,
+          })
+        : Promise.resolve(null)
+      const [matchedResults, fallbackEstimate] = await Promise.all([
+        matchIngredients(supabase, dish.estimatedIngredients),
+        perplexityPromise,
+      ])
+      matchResults = matchedResults
+      perplexityEstimate = fallbackEstimate
+      stats = calculateMatchingStats(matchResults)
+      dishIngredientMatchingMs = Date.now() - matchStartedAt
+      console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
+        dish: dish.name,
+        elapsedMs: dishIngredientMatchingMs,
+      })
 
+      if (useEstimatedNutrition && dish.estimatedNutrition) {
+        console.log(`Step 2: Using Gemini nutrition overlay for "${dish.name}"`, {
+          confidence: dish.estimatedNutrition.confidence,
+          role: dish.role,
+          matchedIngredients: stats.matched,
+          totalIngredients: stats.total,
+          elapsedMs: dishIngredientMatchingMs,
+        })
+      } else if (shouldUsePerplexityNutrition) {
         if (perplexityEstimate) {
-          console.log(`Step 2: Using Perplexity nutrition fallback for "${dish.name}"`, {
+          console.log(`Step 2: Using Perplexity nutrition overlay for "${dish.name}"`, {
             confidence: dish.estimatedNutrition?.confidence,
             fallbackConfidence: perplexityEstimate.confidence,
             role: dish.role,
+            matchedIngredients: stats.matched,
+            totalIngredients: stats.total,
             elapsedMs: dishIngredientMatchingMs,
           })
-          stats = {
-            total: dish.visibleIngredients.length,
-            matched: dish.visibleIngredients.length,
-            highConfidence: perplexityEstimate.confidence === 'high' ? dish.visibleIngredients.length : 0,
-            mediumConfidence: perplexityEstimate.confidence === 'medium' ? dish.visibleIngredients.length : 0,
-            lowConfidence: perplexityEstimate.confidence === 'low' ? dish.visibleIngredients.length : 0,
-            noMatch: 0,
-            matchRate: dish.visibleIngredients.length > 0 ? 1 : 0,
-          }
         } else {
-          console.log(`Step 2: Perplexity fallback unavailable for "${dish.name}", using ingredient search`, {
+          console.log(`Step 2: Perplexity fallback unavailable for "${dish.name}", using ingredient-based nutrition only`, {
             confidence: dish.estimatedNutrition?.confidence,
             role: dish.role,
+            matchedIngredients: stats.matched,
+            totalIngredients: stats.total,
             elapsedMs: dishIngredientMatchingMs,
           })
         }
-      } else {
-        console.log(`Step 2: Matching ingredients for "${dish.name}"...`)
-        const matchStartedAt = Date.now()
-        matchResults = await matchIngredients(supabase, dish.estimatedIngredients)
-        stats = calculateMatchingStats(matchResults)
-        dishIngredientMatchingMs = Date.now() - matchStartedAt
-        console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
-          dish: dish.name,
-          elapsedMs: dishIngredientMatchingMs,
-        })
-      }
-
-      if (shouldUsePerplexityNutrition && !perplexityEstimate) {
-        console.log(`Step 2: Matching ingredients for "${dish.name}" after Perplexity miss...`)
-        const matchStartedAt = Date.now()
-        matchResults = await matchIngredients(supabase, dish.estimatedIngredients)
-        stats = calculateMatchingStats(matchResults)
-        dishIngredientMatchingMs += Date.now() - matchStartedAt
-        console.log(`Matched ${stats.matched}/${stats.total} ingredients`, {
-          dish: dish.name,
-          elapsedMs: dishIngredientMatchingMs,
-        })
       }
 
       console.log(`Step 3: Calculating nutrition for "${dish.name}"...`)
       const nutritionStartedAt = Date.now()
-      const rawDishNutrition = useEstimatedNutrition && dish.estimatedNutrition
-        ? buildEstimatedDishNutrition(dish, dish.estimatedNutrition)
+      const ingredientBasedDishNutrition = calculateDishNutrition(dish.name, dish.role, matchResults)
+      const overlayEstimate = useEstimatedNutrition
+        ? dish.estimatedNutrition ?? null
         : perplexityEstimate
-          ? buildEstimatedDishNutrition(dish, perplexityEstimate)
-        : calculateDishNutrition(dish.name, dish.role, matchResults)
+      const rawDishNutrition = overlayEstimate
+        ? overlayEstimatedTopLineNutrition(ingredientBasedDishNutrition, overlayEstimate)
+        : ingredientBasedDishNutrition
       const {
         dishNutrition,
         factor: nutritionAdjustmentFactor,
@@ -885,9 +889,9 @@ export async function analyzeWithEvidence(
 
       const matchedIngredients: MatchedIngredientInfo[] = dish.visibleIngredients.map((ingredient, index) => ({
         input: ingredient.name,
-        matchedName: useEstimatedNutrition || perplexityEstimate ? null : (dishNutrition.ingredients[index]?.matchedName ?? null),
-        matchedId: useEstimatedNutrition || perplexityEstimate ? null : (dishNutrition.ingredients[index]?.matchedId ?? null),
-        similarity: useEstimatedNutrition || perplexityEstimate ? 0 : (dishNutrition.ingredients[index]?.similarity ?? 0),
+        matchedName: dishNutrition.ingredients[index]?.matchedName ?? null,
+        matchedId: dishNutrition.ingredients[index]?.matchedId ?? null,
+        similarity: dishNutrition.ingredients[index]?.similarity ?? 0,
         amount_g: ingredient.amount_g,
       }))
 
@@ -905,15 +909,11 @@ export async function analyzeWithEvidence(
         ingredients: dish.visibleIngredients.map((ingredient, index) => ({
           name: ingredient.name,
           amount_g: ingredient.amount_g,
-          matched: useEstimatedNutrition
-            ? null
-            : perplexityEstimate
-            ? null
-            : (matchResults[index]?.matched ? {
-                id: matchResults[index].matched!.id,
-                name: matchResults[index].matched!.name,
-                similarity: matchResults[index].matched!.similarity,
-              } : null),
+          matched: matchResults[index]?.matched ? {
+            id: matchResults[index].matched!.id,
+            name: matchResults[index].matched!.name,
+            similarity: matchResults[index].matched!.similarity,
+          } : null,
         })),
       }
 
@@ -925,6 +925,9 @@ export async function analyzeWithEvidence(
         ingredientMatchingMs: dishIngredientMatchingMs,
         nutritionCalculationMs: dishNutritionCalculationMs,
         usedEstimatedNutrition: useEstimatedNutrition || Boolean(perplexityEstimate),
+        llmConfidence: useEstimatedNutrition
+          ? dish.estimatedNutrition?.confidence
+          : perplexityEstimate?.confidence,
       }
     }),
   )
@@ -935,6 +938,7 @@ export async function analyzeWithEvidence(
   let totalIngredientCount = 0
   let matchedIngredientCount = 0
   let usedLlmEstimatedNutrition = false
+  let llmFallbackConfidence: MealNutritionConfidence | undefined = undefined
 
   for (const processed of processedDishes) {
     analyzedDishes.push(processed.analyzedDish)
@@ -943,6 +947,7 @@ export async function analyzeWithEvidence(
     totalIngredientCount += processed.stats.total
     matchedIngredientCount += processed.stats.matched
     usedLlmEstimatedNutrition = usedLlmEstimatedNutrition || processed.usedEstimatedNutrition
+    llmFallbackConfidence = mergeFallbackConfidence(llmFallbackConfidence, processed.llmConfidence)
     allMatchedIngredients.push(...processed.matchedIngredients)
 
     mealTotals.calories_kcal += processed.totals.calories_kcal
@@ -997,7 +1002,8 @@ export async function analyzeWithEvidence(
     allReferences,
     verification,
     matchRate,
-    usedLlmEstimatedNutrition
+    usedLlmEstimatedNutrition,
+    llmFallbackConfidence,
   )
 
   // Step 5: テンプレート文言生成

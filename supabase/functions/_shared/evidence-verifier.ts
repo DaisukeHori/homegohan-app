@@ -53,6 +53,8 @@ export interface MatchedIngredientInfo {
   amount_g: number
 }
 
+type LlmFallbackConfidence = 'high' | 'medium' | 'low'
+
 // ============================================
 // 類似レシピ検索
 // ============================================
@@ -185,10 +187,18 @@ export async function verifyNutrition(
 
 export function calculateConfidenceScore(
   matchRate: number,
-  verification: VerificationResult
+  verification: VerificationResult,
+  fallbackConfidence?: LlmFallbackConfidence,
 ): number {
-  // 基本スコア: マッチ率（0-1）
   let score = matchRate
+
+  if (score <= 0 && fallbackConfidence) {
+    score = fallbackConfidence === 'high'
+      ? 0.75
+      : fallbackConfidence === 'medium'
+        ? 0.6
+        : 0.45
+  }
 
   // 検証結果による調整
   if (verification.isVerified) {
@@ -222,9 +232,14 @@ export function createEvidenceInfo(
   referenceRecipes: ReferenceRecipe[],
   verification: VerificationResult,
   matchRate: number,
-  usedFallback: boolean = false
+  usedFallback: boolean = false,
+  fallbackConfidence?: LlmFallbackConfidence,
 ): EvidenceInfo {
-  const confidenceScore = calculateConfidenceScore(matchRate, verification)
+  const confidenceScore = calculateConfidenceScore(
+    matchRate,
+    verification,
+    usedFallback ? fallbackConfidence : undefined,
+  )
 
   return {
     calculationMethod: usedFallback ? 'llm_fallback' : 'ingredient_based',

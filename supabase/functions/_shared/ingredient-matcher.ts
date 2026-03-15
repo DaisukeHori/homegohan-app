@@ -69,6 +69,12 @@ export interface IngredientMatchResult {
   matchMethod: 'exact_map' | 'alias_map' | 'exact_name_norm' | 'alias_name_norm' | 'embedding_llm' | 'embedding' | 'text_similarity' | 'none'
 }
 
+type PartialMatchedIngredientCandidate =
+  Partial<Omit<MatchedIngredientData, 'id' | 'name' | 'name_norm' | 'similarity'>> &
+  Pick<MatchedIngredientData, 'id' | 'name' | 'name_norm'> & {
+    similarity?: number | null
+  }
+
 interface IngredientMatchMemo {
   matched: MatchedIngredientData | null
   confidence: IngredientMatchResult['confidence']
@@ -76,6 +82,47 @@ interface IngredientMatchMemo {
 }
 
 const MAX_INGREDIENT_MATCH_CONCURRENCY = 4
+
+function toMatchedIngredientData(
+  candidate: PartialMatchedIngredientCandidate,
+  similarity: number,
+): MatchedIngredientData {
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    name_norm: candidate.name_norm,
+    calories_kcal: candidate.calories_kcal ?? null,
+    protein_g: candidate.protein_g ?? null,
+    fat_g: candidate.fat_g ?? null,
+    carbs_g: candidate.carbs_g ?? null,
+    fiber_g: candidate.fiber_g ?? null,
+    sodium_mg: candidate.sodium_mg ?? null,
+    potassium_mg: candidate.potassium_mg ?? null,
+    calcium_mg: candidate.calcium_mg ?? null,
+    magnesium_mg: candidate.magnesium_mg ?? null,
+    phosphorus_mg: candidate.phosphorus_mg ?? null,
+    iron_mg: candidate.iron_mg ?? null,
+    zinc_mg: candidate.zinc_mg ?? null,
+    iodine_ug: candidate.iodine_ug ?? null,
+    cholesterol_mg: candidate.cholesterol_mg ?? null,
+    vitamin_a_ug: candidate.vitamin_a_ug ?? null,
+    vitamin_d_ug: candidate.vitamin_d_ug ?? null,
+    vitamin_e_alpha_mg: candidate.vitamin_e_alpha_mg ?? null,
+    vitamin_k_ug: candidate.vitamin_k_ug ?? null,
+    vitamin_b1_mg: candidate.vitamin_b1_mg ?? null,
+    vitamin_b2_mg: candidate.vitamin_b2_mg ?? null,
+    niacin_mg: candidate.niacin_mg ?? null,
+    vitamin_b6_mg: candidate.vitamin_b6_mg ?? null,
+    vitamin_b12_ug: candidate.vitamin_b12_ug ?? null,
+    folic_acid_ug: candidate.folic_acid_ug ?? null,
+    pantothenic_acid_mg: candidate.pantothenic_acid_mg ?? null,
+    biotin_ug: candidate.biotin_ug ?? null,
+    vitamin_c_mg: candidate.vitamin_c_mg ?? null,
+    salt_eq_g: candidate.salt_eq_g ?? null,
+    discard_rate_percent: candidate.discard_rate_percent ?? null,
+    similarity,
+  }
+}
 
 function isGenericSoupOrDishWord(inputName: string): boolean {
   const normalized = normalizeIngredientNameJs(inputName)
@@ -466,10 +513,10 @@ export async function matchSingleIngredient(
       console.log(`[ingredient-matcher] ✅ merged_direct: "${inputName}" → "${candidate.name}"`)
       return {
         input: ingredient,
-        matched: {
-          ...candidate,
-          similarity: candidate.combinedScore ?? candidate.textSignal ?? candidate.vectorSimilarity ?? candidate.similarity ?? 0,
-        },
+        matched: toMatchedIngredientData(
+          candidate,
+          candidate.combinedScore ?? candidate.textSignal ?? candidate.vectorSimilarity ?? candidate.similarity ?? 0,
+        ),
         confidence,
         matchMethod,
       }
@@ -499,10 +546,7 @@ export async function matchSingleIngredient(
       console.log(`[ingredient-matcher] ✅ embedding_llm: "${inputName}" → "${selected.name}" (combined: ${(selectedSimilarity * 100).toFixed(0)}%)`)
       return {
         input: ingredient,
-        matched: {
-          ...selected,
-          similarity: selectedSimilarity,
-        },
+        matched: toMatchedIngredientData(selected, selectedSimilarity),
         confidence,
         matchMethod: selected.textSignal ? 'text_similarity' : 'embedding_llm',
       }
