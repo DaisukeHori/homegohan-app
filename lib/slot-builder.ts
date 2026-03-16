@@ -264,6 +264,34 @@ export function buildSingleSlot(params: {
 }
 
 /**
+ * モード: 1日分を作り直す
+ *
+ * 指定日の朝・昼・夜を targetSlots として返す。
+ * 既存スロットは plannedMealId を付与して上書き対象にする。
+ */
+export function buildSingleDaySlots(params: {
+  date: string;
+  mealPlanDays: MealDay[];
+  mealTypes?: MealType[];
+}): TargetSlot[] {
+  const {
+    date,
+    mealPlanDays,
+    mealTypes = BASE_MEAL_TYPES,
+  } = params;
+
+  return mealTypes.map((mealType) => {
+    const existingMeal = getMealAtSlot(date, mealType, mealPlanDays);
+
+    return {
+      date,
+      mealType,
+      plannedMealId: existingMeal?.id,
+    };
+  });
+}
+
+/**
  * スロット数の検証
  * 
  * V4 API の制限（最大93件）をチェック

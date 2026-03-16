@@ -12,6 +12,7 @@ import {
   buildEmptySlots,
   buildRangeSlots,
   buildAiOnlySlots,
+  buildSingleDaySlots,
   countEmptySlots,
   countAiSlots,
   validateSlotCount,
@@ -256,11 +257,10 @@ export function V4GenerateModal({
         });
       case 'single_day':
         // 1日分の献立を作り直す（朝・昼・夜）
-        return [
-          { date: singleDayDate, mealType: 'breakfast' as const },
-          { date: singleDayDate, mealType: 'lunch' as const },
-          { date: singleDayDate, mealType: 'dinner' as const },
-        ];
+        return buildSingleDaySlots({
+          date: singleDayDate,
+          mealPlanDays,
+        });
       default:
         return [];
     }
