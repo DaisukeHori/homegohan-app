@@ -182,6 +182,8 @@ export async function PUT(request: Request) {
     if (body.vitaminKUg !== undefined) dbData.vitamin_k_ug = body.vitaminKUg;
     if (body.vitaminEMg !== undefined) dbData.vitamin_e_mg = body.vitaminEMg;
     if (body.saturatedFatG !== undefined) dbData.saturated_fat_g = body.saturatedFatG;
+    if (body.calculationBasis !== undefined) dbData.calculation_basis = body.calculationBasis;
+    if (body.lastCalculatedAt !== undefined) dbData.last_calculated_at = body.lastCalculatedAt;
 
     // UPSERT
     const { data, error } = await supabase

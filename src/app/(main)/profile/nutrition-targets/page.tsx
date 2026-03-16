@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
+import { NutritionTargetPlanner } from "@/components/nutrition/nutrition-target-planner";
 import type { CalculationBasis, NutrientReference } from "@homegohan/core";
 
 interface NutritionTargetsData {
@@ -167,29 +168,6 @@ export default function NutritionTargetsExplainPage() {
     void fetchData();
   }, []);
 
-  const handleRecalculate = async () => {
-    setLoading(true);
-    const supabase = createClient();
-    try {
-      const res = await fetch('/api/nutrition-targets/calculate', {
-        method: 'POST',
-      });
-      if (res.ok) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data } = await supabase.from('nutrition_targets').select('*').eq('user_id', user.id).single();
-          if (data) {
-            setTargets(data as NutritionTargetsData);
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Recalculate error:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -262,6 +240,14 @@ export default function NutritionTargetsExplainPage() {
               <p className="text-xs text-gray-500">炭水化物 (g)</p>
             </div>
           </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.05 }}
+        >
+          <NutritionTargetPlanner />
         </motion.div>
 
         {/* 入力値セクション */}
@@ -585,16 +571,6 @@ export default function NutritionTargetsExplainPage() {
           )}
         </motion.div>
 
-        {/* 再計算ボタン */}
-        <div className="fixed bottom-24 left-0 right-0 px-4">
-          <button
-            onClick={handleRecalculate}
-            disabled={loading}
-            className="w-full bg-orange-500 text-white py-4 rounded-xl font-bold shadow-lg hover:bg-orange-600 transition-colors disabled:opacity-50"
-          >
-            {loading ? '計算中...' : '栄養目標を再計算する'}
-          </button>
-        </div>
       </div>
     </div>
   );

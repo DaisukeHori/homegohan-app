@@ -180,6 +180,20 @@ export default function SettingsPage() {
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
 
+             <button
+               onClick={() => router.push('/profile/nutrition-targets')}
+               className="w-full flex items-center justify-between p-4 border-t border-gray-50 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500">🎯</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">栄養目標を再設定</span>
+                   <p className="text-xs text-gray-400">計算根拠を見ながら目標カロリーを調整</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
           </div>
         </div>
 
