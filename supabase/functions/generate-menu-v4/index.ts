@@ -66,6 +66,7 @@ import {
   rerankMenuReferenceCandidates,
   shouldSkipReferenceMenuSearch,
 } from "./reference-menu-utils.ts";
+import { selectRecentMenusForVariety } from "./context-utils.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -95,6 +96,16 @@ function getMinExpectedCaloriesForRole(role: string | undefined): number {
     default:
       return 20;
   }
+}
+
+function addDays(dateStr: string, days: number): string {
+  const date = new Date(dateStr);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getTodayStr(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 // =========================================================
@@ -495,11 +506,10 @@ function buildV4Context(params: {
   }
 
   // Existing menus (for variety)
-  const recentMenus = existingMenus.filter(m => {
-    const dayDiff = Math.abs(
-      (new Date(targetSlot.date).getTime() - new Date(m.date).getTime()) / (1000 * 60 * 60 * 24)
-    );
-    return dayDiff <= 7;
+  const recentMenus = selectRecentMenusForVariety({
+    targetDate: targetSlot.date,
+    existingMenus,
+    targetSlots: [targetSlot],
   });
 
   if (recentMenus.length > 0) {
@@ -624,11 +634,10 @@ function buildV4DayContext(params: {
   }
 
   // Existing menus (for variety)
-  const recentMenus = existingMenus.filter((m) => {
-    const dayDiff = Math.abs(
-      (new Date(date).getTime() - new Date(m.date).getTime()) / (1000 * 60 * 60 * 24),
-    );
-    return dayDiff <= 7;
+  const recentMenus = selectRecentMenusForVariety({
+    targetDate: date,
+    existingMenus,
+    targetSlots: slotsForDate,
   });
 
   if (recentMenus.length > 0) {
@@ -1212,9 +1221,84 @@ async function executeStep1_Generate(
     (generatedData.seasonalContext ?? body?.seasonalContext) ??
     { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
 
-  const existingMenus: ExistingMenuContext[] = (generatedData.existingMenus ?? body?.existingMenus ?? []) as any[];
-  const fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? body?.fridgeItems ?? []) as any[];
-  const userProfile = generatedData.userProfile ?? body?.userProfile ?? {};
+  let existingMenus: ExistingMenuContext[] = (generatedData.existingMenus ?? body?.existingMenus ?? []) as any[];
+  let fridgeItems: FridgeItemContext[] = (generatedData.fridgeItems ?? body?.fridgeItems ?? []) as any[];
+  let userProfile = generatedData.userProfile ?? body?.userProfile ?? {};
+
+  const hasUserProfile = userProfile && typeof userProfile === "object" && Object.keys(userProfile).length > 0;
+  if (existingMenus.length === 0 || fridgeItems.length === 0 || !hasUserProfile) {
+    const contextStartDate = addDays(dates[0], -7);
+    const contextEndDate = addDays(dates[dates.length - 1], 7);
+    const todayStr = getTodayStr();
+
+    const [existingMealsResult, pantryResult, profileResult] = await Promise.all([
+      existingMenus.length === 0
+        ? supabase
+            .from("user_daily_meals")
+            .select(`
+              day_date,
+              planned_meals (
+                id,
+                meal_type,
+                dish_name,
+                is_completed,
+                mode
+              )
+            `)
+            .eq("user_id", userId)
+            .gte("day_date", contextStartDate)
+            .lte("day_date", contextEndDate)
+        : Promise.resolve({ data: null, error: null }),
+      fridgeItems.length === 0
+        ? supabase
+            .from("pantry_items")
+            .select("name, amount, expiration_date")
+            .eq("user_id", userId)
+            .gte("expiration_date", todayStr)
+            .order("expiration_date", { ascending: true })
+        : Promise.resolve({ data: null, error: null }),
+      !hasUserProfile
+        ? supabase
+            .from("user_profiles")
+            .select("*")
+            .eq("id", userId)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+
+    if (existingMenus.length === 0 && !existingMealsResult.error) {
+      const existingMenusFetched: ExistingMenuContext[] = [];
+      for (const day of (existingMealsResult.data ?? []) as any[]) {
+        const dayDate = String(day.day_date ?? "");
+        const isPast = dayDate < todayStr;
+        const meals = Array.isArray(day.planned_meals) ? day.planned_meals : [];
+        for (const meal of meals) {
+          if (!meal?.dish_name) continue;
+          const mode = String(meal.mode ?? "");
+          existingMenusFetched.push({
+            date: dayDate,
+            mealType: meal.meal_type as MealType,
+            dishName: String(meal.dish_name),
+            status: meal.is_completed ? "completed" : mode === "skip" ? "skip" : mode.startsWith("ai") ? "ai" : "manual",
+            isPast,
+          });
+        }
+      }
+      existingMenus = existingMenusFetched;
+    }
+
+    if (fridgeItems.length === 0 && !pantryResult.error) {
+      fridgeItems = ((pantryResult.data ?? []) as any[]).map((item) => ({
+        name: item.name,
+        quantity: item.amount || undefined,
+        expirationDate: item.expiration_date || undefined,
+      }));
+    }
+
+    if (!hasUserProfile && !profileResult.error && profileResult.data) {
+      userProfile = profileResult.data;
+    }
+  }
 
   const familySize = Number.isFinite(generatedData.familySize)
     ? Number(generatedData.familySize)
