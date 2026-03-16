@@ -675,8 +675,13 @@ async function saveMealToDb(
   }
 ): Promise<void> {
   const { userId, requestId, targetSlot, generatedMeal } = params;
+  const slotStartedAt = Date.now();
+  let dishProcessingTotalMs = 0;
+  let plannedMealLookupMs = 0;
+  let plannedMealWriteMs = 0;
 
   // user_daily_meals: upsert（日付ベース）
+  const dailyMealUpsertStartedAt = Date.now();
   const { data: dailyMeal, error: dailyMealErr } = await supabase
     .from("user_daily_meals")
     .upsert(
@@ -693,6 +698,7 @@ async function saveMealToDb(
   if (dailyMealErr || !dailyMeal?.id) {
     throw new Error(`Failed to upsert user_daily_meals: ${dailyMealErr?.message}`);
   }
+  const dailyMealUpsertMs = Date.now() - dailyMealUpsertStartedAt;
   const dayData = dailyMeal;
 
   // Calculate nutrition per dish + V3-like validation/adjustment for suspicious low-calorie dishes
@@ -710,12 +716,27 @@ async function saveMealToDb(
   const recipeSource = (generatedMeal as any)._recipeSource as { type: string; id: string; externalId: string } | undefined;
 
   for (let idx = 0; idx < generatedMeal.dishes.length; idx++) {
+    const dishStartedAt = Date.now();
     const dish = generatedMeal.dishes[idx];
 
     const inputIngredients = (dish.ingredients ?? []).map((ingredient: any) => ({
       name: String(ingredient?.name ?? "").trim(),
       amount_g: Number(ingredient?.amount_g ?? 0),
     }));
+    const dishTimingMs: Record<string, unknown> = {
+      dish_index: idx,
+      ingredient_count: inputIngredients.length,
+      used_resolved_recipe_db: Boolean(resolvedNutrition && idx === 0),
+      nutrition_analysis_ms: 0,
+      normalize_ingredients_ms: 0,
+      match_ingredients_ms: 0,
+      calculate_dish_nutrition_ms: 0,
+      validation_ms: 0,
+      reference_search_ms: 0,
+      reference_adjustment_ms: 0,
+      build_dish_detail_ms: 0,
+      total_ms: 0,
+    };
     let normalizedIngredients = inputIngredients;
     let ingredientMatches: MealNutritionDebugLogInput["ingredientMatches"] = [];
     let calculatedNutrition: NutritionTotals = emptyNutrition();
@@ -743,7 +764,12 @@ async function saveMealToDb(
       console.log(`📊 Using pre-calculated nutrition from recipe DB for ${dish.name}`);
     } else {
       try {
+        const nutritionAnalysisStartedAt = Date.now();
         const analysis = await analyzeNutritionFromIngredientsV4(supabase, dish.name, dish.role, dish.ingredients);
+        dishTimingMs.nutrition_analysis_ms = Date.now() - nutritionAnalysisStartedAt;
+        dishTimingMs.normalize_ingredients_ms = analysis.timingMs.normalize_ingredients_ms;
+        dishTimingMs.match_ingredients_ms = analysis.timingMs.match_ingredients_ms;
+        dishTimingMs.calculate_dish_nutrition_ms = analysis.timingMs.calculate_dish_nutrition_ms;
         normalizedIngredients = analysis.normalizedIngredients;
         ingredientMatches = analysis.ingredientMatches;
         calculatedNutrition = analysis.calculatedNutrition;
@@ -771,12 +797,16 @@ async function saveMealToDb(
       };
       try {
         const before = nutrition.calories_kcal ?? 0;
+        const validationStartedAt = Date.now();
         const validation = await validateAndAdjustNutritionV4(
           supabase,
           dish.name,
           nutrition,
           { maxDeviationPercent: 70, useReferenceIfInvalid: true },
         );
+        dishTimingMs.validation_ms = Date.now() - validationStartedAt;
+        dishTimingMs.reference_search_ms = validation.timingMs.reference_search_ms;
+        dishTimingMs.reference_adjustment_ms = validation.timingMs.adjustment_ms;
         validationDebug = {
           attempted: true,
           min_expected_calories: minExpectedCal,
@@ -815,6 +845,7 @@ async function saveMealToDb(
       };
     }
 
+    const buildDishDetailStartedAt = Date.now();
     nutritionDebugEntries.push({
       requestId: requestId ?? null,
       userId,
@@ -831,6 +862,7 @@ async function saveMealToDb(
       calculatedNutrition,
       finalNutrition: nutrition,
       validation: validationDebug,
+      dishTimingMs,
       metadata: {
         generated_meal_type: generatedMeal.mealType,
         recipe_source: idx === 0 && recipeSource ? recipeSource : null,
@@ -906,6 +938,9 @@ async function saveMealToDb(
       // レシピDBソース（AIアドバイザーからの検索時）
       recipe_source: idx === 0 && recipeSource ? recipeSource : undefined,
     });
+    dishTimingMs.build_dish_detail_ms = Date.now() - buildDishDetailStartedAt;
+    dishTimingMs.total_ms = Date.now() - dishStartedAt;
+    dishProcessingTotalMs += Number(dishTimingMs.total_ms ?? 0);
   }
 
   const dishName = dishDetails.length === 1
@@ -969,10 +1004,12 @@ async function saveMealToDb(
 
   // If plannedMealId is specified, update existing record
   if (targetSlot.plannedMealId) {
+    const plannedMealWriteStartedAt = Date.now();
     const { error: updateError } = await supabase
       .from("planned_meals")
       .update(plannedMealData)
       .eq("id", targetSlot.plannedMealId);
+    plannedMealWriteMs = Date.now() - plannedMealWriteStartedAt;
     if (updateError) {
       console.error(`Failed to update planned_meal ${targetSlot.plannedMealId}:`, updateError);
       throw updateError;
@@ -980,12 +1017,14 @@ async function saveMealToDb(
     console.log(`✅ Updated planned_meal ${targetSlot.plannedMealId}`);
   } else {
     // Check if slot already exists (should not happen if API validated correctly)
+    const plannedMealLookupStartedAt = Date.now();
     const { data: existingMeal } = await supabase
       .from("planned_meals")
       .select("id")
       .eq("daily_meal_id", dayData.id)
       .eq("meal_type", targetSlot.mealType)
       .maybeSingle();
+    plannedMealLookupMs = Date.now() - plannedMealLookupStartedAt;
 
     if (existingMeal) {
       // This should not happen in V4 (empty slots only), log warning
@@ -993,11 +1032,13 @@ async function saveMealToDb(
       return;
     }
 
+    const plannedMealWriteStartedAt = Date.now();
     const { data: insertedMeal, error: insertError } = await supabase
       .from("planned_meals")
       .insert(plannedMealData)
       .select("id")
       .single();
+    plannedMealWriteMs = Date.now() - plannedMealWriteStartedAt;
     if (insertError) {
       console.error(`Failed to insert planned_meal:`, insertError);
       throw insertError;
@@ -1006,11 +1047,25 @@ async function saveMealToDb(
     console.log(`✅ Created new planned_meal for ${targetSlot.date}/${targetSlot.mealType}`);
   }
 
-  await Promise.all(
+  const slotTimingMs = {
+    daily_meal_upsert_ms: dailyMealUpsertMs,
+    dish_processing_total_ms: dishProcessingTotalMs,
+    planned_meal_lookup_ms: plannedMealLookupMs,
+    planned_meal_write_ms: plannedMealWriteMs,
+    nutrition_debug_insert_ms: 0,
+    dish_count: generatedMeal.dishes.length,
+    updated_existing_planned_meal: Boolean(targetSlot.plannedMealId),
+    total_ms: 0,
+  };
+
+  const nutritionDebugInsertStartedAt = Date.now();
+  const debugLogIds = (
+    await Promise.all(
     nutritionDebugEntries.map((entry) =>
       insertMealNutritionDebugLog(supabase, {
         ...entry,
         plannedMealId,
+        slotTimingMs,
         metadata: {
           ...(entry.metadata ?? {}),
           planned_meal_id: plannedMealId,
@@ -1018,7 +1073,20 @@ async function saveMealToDb(
         },
       }),
     ),
-  );
+    )
+  ).filter((id): id is string => Boolean(id));
+  slotTimingMs.nutrition_debug_insert_ms = Date.now() - nutritionDebugInsertStartedAt;
+  slotTimingMs.total_ms = Date.now() - slotStartedAt;
+
+  if (debugLogIds.length > 0) {
+    const { error: debugUpdateError } = await supabase
+      .from("meal_nutrition_debug_logs")
+      .update({ slot_timing_ms: slotTimingMs })
+      .in("id", debugLogIds);
+    if (debugUpdateError) {
+      console.error("[meal-nutrition-debug] Failed to update slot timing:", debugUpdateError);
+    }
+  }
 }
 
 // =========================================================

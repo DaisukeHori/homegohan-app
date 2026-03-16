@@ -34,6 +34,12 @@ export type V4NutritionAnalysis = {
   normalizedIngredients: EstimatedIngredient[];
   ingredientMatches: V4IngredientMatchDebug[];
   calculatedNutrition: NutritionTotals;
+  timingMs: {
+    normalize_ingredients_ms: number;
+    match_ingredients_ms: number;
+    calculate_dish_nutrition_ms: number;
+    total_ms: number;
+  };
 };
 
 export function normalizeV4IngredientsForDish(
@@ -71,6 +77,11 @@ type NutritionValidationResult = {
   appliedAdjustment: boolean;
   referenceRecipe: ReferenceRecipe | null;
   referenceCandidates: ReferenceRecipe[];
+  timingMs: {
+    reference_search_ms: number;
+    adjustment_ms: number;
+    total_ms: number;
+  };
 };
 
 function toLegacyNutritionTotals(input: ReturnType<typeof calculateDishNutrition>["totals"]): NutritionTotals {
@@ -109,18 +120,33 @@ export async function analyzeNutritionFromIngredientsV4(
   dishRole: string | undefined,
   ingredients: EstimatedIngredient[],
 ): Promise<V4NutritionAnalysis> {
+  const startedAt = Date.now();
+
+  const normalizeStartedAt = Date.now();
   const normalizedIngredients = normalizeV4IngredientsForDish(dishName, dishRole, ingredients);
+  const normalizeIngredientsMs = Date.now() - normalizeStartedAt;
   const effectiveIngredients = normalizedIngredients.filter((ingredient) => ingredient.amount_g > 0);
   if (effectiveIngredients.length === 0) {
     return {
       normalizedIngredients,
       ingredientMatches: [],
       calculatedNutrition: emptyNutrition(),
+      timingMs: {
+        normalize_ingredients_ms: normalizeIngredientsMs,
+        match_ingredients_ms: 0,
+        calculate_dish_nutrition_ms: 0,
+        total_ms: Date.now() - startedAt,
+      },
     };
   }
 
+  const matchStartedAt = Date.now();
   const matchResults = await matchIngredients(supabase, effectiveIngredients);
+  const matchIngredientsMs = Date.now() - matchStartedAt;
+
+  const calculateDishNutritionStartedAt = Date.now();
   const dishNutrition = calculateDishNutrition(dishName, "other", matchResults);
+  const calculateDishNutritionMs = Date.now() - calculateDishNutritionStartedAt;
   const calculatedNutrition = toLegacyNutritionTotals(dishNutrition.totals);
   const ingredientMatches = matchResults.map((matchResult, index) => {
     const ingredientNutrition = dishNutrition.ingredients[index];
@@ -149,6 +175,12 @@ export async function analyzeNutritionFromIngredientsV4(
     normalizedIngredients,
     ingredientMatches,
     calculatedNutrition,
+    timingMs: {
+      normalize_ingredients_ms: normalizeIngredientsMs,
+      match_ingredients_ms: matchIngredientsMs,
+      calculate_dish_nutrition_ms: calculateDishNutritionMs,
+      total_ms: Date.now() - startedAt,
+    },
   };
 }
 
@@ -171,9 +203,12 @@ export async function validateAndAdjustNutritionV4(
     useReferenceIfInvalid?: boolean;
   },
 ): Promise<NutritionValidationResult> {
+  const startedAt = Date.now();
   const maxDeviation = options?.maxDeviationPercent ?? 50;
   const useReference = options?.useReferenceIfInvalid ?? true;
+  const referenceSearchStartedAt = Date.now();
   const referenceCandidates = await searchSimilarRecipes(supabase, dishName, 0.3, 5);
+  const referenceSearchMs = Date.now() - referenceSearchStartedAt;
   const reference = referenceCandidates[0] ?? null;
 
   if (!reference || !reference.calories_kcal) {
@@ -188,6 +223,11 @@ export async function validateAndAdjustNutritionV4(
       appliedAdjustment: false,
       referenceRecipe: null,
       referenceCandidates,
+      timingMs: {
+        reference_search_ms: referenceSearchMs,
+        adjustment_ms: 0,
+        total_ms: Date.now() - startedAt,
+      },
     };
   }
 
@@ -212,6 +252,11 @@ export async function validateAndAdjustNutritionV4(
       appliedAdjustment: false,
       referenceRecipe: reference,
       referenceCandidates,
+      timingMs: {
+        reference_search_ms: referenceSearchMs,
+        adjustment_ms: 0,
+        total_ms: Date.now() - startedAt,
+      },
     };
   }
 
@@ -227,9 +272,15 @@ export async function validateAndAdjustNutritionV4(
       appliedAdjustment: false,
       referenceRecipe: reference,
       referenceCandidates,
+      timingMs: {
+        reference_search_ms: referenceSearchMs,
+        adjustment_ms: 0,
+        total_ms: Date.now() - startedAt,
+      },
     };
   }
 
+  const adjustmentStartedAt = Date.now();
   const adjustedNutrition = { ...calculatedNutrition };
   const scaleFactor = calcCal > 0 ? refCal / calcCal : 1;
 
@@ -262,6 +313,7 @@ export async function validateAndAdjustNutritionV4(
   adjustedNutrition.vitamin_e_mg *= scaleFactor;
   adjustedNutrition.vitamin_k_ug *= scaleFactor;
   adjustedNutrition.folic_acid_ug *= scaleFactor;
+  const adjustmentMs = Date.now() - adjustmentStartedAt;
 
   return {
     isValid: false,
@@ -274,5 +326,10 @@ export async function validateAndAdjustNutritionV4(
     appliedAdjustment: true,
     referenceRecipe: reference,
     referenceCandidates,
+    timingMs: {
+      reference_search_ms: referenceSearchMs,
+      adjustment_ms: adjustmentMs,
+      total_ms: Date.now() - startedAt,
+    },
   };
 }

@@ -56,6 +56,8 @@ export type MealNutritionDebugLogInput = {
   calculatedNutrition: NutritionTotals;
   finalNutrition: NutritionTotals;
   validation: ValidationDebug;
+  dishTimingMs?: Record<string, unknown>;
+  slotTimingMs?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 };
 
@@ -121,7 +123,7 @@ export function collectMealNutritionIssueFlags(input: {
 export async function insertMealNutritionDebugLog(
   supabase: SupabaseClient,
   input: MealNutritionDebugLogInput,
-): Promise<void> {
+): Promise<string | null> {
   try {
     const issueFlags = collectMealNutritionIssueFlags({
       sourceKind: input.sourceKind,
@@ -131,31 +133,40 @@ export async function insertMealNutritionDebugLog(
       validation: input.validation,
     });
 
-    const { error } = await supabase.from("meal_nutrition_debug_logs").insert({
-      request_id: input.requestId ?? null,
-      user_id: input.userId,
-      daily_meal_id: input.dailyMealId ?? null,
-      planned_meal_id: input.plannedMealId ?? null,
-      target_date: input.targetDate,
-      meal_type: input.mealType,
-      dish_name: input.dishName,
-      dish_role: input.dishRole ?? null,
-      source_function: input.sourceFunction,
-      source_kind: input.sourceKind,
-      input_ingredients: input.inputIngredients,
-      normalized_ingredients: input.normalizedIngredients,
-      ingredient_matches: input.ingredientMatches,
-      calculated_nutrition: input.calculatedNutrition,
-      validation_result: input.validation,
-      final_nutrition: input.finalNutrition,
-      issue_flags: issueFlags,
-      metadata: input.metadata ?? {},
-    });
+    const { data, error } = await supabase
+      .from("meal_nutrition_debug_logs")
+      .insert({
+        request_id: input.requestId ?? null,
+        user_id: input.userId,
+        daily_meal_id: input.dailyMealId ?? null,
+        planned_meal_id: input.plannedMealId ?? null,
+        target_date: input.targetDate,
+        meal_type: input.mealType,
+        dish_name: input.dishName,
+        dish_role: input.dishRole ?? null,
+        source_function: input.sourceFunction,
+        source_kind: input.sourceKind,
+        input_ingredients: input.inputIngredients,
+        normalized_ingredients: input.normalizedIngredients,
+        ingredient_matches: input.ingredientMatches,
+        calculated_nutrition: input.calculatedNutrition,
+        validation_result: input.validation,
+        final_nutrition: input.finalNutrition,
+        dish_timing_ms: input.dishTimingMs ?? {},
+        slot_timing_ms: input.slotTimingMs ?? {},
+        issue_flags: issueFlags,
+        metadata: input.metadata ?? {},
+      })
+      .select("id")
+      .single();
 
     if (error) {
       console.error("[meal-nutrition-debug] Failed to insert log:", error);
+      return null;
     }
+    return typeof data?.id === "string" ? data.id : null;
   } catch (error) {
     console.error("[meal-nutrition-debug] Failed to insert log:", error);
+    return null;
   }
 }
