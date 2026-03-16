@@ -4,7 +4,7 @@ import { searchSimilarRecipes, type ReferenceRecipe } from "./evidence-verifier.
 import { matchIngredients, type IngredientMatchResult } from "./ingredient-matcher.ts";
 import { calculateDishNutrition } from "./nutrition-calculator-v2.ts";
 import type { NutritionTotals } from "./nutrition-calculator.ts";
-import { emptyNutrition } from "./nutrition-calculator.ts";
+import { adjustStockIngredient, emptyNutrition, isWaterishIngredient } from "./nutrition-calculator.ts";
 
 interface EstimatedIngredient {
   name: string;
@@ -51,17 +51,43 @@ export function normalizeV4IngredientsForDish(
   const isRiceDish =
     dishRole === "rice" ||
     /^(ご飯|ライス|白ご飯|白米|麦ご飯|麦飯|玄米ご飯|発芽玄米ご飯)$/.test(normalizedDishName);
-  if (!isRiceDish) return ingredients;
+  const hasCookingWater = ingredients.some((ingredient) => {
+    return isWaterishIngredient(String(ingredient.name ?? "").trim()) && ingredient.amount_g > 0;
+  });
 
   return ingredients.map((ingredient) => {
     const normalizedName = String(ingredient.name ?? "").trim();
+    const adjustedStock = adjustStockIngredient(normalizedName, ingredient.amount_g);
+    if (adjustedStock.skipped) {
+      return {
+        ...ingredient,
+        amount_g: 0,
+      };
+    }
+    if (adjustedStock.name !== normalizedName || adjustedStock.amount_g !== ingredient.amount_g) {
+      ingredient = {
+        ...ingredient,
+        name: adjustedStock.name,
+        amount_g: adjustedStock.amount_g,
+      };
+    }
+
+    if (!isRiceDish) return ingredient;
     if (normalizedName !== "米") return ingredient;
+
+    const looksLikeDryRice = hasCookingWater || ingredient.amount_g <= 80;
+    const normalizedAmount = looksLikeDryRice
+      ? Math.round(ingredient.amount_g * 2.5)
+      : ingredient.amount_g;
 
     return {
       ...ingredient,
       // 「米 150g」のような曖昧入力は乾燥穀粒やそば米へ誤爆しやすい。
       // role=rice の皿では炊飯後の「ご飯」と解釈する。
+      // 水を併記した 50〜80g 程度の「米」は、生米量として出力されることが多いので
+      // 1人前の炊飯後重量へ換算してから計算する。
       name: "ご飯",
+      amount_g: normalizedAmount,
     };
   });
 }
