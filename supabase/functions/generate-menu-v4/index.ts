@@ -15,6 +15,10 @@ import {
   type HealthCheckupGuidance,
 } from "../_shared/user-context.ts";
 import {
+  sanitizeGenerationPromptConstraints,
+  sanitizeGenerationPromptProfile,
+} from "../_shared/generation-serving.ts";
+import {
   emptyNutrition,
   type NutritionTotals,
 } from "../_shared/nutrition-calculator.ts";
@@ -704,7 +708,7 @@ async function saveMealToDb(
       console.log(`📊 Using pre-calculated nutrition from recipe DB for ${dish.name}`);
     } else {
       try {
-        nutrition = await calculateNutritionFromIngredientsV4(supabase, dish.name, dish.ingredients);
+        nutrition = await calculateNutritionFromIngredientsV4(supabase, dish.name, dish.role, dish.ingredients);
       } catch (e) {
         console.warn(`Nutrition calc failed for ${dish.name}:`, e);
         nutrition = emptyNutrition();
@@ -1109,6 +1113,8 @@ async function executeStep1_Generate(
       (Number.isFinite(userProfile?.family_size) ? Number(userProfile.family_size) : 1);
 
   const constraintsForContext = { ...(constraintsRaw ?? {}), familySize };
+  const promptProfile = sanitizeGenerationPromptProfile(userProfile);
+  const promptConstraints = sanitizeGenerationPromptConstraints(constraintsForContext);
 
   // Build (or reuse) LLM context
   const nutritionTargets =
@@ -1171,17 +1177,17 @@ async function executeStep1_Generate(
   const userContext =
     generatedData.userContext ??
     buildUserContextForPrompt({
-      profile: userProfile,
+      profile: promptProfile,
       nutritionTargets,
       note,
-      constraints: constraintsForContext,
+      constraints: promptConstraints,
       healthCheckups,
       healthGuidance,
     });
 
   const userSummary =
     generatedData.userSummary ??
-    buildUserSummary(userProfile, nutritionTargets, note, constraintsForContext, healthCheckups, healthGuidance);
+    buildUserSummary(promptProfile, nutritionTargets, note, promptConstraints, healthCheckups, healthGuidance);
 
   const references: MenuReference[] =
     generatedData.references ??
@@ -1193,10 +1199,10 @@ async function executeStep1_Generate(
         1,
       );
       const searchQuery = buildSearchQueryBase({
-        profile: userProfile,
+        profile: promptProfile,
         nutritionTargets,
         note,
-        constraints: constraintsForContext,
+        constraints: promptConstraints,
       });
       console.time("⏱️ searchMenuCandidates");
       const result = await searchMenuCandidates(supabase, searchQuery, 150);
@@ -1669,7 +1675,7 @@ async function executeStep3_Complete(
   await updateProgress(
     supabase,
     requestId,
-    { currentStep: 3, totalSteps, message: `${stepMessage}（${cursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+    { currentStep: 3, totalSteps, message: `${stepMessage}（${cursor}/${totalSlots}）`, completedSlots: cursor, totalSlots },
     3,
   );
 
@@ -1695,6 +1701,14 @@ async function executeStep3_Complete(
     } catch (e: any) {
       errors.push({ key, error: e?.message ?? String(e) });
     }
+
+    const processedCount = i + 1;
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 3, totalSteps, message: `${stepMessage}（${processedCount}/${totalSlots}）`, completedSlots: processedCount, totalSlots },
+      3,
+    );
   }
 
   const newCursor = end;
@@ -2162,7 +2176,7 @@ async function executeStep6_FinalSave(
   await updateProgress(
     supabase,
     requestId,
-    { currentStep: 6, totalSteps: 6, message: `最終保存中...（${cursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+    { currentStep: 6, totalSteps: 6, message: `最終保存中...（${cursor}/${totalSlots}）`, completedSlots: cursor, totalSlots },
     6,
   );
 
@@ -2180,6 +2194,14 @@ async function executeStep6_FinalSave(
     } catch (e: any) {
       errors.push({ key, error: e?.message ?? String(e) });
     }
+
+    const processedCount = i + 1;
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 6, totalSteps: 6, message: `最終保存中...（${processedCount}/${totalSlots}）`, completedSlots: processedCount, totalSlots },
+      6,
+    );
   }
 
   const newCursor = end;

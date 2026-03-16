@@ -5,6 +5,7 @@
  */
 
 import { z } from "zod";
+import { SINGLE_SERVING_PROMPT_GUIDANCE } from "./generation-serving.ts";
 
 // =========================================================
 // Types / Schemas
@@ -106,6 +107,7 @@ export async function generateMealWithLLM(input: {
     `【絶対ルール】\n` +
     `- 出力は **厳密なJSONのみ**（Markdown/説明文/コードブロック禁止）\n` +
     `- ingredients[].amount_g は必ず g 単位（大さじ/小さじ/個/本などは料理として自然なgに換算）\n` +
+    `${SINGLE_SERVING_PROMPT_GUIDANCE}\n` +
     `- ingredients[].name は **食材名のみ**（括弧・分量・用途・状態は入れない）\n` +
     `  - 例: 「キャベツ」「卵」「豚ひき肉」「ごま油」「醤油」\n` +
     `- instructions は手順ごとに分割し、番号なしで配列に入れる\n` +
@@ -211,6 +213,7 @@ export async function generateDayMealsWithLLM(input: {
     `【絶対ルール】\n` +
     `- 出力は **厳密なJSONのみ**（Markdown/説明文/コードブロック禁止）\n` +
     `- ingredients[].amount_g は必ず g 単位（大さじ/小さじ/個/本などは料理として自然なgに換算）\n` +
+    `${SINGLE_SERVING_PROMPT_GUIDANCE}\n` +
     `- ingredients[].name は **食材名のみ**（括弧・分量・用途・状態は入れない）\n` +
     `  - 例: 「キャベツ」「卵」「豚ひき肉」「ごま油」「醤油」\n` +
     `- instructions は手順ごとに分割し、番号なしで配列に入れる\n` +
@@ -466,6 +469,7 @@ export async function regenerateMealForIssue(input: {
     `【絶対ルール】\n` +
     `- 出力は **厳密なJSONのみ**（Markdown/説明文/コードブロック禁止）\n` +
     `- ingredients[].amount_g は必ず g 単位\n` +
+    `${SINGLE_SERVING_PROMPT_GUIDANCE}\n` +
     `- ingredients[].name は **食材名のみ**\n` +
     `- 昼食・夕食は「1汁3菜」を基本（主菜 + 副菜 + 汁物 + ご飯など、3〜4品）\n` +
     `- 朝食は2品以上\n` +

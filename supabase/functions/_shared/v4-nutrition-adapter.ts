@@ -11,6 +11,30 @@ interface EstimatedIngredient {
   amount_g: number;
 }
 
+export function normalizeV4IngredientsForDish(
+  dishName: string,
+  dishRole: string | undefined,
+  ingredients: EstimatedIngredient[],
+): EstimatedIngredient[] {
+  const normalizedDishName = String(dishName ?? "").trim();
+  const isRiceDish =
+    dishRole === "rice" ||
+    /^(ご飯|ライス|白ご飯|白米|麦ご飯|麦飯|玄米ご飯|発芽玄米ご飯)$/.test(normalizedDishName);
+  if (!isRiceDish) return ingredients;
+
+  return ingredients.map((ingredient) => {
+    const normalizedName = String(ingredient.name ?? "").trim();
+    if (normalizedName !== "米") return ingredient;
+
+    return {
+      ...ingredient,
+      // 「米 150g」のような曖昧入力は乾燥穀粒やそば米へ誤爆しやすい。
+      // role=rice の皿では炊飯後の「ご飯」と解釈する。
+      name: "ご飯",
+    };
+  });
+}
+
 type NutritionValidationResult = {
   isValid: boolean;
   calculatedCalories: number;
@@ -54,9 +78,11 @@ function toLegacyNutritionTotals(input: ReturnType<typeof calculateDishNutrition
 export async function calculateNutritionFromIngredientsV4(
   supabase: SupabaseClient,
   dishName: string,
+  dishRole: string | undefined,
   ingredients: EstimatedIngredient[],
 ): Promise<NutritionTotals> {
-  const effectiveIngredients = ingredients.filter((ingredient) => ingredient.amount_g > 0);
+  const normalizedIngredients = normalizeV4IngredientsForDish(dishName, dishRole, ingredients);
+  const effectiveIngredients = normalizedIngredients.filter((ingredient) => ingredient.amount_g > 0);
   if (effectiveIngredients.length === 0) {
     return emptyNutrition();
   }
