@@ -23,9 +23,10 @@ import {
   type NutritionTotals,
 } from "../_shared/nutrition-calculator.ts";
 import {
-  calculateNutritionFromIngredientsV4,
+  analyzeNutritionFromIngredientsV4,
   validateAndAdjustNutritionV4,
 } from "../_shared/v4-nutrition-adapter.ts";
+import { insertMealNutritionDebugLog, type MealNutritionDebugLogInput } from "../_shared/meal-nutrition-debug.ts";
 import {
   generateMealWithLLM,
   generateDayMealsWithLLM,
@@ -659,11 +660,12 @@ async function saveMealToDb(
   supabase: any,
   params: {
     userId: string;
+    requestId?: string;
     targetSlot: TargetSlot;
     generatedMeal: GeneratedMeal;
   }
 ): Promise<void> {
-  const { userId, targetSlot, generatedMeal } = params;
+  const { userId, requestId, targetSlot, generatedMeal } = params;
 
   // user_daily_meals: upsert（日付ベース）
   const { data: dailyMeal, error: dailyMealErr } = await supabase
@@ -687,6 +689,7 @@ async function saveMealToDb(
   // Calculate nutrition per dish + V3-like validation/adjustment for suspicious low-calorie dishes
   const totalNutrition = emptyNutrition();
   const dishDetails: any[] = [];
+  const nutritionDebugEntries: MealNutritionDebugLogInput[] = [];
   const aggregatedIngredients: string[] = [];
   const allSteps: string[] = [];
 
@@ -700,24 +703,63 @@ async function saveMealToDb(
   for (let idx = 0; idx < generatedMeal.dishes.length; idx++) {
     const dish = generatedMeal.dishes[idx];
 
+    const inputIngredients = (dish.ingredients ?? []).map((ingredient: any) => ({
+      name: String(ingredient?.name ?? "").trim(),
+      amount_g: Number(ingredient?.amount_g ?? 0),
+    }));
+    let normalizedIngredients = inputIngredients;
+    let ingredientMatches: MealNutritionDebugLogInput["ingredientMatches"] = [];
+    let calculatedNutrition: NutritionTotals = emptyNutrition();
     let nutrition: NutritionTotals = emptyNutrition();
+    let sourceKind: MealNutritionDebugLogInput["sourceKind"] = "ingredient_match";
+    const minExpectedCal = getMinExpectedCaloriesForRole(dish.role);
+    let validationDebug: MealNutritionDebugLogInput["validation"] = {
+      attempted: false,
+      min_expected_calories: minExpectedCal,
+      calculated_calories: 0,
+      reference_calories: 0,
+      deviation_percent: 0,
+      used_reference_adjustment: false,
+      message: "未検証",
+      reference_source: "none",
+      reference_recipe: null,
+      reference_candidates: [],
+    };
 
     // レシピDBからの事前計算済み栄養データがある場合はそれを使用
     if (resolvedNutrition && idx === 0) {
+      sourceKind = "resolved_recipe_db";
+      calculatedNutrition = resolvedNutrition;
       nutrition = resolvedNutrition;
       console.log(`📊 Using pre-calculated nutrition from recipe DB for ${dish.name}`);
     } else {
       try {
-        nutrition = await calculateNutritionFromIngredientsV4(supabase, dish.name, dish.role, dish.ingredients);
+        const analysis = await analyzeNutritionFromIngredientsV4(supabase, dish.name, dish.role, dish.ingredients);
+        normalizedIngredients = analysis.normalizedIngredients;
+        ingredientMatches = analysis.ingredientMatches;
+        calculatedNutrition = analysis.calculatedNutrition;
+        nutrition = analysis.calculatedNutrition;
       } catch (e) {
         console.warn(`Nutrition calc failed for ${dish.name}:`, e);
+        calculatedNutrition = emptyNutrition();
         nutrition = emptyNutrition();
       }
     }
 
     // V3同様: 低カロリーなど怪しい料理のみ参照レシピで検証・補正
-    const minExpectedCal = getMinExpectedCaloriesForRole(dish.role);
     if ((nutrition.calories_kcal ?? 0) < minExpectedCal) {
+      validationDebug = {
+        attempted: true,
+        min_expected_calories: minExpectedCal,
+        calculated_calories: nutrition.calories_kcal ?? 0,
+        reference_calories: 0,
+        deviation_percent: 0,
+        used_reference_adjustment: false,
+        message: "検証開始",
+        reference_source: "none",
+        reference_recipe: null,
+        reference_candidates: [],
+      };
       try {
         const before = nutrition.calories_kcal ?? 0;
         const validation = await validateAndAdjustNutritionV4(
@@ -726,6 +768,18 @@ async function saveMealToDb(
           nutrition,
           { maxDeviationPercent: 70, useReferenceIfInvalid: true },
         );
+        validationDebug = {
+          attempted: true,
+          min_expected_calories: minExpectedCal,
+          calculated_calories: validation.calculatedCalories,
+          reference_calories: validation.referenceCalories,
+          deviation_percent: validation.deviationPercent,
+          used_reference_adjustment: Boolean(validation.appliedAdjustment),
+          message: validation.message,
+          reference_source: validation.referenceSource,
+          reference_recipe: validation.referenceRecipe,
+          reference_candidates: validation.referenceCandidates,
+        };
         if (validation.adjustedNutrition) {
           nutrition = validation.adjustedNutrition;
           const after = nutrition.calories_kcal ?? 0;
@@ -735,8 +789,44 @@ async function saveMealToDb(
         }
       } catch (e: any) {
         console.warn(`Validation failed for ${dish.name}:`, e?.message ?? e);
+        validationDebug.message = `検証失敗: ${e?.message ?? String(e)}`;
       }
+    } else {
+      validationDebug = {
+        attempted: false,
+        min_expected_calories: minExpectedCal,
+        calculated_calories: nutrition.calories_kcal ?? 0,
+        reference_calories: 0,
+        deviation_percent: 0,
+        used_reference_adjustment: false,
+        message: "閾値以上のため検証スキップ",
+        reference_source: "none",
+        reference_recipe: null,
+        reference_candidates: [],
+      };
     }
+
+    nutritionDebugEntries.push({
+      requestId: requestId ?? null,
+      userId,
+      dailyMealId: dayData.id,
+      targetDate: targetSlot.date,
+      mealType: targetSlot.mealType,
+      dishName: dish.name,
+      dishRole: dish.role ?? null,
+      sourceFunction: "generate-menu-v4",
+      sourceKind,
+      inputIngredients,
+      normalizedIngredients,
+      ingredientMatches,
+      calculatedNutrition,
+      finalNutrition: nutrition,
+      validation: validationDebug,
+      metadata: {
+        generated_meal_type: generatedMeal.mealType,
+        recipe_source: idx === 0 && recipeSource ? recipeSource : null,
+      },
+    });
 
     // 合算
     for (const key of Object.keys(totalNutrition) as (keyof NutritionTotals)[]) {
@@ -866,6 +956,8 @@ async function saveMealToDb(
     updated_at: new Date().toISOString(),
   };
 
+  let plannedMealId = targetSlot.plannedMealId ?? null;
+
   // If plannedMealId is specified, update existing record
   if (targetSlot.plannedMealId) {
     const { error: updateError } = await supabase
@@ -892,15 +984,32 @@ async function saveMealToDb(
       return;
     }
 
-    const { error: insertError } = await supabase
+    const { data: insertedMeal, error: insertError } = await supabase
       .from("planned_meals")
-      .insert(plannedMealData);
+      .insert(plannedMealData)
+      .select("id")
+      .single();
     if (insertError) {
       console.error(`Failed to insert planned_meal:`, insertError);
       throw insertError;
     }
+    plannedMealId = insertedMeal?.id ?? null;
     console.log(`✅ Created new planned_meal for ${targetSlot.date}/${targetSlot.mealType}`);
   }
+
+  await Promise.all(
+    nutritionDebugEntries.map((entry) =>
+      insertMealNutritionDebugLog(supabase, {
+        ...entry,
+        plannedMealId,
+        metadata: {
+          ...(entry.metadata ?? {}),
+          planned_meal_id: plannedMealId,
+          meal_title: dishName,
+        },
+      }),
+    ),
+  );
 }
 
 // =========================================================
@@ -1695,7 +1804,7 @@ async function executeStep3_Complete(
         savedCount++;
       } else {
         // Normal Mode: 栄養計算 + 保存
-        await saveMealToDb(supabase, { userId, targetSlot: slot, generatedMeal: meal });
+        await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
         savedCount++;
       }
     } catch (e: any) {
@@ -2189,7 +2298,7 @@ async function executeStep6_FinalSave(
       continue;
     }
     try {
-      await saveMealToDb(supabase, { userId, targetSlot: slot, generatedMeal: meal });
+      await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
       savedCount++;
     } catch (e: any) {
       errors.push({ key, error: e?.message ?? String(e) });

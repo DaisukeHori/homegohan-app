@@ -1,7 +1,7 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 
-import { searchSimilarRecipes } from "./evidence-verifier.ts";
-import { matchIngredients } from "./ingredient-matcher.ts";
+import { searchSimilarRecipes, type ReferenceRecipe } from "./evidence-verifier.ts";
+import { matchIngredients, type IngredientMatchResult } from "./ingredient-matcher.ts";
 import { calculateDishNutrition } from "./nutrition-calculator-v2.ts";
 import type { NutritionTotals } from "./nutrition-calculator.ts";
 import { emptyNutrition } from "./nutrition-calculator.ts";
@@ -10,6 +10,31 @@ interface EstimatedIngredient {
   name: string;
   amount_g: number;
 }
+
+export type V4IngredientMatchDebug = {
+  input_name: string;
+  amount_g: number;
+  match_method: IngredientMatchResult["matchMethod"];
+  confidence: IngredientMatchResult["confidence"];
+  matched_name: string | null;
+  matched_id: string | null;
+  similarity: number;
+  calories_kcal_per_100g: number | null;
+  protein_g_per_100g: number | null;
+  fat_g_per_100g: number | null;
+  carbs_g_per_100g: number | null;
+  calculated_calories_kcal: number;
+  calculated_protein_g: number;
+  calculated_fat_g: number;
+  calculated_carbs_g: number;
+  calculated_fiber_g: number;
+};
+
+export type V4NutritionAnalysis = {
+  normalizedIngredients: EstimatedIngredient[];
+  ingredientMatches: V4IngredientMatchDebug[];
+  calculatedNutrition: NutritionTotals;
+};
 
 export function normalizeV4IngredientsForDish(
   dishName: string,
@@ -43,6 +68,9 @@ type NutritionValidationResult = {
   adjustedNutrition: NutritionTotals | null;
   referenceSource: "dataset_recipes" | "dataset_menu_sets" | "none";
   message: string;
+  appliedAdjustment: boolean;
+  referenceRecipe: ReferenceRecipe | null;
+  referenceCandidates: ReferenceRecipe[];
 };
 
 function toLegacyNutritionTotals(input: ReturnType<typeof calculateDishNutrition>["totals"]): NutritionTotals {
@@ -75,21 +103,63 @@ function toLegacyNutritionTotals(input: ReturnType<typeof calculateDishNutrition
   };
 }
 
+export async function analyzeNutritionFromIngredientsV4(
+  supabase: SupabaseClient,
+  dishName: string,
+  dishRole: string | undefined,
+  ingredients: EstimatedIngredient[],
+): Promise<V4NutritionAnalysis> {
+  const normalizedIngredients = normalizeV4IngredientsForDish(dishName, dishRole, ingredients);
+  const effectiveIngredients = normalizedIngredients.filter((ingredient) => ingredient.amount_g > 0);
+  if (effectiveIngredients.length === 0) {
+    return {
+      normalizedIngredients,
+      ingredientMatches: [],
+      calculatedNutrition: emptyNutrition(),
+    };
+  }
+
+  const matchResults = await matchIngredients(supabase, effectiveIngredients);
+  const dishNutrition = calculateDishNutrition(dishName, "other", matchResults);
+  const calculatedNutrition = toLegacyNutritionTotals(dishNutrition.totals);
+  const ingredientMatches = matchResults.map((matchResult, index) => {
+    const ingredientNutrition = dishNutrition.ingredients[index];
+
+    return {
+      input_name: matchResult.input.name,
+      amount_g: matchResult.input.amount_g,
+      match_method: matchResult.matchMethod,
+      confidence: matchResult.confidence,
+      matched_name: matchResult.matched?.name ?? null,
+      matched_id: matchResult.matched?.id ?? null,
+      similarity: matchResult.matched?.similarity ?? 0,
+      calories_kcal_per_100g: matchResult.matched?.calories_kcal ?? null,
+      protein_g_per_100g: matchResult.matched?.protein_g ?? null,
+      fat_g_per_100g: matchResult.matched?.fat_g ?? null,
+      carbs_g_per_100g: matchResult.matched?.carbs_g ?? null,
+      calculated_calories_kcal: ingredientNutrition?.nutrition.calories_kcal ?? 0,
+      calculated_protein_g: ingredientNutrition?.nutrition.protein_g ?? 0,
+      calculated_fat_g: ingredientNutrition?.nutrition.fat_g ?? 0,
+      calculated_carbs_g: ingredientNutrition?.nutrition.carbs_g ?? 0,
+      calculated_fiber_g: ingredientNutrition?.nutrition.fiber_g ?? 0,
+    };
+  });
+
+  return {
+    normalizedIngredients,
+    ingredientMatches,
+    calculatedNutrition,
+  };
+}
+
 export async function calculateNutritionFromIngredientsV4(
   supabase: SupabaseClient,
   dishName: string,
   dishRole: string | undefined,
   ingredients: EstimatedIngredient[],
 ): Promise<NutritionTotals> {
-  const normalizedIngredients = normalizeV4IngredientsForDish(dishName, dishRole, ingredients);
-  const effectiveIngredients = normalizedIngredients.filter((ingredient) => ingredient.amount_g > 0);
-  if (effectiveIngredients.length === 0) {
-    return emptyNutrition();
-  }
-
-  const matchResults = await matchIngredients(supabase, effectiveIngredients);
-  const dishNutrition = calculateDishNutrition(dishName, "other", matchResults);
-  return toLegacyNutritionTotals(dishNutrition.totals);
+  const result = await analyzeNutritionFromIngredientsV4(supabase, dishName, dishRole, ingredients);
+  return result.calculatedNutrition;
 }
 
 export async function validateAndAdjustNutritionV4(
@@ -103,7 +173,8 @@ export async function validateAndAdjustNutritionV4(
 ): Promise<NutritionValidationResult> {
   const maxDeviation = options?.maxDeviationPercent ?? 50;
   const useReference = options?.useReferenceIfInvalid ?? true;
-  const reference = (await searchSimilarRecipes(supabase, dishName, 0.3, 5))[0] ?? null;
+  const referenceCandidates = await searchSimilarRecipes(supabase, dishName, 0.3, 5);
+  const reference = referenceCandidates[0] ?? null;
 
   if (!reference || !reference.calories_kcal) {
     return {
@@ -114,6 +185,9 @@ export async function validateAndAdjustNutritionV4(
       adjustedNutrition: null,
       referenceSource: "none",
       message: `参照レシピなし（計算値 ${Math.round(calculatedNutrition.calories_kcal)}kcal を使用）`,
+      appliedAdjustment: false,
+      referenceRecipe: null,
+      referenceCandidates,
     };
   }
 
@@ -135,6 +209,9 @@ export async function validateAndAdjustNutritionV4(
       adjustedNutrition: null,
       referenceSource: "dataset_recipes",
       message: `妥当（計算=${Math.round(calcCal)}kcal, 参照=${refCal}kcal, 乖離${deviationPercent.toFixed(0)}%）`,
+      appliedAdjustment: false,
+      referenceRecipe: reference,
+      referenceCandidates,
     };
   }
 
@@ -147,6 +224,9 @@ export async function validateAndAdjustNutritionV4(
       adjustedNutrition: null,
       referenceSource: "dataset_recipes",
       message: `要確認（計算=${Math.round(calcCal)}kcal, 参照=${refCal}kcal, 乖離${deviationPercent.toFixed(0)}%）`,
+      appliedAdjustment: false,
+      referenceRecipe: reference,
+      referenceCandidates,
     };
   }
 
@@ -191,5 +271,8 @@ export async function validateAndAdjustNutritionV4(
     adjustedNutrition,
     referenceSource: "dataset_recipes",
     message: `調整済み（計算=${Math.round(calcCal)}kcal → 参照=${refCal}kcal に修正）`,
+    appliedAdjustment: true,
+    referenceRecipe: reference,
+    referenceCandidates,
   };
 }
