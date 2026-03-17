@@ -664,6 +664,7 @@ export default function AIChatBubble() {
 
       const result = await generateV4({
         targetSlots,
+        resolveExistingMeals: true,
         constraints: {},
         note: `${formattedDate}の献立を作成`,
         ultimateMode: false,
@@ -1259,4 +1260,3 @@ export default function AIChatBubble() {
     </>
   );
 }
-

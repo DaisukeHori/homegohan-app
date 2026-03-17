@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import type { TargetSlot } from '@/types/domain';
 import {
   sanitizeHealthGoalUpdate,
   sanitizeHealthRecordPayload,
@@ -12,6 +13,7 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../../../../../lib/meal-image-jobs';
+import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -138,11 +140,15 @@ export async function POST(
         }
 
         // 1日分のスロット（朝・昼・夜）を生成
-        const targetSlots = [
-          { date, mealType: 'breakfast' },
-          { date, mealType: 'lunch' },
-          { date, mealType: 'dinner' },
-        ];
+        const targetSlots = await resolveExistingTargetSlots({
+          supabase,
+          userId: user.id,
+          targetSlots: [
+            { date, mealType: 'breakfast' },
+            { date, mealType: 'lunch' },
+            { date, mealType: 'dinner' },
+          ],
+        });
 
         // リクエストを記録
         const { data: requestData, error: requestError } = await supabase
@@ -152,7 +158,11 @@ export async function POST(
             start_date: date,
             mode: 'v4',
             status: 'processing',
-            target_slots: targetSlots.map(s => ({ date: s.date, meal_type: s.mealType })),
+            target_slots: targetSlots.map((s) => ({
+              date: s.date,
+              meal_type: s.mealType,
+              planned_meal_id: s.plannedMealId,
+            })),
             progress: {
               currentStep: 0,
               totalSteps: 3,
@@ -216,16 +226,21 @@ export async function POST(
         }
 
         // 1週間分のスロットを生成
-        const targetSlots: { date: string; mealType: string }[] = [];
+        const baseTargetSlots: TargetSlot[] = [];
         const start = new Date(startDate);
         for (let i = 0; i < 7; i++) {
           const d = new Date(start);
           d.setDate(start.getDate() + i);
           const dateStr = d.toISOString().split('T')[0];
-          targetSlots.push({ date: dateStr, mealType: 'breakfast' });
-          targetSlots.push({ date: dateStr, mealType: 'lunch' });
-          targetSlots.push({ date: dateStr, mealType: 'dinner' });
+          baseTargetSlots.push({ date: dateStr, mealType: 'breakfast' });
+          baseTargetSlots.push({ date: dateStr, mealType: 'lunch' });
+          baseTargetSlots.push({ date: dateStr, mealType: 'dinner' });
         }
+        const targetSlots = await resolveExistingTargetSlots({
+          supabase,
+          userId: user.id,
+          targetSlots: baseTargetSlots,
+        });
 
         // リクエストを記録
         const { data: requestData, error: requestError } = await supabase
@@ -235,7 +250,11 @@ export async function POST(
             start_date: startDate,
             mode: 'v4',
             status: 'processing',
-            target_slots: targetSlots.map(s => ({ date: s.date, meal_type: s.mealType })),
+            target_slots: targetSlots.map((s) => ({
+              date: s.date,
+              meal_type: s.mealType,
+              planned_meal_id: s.plannedMealId,
+            })),
             progress: {
               currentStep: 0,
               totalSteps: 21,
@@ -308,6 +327,12 @@ export async function POST(
           break;
         }
 
+        const targetSlots = await resolveExistingTargetSlots({
+          supabase,
+          userId: user.id,
+          targetSlots: [{ date, mealType }],
+        });
+
         // 1. weekly_menu_requests に記録
         const { data: requestData, error: requestError } = await supabase
           .from('weekly_menu_requests')
@@ -316,7 +341,11 @@ export async function POST(
             start_date: date,
             mode: 'v4',
             status: 'processing',
-            target_slots: [{ date, meal_type: mealType }],
+            target_slots: targetSlots.map((slot) => ({
+              date: slot.date,
+              meal_type: slot.mealType,
+              planned_meal_id: slot.plannedMealId,
+            })),
             constraints: { specificDish, recipeId, recipeExternalId, excludeIngredients, preferIngredients },
             prompt: note || '',
             progress: {
@@ -348,7 +377,7 @@ export async function POST(
             body: {
               userId: user.id,
               requestId: requestData.id,
-              targetSlots: [{ date, mealType }],
+              targetSlots,
               existingMenus: [], // v4内部で取得
               fridgeItems: [], // v4内部で取得
               userProfile: {}, // v4内部で取得

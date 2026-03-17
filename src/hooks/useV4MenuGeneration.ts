@@ -15,6 +15,7 @@ interface GenerateParams {
   constraints: MenuGenerationConstraints;
   note: string;
   ultimateMode?: boolean;
+  resolveExistingMeals?: boolean;
 }
 
 export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
@@ -32,6 +33,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           targetSlots: params.targetSlots,
+          resolveExistingMeals: params.resolveExistingMeals ?? false,
           constraints: params.constraints,
           note: params.note,
           ultimateMode: params.ultimateMode ?? false,

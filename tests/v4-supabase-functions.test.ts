@@ -13,9 +13,11 @@ import {
   getSlotKey,
   normalizeTargetSlots,
   sortTargetSlots,
+  summarizeSaveResults,
   uniqDatesFromSlots,
   type TargetSlot,
 } from "../supabase/functions/generate-menu-v4/step-utils";
+import { mergeTargetSlotsWithExistingMeals } from "../src/lib/v4-target-slots";
 
 describe("V4 Supabase Functions - step utils", () => {
   it("exports default constants", () => {
@@ -180,5 +182,71 @@ describe("V4 Supabase Functions - step utils", () => {
       expect(computeNextCursor({ cursor: 0, batchSize: 0, length: 10 })).toBe(1);
     });
   });
-});
 
+  describe("summarizeSaveResults", () => {
+    it("returns completed when all slots were written", () => {
+      expect(summarizeSaveResults({
+        totalSlots: 3,
+        savedCount: 3,
+        skipped: [],
+        errors: [],
+        successMessage: "全3件の献立が完成しました！",
+      })).toEqual({
+        status: "completed",
+        message: "全3件の献立が完成しました！",
+        errorMessage: null,
+      });
+    });
+
+    it("fails when every slot was skipped to protect existing meals", () => {
+      expect(summarizeSaveResults({
+        totalSlots: 3,
+        savedCount: 0,
+        skipped: [
+          { key: "2026-01-03:breakfast", error: "既存献立を保護したため未保存" },
+          { key: "2026-01-03:lunch", error: "既存献立を保護したため未保存" },
+          { key: "2026-01-03:dinner", error: "既存献立を保護したため未保存" },
+        ],
+        errors: [],
+        successMessage: "全3件の献立が完成しました！",
+      })).toEqual({
+        status: "failed",
+        message: "保存されませんでした（既存3件を保護）",
+        errorMessage: "2026-01-03:breakfast: 既存献立を保護したため未保存; 2026-01-03:lunch: 既存献立を保護したため未保存; 2026-01-03:dinner: 既存献立を保護したため未保存",
+      });
+    });
+
+    it("keeps completed status for partial writes and surfaces counts", () => {
+      expect(summarizeSaveResults({
+        totalSlots: 4,
+        savedCount: 2,
+        skipped: [{ key: "2026-01-03:lunch", error: "既存献立を保護したため未保存" }],
+        errors: [{ key: "2026-01-03:dinner", error: "timeout" }],
+        successMessage: "全4件の献立が完成しました！",
+      })).toEqual({
+        status: "completed",
+        message: "保存完了（成功2/4、スキップ1、エラー1）",
+        errorMessage: "2026-01-03:lunch: 既存献立を保護したため未保存; 2026-01-03:dinner: timeout",
+      });
+    });
+  });
+
+  describe("mergeTargetSlotsWithExistingMeals", () => {
+    it("fills missing plannedMealId from matching existing meals", () => {
+      const slots: TargetSlot[] = [
+        { date: "2026-01-03", mealType: "breakfast" },
+        { date: "2026-01-03", mealType: "lunch", plannedMealId: "keep-me" },
+        { date: "2026-01-03", mealType: "dinner" },
+      ];
+
+      expect(mergeTargetSlotsWithExistingMeals(slots, [
+        { date: "2026-01-03", mealType: "breakfast", plannedMealId: "pm-breakfast" },
+        { date: "2026-01-03", mealType: "dinner", plannedMealId: "pm-dinner" },
+      ])).toEqual([
+        { date: "2026-01-03", mealType: "breakfast", plannedMealId: "pm-breakfast" },
+        { date: "2026-01-03", mealType: "lunch", plannedMealId: "keep-me" },
+        { date: "2026-01-03", mealType: "dinner", plannedMealId: "pm-dinner" },
+      ]);
+    });
+  });
+});

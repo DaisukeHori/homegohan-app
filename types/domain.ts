@@ -401,6 +401,7 @@ export interface MenuGenerationProgress {
 // V4 Request body for /api/ai/menu/v4/generate
 export interface GenerateMenuV4Request {
   targetSlots: TargetSlot[];
+  resolveExistingMeals?: boolean;
   existingMenus?: ExistingMenuContext[];
   fridgeItems?: FridgeItemContext[];
   note?: string;

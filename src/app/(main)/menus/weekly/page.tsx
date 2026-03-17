@@ -8009,6 +8009,7 @@ export default function WeeklyMenuPage() {
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
                                 targetSlots,
+                                resolveExistingMeals: true,
                                 note: userComment,
                                 constraints: {},
                               }),

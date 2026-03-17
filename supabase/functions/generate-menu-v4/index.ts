@@ -46,6 +46,9 @@ import {
   DEFAULT_STEP6_SLOT_BATCH,
   computeMaxFixesForRange,
   computeNextCursor,
+  summarizeSaveResults,
+  type SaveMealResult,
+  type SaveIssue,
 } from "./step-utils.ts";
 import {
   generateNutritionFeedback,
@@ -730,7 +733,7 @@ async function saveMealToDb(
     targetSlot: TargetSlot;
     generatedMeal: GeneratedMeal;
   }
-): Promise<void> {
+): Promise<SaveMealResult> {
   const { userId, requestId, targetSlot, generatedMeal } = params;
   const slotStartedAt = Date.now();
   let dishProcessingTotalMs = 0;
@@ -763,6 +766,31 @@ async function saveMealToDb(
   const dailyMealUpsertMs = Date.now() - dailyMealUpsertStartedAt;
   const dayData = dailyMeal;
 
+  if (!targetSlot.plannedMealId) {
+    const plannedMealLookupStartedAt = Date.now();
+    const occupiedMeal = await runSupabaseQuery<{ id: string } | null>(
+      () => supabase
+        .from("planned_meals")
+        .select("id")
+        .eq("daily_meal_id", dayData.id)
+        .eq("meal_type", targetSlot.mealType)
+        .maybeSingle(),
+      `planned_meals.lookup:${dayData.id}:${targetSlot.mealType}`,
+      null,
+      15000,
+    );
+    plannedMealLookupMs = Date.now() - plannedMealLookupStartedAt;
+
+    if (occupiedMeal?.id) {
+      console.warn(`⚠️ Slot ${targetSlot.date}/${targetSlot.mealType} already exists, skipping to protect data`);
+      return {
+        outcome: "skipped_existing",
+        plannedMealId: occupiedMeal.id,
+        reason: `既存スロット ${targetSlot.date}/${targetSlot.mealType} を保護しました（plannedMealId 未指定）`,
+      };
+    }
+  }
+
   const existingMeal = targetSlot.plannedMealId
     ? await runSupabaseQuery(
         () => supabase
@@ -774,6 +802,10 @@ async function saveMealToDb(
         null,
       )
     : null;
+
+  if (targetSlot.plannedMealId && !existingMeal?.id) {
+    throw new Error(`Failed to find planned_meal ${targetSlot.plannedMealId}`);
+  }
 
   // Calculate nutrition per dish + V3-like validation/adjustment for suspicious low-calorie dishes
   const totalNutrition = emptyNutrition();
@@ -1095,43 +1127,29 @@ async function saveMealToDb(
   };
 
   let plannedMealId = targetSlot.plannedMealId ?? null;
+  const writeOutcome: SaveMealResult["outcome"] = targetSlot.plannedMealId ? "updated" : "inserted";
 
   // If plannedMealId is specified, update existing record
   if (targetSlot.plannedMealId) {
     const plannedMealWriteStartedAt = Date.now();
-    await runSupabaseQuery(
+    const updatedMeal = await runSupabaseQuery<{ id: string } | null>(
       () => supabase
         .from("planned_meals")
         .update(plannedMealData)
-        .eq("id", targetSlot.plannedMealId),
+        .eq("id", targetSlot.plannedMealId)
+        .select("id")
+        .maybeSingle(),
       `planned_meals.update:${targetSlot.plannedMealId}`,
       null,
       20000,
     );
     plannedMealWriteMs = Date.now() - plannedMealWriteStartedAt;
+    if (!updatedMeal?.id) {
+      throw new Error(`Failed to update planned_meal ${targetSlot.plannedMealId}`);
+    }
+    plannedMealId = updatedMeal.id;
     console.log(`✅ Updated planned_meal ${targetSlot.plannedMealId}`);
   } else {
-    // Check if slot already exists (should not happen if API validated correctly)
-    const plannedMealLookupStartedAt = Date.now();
-    const existingMeal = await runSupabaseQuery<{ id: string } | null>(
-      () => supabase
-        .from("planned_meals")
-        .select("id")
-        .eq("daily_meal_id", dayData.id)
-        .eq("meal_type", targetSlot.mealType)
-        .maybeSingle(),
-      `planned_meals.lookup:${dayData.id}:${targetSlot.mealType}`,
-      null,
-      15000,
-    );
-    plannedMealLookupMs = Date.now() - plannedMealLookupStartedAt;
-
-    if (existingMeal) {
-      // This should not happen in V4 (empty slots only), log warning
-      console.warn(`⚠️ Slot ${targetSlot.date}/${targetSlot.mealType} already exists, skipping to protect data`);
-      return;
-    }
-
     const plannedMealWriteStartedAt = Date.now();
     const insertedMeal = await runSupabaseQuery<{ id: string } | null>(
       () => supabase
@@ -1220,6 +1238,11 @@ async function saveMealToDb(
       console.error("[meal-nutrition-debug] Failed to update slot timing:", debugUpdateError);
     }
   }
+
+  return {
+    outcome: writeOutcome,
+    plannedMealId,
+  };
 }
 
 // =========================================================
@@ -1272,6 +1295,7 @@ type V4GeneratedData = {
     savedCount?: number;
     batchSize?: number;
     errors?: Array<{ key: string; error: string }>;
+    skipped?: Array<{ key: string; error: string }>;
     nutritionCalculated?: boolean; // Ultimate mode: 栄養計算済みフラグ
   };
   // Ultimate Mode steps
@@ -1291,6 +1315,7 @@ type V4GeneratedData = {
     savedCount?: number;
     batchSize?: number;
     errors?: Array<{ key: string; error: string }>;
+    skipped?: Array<{ key: string; error: string }>;
   };
 };
 
@@ -2118,7 +2143,8 @@ async function executeStep3_Complete(
   const BATCH = Number(step3.batchSize ?? DEFAULT_STEP3_SLOT_BATCH);
   const cursor = Number(step3.cursor ?? 0);
   const savedCountStart = Number(step3.savedCount ?? 0);
-  const errors: Array<{ key: string; error: string }> = Array.isArray(step3.errors) ? step3.errors : [];
+  const errors: SaveIssue[] = Array.isArray(step3.errors) ? step3.errors : [];
+  const skipped: SaveIssue[] = Array.isArray(step3.skipped) ? step3.skipped : [];
 
   const end = Math.min(cursor + BATCH, totalSlots);
   let savedCount = savedCountStart;
@@ -2144,11 +2170,14 @@ async function executeStep3_Complete(
         // Ultimate Mode: 栄養計算のみ（保存はStep 6で行う）
         // saveMealToDbの栄養計算部分だけを実行し、generatedMealsに栄養情報を付加
         // Note: 実際の栄養計算はStep 6で行うので、ここでは進捗だけ更新
-        savedCount++;
       } else {
         // Normal Mode: 栄養計算 + 保存
-        await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
-        savedCount++;
+        const saveResult = await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
+        if (saveResult.outcome === "skipped_existing") {
+          skipped.push({ key, error: saveResult.reason ?? "既存献立を保護したため未保存" });
+        } else {
+          savedCount++;
+        }
       }
     } catch (e: any) {
       errors.push({ key, error: e?.message ?? String(e) });
@@ -2172,6 +2201,7 @@ async function executeStep3_Complete(
       batchSize: BATCH,
       savedCount,
       errors: errors.slice(-200),
+      skipped: skipped.slice(-200),
       nutritionCalculated: newCursor >= totalSlots,
     },
   };
@@ -2196,7 +2226,7 @@ async function executeStep3_Complete(
     await updateProgress(
       supabase,
       requestId,
-      { currentStep: 3, totalSteps, message: `${stepMessage}（${newCursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+      { currentStep: 3, totalSteps, message: `${stepMessage}（${newCursor}/${totalSlots}）`, completedSlots: newCursor, totalSlots },
       3,
     );
 
@@ -2233,27 +2263,29 @@ async function executeStep3_Complete(
   }
 
   // Normal Mode: Done
-  const hasErrors = errors.length > 0;
-  const finalStatus = hasErrors ? (savedCount > 0 ? "completed" : "failed") : "completed";
-  const finalMessage = hasErrors
-    ? `保存完了（成功${savedCount}/${totalSlots}、エラー${errors.length}）`
-    : `全${totalSlots}件の献立が完成しました！`;
+  const finalSummary = summarizeSaveResults({
+    totalSlots,
+    savedCount,
+    skipped,
+    errors,
+    successMessage: `全${totalSlots}件の献立が完成しました！`,
+  });
 
   await runSupabaseQuery(
     () => supabase
       .from("weekly_menu_requests")
       .update({
-        status: finalStatus,
+        status: finalSummary.status,
         generated_data: updatedGeneratedData,
         current_step: 3,
         progress: {
           currentStep: 3,
           totalSteps,
-          message: finalMessage,
-          completedSlots: savedCount,
+          message: finalSummary.message,
+          completedSlots: totalSlots,
           totalSlots,
         },
-        error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
+        error_message: finalSummary.errorMessage,
         updated_at: new Date().toISOString(),
       })
       .eq("id", requestId),
@@ -2662,7 +2694,8 @@ async function executeStep6_FinalSave(
   const BATCH = Number(step6.batchSize ?? DEFAULT_STEP6_SLOT_BATCH);
   const cursor = Number(step6.cursor ?? 0);
   const savedCountStart = Number(step6.savedCount ?? 0);
-  const errors: Array<{ key: string; error: string }> = Array.isArray(step6.errors) ? step6.errors : [];
+  const errors: SaveIssue[] = Array.isArray(step6.errors) ? step6.errors : [];
+  const skipped: SaveIssue[] = Array.isArray(step6.skipped) ? step6.skipped : [];
 
   const end = Math.min(cursor + BATCH, totalSlots);
   let savedCount = savedCountStart;
@@ -2683,8 +2716,12 @@ async function executeStep6_FinalSave(
       continue;
     }
     try {
-      await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
-      savedCount++;
+      const saveResult = await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
+      if (saveResult.outcome === "skipped_existing") {
+        skipped.push({ key, error: saveResult.reason ?? "既存献立を保護したため未保存" });
+      } else {
+        savedCount++;
+      }
     } catch (e: any) {
       errors.push({ key, error: e?.message ?? String(e) });
     }
@@ -2707,6 +2744,7 @@ async function executeStep6_FinalSave(
       batchSize: BATCH,
       savedCount,
       errors: errors.slice(-200),
+      skipped: skipped.slice(-200),
     },
   };
 
@@ -2730,7 +2768,7 @@ async function executeStep6_FinalSave(
     await updateProgress(
       supabase,
       requestId,
-      { currentStep: 6, totalSteps: 6, message: `最終保存中...（${newCursor}/${totalSlots}）`, completedSlots: savedCount, totalSlots },
+      { currentStep: 6, totalSteps: 6, message: `最終保存中...（${newCursor}/${totalSlots}）`, completedSlots: newCursor, totalSlots },
       6,
     );
 
@@ -2739,34 +2777,36 @@ async function executeStep6_FinalSave(
   }
 
   // Done - Ultimate Mode completed!
-  const hasErrors = errors.length > 0;
-  const finalStatus = hasErrors ? (savedCount > 0 ? "completed" : "failed") : "completed";
-
   // 最終フィードバックを取得
   const step4 = generatedData.step4 ?? {};
   const feedbackByDate = step4.feedbackByDate ?? {};
   const firstFeedback = Object.values(feedbackByDate)[0];
   const praiseComment = firstFeedback?.praiseComment ?? "";
 
-  const finalMessage = hasErrors
-    ? `保存完了（成功${savedCount}/${totalSlots}、エラー${errors.length}）`
-    : `全${totalSlots}件の献立が完成しました！${praiseComment ? ` ${praiseComment}` : ""}`;
+  const finalSummary = summarizeSaveResults({
+    totalSlots,
+    savedCount,
+    skipped,
+    errors,
+    successMessage: `全${totalSlots}件の献立が完成しました！`,
+    successSuffix: praiseComment ? ` ${praiseComment}` : "",
+  });
 
   await runSupabaseQuery(
     () => supabase
       .from("weekly_menu_requests")
       .update({
-        status: finalStatus,
+        status: finalSummary.status,
         generated_data: updatedGeneratedData,
         current_step: 6,
         progress: {
           currentStep: 6,
           totalSteps: 6,
-          message: finalMessage,
-          completedSlots: savedCount,
+          message: finalSummary.message,
+          completedSlots: totalSlots,
           totalSlots,
         },
-        error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
+        error_message: finalSummary.errorMessage,
         updated_at: new Date().toISOString(),
       })
       .eq("id", requestId),

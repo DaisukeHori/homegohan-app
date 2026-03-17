@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -48,6 +49,19 @@ export async function POST(request: Request) {
       dailyMeal = newDailyMeal;
     }
 
+    const targetSlots = await resolveExistingTargetSlots({
+      supabase,
+      userId: user.id,
+      targetSlots: [{ date: dayDate, mealType }],
+    });
+
+    if (targetSlots[0]?.plannedMealId) {
+      return NextResponse.json(
+        { error: 'Meal already exists for this slot. Use regenerate instead.' },
+        { status: 409 },
+      );
+    }
+
     // 3. リクエストをDBに保存（ステータス追跡用）
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
@@ -71,10 +85,7 @@ export async function POST(request: Request) {
 
     console.log(`📝 Request created for ${dayDate} ${mealType}, requestId: ${requestData?.id}`);
 
-    // 4. target_slotsを生成（1スロット）
-    const targetSlots = [{ date: dayDate, mealType }];
-
-    // target_slotsをリクエストに保存
+    // 4. target_slotsを保存（1スロット）
     await supabase
       .from('weekly_menu_requests')
       .update({

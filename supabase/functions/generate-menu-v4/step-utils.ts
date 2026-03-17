@@ -6,6 +6,14 @@ export type TargetSlot = {
   plannedMealId?: string;
 };
 
+export type SaveMealOutcome = "inserted" | "updated" | "skipped_existing";
+
+export type SaveMealResult = {
+  outcome: SaveMealOutcome;
+  plannedMealId?: string | null;
+  reason?: string;
+};
+
 export const MEAL_TYPE_ORDER: Record<MealType, number> = {
   breakfast: 10,
   lunch: 20,
@@ -24,6 +32,11 @@ export const DEFAULT_STEP3_SLOT_BATCH = 15;
 export const DEFAULT_STEP4_DAY_BATCH = 5;       // 5日/実行（フィードバック分析）
 export const DEFAULT_STEP5_DAY_BATCH = 3;       // 3日/実行（再生成）
 export const DEFAULT_STEP6_SLOT_BATCH = 15;     // Step 3と同じ
+
+export type SaveIssue = {
+  key: string;
+  error: string;
+};
 
 export function getSlotKey(date: string, mealType: MealType): string {
   return `${date}:${mealType}`;
@@ -96,3 +109,49 @@ export function computeNextCursor(params: { cursor: number; batchSize: number; l
   return Math.min(cursor + batchSize, length);
 }
 
+export function summarizeSaveResults(params: {
+  totalSlots: number;
+  savedCount: number;
+  skipped: SaveIssue[];
+  errors: SaveIssue[];
+  successMessage: string;
+  successSuffix?: string;
+}): {
+  status: "completed" | "failed";
+  message: string;
+  errorMessage: string | null;
+} {
+  const totalSlots = Math.max(0, Math.trunc(params.totalSlots ?? 0));
+  const savedCount = Math.max(0, Math.trunc(params.savedCount ?? 0));
+  const skippedCount = params.skipped.length;
+  const errorCount = params.errors.length;
+  const skippedOnly = savedCount === 0 && skippedCount > 0 && errorCount === 0;
+
+  const status = errorCount > 0
+    ? (savedCount > 0 ? "completed" : "failed")
+    : skippedOnly
+      ? "failed"
+      : "completed";
+
+  const message = skippedOnly
+    ? `保存されませんでした（既存${skippedCount}件を保護）`
+    : skippedCount > 0 || errorCount > 0
+      ? `保存完了（成功${savedCount}/${totalSlots}、スキップ${skippedCount}、エラー${errorCount}）`
+      : `${params.successMessage}${params.successSuffix ?? ""}`;
+
+  const issues = [...params.skipped, ...params.errors]
+    .slice(0, 20)
+    .map((issue) => `${issue.key}: ${issue.error}`);
+
+  const errorMessage = issues.length > 0
+    ? issues.join("; ")
+    : skippedOnly
+      ? "対象スロットは既存献立を保護したため保存されませんでした。"
+      : null;
+
+  return {
+    status,
+    message,
+    errorMessage,
+  };
+}

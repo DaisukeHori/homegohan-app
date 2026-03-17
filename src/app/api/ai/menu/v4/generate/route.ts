@@ -13,6 +13,7 @@ import type {
   MealType
 } from '@/types/domain';
 import { fromTargetSlots } from '@/lib/converter';
+import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -98,7 +99,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     
     // 1. Validate targetSlots (required)
-    const { valid, slots: targetSlots, error: slotsError } = validateTargetSlots(body?.targetSlots);
+    const { valid, slots: validatedTargetSlots, error: slotsError } = validateTargetSlots(body?.targetSlots);
     if (!valid) {
       return NextResponse.json({ error: slotsError }, { status: 400 });
     }
@@ -108,6 +109,14 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const targetSlots = body?.resolveExistingMeals
+      ? await resolveExistingTargetSlots({
+          supabase,
+          userId: user.id,
+          targetSlots: validatedTargetSlots,
+        })
+      : validatedTargetSlots;
 
     // 3. Calculate date range from targetSlots
     const dates = targetSlots.map(s => s.date).sort();
