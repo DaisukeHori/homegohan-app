@@ -28,7 +28,7 @@ interface ChatCompletionResponse {
   }>;
 }
 
-const DEFAULT_OPENAI_MODEL = "gpt-5-nano";
+const DEFAULT_OPENAI_MODEL = "gpt-5.2";
 const DEFAULT_XAI_MODEL = "grok-4-1-fast-non-reasoning";
 
 function resolveProvider(): V4FastLLMProvider {

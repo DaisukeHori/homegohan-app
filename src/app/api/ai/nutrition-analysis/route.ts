@@ -1,14 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
+import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
-
-function getOpenAI(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('Missing OPENAI_API_KEY');
-  }
-  return new OpenAI({ apiKey });
-}
 
 /**
  * 栄養分析API
@@ -266,9 +258,8 @@ JSON形式で出力してください：
 ` : ''}
 `;
 
-      const openai = getOpenAI();
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-5-mini',
+      const completion = await getFastLLMClient().chat.completions.create({
+        model: getFastLLMModel(),
         messages: [{ role: 'user', content: prompt }],
         max_completion_tokens: 1000,
       } as any);
@@ -425,4 +416,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

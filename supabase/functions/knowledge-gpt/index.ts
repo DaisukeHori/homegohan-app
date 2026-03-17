@@ -2,10 +2,11 @@
 // OpenAI Chat Completions API 互換のエンドポイント
 // Agent SDK がDenoで動作しない場合のフォールバック版
 
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
-import OpenAI from "openai";
+import OpenAI from "npm:openai@6.9.1";
+import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
   DATASET_EMBEDDING_API_KEY_ENV,
   DATASET_EMBEDDING_DIMENSIONS,
@@ -16,7 +17,7 @@ console.log("Knowledge-GPT Function loaded (Fallback Mode)")
 
 // ===== OpenAI client =====
 function getOpenAI(): OpenAI {
-  return new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+  return createFastLLMClient();
 }
 
 // ===== テキスト埋め込み生成 =====
@@ -216,11 +217,10 @@ async function runChat(
 
   // 最初の呼び出し
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: getFastLLMModel(),
     messages: openaiMessages,
     ...(useTools ? { tools } : {}),
     max_completion_tokens: 4000,
-    reasoning_effort: "low",  // 推論時間を短縮
   } as any);
 
   let result = response.choices[0];
@@ -253,10 +253,9 @@ async function runChat(
 
     // 再度呼び出してツール結果を反映
     const followUpResponse = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: getFastLLMModel(),
       messages: openaiMessages,
       max_completion_tokens: 4000,
-      reasoning_effort: "low",  // 推論時間を短縮
     } as any);
 
     result = followUpResponse.choices[0];
@@ -292,11 +291,10 @@ async function* runChatStream(
 
   // ストリーミング呼び出し
   const stream = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: getFastLLMModel(),
     messages: openaiMessages,
     ...(useTools ? { tools } : {}),
     max_completion_tokens: 4000,
-    reasoning_effort: "low",
     stream: true,
   } as any) as unknown as AsyncIterable<any>;
 
@@ -353,10 +351,9 @@ async function* runChatStream(
 
     // 再度ストリーミング呼び出し
     const followUpStream = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: getFastLLMModel(),
       messages: openaiMessages,
       max_completion_tokens: 4000,
-      reasoning_effort: "low",
       stream: true,
     } as any) as unknown as AsyncIterable<any>;
 

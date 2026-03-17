@@ -1,10 +1,8 @@
 import { serve } from 'https://deno.land/std@0.178.0/http/server.ts';
-import OpenAI from "openai";
 import { corsHeaders } from '../_shared/cors.ts';
+import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 
-const openai = new OpenAI({
-  apiKey: Deno.env.get('OPENAI_API_KEY'),
-});
+const openai = createFastLLMClient();
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -21,9 +19,9 @@ serve(async (req) => {
       });
     }
 
-    // OpenAI Vision API
+    // Grok Vision API
     const response = await openai.chat.completions.create({
-      model: 'gpt-5-mini', // Vision対応モデル
+      model: getFastLLMModel(),
       messages: [
         {
           role: 'user',
@@ -48,9 +46,7 @@ serve(async (req) => {
           ],
         },
       ],
-      // gpt-5-mini は max_tokens 非対応のため max_completion_tokens を使用
-      max_completion_tokens: 500,
-      reasoning_effort: "minimal",
+      max_tokens: 500,
       response_format: { type: "json_object" },
     } as any);
 
@@ -61,7 +57,7 @@ serve(async (req) => {
       status: 200,
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error analyzing fridge:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -69,5 +65,3 @@ serve(async (req) => {
     });
   }
 });
-
-

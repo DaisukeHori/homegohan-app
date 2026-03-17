@@ -1,14 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
+import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
-
-function getOpenAI(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('Missing OPENAI_API_KEY');
-  }
-  return new OpenAI({ apiKey });
-}
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -164,7 +156,6 @@ ${importantMessages.length > 0 ? `
 ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n')}
 ` : ''}`;
 
-    const openai = getOpenAI();
     const MAX_ATTEMPTS = 3;
     let summaryData: any | null = null;
 
@@ -175,8 +166,8 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
             ? ''
             : '\n\n【再生成指示】前回の出力がJSONとして解析できませんでした。必ずパース可能な純粋なJSONのみを返してください。';
 
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-5-mini',
+        const completion = await getFastLLMClient().chat.completions.create({
+          model: getFastLLMModel(),
           messages: [
             { role: 'system', content: 'あなたは会話を正確に要約するアシスタントです。JSONのみを出力してください。' },
             { role: 'user', content: summaryPrompt + retryNote },
@@ -245,4 +236,3 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
     return NextResponse.json({ success: true, summary: existingSummary }, { status: 200 });
   }
 }
-

@@ -1,5 +1,6 @@
-import "@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "@supabase/supabase-js";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 const corsHeaders = {
@@ -161,7 +162,7 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error:", error);
     return new Response(
       JSON.stringify({ error: error.message || "Internal server error" }),
@@ -444,9 +445,6 @@ async function generateAIInsight(
   goals: any[],
   periodType: string
 ): Promise<Insight | null> {
-  const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!openaiApiKey) return null;
-
   try {
     const prompt = `以下の健康記録データを分析し、ユーザーへの個別アドバイスを生成してください。
 
@@ -469,20 +467,19 @@ ${JSON.stringify(summarizeRecords(records), null, 2)}
   "priority": "low" | "medium" | "high"
 }`;
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch(getFastLLMChatCompletionsUrl(), {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${openaiApiKey}`,
+        "Authorization": `Bearer ${getFastLLMApiKey()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-5-mini",
+        model: getFastLLMModel(),
         messages: [
           { role: "system", content: "あなたは優しく励ましながらも的確なアドバイスをする健康コーチです。" },
           { role: "user", content: prompt },
         ],
-        max_completion_tokens: 500,
-        reasoning_effort: "minimal",
+        max_tokens: 500,
       }),
     });
 
@@ -500,7 +497,7 @@ ${JSON.stringify(summarizeRecords(records), null, 2)}
       insight_type: 'ai_comprehensive',
       title: parsed.title || '🤖 AI分析',
       summary: parsed.summary || '',
-      details: { source: 'openai' },
+      details: { source: 'xai' },
       recommendations: parsed.recommendations || [],
       priority: parsed.priority || 'low',
       is_alert: false,

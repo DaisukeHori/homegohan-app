@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Meal not found' }, { status: 404 })
     }
 
-    // TODO: OpenAI GPTを使用してフィードバックを生成
+    // TODO: Grok を使用してフィードバックを生成
     // 現在はモックデータ
     const feedbackText = generateMockFeedback(meal)
     const adviceText = generateMockAdvice(meal)
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
         plannedMealId,
         feedbackText,
         adviceText,
-        modelName: "gpt-5-mini",
+        modelName: "grok-4-1-fast-non-reasoning (mock)",
       }
     })
   } catch (error: any) {

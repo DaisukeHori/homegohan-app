@@ -5,7 +5,7 @@
  * globalThis.fetchをラップして自動計測し、llm_usage_logsテーブルに記録する
  */
 
-import { SupabaseClient } from "@supabase/supabase-js";
+import { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 // ============================================
 // 型定義

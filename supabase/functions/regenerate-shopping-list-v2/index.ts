@@ -7,8 +7,9 @@
  * - Supabase Realtimeでクライアントに進捗通知
  */
 
-import "@supabase/functions-js/edge-runtime.d.ts";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 // ============================================
@@ -220,19 +221,14 @@ ${JSON.stringify(ingredients, null, 2)}
 // ============================================
 
 async function callOpenAI(prompt: string): Promise<NormalizedItem[]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
-  }
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch(getFastLLMChatCompletionsUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${getFastLLMApiKey()}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: getFastLLMModel(),
       messages: [{ role: "user", content: prompt }],
       max_tokens: 8000,
       response_format: { type: "json_object" },
@@ -241,7 +237,7 @@ async function callOpenAI(prompt: string): Promise<NormalizedItem[]> {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+    throw new Error(`Fast LLM API error: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
@@ -251,7 +247,7 @@ async function callOpenAI(prompt: string): Promise<NormalizedItem[]> {
 
   if (!content) {
     console.error(`[callOpenAI] Empty content! Full response:`, JSON.stringify(data).slice(0, 500));
-    throw new Error("Empty response from OpenAI");
+    throw new Error("Empty response from fast LLM");
   }
 
   console.log(`[callOpenAI] Content length: ${content.length} chars`);

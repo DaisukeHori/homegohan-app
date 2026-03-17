@@ -12,6 +12,28 @@ function readDenoEnv(name: string): string | undefined {
   return denoLike?.env?.get?.(name);
 }
 
+function getLocalFastLLMApiKey(): string {
+  const apiKey = String(readDenoEnv("XAI_API_KEY") ?? "").trim();
+  if (!apiKey) {
+    throw new Error("Missing XAI_API_KEY");
+  }
+  return apiKey;
+}
+
+function getLocalFastLLMModel(): string {
+  return String(readDenoEnv("FAST_LLM_MODEL") ?? "").trim() || "grok-4-1-fast-non-reasoning";
+}
+
+function getLocalFastLLMChatCompletionsUrl(): string {
+  const rawBaseUrl = String(readDenoEnv("XAI_BASE_URL") ?? "").trim();
+  const normalized = rawBaseUrl
+    ? rawBaseUrl.replace(/\/+$/, "").endsWith("/v1")
+      ? rawBaseUrl.replace(/\/+$/, "")
+      : `${rawBaseUrl.replace(/\/+$/, "")}/v1`
+    : "https://api.x.ai/v1";
+  return `${normalized}/chat/completions`;
+}
+
 // 栄養計算の共通ロジック
 
 // 栄養計算用の型
@@ -288,7 +310,7 @@ async function validateMatchesWithLLM(
 ): Promise<Set<number>> {
   if (matches.length === 0) return new Set();
   
-  const apiKey = readDenoEnv("OPENAI_API_KEY");
+  const apiKey = readDenoEnv("XAI_API_KEY");
   if (!apiKey) {
     console.warn("[nutrition] No API key for LLM validation, skipping");
     return new Set();
@@ -309,17 +331,16 @@ ${batch.map((m, j) => `${j + 1}. 入力:「${m.inputName}」→ マッチ:「${m
 各行について OK または NG だけを答えてください。例: "1. OK\n2. NG\n3. OK"`;
 
     try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await fetch(getLocalFastLLMChatCompletionsUrl(), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
+          "Authorization": `Bearer ${getLocalFastLLMApiKey()}`,
         },
         body: JSON.stringify({
-          model: "gpt-5-nano",
+          model: getLocalFastLLMModel(),
           messages: [{ role: "user", content: prompt }],
-          reasoning_effort: "low",
-          max_completion_tokens: 200,
+          max_tokens: 200,
         }),
       });
 
@@ -352,7 +373,7 @@ async function selectBestMatchWithLLM(
   if (candidates.length === 0) return -1;
   if (candidates.length === 1) return 0; // 1件なら選択の余地なし
   
-  const apiKey = readDenoEnv("OPENAI_API_KEY");
+  const apiKey = readDenoEnv("XAI_API_KEY");
   if (!apiKey) {
     console.warn("[nutrition] No API key for LLM selection, using first candidate");
     return 0;
@@ -381,17 +402,16 @@ ${candidateList}
 回答:`;
 
     try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await fetch(getLocalFastLLMChatCompletionsUrl(), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
+          "Authorization": `Bearer ${getLocalFastLLMApiKey()}`,
         },
         body: JSON.stringify({
-          model: "gpt-5-nano",
+          model: getLocalFastLLMModel(),
           messages: [{ role: "user", content: prompt }],
-          reasoning_effort: "low",
-          max_completion_tokens: 10,
+          max_tokens: 10,
         }),
       });
 

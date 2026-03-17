@@ -1,6 +1,7 @@
-import { Agent, type AgentInputItem, Runner } from "@openai/agents";
-import { createClient } from "@supabase/supabase-js";
+import OpenAI from "npm:openai@6.9.1";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
+import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
   DATASET_EMBEDDING_API_KEY_ENV,
   DATASET_EMBEDDING_DIMENSIONS,
@@ -312,41 +313,18 @@ async function agentJson(userPrompt: string): Promise<any> {
     `【安全】\n` +
     `- 火入れ/衛生の注意（中心温度、加熱不足回避）を踏まえた手順にする\n`;
 
-  const agent = new Agent({
-    name: "derived-recipe-generator",
-    instructions: systemPrompt,
-    model: "gpt-5-mini",
-    modelSettings: { reasoning: { effort: "minimal" } },
-    tools: [],
-  });
+  const client: OpenAI = createFastLLMClient();
+  const response = await client.chat.completions.create({
+    model: getFastLLMModel(),
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    response_format: { type: "json_object" },
+    max_tokens: 2500,
+  } as any);
 
-  const conversationHistory: AgentInputItem[] = [
-    { role: "user", content: [{ type: "input_text", text: userPrompt }] },
-  ];
-
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "create-derived-recipe",
-      workflow_id: "wf_create_derived_recipe",
-    },
-  });
-
-  const result = await runner.run(agent, conversationHistory);
-
-  let outputText = "";
-  if (!result.finalOutput) {
-    const lastAssistantItem = [...result.newItems]
-      .reverse()
-      .find((item) => item.type === "message_output_item");
-    if (lastAssistantItem) {
-      const textContent = lastAssistantItem.rawItem.content.find((contentItem) => contentItem.type === "output_text");
-      if (textContent) outputText = textContent.text;
-    }
-  } else if (typeof result.finalOutput === "object") {
-    outputText = JSON.stringify(result.finalOutput);
-  } else {
-    outputText = String(result.finalOutput);
-  }
+  const outputText = response.choices[0]?.message?.content ?? "";
 
   if (!outputText.trim()) throw new Error("LLM output is empty");
   return safeJsonParse(outputText);

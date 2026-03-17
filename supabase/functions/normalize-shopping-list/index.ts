@@ -8,10 +8,11 @@
  * - カテゴリ分類
  */
 
-import "@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "@supabase/supabase-js";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
+import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 // ============================================
@@ -171,19 +172,14 @@ async function callOpenAI(
   prompt: string,
   logger: ReturnType<typeof createLogger>
 ): Promise<NormalizedItem[]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
-  }
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch(getFastLLMChatCompletionsUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${getFastLLMApiKey()}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: getFastLLMModel(),
       messages: [{ role: "user", content: prompt }],
       max_tokens: 16000, // 200+アイテムのJSON出力に対応
       response_format: { type: "json_object" },
@@ -192,15 +188,15 @@ async function callOpenAI(
 
   if (!response.ok) {
     const errorText = await response.text();
-    logger.error("OpenAI API error", new Error(errorText));
-    throw new Error(`OpenAI API error: ${response.status}`);
+    logger.error("Fast LLM API error", new Error(errorText));
+    throw new Error(`Fast LLM API error: ${response.status}`);
   }
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
 
   if (!content) {
-    throw new Error("Empty response from OpenAI");
+    throw new Error("Empty response from fast LLM");
   }
 
   try {

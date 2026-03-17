@@ -1,14 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
+import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
-
-function getOpenAI(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('Missing OPENAI_API_KEY');
-  }
-  return new OpenAI({ apiKey });
-}
 
 // メッセージ一覧取得
 export async function GET(
@@ -873,7 +866,7 @@ export async function POST(
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const openai = getOpenAI();
+    const openai = getFastLLMClient();
     // セッション所有者確認
     const { data: session } = await supabase
       .from('ai_consultation_sessions')
@@ -1013,7 +1006,7 @@ export async function POST(
             const checkImportanceAsync = async () => {
               try {
                 const importanceCheck = await openai.chat.completions.create({
-                  model: 'gpt-5-mini',
+                  model: getFastLLMModel(),
                   messages: [
                     { role: 'system', content: 'ユーザーメッセージが重要かどうかをJSON形式で判断: {"isImportant": true/false, "reason": "理由", "category": "カテゴリ"}' },
                     { role: 'user', content: userMessage }
@@ -1136,7 +1129,7 @@ export async function POST(
         // knowledge-gptが失敗した場合、フォールバックで直接OpenAI APIを呼び出す
         console.error('knowledge-gpt failed, falling back to OpenAI:', await knowledgeGptRes.text());
         const completion = await openai.chat.completions.create({
-          model: 'gpt-5-mini',
+          model: getFastLLMModel(),
           messages,
           max_completion_tokens: 2000,
         } as any);
@@ -1146,7 +1139,7 @@ export async function POST(
       // エラー時もフォールバック
       console.error('knowledge-gpt error, falling back to OpenAI:', kgError);
       const completion = await openai.chat.completions.create({
-        model: 'gpt-5-mini',
+        model: getFastLLMModel(),
         messages,
         max_completion_tokens: 2000,
       } as any);
@@ -1169,7 +1162,7 @@ export async function POST(
     const checkImportanceAsync = async () => {
       try {
         const importanceCheck = await openai.chat.completions.create({
-          model: 'gpt-5-mini',
+          model: getFastLLMModel(),
           messages: [
             {
               role: 'system',
