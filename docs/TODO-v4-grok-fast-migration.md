@@ -45,8 +45,8 @@
 - [x] D03. Confirm xAI model/provider appears in `llm_usage_logs` for changed sections.
 
 ### E. Git
-- [ ] E01. Commit only the Grok migration files.
-- [ ] E02. Push `main`.
+- [x] E01. Commit only the Grok migration files.
+- [x] E02. Push `main`.
 
 ## Definition of Done
 - Every V4-path `gpt-5-nano` call is replaced by `grok-4-1-fast-non-reasoning`.
@@ -57,3 +57,4 @@
 ## Benchmark Notes
 - Local OpenAI benchmarking was blocked by `unsupported_country_region_territory`.
 - Final before/after numbers were collected via a temporary remote Edge Function benchmark on the linked Supabase project.
+- The temporary remote benchmark function was deleted after the measurements were collected.
