@@ -1,7 +1,7 @@
 /**
  * LLMトークン使用量計測モジュール
- * 
- * Edge Functions内の全OpenAI呼び出し（Chat/Responses/Embeddings/@openai/agents）を
+ *
+ * Edge Functions内の OpenAI / xAI 呼び出しを
  * globalThis.fetchをラップして自動計測し、llm_usage_logsテーブルに記録する
  */
 
@@ -55,6 +55,7 @@ interface ParsedUsage {
 // ============================================
 
 const COST_RATES: Record<string, { input: number; output: number }> = {
+  "gpt-5-nano": { input: 0.05 / 1_000_000, output: 0.40 / 1_000_000 },
   "gpt-5-mini": { input: 0.15 / 1_000_000, output: 0.60 / 1_000_000 },
   "gpt-4o-mini": { input: 0.15 / 1_000_000, output: 0.60 / 1_000_000 },
   "gpt-4o": { input: 2.50 / 1_000_000, output: 10.00 / 1_000_000 },
@@ -137,6 +138,48 @@ function detectCallType(endpoint: string): string {
   return "unknown";
 }
 
+function detectProvider(url: string): string | null {
+  const hostname = new URL(url).hostname;
+  if (hostname.includes("api.openai.com")) return "openai";
+  if (hostname.includes("api.x.ai")) return "xai";
+  return null;
+}
+
+function extractHeaderValue(
+  headers: HeadersInit | undefined,
+  headerName: string,
+): string | null {
+  if (!headers) return null;
+  const normalized = headerName.toLowerCase();
+
+  if (headers instanceof Headers) {
+    return headers.get(headerName) ?? headers.get(normalized);
+  }
+
+  if (Array.isArray(headers)) {
+    for (const [key, value] of headers) {
+      if (String(key).toLowerCase() === normalized) return String(value);
+    }
+    return null;
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === normalized) return String(value);
+  }
+  return null;
+}
+
+function getSectionFromRequest(input: RequestInfo | URL, init?: RequestInit): string | null {
+  const initSection = extractHeaderValue(init?.headers, "x-llm-section");
+  if (initSection) return initSection;
+
+  if (typeof input !== "string" && !(input instanceof URL)) {
+    return input.headers.get("x-llm-section");
+  }
+
+  return null;
+}
+
 // ============================================
 // 累積トラッカー
 // ============================================
@@ -182,7 +225,7 @@ class UsageTracker {
       execution_id: this.ctx.executionId,
       request_id: this.ctx.requestId ?? null,
       user_id: this.ctx.userId ?? null,
-      provider: "openai",
+      provider: this.records.length === 1 ? this.records[0].provider : "mixed",
       endpoint: "summary",
       model: "mixed",
       input_tokens: totalInput || null,
@@ -242,9 +285,10 @@ export async function withOpenAIUsageContext<T>(
   // fetchをラップ
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const provider = detectProvider(url);
 
-    // OpenAI APIへのリクエストかチェック
-    if (!url.includes("api.openai.com")) {
+    // 計測対象プロバイダへのリクエストかチェック
+    if (!provider) {
       return originalFetch(input, init);
     }
 
@@ -255,6 +299,7 @@ export async function withOpenAIUsageContext<T>(
     let errorMessage: string | null = null;
     let parsedUsage: ParsedUsage | null = null;
     let openaiRequestId: string | null = null;
+    const section = getSectionFromRequest(input, init);
 
     try {
       response = await originalFetch(input, init);
@@ -262,7 +307,7 @@ export async function withOpenAIUsageContext<T>(
       success = response.ok;
 
       // x-request-id ヘッダーを取得
-      openaiRequestId = response.headers.get("x-request-id");
+      openaiRequestId = response.headers.get("x-request-id") ?? response.headers.get("request-id");
 
       // レスポンスボディを読み取り、解析してから新しいResponseを返す
       // （Deno Edge Runtimeでのclone()問題を回避）
@@ -293,7 +338,7 @@ export async function withOpenAIUsageContext<T>(
       const endpoint = new URL(url).pathname;
 
       tracker.addRecord({
-        provider: "openai",
+        provider,
         endpoint,
         model: parsedUsage?.model ?? "unknown",
         input_tokens: parsedUsage?.inputTokens ?? null,
@@ -311,7 +356,7 @@ export async function withOpenAIUsageContext<T>(
         openai_response_id: parsedUsage?.responseId ?? null,
         openai_request_id: openaiRequestId,
         error_message: errorMessage,
-        metadata: null,
+        metadata: section ? { section } : null,
       });
     }
   };

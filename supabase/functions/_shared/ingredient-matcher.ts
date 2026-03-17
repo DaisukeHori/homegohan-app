@@ -7,6 +7,7 @@
 
 import { SupabaseClient } from "@supabase/supabase-js";
 import { EXACT_NAME_NORM_MAP, INGREDIENT_ALIASES, normalizeIngredientNameJs, isWaterishIngredient } from './nutrition-calculator.ts'
+import { callV4FastLLM } from './v4-fast-llm.ts'
 import {
   DATASET_EMBEDDING_API_KEY_ENV,
   fetchDatasetEmbeddings,
@@ -223,22 +224,16 @@ async function searchByTextSimilarity(
 // LLMで最適な材料を選択
 // ============================================
 
-async function selectBestMatchWithLLM(
+export async function selectBestMatchWithLLM(
   inputName: string,
   candidates: Array<{ id: string; name: string; name_norm: string; similarity: number; calories_kcal?: number | null }>
 ): Promise<number> {
   if (candidates.length === 0) return -1
   if (candidates.length === 1) return 0
 
-  const apiKey = Deno.env.get('OPENAI_API_KEY')
-  if (!apiKey) {
-    console.warn('[ingredient-matcher] No API key for LLM selection, using first candidate')
-    return 0
-  }
+  const systemPrompt = `あなたは日本の食品データベースの専門家です。`
 
-  const prompt = `あなたは日本の食品データベースの専門家です。
-
-料理で使われる食材「${inputName}」に最も適切な食品データベースエントリを選んでください。
+  const userPrompt = `料理で使われる食材「${inputName}」に最も適切な食品データベースエントリを選んでください。
 
 【候補】
 ${candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 100).toFixed(0)}%, ${c.calories_kcal ?? '?'}kcal/100g)`).join('\n')}
@@ -252,34 +247,22 @@ ${candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 10
 回答:`
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-5-nano',
-        messages: [{ role: 'user', content: prompt }],
-        max_completion_tokens: 10,
-        reasoning_effort: "low",
-      }),
+    const { text: content } = await callV4FastLLM({
+      section: "ingredientMatcher.selectBestMatchWithLLM",
+      systemPrompt,
+      userPrompt,
+      maxCompletionTokens: 10,
     })
+    const num = parseInt(content, 10)
 
-    if (res.ok) {
-      const data = await res.json()
-      const content = (data.choices?.[0]?.message?.content ?? '').trim()
-      const num = parseInt(content, 10)
+    if (num === 0) {
+      console.log(`[ingredient-matcher] LLM: 「${inputName}」→ 全候補却下`)
+      return -1
+    }
 
-      if (num === 0) {
-        console.log(`[ingredient-matcher] LLM: 「${inputName}」→ 全候補却下`)
-        return -1
-      }
-
-      if (num >= 1 && num <= candidates.length) {
-        console.log(`[ingredient-matcher] LLM: 「${inputName}」→ ${num}番「${candidates[num - 1].name}」を選択`)
-        return num - 1
-      }
+    if (num >= 1 && num <= candidates.length) {
+      console.log(`[ingredient-matcher] LLM: 「${inputName}」→ ${num}番「${candidates[num - 1].name}」を選択`)
+      return num - 1
     }
   } catch (e: any) {
     console.warn(`[ingredient-matcher] LLM selection failed for "${inputName}":`, e?.message)

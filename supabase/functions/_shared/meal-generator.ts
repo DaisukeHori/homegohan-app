@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import { SINGLE_SERVING_PROMPT_GUIDANCE } from "./generation-serving.ts";
+import { callV4FastLLM } from "./v4-fast-llm.ts";
 
 // =========================================================
 // Types / Schemas
@@ -154,34 +155,12 @@ export async function generateMealWithLLM(input: {
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${mealTypeJa}の献立を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
-  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
-  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-5-nano",
-      messages: [
-        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
-      ],
-      reasoning_effort: "low",
-      max_completion_tokens: 8000,
-    }),
+  const { text: out } = await callV4FastLLM({
+    section: "generateMealWithLLM",
+    systemPrompt,
+    userPrompt,
+    maxCompletionTokens: 8000,
   });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
-  }
-
-  const json = await res.json();
-  const out = json.choices?.[0]?.message?.content ?? "";
-  if (!out) throw new Error("LLM output is empty");
   const parsed = safeJsonParse(out);
   return GeneratedMealSchema.parse(parsed);
 }
@@ -276,34 +255,12 @@ export async function generateDayMealsWithLLM(input: {
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${input.date}の1日分の献立（${mealTypesJa}）を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
-  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
-  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-5-nano",
-      messages: [
-        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
-      ],
-      reasoning_effort: "low",
-      max_completion_tokens: 8000,
-    }),
+  const { text: out } = await callV4FastLLM({
+    section: "generateDayMealsWithLLM",
+    systemPrompt,
+    userPrompt,
+    maxCompletionTokens: 8000,
   });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
-  }
-
-  const json = await res.json();
-  const out = json.choices?.[0]?.message?.content ?? "";
-  if (!out) throw new Error("LLM output is empty");
   const parsed = safeJsonParse(out);
   return DailyGeneratedMealsSchema.parse(parsed);
 }
@@ -506,34 +463,12 @@ export async function regenerateMealForIssue(input: {
     `【参考にできる献立例】\n${referenceText}\n\n` +
     `上記の問題点を解決した新しい献立を創造してください。`;
 
-  // 直接REST API呼び出し（gpt-5.1-codex-mini - v1/responses API）
-  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-5-nano",
-      messages: [
-        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
-      ],
-      reasoning_effort: "low",
-      max_completion_tokens: 8000,
-    }),
+  const { text: out } = await callV4FastLLM({
+    section: "regenerateMealForIssue",
+    systemPrompt,
+    userPrompt,
+    maxCompletionTokens: 8000,
   });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
-  }
-
-  const json = await res.json();
-  const out = json.choices?.[0]?.message?.content ?? "";
-  if (!out) throw new Error("LLM output is empty");
   const parsed = safeJsonParse(out);
   return GeneratedMealSchema.parse(parsed);
 }
