@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { buildCatalogSelectionUpdate } from "../../../../lib/catalog-products";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
   
   try {
-    const { dayDate, mealType, dishes, totalCalories, imageUrl, nutritionalAdvice } = await request.json();
+    const {
+      dayDate,
+      mealType,
+      dishes,
+      totalCalories,
+      imageUrl,
+      nutritionalAdvice,
+      catalogProductId,
+    } = await request.json();
     
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
@@ -61,20 +70,35 @@ export async function POST(request: Request) {
       ingredient: d.ingredient || ''
     }));
     
+    const insertData: Record<string, any> = {
+      daily_meal_id: dailyMealId,
+      meal_type: mealType,
+      mode: 'cook',
+      dish_name: allDishNames,
+      description: nutritionalAdvice || null,
+      calories_kcal: totalCalories || null,
+      image_url: imageUrl,
+      is_completed: false,
+      dishes: dishesJson.length > 0 ? dishesJson : null,
+      is_simple: dishesJson.length <= 1,
+      source_type: 'manual',
+    };
+
+    if (catalogProductId) {
+      const { fields } = await buildCatalogSelectionUpdate({
+        supabase,
+        catalogProductId,
+        mode: 'buy',
+        imageUrl: imageUrl ?? undefined,
+        description: nutritionalAdvice || null,
+        selectedFrom: 'photo_match',
+      });
+      Object.assign(insertData, fields);
+    }
+
     const { data: newMeal, error: mealError } = await supabase
       .from('planned_meals')
-      .insert({
-        daily_meal_id: dailyMealId,
-        meal_type: mealType,
-        mode: 'cook',
-        dish_name: allDishNames,
-        description: nutritionalAdvice || null,
-        calories_kcal: totalCalories || null,
-        image_url: imageUrl,
-        is_completed: false,
-        dishes: dishesJson.length > 0 ? dishesJson : null,
-        is_simple: dishesJson.length <= 1,
-      })
+      .insert(insertData)
       .select()
       .single();
     

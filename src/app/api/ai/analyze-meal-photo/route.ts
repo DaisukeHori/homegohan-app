@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { findCatalogCandidatesForDishes } from '../../../../lib/catalog-products';
 
 interface ImageInput {
   base64: string;
@@ -91,7 +92,25 @@ export async function POST(request: Request) {
       });
     }
 
-    return NextResponse.json(data);
+    const dishNames = Array.isArray(data?.dishes)
+      ? data.dishes
+          .map((dish: any) => typeof dish?.name === 'string' ? dish.name.trim() : '')
+          .filter((name: string) => name.length > 0)
+      : [];
+
+    let catalogMatches: Awaited<ReturnType<typeof findCatalogCandidatesForDishes>> = [];
+    if (dishNames.length > 0) {
+      try {
+        catalogMatches = await findCatalogCandidatesForDishes(supabase, dishNames, { limitPerDish: 3 });
+      } catch (catalogError) {
+        console.warn('Analyze Meal Photo: catalog lookup skipped', catalogError);
+      }
+    }
+
+    return NextResponse.json({
+      ...data,
+      catalogMatches,
+    });
   } catch (error: any) {
     console.error('Analyze Meal Photo Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

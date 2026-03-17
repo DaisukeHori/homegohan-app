@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
+import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { V4GenerateModal } from "@/components/ai-assistant";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
@@ -1574,6 +1575,11 @@ export default function WeeklyMenuPage() {
   const [manualEditMeal, setManualEditMeal] = useState<PlannedMeal | null>(null);
   const [manualDishes, setManualDishes] = useState<DishDetail[]>([]);
   const [manualMode, setManualMode] = useState<MealMode>('cook');
+  const [catalogQuery, setCatalogQuery] = useState('');
+  const [catalogResults, setCatalogResults] = useState<CatalogProductSummary[]>([]);
+  const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<CatalogProductSummary | null>(null);
+  const [isCatalogSearching, setIsCatalogSearching] = useState(false);
+  const [catalogSearchError, setCatalogSearchError] = useState('');
   
   // Delete confirmation state
   const [deletingMeal, setDeletingMeal] = useState<PlannedMeal | null>(null);
@@ -1593,6 +1599,61 @@ export default function WeeklyMenuPage() {
   const [imageReferencePreviews, setImageReferencePreviews] = useState<string[]>([]);
   const [isGeneratingMealImage, setIsGeneratingMealImage] = useState(false);
   const imageGenerateInputRef = useRef<HTMLInputElement>(null);
+
+  const openAddMealModal = (mealType: MealType, dayIndex: number) => {
+    setAddMealKey(mealType);
+    setAddMealDayIndex(dayIndex);
+    setSelectedCatalogProduct(null);
+    setCatalogQuery('');
+    setCatalogResults([]);
+    setCatalogSearchError('');
+    setActiveModal('add');
+  };
+
+  useEffect(() => {
+    if (activeModal !== 'manualEdit' && activeModal !== 'add') return;
+
+    const query = catalogQuery.trim();
+    if (query.length < 2) {
+      setCatalogResults([]);
+      setCatalogSearchError('');
+      setIsCatalogSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setIsCatalogSearching(true);
+      setCatalogSearchError('');
+
+      try {
+        const response = await fetch(`/api/catalog/products?q=${encodeURIComponent(query)}&limit=8`);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || '商品検索に失敗しました');
+        }
+
+        if (!cancelled) {
+          setCatalogResults(Array.isArray(payload.products) ? payload.products : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCatalogResults([]);
+          setCatalogSearchError(error instanceof Error ? error.message : '商品検索に失敗しました');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsCatalogSearching(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeModal, catalogQuery]);
 
   // Fetch Plan & Check for pending generation requests
   useEffect(() => {
@@ -3146,6 +3207,7 @@ export default function WeeklyMenuPage() {
       skip: 'スキップ',
       ai_creative: 'AI献立',
     };
+    const catalogProduct = mode === 'buy' || mode === 'out' ? selectedCatalogProduct : null;
     
     try {
       const res = await fetch('/api/meal-plans/meals', {
@@ -3155,8 +3217,10 @@ export default function WeeklyMenuPage() {
           dayDate,
           mealType: addMealKey,
           mode,
-          dishName: defaultNames[mode],
-          isSimple: true
+          dishName: catalogProduct?.name || defaultNames[mode],
+          isSimple: true,
+          catalogProductId: catalogProduct?.id ?? null,
+          sourceType: catalogProduct ? 'catalog_product' : 'manual',
         })
       });
       
@@ -3176,6 +3240,10 @@ export default function WeeklyMenuPage() {
             weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
           }
         }
+        setSelectedCatalogProduct(null);
+        setCatalogQuery('');
+        setCatalogResults([]);
+        setCatalogSearchError('');
         setActiveModal(null);
       }
     } catch (e) {
@@ -3364,6 +3432,10 @@ export default function WeeklyMenuPage() {
         : [{ name: meal.dishName || '', calories_kcal: meal.caloriesKcal || 0, role: 'main' }];
     setManualDishes(existingDishes.length > 0 ? existingDishes : [{ name: '', calories_kcal: 0, role: 'main' }]);
     setManualMode(meal.mode || 'cook');
+    setSelectedCatalogProduct(meal.catalogProduct || null);
+    setCatalogQuery(meal.catalogProduct?.name || '');
+    setCatalogResults([]);
+    setCatalogSearchError('');
     setActiveModal('manualEdit');
   };
 
@@ -3416,19 +3488,41 @@ export default function WeeklyMenuPage() {
 
   // Add dish to manual edit
   const addManualDish = () => {
+    setSelectedCatalogProduct(null);
     setManualDishes(prev => [...prev, { name: '', calories_kcal: 0, role: 'side' }]);
   };
 
   // Remove dish from manual edit
   const removeManualDish = (index: number) => {
+    setSelectedCatalogProduct(null);
     setManualDishes(prev => prev.filter((_, i) => i !== index));
   };
 
   // Update dish in manual edit
   const updateManualDish = (index: number, field: keyof DishDetail, value: string | number) => {
+    setSelectedCatalogProduct(null);
     setManualDishes(prev => prev.map((dish, i) => 
       i === index ? { ...dish, [field]: value } : dish
     ));
+  };
+
+  const applyCatalogProductToManualEdit = (product: CatalogProductSummary) => {
+    setSelectedCatalogProduct(product);
+    setManualMode((prev) => (prev === 'out' ? 'out' : 'buy'));
+    setCatalogQuery(product.name);
+    setManualDishes([
+      {
+        name: product.name,
+        role: 'main',
+        calories_kcal: product.caloriesKcal ?? 0,
+        protein_g: product.proteinG ?? undefined,
+        fat_g: product.fatG ?? undefined,
+        carbs_g: product.carbsG ?? undefined,
+        sodium_g: product.sodiumG ?? undefined,
+        fiber_g: product.fiberG ?? undefined,
+        sugar_g: product.sugarG ?? undefined,
+      },
+    ]);
   };
 
   // Save manual edit
@@ -3453,22 +3547,31 @@ export default function WeeklyMenuPage() {
           mode: manualMode,
           dishes: validDishes,
           isSimple: validDishes.length === 1,
-          caloriesKcal: totalCal > 0 ? totalCal : null
+          caloriesKcal: totalCal > 0 ? totalCal : null,
+          catalogProductId: selectedCatalogProduct?.id ?? null,
+          sourceType: selectedCatalogProduct ? 'catalog_product' : 'manual',
         })
       });
-      
-      // Update local state
-      const updatedDays = currentPlan.days?.map(day => ({
-        ...day,
-        meals: day.meals?.map(m => 
-          m.id === manualEditMeal.id 
-            ? { ...m, dishName, mode: manualMode, dishes: validDishes, isSimple: validDishes.length === 1, caloriesKcal: totalCal > 0 ? totalCal : null }
-            : m
-        )
-      }));
-      setCurrentPlan({ ...currentPlan, days: updatedDays });
+
+      const targetDate = formatLocalDate(weekStart);
+      const endDate = addDaysStr(targetDate, 6);
+      const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+      if (refreshRes.ok) {
+        const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
+        const newPlan = dailyMeals && dailyMeals.length > 0 ? { days: dailyMeals } : null;
+        const newShoppingList = shoppingListData?.items || [];
+        setCurrentPlan(newPlan);
+        if (dailyMeals && dailyMeals.length > 0) {
+          syncCalendarMealDatesFromDailyMeals(dailyMeals);
+        }
+        weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+      }
+
       setActiveModal(null);
       setManualEditMeal(null);
+      setSelectedCatalogProduct(null);
+      setCatalogQuery('');
+      setCatalogResults([]);
     } catch (e) {
       alert('更新に失敗しました');
     }
@@ -4061,7 +4164,7 @@ export default function WeeklyMenuPage() {
     
     return (
       <button
-        onClick={() => { setAddMealKey(mealKey); setAddMealDayIndex(dayIndex); setActiveModal('add'); }}
+        onClick={() => openAddMealModal(mealKey, dayIndex)}
         className="w-full flex items-center justify-center gap-2 rounded-[14px] p-5 mb-2 cursor-pointer transition-all hover:border-[#E07A5F]"
         style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
       >
@@ -6246,35 +6349,145 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-3.5 pb-4 lg:pb-7 rounded-t-3xl"
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
                 style={{ background: colors.card }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex justify-between items-center mb-3.5">
+                <div className="flex justify-between items-center px-4 py-3.5" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <span style={{ fontSize: 15, fontWeight: 600 }}>{addMealKey && MEAL_LABELS[addMealKey]}を追加</span>
                   <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <X size={14} color={colors.textLight} />
                   </button>
                 </div>
-                <div className="flex flex-col gap-2">
-                  {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).filter(([k]) => k !== 'skip').map(([key, mode]) => {
-                    const ModeIcon = mode.icon;
-                    return (
-                      <button 
-                        key={key} 
-                        onClick={() => handleAddMealWithMode(key)}
-                        className="flex items-center gap-2.5 p-3 rounded-[10px]" 
-                        style={{ background: mode.bg }}
+                <div className="flex-1 overflow-auto px-4 py-3.5 pb-4 lg:pb-7">
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label style={{ fontSize: 12, color: colors.textMuted }}>市販品・外食メニューから選ぶ</label>
+                      {selectedCatalogProduct && (
+                        <button
+                          onClick={() => {
+                            setSelectedCatalogProduct(null);
+                            setCatalogQuery('');
+                          }}
+                          className="text-[12px]"
+                          style={{ color: colors.textLight }}
+                        >
+                          解除
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={catalogQuery}
+                      onChange={(e) => {
+                        setCatalogQuery(e.target.value);
+                        if (!e.target.value.trim()) {
+                          setSelectedCatalogProduct(null);
+                        }
+                      }}
+                      placeholder="商品名で検索"
+                      className="w-full p-3 rounded-xl text-[13px] outline-none"
+                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                    />
+                    <p style={{ fontSize: 11, color: colors.textMuted, margin: '6px 0 0 0' }}>
+                      選んだ商品は「買う」か「外食」で追加すると公開栄養値ごと保存されます。
+                    </p>
+
+                    {selectedCatalogProduct && (
+                      <div
+                        className="mt-3 p-3 rounded-2xl"
+                        style={{ background: colors.purpleLight, border: `1px solid ${colors.purple}` }}
                       >
-                        <ModeIcon size={18} color={mode.color} />
-                        <span style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>{mode.label}で追加</span>
-                      </button>
-                    );
-                  })}
-                  <button onClick={() => setActiveModal('aiMeal')} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}>
-                    <Sparkles size={18} color={colors.accent} />
-                    <span style={{ fontSize: 13, fontWeight: 500, color: colors.accent }}>AIに提案してもらう</span>
-                  </button>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p style={{ fontSize: 12, color: colors.purple, margin: '0 0 4px 0', fontWeight: 600 }}>
+                              選択中
+                            </p>
+                            <p style={{ fontSize: 14, color: colors.text, margin: 0, fontWeight: 600 }}>
+                              {selectedCatalogProduct.name}
+                            </p>
+                            <p style={{ fontSize: 12, color: colors.textLight, margin: '4px 0 0 0' }}>
+                              {selectedCatalogProduct.brandName}
+                              {selectedCatalogProduct.priceYen ? ` / ${selectedCatalogProduct.priceYen}円` : ''}
+                            </p>
+                          </div>
+                          <div style={{ fontSize: 12, color: colors.textLight, textAlign: 'right' }}>
+                            <div>{selectedCatalogProduct.caloriesKcal ?? '-'} kcal</div>
+                            <div>P {formatNutrition(selectedCatalogProduct.proteinG)}g</div>
+                            <div>F {formatNutrition(selectedCatalogProduct.fatG)}g</div>
+                            <div>C {formatNutrition(selectedCatalogProduct.carbsG)}g</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {(isCatalogSearching || catalogSearchError || catalogResults.length > 0) && (
+                      <div className="mt-3 space-y-2">
+                        {isCatalogSearching && (
+                          <p style={{ fontSize: 12, color: colors.textMuted, margin: 0 }}>検索中...</p>
+                        )}
+                        {catalogSearchError && (
+                          <p style={{ fontSize: 12, color: colors.danger, margin: 0 }}>{catalogSearchError}</p>
+                        )}
+                        {catalogResults.map((product) => {
+                          const isSelected = selectedCatalogProduct?.id === product.id;
+                          return (
+                            <button
+                              key={product.id}
+                              onClick={() => setSelectedCatalogProduct(product)}
+                              className="w-full p-3 rounded-2xl text-left"
+                              style={{
+                                background: isSelected ? colors.purpleLight : colors.bg,
+                                border: isSelected ? `1px solid ${colors.purple}` : `1px solid ${colors.border}`,
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 4px 0' }}>
+                                    {product.brandName}
+                                  </p>
+                                  <p style={{ fontSize: 13, color: colors.text, margin: 0, fontWeight: 600 }}>
+                                    {product.name}
+                                  </p>
+                                  <p style={{ fontSize: 11, color: colors.textLight, margin: '4px 0 0 0' }}>
+                                    {product.categoryCode || '分類なし'}
+                                    {product.priceYen ? ` / ${product.priceYen}円` : ''}
+                                  </p>
+                                </div>
+                                <div style={{ fontSize: 11, color: colors.textLight, textAlign: 'right' }}>
+                                  <div>{product.caloriesKcal ?? '-'} kcal</div>
+                                  <div>P {formatNutrition(product.proteinG)}g</div>
+                                  <div>F {formatNutrition(product.fatG)}g</div>
+                                  <div>C {formatNutrition(product.carbsG)}g</div>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).filter(([k]) => k !== 'skip').map(([key, mode]) => {
+                      const ModeIcon = mode.icon;
+                      return (
+                        <button 
+                          key={key} 
+                          onClick={() => handleAddMealWithMode(key)}
+                          className="flex items-center gap-2.5 p-3 rounded-[10px]" 
+                          style={{ background: mode.bg }}
+                        >
+                          <ModeIcon size={18} color={mode.color} />
+                          <span style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>{mode.label}で追加</span>
+                        </button>
+                      );
+                    })}
+                    <button onClick={() => setActiveModal('aiMeal')} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}>
+                      <Sparkles size={18} color={colors.accent} />
+                      <span style={{ fontSize: 13, fontWeight: 500, color: colors.accent }}>AIに提案してもらう</span>
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -6301,11 +6514,7 @@ export default function WeeklyMenuPage() {
                   {ALL_MEAL_TYPES.map(type => (
                     <button 
                       key={type}
-                      onClick={() => {
-                        setAddMealKey(type);
-                        setAddMealDayIndex(selectedDayIndex);
-                        setActiveModal('add');
-                      }}
+                      onClick={() => openAddMealModal(type, selectedDayIndex)}
                       className="w-full flex items-center justify-between p-4 rounded-xl transition-colors"
                       style={{ background: colors.bg }}
                     >
@@ -6630,6 +6839,114 @@ export default function WeeklyMenuPage() {
                         );
                       })}
                     </div>
+                  </div>
+
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label style={{ fontSize: 12, color: colors.textMuted }}>市販品・外食メニューから選ぶ</label>
+                      {selectedCatalogProduct && (
+                        <button
+                          onClick={() => {
+                            setSelectedCatalogProduct(null);
+                            setCatalogQuery('');
+                          }}
+                          className="text-[12px]"
+                          style={{ color: colors.textLight }}
+                        >
+                          解除
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={catalogQuery}
+                      onChange={(e) => {
+                        setCatalogQuery(e.target.value);
+                        if (!e.target.value.trim()) {
+                          setSelectedCatalogProduct(null);
+                        }
+                      }}
+                      placeholder="商品名で検索"
+                      className="w-full p-3 rounded-xl text-[13px] outline-none"
+                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                    />
+                    <p style={{ fontSize: 11, color: colors.textMuted, margin: '6px 0 0 0' }}>
+                      コンビニだけでなく、今後はスーパーや外食メニューも同じ catalog で追加します。
+                    </p>
+
+                    {selectedCatalogProduct && (
+                      <div
+                        className="mt-3 p-3 rounded-2xl"
+                        style={{ background: colors.purpleLight, border: `1px solid ${colors.purple}` }}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p style={{ fontSize: 12, color: colors.purple, margin: '0 0 4px 0', fontWeight: 600 }}>
+                              選択中
+                            </p>
+                            <p style={{ fontSize: 14, color: colors.text, margin: 0, fontWeight: 600 }}>
+                              {selectedCatalogProduct.name}
+                            </p>
+                            <p style={{ fontSize: 12, color: colors.textLight, margin: '4px 0 0 0' }}>
+                              {selectedCatalogProduct.brandName}
+                              {selectedCatalogProduct.priceYen ? ` / ${selectedCatalogProduct.priceYen}円` : ''}
+                            </p>
+                          </div>
+                          <div style={{ fontSize: 12, color: colors.textLight, textAlign: 'right' }}>
+                            <div>{selectedCatalogProduct.caloriesKcal ?? '-'} kcal</div>
+                            <div>P {formatNutrition(selectedCatalogProduct.proteinG)}g</div>
+                            <div>F {formatNutrition(selectedCatalogProduct.fatG)}g</div>
+                            <div>C {formatNutrition(selectedCatalogProduct.carbsG)}g</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {(isCatalogSearching || catalogSearchError || catalogResults.length > 0) && (
+                      <div className="mt-3 space-y-2">
+                        {isCatalogSearching && (
+                          <p style={{ fontSize: 12, color: colors.textMuted, margin: 0 }}>検索中...</p>
+                        )}
+                        {catalogSearchError && (
+                          <p style={{ fontSize: 12, color: colors.danger, margin: 0 }}>{catalogSearchError}</p>
+                        )}
+                        {catalogResults.map((product) => {
+                          const isSelected = selectedCatalogProduct?.id === product.id;
+                          return (
+                            <button
+                              key={product.id}
+                              onClick={() => applyCatalogProductToManualEdit(product)}
+                              className="w-full p-3 rounded-2xl text-left"
+                              style={{
+                                background: isSelected ? colors.purpleLight : colors.bg,
+                                border: isSelected ? `1px solid ${colors.purple}` : `1px solid ${colors.border}`,
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 4px 0' }}>
+                                    {product.brandName}
+                                  </p>
+                                  <p style={{ fontSize: 13, color: colors.text, margin: 0, fontWeight: 600 }}>
+                                    {product.name}
+                                  </p>
+                                  <p style={{ fontSize: 11, color: colors.textLight, margin: '4px 0 0 0' }}>
+                                    {product.categoryCode || '分類なし'}
+                                    {product.priceYen ? ` / ${product.priceYen}円` : ''}
+                                  </p>
+                                </div>
+                                <div style={{ fontSize: 11, color: colors.textLight, textAlign: 'right' }}>
+                                  <div>{product.caloriesKcal ?? '-'} kcal</div>
+                                  <div>P {formatNutrition(product.proteinG)}g</div>
+                                  <div>F {formatNutrition(product.fatG)}g</div>
+                                  <div>C {formatNutrition(product.carbsG)}g</div>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                   
                   {/* Dishes */}

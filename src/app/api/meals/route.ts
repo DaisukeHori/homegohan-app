@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { buildCatalogSelectionUpdate } from '../../../lib/catalog-products';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -79,6 +80,8 @@ export async function POST(request: Request) {
       caloriesKcal,
       ingredients,
       dishes,
+      catalogProductId,
+      sourceType,
     } = body;
 
     if (!date || !mealType || !dishName) {
@@ -104,20 +107,35 @@ export async function POST(request: Request) {
     }
 
     // 2. planned_mealを追加
+    const insertData: Record<string, any> = {
+      daily_meal_id: dailyMeal.id,
+      meal_type: mealType,
+      dish_name: dishName,
+      mode: mode,
+      description: description,
+      image_url: imageUrl,
+      calories_kcal: caloriesKcal,
+      ingredients: ingredients,
+      dishes: dishes,
+      is_completed: false,
+      source_type: sourceType || 'manual',
+    };
+
+    if (catalogProductId) {
+      const { fields } = await buildCatalogSelectionUpdate({
+        supabase,
+        catalogProductId,
+        mode: mode || 'buy',
+        imageUrl: imageUrl ?? undefined,
+        description: description ?? undefined,
+        selectedFrom: 'manual_search',
+      });
+      Object.assign(insertData, fields);
+    }
+
     const { data: meal, error: mealError } = await supabase
       .from('planned_meals')
-      .insert({
-        daily_meal_id: dailyMeal.id,
-        meal_type: mealType,
-        dish_name: dishName,
-        mode: mode,
-        description: description,
-        image_url: imageUrl,
-        calories_kcal: caloriesKcal,
-        ingredients: ingredients,
-        dishes: dishes,
-        is_completed: false,
-      })
+      .insert(insertData)
       .select()
       .single();
 

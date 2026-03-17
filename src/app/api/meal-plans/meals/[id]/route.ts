@@ -1,5 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import {
+  buildCatalogSelectionUpdate,
+  clearCatalogSelectionMetadata,
+} from '../../../../../lib/catalog-products';
 
 export async function PATCH(
   request: Request,
@@ -11,7 +15,36 @@ export async function PATCH(
 
   try {
     const json = await request.json();
-    const { isCompleted, dishName, mode, dishes, isSimple, caloriesKcal, description, imageUrl } = json;
+    const {
+      isCompleted,
+      dishName,
+      mode,
+      dishes,
+      isSimple,
+      caloriesKcal,
+      description,
+      imageUrl,
+      catalogProductId,
+      sourceType,
+    } = json;
+
+    const { data: existingMeal, error: existingMealError } = await supabase
+      .from('planned_meals')
+      .select(`
+        id,
+        mode,
+        catalog_product_id,
+        source_type,
+        generation_metadata,
+        user_daily_meals!inner(user_id)
+      `)
+      .eq('id', params.id)
+      .eq('user_daily_meals.user_id', user.id)
+      .single();
+
+    if (existingMealError || !existingMeal) {
+      return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
+    }
 
     const updateData: Record<string, any> = {};
     
@@ -27,10 +60,42 @@ export async function PATCH(
     if (description !== undefined) updateData.description = description;
     if (imageUrl !== undefined) updateData.image_url = imageUrl;
 
+    if (catalogProductId) {
+      const { fields } = await buildCatalogSelectionUpdate({
+        supabase,
+        catalogProductId,
+        existingMetadata: existingMeal.generation_metadata,
+        mode: mode ?? existingMeal.mode ?? 'buy',
+        imageUrl: imageUrl ?? undefined,
+        description: description ?? undefined,
+        selectedFrom: 'manual_search',
+      });
+      Object.assign(updateData, fields);
+    } else {
+      const manualContentChanged =
+        dishName !== undefined ||
+        dishes !== undefined ||
+        isSimple !== undefined ||
+        caloriesKcal !== undefined ||
+        description !== undefined ||
+        imageUrl !== undefined;
+
+      if ((catalogProductId === null || manualContentChanged) && existingMeal.catalog_product_id) {
+        updateData.catalog_product_id = null;
+        updateData.source_type = sourceType ?? 'manual';
+        updateData.generation_metadata = clearCatalogSelectionMetadata(
+          existingMeal.generation_metadata,
+          catalogProductId === null ? 'catalog_selection_removed' : 'manual_override',
+        );
+      } else if (sourceType !== undefined) {
+        updateData.source_type = sourceType;
+      }
+    }
+
     const { data, error } = await supabase
       .from('planned_meals')
       .update(updateData)
-      .eq('id', params.id)
+      .eq('id', existingMeal.id)
       .select()
       .single();
 
@@ -63,4 +128,3 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

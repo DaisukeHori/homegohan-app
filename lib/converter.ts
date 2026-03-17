@@ -13,6 +13,7 @@ import type {
   DbUserProfile, DbMeal, DbMealNutritionEstimate, DbWeeklyMenuRequest, 
   DbAnnouncement, DbOrgDailyStats, DbDailyMeal, DbShoppingList, DbShoppingListRequest
 } from '@/types/database';
+import { extractCatalogProductFromMetadata } from '../src/lib/catalog-products';
 
 // User Profile (Extended)
 export const toUserProfile = (db: DbUserProfile): UserProfile => ({
@@ -498,6 +499,10 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   qualityTags: data.quality_tags || null,
   displayOrder: data.display_order ?? 0,
   isGenerating: data.is_generating ?? false,
+  sourceType: data.source_type ?? null,
+  catalogProductId: data.catalog_product_id ?? null,
+  generationMetadata: data.generation_metadata ?? null,
+  catalogProduct: extractCatalogProductFromMetadata(data.generation_metadata),
 });
 
 export const toShoppingListItem = (data: any): ShoppingListItem => ({

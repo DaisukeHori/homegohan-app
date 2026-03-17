@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import type { CatalogProductSummary } from "@/types/catalog";
+import { extractCatalogProductFromMetadata } from "@/lib/catalog-products";
 import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@/lib/supabase/client";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Clock, Users, ChevronLeft, MoreVertical,
@@ -16,6 +17,7 @@ import {
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
+  border: '#E8E3DB',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
   textMuted: '#A0A0A0',
@@ -76,6 +78,9 @@ interface PlannedMealDetail {
   isSimple: boolean;
   cookingTimeMinutes: number | null;
   dayDate: string;
+  sourceType: string | null;
+  catalogProductId: string | null;
+  catalogProduct: CatalogProductSummary | null;
 }
 
 export default function MealDetailPage({ params }: { params: { id: string } }) {
@@ -87,49 +92,62 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     const fetchData = async () => {
-      const supabase = createClient();
       setLoading(true);
-      
-      // planned_mealsとuser_daily_mealsをJOINして取得
-      const { data, error } = await supabase
-        .from('planned_meals')
-        .select(`
-          *,
-          user_daily_meals!inner(day_date)
-        `)
-        .eq('id', params.id)
-        .single();
 
-      if (error || !data) {
+      try {
+        const response = await fetch(`/api/meals/${params.id}`, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error('食事データの取得に失敗しました');
+        }
+
+        const data = await response.json();
+
+        const mappedMeal: PlannedMealDetail = {
+          id: data.id,
+          dailyMealId: data.daily_meal_id,
+          mealType: data.meal_type as MealType,
+          mode: (data.mode || 'cook') as MealMode,
+          dishName: data.dish_name,
+          description: data.description,
+          recipeUrl: data.recipe_url,
+          imageUrl: data.image_url,
+          ingredients: data.ingredients,
+          caloriesKcal: data.calories_kcal,
+          proteinG: data.protein_g,
+          fatG: data.fat_g,
+          carbsG: data.carbs_g,
+          isCompleted: data.is_completed || false,
+          completedAt: data.completed_at,
+          dishes: data.dishes,
+          isSimple: data.is_simple,
+          cookingTimeMinutes: data.cooking_time_minutes,
+          dayDate: data.user_daily_meals?.day_date ?? '',
+          sourceType: data.source_type ?? null,
+          catalogProductId: data.catalog_product_id ?? null,
+          catalogProduct: extractCatalogProductFromMetadata(data.generation_metadata),
+        };
+
+        if (mappedMeal.catalogProductId) {
+          try {
+            const catalogResponse = await fetch(`/api/catalog/products/${mappedMeal.catalogProductId}`, { cache: 'no-store' });
+            if (catalogResponse.ok) {
+              const payload = await catalogResponse.json();
+              if (payload?.product) {
+                mappedMeal.catalogProduct = payload.product as CatalogProductSummary;
+              }
+            }
+          } catch (catalogError) {
+            console.warn("Failed to fetch catalog product detail:", catalogError);
+          }
+        }
+
+        setMeal(mappedMeal);
+      } catch (error) {
         console.error("Error fetching meal:", error);
+        setMeal(null);
+      } finally {
         setLoading(false);
-        return;
       }
-
-      const mappedMeal: PlannedMealDetail = {
-        id: data.id,
-        dailyMealId: data.daily_meal_id,
-        mealType: data.meal_type as MealType,
-        mode: (data.mode || 'cook') as MealMode,
-        dishName: data.dish_name,
-        description: data.description,
-        recipeUrl: data.recipe_url,
-        imageUrl: data.image_url,
-        ingredients: data.ingredients,
-        caloriesKcal: data.calories_kcal,
-        proteinG: data.protein_g,
-        fatG: data.fat_g,
-        carbsG: data.carbs_g,
-        isCompleted: data.is_completed || false,
-        completedAt: data.completed_at,
-        dishes: data.dishes,
-        isSimple: data.is_simple,
-        cookingTimeMinutes: data.cooking_time_minutes,
-        dayDate: data.user_daily_meals.day_date,
-      };
-
-      setMeal(mappedMeal);
-      setLoading(false);
     };
 
     void fetchData();
@@ -138,28 +156,35 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
   const toggleCompletion = async () => {
     if (!meal) return;
     const newStatus = !meal.isCompleted;
-    const supabase = createClient();
-    
     setMeal({ ...meal, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null });
+    try {
+      const response = await fetch(`/api/meals/${meal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          is_completed: newStatus,
+          completed_at: newStatus ? new Date().toISOString() : null,
+        }),
+      });
 
-    await supabase
-      .from('planned_meals')
-      .update({
-        is_completed: newStatus,
-        completed_at: newStatus ? new Date().toISOString() : null,
-      })
-      .eq('id', meal.id);
+      if (!response.ok) {
+        throw new Error('更新に失敗しました');
+      }
+    } catch (error) {
+      setMeal({ ...meal, isCompleted: !newStatus, completedAt: meal.completedAt });
+      alert("更新に失敗しました");
+    }
   };
 
   const handleDelete = async () => {
     try {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from('planned_meals')
-        .delete()
-        .eq('id', params.id);
-      
-      if (error) throw error;
+      const response = await fetch(`/api/meals/${params.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('削除に失敗しました');
+      }
 
       setShowDeleteModal(false);
       setTimeout(() => router.push('/menus/weekly'), 300);
@@ -322,6 +347,57 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
             ))}
           </div>
         </div>
+
+        {meal.catalogProduct && (
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-900 mb-3">公開商品情報</h3>
+            <div className="rounded-2xl border p-4" style={{ borderColor: colors.border, background: colors.purpleLight }}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <p className="text-xs font-bold mb-1" style={{ color: colors.purple }}>
+                    {meal.catalogProduct.brandName || "catalog"}
+                  </p>
+                  <p className="text-sm font-bold text-gray-900">{meal.catalogProduct.name}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {meal.catalogProduct.categoryCode || "分類なし"}
+                    {meal.catalogProduct.priceYen != null ? ` / ${meal.catalogProduct.priceYen}円` : ""}
+                  </p>
+                </div>
+                <span className="px-2 py-1 rounded-full text-[10px] font-bold" style={{ background: "#fff", color: colors.purple }}>
+                  公開栄養値
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {[
+                  { label: "カロリー", value: meal.catalogProduct.caloriesKcal, unit: "kcal" },
+                  { label: "たんぱく質", value: meal.catalogProduct.proteinG, unit: "g" },
+                  { label: "脂質", value: meal.catalogProduct.fatG, unit: "g" },
+                  { label: "炭水化物", value: meal.catalogProduct.carbsG, unit: "g" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-xl bg-white px-3 py-2">
+                    <p className="text-[10px] text-gray-500">{item.label}</p>
+                    <p className="text-sm font-bold text-gray-900">
+                      {item.value != null ? item.value : "-"} {item.value != null ? item.unit : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {meal.catalogProduct.canonicalUrl && (
+                <a
+                  href={meal.catalogProduct.canonicalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm font-bold"
+                  style={{ color: colors.purple }}
+                >
+                  商品ページを見る
+                </a>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 調理情報（自炊の場合） */}
         {(meal.mode === 'cook' || meal.mode === 'quick') && (

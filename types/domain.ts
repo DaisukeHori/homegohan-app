@@ -3,6 +3,8 @@
 export type ISODateTimeString = string;
 export type ISODateString = string;
 
+import type { CatalogProductSummary } from "@/types/catalog";
+
 // --- Enum Types ---
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
@@ -758,6 +760,12 @@ export interface PlannedMeal {
   
   // 生成中フラグ
   isGenerating: boolean;
+
+  // Catalog linkage
+  sourceType: string | null;
+  catalogProductId: string | null;
+  generationMetadata: Record<string, any> | null;
+  catalogProduct: CatalogProductSummary | null;
 }
 
 // 栄養素の詳細型

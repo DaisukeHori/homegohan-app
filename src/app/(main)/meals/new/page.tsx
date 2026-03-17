@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
+import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
@@ -305,6 +306,8 @@ export default function MealCaptureModal() {
   const [praiseComment, setPraiseComment] = useState('');
   const [nutritionTip, setNutritionTip] = useState('');
   const [nutritionalAdvice, setNutritionalAdvice] = useState('');
+  const [catalogMatches, setCatalogMatches] = useState<CatalogDishMatch[]>([]);
+  const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<CatalogProductSummary | null>(null);
   
   // 日付・食事タイプ選択
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
@@ -417,6 +420,8 @@ export default function MealCaptureModal() {
     setIsAnalyzing(true);
     
     try {
+      setCatalogMatches([]);
+      setSelectedCatalogProduct(null);
       const startedAt = Date.now();
       void logToServer('info', 'meal-photo analysis started', {
         photoCount: photoFiles.length,
@@ -455,6 +460,7 @@ export default function MealCaptureModal() {
         setPraiseComment(data.praiseComment || '');
         setNutritionTip(data.nutritionTip || '');
         setNutritionalAdvice(data.nutritionalAdvice || '');
+        setCatalogMatches(Array.isArray(data.catalogMatches) ? data.catalogMatches : []);
         setStep('result');
       } else {
         void logToServer('warn', 'meal-photo analysis failed', {
@@ -477,6 +483,23 @@ export default function MealCaptureModal() {
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  const applyCatalogCandidate = (product: CatalogProductSummary) => {
+    setSelectedCatalogProduct(product);
+    setAnalyzedDishes([
+      {
+        name: product.name,
+        role: 'main',
+        calories_kcal: product.caloriesKcal ?? 0,
+        cal: product.caloriesKcal ?? 0,
+      },
+    ]);
+    setTotalCalories(product.caloriesKcal || 0);
+    setTotalProtein(product.proteinG || 0);
+    setTotalCarbs(product.carbsG || 0);
+    setTotalFat(product.fatG || 0);
+    setNutritionTip(`${product.brandName} の公開栄養値を適用しました。`);
   };
 
   // 写真タイプを判別（オートモード）
@@ -913,6 +936,7 @@ export default function MealCaptureModal() {
           totalCalories,
           imageUrl,
           nutritionalAdvice,
+          catalogProductId: selectedCatalogProduct?.id ?? null,
         }),
       });
       
@@ -1294,6 +1318,54 @@ export default function MealCaptureModal() {
                 ))}
               </div>
             </div>
+
+            {catalogMatches.length > 0 && (
+              <div className="mb-4">
+                <p style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, marginBottom: 8 }}>市販品候補</p>
+                <div className="space-y-3">
+                  {catalogMatches.map((match) => (
+                    <div key={match.dishName} className="p-3 rounded-2xl" style={{ background: colors.card }}>
+                      <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 8px 0' }}>
+                        「{match.dishName}」に近い公開商品
+                      </p>
+                      <div className="space-y-2">
+                        {match.candidates.map((candidate) => {
+                          const isSelected = selectedCatalogProduct?.id === candidate.id;
+                          return (
+                            <button
+                              key={candidate.id}
+                              onClick={() => applyCatalogCandidate(candidate)}
+                              className="w-full p-3 rounded-xl text-left"
+                              style={{
+                                background: isSelected ? colors.purpleLight : colors.bg,
+                                border: isSelected ? `1px solid ${colors.purple}` : `1px solid ${colors.border}`,
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 2px 0' }}>
+                                    {candidate.brandName}
+                                  </p>
+                                  <p style={{ fontSize: 13, color: colors.text, margin: 0, fontWeight: 600 }}>
+                                    {candidate.name}
+                                  </p>
+                                </div>
+                                <div style={{ fontSize: 11, color: colors.textLight, textAlign: 'right' }}>
+                                  <div>{candidate.caloriesKcal ?? '-'} kcal</div>
+                                  <div>P {candidate.proteinG ?? '-'}g</div>
+                                  <div>F {candidate.fatG ?? '-'}g</div>
+                                  <div>C {candidate.carbsG ?? '-'}g</div>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             
             <button
               onClick={() => setStep('select-date')}
@@ -1305,7 +1377,7 @@ export default function MealCaptureModal() {
             </button>
             
             <button
-              onClick={() => { setStep('capture'); setPhotoFiles([]); setPhotoPreviews([]); setAnalyzedDishes([]); setOverallScore(0); setPraiseComment(''); setNutritionTip(''); }}
+              onClick={() => { setStep('capture'); setPhotoFiles([]); setPhotoPreviews([]); setAnalyzedDishes([]); setOverallScore(0); setPraiseComment(''); setNutritionTip(''); setCatalogMatches([]); setSelectedCatalogProduct(null); }}
               className="w-full py-3 mt-2 rounded-xl"
               style={{ background: colors.bg }}
             >

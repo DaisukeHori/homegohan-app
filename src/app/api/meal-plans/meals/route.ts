@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { buildCatalogSelectionUpdate } from '../../../../lib/catalog-products';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -7,7 +8,19 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { dayDate, mealType, mode, dishName, isSimple, dishes, caloriesKcal, description, ingredients } = await request.json();
+    const {
+      dayDate,
+      mealType,
+      mode,
+      dishName,
+      isSimple,
+      dishes,
+      caloriesKcal,
+      description,
+      ingredients,
+      catalogProductId,
+      sourceType,
+    } = await request.json();
 
     if (!dayDate || !mealType) {
       return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });
@@ -42,20 +55,34 @@ export async function POST(request: Request) {
 
     // 同じタイプの食事を複数追加可能にするため、削除はしない
     // Create new planned meal
+    const insertData: Record<string, any> = {
+      daily_meal_id: dailyMealId,
+      meal_type: mealType,
+      mode: mode || 'cook',
+      dish_name: dishName || '未設定',
+      is_simple: isSimple ?? true,
+      dishes: dishes || null,
+      calories_kcal: caloriesKcal || null,
+      description: description || null,
+      ingredients: ingredients || null,
+      is_completed: false,
+      source_type: sourceType || 'manual',
+    };
+
+    if (catalogProductId) {
+      const { fields } = await buildCatalogSelectionUpdate({
+        supabase,
+        catalogProductId,
+        mode: mode || 'buy',
+        description: description || null,
+        selectedFrom: 'manual_search',
+      });
+      Object.assign(insertData, fields);
+    }
+
     const { data: newMeal, error: mealError } = await supabase
       .from('planned_meals')
-      .insert({
-        daily_meal_id: dailyMealId,
-        meal_type: mealType,
-        mode: mode || 'cook',
-        dish_name: dishName || '未設定',
-        is_simple: isSimple ?? true,
-        dishes: dishes || null,
-        calories_kcal: caloriesKcal || null,
-        description: description || null,
-        ingredients: ingredients || null,
-        is_completed: false
-      })
+      .insert(insertData)
       .select()
       .single();
 

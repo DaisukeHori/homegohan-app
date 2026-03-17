@@ -8,8 +8,14 @@ const mockGenerateContent = vi.fn();
 const mockFrom = vi.fn();
 const mockUpdate = vi.fn();
 const mockEq = vi.fn();
+const mockNeq = vi.fn();
+const mockOrder = vi.fn();
+const mockLimit = vi.fn();
+const mockOr = vi.fn();
 const mockSelect = vi.fn();
 const mockSingle = vi.fn();
+let selectChainData: any[] = [];
+let selectChainError: { message: string } | null = null;
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(() => ({
@@ -42,16 +48,53 @@ describe('image route contracts', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
+    selectChainData = [];
+    selectChainError = null;
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
     mockInvoke.mockReset();
     mockUpload.mockResolvedValue({ error: null });
     mockGetPublicUrl.mockReturnValue({ data: { publicUrl: 'https://example.com/generated.png' } });
     mockGenerateContent.mockReset();
+    const selectChain = {
+      get data() {
+        return selectChainData;
+      },
+      get error() {
+        return selectChainError;
+      },
+      eq: mockEq,
+      neq: mockNeq,
+      order: mockOrder,
+      limit: mockLimit,
+      or: mockOr,
+      select: mockSelect,
+      single: mockSingle,
+      maybeSingle: mockSingle,
+    };
+    const updateChain = {
+      eq: mockEq,
+      select: mockSelect,
+    };
+
     mockSingle.mockResolvedValue({ data: { id: 'meal-1' }, error: null });
-    mockSelect.mockReturnValue({ single: mockSingle });
-    mockEq.mockReturnValue({ select: mockSelect });
-    mockUpdate.mockReturnValue({ eq: mockEq });
-    mockFrom.mockReturnValue({ update: mockUpdate });
+    mockSelect.mockImplementation(() => selectChain as any);
+    mockEq.mockImplementation(() => selectChain as any);
+    mockNeq.mockImplementation(() => selectChain as any);
+    mockOrder.mockImplementation(() => selectChain as any);
+    mockLimit.mockImplementation(() => selectChain as any);
+    mockOr.mockImplementation(() => selectChain as any);
+    mockUpdate.mockImplementation(() => updateChain as any);
+    mockFrom.mockImplementation(() => ({
+      update: mockUpdate,
+      select: mockSelect,
+      eq: mockEq,
+      neq: mockNeq,
+      order: mockOrder,
+      limit: mockLimit,
+      or: mockOr,
+      data: [],
+      error: null,
+    }));
     process.env.GOOGLE_AI_STUDIO_API_KEY = 'test-key';
     delete process.env.GEMINI_IMAGE_MODEL;
     delete process.env.GEMINI_VISION_MODEL;
@@ -120,6 +163,7 @@ describe('image route contracts', () => {
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: 'カレー', role: 'main', cal: 620 }],
       totalCalories: 620,
+      catalogMatches: [],
     });
   });
 
@@ -169,7 +213,105 @@ describe('image route contracts', () => {
     await expect(response.json()).resolves.toEqual({
       dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
       totalCalories: 640,
+      catalogMatches: [],
     });
+  });
+
+  it('analyze-meal-photo attaches catalog matches for returned dishes', async () => {
+    mockInvoke.mockResolvedValue({
+      data: {
+        dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
+        totalCalories: 640,
+      },
+      error: null,
+    });
+    selectChainData = [
+      {
+        id: 'catalog-1',
+        source_id: 'source-1',
+        name: '親子丼',
+        brand_name: 'FamilyMart',
+        category_code: 'bento',
+        description: '定番の親子丼',
+        main_image_url: 'https://example.com/oyakodon.png',
+        canonical_url: 'https://example.com/products/catalog-1',
+        price_yen: 598,
+        calories_kcal: 640,
+        protein_g: 28.4,
+        fat_g: 18.2,
+        carbs_g: 82.1,
+        sodium_g: 1.9,
+        fiber_g: 3.2,
+        sugar_g: 6.4,
+        availability_status: 'active',
+        updated_at: '2026-03-17T10:00:00.000Z',
+        catalog_sources: {
+          code: 'familymart',
+          brand_name: 'FamilyMart',
+        },
+      },
+    ];
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+        mealType: 'dinner',
+      }),
+    }));
+
+    await expect(response.json()).resolves.toEqual({
+      dishes: [{ name: '親子丼', role: 'main', cal: 640 }],
+      totalCalories: 640,
+      catalogMatches: [
+        {
+          dishName: '親子丼',
+          candidates: [
+            expect.objectContaining({
+              id: 'catalog-1',
+              name: '親子丼',
+              brandName: 'FamilyMart',
+              sourceCode: 'familymart',
+              caloriesKcal: 640,
+            }),
+          ],
+        },
+      ],
+    });
+  });
+
+  it('analyze-meal-photo keeps response successful when catalog lookup fails', async () => {
+    mockInvoke.mockResolvedValue({
+      data: {
+        dishes: [{ name: 'カレー', role: 'main', cal: 620 }],
+        totalCalories: 620,
+      },
+      error: null,
+    });
+    selectChainError = { message: 'catalog lookup failed' };
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+        mealType: 'dinner',
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      dishes: [{ name: 'カレー', role: 'main', cal: 620 }],
+      totalCalories: 620,
+      catalogMatches: [],
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Analyze Meal Photo: catalog lookup skipped',
+      expect.any(Error),
+    );
   });
 
   it('classify-photo accepts multiple images and returns normalized output', async () => {

@@ -88,6 +88,7 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 | `backfill-ingredient-embeddings` | 材料埋め込みバックフィル |
 | `regenerate-embeddings` | 埋め込み再生成 |
 | `regenerate-shopping-list-v2` | 買い物リスト再生成 v2 |
+| `import-convenience-catalog` | Firecrawl scrape + OpenAI fallback でコンビニ商品カタログを取り込む |
 
 ## ディレクトリ構成
 
@@ -164,9 +165,23 @@ Supabase Dashboard → Edge Functions → 対象関数 → Settings で設定。
 
 主な環境変数：
 - `OPENAI_API_KEY` - OpenAI API キー（LLM補助処理用）
+- `FIRECRAWL_BASE_URL` - Firecrawl API のベース URL。未指定時は `https://api.firecrawl.dev/v2`
+- `FIRECRAWL_API_KEY` - Firecrawl Cloud または Bearer 保護された self-host 用キー
+- `FIRECRAWL_AUTH_TOKEN` - self-host 接続時の任意 auth token。設定時は `FIRECRAWL_API_KEY` より優先
+- `FIRECRAWL_AUTH_HEADER` - self-host が独自ヘッダを要求する場合のヘッダ名。既定は `Authorization`
+- `FIRECRAWL_AUTH_SCHEME` - auth header の scheme。既定は `Bearer`。生 token を送りたい場合は空文字
 - `AIMLAPI_API_KEY` - dataset embeddings 用 Voyage API キー
 - `GOOGLE_AI_API_KEY` - Gemini API キー
 - `PERPLEXITY_API_KEY` - 低信頼な標準料理の栄養相場補助用キー
+
+### Firecrawl self-host
+
+コンビニ catalog importer は Firecrawl の `/scrape` だけを使います。`Agent` や `Browser` には依存しません。
+
+- Firecrawl Cloud の場合: `FIRECRAWL_BASE_URL` は未指定でよく、`FIRECRAWL_API_KEY` を設定します
+- Firecrawl self-host の場合: `FIRECRAWL_BASE_URL` を self-host URL に向けます
+- self-host が認証なしなら token は不要です
+- self-host で `formats: ["markdown", { type: "json", ... }]` を使うため、Firecrawl 側には JSON extraction 用の LLM provider 設定が必要です
 
 ## 注意事項
 

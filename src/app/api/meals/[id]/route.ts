@@ -1,5 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import {
+  buildCatalogSelectionUpdate,
+  clearCatalogSelectionMetadata,
+} from '../../../../lib/catalog-products';
 
 /**
  * 特定の食事を取得（planned_mealsベース）
@@ -65,7 +69,7 @@ export async function PATCH(
     const allowedFields = [
       'dish_name', 'mode', 'description', 'image_url', 'ingredients',
       'calories_kcal', 'protein_g', 'fat_g', 'carbs_g',
-      'is_completed', 'completed_at', 'dishes', 'is_simple', 'cooking_time_minutes'
+      'is_completed', 'completed_at', 'dishes', 'is_simple', 'cooking_time_minutes', 'source_type'
     ];
     
     const updateData: Record<string, any> = {};
@@ -81,6 +85,10 @@ export async function PATCH(
       .from('planned_meals')
       .select(`
         id,
+        mode,
+        catalog_product_id,
+        source_type,
+        generation_metadata,
         user_daily_meals!inner(user_id)
       `)
       .eq('id', params.id)
@@ -89,6 +97,35 @@ export async function PATCH(
 
     if (!existing) {
       return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
+    }
+
+    if (body.catalogProductId) {
+      const { fields } = await buildCatalogSelectionUpdate({
+        supabase,
+        catalogProductId: body.catalogProductId,
+        existingMetadata: existing.generation_metadata,
+        mode: body.mode ?? existing.mode ?? 'buy',
+        imageUrl: body.image_url ?? undefined,
+        description: body.description ?? undefined,
+        selectedFrom: 'manual_search',
+      });
+      Object.assign(updateData, fields);
+    } else {
+      const manualContentChanged =
+        body.dish_name !== undefined ||
+        body.dishes !== undefined ||
+        body.calories_kcal !== undefined ||
+        body.description !== undefined ||
+        body.image_url !== undefined;
+
+      if ((body.catalogProductId === null || manualContentChanged) && existing.catalog_product_id) {
+        updateData.catalog_product_id = null;
+        updateData.source_type = body.source_type ?? 'manual';
+        updateData.generation_metadata = clearCatalogSelectionMetadata(
+          existing.generation_metadata,
+          body.catalogProductId === null ? 'catalog_selection_removed' : 'manual_override',
+        );
+      }
     }
 
     const { data, error } = await supabase

@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { toAnnouncement } from "@/lib/converter";
+import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 
@@ -254,65 +254,7 @@ export const useHomeData = () => {
 
       if (dailyMealData && dailyMealData.planned_meals) {
         const mealsData = dailyMealData.planned_meals;
-        const meals: PlannedMeal[] = mealsData.map((m: any) => ({
-            id: m.id,
-            dailyMealId: m.daily_meal_id,
-            mealType: m.meal_type,
-            mode: m.mode || 'cook',
-            dishName: m.dish_name,
-            description: m.description,
-            recipeUrl: m.recipe_url,
-            imageUrl: m.image_url,
-            ingredients: m.ingredients,
-            recipeSteps: m.recipe_steps,
-            // 基本栄養素
-            caloriesKcal: m.calories_kcal,
-            proteinG: m.protein_g,
-            fatG: m.fat_g,
-            carbsG: m.carbs_g,
-            // 拡張栄養素
-            sodiumG: m.sodium_g ?? null,
-            aminoAcidG: m.amino_acid_g ?? null,
-            sugarG: m.sugar_g ?? null,
-            fiberG: m.fiber_g ?? null,
-            fiberSolubleG: m.fiber_soluble_g ?? null,
-            fiberInsolubleG: m.fiber_insoluble_g ?? null,
-            potassiumMg: m.potassium_mg ?? null,
-            calciumMg: m.calcium_mg ?? null,
-            magnesiumMg: m.magnesium_mg ?? null,
-            phosphorusMg: m.phosphorus_mg ?? null,
-            ironMg: m.iron_mg ?? null,
-            zincMg: m.zinc_mg ?? null,
-            iodineUg: m.iodine_ug ?? null,
-            cholesterolMg: m.cholesterol_mg ?? null,
-            vitaminB1Mg: m.vitamin_b1_mg ?? null,
-            vitaminB2Mg: m.vitamin_b2_mg ?? null,
-            vitaminCMg: m.vitamin_c_mg ?? null,
-            vitaminB6Mg: m.vitamin_b6_mg ?? null,
-            vitaminB12Ug: m.vitamin_b12_ug ?? null,
-            folicAcidUg: m.folic_acid_ug ?? null,
-            vitaminAUg: m.vitamin_a_ug ?? null,
-            vitaminDUg: m.vitamin_d_ug ?? null,
-            vitaminKUg: m.vitamin_k_ug ?? null,
-            vitaminEMg: m.vitamin_e_mg ?? null,
-            saturatedFatG: m.saturated_fat_g ?? null,
-            monounsaturatedFatG: m.monounsaturated_fat_g ?? null,
-            polyunsaturatedFatG: m.polyunsaturated_fat_g ?? null,
-            // その他
-            isCompleted: m.is_completed || false,
-            completedAt: m.completed_at,
-            actualMealId: m.actual_meal_id,
-            dishes: m.dishes,
-            isSimple: m.is_simple,
-            cookingTimeMinutes: m.cooking_time_minutes,
-            memo: m.memo || null,
-            vegScore: m.veg_score || null,
-            qualityTags: m.quality_tags || null,
-            displayOrder: m.display_order ?? 0,
-            isGenerating: m.is_generating ?? false,
-            createdAt: m.created_at,
-            updatedAt: m.updated_at,
-          }));
+        const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
 
           setTodayPlan({
             dayId: dailyMealData.id,
@@ -635,66 +577,7 @@ export const useHomeData = () => {
         .limit(1);
 
       if (data && data.length > 0) {
-        const m = data[0];
-        setBestMealThisWeek({
-          id: m.id,
-          dailyMealId: m.daily_meal_id,
-          mealType: m.meal_type,
-          mode: m.mode || 'cook',
-          dishName: m.dish_name,
-          description: m.description,
-          recipeUrl: m.recipe_url,
-          imageUrl: m.image_url,
-          ingredients: m.ingredients,
-          recipeSteps: m.recipe_steps || null,
-          // 基本栄養素
-          caloriesKcal: m.calories_kcal,
-          proteinG: m.protein_g,
-          fatG: m.fat_g,
-          carbsG: m.carbs_g,
-          // 拡張栄養素
-          sodiumG: m.sodium_g ?? null,
-          aminoAcidG: m.amino_acid_g ?? null,
-          sugarG: m.sugar_g ?? null,
-          fiberG: m.fiber_g ?? null,
-          fiberSolubleG: m.fiber_soluble_g ?? null,
-          fiberInsolubleG: m.fiber_insoluble_g ?? null,
-          potassiumMg: m.potassium_mg ?? null,
-          calciumMg: m.calcium_mg ?? null,
-          magnesiumMg: m.magnesium_mg ?? null,
-          phosphorusMg: m.phosphorus_mg ?? null,
-          ironMg: m.iron_mg ?? null,
-          zincMg: m.zinc_mg ?? null,
-          iodineUg: m.iodine_ug ?? null,
-          cholesterolMg: m.cholesterol_mg ?? null,
-          vitaminB1Mg: m.vitamin_b1_mg ?? null,
-          vitaminB2Mg: m.vitamin_b2_mg ?? null,
-          vitaminCMg: m.vitamin_c_mg ?? null,
-          vitaminB6Mg: m.vitamin_b6_mg ?? null,
-          vitaminB12Ug: m.vitamin_b12_ug ?? null,
-          folicAcidUg: m.folic_acid_ug ?? null,
-          vitaminAUg: m.vitamin_a_ug ?? null,
-          vitaminDUg: m.vitamin_d_ug ?? null,
-          vitaminKUg: m.vitamin_k_ug ?? null,
-          vitaminEMg: m.vitamin_e_mg ?? null,
-          saturatedFatG: m.saturated_fat_g ?? null,
-          monounsaturatedFatG: m.monounsaturated_fat_g ?? null,
-          polyunsaturatedFatG: m.polyunsaturated_fat_g ?? null,
-          // その他
-          isCompleted: m.is_completed || false,
-          completedAt: m.completed_at,
-          actualMealId: m.actual_meal_id,
-          dishes: m.dishes,
-          isSimple: m.is_simple,
-          cookingTimeMinutes: m.cooking_time_minutes,
-          memo: m.memo,
-          vegScore: m.veg_score,
-          qualityTags: m.quality_tags,
-          displayOrder: m.display_order ?? 0,
-          isGenerating: m.is_generating ?? false,
-          createdAt: m.created_at,
-          updatedAt: m.updated_at,
-        });
+        setBestMealThisWeek(toPlannedMeal(data[0]));
       }
     } catch (e) {
       console.error('Best meal fetch error:', e);
