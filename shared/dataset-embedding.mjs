@@ -123,20 +123,37 @@ export async function fetchDatasetEmbeddings(
     apiKey,
     fetchImpl = fetch,
     inputType = "document",
+    timeoutMs = 15000,
   } = {},
 ) {
   if (!apiKey) {
     throw new Error(`Missing ${DATASET_EMBEDDING_API_KEY_ENV}`);
   }
 
-  const response = await fetchImpl(DATASET_EMBEDDING_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(buildDatasetEmbeddingRequestBody(input, { inputType })),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort("dataset_embedding_timeout"), timeoutMs);
+
+  let response;
+  try {
+    response = await fetchImpl(DATASET_EMBEDDING_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildDatasetEmbeddingRequestBody(input, { inputType })),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(`Dataset embedding API timed out after ${timeoutMs}ms`);
+      timeoutError.status = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "unknown error");

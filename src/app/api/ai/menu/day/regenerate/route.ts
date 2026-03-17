@@ -1,5 +1,10 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
+import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+
+// Vercel Proプランでは最大300秒まで延長可能
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -92,19 +97,27 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-      },
-      body: JSON.stringify({
+    const edgeFunctionPromise = callGenerateMenuV4WithRetry({
+      supabaseUrl,
+      serviceRoleKey: supabaseServiceKey,
+      payload: {
         userId: user.id,
         requestId: requestData.id,
         targetSlots,
         constraints: preferences || {},
-      }),
-    }).catch(console.error);
+      },
+    }).then(async (result) => {
+      if (!result.ok) {
+        console.error('❌ Edge Function error:', result.errorMessage);
+        await markWeeklyMenuRequestFailed({
+          supabase,
+          requestId: requestData.id,
+          errorMessage: result.errorMessage,
+        });
+      }
+    });
+
+    waitUntil(edgeFunctionPromise);
 
     return NextResponse.json({
       success: true,

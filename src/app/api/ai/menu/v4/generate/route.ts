@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
+import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import type { 
   TargetSlot, 
   ExistingMenuContext, 
@@ -287,13 +288,10 @@ export async function POST(request: Request) {
     
     console.log('🚀 Calling Edge Function generate-menu-v4...');
     
-    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-      },
-      body: JSON.stringify({
+    const edgeFunctionPromise = callGenerateMenuV4WithRetry({
+      supabaseUrl,
+      serviceRoleKey: supabaseServiceKey,
+      payload: {
         userId: user.id,
         requestId: requestData.id,
         targetSlots,
@@ -305,32 +303,18 @@ export async function POST(request: Request) {
         note: body?.note,
         familySize,
         ultimateMode: body?.ultimateMode ?? false,
-      }),
-    }).then(async (res) => {
-      if (!res.ok) {
-        const text = await res.text().catch(() => 'Unknown error');
-        console.error('❌ Edge Function error:', res.status, text);
-        await supabase
-          .from('weekly_menu_requests')
-          .update({ 
-            status: 'failed', 
-            error_message: `Edge Function error: ${res.status}`,
-            updated_at: new Date().toISOString() 
-          })
-          .eq('id', requestData.id);
-      } else {
-        console.log('✅ Edge Function completed successfully');
+      },
+    }).then(async (result) => {
+      if (!result.ok) {
+        console.error('❌ Edge Function error:', result.errorMessage);
+        await markWeeklyMenuRequestFailed({
+          supabase,
+          requestId: requestData.id,
+          errorMessage: result.errorMessage,
+        });
+        return;
       }
-    }).catch(async (err) => {
-      console.error('❌ Edge Function call error:', err.message);
-      await supabase
-        .from('weekly_menu_requests')
-        .update({ 
-          status: 'failed', 
-          error_message: err.message,
-          updated_at: new Date().toISOString() 
-        })
-        .eq('id', requestData.id);
+      console.log('✅ Edge Function completed successfully');
     });
     
     // Keep the background process alive

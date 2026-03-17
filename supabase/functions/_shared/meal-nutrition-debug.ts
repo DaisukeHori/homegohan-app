@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { NutritionTotals } from "./nutrition-calculator.ts";
+import { isRetryableError, withRetry, withTimeout } from "./network-retry.ts";
 
 export type IngredientAmount = {
   name: string;
@@ -60,6 +61,15 @@ export type MealNutritionDebugLogInput = {
   slotTimingMs?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 };
+
+function createSupabaseQueryError(label: string, error: any): Error & { status?: number } {
+  const err = new Error(`${label}: ${error?.message ?? "unknown error"}`) as Error & { status?: number };
+  err.status =
+    isRetryableError(error) || /timeout|temporar|unavailable|connection|fetch failed/i.test(String(error?.message ?? ""))
+      ? 503
+      : 400;
+  return err;
+}
 
 function hasNormalizationDiff(inputIngredients: IngredientAmount[], normalizedIngredients: IngredientAmount[]): boolean {
   if (inputIngredients.length !== normalizedIngredients.length) return true;
@@ -133,38 +143,53 @@ export async function insertMealNutritionDebugLog(
       validation: input.validation,
     });
 
-    const { data, error } = await supabase
-      .from("meal_nutrition_debug_logs")
-      .insert({
-        request_id: input.requestId ?? null,
-        user_id: input.userId,
-        daily_meal_id: input.dailyMealId ?? null,
-        planned_meal_id: input.plannedMealId ?? null,
-        target_date: input.targetDate,
-        meal_type: input.mealType,
-        dish_name: input.dishName,
-        dish_role: input.dishRole ?? null,
-        source_function: input.sourceFunction,
-        source_kind: input.sourceKind,
-        input_ingredients: input.inputIngredients,
-        normalized_ingredients: input.normalizedIngredients,
-        ingredient_matches: input.ingredientMatches,
-        calculated_nutrition: input.calculatedNutrition,
-        validation_result: input.validation,
-        final_nutrition: input.finalNutrition,
-        dish_timing_ms: input.dishTimingMs ?? {},
-        slot_timing_ms: input.slotTimingMs ?? {},
-        issue_flags: issueFlags,
-        metadata: input.metadata ?? {},
-      })
-      .select("id")
-      .single();
+    const { data, error } = await withRetry(async () => {
+      return await withTimeout(
+        supabase
+          .from("meal_nutrition_debug_logs")
+          .insert({
+            request_id: input.requestId ?? null,
+            user_id: input.userId,
+            daily_meal_id: input.dailyMealId ?? null,
+            planned_meal_id: input.plannedMealId ?? null,
+            target_date: input.targetDate,
+            meal_type: input.mealType,
+            dish_name: input.dishName,
+            dish_role: input.dishRole ?? null,
+            source_function: input.sourceFunction,
+            source_kind: input.sourceKind,
+            input_ingredients: input.inputIngredients,
+            normalized_ingredients: input.normalizedIngredients,
+            ingredient_matches: input.ingredientMatches,
+            calculated_nutrition: input.calculatedNutrition,
+            validation_result: input.validation,
+            final_nutrition: input.finalNutrition,
+            dish_timing_ms: input.dishTimingMs ?? {},
+            slot_timing_ms: input.slotTimingMs ?? {},
+            issue_flags: issueFlags,
+            metadata: input.metadata ?? {},
+          })
+          .select("id")
+          .single(),
+        {
+          label: `meal_nutrition_debug_logs.insert:${input.targetDate}:${input.mealType}:${input.dishName}`,
+          timeoutMs: 15000,
+        },
+      );
+    }, {
+      label: `meal_nutrition_debug_logs.insert:${input.targetDate}:${input.mealType}`,
+      retries: 2,
+      shouldRetry: (error) => isRetryableError(error),
+    });
 
     if (error) {
-      console.error("[meal-nutrition-debug] Failed to insert log:", error);
+      throw createSupabaseQueryError("[meal-nutrition-debug] insert", error);
+    }
+    if (!data?.id || typeof data.id !== "string") {
+      console.error("[meal-nutrition-debug] Insert log returned no id");
       return null;
     }
-    return typeof data?.id === "string" ? data.id : null;
+    return data.id;
   } catch (error) {
     console.error("[meal-nutrition-debug] Failed to insert log:", error);
     return null;

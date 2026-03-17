@@ -4,6 +4,7 @@ import {
   DATASET_EMBEDDING_MODEL,
   fetchDatasetEmbeddings,
 } from "../../../shared/dataset-embedding.mjs";
+import { fetchWithRetry, isRetryableError, withRetry, withTimeout } from "./network-retry.ts";
 
 function readDenoEnv(name: string): string | undefined {
   const denoLike = (globalThis as typeof globalThis & {
@@ -32,6 +33,31 @@ function getLocalFastLLMChatCompletionsUrl(): string {
       : `${rawBaseUrl.replace(/\/+$/, "")}/v1`
     : "https://api.x.ai/v1";
   return `${normalized}/chat/completions`;
+}
+
+function createSupabaseQueryError(label: string, error: any): Error & { status?: number } {
+  const err = new Error(`${label}: ${error?.message ?? "unknown error"}`) as Error & { status?: number };
+  err.status =
+    isRetryableError(error) || /timeout|temporar|unavailable|connection|fetch failed/i.test(String(error?.message ?? ""))
+      ? 503
+      : 400;
+  return err;
+}
+
+async function runSupabaseQuery<T>(
+  queryFactory: () => Promise<{ data: T | null; error: any }>,
+  label: string,
+  defaultValue: T,
+  timeoutMs = 15000,
+  retries = 2,
+): Promise<T> {
+  return await withRetry(async () => {
+    const result = await withTimeout(queryFactory(), { label, timeoutMs });
+    if (result.error) {
+      throw createSupabaseQueryError(label, result.error);
+    }
+    return (result.data ?? defaultValue) as T;
+  }, { label, retries });
 }
 
 // 栄養計算の共通ロジック
@@ -331,7 +357,7 @@ ${batch.map((m, j) => `${j + 1}. 入力:「${m.inputName}」→ マッチ:「${m
 各行について OK または NG だけを答えてください。例: "1. OK\n2. NG\n3. OK"`;
 
     try {
-      const res = await fetch(getLocalFastLLMChatCompletionsUrl(), {
+      const res = await fetchWithRetry(getLocalFastLLMChatCompletionsUrl(), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -342,19 +368,21 @@ ${batch.map((m, j) => `${j + 1}. 入力:「${m.inputName}」→ マッチ:「${m
           messages: [{ role: "user", content: prompt }],
           max_tokens: 200,
         }),
+      }, {
+        label: "nutrition.validateMatchesWithLLM",
+        retries: 2,
+        timeoutMs: 45000,
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const content = data.choices?.[0]?.message?.content ?? "";
-        const lines = content.split("\n");
-        
-        for (let j = 0; j < batch.length; j++) {
-          const line = lines[j] ?? "";
-          if (line.includes("NG")) {
-            invalidIndices.add(batch[j].idx);
-            console.log(`[nutrition] LLM rejected: 「${batch[j].inputName}」→「${batch[j].matchedName}」`);
-          }
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content ?? "";
+      const lines = content.split("\n");
+      
+      for (let j = 0; j < batch.length; j++) {
+        const line = lines[j] ?? "";
+        if (line.includes("NG")) {
+          invalidIndices.add(batch[j].idx);
+          console.log(`[nutrition] LLM rejected: 「${batch[j].inputName}」→「${batch[j].matchedName}」`);
         }
       }
     } catch (e: any) {
@@ -379,7 +407,7 @@ async function selectBestMatchWithLLM(
     return 0;
   }
   
-  const MAX_RETRIES = 1; // 高速化: 3→1回に削減（失敗時は即座にフォールバック）
+  const MAX_RETRIES = 2;
   const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name} (類似度: ${(c.similarity * 100).toFixed(0)}%)`).join("\n");
   
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -402,7 +430,7 @@ ${candidateList}
 回答:`;
 
     try {
-      const res = await fetch(getLocalFastLLMChatCompletionsUrl(), {
+      const res = await fetchWithRetry(getLocalFastLLMChatCompletionsUrl(), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -413,32 +441,31 @@ ${candidateList}
           messages: [{ role: "user", content: prompt }],
           max_tokens: 10,
         }),
+      }, {
+        label: `nutrition.selectBestMatchWithLLM:${inputName}`,
+        retries: 1,
+        timeoutMs: 45000,
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const content = (data.choices?.[0]?.message?.content ?? "").trim();
-        
-        // 数字を抽出（文字列の中から最初の数字を探す）
-        const numMatch = content.match(/\d+/);
-        const num = numMatch ? parseInt(numMatch[0], 10) : NaN;
-        
-        if (num === 0) {
-          console.log(`[nutrition] LLM: 「${inputName}」→ 全候補却下 (attempt ${attempt})`);
-          return -1;
-        }
-        
-        if (num >= 1 && num <= candidates.length) {
-          console.log(`[nutrition] LLM: 「${inputName}」→ ${num}番「${candidates[num - 1].name}」を選択 (attempt ${attempt})`);
-          return num - 1;
-        }
-        
-        // パース失敗 - リトライ
-        console.warn(`[nutrition] LLM response parse failed for "${inputName}" (attempt ${attempt}): "${content}"`);
-      } else {
-        const errorText = await res.text().catch(() => "unknown");
-        console.warn(`[nutrition] LLM API error for "${inputName}" (attempt ${attempt}): ${res.status} - ${errorText}`);
+      const data = await res.json();
+      const content = (data.choices?.[0]?.message?.content ?? "").trim();
+      
+      // 数字を抽出（文字列の中から最初の数字を探す）
+      const numMatch = content.match(/\d+/);
+      const num = numMatch ? parseInt(numMatch[0], 10) : NaN;
+      
+      if (num === 0) {
+        console.log(`[nutrition] LLM: 「${inputName}」→ 全候補却下 (attempt ${attempt})`);
+        return -1;
       }
+
+      if (num >= 1 && num <= candidates.length) {
+        console.log(`[nutrition] LLM: 「${inputName}」→ ${num}番「${candidates[num - 1].name}」を選択 (attempt ${attempt})`);
+        return num - 1;
+      }
+      
+      // パース失敗 - リトライ
+      console.warn(`[nutrition] LLM response parse failed for "${inputName}" (attempt ${attempt}): "${content}"`);
     } catch (e: any) {
       console.warn(`[nutrition] LLM selection failed for "${inputName}" (attempt ${attempt}):`, e?.message);
     }
@@ -455,9 +482,14 @@ ${candidateList}
 export async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[][]> {
   const apiKey = readDenoEnv(DATASET_EMBEDDING_API_KEY_ENV);
   if (!apiKey) throw new Error(`Embedding API Key is missing (${DATASET_EMBEDDING_API_KEY_ENV})`);
-  const embeddings = await fetchDatasetEmbeddings(texts, {
-    apiKey,
-    inputType: "document",
+  const embeddings = await withRetry(async () => {
+    return await fetchDatasetEmbeddings(texts, {
+      apiKey,
+      inputType: "document",
+    });
+  }, {
+    label: "nutrition.embedTexts",
+    retries: 2,
   });
   if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
     throw new Error("Embeddings API returned invalid data");
@@ -1152,11 +1184,20 @@ export async function calculateNutritionFromIngredients(
       const searchResults = await Promise.all(
         stillUnmatched.map(async ({ ing }, i) => {
           const emb = embeddings[i];
-          const { data: rows, error: embErr } = await supabase.rpc("search_dataset_ingredients_by_embedding", {
-            query_embedding: emb,
-            match_count: 5,
-          });
-          return { ing, rows: embErr ? [] : (rows ?? []) };
+          try {
+            const rows = await runSupabaseQuery<any[]>(
+              () => supabase.rpc("search_dataset_ingredients_by_embedding", {
+                query_embedding: emb,
+                match_count: 5,
+              }),
+              `search_dataset_ingredients_by_embedding:${ing.name}`,
+              [],
+            );
+            return { ing, rows };
+          } catch (error: any) {
+            console.warn(`[nutrition] Vector search failed for "${ing.name}": ${error?.message ?? error}`);
+            return { ing, rows: [] };
+          }
         })
       );
       
@@ -1217,10 +1258,14 @@ export async function calculateNutritionFromIngredients(
 
       // Step 4: 選択された候補の詳細データを一括取得（高速化）
       if (selectedIds.length > 0) {
-        const { data: detailRows } = await supabase
-          .from("dataset_ingredients")
-          .select(INGREDIENT_SELECT)
-          .in("id", selectedIds);
+        const detailRows = await runSupabaseQuery<any[]>(
+          () => supabase
+            .from("dataset_ingredients")
+            .select(INGREDIENT_SELECT)
+            .in("id", selectedIds),
+          "dataset_ingredients.detail_fetch",
+          [],
+        );
 
         // キャッシュに保存するデータを収集
         const cacheInserts: Array<{ input_name: string; matched_ingredient_id: string; match_method: string; similarity: number | null }> = [];
@@ -1369,22 +1414,30 @@ async function findReferenceRecipe(
   
   // 1. dataset_recipesからtrigram類似検索
   try {
-    const { data: recipes, error: recipeErr } = await supabase.rpc("search_similar_dataset_recipes", {
-      query_name: dishName,
-      similarity_threshold: 0.15, // 適度な閾値
-      result_limit: 5, // 候補を増やして最適な参照を見つける
-    });
+    const recipes = await runSupabaseQuery<any[]>(
+      () => supabase.rpc("search_similar_dataset_recipes", {
+        query_name: dishName,
+        similarity_threshold: 0.15,
+        result_limit: 5,
+      }),
+      `search_similar_dataset_recipes:${dishName}`,
+      [],
+    );
 
-    if (!recipeErr && Array.isArray(recipes) && recipes.length > 0) {
+    if (Array.isArray(recipes) && recipes.length > 0) {
       // 複数候補から最も関連性の高いものを選ぶ
       for (const recipe of recipes) {
-        const { data: recipeDetail, error: detailErr } = await supabase
-          .from("dataset_recipes")
-          .select("name, calories_kcal, protein_g, fat_g, carbs_g, sodium_g")
-          .eq("id", recipe.id)
-          .maybeSingle();
-        
-        if (!detailErr && recipeDetail && recipeDetail.calories_kcal) {
+        const recipeDetail = await runSupabaseQuery<any | null>(
+          () => supabase
+            .from("dataset_recipes")
+            .select("name, calories_kcal, protein_g, fat_g, carbs_g, sodium_g")
+            .eq("id", recipe.id)
+            .maybeSingle(),
+          `dataset_recipes.detail:${recipe.id}`,
+          null,
+        );
+
+        if (recipeDetail && recipeDetail.calories_kcal) {
           const refKeywords = getKeywords(recipeDetail.name);
           
           // キーワードの一致度をチェック（少なくとも1つのキーワードが一致すること）
@@ -1418,14 +1471,18 @@ async function findReferenceRecipe(
   try {
     // まず料理名で部分一致検索
     const searchTerm = dishName.length > 4 ? dishName.substring(0, 4) : dishName;
-    const { data: menuSets, error: menuErr } = await supabase
-      .from("dataset_menu_sets")
-      .select("title, calories_kcal, protein_g, fat_g, carbs_g, sodium_g, dishes")
-      .ilike("title", `%${searchTerm}%`)
-      .not("calories_kcal", "is", null)
-      .limit(5);
+    const menuSets = await runSupabaseQuery<any[]>(
+      () => supabase
+        .from("dataset_menu_sets")
+        .select("title, calories_kcal, protein_g, fat_g, carbs_g, sodium_g, dishes")
+        .ilike("title", `%${searchTerm}%`)
+        .not("calories_kcal", "is", null)
+        .limit(5),
+      `dataset_menu_sets.search:${dishName}`,
+      [],
+    );
     
-    if (!menuErr && Array.isArray(menuSets) && menuSets.length > 0) {
+    if (Array.isArray(menuSets) && menuSets.length > 0) {
       // dishesの中から該当する料理を探す
       for (const menuSet of menuSets) {
         if (Array.isArray(menuSet.dishes)) {

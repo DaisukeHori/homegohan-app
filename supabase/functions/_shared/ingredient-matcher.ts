@@ -17,6 +17,7 @@ import {
   mergeIngredientCandidates,
   shouldSelectIngredientWithoutLLM,
 } from './ingredient-search-utils.ts'
+import { isRetryableError, withRetry, withTimeout } from './network-retry.ts'
 
 // ============================================
 // 型定義
@@ -130,6 +131,31 @@ function isGenericSoupOrDishWord(inputName: string): boolean {
   return /^(味噌汁|みそ汁|汁物|汁|スープ|お吸い物|吸い物|みそスープ)$/.test(normalized)
 }
 
+function createSupabaseQueryError(label: string, error: any): Error & { status?: number } {
+  const err = new Error(`${label}: ${error?.message ?? 'unknown error'}`) as Error & { status?: number }
+  err.status =
+    isRetryableError(error) || /timeout|temporar|unavailable|connection|fetch failed/i.test(String(error?.message ?? ''))
+      ? 503
+      : 400
+  return err
+}
+
+async function runSupabaseQuery<T>(
+  queryFactory: () => Promise<{ data: T | null; error: any }>,
+  label: string,
+  defaultValue: T,
+  timeoutMs = 15000,
+  retries = 2,
+): Promise<T> {
+  return await withRetry(async () => {
+    const result = await withTimeout(queryFactory(), { label, timeoutMs })
+    if (result.error) {
+      throw createSupabaseQueryError(label, result.error)
+    }
+    return (result.data ?? defaultValue) as T
+  }, { label, retries })
+}
+
 // ============================================
 // Dataset embedding 生成
 // ============================================
@@ -139,7 +165,10 @@ async function generateEmbedding(text: string): Promise<number[]> {
   if (!apiKey) {
     throw new Error(`${DATASET_EMBEDDING_API_KEY_ENV} is not set`)
   }
-  return await fetchSingleDatasetEmbedding(text, { apiKey, inputType: 'query' }) as number[]
+  return await withRetry(
+    async () => await fetchSingleDatasetEmbedding(text, { apiKey, inputType: 'query' }) as number[],
+    { label: `ingredientMatcher.generateEmbedding:${text.slice(0, 40)}`, retries: 2 },
+  )
 }
 
 async function generateEmbeddingsBatch(texts: string[]): Promise<Map<string, number[]>> {
@@ -153,7 +182,10 @@ async function generateEmbeddingsBatch(texts: string[]): Promise<Map<string, num
     throw new Error(`${DATASET_EMBEDDING_API_KEY_ENV} is not set`)
   }
 
-  const embeddings = await fetchDatasetEmbeddings(uniqueTexts, { apiKey, inputType: 'query' }) as number[][]
+  const embeddings = await withRetry(
+    async () => await fetchDatasetEmbeddings(uniqueTexts, { apiKey, inputType: 'query' }) as number[][],
+    { label: 'ingredientMatcher.generateEmbeddingsBatch', retries: 2 },
+  )
   const map = new Map<string, number[]>()
 
   uniqueTexts.forEach((text, index) => {
@@ -178,18 +210,15 @@ async function searchByEmbedding(
 ): Promise<MatchedIngredientData[]> {
   try {
     const embedding = precomputedEmbedding ?? await generateEmbedding(ingredientName)
-    
-    const { data, error } = await supabase.rpc('search_ingredients_full_by_embedding', {
-      query_embedding: embedding,
-      match_count: matchCount,
-    })
 
-    if (error) {
-      console.error('Vector search error:', error)
-      return []
-    }
-
-    return data || []
+    return await runSupabaseQuery<MatchedIngredientData[]>(
+      () => supabase.rpc('search_ingredients_full_by_embedding', {
+        query_embedding: embedding,
+        match_count: matchCount,
+      }),
+      `search_ingredients_full_by_embedding:${ingredientName}`,
+      [],
+    )
   } catch (error) {
     console.error('Embedding generation error:', error)
     return []
@@ -206,18 +235,20 @@ async function searchByTextSimilarity(
   threshold: number = 0.3,
   limit: number = 5
 ): Promise<MatchedIngredientData[]> {
-  const { data, error } = await supabase.rpc('search_ingredients_by_text_similarity', {
-    query_name: ingredientName,
-    similarity_threshold: threshold,
-    result_limit: limit,
-  })
-
-  if (error) {
+  try {
+    return await runSupabaseQuery<MatchedIngredientData[]>(
+      () => supabase.rpc('search_ingredients_by_text_similarity', {
+        query_name: ingredientName,
+        similarity_threshold: threshold,
+        result_limit: limit,
+      }),
+      `search_ingredients_by_text_similarity:${ingredientName}`,
+      [],
+    )
+  } catch (error) {
     console.error('Text similarity search error:', error)
     return []
   }
-
-  return data || []
 }
 
 // ============================================
@@ -326,17 +357,24 @@ async function searchByExactNameNorm(
   supabase: SupabaseClient,
   nameNorm: string
 ): Promise<MatchedIngredientData | null> {
-  const { data, error } = await supabase
-    .from('dataset_ingredients')
-    .select('*')
-    .eq('name_norm', nameNorm)
-    .maybeSingle()
-
-  if (error || !data) {
+  try {
+    const data = await runSupabaseQuery<MatchedIngredientData | null>(
+      () => supabase
+        .from('dataset_ingredients')
+        .select('*')
+        .eq('name_norm', nameNorm)
+        .maybeSingle(),
+      `dataset_ingredients.exact_name_norm:${nameNorm}`,
+      null,
+    )
+    if (!data) {
+      return null
+    }
+    return { ...data, similarity: 1.0 }
+  } catch (error) {
+    console.warn(`[ingredient-matcher] exact name_norm lookup failed for "${nameNorm}":`, error)
     return null
   }
-
-  return { ...data, similarity: 1.0 }
 }
 
 // ============================================

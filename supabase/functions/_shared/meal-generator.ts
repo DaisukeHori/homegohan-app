@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import { SINGLE_SERVING_PROMPT_GUIDANCE } from "./generation-serving.ts";
+import { fetchWithRetry } from "./network-retry.ts";
 import { callV4FastLLM } from "./v4-fast-llm.ts";
 
 // =========================================================
@@ -362,25 +363,29 @@ export async function reviewWeeklyMenus(input: {
   const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-5.2",
-      messages: [
-        { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
-      ],
-      reasoning_effort: "none",
-      max_completion_tokens: 4000,
-    }),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error(`OpenAI API error: ${res.status} - ${errorText}`);
+  let res: Response;
+  try {
+    res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.2",
+        messages: [
+          { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
+        ],
+        reasoning_effort: "none",
+        max_completion_tokens: 4000,
+      }),
+    }, {
+      label: "reviewWeeklyMenus:openai",
+      retries: 2,
+      timeoutMs: 45000,
+    });
+  } catch (error) {
+    console.error("OpenAI API error in reviewWeeklyMenus:", error);
     return { hasIssues: false, issues: [], swaps: [] };
   }
 

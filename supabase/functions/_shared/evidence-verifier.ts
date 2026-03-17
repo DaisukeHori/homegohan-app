@@ -7,6 +7,7 @@
 
 import { SupabaseClient } from "@supabase/supabase-js";
 import { NutritionTotals } from './nutrition-calculator-v2.ts'
+import { isRetryableError, withRetry, withTimeout } from './network-retry.ts'
 
 // ============================================
 // 型定義
@@ -55,6 +56,15 @@ export interface MatchedIngredientInfo {
 
 type LlmFallbackConfidence = 'high' | 'medium' | 'low'
 
+function createSupabaseQueryError(label: string, error: any): Error & { status?: number } {
+  const err = new Error(`${label}: ${error?.message ?? 'unknown error'}`) as Error & { status?: number }
+  err.status =
+    isRetryableError(error) || /timeout|temporar|unavailable|connection|fetch failed/i.test(String(error?.message ?? ''))
+      ? 503
+      : 400
+  return err
+}
+
 // ============================================
 // 類似レシピ検索
 // ============================================
@@ -65,30 +75,42 @@ export async function searchSimilarRecipes(
   threshold: number = 0.3,
   limit: number = 5
 ): Promise<ReferenceRecipe[]> {
-  const { data, error } = await supabase.rpc('search_recipes_with_nutrition', {
-    query_name: dishName,
-    similarity_threshold: threshold,
-    result_limit: limit,
-  })
+  try {
+    const data = await withRetry(async () => {
+      const result = await withTimeout(supabase.rpc('search_recipes_with_nutrition', {
+        query_name: dishName,
+        similarity_threshold: threshold,
+        result_limit: limit,
+      }), {
+        label: `search_recipes_with_nutrition:${dishName}`,
+        timeoutMs: 15000,
+      })
+      if (result.error) {
+        throw createSupabaseQueryError(`search_recipes_with_nutrition:${dishName}`, result.error)
+      }
+      return result.data ?? []
+    }, {
+      label: `search_recipes_with_nutrition:${dishName}`,
+      retries: 2,
+    })
 
-  if (error) {
+    return data.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      name_norm: r.name_norm,
+      source_url: r.source_url,
+      ingredients_text: r.ingredients_text,
+      calories_kcal: r.calories_kcal,
+      protein_g: r.protein_g,
+      fat_g: r.fat_g,
+      carbs_g: r.carbs_g,
+      sodium_g: r.sodium_g,
+      similarity: r.similarity,
+    }))
+  } catch (error) {
     console.error('Recipe search error:', error)
     return []
   }
-
-  return (data || []).map((r: any) => ({
-    id: r.id,
-    name: r.name,
-    name_norm: r.name_norm,
-    source_url: r.source_url,
-    ingredients_text: r.ingredients_text,
-    calories_kcal: r.calories_kcal,
-    protein_g: r.protein_g,
-    fat_g: r.fat_g,
-    carbs_g: r.carbs_g,
-    sodium_g: r.sodium_g,
-    similarity: r.similarity,
-  }))
 }
 
 // ============================================

@@ -1,5 +1,5 @@
 import { Link, router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { getApi } from "../../../src/lib/api";
@@ -27,6 +27,16 @@ type MealPlanRow = {
   start_date: string;
   end_date: string;
   title: string;
+};
+
+type PendingProgress = {
+  phase?: string;
+  message: string;
+  percentage?: number;
+  currentStep?: number;
+  totalSteps?: number;
+  completedSlots?: number;
+  totalSlots?: number;
 };
 
 const formatLocalDate = (date: Date): string => {
@@ -62,9 +72,9 @@ export default function WeeklyMenuPage() {
   const [regeneratingMealId, setRegeneratingMealId] = useState<string | null>(null);
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
-  const [pendingProgress, setPendingProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
+  const [pendingProgress, setPendingProgress] = useState<PendingProgress | null>(null);
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
@@ -111,7 +121,7 @@ export default function WeeklyMenuPage() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [weekStartStr]);
 
   useEffect(() => {
     loadData();
@@ -180,7 +190,7 @@ export default function WeeklyMenuPage() {
           const newRecord = payload.new as {
             status: string;
             error_message?: string | null;
-            progress?: { phase: string; message: string; percentage: number } | null;
+            progress?: PendingProgress | null;
           };
           
           console.log("📡 Realtime update:", newRecord.status, newRecord.progress?.message);
@@ -214,6 +224,44 @@ export default function WeeklyMenuPage() {
       supabase.removeChannel(channel);
     };
   }, [pendingRequestId]);
+
+  useEffect(() => {
+    if (!pendingRequestId) return;
+
+    const poll = async () => {
+      try {
+        const api = getApi();
+        const res = await api.get<{
+          status: string;
+          errorMessage?: string | null;
+          progress?: PendingProgress | null;
+        }>(`/api/ai/menu/weekly/status?requestId=${pendingRequestId}`);
+
+        setPendingStatus(res.status);
+        if (res.progress) {
+          setPendingProgress(res.progress);
+        }
+
+        if (res.status === "completed") {
+          await loadData();
+          setPendingRequestId(null);
+          setPendingStatus(null);
+          setPendingProgress(null);
+        } else if (res.status === "failed") {
+          setPendingRequestId(null);
+          setPendingStatus(null);
+          setPendingProgress(null);
+          setError(res.errorMessage ?? "週間献立の生成に失敗しました。");
+        }
+      } catch {
+        // Ignore transient polling errors and keep the request visible.
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [loadData, pendingRequestId]);
 
   useEffect(() => {
     if (pendingRequestId) return;
@@ -400,5 +448,3 @@ export default function WeeklyMenuPage() {
     </ScrollView>
   );
 }
-
-

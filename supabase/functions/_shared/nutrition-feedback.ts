@@ -4,6 +4,8 @@
  * 栄養データを分析し、褒めコメント・改善アドバイス・栄養豆知識を生成
  */
 
+import { fetchWithRetry } from "./network-retry.ts";
+
 // ============================================
 // 栄養素定義（nutrition-constants.tsからポート）
 // ============================================
@@ -182,7 +184,7 @@ ${weekSummary}
   - 汁物の具材追加のみ例外的に許可（例: 味噌汁に小松菜を追加）
 - JSONのみを出力（説明文は不要）`;
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -200,13 +202,11 @@ ${weekSummary}
       max_completion_tokens: 800,
       reasoning_effort: 'none',
     }),
+  }, {
+    label: 'generateNutritionFeedback:openai',
+    retries: 2,
+    timeoutMs: 45000,
   });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    console.error('OpenAI API error:', errorData);
-    throw new Error('AI分析に失敗しました');
-  }
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content?.trim() || '';

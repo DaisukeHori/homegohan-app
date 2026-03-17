@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
+import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 
 /**
  * 栄養分析API
@@ -355,7 +356,7 @@ export async function POST(request: Request) {
 
     // generate-menu-v4を呼び出す（同期呼び出し）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const serviceRoleKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];
@@ -381,28 +382,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
     }
 
-    const regenerateRes = await fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${serviceRoleKey}`,
-      },
-      body: JSON.stringify({
+    const regenerateResult = await callGenerateMenuV4WithRetry({
+      supabaseUrl,
+      serviceRoleKey,
+      payload: {
         userId: user.id,
         requestId: requestData.id,
         targetSlots,
         note: prompt,
         constraints: {},
-      }),
+      },
     });
 
-    if (!regenerateRes.ok) {
-      const errorText = await regenerateRes.text();
-      console.error('Regenerate error:', errorText);
+    if (!regenerateResult.ok) {
+      console.error('Regenerate error:', regenerateResult.errorMessage);
+      await markWeeklyMenuRequestFailed({
+        supabase,
+        requestId: requestData.id,
+        errorMessage: regenerateResult.errorMessage,
+      });
       return NextResponse.json({ error: 'Failed to regenerate meal' }, { status: 500 });
     }
 
-    const result = await regenerateRes.json();
+    const responseText = await regenerateResult.response.text().catch(() => '');
+    let result: any = null;
+    if (responseText) {
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        result = responseText;
+      }
+    }
 
     return NextResponse.json({
       success: true,

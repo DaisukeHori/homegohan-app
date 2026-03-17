@@ -2034,9 +2034,6 @@ export default function WeeklyMenuPage() {
         async (payload) => {
           try {
             console.log('📡 Realtime update received:', payload.new);
-            // Realtimeが動作しているのでポーリングを停止
-            cleanupPolling();
-            
             const newData = payload.new as { 
               status: string; 
               mode?: string;
@@ -2107,8 +2104,6 @@ export default function WeeklyMenuPage() {
         console.log('📡 Realtime subscription status:', status);
         if (status === 'SUBSCRIBED') {
           realtimeConnected = true;
-          // Realtimeが接続できたらポーリングを停止
-          cleanupPolling();
         } else if (status === 'TIMED_OUT' || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
           // Realtimeが失敗したらポーリングにフォールバック
           if (!realtimeConnected) {

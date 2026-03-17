@@ -61,6 +61,12 @@ import {
   fetchSingleDatasetEmbedding,
 } from "../../../shared/dataset-embedding.mjs";
 import {
+  fetchWithRetry,
+  isRetryableError,
+  withRetry,
+  withTimeout,
+} from "../_shared/network-retry.ts";
+import {
   extractReferenceSearchKeywords,
   mapMenuReferenceCandidates,
   rerankMenuReferenceCandidates,
@@ -106,6 +112,31 @@ function addDays(dateStr: string, days: number): string {
 
 function getTodayStr(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function createSupabaseQueryError(label: string, error: any): Error & { status?: number } {
+  const err = new Error(`${label}: ${error?.message ?? "unknown error"}`) as Error & { status?: number };
+  err.status =
+    isRetryableError(error) || /timeout|temporar|unavailable|connection|fetch failed/i.test(String(error?.message ?? ""))
+      ? 503
+      : 400;
+  return err;
+}
+
+async function runSupabaseQuery<T>(
+  queryFactory: () => Promise<{ data: T | null; error: any }>,
+  label: string,
+  defaultValue: T,
+  timeoutMs = 15000,
+  retries = 2,
+): Promise<T> {
+  return await withRetry(async () => {
+    const result = await withTimeout(queryFactory(), { label, timeoutMs });
+    if (result.error) {
+      throw createSupabaseQueryError(label, result.error);
+    }
+    return (result.data ?? defaultValue) as T;
+  }, { label, retries });
 }
 
 // =========================================================
@@ -160,35 +191,6 @@ interface ProgressInfo {
 // Helpers
 // =========================================================
 
-async function sleep(ms: number) {
-  await new Promise((r) => setTimeout(r, ms));
-}
-
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  opts: { retries?: number; baseDelayMs?: number; label?: string } = {},
-): Promise<T> {
-  const retries = opts.retries ?? 3;
-  const baseDelayMs = opts.baseDelayMs ?? 800;
-  const label = opts.label ?? "retryable";
-
-  let lastErr: unknown = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await fn();
-    } catch (e: any) {
-      lastErr = e;
-      const status = e?.status ?? e?.response?.status ?? e?.statusCode;
-      const retryable = status === 429 || (typeof status === "number" && status >= 500 && status <= 599);
-      if (!retryable || attempt === retries) throw e;
-      const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
-      console.log(`⏳ ${label}: retry in ${delay}ms (attempt ${attempt + 1}/${retries}) status=${status}`);
-      await sleep(delay);
-    }
-  }
-  throw lastErr;
-}
-
 // =========================================================
 // Progress update
 // =========================================================
@@ -208,10 +210,16 @@ async function updateProgress(
     if (currentStep !== undefined) {
       updateData.current_step = currentStep;
     }
-    await supabase
-      .from("weekly_menu_requests")
-      .update(updateData)
-      .eq("id", requestId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update(updateData)
+        .eq("id", requestId),
+      `weekly_menu_requests.updateProgress:${requestId}`,
+      null,
+      10000,
+      1,
+    );
   } catch (e) {
     console.error("Failed to update progress:", e);
   }
@@ -236,28 +244,25 @@ async function triggerNextStep(
   }
 
   const url = `${supabaseUrl}/functions/v1/generate-menu-v4`;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${supabaseServiceKey}`,
-        "apikey": supabaseServiceKey,
-      },
-      body: JSON.stringify({
-        request_id: requestId,
-        userId,
-        _continue: true,
-      }),
-    });
-    console.log(`✅ Next step triggered: ${res.status}`);
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      console.error(`❌ Next step response error: ${res.status} - ${text}`);
-    }
-  } catch (e) {
-    console.error("❌ Failed to trigger next step:", e);
-  }
+  const res = await fetchWithRetry(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${supabaseServiceKey}`,
+      "apikey": supabaseServiceKey,
+    },
+    body: JSON.stringify({
+      request_id: requestId,
+      userId,
+      _continue: true,
+    }),
+  }, {
+    label: `triggerNextStep:${requestId}`,
+    retries: 2,
+    timeoutMs: 10000,
+  });
+
+  console.log(`✅ Next step triggered: ${res.status}`);
 }
 
 // =========================================================
@@ -283,26 +288,66 @@ async function searchMenuCandidates(
   matchCount: number,
 ): Promise<MenuReference[]> {
   try {
-    const { count, error: countError } = await supabase
-      .from("dataset_menu_sets")
-      .select("id", { count: "exact", head: true });
+    let count: number | null = null;
+    let countError: any = null;
+    try {
+      const countResult = await withRetry(
+        async () => await withTimeout(
+          supabase
+            .from("dataset_menu_sets")
+            .select("id", { count: "exact", head: true }),
+          { label: "dataset_menu_sets.count", timeoutMs: 10000 },
+        ),
+        { label: "dataset_menu_sets.count", retries: 1 },
+      );
+      count = countResult.count ?? null;
+      countError = countResult.error;
+    } catch (error) {
+      countError = error;
+    }
+
     if (countError) {
-      console.warn("Failed to count dataset_menu_sets before reference search:", countError.message);
+      console.warn("Failed to count dataset_menu_sets before reference search:", countError?.message ?? countError);
     } else if (shouldSkipReferenceMenuSearch(count)) {
       console.log("ℹ️ Reference-menu RAG skipped: dataset_menu_sets is empty");
       return [];
+    } else {
+      console.log(`🔎 Reference-menu RAG start: dataset_menu_sets=${count ?? "unknown"} requested=${matchCount}`);
     }
 
+    console.log("🔎 Reference-menu embedding start");
     const emb = await embedText(queryText, DATASET_EMBEDDING_DIMENSIONS);
+    console.log(`🔎 Reference-menu embedding ready: dims=${emb.length}`);
     const expandedMatchCount = Math.min(Math.max(matchCount * 4, 20), 60)
-    const { data, error } = await supabase.rpc("search_menu_examples", {
-      query_embedding: emb,
-      match_count: expandedMatchCount,
-      filter_meal_type_hint: null,
-      filter_max_sodium: null,
-      filter_theme_tags: null,
+    console.log(`🔎 search_menu_examples RPC start: expanded=${expandedMatchCount}`);
+    const data = await withRetry(async () => {
+      const rpcResult = await withTimeout(supabase.rpc("search_menu_examples", {
+        query_embedding: emb,
+        match_count: expandedMatchCount,
+        filter_meal_type_hint: null,
+        filter_max_sodium: null,
+        filter_theme_tags: null,
+      }), {
+        label: "search_menu_examples",
+        timeoutMs: 15000,
+      });
+
+      if (rpcResult.error) {
+        const err = new Error(`search_menu_examples failed: ${rpcResult.error.message}`) as Error & { status?: number };
+        if (isRetryableError(rpcResult.error) || /timeout|temporar|unavailable|connection|fetch failed/i.test(rpcResult.error.message ?? "")) {
+          err.status = 503;
+        } else {
+          err.status = 400;
+        }
+        throw err;
+      }
+
+      return rpcResult.data ?? [];
+    }, {
+      label: "search_menu_examples",
+      retries: 2,
     });
-    if (error) throw new Error(`search_menu_examples failed: ${error.message}`);
+
     const reranked = rerankMenuReferenceCandidates(queryText, data ?? [], matchCount);
     console.log(`🔎 search_menu_examples: requested=${matchCount} vector=${data?.length ?? 0} reranked=${reranked.length} keywords=${extractReferenceSearchKeywords(queryText).join("|")}`);
     return mapMenuReferenceCandidates(reranked);
@@ -341,8 +386,12 @@ async function resolveRecipeFromDB(
       query = query.eq("external_id", constraints.recipeExternalId);
     }
 
-    const { data, error } = await query.single();
-    if (error || !data) {
+    const data = await runSupabaseQuery<any | null>(
+      () => query.single(),
+      `dataset_recipes.resolve:${constraints.recipeId ?? constraints.recipeExternalId}`,
+      null,
+    );
+    if (!data) {
       console.warn(`Recipe not found: ${constraints.recipeId ?? constraints.recipeExternalId}`);
       return null;
     }
@@ -682,21 +731,26 @@ async function saveMealToDb(
 
   // user_daily_meals: upsert（日付ベース）
   const dailyMealUpsertStartedAt = Date.now();
-  const { data: dailyMeal, error: dailyMealErr } = await supabase
-    .from("user_daily_meals")
-    .upsert(
-      { 
-        user_id: userId, 
-        day_date: targetSlot.date,
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: 'user_id,day_date' }
-    )
-    .select("id")
-    .single();
+  const dailyMeal = await runSupabaseQuery<{ id: string } | null>(
+    () => supabase
+      .from("user_daily_meals")
+      .upsert(
+        {
+          user_id: userId,
+          day_date: targetSlot.date,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,day_date" },
+      )
+      .select("id")
+      .single(),
+    `user_daily_meals.upsert:${userId}:${targetSlot.date}`,
+    null,
+    20000,
+  );
 
-  if (dailyMealErr || !dailyMeal?.id) {
-    throw new Error(`Failed to upsert user_daily_meals: ${dailyMealErr?.message}`);
+  if (!dailyMeal?.id) {
+    throw new Error(`Failed to upsert user_daily_meals for ${userId}:${targetSlot.date}`);
   }
   const dailyMealUpsertMs = Date.now() - dailyMealUpsertStartedAt;
   const dayData = dailyMeal;
@@ -1005,25 +1059,31 @@ async function saveMealToDb(
   // If plannedMealId is specified, update existing record
   if (targetSlot.plannedMealId) {
     const plannedMealWriteStartedAt = Date.now();
-    const { error: updateError } = await supabase
-      .from("planned_meals")
-      .update(plannedMealData)
-      .eq("id", targetSlot.plannedMealId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("planned_meals")
+        .update(plannedMealData)
+        .eq("id", targetSlot.plannedMealId),
+      `planned_meals.update:${targetSlot.plannedMealId}`,
+      null,
+      20000,
+    );
     plannedMealWriteMs = Date.now() - plannedMealWriteStartedAt;
-    if (updateError) {
-      console.error(`Failed to update planned_meal ${targetSlot.plannedMealId}:`, updateError);
-      throw updateError;
-    }
     console.log(`✅ Updated planned_meal ${targetSlot.plannedMealId}`);
   } else {
     // Check if slot already exists (should not happen if API validated correctly)
     const plannedMealLookupStartedAt = Date.now();
-    const { data: existingMeal } = await supabase
-      .from("planned_meals")
-      .select("id")
-      .eq("daily_meal_id", dayData.id)
-      .eq("meal_type", targetSlot.mealType)
-      .maybeSingle();
+    const existingMeal = await runSupabaseQuery<{ id: string } | null>(
+      () => supabase
+        .from("planned_meals")
+        .select("id")
+        .eq("daily_meal_id", dayData.id)
+        .eq("meal_type", targetSlot.mealType)
+        .maybeSingle(),
+      `planned_meals.lookup:${dayData.id}:${targetSlot.mealType}`,
+      null,
+      15000,
+    );
     plannedMealLookupMs = Date.now() - plannedMealLookupStartedAt;
 
     if (existingMeal) {
@@ -1033,15 +1093,19 @@ async function saveMealToDb(
     }
 
     const plannedMealWriteStartedAt = Date.now();
-    const { data: insertedMeal, error: insertError } = await supabase
-      .from("planned_meals")
-      .insert(plannedMealData)
-      .select("id")
-      .single();
+    const insertedMeal = await runSupabaseQuery<{ id: string } | null>(
+      () => supabase
+        .from("planned_meals")
+        .insert(plannedMealData)
+        .select("id")
+        .single(),
+      `planned_meals.insert:${dayData.id}:${targetSlot.mealType}`,
+      null,
+      20000,
+    );
     plannedMealWriteMs = Date.now() - plannedMealWriteStartedAt;
-    if (insertError) {
-      console.error(`Failed to insert planned_meal:`, insertError);
-      throw insertError;
+    if (!insertedMeal?.id) {
+      throw new Error(`Failed to insert planned_meal for ${dayData.id}:${targetSlot.mealType}`);
     }
     plannedMealId = insertedMeal?.id ?? null;
     console.log(`✅ Created new planned_meal for ${targetSlot.date}/${targetSlot.mealType}`);
@@ -1079,11 +1143,18 @@ async function saveMealToDb(
   slotTimingMs.total_ms = Date.now() - slotStartedAt;
 
   if (debugLogIds.length > 0) {
-    const { error: debugUpdateError } = await supabase
-      .from("meal_nutrition_debug_logs")
-      .update({ slot_timing_ms: slotTimingMs })
-      .in("id", debugLogIds);
-    if (debugUpdateError) {
+    try {
+      await runSupabaseQuery(
+        () => supabase
+          .from("meal_nutrition_debug_logs")
+          .update({ slot_timing_ms: slotTimingMs })
+          .in("id", debugLogIds),
+        `meal_nutrition_debug_logs.updateSlotTiming:${targetSlot.date}:${targetSlot.mealType}`,
+        null,
+        10000,
+        1,
+      );
+    } catch (debugUpdateError) {
       console.error("[meal-nutrition-debug] Failed to update slot timing:", debugUpdateError);
     }
   }
@@ -1196,12 +1267,16 @@ function countGeneratedTargetSlots(targetSlots: TargetSlot[], generatedMeals: Re
 }
 
 async function loadRequestRow(supabase: any, requestId: string) {
-  const { data, error } = await supabase
-    .from("weekly_menu_requests")
-    .select("id, user_id, start_date, prompt, constraints, target_slots, generated_data, current_step, status")
-    .eq("id", requestId)
-    .single();
-  if (error || !data) throw new Error(`Request not found: ${error?.message ?? "no data"}`);
+  const data = await runSupabaseQuery<any | null>(
+    () => supabase
+      .from("weekly_menu_requests")
+      .select("id, user_id, start_date, prompt, constraints, target_slots, generated_data, current_step, status")
+      .eq("id", requestId)
+      .single(),
+    `weekly_menu_requests.load:${requestId}`,
+    null,
+  );
+  if (!data) throw new Error("Request not found: no data");
   return data as any;
 }
 
@@ -1301,42 +1376,63 @@ async function executeStep1_Generate(
 
     const [existingMealsResult, pantryResult, profileResult] = await Promise.all([
       existingMenus.length === 0
-        ? supabase
-            .from("user_daily_meals")
-            .select(`
-              day_date,
-              planned_meals (
-                id,
-                meal_type,
-                dish_name,
-                is_completed,
-                mode
-              )
-            `)
-            .eq("user_id", userId)
-            .gte("day_date", contextStartDate)
-            .lte("day_date", contextEndDate)
-        : Promise.resolve({ data: null, error: null }),
+        ? runSupabaseQuery<any[]>(
+            () => supabase
+              .from("user_daily_meals")
+              .select(`
+                day_date,
+                planned_meals (
+                  id,
+                  meal_type,
+                  dish_name,
+                  is_completed,
+                  mode
+                )
+              `)
+              .eq("user_id", userId)
+              .gte("day_date", contextStartDate)
+              .lte("day_date", contextEndDate),
+            `user_daily_meals.context:${userId}:${contextStartDate}:${contextEndDate}`,
+            [],
+          ).catch((error) => {
+            console.warn("Failed to fetch existing menus context:", error);
+            return [];
+          })
+        : Promise.resolve([]),
       fridgeItems.length === 0
-        ? supabase
-            .from("pantry_items")
-            .select("name, amount, expiration_date")
-            .eq("user_id", userId)
-            .gte("expiration_date", todayStr)
-            .order("expiration_date", { ascending: true })
-        : Promise.resolve({ data: null, error: null }),
+        ? runSupabaseQuery<any[]>(
+            () => supabase
+              .from("pantry_items")
+              .select("name, amount, expiration_date")
+              .eq("user_id", userId)
+              .gte("expiration_date", todayStr)
+              .order("expiration_date", { ascending: true }),
+            `pantry_items.context:${userId}:${todayStr}`,
+            [],
+          ).catch((error) => {
+            console.warn("Failed to fetch pantry context:", error);
+            return [];
+          })
+        : Promise.resolve([]),
       !hasUserProfile
-        ? supabase
-            .from("user_profiles")
-            .select("*")
-            .eq("id", userId)
-            .maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
+        ? runSupabaseQuery<any | null>(
+            () => supabase
+              .from("user_profiles")
+              .select("*")
+              .eq("id", userId)
+              .maybeSingle(),
+            `user_profiles.context:${userId}`,
+            null,
+          ).catch((error) => {
+            console.warn("Failed to fetch user profile context:", error);
+            return null;
+          })
+        : Promise.resolve(null),
     ]);
 
-    if (existingMenus.length === 0 && !existingMealsResult.error) {
+    if (existingMenus.length === 0) {
       const existingMenusFetched: ExistingMenuContext[] = [];
-      for (const day of (existingMealsResult.data ?? []) as any[]) {
+      for (const day of existingMealsResult as any[]) {
         const dayDate = String(day.day_date ?? "");
         const isPast = dayDate < todayStr;
         const meals = Array.isArray(day.planned_meals) ? day.planned_meals : [];
@@ -1355,16 +1451,16 @@ async function executeStep1_Generate(
       existingMenus = existingMenusFetched;
     }
 
-    if (fridgeItems.length === 0 && !pantryResult.error) {
-      fridgeItems = ((pantryResult.data ?? []) as any[]).map((item) => ({
+    if (fridgeItems.length === 0) {
+      fridgeItems = (pantryResult as any[]).map((item) => ({
         name: item.name,
         quantity: item.amount || undefined,
         expirationDate: item.expiration_date || undefined,
       }));
     }
 
-    if (!hasUserProfile && !profileResult.error && profileResult.data) {
-      userProfile = profileResult.data;
+    if (!hasUserProfile && profileResult) {
+      userProfile = profileResult;
     }
   }
 
@@ -1380,7 +1476,14 @@ async function executeStep1_Generate(
   // Build (or reuse) LLM context
   const nutritionTargets =
     generatedData.nutritionTargets ??
-    (await supabase.from("nutrition_goals").select("*").eq("user_id", userId).maybeSingle()).data ??
+    (await runSupabaseQuery<any | null>(
+      () => supabase.from("nutrition_goals").select("*").eq("user_id", userId).maybeSingle(),
+      `nutrition_goals.context:${userId}`,
+      null,
+    ).catch((error) => {
+      console.warn("Failed to fetch nutrition goals context:", error);
+      return null;
+    })) ??
     null;
 
   // Fetch health checkup data (last 3 checkups + longitudinal review guidance)
@@ -1392,33 +1495,41 @@ async function executeStep1_Generate(
   if (!healthCheckups || !healthGuidance) {
     try {
       // Fetch recent 3 health checkups
-      const { data: checkupsData } = await supabase
-        .from("health_checkups")
-        .select(`
-          checkup_date,
-          blood_pressure_systolic,
-          blood_pressure_diastolic,
-          hba1c,
-          fasting_glucose,
-          ldl_cholesterol,
-          hdl_cholesterol,
-          triglycerides,
-          uric_acid,
-          gamma_gtp,
-          individual_review
-        `)
-        .eq("user_id", userId)
-        .order("checkup_date", { ascending: false })
-        .limit(3);
+      const checkupsData = await runSupabaseQuery<any[]>(
+        () => supabase
+          .from("health_checkups")
+          .select(`
+            checkup_date,
+            blood_pressure_systolic,
+            blood_pressure_diastolic,
+            hba1c,
+            fasting_glucose,
+            ldl_cholesterol,
+            hdl_cholesterol,
+            triglycerides,
+            uric_acid,
+            gamma_gtp,
+            individual_review
+          `)
+          .eq("user_id", userId)
+          .order("checkup_date", { ascending: false })
+          .limit(3),
+        `health_checkups.context:${userId}`,
+        [],
+      );
 
-      healthCheckups = (checkupsData ?? []) as HealthCheckupForContext[];
+      healthCheckups = checkupsData as HealthCheckupForContext[];
 
       // Fetch longitudinal review for nutrition guidance
-      const { data: reviewData } = await supabase
-        .from("health_checkup_longitudinal_reviews")
-        .select("nutrition_guidance")
-        .eq("user_id", userId)
-        .single();
+      const reviewData = await runSupabaseQuery<any | null>(
+        () => supabase
+          .from("health_checkup_longitudinal_reviews")
+          .select("nutrition_guidance")
+          .eq("user_id", userId)
+          .single(),
+        `health_checkup_longitudinal_reviews.context:${userId}`,
+        null,
+      );
 
       healthGuidance = (reviewData?.nutrition_guidance ?? null) as HealthCheckupGuidance | null;
 
@@ -1629,14 +1740,20 @@ async function executeStep1_Generate(
     step1: { cursor: nextCursor, batchSize: DAY_BATCH },
   };
 
-  await supabase
-    .from("weekly_menu_requests")
-    .update({
-      generated_data: updatedGeneratedData,
-      current_step: step1Done ? 2 : 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", requestId);
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: step1Done ? 2 : 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.step1:${requestId}`,
+    null,
+    10000,
+    1,
+  );
 
   await updateProgress(
     supabase,
@@ -1835,14 +1952,20 @@ async function executeStep2_Review(
 
   // Continue fixing?
   if (newFixCursor < maxFixes && newFixCursor < issuesToFix.length) {
-    await supabase
-      .from("weekly_menu_requests")
-      .update({
-        generated_data: updatedGeneratedData,
-        current_step: 2,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 2,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.step2_continue:${requestId}`,
+      null,
+      10000,
+      1,
+    );
 
     await updateProgress(
       supabase,
@@ -1876,14 +1999,20 @@ async function executeStep2_Review(
   }
 
   // Move to Step 3
-  await supabase
-    .from("weekly_menu_requests")
-    .update({
-      generated_data: updatedGeneratedData,
-      current_step: 3,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", requestId);
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 3,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.step2_to_step3:${requestId}`,
+    null,
+    10000,
+    1,
+  );
 
   await updateProgress(
     supabase,
@@ -1987,14 +2116,20 @@ async function executeStep3_Complete(
 
   // Continue?
   if (newCursor < totalSlots) {
-    await supabase
-      .from("weekly_menu_requests")
-      .update({
-        generated_data: updatedGeneratedData,
-        current_step: 3,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 3,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.step3_continue:${requestId}`,
+      null,
+      10000,
+      1,
+    );
 
     await updateProgress(
       supabase,
@@ -2009,14 +2144,20 @@ async function executeStep3_Complete(
 
   // Ultimate Mode: Step 4へ進む
   if (ultimateMode) {
-    await supabase
-      .from("weekly_menu_requests")
-      .update({
-        generated_data: updatedGeneratedData,
-        current_step: 4,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 4,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.step3_to_step4:${requestId}`,
+      null,
+      10000,
+      1,
+    );
 
     await updateProgress(
       supabase,
@@ -2036,23 +2177,29 @@ async function executeStep3_Complete(
     ? `保存完了（成功${savedCount}/${totalSlots}、エラー${errors.length}）`
     : `全${totalSlots}件の献立が完成しました！`;
 
-  await supabase
-    .from("weekly_menu_requests")
-    .update({
-      status: finalStatus,
-      generated_data: updatedGeneratedData,
-      current_step: 3,
-      progress: {
-        currentStep: 3,
-        totalSteps, // Normal mode: 3, Ultimate mode won't reach here
-        message: finalMessage,
-        completedSlots: savedCount,
-        totalSlots,
-      },
-      error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", requestId);
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        status: finalStatus,
+        generated_data: updatedGeneratedData,
+        current_step: 3,
+        progress: {
+          currentStep: 3,
+          totalSteps,
+          message: finalMessage,
+          completedSlots: savedCount,
+          totalSlots,
+        },
+        error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.step3_final:${requestId}`,
+    null,
+    10000,
+    1,
+  );
 }
 
 // =========================================================
@@ -2162,14 +2309,20 @@ async function executeStep4_NutritionFeedback(
 
   // Continue?
   if (newCursor < dates.length) {
-    await supabase
-      .from("weekly_menu_requests")
-      .update({
-        generated_data: updatedGeneratedData,
-        current_step: 4,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 4,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.step4_continue:${requestId}`,
+      null,
+      10000,
+      1,
+    );
 
     await updateProgress(
       supabase,
@@ -2185,14 +2338,20 @@ async function executeStep4_NutritionFeedback(
   // Move to Step 5
   console.log(`📊 Step 4 完了: ${daysNeedingImprovement.length}日が改善対象`);
 
-  await supabase
-    .from("weekly_menu_requests")
-    .update({
-      generated_data: updatedGeneratedData,
-      current_step: 5,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", requestId);
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 5,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.step4_to_step5:${requestId}`,
+    null,
+    10000,
+    1,
+  );
 
   await updateProgress(
     supabase,
@@ -2358,14 +2517,20 @@ ${feedback.advice}
 
   // Continue?
   if (newCursor < daysNeedingImprovement.length) {
-    await supabase
-      .from("weekly_menu_requests")
-      .update({
-        generated_data: updatedGeneratedData,
-        current_step: 5,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 5,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.step5_continue:${requestId}`,
+      null,
+      10000,
+      1,
+    );
 
     await updateProgress(
       supabase,
@@ -2381,14 +2546,20 @@ ${feedback.advice}
   // Move to Step 6
   console.log(`🔄 Step 5 完了: ${regeneratedDates.length}日を再生成`);
 
-  await supabase
-    .from("weekly_menu_requests")
-    .update({
-      generated_data: updatedGeneratedData,
-      current_step: 6,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", requestId);
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        generated_data: updatedGeneratedData,
+        current_step: 6,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.step5_to_step6:${requestId}`,
+    null,
+    10000,
+    1,
+  );
 
   const totalSlots = targetSlots.length;
   await updateProgress(
@@ -2479,14 +2650,20 @@ async function executeStep6_FinalSave(
 
   // Continue?
   if (newCursor < totalSlots) {
-    await supabase
-      .from("weekly_menu_requests")
-      .update({
-        generated_data: updatedGeneratedData,
-        current_step: 6,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", requestId);
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 6,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.step6_continue:${requestId}`,
+      null,
+      10000,
+      1,
+    );
 
     await updateProgress(
       supabase,
@@ -2513,23 +2690,29 @@ async function executeStep6_FinalSave(
     ? `保存完了（成功${savedCount}/${totalSlots}、エラー${errors.length}）`
     : `全${totalSlots}件の献立が完成しました！${praiseComment ? ` ${praiseComment}` : ""}`;
 
-  await supabase
-    .from("weekly_menu_requests")
-    .update({
-      status: finalStatus,
-      generated_data: updatedGeneratedData,
-      current_step: 6,
-      progress: {
-        currentStep: 6,
-        totalSteps: 6,
-        message: finalMessage,
-        completedSlots: savedCount,
-        totalSlots,
-      },
-      error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", requestId);
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        status: finalStatus,
+        generated_data: updatedGeneratedData,
+        current_step: 6,
+        progress: {
+          currentStep: 6,
+          totalSteps: 6,
+          message: finalMessage,
+          completedSlots: savedCount,
+          totalSlots,
+        },
+        error_message: hasErrors ? errors.slice(0, 20).map((e) => `${e.key}: ${e.error}`).join("; ") : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.step6_final:${requestId}`,
+    null,
+    10000,
+    1,
+  );
 
   console.log(`✅ Ultimate Mode completed: ${savedCount}/${totalSlots} meals saved`);
 }
@@ -2576,11 +2759,15 @@ Deno.serve(async (req: Request) => {
     // 現在のステップを取得
     let currentStep = 1;
     if (requestId && isContinue) {
-      const { data: reqData } = await supabase
-        .from("weekly_menu_requests")
-        .select("current_step")
-        .eq("id", requestId)
-        .single();
+      const reqData = await runSupabaseQuery<{ current_step: number } | null>(
+        () => supabase
+          .from("weekly_menu_requests")
+          .select("current_step")
+          .eq("id", requestId)
+          .single(),
+        `weekly_menu_requests.current_step:${requestId}`,
+        null,
+      );
       currentStep = reqData?.current_step ?? 1;
     }
 
@@ -2594,14 +2781,24 @@ Deno.serve(async (req: Request) => {
       } catch (bgErr: any) {
         console.error(`❌ Step ${currentStep} error:`, bgErr?.message ?? String(bgErr), bgErr);
         if (requestId) {
-          await supabase
-            .from("weekly_menu_requests")
-            .update({
-              status: "failed",
-              error_message: bgErr?.message ?? String(bgErr) ?? "Step error",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", requestId);
+          try {
+            await runSupabaseQuery(
+              () => supabase
+                .from("weekly_menu_requests")
+                .update({
+                  status: "failed",
+                  error_message: bgErr?.message ?? String(bgErr) ?? "Step error",
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", requestId),
+              `weekly_menu_requests.fail_step:${requestId}`,
+              null,
+              10000,
+              1,
+            );
+          } catch (updateError) {
+            console.error("Failed to persist request failure:", updateError);
+          }
         }
       }
     };
@@ -2628,14 +2825,24 @@ Deno.serve(async (req: Request) => {
     console.error("Request error:", errorMessage, err);
     
     if (requestId) {
-      await supabase
-        .from("weekly_menu_requests")
-        .update({
-          status: "failed",
-          error_message: errorMessage,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", requestId);
+      try {
+        await runSupabaseQuery(
+          () => supabase
+            .from("weekly_menu_requests")
+            .update({
+              status: "failed",
+              error_message: errorMessage,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", requestId),
+          `weekly_menu_requests.fail_request:${requestId}`,
+          null,
+          10000,
+          1,
+        );
+      } catch (updateError) {
+        console.error("Failed to persist request error:", updateError);
+      }
     }
 
     return new Response(JSON.stringify({ error: errorMessage }), {

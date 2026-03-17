@@ -4,6 +4,7 @@ import {
   sanitizeHealthGoalUpdate,
   sanitizeHealthRecordPayload,
 } from '@/lib/health-payloads';
+import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -167,30 +168,33 @@ export async function POST(
           .eq('id', user.id)
           .single();
 
-        const { error: invokeError } = await supabase.functions.invoke('generate-menu-v4', {
-          body: {
-            userId: user.id,
-            requestId: requestData.id,
-            targetSlots,
-            existingMenus: [],
-            fridgeItems: [],
-            userProfile: {},
-            seasonalContext: {},
-            constraints: {},
-            familySize: profile?.family_size || 1,
-            ultimateMode: ultimateMode ?? false,
-          },
+        const invokeResult = await invokeGenerateMenuV4WithRetry({
+          invoke: () => supabase.functions.invoke('generate-menu-v4', {
+            body: {
+              userId: user.id,
+              requestId: requestData.id,
+              targetSlots,
+              existingMenus: [],
+              fridgeItems: [],
+              userProfile: {},
+              seasonalContext: {},
+              constraints: {},
+              familySize: profile?.family_size || 1,
+              ultimateMode: ultimateMode ?? false,
+            },
+          }),
         });
 
-        if (invokeError) {
-          console.error('Failed to invoke generate-menu-v4:', invokeError);
-          await supabase
-            .from('weekly_menu_requests')
-            .update({ status: 'failed', error_message: invokeError.message })
-            .eq('id', requestData.id);
+        if (!invokeResult.ok) {
+          console.error('Failed to invoke generate-menu-v4:', invokeResult.errorMessage);
+          await markWeeklyMenuRequestFailed({
+            supabase,
+            requestId: requestData.id,
+            errorMessage: invokeResult.errorMessage,
+          });
         }
 
-        success = !invokeError;
+        success = invokeResult.ok;
         result = { date, requestId: requestData.id, status: success ? 'processing' : 'failed' };
         break;
       }
@@ -247,30 +251,33 @@ export async function POST(
           .eq('id', user.id)
           .single();
 
-        const { error: invokeError } = await supabase.functions.invoke('generate-menu-v4', {
-          body: {
-            userId: user.id,
-            requestId: requestData.id,
-            targetSlots,
-            existingMenus: [],
-            fridgeItems: [],
-            userProfile: {},
-            seasonalContext: {},
-            constraints: {},
-            familySize: profile?.family_size || 1,
-            ultimateMode: ultimateMode ?? false,
-          },
+        const invokeResult = await invokeGenerateMenuV4WithRetry({
+          invoke: () => supabase.functions.invoke('generate-menu-v4', {
+            body: {
+              userId: user.id,
+              requestId: requestData.id,
+              targetSlots,
+              existingMenus: [],
+              fridgeItems: [],
+              userProfile: {},
+              seasonalContext: {},
+              constraints: {},
+              familySize: profile?.family_size || 1,
+              ultimateMode: ultimateMode ?? false,
+            },
+          }),
         });
 
-        if (invokeError) {
-          console.error('Failed to invoke generate-menu-v4:', invokeError);
-          await supabase
-            .from('weekly_menu_requests')
-            .update({ status: 'failed', error_message: invokeError.message })
-            .eq('id', requestData.id);
+        if (!invokeResult.ok) {
+          console.error('Failed to invoke generate-menu-v4:', invokeResult.errorMessage);
+          await markWeeklyMenuRequestFailed({
+            supabase,
+            requestId: requestData.id,
+            errorMessage: invokeResult.errorMessage,
+          });
         }
 
-        success = !invokeError;
+        success = invokeResult.ok;
         result = { startDate, requestId: requestData.id, status: success ? 'processing' : 'failed' };
         break;
       }
@@ -329,34 +336,37 @@ export async function POST(
         const familySize = profile?.family_size || 1;
 
         // 3. generate-menu-v4 を呼び出し
-        const { error: invokeError } = await supabase.functions.invoke('generate-menu-v4', {
-          body: {
-            userId: user.id,
-            requestId: requestData.id,
-            targetSlots: [{ date, mealType }],
-            existingMenus: [],  // v4内部で取得
-            fridgeItems: [],    // v4内部で取得
-            userProfile: {},    // v4内部で取得
-            seasonalContext: {}, // v4内部で計算
-            constraints: {
-              specificDish,
-              recipeId,
-              recipeExternalId,
-              excludeIngredients,
-              preferIngredients,
+        const invokeResult = await invokeGenerateMenuV4WithRetry({
+          invoke: () => supabase.functions.invoke('generate-menu-v4', {
+            body: {
+              userId: user.id,
+              requestId: requestData.id,
+              targetSlots: [{ date, mealType }],
+              existingMenus: [], // v4内部で取得
+              fridgeItems: [], // v4内部で取得
+              userProfile: {}, // v4内部で取得
+              seasonalContext: {}, // v4内部で計算
+              constraints: {
+                specificDish,
+                recipeId,
+                recipeExternalId,
+                excludeIngredients,
+                preferIngredients,
+              },
+              note,
+              familySize,
+              ultimateMode: ultimateMode ?? false,
             },
-            note,
-            familySize,
-            ultimateMode: ultimateMode ?? false,
-          },
+          }),
         });
 
-        if (invokeError) {
-          console.error('Failed to invoke generate-menu-v4:', invokeError);
-          await supabase
-            .from('weekly_menu_requests')
-            .update({ status: 'failed', error_message: invokeError.message })
-            .eq('id', requestData.id);
+        if (!invokeResult.ok) {
+          console.error('Failed to invoke generate-menu-v4:', invokeResult.errorMessage);
+          await markWeeklyMenuRequestFailed({
+            supabase,
+            requestId: requestData.id,
+            errorMessage: invokeResult.errorMessage,
+          });
           result = { error: '献立生成の開始に失敗しました' };
           break;
         }

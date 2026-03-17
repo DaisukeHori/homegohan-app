@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
+import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -191,44 +192,33 @@ export async function POST(request: Request) {
 
     // 5. Edge Function generate-menu-v4 をバックグラウンドで呼び出し
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
     console.log('🚀 Calling Edge Function generate-menu-v4...');
 
     // Edge Functionをバックグラウンドで呼び出し（waitUntilで接続を維持）
-    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-      },
-      body: JSON.stringify({
+    const edgeFunctionPromise = callGenerateMenuV4WithRetry({
+      supabaseUrl,
+      serviceRoleKey: supabaseServiceKey,
+      payload: {
         userId: user.id,
         requestId: requestData.id,
         targetSlots,
         note: noteForAi,
         familySize,
         constraints,
-      }),
-    }).then(async (res) => {
-      if (!res.ok) {
-        const text = await res.text().catch(() => 'Unknown error');
-        console.error('❌ Edge Function error:', res.status, text);
-        // 失敗時はステータスを更新
-        await supabase
-          .from('weekly_menu_requests')
-          .update({ status: 'failed', updated_at: new Date().toISOString() })
-          .eq('id', requestData.id);
-      } else {
-        console.log('✅ Edge Function completed successfully');
+      },
+    }).then(async (result) => {
+      if (!result.ok) {
+        console.error('❌ Edge Function error:', result.errorMessage);
+        await markWeeklyMenuRequestFailed({
+          supabase,
+          requestId: requestData.id,
+          errorMessage: result.errorMessage,
+        });
+        return;
       }
-    }).catch(async (err) => {
-      console.error('❌ Edge Function call error:', err.message);
-      // 失敗時はステータスを更新
-      await supabase
-        .from('weekly_menu_requests')
-        .update({ status: 'failed', updated_at: new Date().toISOString() })
-        .eq('id', requestData.id);
+      console.log('✅ Edge Function completed successfully');
     });
     
     // waitUntilでバックグラウンド処理を維持（Vercel Functionsの終了後も実行を継続）

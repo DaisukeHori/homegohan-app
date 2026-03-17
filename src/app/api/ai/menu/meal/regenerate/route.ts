@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
+import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -66,43 +67,28 @@ export async function POST(request: Request) {
 
     console.log('🚀 Calling Edge Function generate-menu-v4...');
 
-    const edgeFunctionPromise = fetch(`${supabaseUrl}/functions/v1/generate-menu-v4`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-        'apikey': supabaseServiceKey,
+    const edgeFunctionPromise = callGenerateMenuV4WithRetry({
+      supabaseUrl,
+      serviceRoleKey: supabaseServiceKey,
+      extraHeaders: {
+        apikey: supabaseServiceKey,
       },
-      body: JSON.stringify({
+      payload: {
         userId: user.id,
         requestId: requestData.id,
         targetSlots,
         note: note || '',
         constraints: preferences || {},
-      }),
-    }).then(async (res) => {
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        console.error('❌ Edge Function error:', res.status, text);
-        await supabase
-          .from('weekly_menu_requests')
-          .update({
-            status: 'failed',
-            error_message: `edge_function_error:${res.status}`,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', requestData.id);
+      },
+    }).then(async (result) => {
+      if (!result.ok) {
+        console.error('❌ Edge Function error:', result.errorMessage);
+        await markWeeklyMenuRequestFailed({
+          supabase,
+          requestId: requestData.id,
+          errorMessage: result.errorMessage,
+        });
       }
-    }).catch(async (err) => {
-      console.error('❌ Edge Function call error:', err.message);
-      await supabase
-        .from('weekly_menu_requests')
-        .update({
-          status: 'failed',
-          error_message: err.message,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', requestData.id);
     });
 
     waitUntil(edgeFunctionPromise);

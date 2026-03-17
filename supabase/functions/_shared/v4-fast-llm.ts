@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "./network-retry.ts";
+
 export type V4FastLLMProvider = "openai" | "xai";
 
 export type V4FastLLMSection =
@@ -100,7 +102,7 @@ export async function callV4FastLLM(input: {
     body.reasoning_effort = "low";
   }
 
-  const res = await fetch(config.endpoint, {
+  const res = await fetchWithRetry(config.endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
@@ -108,12 +110,11 @@ export async function callV4FastLLM(input: {
       "x-llm-section": input.section,
     },
     body: JSON.stringify(body),
+  }, {
+    label: `${input.section}:${config.provider}`,
+    retries: 2,
+    timeoutMs: 60000,
   });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`${config.provider} API error: ${res.status} - ${errorText}`);
-  }
 
   const json = await res.json() as ChatCompletionResponse;
   const text = json.choices?.[0]?.message?.content?.trim() ?? "";
