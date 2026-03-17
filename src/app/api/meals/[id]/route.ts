@@ -4,6 +4,13 @@ import {
   buildCatalogSelectionUpdate,
   clearCatalogSelectionMetadata,
 } from '../../../../lib/catalog-products';
+import type { MealImageJobSeed } from '../../../../lib/meal-image';
+import {
+  buildDishImagePayload,
+  cancelPendingMealImageJobs,
+  enqueueMealImageJobs,
+  triggerMealImageJobProcessing,
+} from '../../../../lib/meal-image-jobs';
 
 /**
  * 特定の食事を取得（planned_mealsベース）
@@ -79,6 +86,7 @@ export async function PATCH(
       }
     }
     updateData.updated_at = new Date().toISOString();
+    const manualImageUrl = typeof body.image_url === 'string' ? body.image_url : undefined;
 
     // まずユーザーの所有確認
     const { data: existing } = await supabase
@@ -89,6 +97,8 @@ export async function PATCH(
         catalog_product_id,
         source_type,
         generation_metadata,
+        dishes,
+        image_url,
         user_daily_meals!inner(user_id)
       `)
       .eq('id', params.id)
@@ -128,6 +138,32 @@ export async function PATCH(
       }
     }
 
+    const imageModel = process.env.GEMINI_IMAGE_MODEL ?? undefined;
+    const triggerSource = `nextjs:meals/${params.id}:PATCH`;
+    const requestId = request.headers.get('x-request-id') ?? null;
+    const hasImageManagedDishes =
+      (Array.isArray(existing.dishes) && existing.dishes.length > 0) ||
+      (Array.isArray(body.dishes) && body.dishes.length > 0);
+    let jobs: MealImageJobSeed[] = [];
+
+    if (hasImageManagedDishes) {
+      const { dishes: reconciledDishes, jobs: nextJobs, mealCoverImageUrl } = await buildDishImagePayload({
+        previousDishes: existing.dishes ?? null,
+        nextDishes: body.dishes ?? undefined,
+        dishName: updateData.dish_name ?? undefined,
+        triggerSource,
+        imageUrlOverride: manualImageUrl,
+        imageModel,
+        existingCover: existing.image_url ?? null,
+        fallbackMealImageUrl: existing.image_url ?? null,
+      });
+      updateData.dishes = reconciledDishes;
+      updateData.image_url = mealCoverImageUrl;
+      jobs = nextJobs;
+    } else if (body.image_url !== undefined) {
+      updateData.image_url = body.image_url;
+    }
+
     const { data, error } = await supabase
       .from('planned_meals')
       .update(updateData)
@@ -137,6 +173,18 @@ export async function PATCH(
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    await enqueueMealImageJobs({
+      supabase,
+      plannedMealId: data.id,
+      userId: user.id,
+      triggerSource,
+      jobSeeds: jobs,
+      requestId,
+    });
+    if (jobs.length > 0) {
+      await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
     }
 
     return NextResponse.json(data);
@@ -174,6 +222,12 @@ export async function DELETE(
     if (!existing) {
       return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
     }
+
+    await cancelPendingMealImageJobs({
+      supabase,
+      plannedMealId: params.id,
+      reason: 'meal deleted',
+    });
 
     const { error } = await supabase
       .from('planned_meals')

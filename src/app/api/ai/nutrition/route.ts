@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
+import { buildPhotoDishList } from '../../../../lib/meal-image';
+import { cancelPendingMealImageJobs } from '../../../../lib/meal-image-jobs';
 
 /**
  * 献立の栄養情報を更新
@@ -27,9 +29,14 @@ export async function POST(request: Request) {
     // 2. 所有権確認（日付ベースモデル）
     const { data: existing, error: existError } = await supabase
       .from('planned_meals')
-      .select('id, user_id')
+      .select(`
+        id,
+        dishes,
+        is_simple,
+        user_daily_meals!inner(user_id)
+      `)
       .eq('id', plannedMealId)
-      .eq('user_id', user.id)
+      .eq('user_daily_meals.user_id', user.id)
       .single();
 
     if (existError || !existing) {
@@ -106,18 +113,40 @@ export async function POST(request: Request) {
         }
 
         // DBを更新
+        const baseDishes = Array.isArray(result.dishes)
+          ? result.dishes.map((dish: any) => ({
+              name: dish?.name ?? '料理',
+              role: dish?.role ?? 'main',
+            }))
+          : [];
+        const photoDishes = buildPhotoDishList(baseDishes, imageUrl);
+
+        await cancelPendingMealImageJobs({
+          supabase,
+          plannedMealId,
+          reason: 'nutrition photo overwrite',
+        });
+
+        const updatePayload: Record<string, unknown> = {
+          calories_kcal: result.calories_kcal,
+          protein_g: result.protein_g,
+          fat_g: result.fat_g,
+          carbs_g: result.carbs_g,
+          veg_score: result.veg_score,
+          quality_tags: result.quality_tags,
+          dishes: photoDishes.length > 0 ? photoDishes : existing.dishes ?? null,
+          image_url: imageUrl,
+          updated_at: new Date().toISOString(),
+        };
+        if (photoDishes.length > 0) {
+          updatePayload.is_simple = photoDishes.length <= 1;
+        } else {
+          updatePayload.is_simple = existing.is_simple ?? null;
+        }
+
         const { error: updateError } = await supabase
           .from('planned_meals')
-          .update({
-            calories_kcal: result.calories_kcal,
-            protein_g: result.protein_g,
-            fat_g: result.fat_g,
-            carbs_g: result.carbs_g,
-            veg_score: result.veg_score,
-            quality_tags: result.quality_tags,
-            dishes: result.dishes,
-            updated_at: new Date().toISOString(),
-          })
+          .update(updatePayload)
           .eq('id', plannedMealId);
 
         if (updateError) {

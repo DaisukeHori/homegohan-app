@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -140,6 +141,25 @@ export async function POST(request: Request) {
           .maybeSingle();
 
         if (existingDay) {
+          const { data: existingMeals } = await supabase
+            .from('planned_meals')
+            .select('id')
+            .eq('daily_meal_id', existingDay.id);
+
+          if (Array.isArray(existingMeals) && existingMeals.length > 0) {
+            await Promise.all(
+              existingMeals.map((meal) =>
+                cancelPendingMealImageJobs({
+                  supabase,
+                  plannedMealId: meal.id,
+                  reason: 'weekly regeneration overwrite',
+                }).catch((error) => {
+                  console.warn('Failed to cancel meal image jobs before weekly reset:', error);
+                }),
+              ),
+            );
+          }
+
           // 既存の食事を削除
           await supabase
             .from('planned_meals')

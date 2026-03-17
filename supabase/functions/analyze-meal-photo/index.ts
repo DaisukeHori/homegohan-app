@@ -6,6 +6,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { analyzeWithEvidence, ImageInput, GeminiAnalysisResult } from '../_shared/nutrition-pipeline.ts'
+import { buildPhotoDishList } from '../_shared/meal-image.ts'
+import { cancelPendingMealImageJobs } from '../_shared/meal-image-jobs.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -198,14 +200,25 @@ async function analyzeMealPhotoBackgroundTask({
       ingredient: d.ingredient,
       ingredients: d.ingredients,
     }))
+    const photoDishes = buildPhotoDishList(dishes, imageUrl)
     const dishName = result.dishes.map(d => d.name).join('、')
     
     // planned_mealsを更新（全栄養素）
+    try {
+      await cancelPendingMealImageJobs({
+        supabase,
+        plannedMealId: mealId,
+        reason: 'photo overwrite',
+      })
+    } catch (cancelError) {
+      console.warn('Failed to cancel pending meal image jobs for photo update:', cancelError)
+    }
+
     const { error: updateError } = await supabase
       .from('planned_meals')
       .update({
-        dish_name: dishName || '写真から入力',
-        dishes: dishes,
+      dish_name: dishName || '写真から入力',
+      dishes: photoDishes,
         image_url: imageUrl,
         description: result.praiseComment,
         // 基本栄養素

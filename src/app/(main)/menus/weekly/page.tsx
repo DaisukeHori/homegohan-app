@@ -4456,6 +4456,7 @@ export default function WeeklyMenuPage() {
                     };
                     setSelectedRecipeData({
                       ...normalizedDish,
+                      imageUrl: (dish as any).image_url ?? meal.imageUrl ?? null,
                       // この料理だけを配列に入れる（UIの互換性のため）
                       dishes: [normalizedDish],
                       // 全料理の材料（買い物リスト用）
@@ -6105,6 +6106,44 @@ export default function WeeklyMenuPage() {
                       <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories_kcal ?? selectedRecipeData?.cal ?? '-'}kcal</span>
                     </div>
                   </div>
+
+                  {(selectedRecipeData?.imageUrl || selectedRecipeData?.image_status) && (
+                    <div className="mb-4">
+                      {selectedRecipeData?.imageUrl ? (
+                        <div className="relative h-48 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
+                          <Image
+                            src={selectedRecipeData.imageUrl}
+                            alt={selectedRecipe ?? 'Dish image'}
+                            fill
+                            sizes="(max-width: 1024px) 100vw, 50vw"
+                            className="object-cover"
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          className="h-48 rounded-2xl flex items-center justify-center px-4 text-center"
+                          style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}
+                        >
+                          <p style={{ fontSize: 13, color: colors.textMuted, margin: 0 }}>
+                            {selectedRecipeData?.image_status === 'pending'
+                              ? '料理画像を生成中です'
+                              : selectedRecipeData?.image_status === 'stale'
+                                ? '料理内容の変更後、画像を再生成待ちです'
+                                : '料理画像の生成に失敗しました'}
+                          </p>
+                        </div>
+                      )}
+                      {selectedRecipeData?.image_status && selectedRecipeData.image_status !== 'ready' && (
+                        <p style={{ fontSize: 11, color: colors.textMuted, marginTop: 8, marginBottom: 0 }}>
+                          {selectedRecipeData.image_status === 'pending'
+                            ? 'AIが料理画像を生成しています。'
+                            : selectedRecipeData.image_status === 'stale'
+                              ? '現在の料理内容に合わせた画像へ更新待ちです。'
+                              : '画像生成に失敗しました。後でもう一度お試しください。'}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {/* この料理の栄養素 */}
                   {selectedRecipeData && (selectedRecipeData.protein_g || selectedRecipeData.fat_g || selectedRecipeData.carbs_g) && (

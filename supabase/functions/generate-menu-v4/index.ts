@@ -73,6 +73,14 @@ import {
   shouldSkipReferenceMenuSearch,
 } from "./reference-menu-utils.ts";
 import { selectRecentMenusForVariety } from "./context-utils.ts";
+import {
+  reconcileDishImages,
+  DEFAULT_MEAL_IMAGE_MODEL,
+} from "../_shared/meal-image.ts";
+import {
+  enqueueMealImageJobs,
+  triggerMealImageJobProcessing,
+} from "../_shared/meal-image-jobs.ts";
 
 console.log("Generate Menu V4 Function loaded (Slot-based generation)");
 
@@ -755,6 +763,18 @@ async function saveMealToDb(
   const dailyMealUpsertMs = Date.now() - dailyMealUpsertStartedAt;
   const dayData = dailyMeal;
 
+  const existingMeal = targetSlot.plannedMealId
+    ? await runSupabaseQuery(
+        () => supabase
+          .from("planned_meals")
+          .select("id, dishes, image_url")
+          .eq("id", targetSlot.plannedMealId)
+          .single(),
+        `planned_meals.lookup:${targetSlot.plannedMealId}`,
+        null,
+      )
+    : null;
+
   // Calculate nutrition per dish + V3-like validation/adjustment for suspicious low-calorie dishes
   const totalNutrition = emptyNutrition();
   const dishDetails: any[] = [];
@@ -997,6 +1017,25 @@ async function saveMealToDb(
     dishProcessingTotalMs += Number(dishTimingMs.total_ms ?? 0);
   }
 
+  const jobTriggerSource = requestId ? `generate-menu-v4:${requestId}` : "generate-menu-v4";
+  const reconcileResult = await reconcileDishImages({
+    previousDishes: Array.isArray(existingMeal?.dishes) ? existingMeal?.dishes : null,
+    nextDishes: generatedMeal.dishes.map((dish, idx) => ({
+      name: dish.name,
+      role: dish.role,
+      ingredients: Array.isArray(dish.ingredients) ? dish.ingredients : [],
+      displayOrder: idx,
+    })),
+    triggerSource: jobTriggerSource,
+    fallbackMealImageUrl: existingMeal?.image_url ?? null,
+    model: DEFAULT_MEAL_IMAGE_MODEL,
+  });
+  const mergedDishes = dishDetails.map((detail, idx) => ({
+    ...detail,
+    ...reconcileResult.dishes[idx],
+  }));
+  const mealCoverImageUrl = reconcileResult.mealCoverImageUrl ?? existingMeal?.image_url ?? null;
+
   const dishName = dishDetails.length === 1
     ? String(dishDetails[0]?.name ?? "献立")
     : (() => {
@@ -1014,7 +1053,7 @@ async function saveMealToDb(
     dish_name: dishName,
     ingredients: aggregatedIngredients,
     recipe_steps: allSteps,
-    dishes: dishDetails,
+    dishes: mergedDishes,
     mode: "ai_creative",
     is_simple: false,
     display_order: DISPLAY_ORDER_MAP[targetSlot.mealType] ?? 0,
@@ -1051,6 +1090,7 @@ async function saveMealToDb(
     saturated_fat_g: Math.round((totalNutrition.saturated_fat_g ?? 0) * 10) / 10,
     monounsaturated_fat_g: Math.round((totalNutrition.monounsaturated_fat_g ?? 0) * 10) / 10,
     polyunsaturated_fat_g: Math.round((totalNutrition.polyunsaturated_fat_g ?? 0) * 10) / 10,
+    image_url: mealCoverImageUrl,
     updated_at: new Date().toISOString(),
   };
 
@@ -1109,6 +1149,28 @@ async function saveMealToDb(
     }
     plannedMealId = insertedMeal?.id ?? null;
     console.log(`✅ Created new planned_meal for ${targetSlot.date}/${targetSlot.mealType}`);
+  }
+
+  if (!plannedMealId) {
+    throw new Error(`plannedMealId missing after save for ${targetSlot.date}/${targetSlot.mealType}`);
+  }
+
+  await enqueueMealImageJobs({
+    supabase,
+    plannedMealId,
+    userId,
+    jobs: reconcileResult.jobs,
+    requestId: requestId ?? null,
+  });
+  if (reconcileResult.jobs.length > 0) {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    await triggerMealImageJobProcessing({
+      supabaseUrl,
+      serviceRoleKey,
+      plannedMealId,
+      limit: reconcileResult.jobs.length,
+    });
   }
 
   const slotTimingMs = {

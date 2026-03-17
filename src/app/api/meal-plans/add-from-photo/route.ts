@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { buildCatalogSelectionUpdate } from "../../../../lib/catalog-products";
+import { buildPhotoDishList } from "../../../../lib/meal-image";
+import { cancelPendingMealImageJobs } from "../../../../lib/meal-image-jobs";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -51,7 +53,30 @@ export async function POST(request: Request) {
       dailyMealId = newDay.id;
     }
     
-    // 2. 既存の同じ meal_type の planned_meal を削除（上書き）
+    // 2. 既存の同じ meal_type の planned_meal を削除（上書き）および画像ジョブを止める
+    const { data: existingMeals, error: existingMealsError } = await supabase
+      .from('planned_meals')
+      .select('id')
+      .eq('daily_meal_id', dailyMealId)
+      .eq('meal_type', mealType);
+
+    if (existingMealsError) {
+      console.error('Failed to load existing meal for photo insert:', existingMealsError);
+      return NextResponse.json({ error: 'Failed to replace existing meal' }, { status: 500 });
+    }
+
+    if (Array.isArray(existingMeals) && existingMeals.length > 0) {
+      await Promise.all(
+        existingMeals.map((meal) =>
+          cancelPendingMealImageJobs({ supabase, plannedMealId: meal.id, reason: 'photo overwrite' }).catch(
+            (cancelError) => {
+              console.warn('Failed to cancel meal image jobs for overwritten photo:', cancelError);
+            },
+          ),
+        ),
+      );
+    }
+
     await supabase
       .from('planned_meals')
       .delete()
@@ -69,6 +94,7 @@ export async function POST(request: Request) {
       role: d.role || 'side',
       ingredient: d.ingredient || ''
     }));
+    const photoDishes = buildPhotoDishList(dishesJson, imageUrl ?? null);
     
     const insertData: Record<string, any> = {
       daily_meal_id: dailyMealId,
@@ -79,8 +105,8 @@ export async function POST(request: Request) {
       calories_kcal: totalCalories || null,
       image_url: imageUrl,
       is_completed: false,
-      dishes: dishesJson.length > 0 ? dishesJson : null,
-      is_simple: dishesJson.length <= 1,
+      dishes: photoDishes.length > 0 ? photoDishes : null,
+      is_simple: photoDishes.length <= 1,
       source_type: 'manual',
     };
 

@@ -5,6 +5,13 @@ import {
   sanitizeHealthRecordPayload,
 } from '@/lib/health-payloads';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import type { MealImageJobSeed } from '../../../../../../../lib/meal-image';
+import {
+  buildDishImagePayload,
+  cancelPendingMealImageJobs,
+  enqueueMealImageJobs,
+  triggerMealImageJobProcessing,
+} from '../../../../../../../lib/meal-image-jobs';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -392,7 +399,7 @@ export async function POST(
         // セキュリティ: 自分の献立のみ更新可能
         const { data: meal, error: mealFetchError } = await supabase
           .from('planned_meals')
-          .select('id, dish_name, user_id')
+          .select('id, dish_name, user_id, dishes, image_url')
           .eq('id', mealId)
           .single();
 
@@ -419,16 +426,31 @@ export async function POST(
           updateData.dishes = updates.dishes;
           updateData.is_simple = updates.dishes.length === 1;
           console.log('Using AI-provided dishes:', updates.dishes);
-        } else if (updates.dish_name && !updates.dishes) {
-          // dish_nameのみが更新され、dishesが提供されていない場合は単品として再構築
-          updateData.dishes = [{
-            name: updates.dish_name,
-            role: 'main',
-            cal: updates.calories_kcal || null,
-            ingredient: '',
-          }];
-          updateData.is_simple = true;
-          console.log('Created single dish from dish_name:', updates.dish_name);
+        }
+
+        const triggerSource = `consultation:update_meal:${action.id}`;
+        const manualImageUrl = typeof updates.image_url === 'string' ? updates.image_url : undefined;
+        const hasImageManagedDishes =
+          (Array.isArray(meal.dishes) && meal.dishes.length > 0) ||
+          (Array.isArray(updateData.dishes) && updateData.dishes.length > 0);
+        let jobs: MealImageJobSeed[] = [];
+
+        if (hasImageManagedDishes) {
+          const { dishes: reconciledDishes, jobs: nextJobs, mealCoverImageUrl } = await buildDishImagePayload({
+            previousDishes: Array.isArray(meal.dishes) ? meal.dishes : null,
+            nextDishes: updateData.dishes ?? undefined,
+            dishName: updateData.dish_name ?? undefined,
+            triggerSource,
+            imageUrlOverride: manualImageUrl,
+            imageModel: process.env.GEMINI_IMAGE_MODEL ?? undefined,
+            existingCover: meal.image_url ?? null,
+            fallbackMealImageUrl: meal.image_url ?? null,
+          });
+          updateData.dishes = reconciledDishes;
+          updateData.image_url = mealCoverImageUrl;
+          jobs = nextJobs;
+        } else if (updates.image_url !== undefined) {
+          updateData.image_url = updates.image_url;
         }
 
         const { data: updatedMeal, error: updateError } = await supabase
@@ -443,7 +465,19 @@ export async function POST(
           result = { error: `更新に失敗: ${updateError.message}` };
           break;
         }
-        
+
+        await enqueueMealImageJobs({
+          supabase,
+          plannedMealId: mealId,
+          userId: user.id,
+          triggerSource,
+          jobSeeds: jobs,
+          requestId: action.id,
+        });
+        if (jobs.length > 0) {
+          await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
+        }
+
         console.log('Meal updated successfully:', updatedMeal);
         success = true;
         result = { mealId, updated: true, newDishName: updatedMeal?.dish_name };
@@ -463,6 +497,12 @@ export async function POST(
           result = { error: '権限がありません' };
           break;
         }
+
+        await cancelPendingMealImageJobs({
+          supabase,
+          plannedMealId: mealId,
+          reason: 'meal deleted',
+        });
 
         const { error: deleteError } = await supabase
           .from('planned_meals')

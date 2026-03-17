@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { buildCatalogSelectionUpdate } from '../../../../lib/catalog-products';
+import {
+  buildDishImagePayload,
+  enqueueMealImageJobs,
+  triggerMealImageJobProcessing,
+} from '../../../../lib/meal-image-jobs';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -20,11 +25,34 @@ export async function POST(request: Request) {
       ingredients,
       catalogProductId,
       sourceType,
+      imageUrl,
     } = await request.json();
 
     if (!dayDate || !mealType) {
       return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });
     }
+
+    const manualImageUrl = typeof imageUrl === 'string' ? imageUrl : undefined;
+    const imageModel = process.env.GEMINI_IMAGE_MODEL ?? undefined;
+    const triggerSource = 'nextjs:meal-plans/meals:POST';
+    const requestId = request.headers.get('x-request-id') ?? null;
+    const hasImageManagedDishes = Array.isArray(dishes) && dishes.length > 0;
+    const dishImagePayload = hasImageManagedDishes
+      ? await buildDishImagePayload({
+          previousDishes: null,
+          nextDishes: dishes ?? undefined,
+          dishName: dishName ?? undefined,
+          triggerSource,
+          imageUrlOverride: manualImageUrl,
+          imageModel,
+          existingCover: null,
+          fallbackMealImageUrl: imageUrl ?? null,
+        })
+      : {
+          dishes: dishes || null,
+          jobs: [],
+          mealCoverImageUrl: imageUrl ?? null,
+        };
 
     // Get or create user_daily_meals for the target date
     let { data: existingDay } = await supabase
@@ -61,10 +89,11 @@ export async function POST(request: Request) {
       mode: mode || 'cook',
       dish_name: dishName || '未設定',
       is_simple: isSimple ?? true,
-      dishes: dishes || null,
+      dishes: dishImagePayload.dishes,
       calories_kcal: caloriesKcal || null,
       description: description || null,
       ingredients: ingredients || null,
+      image_url: dishImagePayload.mealCoverImageUrl,
       is_completed: false,
       source_type: sourceType || 'manual',
     };
@@ -87,6 +116,21 @@ export async function POST(request: Request) {
       .single();
 
     if (mealError) throw mealError;
+
+    await enqueueMealImageJobs({
+      supabase,
+      plannedMealId: newMeal.id,
+      userId: user.id,
+      triggerSource,
+      jobSeeds: dishImagePayload.jobs as any,
+      requestId,
+    });
+    if (dishImagePayload.jobs.length > 0) {
+      await triggerMealImageJobProcessing({
+        plannedMealId: newMeal.id,
+        limit: dishImagePayload.jobs.length,
+      });
+    }
 
     return NextResponse.json({ 
       success: true,

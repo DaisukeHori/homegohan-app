@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { buildCatalogSelectionUpdate } from '../../../lib/catalog-products';
+import {
+  buildDishImagePayload,
+  enqueueMealImageJobs,
+  triggerMealImageJobProcessing,
+} from '../../../lib/meal-image-jobs';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -88,6 +93,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    const manualImageUrl = typeof imageUrl === 'string' ? imageUrl : undefined;
+    const imageModel = process.env.GEMINI_IMAGE_MODEL ?? undefined;
+    const triggerSource = 'nextjs:meals:POST';
+    const requestId = request.headers.get('x-request-id') ?? null;
+    const hasImageManagedDishes = Array.isArray(dishes) && dishes.length > 0;
+    const dishImagePayload = hasImageManagedDishes
+      ? await buildDishImagePayload({
+          previousDishes: null,
+          nextDishes: dishes ?? undefined,
+          dishName: dishName ?? undefined,
+          triggerSource,
+          imageUrlOverride: manualImageUrl,
+          imageModel,
+          existingCover: null,
+          fallbackMealImageUrl: imageUrl ?? null,
+        })
+      : {
+          dishes: dishes ?? null,
+          jobs: [],
+          mealCoverImageUrl: imageUrl ?? null,
+        };
+
     // 1. user_daily_mealsをupsert
     const { data: dailyMeal, error: dailyMealError } = await supabase
       .from('user_daily_meals')
@@ -113,10 +140,10 @@ export async function POST(request: Request) {
       dish_name: dishName,
       mode: mode,
       description: description,
-      image_url: imageUrl,
       calories_kcal: caloriesKcal,
       ingredients: ingredients,
-      dishes: dishes,
+      image_url: dishImagePayload.mealCoverImageUrl,
+      dishes: dishImagePayload.dishes,
       is_completed: false,
       source_type: sourceType || 'manual',
     };
@@ -140,6 +167,21 @@ export async function POST(request: Request) {
       .single();
 
     if (mealError) throw mealError;
+
+    await enqueueMealImageJobs({
+      supabase,
+      plannedMealId: meal.id,
+      userId: user.id,
+      triggerSource,
+      jobSeeds: dishImagePayload.jobs as any,
+      requestId,
+    });
+    if (dishImagePayload.jobs.length > 0) {
+      await triggerMealImageJobProcessing({
+        plannedMealId: meal.id,
+        limit: dishImagePayload.jobs.length,
+      });
+    }
 
     return NextResponse.json({ meal });
 

@@ -645,6 +645,16 @@ export interface DishDetail {
   ingredientsMd?: string; // 材料のマークダウン
   recipeStepsMd?: string; // 作り方のマークダウン
   displayOrder?: number; // 表示順序
+
+  // ===== 画像メタデータ =====
+  image_url?: string | null;
+  image_source?: 'generated_ai' | 'meal_photo' | 'manual_override' | 'catalog' | 'none';
+  image_status?: 'pending' | 'ready' | 'failed' | 'stale';
+  image_prompt?: string | null;
+  image_model?: string | null;
+  image_subject_hash?: string | null;
+  image_generated_at?: string | null;
+  image_error?: string | null;
   
   // ===== 栄養素（単位付きの統一形式）=====
   // ⚠️ 命名規則を変更しないこと！上記コメント参照

@@ -3,6 +3,8 @@ import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
+import { buildPhotoDishList } from "../../../../lib/meal-image";
+import { cancelPendingMealImageJobs } from "../../../../lib/meal-image-jobs";
 import { supabase } from "../../src/lib/supabase";
 
 type MealType = "breakfast" | "lunch" | "dinner" | "snack" | "midnight_snack";
@@ -174,21 +176,46 @@ export default function MealNewPage() {
         dailyMealId = newDay.id;
       }
 
-      // 2) 既存の同じ meal_type を削除（上書き）
+      // 2) 既存の同じ meal_type を削除（上書き）しつつ画像ジョブを止める
+      const { data: existingMeals, error: existingMealsError } = await supabase
+        .from("planned_meals")
+        .select("id")
+        .eq("daily_meal_id", dailyMealId)
+        .eq("meal_type", mealType);
+
+      if (existingMealsError) throw existingMealsError;
+
+      if (Array.isArray(existingMeals) && existingMeals.length > 0) {
+        await Promise.all(
+          existingMeals.map((meal) =>
+            cancelPendingMealImageJobs({
+              supabase,
+              plannedMealId: meal.id,
+              reason: "photo overwrite",
+            }).catch((cancelError) => {
+              console.warn("Failed to cancel meal image jobs for overwritten photo:", cancelError);
+            }),
+          ),
+        );
+      }
+
       await supabase.from("planned_meals").delete().eq("daily_meal_id", dailyMealId).eq("meal_type", mealType);
 
       // 4) planned_meal を作成
-      const dishesArray = result.dishes || [];
-      const allDishNames = dishesArray.map((d) => d.name).join("、") || "写真から入力";
-      const dishesJson = dishesArray.map((d) => ({
+      const baseDishPayloads = (result.dishes ?? []).map((d) => ({
         name: d.name,
-        cal: d.cal || 0,
-        role: d.role || "side",
-        ingredient: d.ingredient || "",
-        protein: d.protein ?? null,
-        carbs: d.carbs ?? null,
-        fat: d.fat ?? null,
+        role: d.role ?? "side",
+        ingredient: d.ingredient ?? null,
+        calories_kcal: typeof d.cal === "number" ? d.cal : d.calories_kcal ?? null,
+        protein_g: d.protein ?? null,
+        carbs_g: d.carbs ?? null,
+        fat_g: d.fat ?? null,
       }));
+      const photoDishes = buildPhotoDishList(baseDishPayloads, result.imageUrl ?? null);
+      const dishNames = photoDishes
+        .map((d) => (typeof d.name === "string" ? d.name.trim() : ""))
+        .filter(Boolean);
+      const allDishNames = dishNames.join("、") || "写真から入力";
 
       const n = result.nutrition || {};
 
@@ -234,8 +261,8 @@ export default function MealNewPage() {
           veg_score: result.vegScore ?? null,
           image_url: result.imageUrl ?? null,
           is_completed: false,
-          dishes: dishesJson.length ? dishesJson : null,
-          is_simple: dishesJson.length <= 1,
+          dishes: photoDishes.length ? photoDishes : null,
+          is_simple: photoDishes.length <= 1,
         })
         .select("id")
         .single();
@@ -382,6 +409,3 @@ export default function MealNewPage() {
     </ScrollView>
   );
 }
-
-
-
