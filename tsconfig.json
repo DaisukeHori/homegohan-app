@@ -39,6 +39,7 @@
   ],
   "exclude": [
     "node_modules",
+    "scripts",
     "supabase",
     "tests",
     "apps/mobile",
