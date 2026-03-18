@@ -6,6 +6,8 @@ export type V4FastLLMSection =
   | "generateMealWithLLM"
   | "generateDayMealsWithLLM"
   | "regenerateMealForIssue"
+  | "reviewWeeklyMenus"
+  | "generateNutritionFeedback"
   | "ingredientMatcher.selectBestMatchWithLLM";
 
 export interface V4FastLLMConfig {

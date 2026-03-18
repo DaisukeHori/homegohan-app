@@ -77,7 +77,7 @@ type PartialMatchedIngredientCandidate =
     similarity?: number | null
   }
 
-interface IngredientMatchMemo {
+export interface IngredientMatchMemo {
   matched: MatchedIngredientData | null
   confidence: IngredientMatchResult['confidence']
   matchMethod: IngredientMatchResult['matchMethod']
@@ -592,10 +592,13 @@ export async function matchSingleIngredient(
 
 export async function matchIngredients(
   supabase: SupabaseClient,
-  ingredients: EstimatedIngredient[]
+  ingredients: EstimatedIngredient[],
+  options?: {
+    memo?: Map<string, IngredientMatchMemo>
+  },
 ): Promise<IngredientMatchResult[]> {
   const results = new Array<IngredientMatchResult>(ingredients.length)
-  const memo = new Map<string, IngredientMatchMemo>()
+  const memo = options?.memo ?? new Map<string, IngredientMatchMemo>()
   const uniqueEmbeddingInputs = [...new Set(
     ingredients
       .map((ingredient) => ingredient.name.trim())

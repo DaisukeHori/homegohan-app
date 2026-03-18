@@ -26,6 +26,7 @@ import {
   analyzeNutritionFromIngredientsV4,
   validateAndAdjustNutritionV4,
 } from "../_shared/v4-nutrition-adapter.ts";
+import type { IngredientMatchMemo } from "../_shared/ingredient-matcher.ts";
 import { insertMealNutritionDebugLog, type MealNutritionDebugLogInput } from "../_shared/meal-nutrition-debug.ts";
 import {
   generateMealWithLLM,
@@ -35,6 +36,7 @@ import {
   type GeneratedMeal,
   type MealType,
   type MenuReference,
+  type ReviewResult,
   type WeeklyMealsSummary,
 } from "../_shared/meal-generator.ts";
 import {
@@ -45,7 +47,6 @@ import {
   DEFAULT_STEP5_DAY_BATCH,
   DEFAULT_STEP6_SLOT_BATCH,
   computeMaxFixesForRange,
-  computeNextCursor,
   summarizeSaveResults,
   type SaveMealResult,
   type SaveIssue,
@@ -70,6 +71,8 @@ import {
   withTimeout,
 } from "../_shared/network-retry.ts";
 import {
+  buildReferenceMenuSummary,
+  computeReferenceSearchMatchCount,
   extractReferenceSearchKeywords,
   mapMenuReferenceCandidates,
   rerankMenuReferenceCandidates,
@@ -99,6 +102,62 @@ const DISPLAY_ORDER_MAP: Record<string, number> = {
   snack: 40,
   midnight_snack: 50,
 };
+
+type V4InvocationContext = {
+  startedAtMs: number;
+  softBudgetMs: number;
+};
+
+type PersistedIngredientMatchCache = Record<string, IngredientMatchMemo>;
+
+const DEFAULT_V4_INVOCATION_SOFT_BUDGET_MS = Number(Deno.env.get("V4_INVOCATION_SOFT_BUDGET_MS") ?? 18000);
+const STEP1_WAVE_RESERVE_MS = 9000;
+const STEP2_REVIEW_RESERVE_MS = 7000;
+const STEP2_FIX_RESERVE_MS = 6000;
+const STEP3_SLOT_RESERVE_MS = 9000;
+const STEP4_DAY_RESERVE_MS = 5000;
+const STEP5_DAY_RESERVE_MS = 9000;
+const STEP6_SLOT_RESERVE_MS = 9000;
+const SLOT_PROGRESS_UPDATE_INTERVAL = 5;
+const STEP2_REVIEW_WINDOW_DAYS = 7;
+
+function hasTimeBudgetRemaining(context: V4InvocationContext, reserveMs = 0): boolean {
+  return Date.now() - context.startedAtMs + reserveMs < context.softBudgetMs;
+}
+
+function shouldEmitProgressUpdate(processedCount: number, totalCount: number, interval = SLOT_PROGRESS_UPDATE_INTERVAL): boolean {
+  if (totalCount <= 0) return true;
+  return processedCount === 1 || processedCount === totalCount || processedCount % interval === 0;
+}
+
+function scheduleBackgroundTask(label: string, task: () => Promise<void>): void {
+  const promise = Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[background] ${label} failed:`, error);
+    });
+
+  // @ts-ignore EdgeRuntime
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+    // @ts-ignore EdgeRuntime
+    EdgeRuntime.waitUntil(promise);
+    return;
+  }
+
+  void promise;
+}
+
+function deserializeIngredientMatchCache(
+  cache: PersistedIngredientMatchCache | undefined,
+): Map<string, IngredientMatchMemo> {
+  return new Map(Object.entries(cache ?? {}));
+}
+
+function serializeIngredientMatchCache(
+  cache: Map<string, IngredientMatchMemo>,
+): PersistedIngredientMatchCache {
+  return Object.fromEntries(cache.entries());
+}
 
 function getMinExpectedCaloriesForRole(role: string | undefined): number {
   // V3のカテゴリ別閾値（主菜/ご飯>=100, 副菜>=30, 汁物>=20）を role にマッピング
@@ -721,6 +780,140 @@ function getSlotKey(date: string, mealType: MealType): string {
   return `${date}:${mealType}`;
 }
 
+function buildWeeklyMealsSummaryForDates(params: {
+  dates: string[];
+  generatedMeals: Record<string, GeneratedMeal>;
+  existingMenus: ExistingMenuContext[];
+}): WeeklyMealsSummary[] {
+  const existingByKey = new Map<string, string[]>();
+  for (const menu of params.existingMenus) {
+    const key = getSlotKey(menu.date, menu.mealType);
+    if (!existingByKey.has(key)) existingByKey.set(key, []);
+    if (menu.dishName) existingByKey.get(key)!.push(menu.dishName);
+  }
+
+  const allTypes: MealType[] = ["breakfast", "lunch", "dinner", "snack", "midnight_snack"];
+  return params.dates
+    .map((date) => {
+      const meals: Array<{ mealType: MealType; dishNames: string[] }> = [];
+      for (const mealType of allTypes) {
+        const key = getSlotKey(date, mealType);
+        const generatedMeal = params.generatedMeals[key];
+        if (generatedMeal) {
+          meals.push({
+            mealType,
+            dishNames: (generatedMeal.dishes ?? []).map((dish: any) => String(dish?.name ?? "").trim()).filter(Boolean),
+          });
+          continue;
+        }
+        const existingDishNames = existingByKey.get(key);
+        if (existingDishNames && existingDishNames.length > 0) {
+          meals.push({ mealType, dishNames: existingDishNames });
+        }
+      }
+      return { date, meals };
+    })
+    .filter((day) => day.meals.length > 0);
+}
+
+function mergeReviewIssues(
+  currentIssues: ReviewResult["issues"],
+  nextIssues: ReviewResult["issues"],
+): ReviewResult["issues"] {
+  const seen = new Set<string>();
+  const merged: ReviewResult["issues"] = [];
+
+  for (const issue of [...currentIssues, ...nextIssues]) {
+    const key = [
+      String(issue?.date ?? "").slice(0, 10),
+      String(issue?.mealType ?? ""),
+      String(issue?.issue ?? "").trim(),
+      String(issue?.suggestion ?? "").trim(),
+    ].join("|");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(issue);
+  }
+
+  return merged;
+}
+
+function mergeReviewSwaps(
+  currentSwaps: ReviewResult["swaps"],
+  nextSwaps: ReviewResult["swaps"],
+): ReviewResult["swaps"] {
+  const seen = new Set<string>();
+  const merged: ReviewResult["swaps"] = [];
+
+  for (const swap of [...currentSwaps, ...nextSwaps]) {
+    const key = [
+      String(swap?.date1 ?? "").slice(0, 10),
+      String(swap?.mealType1 ?? ""),
+      String(swap?.date2 ?? "").slice(0, 10),
+      String(swap?.mealType2 ?? ""),
+    ].join("|");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(swap);
+  }
+
+  return merged;
+}
+
+async function ensureDailyMealIdsForDates(
+  supabase: any,
+  userId: string,
+  dates: string[],
+): Promise<Map<string, string>> {
+  const uniqueDates = [...new Set(dates.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))];
+  const map = new Map<string, string>();
+
+  if (uniqueDates.length === 0) return map;
+
+  const upsertRows = uniqueDates.map((date) => ({
+    user_id: userId,
+    day_date: date,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const rows = await runSupabaseQuery<Array<{ id: string; day_date: string }> | null>(
+    () => supabase
+      .from("user_daily_meals")
+      .upsert(upsertRows, { onConflict: "user_id,day_date" })
+      .select("id, day_date"),
+    `user_daily_meals.bulk_upsert:${userId}:${uniqueDates[0]}:${uniqueDates[uniqueDates.length - 1]}`,
+    null,
+    20000,
+  );
+
+  for (const row of rows ?? []) {
+    if (row?.id && row?.day_date) {
+      map.set(String(row.day_date).slice(0, 10), row.id);
+    }
+  }
+
+  if (map.size === uniqueDates.length) return map;
+
+  const fallbackRows = await runSupabaseQuery<Array<{ id: string; day_date: string }>>(
+    () => supabase
+      .from("user_daily_meals")
+      .select("id, day_date")
+      .eq("user_id", userId)
+      .in("day_date", uniqueDates),
+    `user_daily_meals.bulk_select:${userId}:${uniqueDates[0]}:${uniqueDates[uniqueDates.length - 1]}`,
+    [],
+    20000,
+  );
+
+  for (const row of fallbackRows ?? []) {
+    if (row?.id && row?.day_date) {
+      map.set(String(row.day_date).slice(0, 10), row.id);
+    }
+  }
+
+  return map;
+}
+
 // =========================================================
 // Save meal to DB
 // =========================================================
@@ -732,9 +925,11 @@ async function saveMealToDb(
     requestId?: string;
     targetSlot: TargetSlot;
     generatedMeal: GeneratedMeal;
+    dailyMealIdByDate?: Map<string, string>;
+    ingredientMatchMemo?: Map<string, IngredientMatchMemo>;
   }
 ): Promise<SaveMealResult> {
-  const { userId, requestId, targetSlot, generatedMeal } = params;
+  const { userId, requestId, targetSlot, generatedMeal, dailyMealIdByDate, ingredientMatchMemo } = params;
   const slotStartedAt = Date.now();
   let dishProcessingTotalMs = 0;
   let plannedMealLookupMs = 0;
@@ -742,23 +937,31 @@ async function saveMealToDb(
 
   // user_daily_meals: upsert（日付ベース）
   const dailyMealUpsertStartedAt = Date.now();
-  const dailyMeal = await runSupabaseQuery<{ id: string } | null>(
-    () => supabase
-      .from("user_daily_meals")
-      .upsert(
-        {
-          user_id: userId,
-          day_date: targetSlot.date,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,day_date" },
-      )
-      .select("id")
-      .single(),
-    `user_daily_meals.upsert:${userId}:${targetSlot.date}`,
-    null,
-    20000,
-  );
+  let dailyMeal = dailyMealIdByDate?.get(targetSlot.date)
+    ? { id: dailyMealIdByDate.get(targetSlot.date)! }
+    : null;
+  if (!dailyMeal?.id) {
+    dailyMeal = await runSupabaseQuery<{ id: string } | null>(
+      () => supabase
+        .from("user_daily_meals")
+        .upsert(
+          {
+            user_id: userId,
+            day_date: targetSlot.date,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id,day_date" },
+        )
+        .select("id")
+        .single(),
+      `user_daily_meals.upsert:${userId}:${targetSlot.date}`,
+      null,
+      20000,
+    );
+    if (dailyMeal?.id) {
+      dailyMealIdByDate?.set(targetSlot.date, dailyMeal.id);
+    }
+  }
 
   if (!dailyMeal?.id) {
     throw new Error(`Failed to upsert user_daily_meals for ${userId}:${targetSlot.date}`);
@@ -871,7 +1074,13 @@ async function saveMealToDb(
     } else {
       try {
         const nutritionAnalysisStartedAt = Date.now();
-        const analysis = await analyzeNutritionFromIngredientsV4(supabase, dish.name, dish.role, dish.ingredients);
+        const analysis = await analyzeNutritionFromIngredientsV4(
+          supabase,
+          dish.name,
+          dish.role,
+          dish.ingredients,
+          { matchMemo: ingredientMatchMemo },
+        );
         dishTimingMs.nutrition_analysis_ms = Date.now() - nutritionAnalysisStartedAt;
         dishTimingMs.normalize_ingredients_ms = analysis.timingMs.normalize_ingredients_ms;
         dishTimingMs.match_ingredients_ms = analysis.timingMs.match_ingredients_ms;
@@ -1173,24 +1382,6 @@ async function saveMealToDb(
     throw new Error(`plannedMealId missing after save for ${targetSlot.date}/${targetSlot.mealType}`);
   }
 
-  await enqueueMealImageJobs({
-    supabase,
-    plannedMealId,
-    userId,
-    jobs: reconcileResult.jobs,
-    requestId: requestId ?? null,
-  });
-  if (reconcileResult.jobs.length > 0) {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-    const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    await triggerMealImageJobProcessing({
-      supabaseUrl,
-      serviceRoleKey,
-      plannedMealId,
-      limit: reconcileResult.jobs.length,
-    });
-  }
-
   const slotTimingMs = {
     daily_meal_upsert_ms: dailyMealUpsertMs,
     dish_processing_total_ms: dishProcessingTotalMs,
@@ -1199,45 +1390,64 @@ async function saveMealToDb(
     nutrition_debug_insert_ms: 0,
     dish_count: generatedMeal.dishes.length,
     updated_existing_planned_meal: Boolean(targetSlot.plannedMealId),
-    total_ms: 0,
+    total_ms: Date.now() - slotStartedAt,
   };
-
-  const nutritionDebugInsertStartedAt = Date.now();
-  const debugLogIds = (
-    await Promise.all(
-    nutritionDebugEntries.map((entry) =>
-      insertMealNutritionDebugLog(supabase, {
-        ...entry,
+  scheduleBackgroundTask(`meal-image-jobs:${plannedMealId}`, async () => {
+    await enqueueMealImageJobs({
+      supabase,
+      plannedMealId,
+      userId,
+      jobs: reconcileResult.jobs,
+      requestId: requestId ?? null,
+    });
+    if (reconcileResult.jobs.length > 0) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+      const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      await triggerMealImageJobProcessing({
+        supabaseUrl,
+        serviceRoleKey,
         plannedMealId,
-        slotTimingMs,
-        metadata: {
-          ...(entry.metadata ?? {}),
-          planned_meal_id: plannedMealId,
-          meal_title: dishName,
-        },
-      }),
-    ),
-    )
-  ).filter((id): id is string => Boolean(id));
-  slotTimingMs.nutrition_debug_insert_ms = Date.now() - nutritionDebugInsertStartedAt;
-  slotTimingMs.total_ms = Date.now() - slotStartedAt;
-
-  if (debugLogIds.length > 0) {
-    try {
-      await runSupabaseQuery(
-        () => supabase
-          .from("meal_nutrition_debug_logs")
-          .update({ slot_timing_ms: slotTimingMs })
-          .in("id", debugLogIds),
-        `meal_nutrition_debug_logs.updateSlotTiming:${targetSlot.date}:${targetSlot.mealType}`,
-        null,
-        10000,
-        1,
-      );
-    } catch (debugUpdateError) {
-      console.error("[meal-nutrition-debug] Failed to update slot timing:", debugUpdateError);
+        limit: reconcileResult.jobs.length,
+      });
     }
-  }
+  });
+
+  scheduleBackgroundTask(`meal-nutrition-debug:${targetSlot.date}:${targetSlot.mealType}`, async () => {
+    const nutritionDebugInsertStartedAt = Date.now();
+    const debugLogIds = (
+      await Promise.all(
+        nutritionDebugEntries.map((entry) =>
+          insertMealNutritionDebugLog(supabase, {
+            ...entry,
+            plannedMealId,
+            slotTimingMs,
+            metadata: {
+              ...(entry.metadata ?? {}),
+              planned_meal_id: plannedMealId,
+              meal_title: dishName,
+            },
+          }),
+        ),
+      )
+    ).filter((id): id is string => Boolean(id));
+    const finalizedSlotTimingMs = {
+      ...slotTimingMs,
+      nutrition_debug_insert_ms: Date.now() - nutritionDebugInsertStartedAt,
+    };
+
+    if (debugLogIds.length === 0) return;
+
+    await runSupabaseQuery(
+      () => supabase
+        .from("meal_nutrition_debug_logs")
+        .update({ slot_timing_ms: finalizedSlotTimingMs })
+        .in("id", debugLogIds),
+      `meal_nutrition_debug_logs.updateSlotTiming:${targetSlot.date}:${targetSlot.mealType}`,
+      null,
+      10000,
+      1,
+    );
+  });
 
   return {
     outcome: writeOutcome,
@@ -1272,6 +1482,7 @@ type V4GeneratedData = {
   userContext?: any;
   userSummary?: string;
   references?: MenuReference[];
+  referenceSummary?: string;
 
   // Health checkup data (for nutrition guidance in LLM context)
   healthCheckups?: HealthCheckupForContext[] | null;
@@ -1285,6 +1496,9 @@ type V4GeneratedData = {
   step2?: {
     reviewResult?: any;
     issuesToFix?: any[];
+    reviewCursor?: number;
+    reviewWindowDays?: number;
+    reviewCompleted?: boolean;
     fixCursor?: number;
     maxFixes?: number;
     fixesPerRun?: number;
@@ -1297,6 +1511,7 @@ type V4GeneratedData = {
     errors?: Array<{ key: string; error: string }>;
     skipped?: Array<{ key: string; error: string }>;
     nutritionCalculated?: boolean; // Ultimate mode: 栄養計算済みフラグ
+    ingredientMatchCache?: PersistedIngredientMatchCache;
   };
   // Ultimate Mode steps
   step4?: {
@@ -1316,6 +1531,7 @@ type V4GeneratedData = {
     batchSize?: number;
     errors?: Array<{ key: string; error: string }>;
     skipped?: Array<{ key: string; error: string }>;
+    ingredientMatchCache?: PersistedIngredientMatchCache;
   };
 };
 
@@ -1375,6 +1591,7 @@ async function executeStep(
   requestId: string,
   body: any,
   currentStep: number,
+  invocationContext: V4InvocationContext,
 ) {
   // LLMトークン使用量計測（各ステップごとにexecutionIdを生成）
   const executionId = generateExecutionId();
@@ -1388,22 +1605,22 @@ async function executeStep(
   }, async () => {
     switch (currentStep) {
       case 1:
-        await executeStep1_Generate(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, body);
+        await executeStep1_Generate(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, body, invocationContext);
         break;
       case 2:
-        await executeStep2_Review(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        await executeStep2_Review(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
         break;
       case 3:
-        await executeStep3_Complete(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        await executeStep3_Complete(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
         break;
       case 4:
-        await executeStep4_NutritionFeedback(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        await executeStep4_NutritionFeedback(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
         break;
       case 5:
-        await executeStep5_RegenerateWithAdvice(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        await executeStep5_RegenerateWithAdvice(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
         break;
       case 6:
-        await executeStep6_FinalSave(supabase, supabaseUrl, supabaseServiceKey, userId, requestId);
+        await executeStep6_FinalSave(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
         break;
       default:
         throw new Error(`Unknown step: ${currentStep}`);
@@ -1422,6 +1639,7 @@ async function executeStep1_Generate(
   userId: string,
   requestId: string,
   body: any,
+  invocationContext: V4InvocationContext,
 ) {
   console.log("📝 V4 Step 1: Generating meals...");
   console.time("⏱️ Step1_Total");
@@ -1664,10 +1882,17 @@ async function executeStep1_Generate(
         constraints: promptConstraints,
       });
       console.time("⏱️ searchMenuCandidates");
-      const result = await searchMenuCandidates(supabase, searchQuery, 150);
+      const result = await searchMenuCandidates(
+        supabase,
+        searchQuery,
+        computeReferenceSearchMatchCount(targetSlots.length),
+      );
       console.timeEnd("⏱️ searchMenuCandidates");
       return result;
     })();
+  const referenceSummary =
+    generatedData.referenceSummary ??
+    buildReferenceMenuSummary(references, { maxPerRole: Math.max(6, Math.min(12, targetSlots.length * 2)) });
 
   // Generated meals map (persisted)
   const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
@@ -1675,7 +1900,7 @@ async function executeStep1_Generate(
   // Cursor / batching
   const DAY_BATCH = Number(generatedData.step1?.batchSize ?? DEFAULT_STEP1_DAY_BATCH);
   const cursor = Number(generatedData.step1?.cursor ?? 0);
-  const nextCursor = computeNextCursor({ cursor, batchSize: DAY_BATCH, length: dates.length });
+  let nextCursor = cursor;
 
   // Group slots by date (for this execution)
   const slotsByDate = new Map<string, TargetSlot[]>();
@@ -1717,8 +1942,14 @@ async function executeStep1_Generate(
   }
 
   const CONCURRENCY = 4; // 高速化: 2→4日並列
-  for (let i = cursor; i < nextCursor; i += CONCURRENCY) {
-    const batchDates = dates.slice(i, Math.min(i + CONCURRENCY, nextCursor));
+  let processedDays = 0;
+  while (nextCursor < dates.length && processedDays < DAY_BATCH) {
+    if (processedDays > 0 && !hasTimeBudgetRemaining(invocationContext, STEP1_WAVE_RESERVE_MS)) {
+      break;
+    }
+    const batchEnd = Math.min(nextCursor + CONCURRENCY, dates.length, cursor + DAY_BATCH);
+    const batchDates = dates.slice(nextCursor, batchEnd);
+    if (batchDates.length === 0) break;
     await Promise.all(
       batchDates.map(async (date) => {
         const slotsForDate = slotsByDate.get(date) ?? [];
@@ -1750,6 +1981,7 @@ async function executeStep1_Generate(
             date,
             mealTypes: coreTypes,
             referenceMenus: references,
+            referenceSummary,
           });
           console.timeEnd(`⏱️ generateDayMealsWithLLM[${date}]`);
 
@@ -1789,12 +2021,15 @@ async function executeStep1_Generate(
             mealType: slot.mealType as MealType,
             currentDishName,
             referenceMenus: references,
+            referenceSummary,
           });
 
           generatedMeals[key] = meal;
         }
       }),
     );
+    processedDays += batchDates.length;
+    nextCursor += batchDates.length;
   }
 
   const generatedCount = countGeneratedTargetSlots(targetSlots, generatedMeals);
@@ -1821,6 +2056,7 @@ async function executeStep1_Generate(
     userContext,
     userSummary,
     references,
+    referenceSummary,
     healthCheckups,
     healthGuidance,
     generatedMeals,
@@ -1871,6 +2107,7 @@ async function executeStep2_Review(
   supabaseServiceKey: string,
   userId: string,
   requestId: string,
+  invocationContext: V4InvocationContext,
 ) {
   console.log("🔍 V4 Step 2: Reviewing meals...");
 
@@ -1898,71 +2135,147 @@ async function executeStep2_Review(
   const userContext = generatedData.userContext;
   const userSummary = generatedData.userSummary ?? "";
   const references: MenuReference[] = (generatedData.references ?? []) as any[];
+  const referenceSummary = generatedData.referenceSummary ?? buildReferenceMenuSummary(references);
 
   const targetKeySet = new Set<string>(targetSlots.map((s) => getSlotKey(s.date, s.mealType)));
 
   let step2 = generatedData.step2 ?? {};
+  const reviewWindowDays = Number.isFinite(step2.reviewWindowDays)
+    ? Math.max(3, Number(step2.reviewWindowDays))
+    : STEP2_REVIEW_WINDOW_DAYS;
+  const rawReviewCursor = Number.isFinite(step2.reviewCursor) ? Number(step2.reviewCursor) : null;
+  const reviewCursor = rawReviewCursor ?? 0;
+  const priorReviewIssues = Array.isArray(step2.reviewResult?.issues) ? step2.reviewResult.issues as ReviewResult["issues"] : [];
+  const priorReviewSwaps = Array.isArray(step2.reviewResult?.swaps) ? step2.reviewResult.swaps as ReviewResult["swaps"] : [];
+  const reviewCompleted = Boolean(step2.reviewCompleted)
+    || (rawReviewCursor == null && Boolean(step2.reviewResult))
+    || reviewCursor >= dates.length;
 
-  // Review once (persist)
-  if (!step2.reviewResult) {
+  if (!reviewCompleted) {
     await updateProgress(
       supabase,
       requestId,
-      { currentStep: 2, totalSteps, message: "献立の重複・バランスをAIがチェック中...", completedSlots: 0, totalSlots: targetSlots.length },
+      {
+        currentStep: 2,
+        totalSteps,
+        message: `献立の重複・バランスをAIがチェック中...（${Math.min(reviewCursor, dates.length)}/${dates.length}日）`,
+        completedSlots: 0,
+        totalSlots: targetSlots.length,
+      },
       2,
     );
 
-    const existingByKey = new Map<string, string[]>();
-    for (const m of existingMenus) {
-      const key = getSlotKey(m.date, m.mealType);
-      if (!existingByKey.has(key)) existingByKey.set(key, []);
-      if (m.dishName) existingByKey.get(key)!.push(m.dishName);
+    let mergedIssues = priorReviewIssues;
+    let mergedSwaps = priorReviewSwaps;
+    let newReviewCursor = reviewCursor;
+
+    while (newReviewCursor < dates.length) {
+      if (newReviewCursor > reviewCursor && !hasTimeBudgetRemaining(invocationContext, STEP2_REVIEW_RESERVE_MS)) {
+        break;
+      }
+
+      const reviewEnd = Math.min(newReviewCursor + reviewWindowDays, dates.length);
+      const reviewDates = dates.slice(Math.max(0, newReviewCursor - 1), reviewEnd);
+      const actionableDates = new Set(dates.slice(newReviewCursor, reviewEnd));
+      const weeklyMealsSummary: WeeklyMealsSummary[] = buildWeeklyMealsSummaryForDates({
+        dates: reviewDates,
+        generatedMeals,
+        existingMenus,
+      });
+
+      const reviewResult = weeklyMealsSummary.length > 0
+        ? await reviewWeeklyMenus({
+            weeklyMeals: weeklyMealsSummary,
+            userSummary,
+          })
+        : { hasIssues: false, issues: [], swaps: [] };
+
+      const actionableIssues = (reviewResult.issues ?? []).filter((issue) => {
+        const date = String(issue.date ?? "").slice(0, 10);
+        const key = getSlotKey(date, String(issue.mealType) as MealType);
+        return actionableDates.has(date) && targetKeySet.has(key) && Boolean(generatedMeals[key]);
+      });
+
+      const actionableSwaps = (reviewResult.swaps ?? []).filter((swap) => {
+        const date1 = String(swap.date1 ?? "").slice(0, 10);
+        const date2 = String(swap.date2 ?? "").slice(0, 10);
+        const key1 = getSlotKey(date1, String(swap.mealType1) as MealType);
+        const key2 = getSlotKey(date2, String(swap.mealType2) as MealType);
+        return date1 === date2
+          && actionableDates.has(date1)
+          && targetKeySet.has(key1)
+          && targetKeySet.has(key2)
+          && Boolean(generatedMeals[key1])
+          && Boolean(generatedMeals[key2]);
+      });
+
+      mergedIssues = mergeReviewIssues(mergedIssues, actionableIssues);
+      mergedSwaps = mergeReviewSwaps(mergedSwaps, actionableSwaps);
+      newReviewCursor = reviewEnd;
     }
 
-    const allTypes: MealType[] = ["breakfast", "lunch", "dinner", "snack", "midnight_snack"];
-    const weeklyMealsSummary: WeeklyMealsSummary[] = dates
-      .map((date) => {
-        const meals: Array<{ mealType: MealType; dishNames: string[] }> = [];
-        for (const mt of allTypes) {
-          const key = getSlotKey(date, mt);
-          const gm = generatedMeals[key];
-          if (gm) {
-            meals.push({ mealType: mt, dishNames: (gm.dishes ?? []).map((d: any) => String(d?.name ?? "").trim()).filter(Boolean) });
-            continue;
-          }
-          const ex = existingByKey.get(key);
-          if (ex && ex.length > 0) {
-            meals.push({ mealType: mt, dishNames: ex });
-          }
-        }
-        return { date, meals };
-      })
-      .filter((d) => d.meals.length > 0);
-
-    const reviewResult = await reviewWeeklyMenus({
-      weeklyMeals: weeklyMealsSummary,
-      userSummary,
-    });
-
-    const issuesToFix = (reviewResult.issues ?? []).filter((iss: any) => {
-      const key = getSlotKey(String(iss.date), String(iss.mealType) as MealType);
-      return targetKeySet.has(key) && Boolean(generatedMeals[key]);
-    });
-
-    // Fix budget: V3「2件/週（=7日）」を期間に応じてスケール（capあり）
+    const issuesToFix = mergedIssues;
     const maxFixes = computeMaxFixesForRange({
       days: dates.length,
       issuesCount: issuesToFix.length,
     });
+    const reviewDone = newReviewCursor >= dates.length;
 
     step2 = {
-      reviewResult,
+      ...step2,
+      reviewResult: {
+        hasIssues: issuesToFix.length > 0 || mergedSwaps.length > 0,
+        issues: mergedIssues,
+        swaps: mergedSwaps,
+      },
       issuesToFix,
-      fixCursor: 0,
+      reviewCursor: newReviewCursor,
+      reviewWindowDays,
+      reviewCompleted: reviewDone,
+      fixCursor: Number.isFinite(step2.fixCursor) ? Number(step2.fixCursor) : 0,
       maxFixes,
-      fixesPerRun: DEFAULT_STEP2_FIXES_PER_RUN,
-      swapsApplied: false,
+      fixesPerRun: Number.isFinite(step2.fixesPerRun) ? Number(step2.fixesPerRun) : DEFAULT_STEP2_FIXES_PER_RUN,
+      swapsApplied: Boolean(step2.swapsApplied),
     };
+
+    if (!reviewDone) {
+      const updatedGeneratedData: V4GeneratedData = {
+        ...generatedData,
+        generatedMeals,
+        step2,
+      };
+
+      await runSupabaseQuery(
+        () => supabase
+          .from("weekly_menu_requests")
+          .update({
+            generated_data: updatedGeneratedData,
+            current_step: 2,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", requestId),
+        `weekly_menu_requests.step2_review_continue:${requestId}`,
+        null,
+        10000,
+        1,
+      );
+
+      await updateProgress(
+        supabase,
+        requestId,
+        {
+          currentStep: 2,
+          totalSteps,
+          message: `献立の重複・バランスをAIがチェック中...（${Math.min(newReviewCursor, dates.length)}/${dates.length}日）`,
+          completedSlots: 0,
+          totalSlots: targetSlots.length,
+        },
+        2,
+      );
+
+      await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+      return;
+    }
   }
 
   const issuesToFix: any[] = Array.isArray(step2.issuesToFix) ? step2.issuesToFix : [];
@@ -1972,9 +2285,9 @@ async function executeStep2_Review(
   const fixesPerRun = Number.isFinite(step2.fixesPerRun) ? Number(step2.fixesPerRun) : DEFAULT_STEP2_FIXES_PER_RUN;
   const fixCursor = Number.isFinite(step2.fixCursor) ? Number(step2.fixCursor) : 0;
 
-  const end = Math.min(fixCursor + fixesPerRun, maxFixes, issuesToFix.length);
+  let newFixCursor = fixCursor;
 
-  if (end > fixCursor) {
+  if (newFixCursor < issuesToFix.length && newFixCursor < maxFixes) {
     await updateProgress(
       supabase,
       requestId,
@@ -1986,17 +2299,26 @@ async function executeStep2_Review(
     const slotByKey = new Map<string, TargetSlot>();
     for (const s of targetSlots) slotByKey.set(getSlotKey(s.date, s.mealType), s);
 
-    for (let i = fixCursor; i < end; i++) {
-      const issue = issuesToFix[i];
+    while (newFixCursor < issuesToFix.length && newFixCursor < maxFixes && newFixCursor - fixCursor < fixesPerRun) {
+      if (newFixCursor > fixCursor && !hasTimeBudgetRemaining(invocationContext, STEP2_FIX_RESERVE_MS)) {
+        break;
+      }
+      const issue = issuesToFix[newFixCursor];
       const date = String(issue.date);
       const mealType = String(issue.mealType) as MealType;
       const key = getSlotKey(date, mealType);
       const current = generatedMeals[key];
-      if (!current) continue;
+      if (!current) {
+        newFixCursor++;
+        continue;
+      }
 
       const currentDishes = (current.dishes ?? []).map((d: any) => String(d?.name ?? "").trim()).filter(Boolean);
       const slot = slotByKey.get(key);
-      if (!slot) continue;
+      if (!slot) {
+        newFixCursor++;
+        continue;
+      }
 
       const contextText = buildV4Context({
         targetSlot: slot,
@@ -2019,13 +2341,13 @@ async function executeStep2_Review(
         issue: String(issue.issue ?? ""),
         suggestion: String(issue.suggestion ?? ""),
         referenceMenus: references,
+        referenceSummary,
       });
 
       generatedMeals[key] = fixedMeal;
+      newFixCursor++;
     }
   }
-
-  const newFixCursor = end;
 
   // Persist intermediate state
   const updatedGeneratedData: V4GeneratedData = {
@@ -2123,6 +2445,7 @@ async function executeStep3_Complete(
   supabaseServiceKey: string,
   userId: string,
   requestId: string,
+  invocationContext: V4InvocationContext,
 ) {
   console.log("💾 V4 Step 3: Nutrition & saving...");
 
@@ -2145,8 +2468,13 @@ async function executeStep3_Complete(
   const savedCountStart = Number(step3.savedCount ?? 0);
   const errors: SaveIssue[] = Array.isArray(step3.errors) ? step3.errors : [];
   const skipped: SaveIssue[] = Array.isArray(step3.skipped) ? step3.skipped : [];
-
-  const end = Math.min(cursor + BATCH, totalSlots);
+  const ingredientMatchMemo = deserializeIngredientMatchCache(step3.ingredientMatchCache);
+  const targetSlotsForRun = targetSlots.slice(cursor, Math.min(cursor + BATCH, totalSlots));
+  const dailyMealIdByDate = await ensureDailyMealIdsForDates(
+    supabase,
+    userId,
+    targetSlotsForRun.map((slot) => slot.date),
+  );
   let savedCount = savedCountStart;
 
   const stepMessage = ultimateMode ? "栄養計算中..." : "保存中...";
@@ -2157,12 +2485,18 @@ async function executeStep3_Complete(
     3,
   );
 
-  for (let i = cursor; i < end; i++) {
+  let newCursor = cursor;
+  while (newCursor < totalSlots && newCursor - cursor < BATCH) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP3_SLOT_RESERVE_MS)) {
+      break;
+    }
+    const i = newCursor;
     const slot = targetSlots[i];
     const key = getSlotKey(slot.date, slot.mealType);
     const meal = generatedMeals[key];
     if (!meal) {
       errors.push({ key, error: "No generated meal" });
+      newCursor++;
       continue;
     }
     try {
@@ -2172,7 +2506,14 @@ async function executeStep3_Complete(
         // Note: 実際の栄養計算はStep 6で行うので、ここでは進捗だけ更新
       } else {
         // Normal Mode: 栄養計算 + 保存
-        const saveResult = await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
+        const saveResult = await saveMealToDb(supabase, {
+          userId,
+          requestId,
+          targetSlot: slot,
+          generatedMeal: meal,
+          dailyMealIdByDate,
+          ingredientMatchMemo,
+        });
         if (saveResult.outcome === "skipped_existing") {
           skipped.push({ key, error: saveResult.reason ?? "既存献立を保護したため未保存" });
         } else {
@@ -2184,15 +2525,16 @@ async function executeStep3_Complete(
     }
 
     const processedCount = i + 1;
-    await updateProgress(
-      supabase,
-      requestId,
-      { currentStep: 3, totalSteps, message: `${stepMessage}（${processedCount}/${totalSlots}）`, completedSlots: processedCount, totalSlots },
-      3,
-    );
+    if (shouldEmitProgressUpdate(processedCount, totalSlots)) {
+      await updateProgress(
+        supabase,
+        requestId,
+        { currentStep: 3, totalSteps, message: `${stepMessage}（${processedCount}/${totalSlots}）`, completedSlots: processedCount, totalSlots },
+        3,
+      );
+    }
+    newCursor++;
   }
-
-  const newCursor = end;
 
   const updatedGeneratedData: V4GeneratedData = {
     ...generatedData,
@@ -2203,6 +2545,7 @@ async function executeStep3_Complete(
       errors: errors.slice(-200),
       skipped: skipped.slice(-200),
       nutritionCalculated: newCursor >= totalSlots,
+      ingredientMatchCache: serializeIngredientMatchCache(ingredientMatchMemo),
     },
   };
 
@@ -2307,6 +2650,7 @@ async function executeStep4_NutritionFeedback(
   supabaseServiceKey: string,
   userId: string,
   requestId: string,
+  invocationContext: V4InvocationContext,
 ) {
   console.log("📊 V4 Step 4: Nutrition feedback analysis...");
 
@@ -2327,8 +2671,6 @@ async function executeStep4_NutritionFeedback(
     (step4.feedbackByDate ?? {}) as any;
   const daysNeedingImprovement: string[] = step4.daysNeedingImprovement ?? [];
 
-  const end = Math.min(cursor + BATCH, dates.length);
-
   await updateProgress(
     supabase,
     requestId,
@@ -2339,8 +2681,12 @@ async function executeStep4_NutritionFeedback(
   // 週間データを構築
   const weekData = buildWeekDataFromMeals(generatedMeals, dates);
 
-  for (let i = cursor; i < end; i++) {
-    const date = dates[i];
+  let newCursor = cursor;
+  while (newCursor < dates.length && newCursor - cursor < BATCH) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP4_DAY_RESERVE_MS)) {
+      break;
+    }
+    const date = dates[newCursor];
 
     // その日の栄養データを集計
     const dayNutrition = aggregateDayNutrition(generatedMeals, date);
@@ -2387,9 +2733,8 @@ async function executeStep4_NutritionFeedback(
         issuesFound: [],
       };
     }
+    newCursor++;
   }
-
-  const newCursor = end;
 
   const updatedGeneratedData: V4GeneratedData = {
     ...generatedData,
@@ -2468,6 +2813,7 @@ async function executeStep5_RegenerateWithAdvice(
   supabaseServiceKey: string,
   userId: string,
   requestId: string,
+  invocationContext: V4InvocationContext,
 ) {
   console.log("🔄 V4 Step 5: Regenerating meals with advice...");
 
@@ -2489,6 +2835,7 @@ async function executeStep5_RegenerateWithAdvice(
   const userContext = generatedData.userContext;
   const userSummary = generatedData.userSummary ?? "";
   const references = generatedData.references ?? [];
+  const referenceSummary = generatedData.referenceSummary ?? buildReferenceMenuSummary(references as MenuReference[]);
 
   const step4 = generatedData.step4 ?? {};
   const feedbackByDate = step4.feedbackByDate ?? {};
@@ -2498,8 +2845,6 @@ async function executeStep5_RegenerateWithAdvice(
   const BATCH = Number(step5.batchSize ?? DEFAULT_STEP5_DAY_BATCH);
   const cursor = Number(step5.cursor ?? 0);
   const regeneratedDates: string[] = step5.regeneratedDates ?? [];
-
-  const end = Math.min(cursor + BATCH, daysNeedingImprovement.length);
 
   await updateProgress(
     supabase,
@@ -2515,17 +2860,23 @@ async function executeStep5_RegenerateWithAdvice(
     slotsByDate.get(s.date)!.push(s);
   }
 
-  for (let i = cursor; i < end; i++) {
-    const date = daysNeedingImprovement[i];
+  let newCursor = cursor;
+  while (newCursor < daysNeedingImprovement.length && newCursor - cursor < BATCH) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP5_DAY_RESERVE_MS)) {
+      break;
+    }
+    const date = daysNeedingImprovement[newCursor];
     const feedback = feedbackByDate[date];
     if (!feedback || !feedback.advice) {
       regeneratedDates.push(date);
+      newCursor++;
       continue;
     }
 
     const slotsForDate = slotsByDate.get(date) ?? [];
     if (slotsForDate.length === 0) {
       regeneratedDates.push(date);
+      newCursor++;
       continue;
     }
 
@@ -2578,6 +2929,7 @@ ${feedback.advice}
           date,
           mealTypes: coreTypes,
           referenceMenus: references as MenuReference[],
+          referenceSummary,
         });
         console.timeEnd(`⏱️ regenerateDayMeals[${date}]`);
 
@@ -2595,9 +2947,8 @@ ${feedback.advice}
     }
 
     regeneratedDates.push(date);
+    newCursor++;
   }
-
-  const newCursor = end;
 
   const updatedGeneratedData: V4GeneratedData = {
     ...generatedData,
@@ -2677,6 +3028,7 @@ async function executeStep6_FinalSave(
   supabaseServiceKey: string,
   userId: string,
   requestId: string,
+  invocationContext: V4InvocationContext,
 ) {
   console.log("💾 V4 Step 6: Final save...");
 
@@ -2696,8 +3048,15 @@ async function executeStep6_FinalSave(
   const savedCountStart = Number(step6.savedCount ?? 0);
   const errors: SaveIssue[] = Array.isArray(step6.errors) ? step6.errors : [];
   const skipped: SaveIssue[] = Array.isArray(step6.skipped) ? step6.skipped : [];
-
-  const end = Math.min(cursor + BATCH, totalSlots);
+  const ingredientMatchMemo = deserializeIngredientMatchCache(
+    step6.ingredientMatchCache ?? generatedData.step3?.ingredientMatchCache,
+  );
+  const targetSlotsForRun = targetSlots.slice(cursor, Math.min(cursor + BATCH, totalSlots));
+  const dailyMealIdByDate = await ensureDailyMealIdsForDates(
+    supabase,
+    userId,
+    targetSlotsForRun.map((slot) => slot.date),
+  );
   let savedCount = savedCountStart;
 
   await updateProgress(
@@ -2707,16 +3066,29 @@ async function executeStep6_FinalSave(
     6,
   );
 
-  for (let i = cursor; i < end; i++) {
+  let newCursor = cursor;
+  while (newCursor < totalSlots && newCursor - cursor < BATCH) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP6_SLOT_RESERVE_MS)) {
+      break;
+    }
+    const i = newCursor;
     const slot = targetSlots[i];
     const key = getSlotKey(slot.date, slot.mealType);
     const meal = generatedMeals[key];
     if (!meal) {
       errors.push({ key, error: "No generated meal" });
+      newCursor++;
       continue;
     }
     try {
-      const saveResult = await saveMealToDb(supabase, { userId, requestId, targetSlot: slot, generatedMeal: meal });
+      const saveResult = await saveMealToDb(supabase, {
+        userId,
+        requestId,
+        targetSlot: slot,
+        generatedMeal: meal,
+        dailyMealIdByDate,
+        ingredientMatchMemo,
+      });
       if (saveResult.outcome === "skipped_existing") {
         skipped.push({ key, error: saveResult.reason ?? "既存献立を保護したため未保存" });
       } else {
@@ -2727,15 +3099,16 @@ async function executeStep6_FinalSave(
     }
 
     const processedCount = i + 1;
-    await updateProgress(
-      supabase,
-      requestId,
-      { currentStep: 6, totalSteps: 6, message: `最終保存中...（${processedCount}/${totalSlots}）`, completedSlots: processedCount, totalSlots },
-      6,
-    );
+    if (shouldEmitProgressUpdate(processedCount, totalSlots)) {
+      await updateProgress(
+        supabase,
+        requestId,
+        { currentStep: 6, totalSteps: 6, message: `最終保存中...（${processedCount}/${totalSlots}）`, completedSlots: processedCount, totalSlots },
+        6,
+      );
+    }
+    newCursor++;
   }
-
-  const newCursor = end;
 
   const updatedGeneratedData: V4GeneratedData = {
     ...generatedData,
@@ -2745,6 +3118,7 @@ async function executeStep6_FinalSave(
       savedCount,
       errors: errors.slice(-200),
       skipped: skipped.slice(-200),
+      ingredientMatchCache: serializeIngredientMatchCache(ingredientMatchMemo),
     },
   };
 
@@ -2874,11 +3248,15 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(`📍 Starting step ${currentStep} for request ${requestId}`);
+    const invocationContext: V4InvocationContext = {
+      startedAtMs: Date.now(),
+      softBudgetMs: DEFAULT_V4_INVOCATION_SOFT_BUDGET_MS,
+    };
 
     const wrappedBackgroundTask = async () => {
       console.log(`🚀 Step ${currentStep} starting...`);
       try {
-        await executeStep(supabase, supabaseUrl, supabaseServiceKey, userId!, requestId!, body, currentStep);
+        await executeStep(supabase, supabaseUrl, supabaseServiceKey, userId!, requestId!, body, currentStep, invocationContext);
         console.log(`✅ Step ${currentStep} completed successfully`);
       } catch (bgErr: any) {
         console.error(`❌ Step ${currentStep} error:`, bgErr?.message ?? String(bgErr), bgErr);

@@ -4,7 +4,7 @@
  * 栄養データを分析し、褒めコメント・改善アドバイス・栄養豆知識を生成
  */
 
-import { fetchWithRetry } from "./network-retry.ts";
+import { callV4FastLLM } from "./v4-fast-llm.ts";
 
 // ============================================
 // 栄養素定義（nutrition-constants.tsからポート）
@@ -108,11 +108,6 @@ export async function generateNutritionFeedback(
   weekData: DayMealData[],
   userSummary?: string
 ): Promise<NutritionFeedbackResult> {
-  const apiKey = Deno.env.get('OPENAI_API_KEY');
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not set');
-  }
-
   const mainNutrients = [
     'caloriesKcal', 'proteinG', 'fatG', 'carbsG', 'fiberG',
     'sodiumG', 'vitaminCMg', 'calciumMg', 'ironMg', 'vitaminAUg',
@@ -145,7 +140,9 @@ export async function generateNutritionFeedback(
   const todayMeals = weekData?.find((d) => d.date === date)?.meals || [];
   const todayDishes = todayMeals.flatMap((m) => m.dishes || [m.title]).filter(Boolean).join('、');
 
-  const prompt = `あなたは「ほめゴハン」のAI栄養士です。ユーザーの1日の栄養データを分析し、以下の3つを生成してください。
+  const systemPrompt = 'あなたは「ほめゴハン」のAI栄養士です。ユーザーの食事を褒めて、やる気を引き出すことが大切です。必ずJSON形式で出力してください。';
+
+  const userPrompt = `あなたは「ほめゴハン」のAI栄養士です。ユーザーの1日の栄養データを分析し、以下の3つを生成してください。
 
 ## 対象日: ${date}
 ## 食事数: ${mealCount}食
@@ -184,32 +181,18 @@ ${weekSummary}
   - 汁物の具材追加のみ例外的に許可（例: 味噌汁に小松菜を追加）
 - JSONのみを出力（説明文は不要）`;
 
-  const response = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-5.2',
-      messages: [
-        {
-          role: 'system',
-          content: 'あなたは「ほめゴハン」のAI栄養士です。ユーザーの食事を褒めて、やる気を引き出すことが大切です。必ずJSON形式で出力してください。',
-        },
-        { role: 'user', content: prompt },
-      ],
-      max_completion_tokens: 800,
-      reasoning_effort: 'none',
-    }),
-  }, {
-    label: 'generateNutritionFeedback:openai',
-    retries: 2,
-    timeoutMs: 45000,
-  });
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content?.trim() || '';
+  let content = '';
+  try {
+    const result = await callV4FastLLM({
+      section: 'generateNutritionFeedback',
+      systemPrompt,
+      userPrompt,
+      maxCompletionTokens: 800,
+    });
+    content = result.text.trim();
+  } catch (error) {
+    console.error('LLM error in generateNutritionFeedback:', error);
+  }
 
   // JSONをパース
   const jsonMatch = content.match(/\{[\s\S]*\}/);

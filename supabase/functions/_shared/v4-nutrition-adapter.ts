@@ -1,7 +1,7 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 
 import { searchSimilarRecipes, type ReferenceRecipe } from "./evidence-verifier.ts";
-import { matchIngredients, type IngredientMatchResult } from "./ingredient-matcher.ts";
+import { matchIngredients, type IngredientMatchMemo, type IngredientMatchResult } from "./ingredient-matcher.ts";
 import { calculateDishNutrition } from "./nutrition-calculator-v2.ts";
 import type { NutritionTotals } from "./nutrition-calculator.ts";
 import { adjustStockIngredient, emptyNutrition, isWaterishIngredient } from "./nutrition-calculator.ts";
@@ -145,6 +145,9 @@ export async function analyzeNutritionFromIngredientsV4(
   dishName: string,
   dishRole: string | undefined,
   ingredients: EstimatedIngredient[],
+  options?: {
+    matchMemo?: Map<string, IngredientMatchMemo>;
+  },
 ): Promise<V4NutritionAnalysis> {
   const startedAt = Date.now();
 
@@ -167,7 +170,9 @@ export async function analyzeNutritionFromIngredientsV4(
   }
 
   const matchStartedAt = Date.now();
-  const matchResults = await matchIngredients(supabase, effectiveIngredients);
+  const matchResults = await matchIngredients(supabase, effectiveIngredients, {
+    memo: options?.matchMemo,
+  });
   const matchIngredientsMs = Date.now() - matchStartedAt;
 
   const calculateDishNutritionStartedAt = Date.now();

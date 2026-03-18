@@ -6,7 +6,6 @@
 
 import { z } from "zod";
 import { SINGLE_SERVING_PROMPT_GUIDANCE } from "./generation-serving.ts";
-import { fetchWithRetry } from "./network-retry.ts";
 import { callV4FastLLM } from "./v4-fast-llm.ts";
 
 // =========================================================
@@ -75,6 +74,98 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
+function prunePromptValue<T>(value: T): T | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed as T : undefined;
+  }
+  if (Array.isArray(value)) {
+    const pruned = value
+      .map((item) => prunePromptValue(item))
+      .filter((item): item is NonNullable<typeof item> => item != null);
+    return pruned.length > 0 ? pruned as T : undefined;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([key, entryValue]) => [key, prunePromptValue(entryValue)] as const)
+      .filter(([, entryValue]) => entryValue != null);
+    return entries.length > 0 ? Object.fromEntries(entries) as T : undefined;
+  }
+  return value;
+}
+
+function buildCompactUserContextText(userContext: unknown): string {
+  const ctx = (userContext ?? {}) as Record<string, any>;
+  const compact = prunePromptValue({
+    hard: {
+      allergies: ctx?.hard?.allergies,
+    },
+    goals: {
+      nutrition_goal: ctx?.goals?.nutrition_goal,
+      weight_change_rate: ctx?.goals?.weight_change_rate,
+      nutrition_targets: {
+        daily_calories: ctx?.goals?.nutrition_targets?.daily_calories,
+        protein_g: ctx?.goals?.nutrition_targets?.protein_g,
+        sodium_g: ctx?.goals?.nutrition_targets?.sodium_g,
+      },
+    },
+    performance: {
+      sport_name: ctx?.performance?.sport_name,
+      sport_role: ctx?.performance?.sport_role,
+      phase: ctx?.performance?.phase,
+      priorities: ctx?.performance?.priorities,
+      is_growth_protection: ctx?.performance?.is_growth_protection,
+      is_cutting: ctx?.performance?.is_cutting,
+    },
+    feasibility: {
+      cooking_experience: ctx?.feasibility?.cooking_experience,
+      weekday_cooking_minutes: ctx?.feasibility?.weekday_cooking_minutes,
+      weekend_cooking_minutes: ctx?.feasibility?.weekend_cooking_minutes,
+      family_size: ctx?.feasibility?.family_size,
+    },
+    preferences: {
+      cuisine_preferences: ctx?.preferences?.cuisine_preferences,
+      favorite_ingredients: Array.isArray(ctx?.preferences?.favorite_ingredients)
+        ? ctx.preferences.favorite_ingredients.slice(0, 8)
+        : undefined,
+      dislikes: ctx?.preferences?.dislikes,
+    },
+    medical: {
+      health_conditions: ctx?.medical?.health_conditions,
+      medications: ctx?.medical?.medications,
+    },
+    weekly: {
+      note: ctx?.weekly?.note,
+      constraints: {
+        useFridgeFirst: ctx?.weekly?.constraints?.useFridgeFirst,
+        quickMeals: ctx?.weekly?.constraints?.quickMeals,
+        japaneseStyle: ctx?.weekly?.constraints?.japaneseStyle,
+        healthy: ctx?.weekly?.constraints?.healthy,
+        themes: ctx?.weekly?.constraints?.themes,
+        ingredients: Array.isArray(ctx?.weekly?.constraints?.ingredients)
+          ? ctx.weekly.constraints.ingredients.slice(0, 10)
+          : undefined,
+        cookingTime: ctx?.weekly?.constraints?.cookingTime,
+        familySize: ctx?.weekly?.constraints?.familySize,
+        cheatDay: ctx?.weekly?.constraints?.cheatDay,
+      },
+    },
+    health: {
+      guidance: ctx?.health?.guidance
+        ? {
+            generalDirection: ctx.health.guidance.generalDirection,
+            avoidanceHints: ctx.health.guidance.avoidanceHints,
+            emphasisHints: ctx.health.guidance.emphasisHints,
+            specialNotes: ctx.health.guidance.specialNotes,
+          }
+        : undefined,
+    },
+  });
+
+  return JSON.stringify(compact ?? {});
+}
+
 // =========================================================
 // 参考メニューの型
 // =========================================================
@@ -95,6 +186,7 @@ export async function generateMealWithLLM(input: {
   mealType: MealType;
   currentDishName: string | null;
   referenceMenus: MenuReference[];
+  referenceSummary?: string | null;
 }): Promise<GeneratedMeal> {
   const mealTypeJa = input.mealType === "breakfast" ? "朝食" 
     : input.mealType === "lunch" ? "昼食" 
@@ -149,10 +241,11 @@ export async function generateMealWithLLM(input: {
 
   const userPrompt =
     `【ユーザー情報】\n${input.userSummary}\n\n` +
-    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
+    `【ユーザーコンテキスト(JSON)】\n${buildCompactUserContextText(input.userContext)}\n\n` +
     `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
     `【食事タイプ】\n${mealTypeJa}\n\n` +
     `${input.currentDishName ? `【現在の献立（これとは異なるものを）】\n${input.currentDishName}\n\n` : ""}` +
+    `${input.referenceSummary ? `【参考献立の要約】\n${input.referenceSummary}\n\n` : ""}` +
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${mealTypeJa}の献立を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
@@ -160,7 +253,7 @@ export async function generateMealWithLLM(input: {
     section: "generateMealWithLLM",
     systemPrompt,
     userPrompt,
-    maxCompletionTokens: 8000,
+    maxCompletionTokens: 2600,
   });
   const parsed = safeJsonParse(out);
   return GeneratedMealSchema.parse(parsed);
@@ -184,6 +277,7 @@ export async function generateDayMealsWithLLM(input: {
   date: string;
   mealTypes: MealType[];
   referenceMenus: MenuReference[];
+  referenceSummary?: string | null;
   previousDayMeals?: string[]; // 前日の献立名（重複を避けるため）
 }): Promise<DailyGeneratedMeals> {
   const systemPrompt =
@@ -248,11 +342,12 @@ export async function generateDayMealsWithLLM(input: {
 
   const userPrompt =
     `【ユーザー情報】\n${input.userSummary}\n\n` +
-    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
+    `【ユーザーコンテキスト(JSON)】\n${buildCompactUserContextText(input.userContext)}\n\n` +
     `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
     `【日付】\n${input.date}\n\n` +
     `【生成する食事タイプ】\n${mealTypesJa}\n\n` +
     `${previousDayText}` +
+    `${input.referenceSummary ? `【参考献立の要約】\n${input.referenceSummary}\n\n` : ""}` +
     `【参考にできる献立例（あくまで参考）】\n${referenceText}\n\n` +
     `上記を参考に、${input.date}の1日分の献立（${mealTypesJa}）を創造してください。参考例をそのままコピーせず、ユーザーに合わせてアレンジしてください。`;
 
@@ -260,7 +355,7 @@ export async function generateDayMealsWithLLM(input: {
     section: "generateDayMealsWithLLM",
     systemPrompt,
     userPrompt,
-    maxCompletionTokens: 8000,
+    maxCompletionTokens: 3200,
   });
   const parsed = safeJsonParse(out);
   return DailyGeneratedMealsSchema.parse(parsed);
@@ -359,47 +454,17 @@ export async function reviewWeeklyMenus(input: {
     `【1週間の献立】\n${mealsText}\n\n` +
     `上記の献立をレビューしてください。`;
 
-  // GPT-5.2で高品質なレビュー（呼び出し頻度が低いのでコスト許容）
-  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-
-  let res: Response;
   try {
-    res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-5.2",
-        messages: [
-          { role: "user", content: `${systemPrompt}\n\n---\n\n${userPrompt}` },
-        ],
-        reasoning_effort: "none",
-        max_completion_tokens: 4000,
-      }),
-    }, {
-      label: "reviewWeeklyMenus:openai",
-      retries: 2,
-      timeoutMs: 45000,
+    const { text: out } = await callV4FastLLM({
+      section: "reviewWeeklyMenus",
+      systemPrompt,
+      userPrompt,
+      maxCompletionTokens: 1200,
     });
-  } catch (error) {
-    console.error("OpenAI API error in reviewWeeklyMenus:", error);
-    return { hasIssues: false, issues: [], swaps: [] };
-  }
-
-  const json = await res.json();
-  const out = json.choices?.[0]?.message?.content ?? "";
-  if (!out) {
-    return { hasIssues: false, issues: [], swaps: [] };
-  }
-
-  try {
     const parsed = safeJsonParse(out);
     return ReviewResultSchema.parse(parsed);
-  } catch (e) {
-    console.error("Review parsing failed:", e);
+  } catch (error) {
+    console.error("LLM error in reviewWeeklyMenus:", error);
     return { hasIssues: false, issues: [], swaps: [] };
   }
 }
@@ -418,6 +483,7 @@ export async function regenerateMealForIssue(input: {
   issue: string;
   suggestion: string;
   referenceMenus: MenuReference[];
+  referenceSummary?: string | null;
 }): Promise<GeneratedMeal> {
   const mealTypeJa = input.mealType === "breakfast" ? "朝食" 
     : input.mealType === "lunch" ? "昼食" 
@@ -459,12 +525,13 @@ export async function regenerateMealForIssue(input: {
 
   const userPrompt =
     `【ユーザー情報】\n${input.userSummary}\n\n` +
-    `【ユーザーコンテキスト(JSON)】\n${JSON.stringify(input.userContext)}\n\n` +
+    `【ユーザーコンテキスト(JSON)】\n${buildCompactUserContextText(input.userContext)}\n\n` +
     `${input.note ? `【要望】\n${input.note}\n\n` : ""}` +
     `【日付・食事タイプ】\n${input.date} ${mealTypeJa}\n\n` +
     `【現在の献立（問題あり）】\n${input.currentDishes.join("、")}\n\n` +
     `【問題点】\n${input.issue}\n\n` +
     `【改善案】\n${input.suggestion}\n\n` +
+    `${input.referenceSummary ? `【参考献立の要約】\n${input.referenceSummary}\n\n` : ""}` +
     `【参考にできる献立例】\n${referenceText}\n\n` +
     `上記の問題点を解決した新しい献立を創造してください。`;
 
@@ -472,7 +539,7 @@ export async function regenerateMealForIssue(input: {
     section: "regenerateMealForIssue",
     systemPrompt,
     userPrompt,
-    maxCompletionTokens: 8000,
+    maxCompletionTokens: 2600,
   });
   const parsed = safeJsonParse(out);
   return GeneratedMealSchema.parse(parsed);
