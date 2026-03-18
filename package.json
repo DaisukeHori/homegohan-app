@@ -12,6 +12,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
+    "diagnostic:v4-benchmark": "node scripts/diagnostics/v4-benchmark.js",
     "mobile:start": "npm --workspace apps/mobile run start",
     "mobile:ios": "npm --workspace apps/mobile run ios",
     "mobile:android": "npm --workspace apps/mobile run android"
