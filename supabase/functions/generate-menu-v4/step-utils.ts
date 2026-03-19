@@ -12,7 +12,79 @@ export type SaveMealResult = {
   outcome: SaveMealOutcome;
   plannedMealId?: string | null;
   reason?: string;
+  qualityIssues?: PostNutritionIssue[];
 };
+
+export type PostNutritionIssueCode =
+  | "breakfast_calorie_low"
+  | "breakfast_calorie_high"
+  | "lunch_calorie_low"
+  | "lunch_calorie_high"
+  | "dinner_calorie_low"
+  | "dinner_calorie_high"
+  | "meal_sodium_high";
+
+export type PostNutritionIssue = {
+  key: string;
+  code: PostNutritionIssueCode;
+  issue: string;
+  suggestion: string;
+};
+
+const POST_NUTRITION_MEAL_LIMITS: Partial<Record<MealType, { minCalories?: number; maxCalories?: number; maxSodiumG?: number }>> = {
+  breakfast: { minCalories: 250, maxCalories: 700, maxSodiumG: 4.5 },
+  lunch: { minCalories: 400, maxCalories: 950, maxSodiumG: 6.0 },
+  dinner: { minCalories: 400, maxCalories: 950, maxSodiumG: 6.0 },
+};
+
+export function derivePostNutritionIssues(params: {
+  date: string;
+  mealType: MealType;
+  caloriesKcal?: number | null;
+  sodiumG?: number | null;
+}): PostNutritionIssue[] {
+  const { date, mealType } = params;
+  const key = getSlotKey(date, mealType);
+  const limits = POST_NUTRITION_MEAL_LIMITS[mealType];
+  if (!limits) return [];
+
+  const calories = Number(params.caloriesKcal);
+  const sodium = Number(params.sodiumG);
+  const issues: PostNutritionIssue[] = [];
+
+  if (Number.isFinite(calories) && limits.minCalories != null && calories < limits.minCalories) {
+    issues.push({
+      key,
+      code: `${mealType}_calorie_low` as PostNutritionIssueCode,
+      issue: `${mealType === "breakfast" ? "朝食" : mealType === "lunch" ? "昼食" : "夕食"}の総カロリーが低すぎます（${Math.round(calories)}kcal）。`,
+      suggestion: mealType === "breakfast"
+        ? "主食を 1 つ、主たんぱくを 1 つ、補助 1 品を揃え、250kcal を下回らない構成にしてください。"
+        : "主食か主菜のボリュームを少し上げ、400kcal を下回らない構成にしてください。",
+    });
+  }
+
+  if (Number.isFinite(calories) && limits.maxCalories != null && calories > limits.maxCalories) {
+    issues.push({
+      key,
+      code: `${mealType}_calorie_high` as PostNutritionIssueCode,
+      issue: `${mealType === "breakfast" ? "朝食" : mealType === "lunch" ? "昼食" : "夕食"}の総カロリーが高すぎます（${Math.round(calories)}kcal）。`,
+      suggestion: mealType === "breakfast"
+        ? "朝食は 700kcal 以下に収め、重い主食や副菜を 1 品減らしてください。"
+        : "主食の重複や品数過多を避け、950kcal を超えない構成にしてください。",
+    });
+  }
+
+  if (Number.isFinite(sodium) && limits.maxSodiumG != null && sodium > limits.maxSodiumG) {
+    issues.push({
+      key,
+      code: "meal_sodium_high",
+      issue: `${mealType === "breakfast" ? "朝食" : mealType === "lunch" ? "昼食" : "夕食"}の塩分が高すぎます（${Math.round(sodium * 10) / 10}g）。`,
+      suggestion: "味噌・照り焼き・煮付け・ポン酢など濃い味を 1 つ減らし、汁物か副菜を薄味へ置き換えてください。",
+    });
+  }
+
+  return issues;
+}
 
 export const MEAL_TYPE_ORDER: Record<MealType, number> = {
   breakfast: 10,

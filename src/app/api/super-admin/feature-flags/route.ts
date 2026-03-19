@@ -1,17 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
+import { DEFAULT_FEATURE_FLAGS } from '@/lib/menu-generation-feature-flags';
 import { NextResponse } from 'next/server';
-
-// デフォルトの機能フラグ
-const DEFAULT_FLAGS = {
-  ai_chat_enabled: true,
-  meal_photo_analysis: true,
-  recipe_generation: true,
-  weekly_menu_generation: true,
-  health_insights: true,
-  comparison_feature: true,
-  organization_features: true,
-  maintenance_mode: false,
-};
 
 // 機能フラグ取得
 export async function GET(request: Request) {
@@ -37,7 +26,7 @@ export async function GET(request: Request) {
       .eq('key', 'feature_flags')
       .single();
 
-    const flags = setting?.value || DEFAULT_FLAGS;
+    const flags = { ...DEFAULT_FEATURE_FLAGS, ...(setting?.value ?? {}) };
 
     return NextResponse.json({ flags });
 
@@ -98,4 +87,3 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

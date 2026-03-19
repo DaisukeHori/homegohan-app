@@ -12,6 +12,8 @@ const FLAG_LABELS: Record<string, { label: string; description: string }> = {
   comparison_feature: { label: "比較機能", description: "セグメント別の比較・ランキング" },
   organization_features: { label: "法人機能", description: "法人向け機能全般" },
   maintenance_mode: { label: "メンテナンスモード", description: "サービス全体をメンテナンス中に" },
+  menu_generation_v5_wrapped: { label: "V5献立生成（wrapped）", description: "週間改善の wrapped API に V5 を使う" },
+  menu_generation_v5_direct: { label: "V5献立生成（direct）", description: "直接 /api/ai/menu/v5 を呼ぶ改善ボタンに V5 を使う" },
 };
 
 export default function SuperAdminFeatureFlagsPage() {
@@ -129,4 +131,3 @@ export default function SuperAdminFeatureFlagsPage() {
     </div>
   );
 }
-

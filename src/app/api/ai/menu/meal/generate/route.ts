@@ -1,7 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
+import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 
 // Vercel Proプランでは最大300秒まで延長可能
@@ -86,11 +88,15 @@ export async function POST(request: Request) {
     console.log(`📝 Request created for ${dayDate} ${mealType}, requestId: ${requestData?.id}`);
 
     // 4. target_slotsを保存（1スロット）
+    const featureFlags = await loadFeatureFlags(supabase);
+    const useV5Wrapped = Boolean(featureFlags.menu_generation_v5_wrapped);
+    const engine = useV5Wrapped ? 'v5' : 'v4';
+
     await supabase
       .from('weekly_menu_requests')
       .update({
         target_slots: targetSlots,
-        mode: 'v4',
+        mode: engine,
         current_step: 1,
       })
       .eq('id', requestData.id);
@@ -98,10 +104,12 @@ export async function POST(request: Request) {
     // 5. Edge Function generate-menu-v4 を非同期で呼び出し
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const generator = useV5Wrapped ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
+    const targetLabel = useV5Wrapped ? 'generate-menu-v5' : 'generate-menu-v4';
 
-    console.log('🚀 Calling Edge Function generate-menu-v4...');
+    console.log(`🚀 Calling Edge Function ${targetLabel}...`);
 
-    const edgeFunctionPromise = callGenerateMenuV4WithRetry({
+    const edgeFunctionPromise = generator({
       supabaseUrl,
       serviceRoleKey: supabaseServiceKey,
       extraHeaders: {

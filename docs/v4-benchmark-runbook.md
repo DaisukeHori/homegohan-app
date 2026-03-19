@@ -1,8 +1,8 @@
-# V4 Benchmark Runbook
+# V4/V5 Benchmark Runbook
 
 ## 目的
 
-`generate-menu-v4` を実 Supabase / 実 Edge Function で複数回実行し、以下を確認するための診断ツールです。
+`generate-menu-v4` / `generate-menu-v5` を実 Supabase / 実 Edge Function で複数回実行し、以下を確認するための診断ツールです。
 
 - 1日生成と1週間生成の平均所要時間
 - Step 1 / Step 2 / Step 3 の壁時計時間
@@ -30,9 +30,17 @@
 npm run diagnostic:v4-benchmark
 ```
 
+### V5 を実行
+
+```bash
+GENERATE_MENU_ENGINE=v5 \
+npm run diagnostic:v4-benchmark
+```
+
 ### レポート JSON を保存しながら実行
 
 ```bash
+GENERATE_MENU_ENGINE=v5 \
 BENCHMARK_REPORT_FILE=tmp/benchmarks/v4-benchmark-$(date +%Y%m%d-%H%M%S).json \
 npm run diagnostic:v4-benchmark
 ```
@@ -153,5 +161,6 @@ NODE
 ## 注意
 
 - これは mock ではなく実データベース / 実 Edge Function を叩く診断です
+- `GENERATE_MENU_ENGINE` を指定しない場合は `v4` が使われます
 - 実行時間は長く、1日生成 20 回だけでも数十分、1週間生成まで含めると数時間かかることがあります
 - 失敗 run が混じるため、平均を見るときは `completed` 数も必ず確認してください

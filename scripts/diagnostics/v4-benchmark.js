@@ -5,7 +5,15 @@ const fs = require('fs/promises');
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = String(process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY || '').replace(/^"|"$/g, '');
 const REPORT_FILE = process.env.BENCHMARK_REPORT_FILE || null;
+const PARTIAL_REPORT_FILE = REPORT_FILE
+  ? REPORT_FILE.replace(/\.json$/i, '.partial.json')
+  : null;
 const SEED_FILE = process.env.BENCHMARK_SEED_FILE || null;
+const GENERATE_MENU_ENGINE = (process.env.GENERATE_MENU_ENGINE || 'v4').trim().toLowerCase() === 'v5' ? 'v5' : 'v4';
+const SCENARIO_FILTER = String(process.env.BENCHMARK_SCENARIOS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   throw new Error('Missing Supabase credentials in .env.local');
@@ -33,6 +41,9 @@ const SCENARIOS = [
     targetSlots: buildTargetSlots('2026-04-01', 7, ['breakfast', 'lunch', 'dinner']),
   },
 ];
+const ACTIVE_SCENARIOS = SCENARIO_FILTER.length > 0
+  ? SCENARIOS.filter((scenario) => SCENARIO_FILTER.includes(scenario.key))
+  : SCENARIOS;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -103,7 +114,7 @@ async function loadSeedRuns(seedFile) {
 
   if (parsed && typeof parsed === 'object' && parsed.runsByScenario && typeof parsed.runsByScenario === 'object') {
     for (const [scenario, runs] of Object.entries(parsed.runsByScenario)) {
-      byScenario[scenario] = Array.isArray(runs) ? runs : [];
+      byScenario[scenario] = Array.isArray(runs) ? runs.map(normalizeSeedRun) : [];
     }
   }
 
@@ -112,12 +123,88 @@ async function loadSeedRuns(seedFile) {
       const scenario = scenarioEntry?.scenario;
       const runs = scenarioEntry?.runs;
       if (typeof scenario === 'string' && Array.isArray(runs)) {
-        byScenario[scenario] = runs;
+        byScenario[scenario] = runs.map(normalizeSeedRun);
       }
     }
   }
 
   return byScenario;
+}
+
+async function writeReport(file, payload) {
+  if (!file) return;
+  await fs.writeFile(file, JSON.stringify(payload, null, 2));
+}
+
+async function writePartialReport(params) {
+  if (!PARTIAL_REPORT_FILE) return;
+  const partialReport = {
+    startedAt: params.startedAt,
+    updatedAt: new Date().toISOString(),
+    resumedFrom: SEED_FILE,
+    engine: GENERATE_MENU_ENGINE,
+    partial: true,
+    scenarios: params.completedScenarioResults.map((result) => ({
+      scenario: result.scenario,
+      summary: result.summary,
+      runs: result.runs,
+    })),
+    runsByScenario: {
+      ...Object.fromEntries(params.completedScenarioResults.map((result) => [result.scenario, result.runs])),
+      ...(params.currentScenario
+        ? {
+            [params.currentScenario.scenario]: params.currentScenario.runs,
+          }
+        : {}),
+    },
+  };
+  await writeReport(PARTIAL_REPORT_FILE, partialReport);
+}
+
+function normalizeSeedRun(run) {
+  const warningCodes = Array.isArray(run?.content_warning_codes)
+    ? run.content_warning_codes.filter((value) => typeof value === 'string')
+    : [];
+  const warningCodeCounts = warningCodes.reduce((acc, code) => {
+    acc[code] = (acc[code] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    scenario: run?.scenario ?? 'unknown',
+    attempt: Number(run?.attempt || 0),
+    requestId: run?.requestId ?? null,
+    success: Boolean(run?.success),
+    status: run?.status ?? (run?.success ? 'completed' : 'failed'),
+    currentStep: run?.currentStep ?? null,
+    total_duration_ms: run?.total_duration_ms ?? null,
+    progress_message: run?.progress_message ?? null,
+    error_message: run?.error_message ?? null,
+    step1_wall_ms: run?.step1_wall_ms ?? null,
+    step2_wall_ms: run?.step2_wall_ms ?? null,
+    step3_wall_ms: run?.step3_wall_ms ?? null,
+    planned_meal_count: Number(run?.planned_meal_count || 0),
+    slot_count: Number(run?.slot_count || 0),
+    fixes_detected: Number(run?.fixes_detected || 0),
+    fixes_applied: Number(run?.fixes_applied || 0),
+    content: run?.content ?? {
+      warningCount: Number(run?.content_warning_count || 0),
+      warningCodeCounts,
+      warnings: [],
+      dayTotals: Array.isArray(run?.content_day_totals) ? run.content_day_totals : [],
+      preview: Array.isArray(run?.content_preview) ? run.content_preview : [],
+    },
+    usage: run?.usage ?? {},
+    debug: run?.debug ?? {
+      total_ms: 0,
+      slot_count: 0,
+      daily_meal_upsert_ms: 0,
+      dish_processing_total_ms: 0,
+      planned_meal_lookup_ms: 0,
+      planned_meal_write_ms: 0,
+      nutrition_debug_insert_ms: 0,
+    },
+  };
 }
 
 const MEAL_TYPE_ORDER = {
@@ -175,8 +262,22 @@ function buildContentInspection({ plannedMeals, dailyMealDateById, targetSlots }
     if ([meal.caloriesKcal, meal.proteinG, meal.fatG, meal.carbsG].some((value) => value == null)) {
       pushWarning('meal_missing_macros', `${meal.date} ${meal.mealType}: 基本栄養素が欠けています`);
     }
-    if (meal.caloriesKcal != null && (meal.caloriesKcal < 80 || meal.caloriesKcal > 1800)) {
-      pushWarning('meal_calorie_outlier', `${meal.date} ${meal.mealType}: ${meal.caloriesKcal}kcal`);
+    if (meal.caloriesKcal != null) {
+      if (meal.mealType === 'breakfast') {
+        if (meal.caloriesKcal < 250) {
+          pushWarning('breakfast_calorie_low', `${meal.date} ${meal.mealType}: ${meal.caloriesKcal}kcal`);
+        } else if (meal.caloriesKcal > 700) {
+          pushWarning('breakfast_calorie_high', `${meal.date} ${meal.mealType}: ${meal.caloriesKcal}kcal`);
+        }
+      } else if (meal.mealType === 'lunch' || meal.mealType === 'dinner') {
+        if (meal.caloriesKcal < 400) {
+          pushWarning(`${meal.mealType}_calorie_low`, `${meal.date} ${meal.mealType}: ${meal.caloriesKcal}kcal`);
+        } else if (meal.caloriesKcal > 950) {
+          pushWarning(`${meal.mealType}_calorie_high`, `${meal.date} ${meal.mealType}: ${meal.caloriesKcal}kcal`);
+        }
+      } else if (meal.caloriesKcal < 80 || meal.caloriesKcal > 1800) {
+        pushWarning('meal_calorie_outlier', `${meal.date} ${meal.mealType}: ${meal.caloriesKcal}kcal`);
+      }
     }
     if (meal.sodiumG != null && meal.sodiumG > 6) {
       pushWarning('meal_sodium_high', `${meal.date} ${meal.mealType}: 塩分 ${meal.sodiumG}g`);
@@ -201,7 +302,7 @@ function buildContentInspection({ plannedMeals, dailyMealDateById, targetSlots }
     if ((expectedSlotsByDate[date] || 0) !== meals.length) {
       pushWarning('day_slot_count_mismatch', `${date}: 食事数 ${meals.length}/${expectedSlotsByDate[date] || 0}`);
     }
-    if (totalCalories < 900 || totalCalories > 2800) {
+    if (totalCalories < 1400 || totalCalories > 2400) {
       pushWarning('day_calorie_outlier', `${date}: 合計 ${round(totalCalories)}kcal`);
     }
     if (totalSodium > 12) {
@@ -406,6 +507,7 @@ async function collectRunResult({ scenario, attempt, userId, requestId, finalRow
   });
 
   return {
+    engine: GENERATE_MENU_ENGINE,
     scenario: scenario.key,
     attempt,
     requestId,
@@ -442,7 +544,7 @@ async function runScenarioAttempt(scenario, attempt) {
       .insert({
         user_id: userId,
         start_date: scenario.targetSlots[0].date,
-        mode: 'v4',
+        mode: GENERATE_MENU_ENGINE,
         status: 'processing',
         current_step: 1,
         prompt: `Codex benchmark ${scenario.key} attempt ${attempt}`,
@@ -461,7 +563,7 @@ async function runScenarioAttempt(scenario, attempt) {
     }
     requestId = requestInsert.data.id;
 
-    const invokeResponse = await fetch(`${SUPABASE_URL.replace(/\/+$/, '')}/functions/v1/generate-menu-v4`, {
+    const invokeResponse = await fetch(`${SUPABASE_URL.replace(/\/+$/, '')}/functions/v1/generate-menu-${GENERATE_MENU_ENGINE}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -586,7 +688,7 @@ function summarizeScenario(results) {
   return summary;
 }
 
-async function benchmarkScenario(scenario, seededRuns = []) {
+async function benchmarkScenario(scenario, seededRuns = [], onProgress = async () => {}) {
   const results = [...seededRuns];
   let attempt = results.reduce((maxAttempt, result) => Math.max(maxAttempt, Number(result?.attempt || 0)), 0);
   const seededSuccesses = results.filter((result) => result.success).length;
@@ -603,6 +705,9 @@ async function benchmarkScenario(scenario, seededRuns = []) {
         attempt,
         success: result.success,
         status: result.status,
+        current_step: result.currentStep,
+        progress_message: result.progress_message,
+        error_message: result.error_message,
         total_duration_ms: result.total_duration_ms,
         step1_wall_ms: result.step1_wall_ms,
         step2_wall_ms: result.step2_wall_ms,
@@ -615,8 +720,10 @@ async function benchmarkScenario(scenario, seededRuns = []) {
         content_preview: result.content.preview,
         elapsed_wall_ms: Date.now() - runStartedAt,
       }));
+      await onProgress(results);
     } catch (error) {
       results.push({
+        engine: GENERATE_MENU_ENGINE,
         scenario: scenario.key,
         attempt,
         success: false,
@@ -654,8 +761,10 @@ async function benchmarkScenario(scenario, seededRuns = []) {
         scenario: scenario.key,
         attempt,
         success: false,
+        status: 'failed',
         error: error.message || String(error),
       }));
+      await onProgress(results);
     }
 
     await sleep(2000);
@@ -673,13 +782,32 @@ async function benchmarkScenario(scenario, seededRuns = []) {
   const startedAt = new Date().toISOString();
   const seedRunsByScenario = await loadSeedRuns(SEED_FILE);
   const scenarioResults = [];
-  for (const scenario of SCENARIOS) {
-    scenarioResults.push(await benchmarkScenario(scenario, seedRunsByScenario[scenario.key] || []));
+  for (const scenario of ACTIVE_SCENARIOS) {
+    scenarioResults.push(await benchmarkScenario(
+      scenario,
+      seedRunsByScenario[scenario.key] || [],
+      async (runs) => {
+        await writePartialReport({
+          startedAt,
+          completedScenarioResults: scenarioResults,
+          currentScenario: {
+            scenario: scenario.key,
+            runs,
+          },
+        });
+      },
+    ));
+    await writePartialReport({
+      startedAt,
+      completedScenarioResults: scenarioResults,
+      currentScenario: null,
+    });
   }
   const finalReport = {
     startedAt,
     finishedAt: new Date().toISOString(),
     resumedFrom: SEED_FILE,
+    engine: GENERATE_MENU_ENGINE,
     scenarios: scenarioResults.map((result) => ({
       scenario: result.scenario,
       summary: result.summary,
@@ -687,7 +815,7 @@ async function benchmarkScenario(scenario, seededRuns = []) {
     })),
   };
   if (REPORT_FILE) {
-    await fs.writeFile(REPORT_FILE, JSON.stringify(finalReport, null, 2));
+    await writeReport(REPORT_FILE, finalReport);
     console.log(`[benchmark-report] ${REPORT_FILE}`);
   }
   console.log('[benchmark-complete]', JSON.stringify({

@@ -1,9 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
+import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import type { 
   TargetSlot, 
   ExistingMenuContext, 
@@ -265,13 +267,17 @@ export async function POST(request: Request) {
       ? rawConstraints as MenuGenerationConstraints 
       : {};
 
+    const featureFlags = await loadFeatureFlags(supabase);
+    const useV5Direct = Boolean(featureFlags.menu_generation_v5_direct);
+    const engine = useV5Direct ? 'v5' : 'v4';
+
     // 10. Create request record
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
         start_date: startDate,
-        mode: 'v4',
+        mode: engine,
         status: 'processing',
         current_step: 1,
         prompt: body?.note || '',
@@ -295,9 +301,12 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
     
-    console.log('🚀 Calling Edge Function generate-menu-v4...');
+    const generator = useV5Direct ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
+    const targetLabel = useV5Direct ? 'generate-menu-v5' : 'generate-menu-v4';
+
+    console.log(`🚀 Calling Edge Function ${targetLabel}...`);
     
-    const edgeFunctionPromise = callGenerateMenuV4WithRetry({
+    const edgeFunctionPromise = generator({
       supabaseUrl,
       serviceRoleKey: supabaseServiceKey,
       payload: {
@@ -332,7 +341,7 @@ export async function POST(request: Request) {
     // 12. Return immediately
     return NextResponse.json({ 
       status: 'processing',
-      message: 'V4 generation started',
+      message: `${engine.toUpperCase()} generation started`,
       requestId: requestData.id,
       totalSlots: targetSlots.length,
     });

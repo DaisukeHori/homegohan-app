@@ -47,7 +47,9 @@ import {
   DEFAULT_STEP5_DAY_BATCH,
   DEFAULT_STEP6_SLOT_BATCH,
   computeMaxFixesForRange,
+  derivePostNutritionIssues,
   summarizeSaveResults,
+  type PostNutritionIssue,
   type SaveMealResult,
   type SaveIssue,
 } from "./step-utils.ts";
@@ -1449,9 +1451,18 @@ async function saveMealToDb(
     );
   });
 
+  // Post-save nutrition quality check
+  const qualityIssues = derivePostNutritionIssues({
+    date: targetSlot.date,
+    mealType: targetSlot.mealType,
+    caloriesKcal: totalNutrition.calories_kcal,
+    sodiumG: totalNutrition.sodium_g,
+  });
+
   return {
     outcome: writeOutcome,
     plannedMealId,
+    qualityIssues: qualityIssues.length > 0 ? qualityIssues : undefined,
   };
 }
 
@@ -1512,6 +1523,8 @@ type V4GeneratedData = {
     skipped?: Array<{ key: string; error: string }>;
     nutritionCalculated?: boolean; // Ultimate mode: 栄養計算済みフラグ
     ingredientMatchCache?: PersistedIngredientMatchCache;
+    postNutritionIssues?: PostNutritionIssue[];
+    postNutritionFixAttempts?: number;
   };
   // Ultimate Mode steps
   step4?: {
@@ -1573,7 +1586,7 @@ async function loadRequestRow(supabase: any, requestId: string) {
   const data = await runSupabaseQuery<any | null>(
     () => supabase
       .from("weekly_menu_requests")
-      .select("id, user_id, start_date, prompt, constraints, target_slots, generated_data, current_step, status")
+      .select("id, user_id, start_date, prompt, constraints, target_slots, generated_data, current_step, status, mode")
       .eq("id", requestId)
       .single(),
     `weekly_menu_requests.load:${requestId}`,
@@ -2476,6 +2489,7 @@ async function executeStep3_Complete(
     targetSlotsForRun.map((slot) => slot.date),
   );
   let savedCount = savedCountStart;
+  const postNutritionIssues: PostNutritionIssue[] = Array.isArray(step3.postNutritionIssues) ? [...step3.postNutritionIssues] : [];
 
   const stepMessage = ultimateMode ? "栄養計算中..." : "保存中...";
   await updateProgress(
@@ -2518,6 +2532,9 @@ async function executeStep3_Complete(
           skipped.push({ key, error: saveResult.reason ?? "既存献立を保護したため未保存" });
         } else {
           savedCount++;
+          if (saveResult.qualityIssues?.length) {
+            postNutritionIssues.push(...saveResult.qualityIssues);
+          }
         }
       }
     } catch (e: any) {
@@ -2546,6 +2563,8 @@ async function executeStep3_Complete(
       skipped: skipped.slice(-200),
       nutritionCalculated: newCursor >= totalSlots,
       ingredientMatchCache: serializeIngredientMatchCache(ingredientMatchMemo),
+      postNutritionIssues: postNutritionIssues.slice(-100),
+      postNutritionFixAttempts: Number(step3.postNutritionFixAttempts ?? 0),
     },
   };
 
@@ -2602,6 +2621,113 @@ async function executeStep3_Complete(
     );
 
     await triggerNextStep(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // V5 post-nutrition fix: 保存後の実栄養に外れ値がある場合、V5 Step2 へ差し戻す
+  const MAX_POST_NUTRITION_FIX_ATTEMPTS = 2;
+  const postFixAttempts = Number(updatedGeneratedData.step3?.postNutritionFixAttempts ?? 0);
+  const isV5 = String(reqRow.mode ?? "") === "v5";
+
+  if (isV5 && postNutritionIssues.length > 0 && postFixAttempts < MAX_POST_NUTRITION_FIX_ATTEMPTS) {
+    console.log(`🔄 V5 post-nutrition fix: ${postNutritionIssues.length} issues found (attempt ${postFixAttempts + 1}/${MAX_POST_NUTRITION_FIX_ATTEMPTS})`);
+
+    // 外れ値スロットの planned_meal を削除して、V5 Step2 で再生成させる
+    const issueKeys = new Set(postNutritionIssues.map((i) => i.key));
+    const slotsToRegenerate: TargetSlot[] = [];
+
+    for (const slot of targetSlots) {
+      const key = getSlotKey(slot.date, slot.mealType);
+      if (!issueKeys.has(key)) continue;
+
+      // planned_meal を削除（再生成対象にする）
+      const dailyMealId = dailyMealIdByDate.get(slot.date);
+      if (dailyMealId) {
+        await runSupabaseQuery(
+          () => supabase
+            .from("planned_meals")
+            .delete()
+            .eq("daily_meal_id", dailyMealId)
+            .eq("meal_type", slot.mealType),
+          `planned_meals.delete_for_refix:${key}`,
+          null,
+          10000,
+          1,
+        ).catch((e: any) => console.warn(`Failed to delete planned_meal for ${key}:`, e?.message));
+      }
+
+      // generatedMeals から外れ値スロットを除去（V5 Step2 で再生成させる）
+      delete (updatedGeneratedData.generatedMeals as any)?.[key];
+      slotsToRegenerate.push(slot);
+    }
+
+    // Step3 の試行回数をインクリメント、cursor をリセット
+    updatedGeneratedData.step3 = {
+      ...updatedGeneratedData.step3,
+      postNutritionFixAttempts: postFixAttempts + 1,
+      postNutritionIssues: postNutritionIssues.slice(-100),
+      cursor: 0,
+      savedCount: 0,
+      errors: [],
+      skipped: [],
+    };
+
+    // V5 の generated_data に違反情報を書き込んで Step 2 に戻す
+    const v5Data = (updatedGeneratedData as any).v5 ?? {};
+    (updatedGeneratedData as any).v5 = {
+      ...v5Data,
+      postNutritionIssues,
+      slotsToRegenerate: slotsToRegenerate.map((s) => ({ date: s.date, mealType: s.mealType })),
+    };
+
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 2,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.step3_back_to_v5_step2:${requestId}`,
+      null,
+      10000,
+      1,
+    );
+
+    await updateProgress(
+      supabase,
+      requestId,
+      {
+        currentStep: 2,
+        totalSteps,
+        message: `栄養外れ値 ${postNutritionIssues.length} 件を再修正中...`,
+        completedSlots: totalSlots - slotsToRegenerate.length,
+        totalSlots,
+      },
+      2,
+    );
+
+    // V5 の generate-menu-v5 を呼び戻す
+    const v5Url = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/generate-menu-v5`;
+    await fetchWithRetry(v5Url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${supabaseServiceKey}`,
+        apikey: supabaseServiceKey,
+      },
+      body: JSON.stringify({
+        request_id: requestId,
+        requestId,
+        userId,
+        _continue: true,
+      }),
+    }, {
+      label: `handoffToV5:${requestId}`,
+      retries: 2,
+      timeoutMs: 10000,
+    });
     return;
   }
 

@@ -10,6 +10,7 @@ import {
   computeMaxFixesForRange,
   computeNextCursor,
   computeWeeksFromDays,
+  derivePostNutritionIssues,
   getSlotKey,
   normalizeTargetSlots,
   sortTargetSlots,
@@ -162,6 +163,55 @@ describe("V4 Supabase Functions - step utils", () => {
 
     it("supports custom fixesPerWeek", () => {
       expect(computeMaxFixesForRange({ days: 7, issuesCount: 999, fixesPerWeek: 3 })).toBe(3);
+    });
+  });
+
+  describe("derivePostNutritionIssues", () => {
+    it("returns breakfast low calorie issue", () => {
+      expect(derivePostNutritionIssues({
+        date: "2026-03-19",
+        mealType: "breakfast",
+        caloriesKcal: 180,
+        sodiumG: 1.8,
+      })).toEqual([
+        {
+          key: "2026-03-19:breakfast",
+          code: "breakfast_calorie_low",
+          issue: "朝食の総カロリーが低すぎます（180kcal）。",
+          suggestion: "主食を 1 つ、主たんぱくを 1 つ、補助 1 品を揃え、250kcal を下回らない構成にしてください。",
+        },
+      ]);
+    });
+
+    it("returns lunch high calorie and sodium issues", () => {
+      expect(derivePostNutritionIssues({
+        date: "2026-03-19",
+        mealType: "lunch",
+        caloriesKcal: 1120,
+        sodiumG: 6.4,
+      })).toEqual([
+        {
+          key: "2026-03-19:lunch",
+          code: "lunch_calorie_high",
+          issue: "昼食の総カロリーが高すぎます（1120kcal）。",
+          suggestion: "主食の重複や品数過多を避け、950kcal を超えない構成にしてください。",
+        },
+        {
+          key: "2026-03-19:lunch",
+          code: "meal_sodium_high",
+          issue: "昼食の塩分が高すぎます（6.4g）。",
+          suggestion: "味噌・照り焼き・煮付け・ポン酢など濃い味を 1 つ減らし、汁物か副菜を薄味へ置き換えてください。",
+        },
+      ]);
+    });
+
+    it("returns no issue for snack because thresholds are core meals only", () => {
+      expect(derivePostNutritionIssues({
+        date: "2026-03-19",
+        mealType: "snack",
+        caloriesKcal: 50,
+        sodiumG: 2,
+      })).toEqual([]);
     });
   });
 
