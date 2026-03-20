@@ -685,7 +685,9 @@ export async function saveMealToDb(
     updated_existing_planned_meal: Boolean(targetSlot.plannedMealId),
     total_ms: Date.now() - slotStartedAt,
   };
-  scheduleBackgroundTask(`meal-image-jobs:${plannedMealId}`, async () => {
+  // Image jobs must run inline (not via scheduleBackgroundTask) because
+  // V5's outer waitUntil may resolve before nested background tasks execute.
+  try {
     await enqueueMealImageJobs({
       supabase,
       plannedMealId,
@@ -703,7 +705,9 @@ export async function saveMealToDb(
         limit: reconcileResult.jobs.length,
       });
     }
-  });
+  } catch (imageError: any) {
+    console.error(`[save-meal] meal-image-jobs enqueue failed for ${plannedMealId}:`, imageError?.message);
+  }
 
   scheduleBackgroundTask(`meal-nutrition-debug:${targetSlot.date}:${targetSlot.mealType}`, async () => {
     const nutritionDebugInsertStartedAt = Date.now();
