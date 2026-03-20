@@ -141,14 +141,22 @@ export async function POST(request: Request) {
       const foundIds = new Set((plannedMeals || []).map((meal) => meal.id));
       const missing = plannedMealIds.filter((id) => !foundIds.has(id));
       if (missing.length > 0) {
-        return NextResponse.json({ error: 'Meal not found or unauthorized' }, { status: 404 });
+        // plannedMealId が見つからない場合はクリアして新規作成パスに進む
+        console.warn(`[v5/generate] ${missing.length} plannedMealId(s) not found, clearing: ${missing.join(', ')}`);
+        for (const slot of plannedSlots) {
+          if (slot.plannedMealId && missing.includes(slot.plannedMealId)) {
+            slot.plannedMealId = undefined;
+          }
+        }
       }
 
       const byId = new Map((plannedMeals || []).map((meal) => [meal.id, meal]));
       for (const slot of plannedSlots) {
-        const stored = byId.get(slot.plannedMealId!);
+        if (!slot.plannedMealId) continue;
+        const stored = byId.get(slot.plannedMealId);
         if (!stored) {
-          return NextResponse.json({ error: 'Meal not found or unauthorized' }, { status: 404 });
+          slot.plannedMealId = undefined;
+          continue;
         }
         const day = Array.isArray(stored.user_daily_meals)
           ? stored.user_daily_meals[0] || {}

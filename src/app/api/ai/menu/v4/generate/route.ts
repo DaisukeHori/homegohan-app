@@ -151,14 +151,21 @@ export async function POST(request: Request) {
       const foundIds = new Set((plannedMeals || []).map((m: any) => m.id));
       const missingIds = plannedMealIds.filter(id => !foundIds.has(id));
       if (missingIds.length > 0) {
-        return NextResponse.json({ error: 'Meal not found or unauthorized' }, { status: 404 });
+        console.warn(`[v4/generate] ${missingIds.length} plannedMealId(s) not found, clearing: ${missingIds.join(', ')}`);
+        for (const slot of slotsWithPlannedId) {
+          if (slot.plannedMealId && missingIds.includes(slot.plannedMealId)) {
+            slot.plannedMealId = undefined;
+          }
+        }
       }
 
       const byId = new Map<string, any>((plannedMeals || []).map((m: any) => [m.id, m]));
       for (const slot of slotsWithPlannedId) {
-        const pm = byId.get(slot.plannedMealId!);
+        if (!slot.plannedMealId) continue;
+        const pm = byId.get(slot.plannedMealId);
         if (!pm) {
-          return NextResponse.json({ error: 'Meal not found or unauthorized' }, { status: 404 });
+          slot.plannedMealId = undefined;
+          continue;
         }
         const day = (pm.user_daily_meals as any) || {};
         if (String(pm.meal_type) !== String(slot.mealType)) {
