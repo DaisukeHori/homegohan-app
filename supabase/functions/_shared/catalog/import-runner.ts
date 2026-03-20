@@ -1,4 +1,4 @@
-import { createClient } from "jsr:@supabase/supabase-js@2.99.1";
+import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../cors.ts";
 import { createLogger, generateRequestId } from "../db-logger.ts";
 import { firecrawlScrapeStructured } from "../firecrawl-client.ts";

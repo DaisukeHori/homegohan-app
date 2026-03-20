@@ -1,5 +1,5 @@
-import OpenAI from "npm:openai@6.9.1";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import OpenAI from "openai";
+import { createClient } from "@supabase/supabase-js";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {

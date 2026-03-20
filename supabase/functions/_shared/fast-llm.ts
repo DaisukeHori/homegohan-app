@@ -1,4 +1,4 @@
-import OpenAI from "npm:openai@6.9.1";
+import OpenAI from "openai";
 
 const DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_FAST_LLM_MODEL = "grok-4-1-fast-non-reasoning";

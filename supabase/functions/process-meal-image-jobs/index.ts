@@ -1,5 +1,5 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
-import { GoogleGenAI, createUserContent } from "npm:@google/genai@1.44.0";
+import { createClient } from "@supabase/supabase-js";
+import { GoogleGenAI, createUserContent } from "@google/genai";
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
   deriveMealCoverImage,

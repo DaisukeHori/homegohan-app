@@ -1,4 +1,4 @@
-import OpenAI from "npm:openai@6.9.1";
+import OpenAI from "openai";
 import { createFastLLMClient, getFastLLMModel } from "./fast-llm.ts";
 import {
   firecrawlDiscoverySchema,

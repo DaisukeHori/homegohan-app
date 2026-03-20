@@ -2,10 +2,10 @@
 // OpenAI Chat Completions API 互換のエンドポイント
 // Agent SDK がDenoで動作しない場合のフォールバック版
 
-import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
-import OpenAI from "npm:openai@6.9.1";
+import OpenAI from "openai";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
   DATASET_EMBEDDING_API_KEY_ENV,

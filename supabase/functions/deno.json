@@ -4,6 +4,7 @@
     "strict": true
   },
   "imports": {
+    "@google/genai": "npm:@google/genai@1.44.0",
     "@openai/agents": "npm:@openai/agents@0.7.1",
     "@supabase/functions-js/edge-runtime.d.ts": "jsr:@supabase/functions-js@2.99.1/edge-runtime.d.ts",
     "@supabase/supabase-js": "jsr:@supabase/supabase-js@2.99.1",

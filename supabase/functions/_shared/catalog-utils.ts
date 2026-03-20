@@ -1,4 +1,4 @@
-import { z } from "npm:zod@4.1.13";
+import { z } from "zod";
 
 export const catalogNutritionSchema = z.object({
   caloriesKcal: z.number().nullable().optional(),
