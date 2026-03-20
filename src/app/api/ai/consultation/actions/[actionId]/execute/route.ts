@@ -6,6 +6,7 @@ import {
   sanitizeHealthRecordPayload,
 } from '@/lib/health-payloads';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
 import type { MealImageJobSeed } from '../../../../../../../lib/meal-image';
 import {
   buildDishImagePayload,
@@ -127,6 +128,11 @@ export async function POST(
     let result: any = null;
     let success = false;
 
+    // V5フラグ判定
+    const featureFlags = await loadFeatureFlags(supabase);
+    const useV5 = Boolean(featureFlags.menu_generation_v5_wrapped);
+    const engineLabel = useV5 ? 'generate-menu-v5' : 'generate-menu-v4';
+
     // アクションタイプに応じて実行
     switch (action.action_type) {
       // ==================== 献立関連 ====================
@@ -156,7 +162,7 @@ export async function POST(
           .insert({
             user_id: user.id,
             start_date: date,
-            mode: 'v4',
+            mode: engineLabel.replace('generate-menu-', ''),
             status: 'processing',
             target_slots: targetSlots.map((s) => ({
               date: s.date,
@@ -186,7 +192,7 @@ export async function POST(
           .single();
 
         const invokeResult = await invokeGenerateMenuV4WithRetry({
-          invoke: () => supabase.functions.invoke('generate-menu-v4', {
+          invoke: () => supabase.functions.invoke(engineLabel, {
             body: {
               userId: user.id,
               requestId: requestData.id,
@@ -203,7 +209,7 @@ export async function POST(
         });
 
         if (!invokeResult.ok) {
-          console.error('Failed to invoke generate-menu-v4:', invokeResult.errorMessage);
+          console.error(`Failed to invoke ${engineLabel}:`, invokeResult.errorMessage);
           await markWeeklyMenuRequestFailed({
             supabase,
             requestId: requestData.id,
@@ -217,7 +223,7 @@ export async function POST(
       }
 
       case 'generate_week_menu': {
-        // 1週間分の献立を生成（generate-menu-v4を使用）
+        // 1週間分の献立を生成
         const { startDate, ultimateMode } = action.action_params;
 
         if (!startDate) {
@@ -248,7 +254,7 @@ export async function POST(
           .insert({
             user_id: user.id,
             start_date: startDate,
-            mode: 'v4',
+            mode: engineLabel.replace('generate-menu-', ''),
             status: 'processing',
             target_slots: targetSlots.map((s) => ({
               date: s.date,
@@ -278,7 +284,7 @@ export async function POST(
           .single();
 
         const invokeResult = await invokeGenerateMenuV4WithRetry({
-          invoke: () => supabase.functions.invoke('generate-menu-v4', {
+          invoke: () => supabase.functions.invoke(engineLabel, {
             body: {
               userId: user.id,
               requestId: requestData.id,
@@ -295,7 +301,7 @@ export async function POST(
         });
 
         if (!invokeResult.ok) {
-          console.error('Failed to invoke generate-menu-v4:', invokeResult.errorMessage);
+          console.error(`Failed to invoke ${engineLabel}:`, invokeResult.errorMessage);
           await markWeeklyMenuRequestFailed({
             supabase,
             requestId: requestData.id,
@@ -309,7 +315,7 @@ export async function POST(
       }
 
       case 'generate_single_meal': {
-        // AIが栄養計算付きで1食を生成（generate-menu-v4を1スロットで呼び出し）
+        // AIが栄養計算付きで1食を生成
         const {
           date,
           mealType,
@@ -339,7 +345,7 @@ export async function POST(
           .insert({
             user_id: user.id,
             start_date: date,
-            mode: 'v4',
+            mode: engineLabel.replace('generate-menu-', ''),
             status: 'processing',
             target_slots: targetSlots.map((slot) => ({
               date: slot.date,
@@ -371,9 +377,9 @@ export async function POST(
           .single();
         const familySize = profile?.family_size || 1;
 
-        // 3. generate-menu-v4 を呼び出し
+        // 3. Edge Functionを呼び出し
         const invokeResult = await invokeGenerateMenuV4WithRetry({
-          invoke: () => supabase.functions.invoke('generate-menu-v4', {
+          invoke: () => supabase.functions.invoke(engineLabel, {
             body: {
               userId: user.id,
               requestId: requestData.id,

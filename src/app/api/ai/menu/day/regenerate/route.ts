@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -73,13 +75,17 @@ export async function POST(request: Request) {
     });
 
     // 5. リクエストを作成
+    const featureFlags = await loadFeatureFlags(supabase);
+    const useV5 = Boolean(featureFlags.menu_generation_v5_wrapped);
+    const engine = useV5 ? 'v5' : 'v4';
+
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
         start_date: dailyMeal.day_date,
         target_date: dailyMeal.day_date,
-        mode: 'v4',
+        mode: engine,
         status: 'processing',
         target_slots: targetSlots,
         constraints: preferences || {},
@@ -93,11 +99,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
     }
 
-    // 6. generate-menu-v4を呼び出し
+    // 6. Edge Functionを呼び出し（V5/V4をfeature flagで切り替え）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    const edgeFunctionPromise = callGenerateMenuV4WithRetry({
+    const generator = useV5 ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
+    const edgeFunctionPromise = generator({
       supabaseUrl,
       serviceRoleKey: supabaseServiceKey,
       payload: {
@@ -106,6 +113,7 @@ export async function POST(request: Request) {
         targetSlots,
         constraints: preferences || {},
       },
+      ...(useV5 ? { extraHeaders: { apikey: supabaseServiceKey } } : {}),
     }).then(async (result) => {
       if (!result.ok) {
         console.error('❌ Edge Function error:', result.errorMessage);

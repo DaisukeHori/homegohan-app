@@ -328,8 +328,8 @@ export function validateGeneratedMeals(params: {
       return otherDate !== slot.date && getDayDistance(slot.date, otherDate) <= 1;
     });
     if (nearbyFamilySlot) {
-      const severity = slot.mealType === "breakfast" ? "soft" : "hard";
-      const code = slot.mealType === "breakfast" ? "weekly_family_overuse" : "adjacent_main_family_duplicate";
+      const severity: ViolationSeverity = "soft";
+      const code: ViolationCode = slot.mealType === "breakfast" ? "weekly_family_overuse" : "adjacent_main_family_duplicate";
       violations.push({
         code,
         severity,
@@ -345,19 +345,30 @@ export function validateGeneratedMeals(params: {
 
     if (slot.mealType === "breakfast" && fingerprint.breakfastTemplate !== "other_breakfast") {
       const breakfastSlots = breakfastTemplateWindow.get(fingerprint.breakfastTemplate) ?? [];
-      const nearbyBreakfast = breakfastSlots.find((otherSlotKey) => {
+      // 隔日チェック: 2日以内に同じテンプレートが2回以上あれば hard（= 3日連続で同じパターン）
+      const nearbyBreakfasts = breakfastSlots.filter((otherSlotKey) => {
         const [otherDate] = otherSlotKey.split(":");
-        return getDayDistance(slot.date, otherDate) <= 1;
+        return getDayDistance(slot.date, otherDate) <= 2;
       });
-      if (nearbyBreakfast) {
+      if (nearbyBreakfasts.length >= 2) {
         violations.push({
           code: "adjacent_breakfast_template_duplicate",
           severity: "hard",
           date: slot.date,
           mealType: slot.mealType,
           slotKey,
-          message: "朝食テンプレートが連日で重複しています。",
-          relatedSlotKeys: [nearbyBreakfast],
+          message: "朝食テンプレートが3日以上連続で重複しています。",
+          relatedSlotKeys: nearbyBreakfasts,
+        });
+      } else if (nearbyBreakfasts.length === 1) {
+        violations.push({
+          code: "adjacent_breakfast_template_duplicate",
+          severity: "soft",
+          date: slot.date,
+          mealType: slot.mealType,
+          slotKey,
+          message: "朝食テンプレートが連日で重複しています（soft警告）。",
+          relatedSlotKeys: nearbyBreakfasts,
         });
       }
       breakfastSlots.push(slotKey);

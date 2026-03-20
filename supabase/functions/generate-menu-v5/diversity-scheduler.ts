@@ -153,7 +153,7 @@ function getTemplateSodiumPenalty(slot: TargetSlotLike, candidate: MenuTemplate,
 function getHeavyFamilyPenalty(slot: TargetSlotLike, candidate: MenuTemplate): number {
   if (slot.mealType !== "lunch" && slot.mealType !== "dinner") return 0;
   if (candidate.mainDishFamily === "curry_main") return slot.mealType === "dinner" ? 220 : 140;
-  if (candidate.mainDishFamily === "gratin_main") return slot.mealType === "dinner" ? 180 : 120;
+  if (candidate.mainDishFamily === "gratin_main") return slot.mealType === "dinner" ? 260 : 180;
   if (candidate.mainDishFamily === "rice_bowl") return 120;
   return 0;
 }

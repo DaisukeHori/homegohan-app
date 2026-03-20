@@ -11,8 +11,8 @@ export const DEFAULT_FEATURE_FLAGS = {
   comparison_feature: true,
   organization_features: true,
   maintenance_mode: false,
-  menu_generation_v5_wrapped: false,
-  menu_generation_v5_direct: false,
+  menu_generation_v5_wrapped: true,
+  menu_generation_v5_direct: true,
 };
 
 export type FeatureFlags = typeof DEFAULT_FEATURE_FLAGS;

@@ -96,7 +96,7 @@ export const MEAL_TYPE_ORDER: Record<MealType, number> = {
 
 export const DEFAULT_STEP1_DAY_BATCH = 6;
 export const DEFAULT_STEP2_FIXES_PER_RUN = 3;
-export const DEFAULT_STEP2_FIXES_PER_WEEK = 2;
+export const DEFAULT_STEP2_FIXES_PER_WEEK = 6;
 export const DEFAULT_STEP2_MAX_FIXES_CAP = 12;
 export const DEFAULT_STEP3_SLOT_BATCH = 15;
 

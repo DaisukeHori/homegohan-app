@@ -1,6 +1,6 @@
 import { fetchWithRetry } from "./network-retry.ts";
 
-export type V4FastLLMProvider = "openai" | "xai";
+export type V4FastLLMProvider = "openai" | "xai" | "openai-mini";
 
 export type V4FastLLMSection =
   | "generateMealWithLLM"
@@ -33,15 +33,16 @@ interface ChatCompletionResponse {
 }
 
 const DEFAULT_OPENAI_MODEL = "gpt-5.2";
+const DEFAULT_OPENAI_MINI_MODEL = "gpt-5.4-mini";
 const DEFAULT_XAI_MODEL = "grok-4-1-fast-non-reasoning";
 
 function resolveProvider(): V4FastLLMProvider {
   const override = globalThis.__HOMEGOHAN_V4_FAST_LLM_OVERRIDE__;
-  if (override?.provider === "openai" || override?.provider === "xai") {
+  if (override?.provider === "openai" || override?.provider === "xai" || override?.provider === "openai-mini") {
     return override.provider;
   }
   const explicit = String(Deno.env.get("V4_FAST_LLM_PROVIDER") ?? "").trim().toLowerCase();
-  if (explicit === "openai" || explicit === "xai") return explicit;
+  if (explicit === "openai" || explicit === "xai" || explicit === "openai-mini") return explicit as V4FastLLMProvider;
   return Deno.env.get("XAI_API_KEY") ? "xai" : "openai";
 }
 
@@ -64,6 +65,20 @@ export function getV4FastLLMConfig(): V4FastLLMConfig {
       model: override?.model ?? (String(Deno.env.get("V4_FAST_LLM_MODEL") ?? "").trim() || DEFAULT_XAI_MODEL),
       apiKey,
       endpoint: "https://api.x.ai/v1/chat/completions",
+    };
+  }
+
+  if (provider === "openai-mini") {
+    const apiKey = String(Deno.env.get("OPENAI_API_KEY") ?? "").trim();
+    if (!apiKey) {
+      throw new Error("Missing OPENAI_API_KEY");
+    }
+
+    return {
+      provider,
+      model: override?.model ?? (String(Deno.env.get("V4_FAST_LLM_MODEL") ?? "").trim() || DEFAULT_OPENAI_MINI_MODEL),
+      apiKey,
+      endpoint: "https://api.openai.com/v1/chat/completions",
     };
   }
 
@@ -97,10 +112,12 @@ export async function callV4FastLLM(input: {
   const body: Record<string, unknown> = {
     model: config.model,
     messages,
-    max_completion_tokens: input.maxCompletionTokens ?? 8000,
+    ...(input.maxCompletionTokens ? { max_completion_tokens: input.maxCompletionTokens } : {}),
   };
 
   if (config.provider === "openai") {
+    body.reasoning_effort = "low";
+  } else if (config.provider === "openai-mini") {
     body.reasoning_effort = "low";
   }
 

@@ -10,6 +10,7 @@ const PARTIAL_REPORT_FILE = REPORT_FILE
   : null;
 const SEED_FILE = process.env.BENCHMARK_SEED_FILE || null;
 const GENERATE_MENU_ENGINE = (process.env.GENERATE_MENU_ENGINE || 'v4').trim().toLowerCase() === 'v5' ? 'v5' : 'v4';
+const ULTIMATE_MODE = String(process.env.BENCHMARK_ULTIMATE_MODE || '').trim().toLowerCase() === 'true';
 const SCENARIO_FILTER = String(process.env.BENCHMARK_SCENARIOS || '')
   .split(',')
   .map((value) => value.trim())
@@ -23,20 +24,22 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+const SUCCESS_TARGET_OVERRIDE = Number(process.env.BENCHMARK_SUCCESS_TARGET) || 0;
+
 const SCENARIOS = [
   {
     key: 'one_day',
     label: '1日生成',
-    successTarget: 20,
-    maxAttempts: 40,
+    successTarget: SUCCESS_TARGET_OVERRIDE || 20,
+    maxAttempts: (SUCCESS_TARGET_OVERRIDE || 20) * 2,
     pollTimeoutMs: 20 * 60 * 1000,
     targetSlots: buildTargetSlots('2026-04-01', 1, ['breakfast', 'lunch', 'dinner']),
   },
   {
     key: 'one_week',
     label: '1週間生成',
-    successTarget: 20,
-    maxAttempts: 40,
+    successTarget: SUCCESS_TARGET_OVERRIDE || 20,
+    maxAttempts: (SUCCESS_TARGET_OVERRIDE || 20) * 2,
     pollTimeoutMs: 30 * 60 * 1000,
     targetSlots: buildTargetSlots('2026-04-01', 7, ['breakfast', 'lunch', 'dinner']),
   },
@@ -183,6 +186,9 @@ function normalizeSeedRun(run) {
     step1_wall_ms: run?.step1_wall_ms ?? null,
     step2_wall_ms: run?.step2_wall_ms ?? null,
     step3_wall_ms: run?.step3_wall_ms ?? null,
+    step4_wall_ms: run?.step4_wall_ms ?? null,
+    step5_wall_ms: run?.step5_wall_ms ?? null,
+    step6_wall_ms: run?.step6_wall_ms ?? null,
     planned_meal_count: Number(run?.planned_meal_count || 0),
     slot_count: Number(run?.slot_count || 0),
     fixes_detected: Number(run?.fixes_detected || 0),
@@ -407,10 +413,17 @@ async function cleanupRun({ requestId, userId }) {
 function getStepTransitionTimes(createdAt, transitions, finalUpdatedAt) {
   const step2At = transitions[2] ?? null;
   const step3At = transitions[3] ?? null;
+  const step4At = transitions[4] ?? null;
+  const step5At = transitions[5] ?? null;
+  const step6At = transitions[6] ?? null;
+  const lastStepAt = step6At ?? step5At ?? step4At ?? step3At;
   return {
     step1_wall_ms: step2At ? msBetween(createdAt, step2At) : null,
     step2_wall_ms: step2At && step3At ? msBetween(step2At, step3At) : null,
-    step3_wall_ms: step3At ? msBetween(step3At, finalUpdatedAt) : null,
+    step3_wall_ms: step3At ? msBetween(step3At, step4At ?? finalUpdatedAt) : null,
+    step4_wall_ms: step4At ? msBetween(step4At, step5At ?? finalUpdatedAt) : null,
+    step5_wall_ms: step5At ? msBetween(step5At, step6At ?? finalUpdatedAt) : null,
+    step6_wall_ms: step6At ? msBetween(step6At, finalUpdatedAt) : null,
   };
 }
 
@@ -520,6 +533,9 @@ async function collectRunResult({ scenario, attempt, userId, requestId, finalRow
     step1_wall_ms: stepTimes.step1_wall_ms,
     step2_wall_ms: stepTimes.step2_wall_ms,
     step3_wall_ms: stepTimes.step3_wall_ms,
+    step4_wall_ms: stepTimes.step4_wall_ms,
+    step5_wall_ms: stepTimes.step5_wall_ms,
+    step6_wall_ms: stepTimes.step6_wall_ms,
     planned_meal_count: plannedMeals.length,
     slot_count: scenario.targetSlots.length,
     fixes_detected: Array.isArray(generatedData.step2?.issuesToFix) ? generatedData.step2.issuesToFix.length : 0,
@@ -577,7 +593,7 @@ async function runScenarioAttempt(scenario, attempt) {
         constraints: {},
         note: `Codex benchmark ${scenario.key} attempt ${attempt}`,
         familySize: 1,
-        ultimateMode: false,
+        ultimateMode: ULTIMATE_MODE,
       }),
     });
 
@@ -638,6 +654,9 @@ function summarizeScenario(results) {
     step1_wall_ms: summarizeNumeric(successful.map((result) => result.step1_wall_ms)),
     step2_wall_ms: summarizeNumeric(successful.map((result) => result.step2_wall_ms)),
     step3_wall_ms: summarizeNumeric(successful.map((result) => result.step3_wall_ms)),
+    step4_wall_ms: summarizeNumeric(successful.map((result) => result.step4_wall_ms)),
+    step5_wall_ms: summarizeNumeric(successful.map((result) => result.step5_wall_ms)),
+    step6_wall_ms: summarizeNumeric(successful.map((result) => result.step6_wall_ms)),
     planned_meal_count: summarizeNumeric(successful.map((result) => result.planned_meal_count)),
     fixes_detected: summarizeNumeric(successful.map((result) => result.fixes_detected)),
     fixes_applied: summarizeNumeric(successful.map((result) => result.fixes_applied)),
@@ -688,86 +707,159 @@ function summarizeScenario(results) {
   return summary;
 }
 
+const BENCHMARK_CONCURRENCY = Number(process.env.BENCHMARK_CONCURRENCY) || 1;
+const BENCHMARK_STAGGER_MS = Number(process.env.BENCHMARK_STAGGER_MS) || 30000;
+
+function makeFailedResult(scenario, attempt, error) {
+  return {
+    engine: GENERATE_MENU_ENGINE,
+    scenario: scenario.key,
+    attempt,
+    success: false,
+    status: 'failed',
+    currentStep: null,
+    total_duration_ms: null,
+    progress_message: null,
+    error_message: error.message || String(error),
+    step1_wall_ms: null,
+    step2_wall_ms: null,
+    step3_wall_ms: null,
+    step4_wall_ms: null,
+    step5_wall_ms: null,
+    step6_wall_ms: null,
+    planned_meal_count: 0,
+    slot_count: scenario.targetSlots.length,
+    fixes_detected: 0,
+    fixes_applied: 0,
+    content: {
+      warningCount: 0,
+      warningCodeCounts: {},
+      warnings: [],
+      dayTotals: [],
+      preview: [],
+    },
+    usage: {},
+    debug: {
+      total_ms: 0,
+      slot_count: 0,
+      daily_meal_upsert_ms: 0,
+      dish_processing_total_ms: 0,
+      planned_meal_lookup_ms: 0,
+      planned_meal_write_ms: 0,
+      nutrition_debug_insert_ms: 0,
+    },
+  };
+}
+
+function logRunResult(scenario, attempt, result, runStartedAt) {
+  if (result.success) {
+    console.log('[run-result]', JSON.stringify({
+      scenario: scenario.key,
+      attempt,
+      success: result.success,
+      status: result.status,
+      current_step: result.currentStep,
+      progress_message: result.progress_message,
+      error_message: result.error_message,
+      total_duration_ms: result.total_duration_ms,
+      step1_wall_ms: result.step1_wall_ms,
+      step2_wall_ms: result.step2_wall_ms,
+      step3_wall_ms: result.step3_wall_ms,
+      step4_wall_ms: result.step4_wall_ms,
+      step5_wall_ms: result.step5_wall_ms,
+      step6_wall_ms: result.step6_wall_ms,
+      planned_meal_count: result.planned_meal_count,
+      fixes_detected: result.fixes_detected,
+      fixes_applied: result.fixes_applied,
+      content_warning_count: result.content.warningCount,
+      content_warning_codes: Object.keys(result.content.warningCodeCounts),
+      content_preview: result.content.preview,
+      elapsed_wall_ms: Date.now() - runStartedAt,
+    }));
+  } else {
+    console.log('[run-result]', JSON.stringify({
+      scenario: scenario.key,
+      attempt,
+      success: false,
+      status: 'failed',
+      error: result.error_message,
+    }));
+  }
+}
+
 async function benchmarkScenario(scenario, seededRuns = [], onProgress = async () => {}) {
   const results = [...seededRuns];
-  let attempt = results.reduce((maxAttempt, result) => Math.max(maxAttempt, Number(result?.attempt || 0)), 0);
+  let nextAttempt = results.reduce((maxAttempt, result) => Math.max(maxAttempt, Number(result?.attempt || 0)), 0) + 1;
   const seededSuccesses = results.filter((result) => result.success).length;
-  console.log(`[scenario-start] ${scenario.key} target=${scenario.successTarget} seeded_runs=${results.length} seeded_successes=${seededSuccesses}`);
+  const concurrency = BENCHMARK_CONCURRENCY;
+  const staggerMs = BENCHMARK_STAGGER_MS;
+  console.log(`[scenario-start] ${scenario.key} target=${scenario.successTarget} seeded_runs=${results.length} seeded_successes=${seededSuccesses} concurrency=${concurrency} stagger=${staggerMs}ms`);
 
-  while (results.filter((result) => result.success).length < scenario.successTarget && attempt < scenario.maxAttempts) {
-    attempt += 1;
-    const runStartedAt = Date.now();
-    try {
-      const result = await runScenarioAttempt(scenario, attempt);
-      results.push(result);
-      console.log('[run-result]', JSON.stringify({
-        scenario: scenario.key,
-        attempt,
-        success: result.success,
-        status: result.status,
-        current_step: result.currentStep,
-        progress_message: result.progress_message,
-        error_message: result.error_message,
-        total_duration_ms: result.total_duration_ms,
-        step1_wall_ms: result.step1_wall_ms,
-        step2_wall_ms: result.step2_wall_ms,
-        step3_wall_ms: result.step3_wall_ms,
-        planned_meal_count: result.planned_meal_count,
-        fixes_detected: result.fixes_detected,
-        fixes_applied: result.fixes_applied,
-        content_warning_count: result.content.warningCount,
-        content_warning_codes: Object.keys(result.content.warningCodeCounts),
-        content_preview: result.content.preview,
-        elapsed_wall_ms: Date.now() - runStartedAt,
-      }));
+  if (concurrency <= 1) {
+    // 直列モード（従来通り）
+    while (results.filter((r) => r.success).length < scenario.successTarget && nextAttempt <= scenario.maxAttempts) {
+      const attempt = nextAttempt++;
+      const runStartedAt = Date.now();
+      try {
+        const result = await runScenarioAttempt(scenario, attempt);
+        results.push(result);
+        logRunResult(scenario, attempt, result, runStartedAt);
+      } catch (error) {
+        const failedResult = makeFailedResult(scenario, attempt, error);
+        results.push(failedResult);
+        logRunResult(scenario, attempt, failedResult, runStartedAt);
+      }
       await onProgress(results);
-    } catch (error) {
-      results.push({
-        engine: GENERATE_MENU_ENGINE,
-        scenario: scenario.key,
-        attempt,
-        success: false,
-        status: 'failed',
-        currentStep: null,
-        total_duration_ms: null,
-        progress_message: null,
-        error_message: error.message || String(error),
-        step1_wall_ms: null,
-        step2_wall_ms: null,
-        step3_wall_ms: null,
-        planned_meal_count: 0,
-        slot_count: scenario.targetSlots.length,
-        fixes_detected: 0,
-        fixes_applied: 0,
-        content: {
-          warningCount: 0,
-          warningCodeCounts: {},
-          warnings: [],
-          dayTotals: [],
-          preview: [],
-        },
-        usage: {},
-        debug: {
-          total_ms: 0,
-          slot_count: 0,
-          daily_meal_upsert_ms: 0,
-          dish_processing_total_ms: 0,
-          planned_meal_lookup_ms: 0,
-          planned_meal_write_ms: 0,
-          nutrition_debug_insert_ms: 0,
-        },
-      });
-      console.log('[run-result]', JSON.stringify({
-        scenario: scenario.key,
-        attempt,
-        success: false,
-        status: 'failed',
-        error: error.message || String(error),
-      }));
+      await sleep(2000);
+    }
+  } else {
+    // スタッガード並列モード
+    const inFlight = new Map(); // attempt -> Promise
+    while (results.filter((r) => r.success).length < scenario.successTarget && nextAttempt <= scenario.maxAttempts) {
+      // 空きスロットがあれば新しい run を投入（stagger 間隔で）
+      while (inFlight.size < concurrency && nextAttempt <= scenario.maxAttempts
+        && results.filter((r) => r.success).length + inFlight.size > 0 // at least one started
+        && results.filter((r) => r.success).length < scenario.successTarget) {
+        const attempt = nextAttempt++;
+        const runStartedAt = Date.now();
+        console.log(`[stagger] launching attempt ${attempt} (in-flight: ${inFlight.size})`);
+        const promise = runScenarioAttempt(scenario, attempt)
+          .then((result) => ({ attempt, result, runStartedAt }))
+          .catch((error) => ({ attempt, result: makeFailedResult(scenario, attempt, error), runStartedAt }));
+        inFlight.set(attempt, promise);
+        if (inFlight.size < concurrency && nextAttempt <= scenario.maxAttempts) {
+          await sleep(staggerMs);
+        }
+      }
+      // 最初の run を投入（空の場合）
+      if (inFlight.size === 0 && nextAttempt <= scenario.maxAttempts) {
+        const attempt = nextAttempt++;
+        const runStartedAt = Date.now();
+        console.log(`[stagger] launching attempt ${attempt} (first)`);
+        const promise = runScenarioAttempt(scenario, attempt)
+          .then((result) => ({ attempt, result, runStartedAt }))
+          .catch((error) => ({ attempt, result: makeFailedResult(scenario, attempt, error), runStartedAt }));
+        inFlight.set(attempt, promise);
+      }
+
+      // いずれかの完了を待つ
+      const settled = await Promise.race([...inFlight.values()]);
+      inFlight.delete(settled.attempt);
+      results.push(settled.result);
+      logRunResult(scenario, settled.attempt, settled.result, settled.runStartedAt);
       await onProgress(results);
     }
 
-    await sleep(2000);
+    // 残りの in-flight を待つ
+    if (inFlight.size > 0) {
+      console.log(`[stagger] waiting for ${inFlight.size} remaining in-flight runs...`);
+      const remaining = await Promise.all([...inFlight.values()]);
+      for (const settled of remaining) {
+        results.push(settled.result);
+        logRunResult(scenario, settled.attempt, settled.result, settled.runStartedAt);
+        await onProgress(results);
+      }
+    }
   }
 
   const summary = summarizeScenario(results);

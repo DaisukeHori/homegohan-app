@@ -24,6 +24,17 @@ import {
   regenerateMealForIssue_V5,
 } from "../_shared/meal-generator-v5.ts";
 import { generateExecutionId, withOpenAIUsageContext } from "../_shared/llm-usage.ts";
+import { setV4FastLLMOverride } from "../_shared/v4-fast-llm.ts";
+import {
+  emptyNutrition,
+  type NutritionTotals,
+} from "../_shared/nutrition-calculator.ts";
+import {
+  generateNutritionFeedback,
+  aggregateDayNutrition,
+  buildWeekDataFromMeals,
+  type NutritionFeedbackResult,
+} from "../_shared/nutrition-feedback.ts";
 import {
   fetchWithRetry,
   isRetryableError,
@@ -45,15 +56,28 @@ import { selectRecentMenusForVariety } from "../generate-menu-v4/context-utils.t
 import {
   DEFAULT_STEP1_DAY_BATCH,
   DEFAULT_STEP2_FIXES_PER_RUN,
+  DEFAULT_STEP3_SLOT_BATCH,
+  DEFAULT_STEP4_DAY_BATCH,
+  DEFAULT_STEP5_DAY_BATCH,
+  DEFAULT_STEP6_SLOT_BATCH,
   computeMaxFixesForRange,
   countGeneratedTargetSlots,
   getSlotKey,
   normalizeTargetSlots,
   sortTargetSlots,
+  summarizeSaveResults,
   uniqDatesFromSlots,
   type PostNutritionIssue,
+  type SaveIssue,
   type TargetSlot,
 } from "../generate-menu-v4/step-utils.ts";
+import {
+  saveMealToDb,
+  ensureDailyMealIdsForDates,
+  deserializeIngredientMatchCache,
+  serializeIngredientMatchCache,
+  type PersistedIngredientMatchCache,
+} from "../_shared/save-meal.ts";
 import {
   buildTemplateCatalog,
   type DatasetMenuSetRaw,
@@ -86,6 +110,9 @@ const corsHeaders = {
 const DEFAULT_V5_INVOCATION_SOFT_BUDGET_MS = Number(Deno.env.get("V5_INVOCATION_SOFT_BUDGET_MS") ?? 18000);
 const STEP1_WAVE_RESERVE_MS = 9000;
 const STEP2_FIX_RESERVE_MS = 7000;
+const STEP4_DAY_RESERVE_MS = 5000;
+const STEP5_DAY_RESERVE_MS = 9000;
+const STEP6_SLOT_RESERVE_MS = 9000;
 
 type ExistingMenuContext = {
   date: string;
@@ -160,6 +187,36 @@ type V5GeneratedData = {
     fixesPerRun?: number;
     maxFixes?: number;
     hardAttemptCounts?: Record<string, number>;
+  };
+  step3?: {
+    cursor?: number;
+    batchSize?: number;
+    savedCount?: number;
+    errors?: SaveIssue[];
+    skipped?: SaveIssue[];
+    ingredientMatchCache?: PersistedIngredientMatchCache;
+    postNutritionIssues?: PostNutritionIssue[];
+    postNutritionFixAttempts?: number;
+  };
+  // Ultimate Mode steps
+  step4?: {
+    cursor?: number;
+    batchSize?: number;
+    feedbackByDate?: Record<string, NutritionFeedbackResult & { issuesFound: string[] }>;
+    daysNeedingImprovement?: string[];
+  };
+  step5?: {
+    cursor?: number;
+    batchSize?: number;
+    regeneratedDates?: string[];
+  };
+  step6?: {
+    cursor?: number;
+    savedCount?: number;
+    batchSize?: number;
+    errors?: SaveIssue[];
+    skipped?: SaveIssue[];
+    ingredientMatchCache?: PersistedIngredientMatchCache;
   };
   v5?: {
     slotPlans?: Record<string, SlotPlan>;
@@ -296,30 +353,438 @@ async function triggerNextV5Step(
   });
 }
 
-async function handoffToV4(
+/** V5 Step3 前に既存の planned_meals をクリアする（同一 request の再保存を妨げないため） */
+async function clearExistingPlannedMeals(supabase: any, userId: string, targetSlots: TargetSlot[]) {
+  const dates = [...new Set(targetSlots.map((s) => s.date))];
+  if (dates.length === 0) return;
+  const dailyMealsRes = await supabase
+    .from("user_daily_meals")
+    .select("id")
+    .eq("user_id", userId)
+    .in("day_date", dates);
+  if (dailyMealsRes.error) {
+    console.warn("clearExistingPlannedMeals: failed to load daily meals:", dailyMealsRes.error.message);
+    return;
+  }
+  const dailyMealIds = (dailyMealsRes.data || []).map((row: any) => row.id);
+  if (dailyMealIds.length === 0) return;
+  const delRes = await supabase.from("planned_meals").delete().in("daily_meal_id", dailyMealIds);
+  if (delRes.error) {
+    console.warn("clearExistingPlannedMeals: failed to delete planned_meals:", delRes.error.message);
+  } else {
+    console.log(`🧹 Cleared existing planned_meals for ${dailyMealIds.length} daily_meal records before save`);
+  }
+}
+
+function shouldEmitProgressUpdate(processedCount: number, totalCount: number, interval = 5): boolean {
+  if (totalCount <= 0) return true;
+  return processedCount === 1 || processedCount === totalCount || processedCount % interval === 0;
+}
+
+// =========================================================
+// V5 Step 3: 栄養計算 + DB保存（V4 HTTP呼び出しを排除して直接実行）
+// =========================================================
+
+async function executeStep3_Save(
+  supabase: any,
   supabaseUrl: string,
   supabaseServiceKey: string,
-  requestId: string,
   userId: string,
+  requestId: string,
+  invocationContext: V5InvocationContext,
 ) {
-  const url = `${supabaseUrl}/functions/v1/generate-menu-v4`;
-  await fetchWithRetry(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${supabaseServiceKey}`,
-      "apikey": supabaseServiceKey,
+  console.log("💾 V5 Step 3: Nutrition & saving (direct)...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const ultimateMode = generatedData.ultimateMode ?? false;
+  const totalSteps = ultimateMode ? 6 : 3;
+
+  const targetSlots = sortTargetSlots(generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []));
+  const totalSlots = targetSlots.length;
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+
+  const step3 = generatedData.step3 ?? {};
+  const BATCH = Number(step3.batchSize ?? DEFAULT_STEP3_SLOT_BATCH);
+  const cursor = Number(step3.cursor ?? 0);
+  const savedCountStart = Number(step3.savedCount ?? 0);
+  const errors: SaveIssue[] = Array.isArray(step3.errors) ? step3.errors : [];
+  const skipped: SaveIssue[] = Array.isArray(step3.skipped) ? step3.skipped : [];
+  const ingredientMatchMemo = deserializeIngredientMatchCache(step3.ingredientMatchCache);
+  const targetSlotsForRun = targetSlots.slice(cursor, Math.min(cursor + BATCH, totalSlots));
+  const dailyMealIdByDate = await ensureDailyMealIdsForDates(
+    supabase,
+    userId,
+    targetSlotsForRun.map((slot) => slot.date),
+  );
+  let savedCount = savedCountStart;
+  const postNutritionIssues: PostNutritionIssue[] = Array.isArray(step3.postNutritionIssues) ? [...step3.postNutritionIssues] : [];
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 3, totalSteps, message: `保存中...（${cursor}/${totalSlots}）`, completedSlots: cursor, totalSlots },
+    3,
+  );
+
+  const STEP3_CONCURRENCY = 5;
+  const STEP3_SLOT_RESERVE_MS = 9000;
+  let newCursor = cursor;
+  const batchEnd = Math.min(cursor + BATCH, totalSlots);
+
+  while (newCursor < batchEnd) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP3_SLOT_RESERVE_MS)) {
+      break;
+    }
+
+    const batchSlots: Array<{ index: number; slot: TargetSlot; key: string; meal: GeneratedMeal | null }> = [];
+    for (let b = 0; b < STEP3_CONCURRENCY && newCursor + b < batchEnd; b++) {
+      const idx = newCursor + b;
+      const slot = targetSlots[idx];
+      const key = getSlotKey(slot.date, slot.mealType);
+      const meal = generatedMeals[key] ?? null;
+      batchSlots.push({ index: idx, slot, key, meal });
+    }
+
+    const batchResults = await Promise.all(batchSlots.map(async ({ index, slot, key, meal }) => {
+      if (!meal) {
+        return { index, key, type: "no_meal" as const };
+      }
+      try {
+        if (ultimateMode) {
+          return { index, key, type: "ultimate_skip" as const };
+        }
+        const saveResult = await saveMealToDb(supabase, {
+          userId,
+          requestId,
+          targetSlot: slot,
+          generatedMeal: meal,
+          dailyMealIdByDate,
+          ingredientMatchMemo,
+          sourceFunction: "generate-menu-v5",
+        });
+        return { index, key, type: "saved" as const, saveResult };
+      } catch (e: any) {
+        return { index, key, type: "error" as const, error: e?.message ?? String(e) };
+      }
+    }));
+
+    for (const result of batchResults) {
+      if (result.type === "no_meal") {
+        errors.push({ key: result.key, error: "No generated meal" });
+      } else if (result.type === "error") {
+        errors.push({ key: result.key, error: result.error });
+      } else if (result.type === "saved" && result.saveResult) {
+        if (result.saveResult.outcome === "skipped_existing") {
+          skipped.push({ key: result.key, error: result.saveResult.reason ?? "既存献立を保護したため未保存" });
+        } else {
+          savedCount++;
+          if (result.saveResult.qualityIssues?.length) {
+            postNutritionIssues.push(...result.saveResult.qualityIssues);
+          }
+        }
+      }
+    }
+
+    newCursor += batchSlots.length;
+
+    if (shouldEmitProgressUpdate(newCursor, totalSlots)) {
+      await updateProgress(
+        supabase,
+        requestId,
+        { currentStep: 3, totalSteps, message: `保存中...（${newCursor}/${totalSlots}）`, completedSlots: newCursor, totalSlots },
+        3,
+      );
+    }
+  }
+
+  const updatedGeneratedData: V5GeneratedData = {
+    ...generatedData,
+    step3: {
+      cursor: newCursor,
+      batchSize: BATCH,
+      savedCount,
+      errors: errors.slice(-200),
+      skipped: skipped.slice(-200),
+      ingredientMatchCache: serializeIngredientMatchCache(ingredientMatchMemo),
+      postNutritionIssues: postNutritionIssues.slice(-100),
+      postNutritionFixAttempts: Number(step3.postNutritionFixAttempts ?? 0),
     },
-    body: JSON.stringify({
-      request_id: requestId,
-      userId,
-      _continue: true,
-    }),
-  }, {
-    label: `handoffToV4:${requestId}`,
-    retries: 2,
-    timeoutMs: 10000,
+  };
+
+  // Continue if more slots remain
+  if (newCursor < totalSlots) {
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 3,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.v5_step3_continue:${requestId}`,
+      null,
+      10000,
+      1,
+    );
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 3, totalSteps, message: `保存中...（${newCursor}/${totalSlots}）`, completedSlots: newCursor, totalSlots },
+      3,
+    );
+
+    await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Post-nutrition fix: 保存後の実栄養に外れ値がある場合、V5 Step2 へ差し戻す
+  const MAX_POST_NUTRITION_FIX_ATTEMPTS = 2;
+  const postFixAttempts = Number(updatedGeneratedData.step3?.postNutritionFixAttempts ?? 0);
+
+  if (postNutritionIssues.length > 0 && postFixAttempts < MAX_POST_NUTRITION_FIX_ATTEMPTS) {
+    console.log(`🔄 V5 post-nutrition fix: ${postNutritionIssues.length} issues found (attempt ${postFixAttempts + 1}/${MAX_POST_NUTRITION_FIX_ATTEMPTS})`);
+
+    const issueKeys = new Set(postNutritionIssues.map((i) => i.key));
+    const slotsToRegenerate: TargetSlot[] = [];
+
+    for (const slot of targetSlots) {
+      const key = getSlotKey(slot.date, slot.mealType);
+      if (!issueKeys.has(key)) continue;
+
+      const dailyMealId = dailyMealIdByDate.get(slot.date);
+      if (dailyMealId) {
+        await runSupabaseQuery(
+          () => supabase
+            .from("planned_meals")
+            .delete()
+            .eq("daily_meal_id", dailyMealId)
+            .eq("meal_type", slot.mealType),
+          `planned_meals.delete_for_refix:${key}`,
+          null,
+          10000,
+          1,
+        ).catch((e: any) => console.warn(`Failed to delete planned_meal for ${key}:`, e?.message));
+      }
+
+      delete (updatedGeneratedData.generatedMeals as any)?.[key];
+      slotsToRegenerate.push(slot);
+    }
+
+    updatedGeneratedData.step3 = {
+      ...updatedGeneratedData.step3,
+      postNutritionFixAttempts: postFixAttempts + 1,
+      postNutritionIssues: postNutritionIssues.slice(-100),
+      cursor: 0,
+      savedCount: 0,
+      errors: [],
+      skipped: [],
+    };
+
+    updatedGeneratedData.v5 = {
+      ...(updatedGeneratedData.v5 ?? {}),
+      postNutritionIssues,
+      slotsToRegenerate: slotsToRegenerate.map((s) => ({ date: s.date, mealType: s.mealType })),
+    };
+
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 2,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.v5_step3_back_to_step2:${requestId}`,
+      null,
+      10000,
+      1,
+    );
+
+    await updateProgress(
+      supabase,
+      requestId,
+      {
+        currentStep: 2,
+        totalSteps,
+        message: `栄養外れ値 ${postNutritionIssues.length} 件を再修正中...`,
+        completedSlots: totalSlots - slotsToRegenerate.length,
+        totalSlots,
+      },
+      2,
+    );
+
+    await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Ultimate Mode: Step 4へ進む
+  if (ultimateMode) {
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({
+          generated_data: updatedGeneratedData,
+          current_step: 4,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", requestId),
+      `weekly_menu_requests.v5_step3_to_step4:${requestId}`,
+      null,
+      10000,
+      1,
+    );
+
+    await updateProgress(
+      supabase,
+      requestId,
+      { currentStep: 4, totalSteps: 6, message: "栄養バランスを分析中...", completedSlots: 0, totalSlots },
+      4,
+    );
+
+    await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Done (通常モード)
+  const finalSummary = summarizeSaveResults({
+    totalSlots,
+    savedCount,
+    skipped,
+    errors,
+    successMessage: `全${totalSlots}件の献立が完成しました！`,
   });
+
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        status: finalSummary.status,
+        generated_data: updatedGeneratedData,
+        current_step: 3,
+        progress: {
+          currentStep: 3,
+          totalSteps,
+          message: finalSummary.message,
+          completedSlots: totalSlots,
+          totalSlots,
+        },
+        error_message: finalSummary.errorMessage,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.v5_step3_final:${requestId}`,
+    null,
+    10000,
+    1,
+  );
+}
+
+// =========================================================
+// Resolve recipe from dataset_recipes DB
+// (AIアドバイザーがsearch_recipesで見つけたレシピを直接使用)
+// =========================================================
+
+interface ResolvedRecipeResult {
+  meal: GeneratedMeal;
+  nutrition: NutritionTotals;
+  source: { type: "dataset_recipe"; id: string; externalId: string };
+}
+
+async function resolveRecipeFromDB(
+  supabase: any,
+  constraints: { recipeId?: string; recipeExternalId?: string },
+  mealType: MealType,
+): Promise<ResolvedRecipeResult | null> {
+  if (!constraints.recipeId && !constraints.recipeExternalId) return null;
+
+  try {
+    let query = supabase.from("dataset_recipes").select("*");
+    if (constraints.recipeId) {
+      query = query.eq("id", constraints.recipeId);
+    } else {
+      query = query.eq("external_id", constraints.recipeExternalId);
+    }
+
+    const data = await runSupabaseQuery<any | null>(
+      () => query.single(),
+      `dataset_recipes.resolve:${constraints.recipeId ?? constraints.recipeExternalId}`,
+      null,
+    );
+    if (!data) {
+      console.warn(`Recipe not found: ${constraints.recipeId ?? constraints.recipeExternalId}`);
+      return null;
+    }
+
+    console.log(`📖 Resolved recipe from DB: ${data.name} (${data.id})`);
+
+    const ingredients: Array<{ name: string; amount_g: number; note?: string }> = [];
+    if (data.ingredients_text) {
+      const lines = data.ingredients_text.split("\n").filter((l: string) => l.trim());
+      for (const line of lines) {
+        const trimmed = line.trim();
+        const match = trimmed.match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*g$/);
+        if (match) {
+          ingredients.push({ name: match[1].trim(), amount_g: parseFloat(match[2]) });
+        } else {
+          ingredients.push({ name: trimmed, amount_g: 0 });
+        }
+      }
+    }
+
+    const instructions: string[] = data.instructions_text
+      ? data.instructions_text.split("\n").filter((l: string) => l.trim()).map((l: string) => l.trim())
+      : [];
+
+    const meal: GeneratedMeal = {
+      mealType,
+      dishes: [
+        {
+          name: data.name,
+          role: "main",
+          ingredients,
+          instructions,
+        },
+      ],
+      advice: `レシピDB「${data.name}」より。`,
+    };
+
+    const nutrition: NutritionTotals = {
+      ...emptyNutrition(),
+      calories_kcal: data.calories_kcal ?? 0,
+      protein_g: data.protein_g ?? 0,
+      fat_g: data.fat_g ?? 0,
+      carbs_g: data.carbs_g ?? 0,
+      fiber_g: data.fiber_g ?? 0,
+      sodium_g: data.sodium_g ?? 0,
+      potassium_mg: data.potassium_mg ?? 0,
+      calcium_mg: data.calcium_mg ?? 0,
+      magnesium_mg: data.magnesium_mg ?? 0,
+      iron_mg: data.iron_mg ?? 0,
+      zinc_mg: data.zinc_mg ?? 0,
+      vitamin_a_ug: data.vitamin_a_ug ?? 0,
+      vitamin_b1_mg: data.vitamin_b1_mg ?? 0,
+      vitamin_b2_mg: data.vitamin_b2_mg ?? 0,
+      vitamin_c_mg: data.vitamin_c_mg ?? 0,
+      vitamin_d_ug: data.vitamin_d_ug ?? 0,
+    };
+
+    return {
+      meal,
+      nutrition,
+      source: {
+        type: "dataset_recipe",
+        id: data.id,
+        externalId: data.external_id ?? "",
+      },
+    };
+  } catch (e) {
+    console.error("Failed to resolve recipe from DB:", e);
+    return null;
+  }
 }
 
 async function embedText(text: string, dimensions = DATASET_EMBEDDING_DIMENSIONS): Promise<number[]> {
@@ -374,41 +839,47 @@ function dedupeTemplatesByContent(templates: MenuTemplate[]): MenuTemplate[] {
   return deduped;
 }
 
+// 季節イベント名と対応する月のマッピング
+const SEASONAL_EVENT_KEYWORDS: Array<{ keywords: string[]; months: number[] }> = [
+  { keywords: ["クリスマス", "Christmas"], months: [12] },
+  { keywords: ["お正月", "おせち", "お雑煮", "正月"], months: [1] },
+  { keywords: ["バレンタイン"], months: [2] },
+  { keywords: ["ひな祭り", "ひなまつり"], months: [3] },
+  { keywords: ["七夕"], months: [7] },
+  { keywords: ["ハロウィン", "Halloween"], months: [10] },
+  { keywords: ["恵方巻", "節分"], months: [2] },
+  { keywords: ["お花見", "花見"], months: [3, 4] },
+  { keywords: ["七草"], months: [1] },
+  { keywords: ["土用の丑", "うなぎ"], months: [7, 8] },
+];
+
+function isSeasonallyAppropriate(template: MenuTemplate, month: number): boolean {
+  const text = [template.title, template.mainDishName, ...(template.themeTags ?? [])].join(" ");
+  for (const event of SEASONAL_EVENT_KEYWORDS) {
+    if (event.keywords.some((kw) => text.includes(kw))) {
+      if (!event.months.includes(month)) return false;
+    }
+  }
+  return true;
+}
+
 function selectTemplatesForTargetSlots(templates: MenuTemplate[], targetSlots: TargetSlot[]): MenuTemplate[] {
-  const requestedTypes = new Set(targetSlots.map((slot) => slot.mealType));
+  const requestedTypes = new Set<string>(targetSlots.map((slot) => slot.mealType));
   const selected: MenuTemplate[] = [];
   const usedIds = new Set<string>();
 
-  const addTemplates = (candidates: MenuTemplate[], limit: number) => {
-    for (const candidate of candidates) {
-      if (selected.length >= 48 || limit <= 0) break;
-      if (usedIds.has(candidate.id)) continue;
-      usedIds.add(candidate.id);
-      selected.push(candidate);
-      limit--;
+  for (const template of templates) {
+    if (usedIds.has(template.id)) continue;
+    const mt = String(template.mealType);
+    const isBreakfastRelated = requestedTypes.has("breakfast") &&
+      template.breakfastTemplate != null &&
+      template.breakfastTemplate !== "other_breakfast";
+    if (requestedTypes.has(mt) || isBreakfastRelated) {
+      usedIds.add(template.id);
+      selected.push(template);
     }
-  };
-
-  if (requestedTypes.has("breakfast")) {
-    addTemplates(
-      templates.filter((template) => template.breakfastTemplate !== "other_breakfast" || template.mealType === "breakfast"),
-      12,
-    );
-  }
-  if (requestedTypes.has("lunch")) {
-    addTemplates(templates.filter((template) => template.mealType === "lunch"), 12);
-  }
-  if (requestedTypes.has("dinner")) {
-    addTemplates(templates.filter((template) => template.mealType === "dinner"), 12);
-  }
-  if (requestedTypes.has("snack")) {
-    addTemplates(templates.filter((template) => template.mealType === "snack"), 6);
-  }
-  if (requestedTypes.has("midnight_snack")) {
-    addTemplates(templates.filter((template) => template.mealType === "midnight_snack"), 4);
   }
 
-  addTemplates(templates, Math.max(0, 36 - selected.length));
   return selected;
 }
 
@@ -417,6 +888,7 @@ async function searchMenuCandidates(
   queryText: string,
   matchCount: number,
   targetSlots: TargetSlot[],
+  month?: number,
 ): Promise<{
   references: MenuReference[];
   templates: MenuTemplate[];
@@ -446,28 +918,28 @@ async function searchMenuCandidates(
       return { references: [], templates: [] };
     }
 
-    const emb = await embedText(queryText, DATASET_EMBEDDING_DIMENSIONS);
-    const expandedMatchCount = Math.min(Math.max(matchCount * 4, 20), 60);
     const requestedMealTypes = [...new Set(
       targetSlots
         .map((slot) => slot.mealType)
         .filter((mealType): mealType is MealType => mealType === "breakfast" || mealType === "lunch" || mealType === "dinner"),
     )];
-    const focusedMatchCount = Math.min(20, Math.max(8, Math.ceil(matchCount / Math.max(requestedMealTypes.length, 1))));
+    const perTypeCount = Math.max(8, Math.ceil(matchCount / Math.max(requestedMealTypes.length, 1)));
 
-    const searchVariants = [
-      { label: "all", mealTypeHint: null as string | null, matchCount: expandedMatchCount },
-      ...requestedMealTypes.map((mealType) => ({
-        label: `meal:${mealType}`,
-        mealTypeHint: mealType,
-        matchCount: focusedMatchCount,
-      })),
-    ];
+    // --- 大きなプールを検索 → ランダムサンプリングで多様性を確保 ---
+    const POOL_MULTIPLIER = 20;
+    const poolPerType = Math.min(perTypeCount * POOL_MULTIPLIER, 200);
+    const biasedEmb = await embedText(queryText, DATASET_EMBEDDING_DIMENSIONS);
+
+    const searchVariants = requestedMealTypes.map((mealType) => ({
+      label: `pool:${mealType}`,
+      mealTypeHint: mealType as string | null,
+      matchCount: poolPerType,
+    }));
 
     const resultSets = await Promise.all(searchVariants.map(async (variant) => {
       return await withRetry(async () => {
         const rpcResult: any = await withTimeout(supabase.rpc("search_menu_examples", {
-          query_embedding: emb,
+          query_embedding: biasedEmb,
           match_count: variant.matchCount,
           filter_meal_type_hint: variant.mealTypeHint,
           filter_max_sodium: null,
@@ -495,15 +967,30 @@ async function searchMenuCandidates(
     }));
 
     const mergedRows = dedupeDatasetMenuSets(resultSets.flat());
-    const reranked = rerankMenuReferenceCandidates(
-      queryText,
-      mergedRows as unknown as any[],
-      Math.min(Math.max(matchCount + requestedMealTypes.length * 8, 24), 60),
-    ) as unknown as DatasetMenuSetRaw[];
-    const templates = selectTemplatesForTargetSlots(
-      dedupeTemplatesByContent(buildTemplateCatalog(reranked)),
-      targetSlots,
-    );
+
+    // プールからランダムサンプリング: 必要数を各 mealType ごとにランダム抽出
+    const allTemplatesRaw = dedupeTemplatesByContent(buildTemplateCatalog(mergedRows as unknown as DatasetMenuSetRaw[]));
+    // 季節外れのテンプレートを除外（クリスマス料理が4月に出るなど）
+    const currentMonth = month ?? new Date().getMonth() + 1;
+    const allTemplates = allTemplatesRaw.filter((t) => isSeasonallyAppropriate(t, currentMonth));
+    const sampledTemplates: MenuTemplate[] = [];
+    for (const mealType of requestedMealTypes) {
+      const pool = allTemplates.filter((t) => t.mealType === mealType);
+      const needed = perTypeCount;
+      if (pool.length <= needed) {
+        sampledTemplates.push(...pool);
+      } else {
+        // Fisher-Yates shuffle して先頭 needed 件を取る
+        const shuffled = [...pool];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        sampledTemplates.push(...shuffled.slice(0, needed));
+      }
+    }
+
+    const templates = selectTemplatesForTargetSlots(sampledTemplates, targetSlots);
     return {
       references: templates.map(templateToReferenceForSearch),
       templates,
@@ -553,6 +1040,18 @@ function buildSlotContext(params: {
     }).join("、");
     lines.push(`【冷蔵庫の食材】${fridgeText}`);
     lines.push("");
+  }
+
+  // Seasonal ingredients
+  if (seasonalContext.seasonalIngredients) {
+    const { vegetables, fish, fruits } = seasonalContext.seasonalIngredients;
+    if (vegetables.length > 0 || fish.length > 0 || fruits.length > 0) {
+      lines.push(`【旬の食材（${seasonalContext.month}月）】`);
+      if (vegetables.length > 0) lines.push(`野菜: ${vegetables.slice(0, 8).join("、")}`);
+      if (fish.length > 0) lines.push(`魚介: ${fish.slice(0, 8).join("、")}`);
+      if (fruits.length > 0) lines.push(`果物: ${fruits.slice(0, 5).join("、")}`);
+      lines.push("");
+    }
   }
 
   if (seasonalContext.events?.length) {
@@ -627,6 +1126,18 @@ function buildDayContext(params: {
     }).join("、");
     lines.push(`【冷蔵庫の食材】${fridgeText}`);
     lines.push("");
+  }
+
+  // Seasonal ingredients
+  if (params.seasonalContext.seasonalIngredients) {
+    const { vegetables, fish, fruits } = params.seasonalContext.seasonalIngredients;
+    if (vegetables.length > 0 || fish.length > 0 || fruits.length > 0) {
+      lines.push(`【旬の食材（${params.seasonalContext.month}月）】`);
+      if (vegetables.length > 0) lines.push(`野菜: ${vegetables.slice(0, 8).join("、")}`);
+      if (fish.length > 0) lines.push(`魚介: ${fish.slice(0, 8).join("、")}`);
+      if (fruits.length > 0) lines.push(`果物: ${fruits.slice(0, 5).join("、")}`);
+      lines.push("");
+    }
   }
 
   const recentMenus = selectRecentMenusForVariety({
@@ -1201,8 +1712,20 @@ async function executeStep(
       await executeStep2_Review(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
       return;
     }
-    if (currentStep >= 3) {
-      await handoffToV4(supabaseUrl, supabaseServiceKey, requestId, userId);
+    if (currentStep === 3) {
+      await executeStep3_Save(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
+      return;
+    }
+    if (currentStep === 4) {
+      await executeStep4_NutritionFeedback(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
+      return;
+    }
+    if (currentStep === 5) {
+      await executeStep5_RegenerateWithAdvice(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
+      return;
+    }
+    if (currentStep === 6) {
+      await executeStep6_FinalSave(supabase, supabaseUrl, supabaseServiceKey, userId, requestId, invocationContext);
       return;
     }
     throw new Error(`Unknown step ${currentStep}`);
@@ -1227,6 +1750,9 @@ async function executeStep1_Generate(
     ? normalizeTargetSlots(reqRow.target_slots ?? [])
     : (Array.isArray(body?.targetSlots) ? body.targetSlots : []);
   if (targetSlots.length === 0) throw new Error("targetSlots is empty");
+
+  // デフォルトの LLM プロバイダーを使用（XAI_API_KEY があれば Grok）
+  setV4FastLLMOverride(undefined);
 
   const dates = generatedData.dates?.length ? generatedData.dates : uniqDatesFromSlots(targetSlots);
   const note = generatedData.note ?? (typeof body?.note === "string" ? body.note : null) ?? (typeof reqRow.prompt === "string" ? reqRow.prompt : null);
@@ -1419,6 +1945,7 @@ async function executeStep1_Generate(
       searchQuery,
       computeReferenceSearchMatchCount(targetSlots.length),
       targetSlots,
+      seasonalContext.month,
     );
     references = searchResult.references;
     referenceSummary = buildReferenceMenuSummary(references, {
@@ -1465,6 +1992,23 @@ async function executeStep1_Generate(
     },
     1,
   );
+
+  // ===== レシピDB直接指定の場合: LLM生成をスキップ =====
+  if (constraintsForContext.recipeId || constraintsForContext.recipeExternalId) {
+    console.log("📖 Recipe ID specified, resolving from database...");
+    for (const slot of targetSlots) {
+      const key = getSlotKey(slot.date, slot.mealType);
+      if (generatedMeals[key]) continue;
+
+      const resolved = await resolveRecipeFromDB(supabase, constraintsForContext, slot.mealType as MealType);
+      if (resolved) {
+        generatedMeals[key] = resolved.meal;
+        (generatedMeals[key] as any)._resolvedNutrition = resolved.nutrition;
+        (generatedMeals[key] as any)._recipeSource = resolved.source;
+        console.log(`✅ Resolved ${slot.date} ${slot.mealType}: ${resolved.meal.dishes[0]?.name ?? "(unknown)"}`);
+      }
+    }
+  }
 
   const CONCURRENCY = 3;
   let processedDays = 0;
@@ -1540,6 +2084,53 @@ async function executeStep1_Generate(
 
         for (const meal of dayMeals.meals ?? []) {
           generatedMeals[getSlotKey(date, meal.mealType)] = meal;
+        }
+
+        // 欠けた mealType を個別再生成
+        const missingCoreTypes = coreTypes.filter((mt) => !generatedMeals[getSlotKey(date, mt)]);
+        if (missingCoreTypes.length > 0) {
+          console.warn(`⚠️ ${date}: LLM output missing ${missingCoreTypes.join(",")} — retrying individually`);
+          for (const missingType of missingCoreTypes) {
+            const missingSlot = slotsForDate.find((s) => s.mealType === missingType);
+            if (!missingSlot) continue;
+            const missingKey = getSlotKey(date, missingType);
+            const missingPlan = slotPlans[missingKey];
+            const missingSeedTemplate = missingPlan ? seedTemplatesById[missingPlan.seedTemplateId] : undefined;
+            const missingRefs = selectReferenceMenusForPlan({
+              plan: missingPlan,
+              seedTemplate: missingSeedTemplate,
+              templateCatalog,
+              fallbackReferences: references,
+              limit: 3,
+            });
+            const missingBrief = {
+              ...buildPromptBriefForPlan(missingPlan, missingSeedTemplate),
+              referenceExamples: missingRefs,
+            };
+            const missingNote = [
+              note,
+              buildSlotContext({ targetSlot: missingSlot, existingMenus, fridgeItems, seasonalContext, constraints: constraintsForContext, note: null }),
+              buildPlanSummaryForSlot(missingPlan, missingSeedTemplate),
+            ].filter(Boolean).join("\n\n");
+            const currentDishName = missingSlot.plannedMealId
+              ? existingMenus.find((m) => m.date === date && m.mealType === missingType)?.dishName ?? null
+              : null;
+            try {
+              generatedMeals[missingKey] = await generateMealWithLLM_V5({
+                userSummary,
+                userContext,
+                note: missingNote,
+                mealType: missingType,
+                currentDishName,
+                ...missingBrief,
+                referenceMenus: missingRefs,
+                referenceSummary: [referenceSummary, buildPlanSummaryForSlot(missingPlan, missingSeedTemplate)].filter(Boolean).join("\n\n"),
+              });
+              console.log(`✅ ${date}/${missingType}: recovered via individual generation`);
+            } catch (e: any) {
+              console.error(`❌ ${date}/${missingType}: individual generation failed: ${e?.message ?? e}`);
+            }
+          }
         }
       }
 
@@ -1694,6 +2285,63 @@ async function executeStep2_Review(
   const seedTemplatesById = generatedData.v5?.seedTemplatesById ?? {};
   const templateCatalog = generatedData.v5?.templateCatalog ?? Object.values(seedTemplatesById);
 
+  // 穴埋め: Step1 で生成されなかったスロットを個別再生成
+  const missingSlots = targetSlots.filter((slot) => {
+    const key = getSlotKey(slot.date, slot.mealType);
+    return !generatedMeals[key];
+  });
+  if (missingSlots.length > 0) {
+    console.warn(`⚠️ Step2 start: ${missingSlots.length} slots missing, recovering...`);
+    for (const missingSlot of missingSlots) {
+      const missingKey = getSlotKey(missingSlot.date, missingSlot.mealType);
+      const missingPlan = slotPlans[missingKey];
+      const missingSeedTemplate = missingPlan ? seedTemplatesById[missingPlan.seedTemplateId] : undefined;
+      const missingRefs = selectReferenceMenusForPlan({
+        plan: missingPlan,
+        seedTemplate: missingSeedTemplate,
+        templateCatalog,
+        fallbackReferences: references,
+        limit: 3,
+      });
+      const missingBrief = {
+        ...buildPromptBriefForPlan(missingPlan, missingSeedTemplate),
+        referenceExamples: missingRefs,
+      };
+      const constraintsForContext = typeof constraints === "object" && constraints !== null ? constraints as Record<string, unknown> : {};
+      const missingNote = [
+        note,
+        buildSlotContext({ targetSlot: missingSlot, existingMenus, fridgeItems, seasonalContext, constraints: constraintsForContext, note: null }),
+        buildPlanSummaryForSlot(missingPlan, missingSeedTemplate),
+      ].filter(Boolean).join("\n\n");
+      const currentDishName = missingSlot.plannedMealId
+        ? existingMenus.find((m) => m.date === missingSlot.date && m.mealType === missingSlot.mealType)?.dishName ?? null
+        : null;
+      try {
+        generatedMeals[missingKey] = await generateMealWithLLM_V5({
+          userSummary,
+          userContext,
+          note: missingNote,
+          mealType: missingSlot.mealType as MealType,
+          currentDishName,
+          ...missingBrief,
+          referenceMenus: missingRefs,
+          referenceSummary: [referenceSummary, buildPlanSummaryForSlot(missingPlan, missingSeedTemplate)].filter(Boolean).join("\n\n"),
+        });
+        console.log(`✅ ${missingSlot.date}/${missingSlot.mealType}: recovered in Step2`);
+      } catch (e: any) {
+        console.error(`❌ ${missingSlot.date}/${missingSlot.mealType}: recovery failed: ${e?.message ?? e}`);
+      }
+    }
+    // generatedMeals を DB に保存
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({ generated_data: { ...generatedData, generatedMeals } })
+        .eq("id", requestId),
+      `weekly_menu_requests.recovery_save:${requestId}`,
+    );
+  }
+
   // Post-nutrition fix: V4 Step3 から差し戻された栄養外れ値スロットを再生成
   const postNutritionIssues: PostNutritionIssue[] = Array.isArray(generatedData.v5?.postNutritionIssues) ? generatedData.v5.postNutritionIssues : [];
   const slotsToRegenerate: Array<{ date: string; mealType: string }> = Array.isArray(generatedData.v5?.slotsToRegenerate) ? generatedData.v5.slotsToRegenerate : [];
@@ -1811,7 +2459,8 @@ async function executeStep2_Review(
       3,
     );
 
-    await handoffToV4(supabaseUrl, supabaseServiceKey, requestId, userId);
+    await clearExistingPlannedMeals(supabase, userId, targetSlots);
+    await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
     return;
   }
 
@@ -2188,7 +2837,493 @@ async function executeStep2_Review(
     3,
   );
 
-  await handoffToV4(supabaseUrl, supabaseServiceKey, requestId, userId);
+  await clearExistingPlannedMeals(supabase, userId, targetSlots);
+  await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+}
+
+// =========================================================
+// Step 4: Nutrition Feedback (Ultimate Mode only)
+// 栄養データを分析してフィードバックを生成
+// =========================================================
+
+async function executeStep4_NutritionFeedback(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+  invocationContext: V5InvocationContext,
+) {
+  console.log("📊 V5 Step 4: Nutrition feedback analysis...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const dates = generatedData.dates ?? [];
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+  const userSummary = generatedData.userSummary ?? "";
+
+  const step4 = generatedData.step4 ?? {};
+  const BATCH = Number(step4.batchSize ?? DEFAULT_STEP4_DAY_BATCH);
+  const cursor = Number(step4.cursor ?? 0);
+  const feedbackByDate: Record<string, NutritionFeedbackResult & { issuesFound: string[] }> =
+    (step4.feedbackByDate ?? {}) as any;
+  const daysNeedingImprovement: string[] = step4.daysNeedingImprovement ?? [];
+
+  await updateProgress(
+    supabase,
+    requestId,
+    { currentStep: 4, totalSteps: 6, message: `栄養バランスを分析中...（${cursor}/${dates.length}日）`, completedSlots: cursor, totalSlots: dates.length },
+    4,
+  );
+
+  const weekData = buildWeekDataFromMeals(generatedMeals, dates);
+
+  let newCursor = cursor;
+  while (newCursor < dates.length && newCursor - cursor < BATCH) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP4_DAY_RESERVE_MS)) {
+      break;
+    }
+    const date = dates[newCursor];
+    const dayNutrition = aggregateDayNutrition(generatedMeals, date);
+    const mealCount = Object.keys(generatedMeals).filter(key => key.startsWith(`${date}:`)).length;
+
+    try {
+      const feedback = await generateNutritionFeedback(
+        date,
+        dayNutrition,
+        mealCount,
+        weekData,
+        userSummary,
+      );
+
+      const issuesFound: string[] = [];
+      if (feedback.advice.includes("不足")) issuesFound.push("栄養素不足");
+      if (feedback.advice.includes("過剰")) issuesFound.push("栄養素過剰");
+      if (feedback.advice.includes("バランス")) issuesFound.push("バランス改善");
+
+      feedbackByDate[date] = { ...feedback, issuesFound };
+
+      if (feedback.advice && feedback.advice.length > 50) {
+        if (!daysNeedingImprovement.includes(date)) {
+          daysNeedingImprovement.push(date);
+        }
+      }
+
+      console.log(`📊 [${date}] Feedback generated: ${issuesFound.join(", ") || "良好"}`);
+    } catch (e: any) {
+      console.error(`❌ [${date}] Feedback generation failed:`, e?.message);
+      feedbackByDate[date] = {
+        praiseComment: "バランスの良い食事を心がけていますね✨",
+        advice: "",
+        nutritionTip: "",
+        issuesFound: [],
+      };
+    }
+    newCursor++;
+  }
+
+  const updatedGeneratedData: V5GeneratedData = {
+    ...generatedData,
+    step4: { cursor: newCursor, batchSize: BATCH, feedbackByDate, daysNeedingImprovement },
+  };
+
+  if (newCursor < dates.length) {
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({ generated_data: updatedGeneratedData, current_step: 4, updated_at: new Date().toISOString() })
+        .eq("id", requestId),
+      `weekly_menu_requests.v5_step4_continue:${requestId}`,
+      null, 10000, 1,
+    );
+
+    await updateProgress(supabase, requestId,
+      { currentStep: 4, totalSteps: 6, message: `栄養バランスを分析中...（${newCursor}/${dates.length}日）`, completedSlots: newCursor, totalSlots: dates.length },
+      4,
+    );
+
+    await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  console.log(`📊 Step 4 完了: ${daysNeedingImprovement.length}日が改善対象`);
+
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({ generated_data: updatedGeneratedData, current_step: 5, updated_at: new Date().toISOString() })
+      .eq("id", requestId),
+    `weekly_menu_requests.v5_step4_to_step5:${requestId}`,
+    null, 10000, 1,
+  );
+
+  await updateProgress(supabase, requestId,
+    { currentStep: 5, totalSteps: 6, message: "アドバイスを反映して献立を改善中...", completedSlots: 0, totalSlots: daysNeedingImprovement.length },
+    5,
+  );
+
+  await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+}
+
+// =========================================================
+// Step 5: Regenerate with Advice (Ultimate Mode only)
+// アドバイスを反映した献立を再生成
+// =========================================================
+
+async function executeStep5_RegenerateWithAdvice(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+  invocationContext: V5InvocationContext,
+) {
+  console.log("🔄 V5 Step 5: Regenerating meals with advice...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+  const targetSlots = generatedData.targetSlots ?? [];
+
+  const existingMenus = (generatedData.existingMenus ?? []) as ExistingMenuContext[];
+  const fridgeItems = (generatedData.fridgeItems ?? []) as FridgeItemContext[];
+  const seasonalContext: SeasonalContext = (generatedData.seasonalContext as any) ??
+    { month: new Date().getMonth() + 1, seasonalIngredients: { vegetables: [], fish: [], fruits: [] }, events: [] };
+  const constraints = generatedData.constraints ?? {};
+  const note = generatedData.note ?? null;
+  const userContext = generatedData.userContext;
+  const userSummary = generatedData.userSummary ?? "";
+  const references = (generatedData.references ?? []) as MenuReference[];
+  const referenceSummary = generatedData.referenceSummary ?? buildReferenceMenuSummary(references);
+
+  const slotPlans = generatedData.v5?.slotPlans ?? {};
+  const seedTemplatesById = generatedData.v5?.seedTemplatesById ?? {};
+
+  const step4 = generatedData.step4 ?? {};
+  const feedbackByDate = step4.feedbackByDate ?? {};
+  const daysNeedingImprovement = step4.daysNeedingImprovement ?? [];
+
+  const step5 = generatedData.step5 ?? {};
+  const BATCH = Number(step5.batchSize ?? DEFAULT_STEP5_DAY_BATCH);
+  const cursor = Number(step5.cursor ?? 0);
+  const regeneratedDates: string[] = step5.regeneratedDates ?? [];
+
+  await updateProgress(supabase, requestId,
+    { currentStep: 5, totalSteps: 6, message: `献立を改善中...（${cursor}/${daysNeedingImprovement.length}日）`, completedSlots: cursor, totalSlots: daysNeedingImprovement.length },
+    5,
+  );
+
+  const slotsByDate = new Map<string, TargetSlot[]>();
+  for (const s of targetSlots) {
+    if (!slotsByDate.has(s.date)) slotsByDate.set(s.date, []);
+    slotsByDate.get(s.date)!.push(s);
+  }
+
+  let newCursor = cursor;
+  while (newCursor < daysNeedingImprovement.length && newCursor - cursor < BATCH) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP5_DAY_RESERVE_MS)) {
+      break;
+    }
+    const date = daysNeedingImprovement[newCursor];
+    const feedback = feedbackByDate[date];
+    if (!feedback || !feedback.advice) {
+      regeneratedDates.push(date);
+      newCursor++;
+      continue;
+    }
+
+    const slotsForDate = slotsByDate.get(date) ?? [];
+    if (slotsForDate.length === 0) {
+      regeneratedDates.push(date);
+      newCursor++;
+      continue;
+    }
+
+    const mealTypes = Array.from(new Set(slotsForDate.map(s => s.mealType))) as MealType[];
+    const coreTypes = mealTypes.filter(t => t === "breakfast" || t === "lunch" || t === "dinner");
+
+    if (coreTypes.length > 0) {
+      const dayContext = buildDayContext({
+        date,
+        mealTypes: coreTypes,
+        slotsForDate,
+        existingMenus,
+        fridgeItems,
+        seasonalContext,
+        constraints,
+      });
+
+      const mealTypeLabels: Record<string, string> = { breakfast: "朝食", lunch: "昼食", dinner: "夕食" };
+      const replacementInstructions = (feedback as any).replacements?.map((r: any) =>
+        `- ${mealTypeLabels[r.meal] || r.meal}の「${r.target}」→「${r.replacement}」${r.nutrientGain ? `（${r.nutrientGain}）` : ""}`
+      ).join("\n");
+
+      const adviceNote = replacementInstructions
+        ? `【献立改善指示】\n以下の置換を反映した献立を生成してください。カロリーは現状を維持すること。\n\n${replacementInstructions}\n\n重要: 上記の置換指示に従い、カロリーを増やさずに栄養バランスを改善してください。`
+        : `【栄養士からのアドバイス】\n${feedback.advice}\n\n上記アドバイスを反映した献立を生成してください。カロリーを増やさないように注意。`;
+
+      const planSummary = buildPlanSummaryForDate({
+        date,
+        mealTypes: coreTypes,
+        slotPlans,
+        seedTemplatesById,
+      });
+      const noteForDay = [note, dayContext, planSummary, adviceNote].filter(Boolean).join("\n\n");
+      const previousDayMeals = collectPreviousDayMeals(date, generatedMeals, existingMenus);
+
+      const briefEntries = coreTypes.map((mealType) => {
+        const plan = slotPlans[getSlotKey(date, mealType)];
+        const seedTemplate = plan ? seedTemplatesById[plan.seedTemplateId] : undefined;
+        return [mealType, buildPromptBriefForPlan(plan, seedTemplate)] as const;
+      });
+      const briefByMealType = Object.fromEntries(briefEntries);
+
+      try {
+        const dayMeals = await generateDayMealsWithLLM_V5({
+          userSummary,
+          userContext,
+          note: noteForDay,
+          date,
+          mealTypes: coreTypes,
+          referenceMenus: [],
+          referenceSummary: [referenceSummary, planSummary].filter(Boolean).join("\n\n"),
+          previousDayMeals,
+          briefByMealType,
+        });
+
+        for (const meal of dayMeals.meals ?? []) {
+          generatedMeals[getSlotKey(date, meal.mealType)] = meal;
+        }
+
+        console.log(`🔄 [${date}] Regenerated ${coreTypes.length} meals with advice`);
+      } catch (e: any) {
+        console.error(`❌ [${date}] Regeneration failed:`, e?.message);
+      }
+    }
+
+    regeneratedDates.push(date);
+    newCursor++;
+  }
+
+  const updatedGeneratedData: V5GeneratedData = {
+    ...generatedData,
+    generatedMeals,
+    step5: { cursor: newCursor, batchSize: BATCH, regeneratedDates },
+  };
+
+  if (newCursor < daysNeedingImprovement.length) {
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({ generated_data: updatedGeneratedData, current_step: 5, updated_at: new Date().toISOString() })
+        .eq("id", requestId),
+      `weekly_menu_requests.v5_step5_continue:${requestId}`,
+      null, 10000, 1,
+    );
+
+    await updateProgress(supabase, requestId,
+      { currentStep: 5, totalSteps: 6, message: `献立を改善中...（${newCursor}/${daysNeedingImprovement.length}日）`, completedSlots: newCursor, totalSlots: daysNeedingImprovement.length },
+      5,
+    );
+
+    await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  console.log(`🔄 Step 5 完了: ${regeneratedDates.length}日を再生成`);
+
+  const totalSlots = targetSlots.length;
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({ generated_data: updatedGeneratedData, current_step: 6, updated_at: new Date().toISOString() })
+      .eq("id", requestId),
+    `weekly_menu_requests.v5_step5_to_step6:${requestId}`,
+    null, 10000, 1,
+  );
+
+  await updateProgress(supabase, requestId,
+    { currentStep: 6, totalSteps: 6, message: "最終調整・保存中...", completedSlots: 0, totalSlots },
+    6,
+  );
+
+  await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+}
+
+// =========================================================
+// Step 6: Final Save (Ultimate Mode only)
+// 最終的な献立を保存
+// =========================================================
+
+async function executeStep6_FinalSave(
+  supabase: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  userId: string,
+  requestId: string,
+  invocationContext: V5InvocationContext,
+) {
+  console.log("💾 V5 Step 6: Final save...");
+
+  const reqRow = await loadRequestRow(supabase, requestId);
+  const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
+  const targetSlots = sortTargetSlots(generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []));
+  const totalSlots = targetSlots.length;
+  const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
+
+  const step6 = generatedData.step6 ?? {};
+  const BATCH = Number(step6.batchSize ?? DEFAULT_STEP6_SLOT_BATCH);
+  const cursor = Number(step6.cursor ?? 0);
+  const savedCountStart = Number(step6.savedCount ?? 0);
+  const errors: SaveIssue[] = Array.isArray(step6.errors) ? step6.errors : [];
+  const skipped: SaveIssue[] = Array.isArray(step6.skipped) ? step6.skipped : [];
+  const ingredientMatchMemo = deserializeIngredientMatchCache(
+    step6.ingredientMatchCache ?? generatedData.step3?.ingredientMatchCache,
+  );
+  const targetSlotsForRun = targetSlots.slice(cursor, Math.min(cursor + BATCH, totalSlots));
+  const dailyMealIdByDate = await ensureDailyMealIdsForDates(
+    supabase,
+    userId,
+    targetSlotsForRun.map((slot) => slot.date),
+  );
+  let savedCount = savedCountStart;
+
+  await updateProgress(supabase, requestId,
+    { currentStep: 6, totalSteps: 6, message: `最終保存中...（${cursor}/${totalSlots}）`, completedSlots: cursor, totalSlots },
+    6,
+  );
+
+  const STEP6_CONCURRENCY = 5;
+  let newCursor = cursor;
+  const batchEnd = Math.min(cursor + BATCH, totalSlots);
+
+  while (newCursor < batchEnd) {
+    if (newCursor > cursor && !hasTimeBudgetRemaining(invocationContext, STEP6_SLOT_RESERVE_MS)) {
+      break;
+    }
+
+    const batchSlots: Array<{ index: number; slot: TargetSlot; key: string; meal: GeneratedMeal | null }> = [];
+    for (let b = 0; b < STEP6_CONCURRENCY && newCursor + b < batchEnd; b++) {
+      const idx = newCursor + b;
+      const slot = targetSlots[idx];
+      const key = getSlotKey(slot.date, slot.mealType);
+      const meal = generatedMeals[key] ?? null;
+      batchSlots.push({ index: idx, slot, key, meal });
+    }
+
+    const batchResults = await Promise.all(batchSlots.map(async ({ index, slot, key, meal }) => {
+      if (!meal) {
+        return { index, key, type: "no_meal" as const };
+      }
+      try {
+        const saveResult = await saveMealToDb(supabase, {
+          userId,
+          requestId,
+          targetSlot: slot,
+          generatedMeal: meal,
+          dailyMealIdByDate,
+          ingredientMatchMemo,
+          sourceFunction: "generate-menu-v5",
+        });
+        return { index, key, type: "saved" as const, saveResult };
+      } catch (e: any) {
+        return { index, key, type: "error" as const, error: e?.message ?? String(e) };
+      }
+    }));
+
+    for (const result of batchResults) {
+      if (result.type === "no_meal") {
+        errors.push({ key: result.key, error: "No generated meal" });
+      } else if (result.type === "error") {
+        errors.push({ key: result.key, error: result.error });
+      } else if (result.type === "saved" && result.saveResult) {
+        if (result.saveResult.outcome === "skipped_existing") {
+          skipped.push({ key: result.key, error: result.saveResult.reason ?? "既存献立を保護したため未保存" });
+        } else {
+          savedCount++;
+        }
+      }
+    }
+
+    newCursor += batchSlots.length;
+
+    if (shouldEmitProgressUpdate(newCursor, totalSlots)) {
+      await updateProgress(supabase, requestId,
+        { currentStep: 6, totalSteps: 6, message: `最終保存中...（${newCursor}/${totalSlots}）`, completedSlots: newCursor, totalSlots },
+        6,
+      );
+    }
+  }
+
+  const updatedGeneratedData: V5GeneratedData = {
+    ...generatedData,
+    step6: {
+      cursor: newCursor,
+      batchSize: BATCH,
+      savedCount,
+      errors: errors.slice(-200),
+      skipped: skipped.slice(-200),
+      ingredientMatchCache: serializeIngredientMatchCache(ingredientMatchMemo),
+    },
+  };
+
+  if (newCursor < totalSlots) {
+    await runSupabaseQuery(
+      () => supabase
+        .from("weekly_menu_requests")
+        .update({ generated_data: updatedGeneratedData, current_step: 6, updated_at: new Date().toISOString() })
+        .eq("id", requestId),
+      `weekly_menu_requests.v5_step6_continue:${requestId}`,
+      null, 10000, 1,
+    );
+
+    await updateProgress(supabase, requestId,
+      { currentStep: 6, totalSteps: 6, message: `最終保存中...（${newCursor}/${totalSlots}）`, completedSlots: newCursor, totalSlots },
+      6,
+    );
+
+    await triggerNextV5Step(supabaseUrl, supabaseServiceKey, requestId, userId);
+    return;
+  }
+
+  // Done - Ultimate Mode completed!
+  const step4 = generatedData.step4 ?? {};
+  const feedbackByDate = step4.feedbackByDate ?? {};
+  const firstFeedback = Object.values(feedbackByDate)[0];
+  const praiseComment = (firstFeedback as any)?.praiseComment ?? "";
+
+  const finalSummary = summarizeSaveResults({
+    totalSlots,
+    savedCount,
+    skipped,
+    errors,
+    successMessage: `全${totalSlots}件の献立が完成しました！`,
+    successSuffix: praiseComment ? ` ${praiseComment}` : "",
+  });
+
+  await runSupabaseQuery(
+    () => supabase
+      .from("weekly_menu_requests")
+      .update({
+        status: finalSummary.status,
+        generated_data: updatedGeneratedData,
+        current_step: 6,
+        progress: {
+          currentStep: 6,
+          totalSteps: 6,
+          message: finalSummary.message,
+          completedSlots: totalSlots,
+          totalSlots,
+        },
+        error_message: finalSummary.errorMessage,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId),
+    `weekly_menu_requests.v5_step6_final:${requestId}`,
+    null, 10000, 1,
+  );
+
+  console.log(`✅ V5 Ultimate Mode completed: ${savedCount}/${totalSlots} meals saved`);
 }
 
 Deno.serve(async (req: Request) => {
