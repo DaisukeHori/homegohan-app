@@ -277,14 +277,15 @@ export async function saveMealToDb(
           .from("planned_meals")
           .select("id, dishes, image_url")
           .eq("id", targetSlot.plannedMealId)
-          .single(),
+          .maybeSingle(),
         `planned_meals.lookup:${targetSlot.plannedMealId}`,
         null,
       )
     : null;
 
   if (targetSlot.plannedMealId && !existingMeal?.id) {
-    throw new Error(`Failed to find planned_meal ${targetSlot.plannedMealId}`);
+    console.warn(`planned_meal ${targetSlot.plannedMealId} not found (may have been cleared), will insert new`);
+    targetSlot.plannedMealId = undefined as any;
   }
 
   // Calculate nutrition per dish + V3-like validation/adjustment for suspicious low-calorie dishes
