@@ -1,8 +1,13 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link, router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui/Input";
 import { createRecipeCollection, listMyRecipeCollections, type RecipeCollection } from "../../../src/lib/recipeCollections";
+import { colors, spacing } from "../../../src/theme";
+import { typography } from "../../../src/theme/typography";
 
 export default function RecipeCollectionsPage() {
   const [items, setItems] = useState<RecipeCollection[]>([]);
@@ -45,50 +50,110 @@ export default function RecipeCollectionsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>コレクション</Text>
-        <Link href="/recipes">レシピへ</Link>
-      </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="コレクション"
+        right={
+          <Link href="/recipes" style={styles.linkText}>
+            <View style={styles.linkRow}>
+              <Ionicons name="restaurant-outline" size={16} color={colors.accent} />
+              <Text style={styles.linkText}>レシピへ</Text>
+            </View>
+          </Link>
+        }
+      />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>新規作成</Text>
-        <TextInput value={name} onChangeText={setName} placeholder="コレクション名" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <Pressable onPress={create} disabled={isSubmitting} style={{ padding: 12, borderRadius: 12, backgroundColor: isSubmitting ? "#999" : "#333", alignItems: "center" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "作成中..." : "作成"}</Text>
-        </Pressable>
-      </View>
+      <Card style={{ gap: spacing.md }}>
+        <SectionHeader title="新規作成" right={<Ionicons name="add-circle-outline" size={18} color={colors.accent} />} />
+        <Input value={name} onChangeText={setName} placeholder="コレクション名" />
+        <Button onPress={create} loading={isSubmitting} variant="primary">
+          {isSubmitting ? "作成中..." : "作成"}
+        </Button>
+      </Card>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <EmptyState
+          icon={<Ionicons name="alert-circle-outline" size={40} color={colors.error} />}
+          message={error}
+          actionLabel="再読み込み"
+          onAction={load}
+        />
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>コレクションがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="folder-open-outline" size={40} color={colors.textMuted} />}
+          message="コレクションがありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((c) => (
-            <Pressable
+            <Card
               key={c.id}
               onPress={() => router.push(`/recipes/collections/${c.id}`)}
-              style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}
+              style={{ gap: spacing.xs }}
             >
-              <Text style={{ fontWeight: "900" }}>{c.name}</Text>
-              <Text style={{ color: "#666" }}>件数: {(c.recipe_ids ?? []).length}</Text>
-              {c.description ? <Text style={{ color: "#999" }}>{c.description}</Text> : null}
-            </Pressable>
+              <View style={styles.collectionRow}>
+                <Ionicons name="folder-outline" size={20} color={colors.accent} />
+                <Text style={typography.label}>{c.name}</Text>
+              </View>
+              <Text style={typography.bodySmall}>件数: {(c.recipe_ids ?? []).length}</Text>
+              {c.description ? <Text style={typography.caption}>{c.description}</Text> : null}
+            </Card>
           ))}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
+      <Pressable onPress={load} style={styles.refreshButton}>
+        <Ionicons name="refresh-outline" size={16} color={colors.textMuted} />
+        <Text style={styles.refreshText}>更新</Text>
       </Pressable>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
-
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  linkText: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  collectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  refreshButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  refreshText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});

@@ -1,8 +1,11 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link, router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, Input, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { colors, spacing } from "../../src/theme";
 
 type RecipeListItem = {
   id: string;
@@ -50,71 +53,120 @@ export default function RecipesPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>レシピ</Text>
-        <View style={{ flexDirection: "row", gap: 12 }}>
-          <Link href="/recipes/collections">コレクション</Link>
-          <Link href="/recipes/new">新規</Link>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="レシピ"
+        right={
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Button onPress={() => router.push("/recipes/collections")} variant="ghost" size="sm">
+              <Ionicons name="folder-outline" size={18} color={colors.textLight} />
+            </Button>
+            <Button onPress={() => router.push("/recipes/new")} variant="primary" size="sm">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                <Ionicons name="add" size={16} color="#FFFFFF" />
+                <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>新規</Text>
+              </View>
+            </Button>
+          </View>
+        }
+      />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+
+      <Card>
+        <View style={{ gap: spacing.sm }}>
+          <Input
+            value={q}
+            onChangeText={setQ}
+            placeholder="検索（例: からあげ）"
+          />
+          <Button onPress={load} variant="secondary" size="sm">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <Ionicons name="search" size={16} color={colors.text} />
+              <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>検索</Text>
+            </View>
+          </Button>
         </View>
-      </View>
+      </Card>
 
-      <View style={{ gap: 8 }}>
-        <TextInput
-          value={q}
-          onChangeText={setQ}
-          placeholder="検索（例: からあげ）"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 12 }}
-        />
-        <Pressable onPress={load} style={{ padding: 12, borderRadius: 12, backgroundColor: "#333", alignItems: "center" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>検索</Text>
-        </Pressable>
-      </View>
-
-      <View style={{ gap: 8 }}>
-        <Link href="/home">ホームへ</Link>
-        <Link href="/shopping-list">買い物リストへ</Link>
+      <View style={{ flexDirection: "row", gap: spacing.md }}>
+        <Link href="/home" style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="home-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>ホームへ</Text>
+          </View>
+        </Link>
+        <Link href="/shopping-list" style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="cart-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>買い物リストへ</Text>
+          </View>
+        </Link>
       </View>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="レシピを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>レシピがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="restaurant-outline" size={48} color={colors.textMuted} />}
+          message="レシピがありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((r) => (
-            <Pressable
-              key={r.id}
-              onPress={() => router.push(`/recipes/${r.id}`)}
-              style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}
-            >
-              <Text style={{ fontWeight: "900" }}>{r.name}</Text>
-              <Text style={{ color: "#666" }}>
-                {r.authorName} / {r.cookingTimeMinutes ? `${r.cookingTimeMinutes}分` : "時間不明"} / ❤ {r.likeCount}
-              </Text>
-              {r.description ? <Text style={{ color: "#999" }}>{r.description}</Text> : null}
+            <Card key={r.id} onPress={() => router.push(`/recipes/${r.id}`)}>
+              <View style={{ gap: spacing.sm }}>
+                <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{r.name}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Ionicons name="person-outline" size={14} color={colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>{r.authorName}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                      {r.cookingTimeMinutes ? `${r.cookingTimeMinutes}分` : "時間不明"}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Ionicons name="heart" size={14} color={colors.error} />
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>{r.likeCount}</Text>
+                  </View>
+                </View>
+                {r.description ? <Text style={{ fontSize: 13, color: colors.textMuted }}>{r.description}</Text> : null}
 
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
-                <Pressable
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    toggleLike(r.id, !r.isLiked).catch(() => {});
-                  }}
-                  style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: r.isLiked ? "#c00" : "#333" }}
-                >
-                  <Text style={{ color: "white", fontWeight: "900" }}>{r.isLiked ? "いいね解除" : "いいね"}</Text>
-                </Pressable>
+                <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs }}>
+                  <Button
+                    onPress={() => {
+                      toggleLike(r.id, !r.isLiked).catch(() => {});
+                    }}
+                    variant={r.isLiked ? "destructive" : "outline"}
+                    size="sm"
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                      <Ionicons
+                        name={r.isLiked ? "heart" : "heart-outline"}
+                        size={16}
+                        color={r.isLiked ? "#FFFFFF" : colors.accent}
+                      />
+                      <Text style={{ color: r.isLiked ? "#FFFFFF" : colors.accent, fontWeight: "700", fontSize: 13 }}>
+                        {r.isLiked ? "いいね解除" : "いいね"}
+                      </Text>
+                    </View>
+                  </Button>
+                </View>
               </View>
-            </Pressable>
+            </Card>
           ))}
         </View>
       )}
     </ScrollView>
+    </View>
   );
 }
-
-

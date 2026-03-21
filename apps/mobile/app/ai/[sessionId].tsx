@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
+import { Button, Card, LoadingState, PageHeader } from "../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Message = {
@@ -74,7 +77,6 @@ export default function AiSessionPage() {
         { message: trimmed }
       );
 
-      // POSTの戻りは実装により揺れるので、最新を再取得して確定させる
       await load();
       return res;
     } catch (e: any) {
@@ -108,7 +110,6 @@ export default function AiSessionPage() {
 
   async function toggleImportant(m: Message) {
     if (!sessionId) return;
-    // optimistic update
     const next = !m.isImportant;
     setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, isImportant: next } : x)));
     try {
@@ -118,7 +119,6 @@ export default function AiSessionPage() {
         reason: null,
       });
     } catch (e: any) {
-      // rollback
       setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, isImportant: !next } : x)));
       Alert.alert("更新失敗", e?.message ?? "更新に失敗しました。");
     }
@@ -165,97 +165,210 @@ export default function AiSessionPage() {
   function renderActionButtons(messageId: string, proposed: any) {
     if (!proposed) return null;
     return (
-      <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+      <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.sm }}>
         <Pressable
           onPress={() => executeActionByMessageId(messageId)}
-          style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#333" }}
+          style={({ pressed }) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            paddingVertical: spacing.sm,
+            paddingHorizontal: spacing.md,
+            borderRadius: radius.md,
+            backgroundColor: colors.accent,
+            ...(pressed ? { opacity: 0.9 } : {}),
+          })}
         >
-          <Text style={{ color: "white", fontWeight: "900" }}>提案アクションを実行</Text>
+          <Ionicons name="checkmark-circle" size={16} color="#fff" />
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>実行</Text>
         </Pressable>
         <Pressable
           onPress={() => rejectActionByMessageId(messageId)}
-          style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#eee" }}
+          style={({ pressed }) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            paddingVertical: spacing.sm,
+            paddingHorizontal: spacing.md,
+            borderRadius: radius.md,
+            backgroundColor: colors.bg,
+            borderWidth: 1,
+            borderColor: colors.border,
+            ...(pressed ? { opacity: 0.9 } : {}),
+          })}
         >
-          <Text style={{ fontWeight: "900" }}>却下</Text>
+          <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+          <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>却下</Text>
         </Pressable>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={{ flex: 1 }}>
-        <View style={{ padding: 16, borderBottomWidth: 1, borderColor: "#eee", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <Text style={{ fontSize: 18, fontWeight: "900" }}>AI相談</Text>
-          <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
-            <Pressable onPress={summarize}>
-              <Text style={{ color: "#333", fontWeight: "900" }}>要約</Text>
-            </Pressable>
-            <Pressable onPress={closeSession}>
-              <Text style={{ color: "#c00", fontWeight: "900" }}>終了</Text>
-            </Pressable>
-            <Pressable onPress={() => router.back()}>
-              <Text style={{ color: "#666" }}>戻る</Text>
-            </Pressable>
-          </View>
-        </View>
+        <PageHeader
+          title="AIチャット"
+          right={
+            <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center" }}>
+              <Pressable onPress={summarize} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Ionicons name="document-text-outline" size={18} color={colors.textLight} />
+                <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 12 }}>要約</Text>
+              </Pressable>
+              <Pressable onPress={closeSession} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Ionicons name="close-circle-outline" size={18} color={colors.error} />
+                <Text style={{ color: colors.error, fontWeight: "600", fontSize: 12 }}>終了</Text>
+              </Pressable>
+            </View>
+          }
+        />
 
         {isLoading ? (
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <ActivityIndicator />
-          </View>
+          <LoadingState />
         ) : (
           <>
             <ScrollView
               ref={(r) => {
-                // @ts-ignore
                 scrollRef.current = r;
               }}
-              contentContainerStyle={{ padding: 16, gap: 10 }}
+              contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}
+              keyboardShouldPersistTaps="handled"
             >
-              {error ? <Text style={{ color: "#c00" }}>{error}</Text> : null}
-              {messages.map((m) => (
-                <View
-                  key={m.id}
-                  style={{
-                    alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                    maxWidth: "90%",
-                    padding: 12,
-                    borderRadius: 12,
-                    backgroundColor: m.role === "user" ? "#E07A5F" : "white",
-                    borderWidth: m.role === "user" ? 0 : 1,
-                    borderColor: "#eee",
-                    gap: 6,
-                  }}
-                >
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10 }}>
-                    <Text style={{ color: m.role === "user" ? "white" : "#333", flex: 1 }}>{m.content}</Text>
-                    {m.role !== "system" ? (
-                      <Pressable onPress={() => toggleImportant(m)} style={{ paddingHorizontal: 6, paddingVertical: 2 }}>
-                        <Text style={{ color: m.role === "user" ? "white" : "#333", fontWeight: "900" }}>
-                          {m.isImportant ? "★" : "☆"}
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                  {m.role === "assistant" ? renderActionButtons(m.id, m.proposedActions) : null}
+              {error && (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md, backgroundColor: colors.errorLight, borderRadius: radius.md }}>
+                  <Ionicons name="alert-circle" size={16} color={colors.error} />
+                  <Text style={{ color: colors.error, fontSize: 13, flex: 1 }}>{error}</Text>
                 </View>
-              ))}
+              )}
+              {messages.map((m) => {
+                const isUser = m.role === "user";
+                const isSystem = m.role === "system";
+
+                return (
+                  <View
+                    key={m.id}
+                    style={{
+                      alignSelf: isUser ? "flex-end" : "flex-start",
+                      maxWidth: "85%",
+                    }}
+                  >
+                    <View
+                      style={{
+                        padding: spacing.md,
+                        borderRadius: radius.lg,
+                        backgroundColor: isUser ? colors.accent : colors.card,
+                        borderWidth: isUser ? 0 : 1,
+                        borderColor: m.isImportant ? colors.warning : colors.border,
+                        ...shadows.sm,
+                        gap: spacing.xs,
+                        // 吹き出しスタイル
+                        borderBottomRightRadius: isUser ? 4 : radius.lg,
+                        borderBottomLeftRadius: isUser ? radius.lg : 4,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: isUser ? "#fff" : colors.text,
+                          fontSize: 14,
+                          lineHeight: 21,
+                        }}
+                      >
+                        {m.content}
+                      </Text>
+
+                      {/* アクションボタン */}
+                      {m.role === "assistant" && renderActionButtons(m.id, m.proposedActions)}
+
+                      {/* 下部: 時刻 + 重要マーク */}
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
+                        <Text style={{ fontSize: 10, color: isUser ? "rgba(255,255,255,0.6)" : colors.textMuted }}>
+                          {new Date(m.createdAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}
+                        </Text>
+                        {!isSystem && (
+                          <Pressable onPress={() => toggleImportant(m)} hitSlop={8}>
+                            <Ionicons
+                              name={m.isImportant ? "star" : "star-outline"}
+                              size={16}
+                              color={m.isImportant ? colors.warning : (isUser ? "rgba(255,255,255,0.5)" : colors.textMuted)}
+                            />
+                          </Pressable>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+                );
+              })}
+
+              {/* 送信中インジケータ */}
+              {isSending && (
+                <View style={{ alignSelf: "flex-start", maxWidth: "60%" }}>
+                  <View
+                    style={{
+                      padding: spacing.md,
+                      borderRadius: radius.lg,
+                      borderBottomLeftRadius: 4,
+                      backgroundColor: colors.card,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      ...shadows.sm,
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textMuted }} />
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
+                    </View>
+                  </View>
+                </View>
+              )}
             </ScrollView>
 
-            <View style={{ padding: 12, borderTopWidth: 1, borderColor: "#eee", flexDirection: "row", gap: 10 }}>
+            {/* 入力バー */}
+            <View
+              style={{
+                paddingHorizontal: spacing.md,
+                paddingVertical: spacing.sm,
+                borderTopWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+                flexDirection: "row",
+                gap: spacing.sm,
+                alignItems: "flex-end",
+              }}
+            >
               <TextInput
                 value={text}
                 onChangeText={setText}
-                placeholder="相談内容を入力…"
-                style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 12 }}
+                placeholder="相談内容を入力..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+                style={{
+                  flex: 1,
+                  maxHeight: 100,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.bg,
+                  padding: spacing.md,
+                  borderRadius: radius.lg,
+                  fontSize: 14,
+                  color: colors.text,
+                }}
               />
               <Pressable
                 onPress={send}
-                disabled={isSending}
-                style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, backgroundColor: isSending ? "#999" : "#333", justifyContent: "center" }}
+                disabled={isSending || !text.trim()}
+                style={({ pressed }) => ({
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: text.trim() ? colors.accent : colors.border,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  ...shadows.sm,
+                  ...(pressed ? { opacity: 0.9 } : {}),
+                })}
               >
-                <Text style={{ color: "white", fontWeight: "900" }}>{isSending ? "…" : "送信"}</Text>
+                <Ionicons name="send" size={20} color="#fff" />
               </Pressable>
             </View>
           </>
@@ -264,6 +377,3 @@ export default function AiSessionPage() {
     </KeyboardAvoidingView>
   );
 }
-
-
-

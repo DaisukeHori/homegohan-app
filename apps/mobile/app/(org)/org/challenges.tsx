@@ -1,8 +1,12 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { colors, spacing } from "../../../src/theme";
 
 type Challenge = {
   id: string;
@@ -15,7 +19,14 @@ type Challenge = {
   participantCount: number;
 };
 
+const STATUS_MAP: Record<string, { variant: "completed" | "pending" | "generating" | "info"; label: string }> = {
+  active: { variant: "generating", label: "進行中" },
+  completed: { variant: "completed", label: "完了" },
+  draft: { variant: "pending", label: "下書き" },
+};
+
 export default function OrgChallengesPage() {
+  const router = useRouter();
   const [items, setItems] = useState<Challenge[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,66 +84,92 @@ export default function OrgChallengesPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>チャレンジ</Text>
-
-      <View style={{ gap: 8 }}>
-        <Link href="/org/dashboard">ダッシュボードへ</Link>
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>作成</Text>
-        <TextInput value={title} onChangeText={setTitle} placeholder="タイトル" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput
-          value={challengeType}
-          onChangeText={setChallengeType}
-          placeholder="challengeType（breakfast_rate/veg_score/cooking_rate/steps/weight_loss/custom）"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-        <TextInput value={startDate} onChangeText={setStartDate} placeholder="開始日 YYYY-MM-DD" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={endDate} onChangeText={setEndDate} placeholder="終了日 YYYY-MM-DD" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <Pressable onPress={create} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "作成中..." : "作成"}</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: spacing["4xl"] }}>
+      {/* Header */}
+      <View style={{ paddingTop: 56, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.push("/org/dashboard")} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, flex: 1 }}>チャレンジ</Text>
+        <Pressable onPress={load} hitSlop={8}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
-      ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
-      ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>チャレンジがありません。</Text>
-      ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((c) => (
-            <View key={c.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>{c.title}</Text>
-              <Text style={{ color: "#666" }}>
-                type: {c.challengeType} / status: {c.status} / 参加: {c.participantCount}
-              </Text>
-              <Text style={{ color: "#666" }}>
-                {c.startDate} 〜 {c.endDate}
-              </Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable onPress={() => updateStatus(c.id, "active")} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>有効化</Text>
-                </Pressable>
-                <Pressable onPress={() => updateStatus(c.id, "completed")} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>完了</Text>
-                </Pressable>
-              </View>
-            </View>
-          ))}
-        </View>
-      )}
+      <View style={{ paddingHorizontal: spacing.xl, gap: spacing.lg }}>
+        {/* Create Form */}
+        <Card>
+          <SectionHeader title="新規作成" />
+          <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+            <Input value={title} onChangeText={setTitle} placeholder="タイトル" label="タイトル" />
+            <Input
+              value={challengeType}
+              onChangeText={setChallengeType}
+              placeholder="breakfast_rate / veg_score / cooking_rate / steps / weight_loss / custom"
+              label="チャレンジタイプ"
+            />
+            <Input value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" label="開始日" />
+            <Input value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" label="終了日" />
+            <Button onPress={create} loading={isSubmitting} disabled={isSubmitting}>
+              {isSubmitting ? "作成中..." : "作成"}
+            </Button>
+          </View>
+        </Card>
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+        {/* List */}
+        <SectionHeader title="チャレンジ一覧" />
+
+        {isLoading ? (
+          <LoadingState message="チャレンジを読み込み中..." />
+        ) : error ? (
+          <Card variant="error">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="alert-circle" size={20} color={colors.error} />
+              <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+            </View>
+          </Card>
+        ) : items.length === 0 ? (
+          <EmptyState icon={<Ionicons name="trophy-outline" size={40} color={colors.textMuted} />} message="チャレンジがありません。" />
+        ) : (
+          <View style={{ gap: spacing.md }}>
+            {items.map((c) => {
+              const statusConfig = STATUS_MAP[c.status] ?? { variant: "info" as const, label: c.status };
+              return (
+                <Card key={c.id}>
+                  <View style={{ gap: spacing.sm }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text, flex: 1 }}>{c.title}</Text>
+                      <StatusBadge variant={statusConfig.variant} label={statusConfig.label} />
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <Ionicons name="flag" size={14} color={colors.textMuted} />
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>{c.challengeType}</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <Ionicons name="people" size={14} color={colors.textMuted} />
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>参加 {c.participantCount}人</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <Ionicons name="calendar" size={14} color={colors.textMuted} />
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                        {c.startDate} - {c.endDate}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs }}>
+                      <Button onPress={() => updateStatus(c.id, "active")} variant="outline" size="sm">
+                        有効化
+                      </Button>
+                      <Button onPress={() => updateStatus(c.id, "completed")} variant="secondary" size="sm">
+                        完了
+                      </Button>
+                    </View>
+                  </View>
+                </Card>
+              );
+            })}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
-
-

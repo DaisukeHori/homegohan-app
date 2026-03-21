@@ -1,8 +1,11 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, SectionHeader, StatusBadge } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { colors, spacing, radius } from "../../../src/theme";
 
 export default function SuperAdminFeatureFlagsPage() {
   const [flags, setFlags] = useState<Record<string, any> | null>(null);
@@ -51,40 +54,64 @@ export default function SuperAdminFeatureFlagsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>機能フラグ</Text>
-      <Link href="/super-admin">Super Admin Home</Link>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["4xl"] }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, paddingTop: 56 }}>
+        <Pressable onPress={() => router.back()} style={{ padding: spacing.xs }}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text, flex: 1 }}>機能フラグ</Text>
+        <Pressable onPress={load} style={{ padding: spacing.sm }}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
+        </Pressable>
+      </View>
 
-      <Pressable onPress={save} disabled={isSaving || !flags} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSaving ? "#999" : "#333" }}>
-        <Text style={{ color: "white", fontWeight: "900" }}>{isSaving ? "保存中..." : "保存"}</Text>
-      </Pressable>
+      <Button onPress={save} loading={isSaving} disabled={isSaving || !flags}>
+        {isSaving ? "保存中..." : "変更を保存"}
+      </Button>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : !flags ? (
-        <Text style={{ color: "#666" }}>データがありません。</Text>
+        <EmptyState icon={<Ionicons name="flag-outline" size={40} color={colors.textMuted} />} message="データがありません。" />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {Object.keys(flags).sort().map((k) => (
-            <View key={k} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-              <Text style={{ fontWeight: "900" }}>{k}</Text>
-              <Pressable onPress={() => toggle(k)} style={{ padding: 12, borderRadius: 12, backgroundColor: flags[k] ? "#E07A5F" : "#333", alignItems: "center" }}>
-                <Text style={{ color: "white", fontWeight: "900" }}>{flags[k] ? "ON" : "OFF"}</Text>
-              </Pressable>
-            </View>
+            <Card key={k}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: flags[k] ? colors.successLight : colors.bg, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: flags[k] ? "#C8E6C9" : colors.border }}>
+                  <Ionicons name={flags[k] ? "checkmark" : "close"} size={20} color={flags[k] ? colors.success : colors.textMuted} />
+                </View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{k}</Text>
+                  <StatusBadge variant={flags[k] ? "completed" : "pending"} label={flags[k] ? "ON" : "OFF"} />
+                </View>
+                <Pressable
+                  onPress={() => toggle(k)}
+                  style={{
+                    paddingVertical: spacing.sm,
+                    paddingHorizontal: spacing.lg,
+                    borderRadius: radius.full,
+                    backgroundColor: flags[k] ? colors.accent : colors.bg,
+                    borderWidth: 1,
+                    borderColor: flags[k] ? colors.accent : colors.border,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: flags[k] ? "#FFFFFF" : colors.textLight }}>
+                    {flags[k] ? "ON" : "OFF"}
+                  </Text>
+                </Pressable>
+              </View>
+            </Card>
           ))}
         </View>
       )}
-
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
     </ScrollView>
   );
 }
-
-

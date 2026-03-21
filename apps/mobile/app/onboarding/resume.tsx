@@ -1,9 +1,12 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Card, ProgressBar } from "../../src/components/ui";
 import { supabase } from "../../src/lib/supabase";
 import { useProfile } from "../../src/providers/ProfileProvider";
+import { colors, radius, shadows, spacing } from "../../src/theme";
 
 // モバイル版: 再開ウェルカム画面 (OB-UI-04)
 export default function OnboardingResume() {
@@ -54,156 +57,185 @@ export default function OnboardingResume() {
 
   return (
     <ScrollView
-      contentContainerStyle={{
-        flexGrow: 1,
-        padding: 24,
-        justifyContent: "center",
-        alignItems: "center",
-        gap: 24,
-      }}
-      style={{ backgroundColor: "#FFF7ED" }}
+      contentContainerStyle={styles.container}
+      style={styles.scroll}
     >
-      {/* アイコン */}
-      <View
-        style={{
-          width: 100,
-          height: 100,
-          borderRadius: 50,
-          backgroundColor: "#FF8A65",
-          justifyContent: "center",
-          alignItems: "center",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.15,
-          shadowRadius: 12,
-          elevation: 8,
-        }}
-      >
-        <Text style={{ fontSize: 40 }}>👋</Text>
+      {/* Hero icon */}
+      <View style={styles.heroIcon}>
+        <Ionicons name="hand-left" size={48} color="#FFFFFF" />
       </View>
 
-      {/* タイトル */}
-      <View style={{ alignItems: "center", gap: 8 }}>
-        <Text
-          style={{
-            fontSize: 28,
-            fontWeight: "800",
-            color: "#1F2937",
-            textAlign: "center",
-          }}
-        >
+      {/* Title */}
+      <View style={styles.titleSection}>
+        <Text style={styles.title}>
           おかえりなさい{profile?.nickname ? `、\n${profile.nickname}さん` : ""}！
         </Text>
-        <Text
-          style={{
-            fontSize: 16,
-            color: "#6B7280",
-            textAlign: "center",
-            lineHeight: 24,
-          }}
-        >
-          前回の設定の続きから再開しましょう
-        </Text>
+        <Text style={styles.subtitle}>前回の設定の続きから再開しましょう</Text>
       </View>
 
-      {/* 進捗カード */}
-      <View
-        style={{
-          backgroundColor: "rgba(255,255,255,0.8)",
-          borderRadius: 16,
-          padding: 20,
-          width: "100%",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <Text style={{ fontWeight: "700", color: "#4B5563" }}>設定の進捗</Text>
-          <Text style={{ fontWeight: "700", color: "#FF8A65" }}>{progressPercent}%</Text>
+      {/* Progress card */}
+      <Card style={styles.progressCard}>
+        <View style={styles.progressHeader}>
+          <View style={styles.progressLabelRow}>
+            <Ionicons name="stats-chart" size={16} color={colors.textLight} />
+            <Text style={styles.progressLabel}>設定の進捗</Text>
+          </View>
+          <Text style={styles.progressPercent}>{progressPercent}%</Text>
         </View>
-        <View
-          style={{
-            height: 8,
-            backgroundColor: "#E5E7EB",
-            borderRadius: 999,
-            overflow: "hidden",
-          }}
-        >
-          <View
-            style={{
-              height: 8,
-              width: `${progressPercent}%`,
-              backgroundColor: "#FF8A65",
-              borderRadius: 999,
-            }}
-          />
-        </View>
-        <Text
-          style={{
-            fontSize: 12,
-            color: "#9CA3AF",
-            textAlign: "center",
-            marginTop: 8,
-          }}
-        >
+        <ProgressBar
+          value={progress?.currentStep || 0}
+          max={progress?.totalQuestions || 1}
+          height={8}
+        />
+        <Text style={styles.progressCount}>
           {progress?.currentStep || 0} / {progress?.totalQuestions || 0} 問完了
         </Text>
-      </View>
+      </Card>
 
-      {/* ボタン */}
-      <View style={{ width: "100%", gap: 12, marginTop: 8 }}>
+      {/* Buttons */}
+      <View style={styles.buttonGroup}>
         <Pressable
           onPress={() => router.push("/onboarding/questions?resume=true")}
-          style={{
-            backgroundColor: "#333",
-            paddingVertical: 18,
-            borderRadius: 999,
-            alignItems: "center",
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.2,
-            shadowRadius: 8,
-            elevation: 4,
-          }}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] },
+          ]}
         >
-          <Text style={{ color: "white", fontWeight: "700", fontSize: 16 }}>
-            続きから再開
-          </Text>
+          <Ionicons name="play" size={20} color="#FFFFFF" />
+          <Text style={styles.primaryButtonText}>続きから再開</Text>
         </Pressable>
 
         <Pressable
           onPress={handleReset}
           disabled={isResetting}
-          style={{
-            borderWidth: 2,
-            borderColor: "#E5E7EB",
-            paddingVertical: 16,
-            borderRadius: 999,
-            alignItems: "center",
-            opacity: isResetting ? 0.5 : 1,
-          }}
+          style={({ pressed }) => [
+            styles.outlineButton,
+            isResetting && { opacity: 0.5 },
+            pressed && { opacity: 0.8 },
+          ]}
         >
-          <Text style={{ color: "#6B7280", fontWeight: "700", fontSize: 14 }}>
+          <Ionicons name="refresh" size={18} color={colors.textLight} />
+          <Text style={styles.outlineButtonText}>
             {isResetting ? "リセット中..." : "最初からやり直す"}
           </Text>
         </Pressable>
 
         <Pressable
           onPress={() => router.replace("/(tabs)/home")}
-          style={{ alignItems: "center", paddingVertical: 12 }}
+          style={styles.skipButton}
         >
-          <Text style={{ color: "#9CA3AF", fontSize: 14 }}>あとで設定する</Text>
+          <Text style={styles.skipButtonText}>あとで設定する</Text>
         </Pressable>
       </View>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: "#FFF7ED",
+  },
+  container: {
+    flexGrow: 1,
+    padding: spacing["2xl"],
+    justifyContent: "center",
+    alignItems: "center",
+    gap: spacing["2xl"],
+  },
+  heroIcon: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: colors.accent,
+    justifyContent: "center",
+    alignItems: "center",
+    ...shadows.lg,
+  },
+  titleSection: {
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: colors.text,
+    textAlign: "center",
+  },
+  subtitle: {
+    fontSize: 16,
+    color: colors.textLight,
+    textAlign: "center",
+    lineHeight: 24,
+  },
+  progressCard: {
+    width: "100%",
+  },
+  progressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.md,
+  },
+  progressLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  progressLabel: {
+    fontWeight: "700",
+    color: colors.textLight,
+  },
+  progressPercent: {
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  progressCount: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: "center",
+    marginTop: spacing.sm,
+  },
+  buttonGroup: {
+    width: "100%",
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  primaryButton: {
+    backgroundColor: colors.accent,
+    paddingVertical: 18,
+    borderRadius: radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    ...shadows.lg,
+  },
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+    fontSize: 16,
+  },
+  outlineButton: {
+    borderWidth: 2,
+    borderColor: colors.border,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  outlineButtonText: {
+    color: colors.textLight,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  skipButton: {
+    alignItems: "center",
+    paddingVertical: spacing.md,
+  },
+  skipButtonText: {
+    color: colors.textMuted,
+    fontSize: 14,
+  },
+});

@@ -1,9 +1,13 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
+import { Input } from "../../src/components/ui/Input";
 import { getApi } from "../../src/lib/api";
-import { ensureActiveMealPlanId } from "../../src/lib/mealPlan";
+import { colors, radius, shadows, spacing } from "../../src/theme";
+import { typography } from "../../src/theme/typography";
 
 type RecipeDetail = {
   id: string;
@@ -95,9 +99,8 @@ export default function RecipeDetailPage() {
       Alert.alert("追加できません", "材料が空です。");
       return;
     }
-    const mealPlanId = await ensureActiveMealPlanId();
     const api = getApi();
-    await api.post("/api/shopping-list/add-recipe", { mealPlanId, ingredients });
+    await api.post("/api/shopping-list/add-recipe", { ingredients });
     Alert.alert("追加しました", "買い物リストに追加しました。");
   }
 
@@ -138,113 +141,211 @@ export default function RecipeDetailPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>レシピ詳細</Text>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: "#666" }}>戻る</Text>
-        </Pressable>
-      </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="レシピ詳細" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <EmptyState
+          icon={<Ionicons name="alert-circle-outline" size={40} color={colors.error} />}
+          message={error}
+          actionLabel="再読み込み"
+          onAction={load}
+        />
       ) : !recipe ? (
-        <Text style={{ color: "#666" }}>見つかりませんでした。</Text>
+        <EmptyState
+          icon={<Ionicons name="search-outline" size={40} color={colors.textMuted} />}
+          message="見つかりませんでした。"
+        />
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900", fontSize: 18 }}>{recipe.name}</Text>
-            <Text style={{ color: "#666" }}>
-              {recipe.authorName} / ❤ {recipe.likeCount} / {recipe.cookingTimeMinutes ? `${recipe.cookingTimeMinutes}分` : "時間不明"}
-            </Text>
-            {recipe.description ? <Text style={{ color: "#333" }}>{recipe.description}</Text> : null}
-
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
-              <Pressable onPress={toggleLike} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: recipe.isLiked ? "#c00" : "#333" }}>
-                <Text style={{ color: "white", fontWeight: "900" }}>{recipe.isLiked ? "いいね解除" : "いいね"}</Text>
-              </Pressable>
-              <Pressable onPress={addToShoppingList} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#E07A5F" }}>
-                <Text style={{ color: "white", fontWeight: "900" }}>買い物に追加</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => router.push(`/recipes/collections/select?recipeId=${recipe.id}`)}
-                style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#333" }}
-              >
-                <Text style={{ color: "white", fontWeight: "900" }}>コレクション</Text>
-              </Pressable>
-              {recipe.isOwner ? (
-                <Pressable onPress={() => router.push(`/recipes/${recipe.id}/edit`)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#333" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>編集</Text>
-                </Pressable>
-              ) : null}
-              {recipe.isOwner ? (
-                <Pressable onPress={removeRecipe} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#c00" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
-
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>材料</Text>
-            {normalizeIngredients(recipe.ingredients).map((ing, idx) => (
-              <Text key={`${ing.name}-${idx}`} style={{ color: "#333" }}>
-                - {ing.name}
-                {ing.amount ? `（${ing.amount}）` : ""}
+          {/* Recipe header card */}
+          <Card style={{ gap: spacing.sm }}>
+            <Text style={typography.h3}>{recipe.name}</Text>
+            <View style={styles.metaRow}>
+              <Ionicons name="person-outline" size={14} color={colors.textMuted} />
+              <Text style={typography.bodySmall}>{recipe.authorName}</Text>
+              <Ionicons name="heart" size={14} color={colors.error} />
+              <Text style={typography.bodySmall}>{recipe.likeCount}</Text>
+              <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+              <Text style={typography.bodySmall}>
+                {recipe.cookingTimeMinutes ? `${recipe.cookingTimeMinutes}分` : "時間不明"}
               </Text>
-            ))}
-          </View>
+            </View>
+            {recipe.description ? <Text style={typography.body}>{recipe.description}</Text> : null}
 
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>手順</Text>
+            <View style={styles.actionRow}>
+              <Button onPress={toggleLike} variant={recipe.isLiked ? "destructive" : "secondary"} size="sm">
+                <Ionicons name={recipe.isLiked ? "heart" : "heart-outline"} size={16} color={recipe.isLiked ? "#FFF" : colors.text} />
+                <Text style={{ color: recipe.isLiked ? "#FFF" : colors.text, fontWeight: "700", fontSize: 13 }}>
+                  {recipe.isLiked ? "解除" : "いいね"}
+                </Text>
+              </Button>
+              <Button onPress={addToShoppingList} variant="primary" size="sm">
+                <Ionicons name="cart-outline" size={16} color="#FFF" />
+                <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 13 }}>買い物に追加</Text>
+              </Button>
+              <Button onPress={() => router.push(`/recipes/collections/select?recipeId=${recipe.id}`)} variant="secondary" size="sm">
+                <Ionicons name="folder-outline" size={16} color={colors.text} />
+                <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>コレクション</Text>
+              </Button>
+            </View>
+            {recipe.isOwner ? (
+              <View style={styles.actionRow}>
+                <Button onPress={() => router.push(`/recipes/${recipe.id}/edit`)} variant="outline" size="sm">
+                  <Ionicons name="create-outline" size={16} color={colors.accent} />
+                  <Text style={{ color: colors.accent, fontWeight: "700", fontSize: 13 }}>編集</Text>
+                </Button>
+                <Button onPress={removeRecipe} variant="destructive" size="sm">
+                  <Ionicons name="trash-outline" size={16} color="#FFF" />
+                  <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 13 }}>削除</Text>
+                </Button>
+              </View>
+            ) : null}
+          </Card>
+
+          {/* Ingredients card */}
+          <Card style={{ gap: spacing.sm }}>
+            <SectionHeader title="材料" right={<Ionicons name="leaf-outline" size={18} color={colors.accent} />} />
+            {normalizeIngredients(recipe.ingredients).map((ing, idx) => (
+              <View key={`${ing.name}-${idx}`} style={styles.ingredientRow}>
+                <Ionicons name="ellipse" size={6} color={colors.accent} style={{ marginTop: 6 }} />
+                <Text style={typography.body}>
+                  {ing.name}
+                  {ing.amount ? <Text style={{ color: colors.textMuted }}>{` (${ing.amount})`}</Text> : ""}
+                </Text>
+              </View>
+            ))}
+          </Card>
+
+          {/* Steps card */}
+          <Card style={{ gap: spacing.sm }}>
+            <SectionHeader title="手順" right={<Ionicons name="list-outline" size={18} color={colors.accent} />} />
             {Array.isArray(recipe.steps) ? (
               recipe.steps.map((s: any, idx: number) => (
-                <Text key={idx} style={{ color: "#333" }}>
-                  {idx + 1}. {typeof s === "string" ? s : JSON.stringify(s)}
-                </Text>
+                <View key={idx} style={styles.stepRow}>
+                  <View style={styles.stepNumber}>
+                    <Text style={styles.stepNumberText}>{idx + 1}</Text>
+                  </View>
+                  <Text style={[typography.body, { flex: 1 }]}>
+                    {typeof s === "string" ? s : JSON.stringify(s)}
+                  </Text>
+                </View>
               ))
             ) : (
-              <Text style={{ color: "#333" }}>{recipe.steps ? JSON.stringify(recipe.steps) : "-"}</Text>
+              <Text style={typography.body}>{recipe.steps ? JSON.stringify(recipe.steps) : "-"}</Text>
             )}
-          </View>
+          </Card>
 
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>コメント</Text>
-            <TextInput
+          {/* Comments card */}
+          <Card style={{ gap: spacing.md }}>
+            <SectionHeader title="コメント" right={<Ionicons name="chatbubble-outline" size={18} color={colors.accent} />} />
+            <Input
               value={comment}
               onChangeText={setComment}
               placeholder="コメントを書く…"
-              style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
             />
-            <Pressable
-              onPress={postComment}
-              disabled={isPosting}
-              style={{ padding: 12, borderRadius: 12, backgroundColor: isPosting ? "#999" : "#333", alignItems: "center" }}
-            >
-              <Text style={{ color: "white", fontWeight: "900" }}>{isPosting ? "投稿中..." : "投稿"}</Text>
-            </Pressable>
+            <Button onPress={postComment} loading={isPosting} variant="primary">
+              {isPosting ? "投稿中..." : "投稿"}
+            </Button>
             {recipe.comments?.length ? (
-              <View style={{ gap: 8 }}>
+              <View style={{ gap: spacing.sm }}>
                 {recipe.comments.map((c) => (
-                  <View key={c.id} style={{ padding: 10, borderWidth: 1, borderColor: "#eee", borderRadius: 10 }}>
-                    <Text style={{ fontWeight: "900" }}>{c.authorName}</Text>
-                    <Text style={{ color: "#333" }}>{c.content}</Text>
-                    <Text style={{ color: "#999" }}>{new Date(c.createdAt).toLocaleString("ja-JP")}</Text>
+                  <View key={c.id} style={styles.commentItem}>
+                    <View style={styles.commentHeader}>
+                      <Ionicons name="person-circle-outline" size={18} color={colors.textMuted} />
+                      <Text style={typography.label}>{c.authorName}</Text>
+                    </View>
+                    <Text style={typography.body}>{c.content}</Text>
+                    <Text style={typography.caption}>{new Date(c.createdAt).toLocaleString("ja-JP")}</Text>
                   </View>
                 ))}
               </View>
             ) : (
-              <Text style={{ color: "#666" }}>コメントはまだありません。</Text>
+              <EmptyState
+                icon={<Ionicons name="chatbubble-ellipses-outline" size={32} color={colors.textMuted} />}
+                message="コメントはまだありません。"
+              />
             )}
-          </View>
+          </Card>
         </>
       )}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  backText: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+  },
+  actionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  ingredientRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+  },
+  stepRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.md,
+  },
+  stepNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.full,
+    backgroundColor: colors.accentLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepNumberText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  commentItem: {
+    padding: spacing.md,
+    backgroundColor: colors.bg,
+    borderRadius: radius.md,
+    gap: spacing.xs,
+  },
+  commentHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+});

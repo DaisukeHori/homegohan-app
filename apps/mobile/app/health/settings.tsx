@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, Input, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
+import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 import { registerAndSaveExpoPushToken } from "../../src/lib/pushNotifications";
 import { supabase } from "../../src/lib/supabase";
@@ -83,93 +86,250 @@ export default function HealthSettingsPage() {
     }
   }
 
+  function ToggleRow({
+    label,
+    value,
+    onToggle,
+    icon,
+  }: {
+    label: string;
+    value: boolean;
+    onToggle: () => void;
+    icon: string;
+  }) {
+    return (
+      <Button
+        onPress={onToggle}
+        variant={value ? "primary" : "secondary"}
+        size="md"
+      >
+        <Ionicons name={icon as any} size={18} color={value ? "#FFFFFF" : colors.text} />
+        <Text style={{ color: value ? "#FFFFFF" : colors.text, fontWeight: "700", fontSize: 14 }}>
+          {label}: {value ? "ON" : "OFF"}
+        </Text>
+      </Button>
+    );
+  }
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>健康 設定</Text>
-      <Link href="/health">健康トップへ</Link>
+    <View style={styles.screen}>
+      <PageHeader
+        title="健康 設定"
+        right={
+          <Link href="/health">
+            <Text style={styles.linkText}>健康トップへ</Text>
+          </Link>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.container}>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="設定を読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={styles.errorRow}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        </Card>
       ) : !prefs ? (
-        <Text style={{ color: "#666" }}>設定がありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="settings-outline" size={40} color={colors.textMuted} />}
+          message="設定がありません。"
+        />
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>Push通知</Text>
-            <Pressable onPress={registerPush} style={{ padding: 12, borderRadius: 12, backgroundColor: "#333", alignItems: "center" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>端末を登録（Expo Push Token）</Text>
-            </Pressable>
-            {tokens.length === 0 ? (
-              <Text style={{ color: "#666" }}>未登録</Text>
-            ) : (
-              tokens.slice(0, 3).map((t) => (
-                <Text key={t.id} style={{ color: "#666" }}>
-                  - {t.platform ?? "-"}: {t.expo_push_token}
-                </Text>
-              ))
-            )}
-          </View>
-
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>通知設定</Text>
-            <Pressable onPress={() => setPrefs({ ...prefs, enabled: !prefs.enabled })} style={{ padding: 12, borderRadius: 12, backgroundColor: prefs.enabled ? "#E07A5F" : "#333", alignItems: "center" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>{prefs.enabled ? "通知: ON" : "通知: OFF"}</Text>
-            </Pressable>
-
-            <Text style={{ fontWeight: "900" }}>Quiet Hours</Text>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <TextInput
-                value={prefs.quiet_hours_start}
-                onChangeText={(v) => setPrefs({ ...prefs, quiet_hours_start: v })}
-                placeholder="start"
-                style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-              />
-              <TextInput
-                value={prefs.quiet_hours_end}
-                onChangeText={(v) => setPrefs({ ...prefs, quiet_hours_end: v })}
-                placeholder="end"
-                style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-              />
+          <Card>
+            <SectionHeader
+              title="Push通知"
+              right={<Ionicons name="notifications-outline" size={20} color={colors.accent} />}
+            />
+            <View style={styles.pushSection}>
+              <Button onPress={registerPush} variant="primary">
+                <Ionicons name="phone-portrait-outline" size={18} color="#FFFFFF" />
+                <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 14 }}>端末を登録（Expo Push Token）</Text>
+              </Button>
+              {tokens.length === 0 ? (
+                <Text style={styles.noTokenText}>未登録</Text>
+              ) : (
+                <View style={styles.tokenList}>
+                  {tokens.slice(0, 3).map((t) => (
+                    <View key={t.id} style={styles.tokenRow}>
+                      <Ionicons name="phone-portrait-outline" size={14} color={colors.textMuted} />
+                      <Text style={styles.tokenText} numberOfLines={1}>
+                        {t.platform ?? "-"}: {t.expo_push_token}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
             </View>
+          </Card>
 
-            <Pressable
-              onPress={() => setPrefs({ ...prefs, morning_reminder_enabled: !prefs.morning_reminder_enabled })}
-              style={{ padding: 12, borderRadius: 12, backgroundColor: prefs.morning_reminder_enabled ? "#E07A5F" : "#333", alignItems: "center" }}
-            >
-              <Text style={{ color: "white", fontWeight: "900" }}>{prefs.morning_reminder_enabled ? "朝リマインド: ON" : "朝リマインド: OFF"}</Text>
-            </Pressable>
-            <TextInput
-              value={prefs.morning_reminder_time}
-              onChangeText={(v) => setPrefs({ ...prefs, morning_reminder_time: v })}
-              placeholder="07:30"
-              style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
+          <Card>
+            <SectionHeader
+              title="通知設定"
+              right={<Ionicons name="options-outline" size={20} color={colors.accent} />}
             />
+            <View style={styles.settingsSection}>
+              <ToggleRow
+                label="通知"
+                value={prefs.enabled}
+                onToggle={() => setPrefs({ ...prefs, enabled: !prefs.enabled })}
+                icon="notifications"
+              />
 
-            <Pressable
-              onPress={() => setPrefs({ ...prefs, evening_reminder_enabled: !prefs.evening_reminder_enabled })}
-              style={{ padding: 12, borderRadius: 12, backgroundColor: prefs.evening_reminder_enabled ? "#E07A5F" : "#333", alignItems: "center" }}
-            >
-              <Text style={{ color: "white", fontWeight: "900" }}>{prefs.evening_reminder_enabled ? "夜リマインド: ON" : "夜リマインド: OFF"}</Text>
-            </Pressable>
-            <TextInput
-              value={prefs.evening_reminder_time}
-              onChangeText={(v) => setPrefs({ ...prefs, evening_reminder_time: v })}
-              placeholder="21:00"
-              style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-            />
+              <View style={styles.settingGroup}>
+                <View style={styles.settingLabelRow}>
+                  <Ionicons name="moon-outline" size={16} color={colors.textLight} />
+                  <Text style={styles.settingLabel}>Quiet Hours</Text>
+                </View>
+                <View style={styles.timeRow}>
+                  <Input
+                    value={prefs.quiet_hours_start}
+                    onChangeText={(v) => setPrefs({ ...prefs, quiet_hours_start: v })}
+                    placeholder="開始"
+                    containerStyle={styles.flex1}
+                  />
+                  <Text style={styles.timeSeparator}>-</Text>
+                  <Input
+                    value={prefs.quiet_hours_end}
+                    onChangeText={(v) => setPrefs({ ...prefs, quiet_hours_end: v })}
+                    placeholder="終了"
+                    containerStyle={styles.flex1}
+                  />
+                </View>
+              </View>
 
-            <Pressable onPress={save} disabled={isSaving} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSaving ? "#999" : "#333" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>{isSaving ? "保存中..." : "保存"}</Text>
-            </Pressable>
-          </View>
+              <View style={styles.settingGroup}>
+                <View style={styles.settingLabelRow}>
+                  <Ionicons name="sunny-outline" size={16} color={colors.textLight} />
+                  <Text style={styles.settingLabel}>朝リマインド</Text>
+                </View>
+                <ToggleRow
+                  label="朝リマインド"
+                  value={prefs.morning_reminder_enabled}
+                  onToggle={() => setPrefs({ ...prefs, morning_reminder_enabled: !prefs.morning_reminder_enabled })}
+                  icon="sunny"
+                />
+                <Input
+                  value={prefs.morning_reminder_time}
+                  onChangeText={(v) => setPrefs({ ...prefs, morning_reminder_time: v })}
+                  placeholder="07:30"
+                />
+              </View>
+
+              <View style={styles.settingGroup}>
+                <View style={styles.settingLabelRow}>
+                  <Ionicons name="moon" size={16} color={colors.textLight} />
+                  <Text style={styles.settingLabel}>夜リマインド</Text>
+                </View>
+                <ToggleRow
+                  label="夜リマインド"
+                  value={prefs.evening_reminder_enabled}
+                  onToggle={() => setPrefs({ ...prefs, evening_reminder_enabled: !prefs.evening_reminder_enabled })}
+                  icon="moon"
+                />
+                <Input
+                  value={prefs.evening_reminder_time}
+                  onChangeText={(v) => setPrefs({ ...prefs, evening_reminder_time: v })}
+                  placeholder="21:00"
+                />
+              </View>
+
+              <Button onPress={save} disabled={isSaving} loading={isSaving}>
+                {isSaving ? "保存中..." : "保存"}
+              </Button>
+            </View>
+          </Card>
         </>
       )}
     </ScrollView>
+    </View>
   );
 }
 
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  linkText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.error,
+    fontWeight: "600",
+    flex: 1,
+  },
+  pushSection: {
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  noTokenText: {
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  tokenList: {
+    gap: spacing.xs,
+  },
+  tokenRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.bg,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  tokenText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    flex: 1,
+  },
+  settingsSection: {
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  settingGroup: {
+    gap: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  settingLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  settingLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  timeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  timeSeparator: {
+    fontSize: 16,
+    color: colors.textMuted,
+    fontWeight: "700",
+  },
+  flex1: {
+    flex: 1,
+  },
+});

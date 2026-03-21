@@ -1,7 +1,8 @@
 import { Redirect } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
 
+import { LoadingState } from "../../src/components/ui";
 import { useProfile } from "../../src/providers/ProfileProvider";
+import { colors } from "../../src/theme";
 
 // オンボーディングルーティング判定ページ
 // 状態に応じて welcome / resume / home にリダイレクト
@@ -9,11 +10,7 @@ export default function OnboardingIndex() {
   const { isLoading, profile } = useProfile();
 
   if (isLoading) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFF7ED" }}>
-        <ActivityIndicator size="large" color="#FF8A65" />
-      </View>
-    );
+    return <LoadingState style={{ backgroundColor: colors.bg }} />;
   }
 
   // 状態判定

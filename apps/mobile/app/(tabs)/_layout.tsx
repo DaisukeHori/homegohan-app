@@ -1,7 +1,8 @@
-import { Tabs } from "expo-router";
-import { Redirect } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { Tabs, Redirect, router } from "expo-router";
+import { ActivityIndicator, Pressable, View } from "react-native";
 
+import { colors } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 
@@ -11,34 +12,94 @@ export default function TabsLayout() {
 
   if (isLoading || profileLoading) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>
+        <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
 
   if (!session) return <Redirect href="/" />;
-  
-  // オンボーディング状態に応じてリダイレクト
+
   if (profile?.onboardingCompletedAt) {
     // 完了済み → そのまま表示
   } else if (profile?.onboardingStartedAt) {
-    // 進行中 → 再開ページへ
     return <Redirect href="/onboarding/resume" />;
   } else {
-    // 未開始 → ウェルカムページへ
     return <Redirect href="/onboarding/welcome" />;
   }
 
   return (
-    <Tabs screenOptions={{ headerShown: true }}>
-      <Tabs.Screen name="home" options={{ title: "ホーム" }} />
-      <Tabs.Screen name="menus" options={{ title: "献立" }} />
-      <Tabs.Screen name="meals" options={{ title: "食事" }} />
-      <Tabs.Screen name="health" options={{ title: "健康" }} />
-      <Tabs.Screen name="settings" options={{ title: "設定" }} />
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: {
+          backgroundColor: colors.card,
+          borderTopColor: colors.border,
+          height: 88,
+          paddingBottom: 30,
+          paddingTop: 8,
+        },
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
+      }}
+    >
+      <Tabs.Screen
+        name="home"
+        options={{
+          title: "ホーム",
+          tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="menus"
+        options={{
+          title: "献立",
+          tabBarIcon: ({ color, size }) => <Ionicons name="restaurant" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="meals"
+        options={{
+          title: "スキャン",
+          tabBarIcon: () => (
+            <View style={{
+              width: 48, height: 48, borderRadius: 24,
+              backgroundColor: colors.text, alignItems: "center", justifyContent: "center",
+              marginBottom: 16,
+            }}>
+              <Ionicons name="scan" size={24} color="#fff" />
+            </View>
+          ),
+          tabBarLabel: () => null,
+        }}
+        listeners={{
+          tabPress: (e) => {
+            e.preventDefault();
+            router.push("/meals/new");
+          },
+        }}
+      />
+      <Tabs.Screen
+        name="health"
+        options={{
+          title: "健康",
+          tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: "マイページ",
+          tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
+        }}
+        listeners={{
+          tabPress: (e) => {
+            e.preventDefault();
+            router.push("/profile");
+          },
+        }}
+      />
     </Tabs>
   );
 }
-
-

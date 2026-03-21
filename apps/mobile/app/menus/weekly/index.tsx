@@ -1,7 +1,10 @@
-import { Link, router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, SectionHeader, StatusBadge } from "../../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
 
@@ -54,6 +57,26 @@ function getWeekStart(date: Date): Date {
   d.setHours(0, 0, 0, 0);
   return d;
 }
+
+const DOW = ["月", "火", "水", "木", "金", "土", "日"];
+
+const MEAL_ORDER = ["breakfast", "lunch", "snack", "dinner", "midnight_snack"] as const;
+
+const MEAL_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; label: string; color: string }> = {
+  breakfast: { icon: "sunny", label: "朝食", color: "#FF9800" },
+  lunch: { icon: "partly-sunny", label: "昼食", color: "#4CAF50" },
+  snack: { icon: "cafe", label: "おやつ", color: "#E91E63" },
+  dinner: { icon: "moon", label: "夕食", color: "#7C4DFF" },
+  midnight_snack: { icon: "cloudy-night", label: "夜食", color: "#3F51B5" },
+};
+
+const MODE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  cook: { label: "自炊", color: colors.success, bg: colors.successLight },
+  quick: { label: "時短", color: colors.blue, bg: colors.blueLight },
+  buy: { label: "買う", color: colors.purple, bg: colors.purpleLight },
+  out: { label: "外食", color: colors.warning, bg: colors.warningLight },
+  skip: { label: "なし", color: colors.textMuted, bg: colors.bg },
+};
 
 export default function WeeklyMenuPage() {
   const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date()));
@@ -136,17 +159,6 @@ export default function WeeklyMenuPage() {
     setSelectedDate(formatLocalDate(d));
   }
 
-  const mealTypeLabel = useMemo(() => {
-    const map: Record<string, string> = {
-      breakfast: "朝食",
-      lunch: "昼食",
-      dinner: "夕食",
-      snack: "おやつ",
-      midnight_snack: "夜食",
-    };
-    return map;
-  }, []);
-
   async function checkPending() {
     try {
       const api = getApi();
@@ -173,9 +185,7 @@ export default function WeeklyMenuPage() {
   // Supabase Realtime で進捗をリアルタイム監視
   useEffect(() => {
     if (!pendingRequestId) return;
-    
-    console.log("📡 Subscribing to Realtime for request:", pendingRequestId);
-    
+
     const channel = supabase
       .channel(`weekly-menu-progress-${pendingRequestId}`)
       .on(
@@ -192,14 +202,12 @@ export default function WeeklyMenuPage() {
             error_message?: string | null;
             progress?: PendingProgress | null;
           };
-          
-          console.log("📡 Realtime update:", newRecord.status, newRecord.progress?.message);
-          
+
           setPendingStatus(newRecord.status);
           if (newRecord.progress) {
             setPendingProgress(newRecord.progress);
           }
-          
+
           if (newRecord.status === "completed") {
             await loadData();
             setPendingRequestId(null);
@@ -215,12 +223,9 @@ export default function WeeklyMenuPage() {
           }
         }
       )
-      .subscribe((status) => {
-        console.log("📡 Realtime subscription status:", status);
-      });
-    
+      .subscribe();
+
     return () => {
-      console.log("📡 Unsubscribing from Realtime");
       supabase.removeChannel(channel);
     };
   }, [pendingRequestId]);
@@ -254,7 +259,7 @@ export default function WeeklyMenuPage() {
           setError(res.errorMessage ?? "週間献立の生成に失敗しました。");
         }
       } catch {
-        // Ignore transient polling errors and keep the request visible.
+        // Ignore transient polling errors
       }
     };
 
@@ -301,150 +306,325 @@ export default function WeeklyMenuPage() {
     }
   }
 
-  return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>週間献立</Text>
-        <Link href="/menus/weekly/request">AIで生成</Link>
-      </View>
+  // Day selector helpers
+  const getDayOfWeek = (dateStr: string): string => {
+    const d = new Date(dateStr + "T00:00:00");
+    const dayIdx = (d.getDay() + 6) % 7; // Mon=0
+    return DOW[dayIdx] ?? "";
+  };
 
+  const sortedMeals = useMemo(() => {
+    if (!selectedDay?.planned_meals) return [];
+    return [...selectedDay.planned_meals].sort((a, b) => {
+      const ao = a.display_order ?? 0;
+      const bo = b.display_order ?? 0;
+      if (ao !== bo) return ao - bo;
+      const ai = MEAL_ORDER.indexOf(a.meal_type as any);
+      const bi = MEAL_ORDER.indexOf(b.meal_type as any);
+      return ai - bi;
+    });
+  }, [selectedDay]);
+
+  const daySummary = useMemo(() => {
+    if (!selectedDay?.planned_meals) return { totalCalories: 0, completed: 0, total: 0 };
+    const meals = selectedDay.planned_meals;
+    return {
+      totalCalories: meals.reduce((s, m) => s + (m.calories_kcal ?? 0), 0),
+      completed: meals.filter((m) => m.is_completed).length,
+      total: meals.length,
+    };
+  }, [selectedDay]);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="週間献立" />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+      {/* ヘッダー: 週ナビゲーション */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Pressable onPress={() => shiftWeek(-1)} style={{ padding: 10, borderRadius: 10, backgroundColor: "#eee" }}>
-          <Text style={{ fontWeight: "900" }}>←</Text>
+        <Pressable
+          onPress={() => shiftWeek(-1)}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: radius.md,
+            backgroundColor: colors.card,
+            alignItems: "center",
+            justifyContent: "center",
+            borderWidth: 1,
+            borderColor: colors.border,
+            ...shadows.sm,
+          }}
+        >
+          <Ionicons name="chevron-back" size={20} color={colors.text} />
         </Pressable>
-        <Text style={{ color: "#666" }}>
-          {weekStartStr} 〜 {weekEndStr}
-        </Text>
-        <Pressable onPress={() => shiftWeek(1)} style={{ padding: 10, borderRadius: 10, backgroundColor: "#eee" }}>
-          <Text style={{ fontWeight: "900" }}>→</Text>
+        <View style={{ alignItems: "center" }}>
+          <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>
+            {weekStartStr.slice(5)} 〜 {weekEndStr.slice(5)}
+          </Text>
+          {plan && <Text style={{ fontSize: 12, color: colors.textMuted }}>{plan.title}</Text>}
+        </View>
+        <Pressable
+          onPress={() => shiftWeek(1)}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: radius.md,
+            backgroundColor: colors.card,
+            alignItems: "center",
+            justifyContent: "center",
+            borderWidth: 1,
+            borderColor: colors.border,
+            ...shadows.sm,
+          }}
+        >
+          <Ionicons name="chevron-forward" size={20} color={colors.text} />
         </Pressable>
       </View>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ flex: 1, color: colors.error, fontSize: 13 }}>{error}</Text>
+          </View>
+          <Button size="sm" variant="ghost" onPress={() => { setError(null); loadData(); }}>再読み込み</Button>
+        </Card>
       ) : !plan ? (
-        <View style={{ gap: 8 }}>
-          <Text style={{ color: "#666" }}>今週の献立がありません。</Text>
-          <Link href="/menus/weekly/request">AIで週間献立を作成</Link>
+        <View style={{ gap: spacing.lg, paddingTop: spacing["3xl"] }}>
+          <EmptyState
+            icon={<Ionicons name="restaurant-outline" size={48} color={colors.textMuted} />}
+            message="この週の献立がまだありません"
+          />
+          <Button onPress={() => router.push("/menus/weekly/request")}>
+            AIで週間献立を作成
+          </Button>
         </View>
       ) : (
         <>
-          <Text style={{ color: "#999" }}>{plan.title}</Text>
-          {pendingRequestId ? (
-            <View style={{ padding: 12, borderRadius: 12, backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#fed7aa", gap: 8 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <ActivityIndicator size="small" color="#E07A5F" />
-                <Text style={{ fontWeight: "700", color: "#333", flex: 1 }}>
-                  {pendingProgress?.message ?? "AIが献立を生成中..."}
-                </Text>
-                {pendingProgress?.percentage ? (
-                  <Text style={{ color: "#E07A5F", fontWeight: "600" }}>
-                    {pendingProgress.percentage}%
+          {/* AI生成中プログレス */}
+          {pendingRequestId && (
+            <Card variant="accent">
+              <View style={{ gap: spacing.md }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <ActivityIndicator size="small" color={colors.accent} />
+                  <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: 14 }}>
+                    {pendingProgress?.message ?? "AIが献立を生成中..."}
                   </Text>
-                ) : null}
-              </View>
-              {pendingProgress?.percentage ? (
-                <View style={{ height: 6, backgroundColor: "#fed7aa", borderRadius: 3, overflow: "hidden" }}>
-                  <View 
-                    style={{ 
-                      height: "100%", 
-                      width: `${pendingProgress.percentage}%`, 
-                      backgroundColor: "#E07A5F", 
-                      borderRadius: 3 
-                    }} 
-                  />
+                  <StatusBadge variant="generating" label="生成中" />
                 </View>
-              ) : null}
-            </View>
-          ) : null}
+                {pendingProgress?.percentage != null && (
+                  <ProgressBar
+                    value={pendingProgress.percentage}
+                    max={100}
+                    color={colors.accent}
+                    showPercentage
+                  />
+                )}
+              </View>
+            </Card>
+          )}
 
-          {/* 日付セレクタ */}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {/* 日付セレクタ — 横並び丸型ピル */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
             {days.map((d) => {
               const selected = d.day_date === selectedDate;
+              const dow = getDayOfWeek(d.day_date);
+              const dayNum = d.day_date.slice(8);
+              const completedAll = d.planned_meals.length > 0 && d.planned_meals.every((m) => m.is_completed);
+              const hasGenerating = d.planned_meals.some((m) => m.is_generating);
+
               return (
                 <Pressable
                   key={d.id}
                   onPress={() => setSelectedDate(d.day_date)}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 10,
-                    borderRadius: 999,
-                    backgroundColor: selected ? "#E07A5F" : "#eee",
-                  }}
+                  style={({ pressed }) => ({
+                    alignItems: "center",
+                    gap: 4,
+                    paddingVertical: spacing.sm,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: radius.lg,
+                    backgroundColor: selected ? colors.accent : colors.card,
+                    borderWidth: 1,
+                    borderColor: selected ? colors.accent : colors.border,
+                    minWidth: 48,
+                    ...shadows.sm,
+                    ...(pressed ? { opacity: 0.9 } : {}),
+                  })}
                 >
-                  <Text style={{ color: selected ? "white" : "#333", fontWeight: "900" }}>{d.day_date.slice(5)}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: "600", color: selected ? "#fff" : colors.textMuted }}>{dow}</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "800", color: selected ? "#fff" : colors.text }}>{dayNum}</Text>
+                  {completedAll ? (
+                    <Ionicons name="checkmark-circle" size={14} color={selected ? "#fff" : colors.success} />
+                  ) : hasGenerating ? (
+                    <ActivityIndicator size={12} color={selected ? "#fff" : colors.accent} />
+                  ) : (
+                    <Text style={{ fontSize: 10, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>
+                      {d.planned_meals.length}食
+                    </Text>
+                  )}
                 </Pressable>
               );
             })}
-          </View>
+          </ScrollView>
 
-          <View style={{ gap: 10, marginTop: 6 }}>
-            <Text style={{ fontWeight: "900" }}>{selectedDate} の献立</Text>
+          {/* 選択日のサマリ */}
+          {selectedDay && daySummary.total > 0 && (
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                {daySummary.totalCalories.toLocaleString()} kcal・{daySummary.completed}/{daySummary.total} 完了
+              </Text>
+              <Button
+                size="sm"
+                variant="ghost"
+                onPress={() => router.push("/menus/weekly/request")}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name="sparkles" size={14} color={colors.accent} />
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>AIで再生成</Text>
+                </View>
+              </Button>
+            </View>
+          )}
 
-            {selectedDay?.planned_meals?.length ? (
-              <View style={{ gap: 10 }}>
-                {selectedDay.planned_meals
-                  .slice()
-                  .sort((a, b) => {
-                    const ao = a.display_order ?? 0;
-                    const bo = b.display_order ?? 0;
-                    if (ao !== bo) return ao - bo;
-                    return a.meal_type.localeCompare(b.meal_type);
-                  })
-                  .map((m) => (
-                    <Pressable
-                      key={m.id}
-                      onPress={() => router.push(`/meals/${m.id}`)}
-                      style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}
+          {/* 食事一覧 */}
+          {sortedMeals.length > 0 ? (
+            <View style={{ gap: spacing.md }}>
+              {sortedMeals.map((m) => {
+                const mealCfg = MEAL_CONFIG[m.meal_type] ?? { icon: "ellipse", label: m.meal_type, color: colors.textMuted };
+                const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
+                const isGenerating = m.is_generating;
+                return (
+                  <Pressable
+                    key={m.id}
+                    onPress={() => router.push(`/meals/${m.id}`)}
+                    style={({ pressed }) => ({
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: spacing.md,
+                      padding: spacing.lg,
+                      backgroundColor: m.is_completed ? colors.successLight : isGenerating ? colors.accentLight : colors.card,
+                      borderRadius: radius.lg,
+                      borderWidth: 1,
+                      borderColor: m.is_completed ? "#C8E6C9" : isGenerating ? "#FED7AA" : colors.border,
+                      ...shadows.sm,
+                      ...(pressed ? { opacity: 0.9 } : {}),
+                    })}
+                  >
+                    {/* 食事タイプアイコン */}
+                    <View
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: radius.md,
+                        backgroundColor: m.is_completed ? colors.success : mealCfg.color,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
                     >
-                      <Text style={{ fontWeight: "900" }}>
-                        {mealTypeLabel[m.meal_type] ?? m.meal_type} · {m.dish_name}
-                        {m.is_generating ? "（生成中）" : ""}
+                      {m.is_completed ? (
+                        <Ionicons name="checkmark" size={24} color="#fff" />
+                      ) : isGenerating ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Ionicons name={mealCfg.icon} size={22} color="#fff" />
+                      )}
+                    </View>
+
+                    {/* 情報 */}
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
+                        {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
                       </Text>
-                      <Text style={{ color: "#666" }}>{m.calories_kcal ? `${m.calories_kcal}kcal` : "kcal未設定"} / {m.mode || "cook"}</Text>
-                      <Text style={{ color: "#999" }}>{m.is_completed ? "完了" : "未完了"}</Text>
-                      <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealCfg.label}</Text>
+                        <View
+                          style={{
+                            backgroundColor: modeCfg.bg,
+                            paddingHorizontal: 6,
+                            paddingVertical: 2,
+                            borderRadius: 4,
+                          }}
+                        >
+                          <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
+                        </View>
+                        {m.calories_kcal ? (
+                          <Text style={{ fontSize: 12, color: colors.textMuted }}>{m.calories_kcal} kcal</Text>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    {/* ステータス & アクション */}
+                    <View style={{ alignItems: "center", gap: 4 }}>
+                      {m.is_completed ? (
+                        <StatusBadge variant="completed" label="完了" />
+                      ) : isGenerating ? (
+                        <StatusBadge variant="generating" label="生成中" />
+                      ) : (
+                        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })}
+
+              {/* アクションボタン行 */}
+              {selectedDay && (
+                <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+                  {sortedMeals.map((m) => {
+                    const mealCfg = MEAL_CONFIG[m.meal_type] ?? { label: m.meal_type };
+                    return (
+                      <View key={m.id} style={{ flexDirection: "row", gap: 4 }}>
                         <Pressable
                           onPress={() => router.push(`/meals/${m.id}/edit`)}
-                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eee" }}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 4,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: radius.sm,
+                            backgroundColor: colors.card,
+                            borderWidth: 1,
+                            borderColor: colors.border,
+                          }}
                         >
-                          <Text style={{ fontWeight: "900" }}>編集</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => reorderMeal(m.id, "up")}
-                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eee" }}
-                        >
-                          <Text style={{ fontWeight: "900" }}>↑</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => reorderMeal(m.id, "down")}
-                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#eee" }}
-                        >
-                          <Text style={{ fontWeight: "900" }}>↓</Text>
+                          <Ionicons name="create-outline" size={14} color={colors.textLight} />
+                          <Text style={{ fontSize: 11, color: colors.textLight }}>{mealCfg.label}</Text>
                         </Pressable>
                         <Pressable
                           onPress={() => regenerateMeal(m.id, m.meal_type)}
-                          style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}
+                          disabled={!!regeneratingMealId}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 4,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: radius.sm,
+                            backgroundColor: regeneratingMealId === m.id ? colors.accentLight : colors.card,
+                            borderWidth: 1,
+                            borderColor: regeneratingMealId === m.id ? colors.accent : colors.border,
+                          }}
                         >
-                          <Text style={{ color: "white", fontWeight: "900" }}>
-                            {regeneratingMealId === m.id ? "再生成中..." : "再生成"}
-                          </Text>
+                          <Ionicons name="refresh" size={14} color={regeneratingMealId === m.id ? colors.accent : colors.textLight} />
                         </Pressable>
                       </View>
-                    </Pressable>
-                  ))}
-              </View>
-            ) : (
-              <Text style={{ color: "#666" }}>この日の食事がありません。</Text>
-            )}
-          </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          ) : (
+            <EmptyState
+              icon={<Ionicons name="restaurant-outline" size={40} color={colors.textMuted} />}
+              message="この日の食事がありません"
+            />
+          )}
         </>
       )}
     </ScrollView>
+    </View>
   );
 }

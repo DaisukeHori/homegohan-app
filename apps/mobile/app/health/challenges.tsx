@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, ChipSelector, EmptyState, Input, LoadingState, PageHeader, ProgressBar, SectionHeader, StatusBadge } from "../../src/components/ui";
+import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Challenge = {
@@ -93,95 +96,280 @@ export default function HealthChallengesPage() {
     }
   }
 
+  const statusBadgeVariant = (s: string) => {
+    if (s === "completed") return "completed" as const;
+    if (s === "active") return "generating" as const;
+    return "pending" as const;
+  };
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>チャレンジ</Text>
-      <Link href="/health">健康トップへ</Link>
+    <View style={styles.screen}>
+      <PageHeader
+        title="チャレンジ"
+        right={
+          <Link href="/health">
+            <Text style={styles.linkText}>健康トップへ</Text>
+          </Link>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.container}>
 
-      <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
-        {(["active", "completed", "all"] as const).map((s) => (
-          <Pressable
-            key={s}
-            onPress={() => setStatus(s)}
-            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 999, backgroundColor: status === s ? "#E07A5F" : "#eee" }}
-          >
-            <Text style={{ fontWeight: "900", color: status === s ? "white" : "#333" }}>{s}</Text>
-          </Pressable>
-        ))}
-      </View>
+      <ChipSelector
+        options={[
+          { value: "active", label: "アクティブ" },
+          { value: "completed", label: "完了" },
+          { value: "all", label: "すべて" },
+        ]}
+        selected={status}
+        onSelect={(v) => setStatus(v as "active" | "completed" | "all")}
+      />
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>テンプレートから開始</Text>
-        <Text style={{ color: "#666" }}>任意で target を上書きできます（空ならデフォルト）。</Text>
-        <TextInput
+      <Card>
+        <SectionHeader
+          title="テンプレートから開始"
+          right={<Ionicons name="rocket-outline" size={20} color={colors.accent} />}
+        />
+        <Text style={styles.helperText}>
+          任意で target を上書きできます（空ならデフォルト）。
+        </Text>
+        <Input
           value={customTarget}
           onChangeText={setCustomTarget}
-          placeholder="custom_target（数値/任意）"
+          placeholder="カスタム目標値（数値 / 任意）"
           keyboardType="decimal-pad"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
+          containerStyle={styles.customTargetInput}
         />
         {templates.length === 0 ? (
-          <Text style={{ color: "#666" }}>テンプレートがありません。</Text>
+          <EmptyState
+            icon={<Ionicons name="document-outline" size={36} color={colors.textMuted} />}
+            message="テンプレートがありません。"
+          />
         ) : (
-          <View style={{ gap: 10 }}>
+          <View style={styles.templateList}>
             {templates.map((t) => (
-              <View key={t.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "#fafafa", gap: 6 }}>
-                <Text style={{ fontWeight: "900" }}>
-                  {t.emoji} {t.title}
-                </Text>
-                <Text style={{ color: "#666" }}>{t.description}</Text>
-                <Text style={{ color: "#999" }}>
-                  target: {t.default_target}
-                  {t.unit} / {t.duration_days}日 / reward: {t.reward_points}pt
-                </Text>
-                <Pressable
+              <Card key={t.id} variant="accent" padding="md">
+                <View style={styles.templateHeader}>
+                  <Text style={styles.templateEmoji}>{t.emoji}</Text>
+                  <View style={styles.templateTitleWrap}>
+                    <Text style={styles.templateTitle}>{t.title}</Text>
+                    <StatusBadge variant="info" label={t.difficulty} />
+                  </View>
+                </View>
+                <Text style={styles.templateDescription}>{t.description}</Text>
+                <View style={styles.templateMeta}>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="trophy-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>{t.default_target}{t.unit}</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>{t.duration_days}日</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="star-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>{t.reward_points}pt</Text>
+                  </View>
+                </View>
+                <Button
                   onPress={() => create(t.id)}
                   disabled={isSubmitting}
-                  style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: isSubmitting ? "#999" : "#333", alignSelf: "flex-start" }}
+                  loading={isSubmitting}
+                  size="sm"
+                  style={styles.startBtn}
                 >
-                  <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "作成中..." : "開始"}</Text>
-                </Pressable>
-              </View>
+                  {isSubmitting ? "作成中..." : "開始"}
+                </Button>
+              </Card>
             ))}
           </View>
         )}
-      </View>
+      </Card>
 
-      <Text style={{ fontWeight: "900" }}>あなたのチャレンジ</Text>
+      <SectionHeader title="あなたのチャレンジ" />
+
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="チャレンジを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={styles.errorRow}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>チャレンジがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="trophy-outline" size={40} color={colors.textMuted} />}
+          message="チャレンジがありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((c) => (
-            <View key={c.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {c.title}（{c.status}）
-              </Text>
-              {c.description ? <Text style={{ color: "#666" }}>{c.description}</Text> : null}
-              <Text style={{ color: "#999" }}>
-                {c.start_date} → {c.end_date}
-              </Text>
-              <Text style={{ color: "#333" }}>
-                progress: {c.current_value ?? 0} / {c.target_value}
-                {c.target_unit}
-              </Text>
-              {c.reward_description ? <Text style={{ color: "#666" }}>🎁 {c.reward_description}</Text> : null}
-            </View>
-          ))}
+        <View style={styles.list}>
+          {items.map((c) => {
+            const progress = c.target_value > 0 ? (c.current_value ?? 0) / c.target_value : 0;
+            return (
+              <Card key={c.id}>
+                <View style={styles.challengeHeader}>
+                  <Text style={styles.challengeTitle}>{c.title}</Text>
+                  <StatusBadge variant={statusBadgeVariant(c.status)} label={c.status} />
+                </View>
+                {c.description ? <Text style={styles.challengeDesc}>{c.description}</Text> : null}
+                <View style={styles.dateRow}>
+                  <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
+                  <Text style={styles.dateText}>{c.start_date} → {c.end_date}</Text>
+                </View>
+                <ProgressBar
+                  value={c.current_value ?? 0}
+                  max={c.target_value}
+                  label={`${c.current_value ?? 0} / ${c.target_value}${c.target_unit}`}
+                  showPercentage
+                  color={c.status === "completed" ? colors.success : colors.accent}
+                  style={styles.progressBar}
+                />
+                {c.reward_description ? (
+                  <View style={styles.rewardRow}>
+                    <Ionicons name="gift-outline" size={16} color={colors.purple} />
+                    <Text style={styles.rewardText}>{c.reward_description}</Text>
+                  </View>
+                ) : null}
+              </Card>
+            );
+          })}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <Ionicons name="refresh-outline" size={16} color={colors.textLight} />
+        <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>更新</Text>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
 
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  linkText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  helperText: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  customTargetInput: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  templateList: {
+    gap: spacing.md,
+  },
+  templateHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  templateEmoji: {
+    fontSize: 24,
+  },
+  templateTitleWrap: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  templateTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  templateDescription: {
+    fontSize: 13,
+    color: colors.textLight,
+    marginBottom: spacing.sm,
+  },
+  templateMeta: {
+    flexDirection: "row",
+    gap: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  metaText: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  startBtn: {
+    alignSelf: "flex-start",
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.error,
+    fontWeight: "600",
+    flex: 1,
+  },
+  list: {
+    gap: spacing.md,
+  },
+  challengeHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  challengeTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.text,
+    flex: 1,
+  },
+  challengeDesc: {
+    fontSize: 13,
+    color: colors.textLight,
+    marginBottom: spacing.sm,
+  },
+  dateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  dateText: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  progressBar: {
+    marginBottom: spacing.sm,
+  },
+  rewardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.purpleLight,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  rewardText: {
+    fontSize: 13,
+    color: colors.purple,
+    fontWeight: "600",
+    flex: 1,
+  },
+});

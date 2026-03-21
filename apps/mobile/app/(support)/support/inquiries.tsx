@@ -1,8 +1,11 @@
-import { Link, router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, ChipSelector, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { colors, spacing, radius } from "../../../src/theme";
 
 type InquiryRow = {
   id: string;
@@ -13,6 +16,20 @@ type InquiryRow = {
   subject: string;
   status: string;
   createdAt: string;
+};
+
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "resolved", label: "Resolved" },
+  { value: "closed", label: "Closed" },
+];
+
+const STATUS_BADGE_MAP: Record<string, "pending" | "generating" | "completed" | "info"> = {
+  pending: "pending",
+  in_progress: "generating",
+  resolved: "completed",
+  closed: "info",
 };
 
 export default function SupportInquiriesPage() {
@@ -40,49 +57,59 @@ export default function SupportInquiriesPage() {
   }, [status]);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>問い合わせ</Text>
-      <Link href="/support">Support Home</Link>
-
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        {["pending", "in_progress", "resolved", "closed"].map((s) => (
-          <Pressable key={s} onPress={() => setStatus(s)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: status === s ? "#E07A5F" : "#eee" }}>
-            <Text style={{ fontWeight: "900", color: status === s ? "white" : "#333" }}>{s}</Text>
-          </Pressable>
-        ))}
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["4xl"] }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, paddingTop: 56 }}>
+        <Pressable onPress={() => router.back()} style={{ padding: spacing.xs }}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text, flex: 1 }}>問い合わせ</Text>
+        <Pressable onPress={load} style={{ padding: spacing.sm }}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
+        </Pressable>
       </View>
 
+      <ChipSelector
+        options={STATUS_OPTIONS}
+        selected={status}
+        onSelect={setStatus}
+        scrollable
+      />
+
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>問い合わせがありません。</Text>
+        <EmptyState icon={<Ionicons name="chatbubbles-outline" size={40} color={colors.textMuted} />} message="問い合わせがありません。" />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((i) => (
-            <Pressable
-              key={i.id}
-              onPress={() => router.push(`/support/inquiries/${i.id}`)}
-              style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}
-            >
-              <Text style={{ fontWeight: "900" }}>{i.subject}</Text>
-              <Text style={{ color: "#666" }}>
-                {i.inquiryType} / {i.status} / {i.userName ?? i.email}
-              </Text>
-              <Text style={{ color: "#999" }}>{new Date(i.createdAt).toLocaleString("ja-JP")}</Text>
-            </Pressable>
+            <Card key={i.id} onPress={() => router.push(`/support/inquiries/${i.id}`)}>
+              <View style={{ gap: spacing.xs }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text, flex: 1 }} numberOfLines={1}>
+                    {i.subject}
+                  </Text>
+                  <StatusBadge variant={STATUS_BADGE_MAP[i.status] ?? "pending"} label={i.status} />
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                  <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+                  <Text style={{ fontSize: 13, color: colors.textLight }}>{i.inquiryType}</Text>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>-</Text>
+                  <Ionicons name="person-outline" size={14} color={colors.textMuted} />
+                  <Text style={{ fontSize: 13, color: colors.textLight }} numberOfLines={1}>{i.userName ?? i.email}</Text>
+                </View>
+                <Text style={{ fontSize: 12, color: colors.textMuted }}>{new Date(i.createdAt).toLocaleString("ja-JP")}</Text>
+              </View>
+            </Card>
           ))}
         </View>
       )}
-
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
     </ScrollView>
   );
 }
-
-

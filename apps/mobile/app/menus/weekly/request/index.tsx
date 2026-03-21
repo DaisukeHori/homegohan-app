@@ -1,9 +1,12 @@
+import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
-import { Alert, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Image, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, ChipSelector, Input, PageHeader, SectionHeader } from "../../../../src/components/ui";
 import { getApi } from "../../../../src/lib/api";
+import { colors, radius, spacing } from "../../../../src/theme";
 
 const formatLocalDate = (date: Date): string => {
   const y = date.getFullYear();
@@ -32,7 +35,7 @@ export default function WeeklyRequestPage() {
   const [fridgeSummary, setFridgeSummary] = useState<string | null>(null);
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
 
-  const [isUploading, setIsUploading] = useState(false); // UI互換（ボタン無効化用）
+  const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const themes = useMemo(
@@ -134,103 +137,139 @@ export default function WeeklyRequestPage() {
     }
   }
 
+  const themeOptions = themes.map((t) => ({ value: t, label: t }));
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>AIで週間献立を作成</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="AIで週間献立を作成"
+        subtitle="食材や好みに合わせた1週間の献立を自動生成"
+      />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>開始日（週の月曜日推奨）</Text>
-        <TextInput
-          value={startDate}
-          onChangeText={setStartDate}
-          placeholder="YYYY-MM-DD"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
+      <Card>
+        <SectionHeader
+          title="開始日"
+          right={<Ionicons name="calendar-outline" size={18} color={colors.accent} />}
         />
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>冷蔵庫（任意）</Text>
-        <Pressable
-          onPress={uploadFridgePhotoAndAnalyze}
-          disabled={isUploading || isSubmitting}
-          style={{ padding: 12, borderRadius: 10, alignItems: "center", backgroundColor: isUploading ? "#999" : "#333" }}
-        >
-          <Text style={{ color: "white", fontWeight: "900" }}>{isUploading ? "解析中..." : "写真を選んで食材を自動追加"}</Text>
-        </Pressable>
-        {fridgeImageUri ? <Image source={{ uri: fridgeImageUri }} style={{ width: "100%", height: 160, borderRadius: 12 }} /> : null}
-        {fridgeSummary ? <Text style={{ color: "#666" }}>{fridgeSummary}</Text> : null}
-        {fridgeSuggestions.length ? <Text style={{ color: "#999" }}>提案: {fridgeSuggestions.join("、")}</Text> : null}
-        {ingredients.length ? (
-          <Text style={{ color: "#666" }}>検出/指定食材: {ingredients.join("、")}</Text>
-        ) : (
-          <Text style={{ color: "#999" }}>食材指定なし（AIにお任せ）</Text>
-        )}
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>条件</Text>
-        <Text style={{ color: "#666" }}>家族人数</Text>
-        <TextInput
-          value={familySize}
-          onChangeText={setFamilySize}
-          keyboardType="number-pad"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-        <Text style={{ color: "#666" }}>チートデイ（任意）</Text>
-        <TextInput
-          value={cheatDay}
-          onChangeText={setCheatDay}
-          placeholder="例: 土曜"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-
-        <Text style={{ fontWeight: "900", marginTop: 6 }}>テーマ</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {themes.map((t) => {
-            const selected = selectedThemes.includes(t);
-            return (
-              <Pressable
-                key={t}
-                onPress={() => toggleTheme(t)}
-                style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 10,
-                  borderRadius: 999,
-                  backgroundColor: selected ? "#E07A5F" : "#eee",
-                }}
-              >
-                <Text style={{ color: selected ? "white" : "#333", fontWeight: "900" }}>{t}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={{ marginTop: spacing.sm }}>
+          <Input
+            label="週の月曜日推奨"
+            value={startDate}
+            onChangeText={setStartDate}
+            placeholder="YYYY-MM-DD"
+          />
         </View>
-      </View>
+      </Card>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>メモ（任意）</Text>
-        <TextInput
-          value={note}
-          onChangeText={setNote}
-          placeholder="例: 野菜多め、魚を増やしたい"
-          multiline
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 80 }}
+      <Card>
+        <SectionHeader
+          title="冷蔵庫（任意）"
+          right={<Ionicons name="cube-outline" size={18} color={colors.accent} />}
         />
-      </View>
+        <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+          <Button
+            onPress={uploadFridgePhotoAndAnalyze}
+            disabled={isUploading || isSubmitting}
+            loading={isUploading}
+            variant="secondary"
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="camera-outline" size={18} color={isUploading ? "#FFFFFF" : colors.text} />
+              <Text style={{ color: isUploading ? "#FFFFFF" : colors.text, fontWeight: "700", fontSize: 14 }}>
+                {isUploading ? "解析中..." : "写真を選んで食材を自動追加"}
+              </Text>
+            </View>
+          </Button>
+          {fridgeImageUri ? (
+            <Image source={{ uri: fridgeImageUri }} style={{ width: "100%", height: 160, borderRadius: radius.md }} />
+          ) : null}
+          {fridgeSummary ? (
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} style={{ marginTop: 2 }} />
+              <Text style={{ fontSize: 13, color: colors.textLight, flex: 1 }}>{fridgeSummary}</Text>
+            </View>
+          ) : null}
+          {fridgeSuggestions.length ? (
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+              <Ionicons name="bulb-outline" size={16} color={colors.warning} style={{ marginTop: 2 }} />
+              <Text style={{ fontSize: 13, color: colors.textMuted, flex: 1 }}>提案: {fridgeSuggestions.join("、")}</Text>
+            </View>
+          ) : null}
+          {ingredients.length ? (
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+              <Ionicons name="leaf-outline" size={16} color={colors.success} style={{ marginTop: 2 }} />
+              <Text style={{ fontSize: 13, color: colors.textLight, flex: 1 }}>検出/指定食材: {ingredients.join("、")}</Text>
+            </View>
+          ) : (
+            <Text style={{ fontSize: 13, color: colors.textMuted }}>食材指定なし（AIにお任せ）</Text>
+          )}
+        </View>
+      </Card>
 
-      <Pressable
-        onPress={submit}
-        disabled={isSubmitting || isUploading}
-        style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}
-      >
-        <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "生成中..." : "生成する"}</Text>
-      </Pressable>
+      <Card>
+        <SectionHeader
+          title="条件"
+          right={<Ionicons name="options-outline" size={18} color={colors.accent} />}
+        />
+        <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+          <Input
+            label="家族人数"
+            value={familySize}
+            onChangeText={setFamilySize}
+            keyboardType="number-pad"
+          />
+          <Input
+            label="チートデイ（任意）"
+            value={cheatDay}
+            onChangeText={setCheatDay}
+            placeholder="例: 土曜"
+          />
 
-      <Pressable onPress={() => router.back()} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>戻る</Text>
-      </Pressable>
+          <View style={{ gap: spacing.sm }}>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text }}>テーマ</Text>
+            <ChipSelector
+              options={themeOptions}
+              selected={selectedThemes}
+              onSelect={toggleTheme}
+              multiple
+            />
+          </View>
+        </View>
+      </Card>
+
+      <Card>
+        <SectionHeader
+          title="メモ（任意）"
+          right={<Ionicons name="create-outline" size={18} color={colors.accent} />}
+        />
+        <View style={{ marginTop: spacing.sm }}>
+          <Input
+            value={note}
+            onChangeText={setNote}
+            placeholder="例: 野菜多め、魚を増やしたい"
+            multiline
+            style={{ minHeight: 80, textAlignVertical: "top" }}
+          />
+        </View>
+      </Card>
+
+      <Button onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <Ionicons name="sparkles" size={18} color="#FFFFFF" />
+          <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 16 }}>
+            {isSubmitting ? "生成中..." : "生成する"}
+          </Text>
+        </View>
+      </Button>
+
+      <Button onPress={() => router.back()} variant="ghost" size="sm">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Ionicons name="arrow-back" size={16} color={colors.textLight} />
+          <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 14 }}>戻る</Text>
+        </View>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-
-

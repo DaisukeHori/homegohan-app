@@ -1,14 +1,33 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, Input, PageHeader, SectionHeader } from "../../../src/components/ui";
+import { colors, spacing, radius } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
+
+const MOOD_OPTIONS = [
+  { value: 1, label: "1", emoji: "😞" },
+  { value: 2, label: "2", emoji: "😕" },
+  { value: 3, label: "3", emoji: "😐" },
+  { value: 4, label: "4", emoji: "😊" },
+  { value: 5, label: "5", emoji: "😄" },
+];
+
+const SLEEP_OPTIONS = [
+  { value: 1, label: "1", emoji: "😴" },
+  { value: 2, label: "2", emoji: "🥱" },
+  { value: 3, label: "3", emoji: "😌" },
+  { value: 4, label: "4", emoji: "😊" },
+  { value: 5, label: "5", emoji: "🌟" },
+];
 
 export default function HealthQuickRecordPage() {
   const [recordDate, setRecordDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [weight, setWeight] = useState("");
-  const [moodScore, setMoodScore] = useState("");
-  const [sleepQuality, setSleepQuality] = useState("");
+  const [moodScore, setMoodScore] = useState<number | null>(null);
+  const [sleepQuality, setSleepQuality] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function submit() {
@@ -18,8 +37,8 @@ export default function HealthQuickRecordPage() {
       const api = getApi();
       const body: any = { record_date: recordDate };
       if (weight) body.weight = parseFloat(weight);
-      if (moodScore) body.mood_score = parseInt(moodScore, 10);
-      if (sleepQuality) body.sleep_quality = parseInt(sleepQuality, 10);
+      if (moodScore) body.mood_score = moodScore;
+      if (sleepQuality) body.sleep_quality = sleepQuality;
 
       const res = await api.post<any>("/api/health/records/quick", body);
       Alert.alert("記録しました", res?.message ?? "保存しました。");
@@ -32,71 +51,112 @@ export default function HealthQuickRecordPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>クイック入力</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="クイック記録" />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+      {/* 日付 */}
+      <Input
+        label="日付"
+        value={recordDate}
+        onChangeText={setRecordDate}
+        placeholder="YYYY-MM-DD"
+      />
 
-      <View style={{ gap: 6 }}>
-        <Text style={{ fontWeight: "900" }}>日付</Text>
-        <TextInput
-          value={recordDate}
-          onChangeText={setRecordDate}
-          placeholder="YYYY-MM-DD"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-      </View>
+      {/* 体重 */}
+      <Card>
+        <View style={{ gap: spacing.md }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={{ width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.purpleLight, alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="scale" size={18} color={colors.purple} />
+            </View>
+            <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>体重</Text>
+          </View>
+          <Input
+            value={weight}
+            onChangeText={setWeight}
+            keyboardType="decimal-pad"
+            placeholder="60.2"
+          />
+          <Text style={{ fontSize: 12, color: colors.textMuted }}>kg</Text>
+        </View>
+      </Card>
 
-      <View style={{ gap: 6 }}>
-        <Text style={{ fontWeight: "900" }}>体重 (kg)</Text>
-        <TextInput
-          value={weight}
-          onChangeText={setWeight}
-          keyboardType="decimal-pad"
-          placeholder="例: 60.2"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-      </View>
+      {/* 気分 */}
+      <Card>
+        <View style={{ gap: spacing.md }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={{ width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.successLight, alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="happy" size={18} color={colors.success} />
+            </View>
+            <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>気分</Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: spacing.sm, justifyContent: "space-around" }}>
+            {MOOD_OPTIONS.map((opt) => {
+              const selected = moodScore === opt.value;
+              return (
+                <Pressable
+                  key={opt.value}
+                  onPress={() => setMoodScore(opt.value)}
+                  style={{
+                    alignItems: "center",
+                    gap: 4,
+                    padding: spacing.sm,
+                    borderRadius: radius.md,
+                    backgroundColor: selected ? colors.successLight : "transparent",
+                    borderWidth: 1,
+                    borderColor: selected ? colors.success : "transparent",
+                    minWidth: 50,
+                  }}
+                >
+                  <Text style={{ fontSize: 24 }}>{opt.emoji}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: selected ? colors.success : colors.textMuted }}>{opt.value}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </Card>
 
-      <View style={{ gap: 6 }}>
-        <Text style={{ fontWeight: "900" }}>気分 (1-5)</Text>
-        <TextInput
-          value={moodScore}
-          onChangeText={setMoodScore}
-          keyboardType="number-pad"
-          placeholder="例: 4"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-      </View>
+      {/* 睡眠 */}
+      <Card>
+        <View style={{ gap: spacing.md }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={{ width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.blueLight, alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="bed" size={18} color={colors.blue} />
+            </View>
+            <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>睡眠の質</Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: spacing.sm, justifyContent: "space-around" }}>
+            {SLEEP_OPTIONS.map((opt) => {
+              const selected = sleepQuality === opt.value;
+              return (
+                <Pressable
+                  key={opt.value}
+                  onPress={() => setSleepQuality(opt.value)}
+                  style={{
+                    alignItems: "center",
+                    gap: 4,
+                    padding: spacing.sm,
+                    borderRadius: radius.md,
+                    backgroundColor: selected ? colors.blueLight : "transparent",
+                    borderWidth: 1,
+                    borderColor: selected ? colors.blue : "transparent",
+                    minWidth: 50,
+                  }}
+                >
+                  <Text style={{ fontSize: 24 }}>{opt.emoji}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: selected ? colors.blue : colors.textMuted }}>{opt.value}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </Card>
 
-      <View style={{ gap: 6 }}>
-        <Text style={{ fontWeight: "900" }}>睡眠 (1-5)</Text>
-        <TextInput
-          value={sleepQuality}
-          onChangeText={setSleepQuality}
-          keyboardType="number-pad"
-          placeholder="例: 3"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-      </View>
-
-      <Pressable
-        onPress={submit}
-        style={{
-          padding: 14,
-          borderRadius: 12,
-          alignItems: "center",
-          backgroundColor: isSubmitting ? "#999" : "#333",
-          marginTop: 8,
-        }}
-      >
-        <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "保存中..." : "保存"}</Text>
-      </Pressable>
-
-      <Pressable onPress={() => router.back()} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>戻る</Text>
-      </Pressable>
+      <Button onPress={submit} loading={isSubmitting}>
+        {isSubmitting ? "保存中..." : "記録を保存"}
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-
-

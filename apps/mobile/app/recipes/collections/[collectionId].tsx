@@ -1,9 +1,13 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link, router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../../src/components/ui";
 import { removeRecipeFromCollection, type RecipeCollection } from "../../../src/lib/recipeCollections";
 import { supabase } from "../../../src/lib/supabase";
+import { colors, spacing } from "../../../src/theme";
+import { typography } from "../../../src/theme/typography";
 
 type RecipeLite = {
   id: string;
@@ -76,63 +80,133 @@ export default function RecipeCollectionDetailPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>コレクション</Text>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: "#666" }}>戻る</Text>
-        </Pressable>
-      </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="コレクション詳細" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
 
-      <View style={{ gap: 8 }}>
-        <Link href="/recipes/collections">一覧へ</Link>
-      </View>
+      <Link href="/recipes/collections" style={styles.linkText}>
+        <View style={styles.linkRow}>
+          <Ionicons name="list-outline" size={16} color={colors.accent} />
+          <Text style={styles.linkText}>一覧へ</Text>
+        </View>
+      </Link>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <EmptyState
+          icon={<Ionicons name="alert-circle-outline" size={40} color={colors.error} />}
+          message={error}
+          actionLabel="再読み込み"
+          onAction={load}
+        />
       ) : !collection ? (
-        <Text style={{ color: "#666" }}>見つかりませんでした。</Text>
+        <EmptyState
+          icon={<Ionicons name="search-outline" size={40} color={colors.textMuted} />}
+          message="見つかりませんでした。"
+        />
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}>
-            <Text style={{ fontWeight: "900" }}>{collection.name}</Text>
-            <Text style={{ color: "#666" }}>件数: {(collection.recipe_ids ?? []).length}</Text>
-            {collection.description ? <Text style={{ color: "#999" }}>{collection.description}</Text> : null}
-          </View>
+          <Card style={{ gap: spacing.xs }}>
+            <View style={styles.collectionTitleRow}>
+              <Ionicons name="folder-outline" size={22} color={colors.accent} />
+              <Text style={typography.h3}>{collection.name}</Text>
+            </View>
+            <Text style={typography.bodySmall}>件数: {(collection.recipe_ids ?? []).length}</Text>
+            {collection.description ? <Text style={typography.caption}>{collection.description}</Text> : null}
+          </Card>
 
           {recipes.length === 0 ? (
-            <Text style={{ color: "#666" }}>レシピがありません。</Text>
+            <EmptyState
+              icon={<Ionicons name="restaurant-outline" size={40} color={colors.textMuted} />}
+              message="レシピがありません。"
+            />
           ) : (
-            <View style={{ gap: 10 }}>
+            <View style={{ gap: spacing.sm }}>
               {recipes.map((r) => (
-                <View key={r.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-                  <Text style={{ fontWeight: "900" }}>{r.name}</Text>
-                  {r.description ? <Text style={{ color: "#999" }}>{r.description}</Text> : null}
-                  <View style={{ flexDirection: "row", gap: 10 }}>
-                    <Pressable onPress={() => router.push(`/recipes/${r.id}`)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                      <Text style={{ color: "white", fontWeight: "900" }}>開く</Text>
-                    </Pressable>
-                    <Pressable onPress={() => remove(collection.id, r.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}>
-                      <Text style={{ color: "white", fontWeight: "900" }}>外す</Text>
-                    </Pressable>
+                <Card key={r.id} style={{ gap: spacing.sm }}>
+                  <Text style={typography.label}>{r.name}</Text>
+                  {r.description ? <Text style={typography.caption}>{r.description}</Text> : null}
+                  <View style={styles.recipeActions}>
+                    <Button onPress={() => router.push(`/recipes/${r.id}`)} variant="secondary" size="sm">
+                      <Ionicons name="open-outline" size={14} color={colors.text} />
+                      <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>開く</Text>
+                    </Button>
+                    <Button onPress={() => remove(collection.id, r.id)} variant="destructive" size="sm">
+                      <Ionicons name="close-circle-outline" size={14} color="#FFF" />
+                      <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 13 }}>外す</Text>
+                    </Button>
                   </View>
-                </View>
+                </Card>
               ))}
             </View>
           )}
         </>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
+      <Pressable onPress={load} style={styles.refreshButton}>
+        <Ionicons name="refresh-outline" size={16} color={colors.textMuted} />
+        <Text style={styles.refreshText}>更新</Text>
       </Pressable>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
-
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  backText: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  linkText: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  collectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  recipeActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  refreshButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  refreshText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});

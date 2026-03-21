@@ -1,8 +1,11 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, EmptyState, LoadingState, SectionHeader, StatusBadge } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { colors, spacing, radius } from "../../../src/theme";
 
 type AdminRow = {
   id: string;
@@ -12,6 +15,8 @@ type AdminRow = {
   lastLoginAt: string | null;
   recentActionCount: number;
 };
+
+const ROLE_OPTIONS = ["admin", "support", "org_admin", "super_admin"] as const;
 
 export default function SuperAdminAdminsPage() {
   const [items, setItems] = useState<AdminRow[]>([]);
@@ -49,48 +54,80 @@ export default function SuperAdminAdminsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>管理者管理</Text>
-      <Link href="/super-admin">Super Admin Home</Link>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["4xl"] }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, paddingTop: 56 }}>
+        <Pressable onPress={() => router.back()} style={{ padding: spacing.xs }}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text, flex: 1 }}>管理者管理</Text>
+        <Pressable onPress={load} style={{ padding: spacing.sm }}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
+        </Pressable>
+      </View>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>管理者がいません。</Text>
+        <EmptyState icon={<Ionicons name="shield-outline" size={40} color={colors.textMuted} />} message="管理者がいません。" />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((a) => (
-            <View key={a.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>{a.nickname ?? "(no name)"}</Text>
-              <Text style={{ color: "#666" }}>roles: {(a.roles ?? []).join(", ")}</Text>
-              <Text style={{ color: "#666" }}>recent actions (7d): {a.recentActionCount}</Text>
-              <Text style={{ color: "#999" }}>{a.id}</Text>
+            <Card key={a.id}>
+              <View style={{ gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.purpleLight, alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="shield-checkmark-outline" size={20} color={colors.purple} />
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{a.nickname ?? "(no name)"}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{a.id}</Text>
+                  </View>
+                </View>
 
-              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                {(["admin", "support", "org_admin", "super_admin"] as const).map((r) => (
-                  <Pressable
-                    key={r}
-                    onPress={() => toggleRole(a.id, a.roles ?? [], r)}
-                    style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: (a.roles ?? []).includes(r) ? "#E07A5F" : "#333" }}
-                  >
-                    <Text style={{ color: "white", fontWeight: "900" }}>{r}</Text>
-                  </Pressable>
-                ))}
+                <View style={{ backgroundColor: colors.bg, borderRadius: radius.md, padding: spacing.md, gap: spacing.xs }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>Roles</Text>
+                    <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>{(a.roles ?? []).join(", ")}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>Recent actions (7d)</Text>
+                    <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>{a.recentActionCount}</Text>
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+                  {ROLE_OPTIONS.map((r) => {
+                    const active = (a.roles ?? []).includes(r);
+                    return (
+                      <Pressable
+                        key={r}
+                        onPress={() => toggleRole(a.id, a.roles ?? [], r)}
+                        style={{
+                          paddingVertical: spacing.sm,
+                          paddingHorizontal: spacing.md,
+                          borderRadius: radius.full,
+                          backgroundColor: active ? colors.accent : colors.bg,
+                          borderWidth: 1,
+                          borderColor: active ? colors.accent : colors.border,
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: "700", color: active ? "#FFFFFF" : colors.textLight }}>{r}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
-            </View>
+            </Card>
           ))}
         </View>
       )}
-
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
     </ScrollView>
   );
 }
-
-

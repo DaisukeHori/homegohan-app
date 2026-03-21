@@ -1,8 +1,12 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { colors, spacing } from "../../../src/theme";
 
 type Org = {
   id: string;
@@ -15,6 +19,7 @@ type Org = {
 };
 
 export default function OrgSettingsPage() {
+  const router = useRouter();
   const [org, setOrg] = useState<Org | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,41 +76,68 @@ export default function OrgSettingsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>組織 設定</Text>
-
-      <View style={{ gap: 8 }}>
-        <Link href="/org/dashboard">ダッシュボードへ</Link>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: spacing["4xl"] }}>
+      {/* Header */}
+      <View style={{ paddingTop: 56, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.push("/org/dashboard")} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, flex: 1 }}>組織 設定</Text>
+        <Pressable onPress={load} hitSlop={8}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
+        </Pressable>
       </View>
 
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
-      ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
-      ) : !org ? (
-        <Text style={{ color: "#666" }}>見つかりませんでした。</Text>
-      ) : (
-        <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-          <Text style={{ fontWeight: "900" }}>基本情報</Text>
-          <Text style={{ color: "#666" }}>plan: {org.plan ?? "-"}</Text>
-          <TextInput value={name} onChangeText={setName} placeholder="組織名" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={industry} onChangeText={setIndustry} placeholder="業種（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={employeeCount} onChangeText={setEmployeeCount} placeholder="従業員数（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={contactEmail} onChangeText={setContactEmail} placeholder="連絡先メール（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={contactName} onChangeText={setContactName} placeholder="連絡先担当（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <Pressable onPress={save} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-            <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "保存中..." : "保存"}</Text>
-          </Pressable>
-        </View>
-      )}
+      <View style={{ paddingHorizontal: spacing.xl, gap: spacing.lg }}>
+        {isLoading ? (
+          <LoadingState message="設定を読み込み中..." />
+        ) : error ? (
+          <Card variant="error">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="alert-circle" size={20} color={colors.error} />
+              <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+            </View>
+            <Button onPress={load} variant="outline" size="sm" style={{ marginTop: spacing.md }}>
+              再試行
+            </Button>
+          </Card>
+        ) : !org ? (
+          <EmptyState icon={<Ionicons name="settings-outline" size={40} color={colors.textMuted} />} message="見つかりませんでした。" />
+        ) : (
+          <>
+            {/* Plan Info */}
+            <Card>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                  <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: colors.successLight, alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="ribbon" size={20} color={colors.success} />
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>プラン</Text>
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text }}>{org.plan ?? "未設定"}</Text>
+                  </View>
+                </View>
+                <StatusBadge variant="info" label={org.plan ?? "-"} />
+              </View>
+            </Card>
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+            {/* Settings Form */}
+            <Card>
+              <SectionHeader title="基本情報" />
+              <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+                <Input value={name} onChangeText={setName} placeholder="組織名" label="組織名" />
+                <Input value={industry} onChangeText={setIndustry} placeholder="例: IT / 製造 / 医療" label="業種（任意）" />
+                <Input value={employeeCount} onChangeText={setEmployeeCount} placeholder="例: 50" label="従業員数（任意）" keyboardType="number-pad" />
+                <Input value={contactEmail} onChangeText={setContactEmail} placeholder="example@email.com" label="連絡先メール（任意）" keyboardType="email-address" autoCapitalize="none" />
+                <Input value={contactName} onChangeText={setContactName} placeholder="担当者名" label="連絡先担当（任意）" />
+                <Button onPress={save} loading={isSubmitting} disabled={isSubmitting}>
+                  {isSubmitting ? "保存中..." : "保存"}
+                </Button>
+              </View>
+            </Card>
+          </>
+        )}
+      </View>
     </ScrollView>
   );
 }
-
-

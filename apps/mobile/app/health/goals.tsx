@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, Input, LoadingState, PageHeader, ProgressBar, SectionHeader } from "../../src/components/ui";
+import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Goal = {
@@ -98,59 +101,171 @@ export default function HealthGoalsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>目標</Text>
-      <Link href="/health">健康トップへ</Link>
+    <View style={styles.screen}>
+      <PageHeader
+        title="目標"
+        right={
+          <Link href="/health">
+            <Text style={styles.linkText}>健康トップへ</Text>
+          </Link>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.container}>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>作成</Text>
-        <TextInput value={goalType} onChangeText={setGoalType} placeholder="goal_type（weight/body_fat 等）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={targetValue} onChangeText={setTargetValue} placeholder="target_value" keyboardType="decimal-pad" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={targetUnit} onChangeText={setTargetUnit} placeholder="unit（kg/% 等）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={targetDate} onChangeText={setTargetDate} placeholder="target_date（YYYY-MM-DD 任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <Pressable onPress={create} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "作成中..." : "作成"}</Text>
-        </Pressable>
-      </View>
+      <Card>
+        <SectionHeader
+          title="新しい目標を作成"
+          right={<Ionicons name="add-circle-outline" size={20} color={colors.accent} />}
+        />
+        <View style={styles.formFields}>
+          <Input
+            label="タイプ"
+            value={goalType}
+            onChangeText={setGoalType}
+            placeholder="weight / body_fat 等"
+          />
+          <Input
+            label="目標値"
+            value={targetValue}
+            onChangeText={setTargetValue}
+            placeholder="目標値を入力"
+            keyboardType="decimal-pad"
+          />
+          <Input
+            label="単位"
+            value={targetUnit}
+            onChangeText={setTargetUnit}
+            placeholder="kg / % 等"
+          />
+          <Input
+            label="期限（任意）"
+            value={targetDate}
+            onChangeText={setTargetDate}
+            placeholder="YYYY-MM-DD"
+          />
+          <Button onPress={create} disabled={isSubmitting} loading={isSubmitting}>
+            {isSubmitting ? "作成中..." : "作成"}
+          </Button>
+        </View>
+      </Card>
+
+      <SectionHeader title="アクティブな目標" />
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="目標を読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={styles.errorRow}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>目標がありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="flag-outline" size={40} color={colors.textMuted} />}
+          message="目標がありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((g) => (
-            <View key={g.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {g.goal_type}: {g.current_value ?? "-"} → {g.target_value}
-                {g.target_unit}
-              </Text>
-              <Text style={{ color: "#666" }}>progress: {g.progress_percentage ? Math.round(g.progress_percentage) : 0}%</Text>
-              <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
-                <Pressable
-                  onPress={() => updateCurrent(g.id, (g.current_value ?? g.target_value) as number)}
-                  style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}
-                >
-                  <Text style={{ color: "white", fontWeight: "900" }}>最新値で再計算</Text>
-                </Pressable>
-                <Pressable onPress={() => remove(g.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                </Pressable>
-              </View>
-            </View>
-          ))}
+        <View style={styles.list}>
+          {items.map((g) => {
+            const progress = g.progress_percentage ? Math.round(g.progress_percentage) : 0;
+            return (
+              <Card key={g.id}>
+                <View style={styles.goalHeader}>
+                  <Ionicons name="flag" size={18} color={colors.accent} />
+                  <Text style={styles.goalTitle}>
+                    {g.goal_type}: {g.current_value ?? "-"} → {g.target_value}
+                    {g.target_unit}
+                  </Text>
+                </View>
+                <ProgressBar
+                  value={progress}
+                  max={100}
+                  label="進捗"
+                  showPercentage
+                  color={progress >= 100 ? colors.success : colors.accent}
+                  style={styles.progressBar}
+                />
+                <View style={styles.goalActions}>
+                  <Button
+                    onPress={() => updateCurrent(g.id, (g.current_value ?? g.target_value) as number)}
+                    variant="secondary"
+                    size="sm"
+                  >
+                    <Ionicons name="refresh-outline" size={14} color={colors.text} />
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>最新値で再計算</Text>
+                  </Button>
+                  <Button onPress={() => remove(g.id)} variant="destructive" size="sm">
+                    <Ionicons name="trash-outline" size={14} color="#FFFFFF" />
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: "#FFFFFF" }}>削除</Text>
+                  </Button>
+                </View>
+              </Card>
+            );
+          })}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <Ionicons name="refresh-outline" size={16} color={colors.textLight} />
+        <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>更新</Text>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
 
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  linkText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  formFields: {
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.error,
+    fontWeight: "600",
+    flex: 1,
+  },
+  list: {
+    gap: spacing.md,
+  },
+  goalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  goalTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.text,
+    flex: 1,
+  },
+  progressBar: {
+    marginBottom: spacing.md,
+  },
+  goalActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+  },
+});

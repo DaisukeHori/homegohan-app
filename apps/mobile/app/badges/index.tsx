@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 
+import { Card, EmptyState, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { colors, spacing } from "../../src/theme";
 
 type Badge = {
   id: string;
@@ -39,42 +42,71 @@ export default function BadgesPage() {
   }, []);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>バッジ</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="バッジ"
+        right={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="trophy" size={20} color={colors.accent} />
+            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.textMuted }}>
+              {badges.filter((b) => b.earned).length}/{badges.length}
+            </Text>
+          </View>
+        }
+      />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="バッジを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+          </View>
+        </Card>
+      ) : badges.length === 0 ? (
+        <EmptyState
+          icon={<Ionicons name="trophy-outline" size={48} color={colors.textMuted} />}
+          message="バッジがありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {badges.map((b) => (
-            <View
+            <Card
               key={b.id}
-              style={{
-                padding: 12,
-                borderWidth: 1,
-                borderColor: "#eee",
-                borderRadius: 12,
-                backgroundColor: b.earned ? "#E8F5E9" : "white",
-                gap: 4,
-              }}
+              variant={b.earned ? "success" : "default"}
             >
-              <Text style={{ fontWeight: "900" }}>
-                {b.earned ? "✅ " : "⬜️ "}
-                {b.name}
-              </Text>
-              <Text style={{ color: "#666" }}>{b.description}</Text>
-              {b.obtainedAt ? <Text style={{ color: "#999" }}>獲得: {b.obtainedAt}</Text> : null}
-            </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                <View
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor: b.earned ? colors.successLight : colors.bg,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons
+                    name={b.earned ? "checkmark-circle" : "ellipse-outline"}
+                    size={24}
+                    color={b.earned ? colors.success : colors.textMuted}
+                  />
+                </View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{b.name}</Text>
+                  <Text style={{ fontSize: 13, color: colors.textLight }}>{b.description}</Text>
+                  {b.obtainedAt ? (
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>獲得: {b.obtainedAt}</Text>
+                  ) : null}
+                </View>
+              </View>
+            </Card>
           ))}
         </View>
       )}
     </ScrollView>
+    </View>
   );
 }
-
-
-

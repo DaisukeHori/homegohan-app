@@ -1,8 +1,12 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, LoadingState, EmptyState } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { colors, spacing } from "../../../src/theme";
 
 type Dept = {
   id: string;
@@ -12,6 +16,7 @@ type Dept = {
 };
 
 export default function OrgDepartmentsPage() {
+  const router = useRouter();
   const [items, setItems] = useState<Dept[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,54 +97,70 @@ export default function OrgDepartmentsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>部署</Text>
-
-      <View style={{ gap: 8 }}>
-        <Link href="/org/dashboard">ダッシュボードへ</Link>
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>追加</Text>
-        <TextInput value={name} onChangeText={setName} placeholder="部署名" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <Pressable onPress={create} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "追加中..." : "追加"}</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: spacing["4xl"] }}>
+      {/* Header */}
+      <View style={{ paddingTop: 56, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.push("/org/dashboard")} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, flex: 1 }}>部署</Text>
+        <Pressable onPress={load} hitSlop={8}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
-      ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
-      ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>部署がありません。</Text>
-      ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((d) => (
-            <View key={d.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {d.name}（{d.memberCount}人）
-              </Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable onPress={() => rename(d.id, d.name)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>変更</Text>
-                </Pressable>
-                <Pressable onPress={() => remove(d.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                </Pressable>
-              </View>
-            </View>
-          ))}
-        </View>
-      )}
+      <View style={{ paddingHorizontal: spacing.xl, gap: spacing.lg }}>
+        {/* Create Form */}
+        <Card>
+          <SectionHeader title="部署を追加" />
+          <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+            <Input value={name} onChangeText={setName} placeholder="部署名" label="部署名" />
+            <Button onPress={create} loading={isSubmitting} disabled={isSubmitting}>
+              {isSubmitting ? "追加中..." : "追加"}
+            </Button>
+          </View>
+        </Card>
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+        {/* List */}
+        <SectionHeader title="部署一覧" />
+
+        {isLoading ? (
+          <LoadingState message="部署を読み込み中..." />
+        ) : error ? (
+          <Card variant="error">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="alert-circle" size={20} color={colors.error} />
+              <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+            </View>
+          </Card>
+        ) : items.length === 0 ? (
+          <EmptyState icon={<Ionicons name="business-outline" size={40} color={colors.textMuted} />} message="部署がありません。" />
+        ) : (
+          <View style={{ gap: spacing.md }}>
+            {items.map((d) => (
+              <Card key={d.id}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                  <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: colors.purpleLight, alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="business" size={20} color={colors.purple} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text }}>{d.name}</Text>
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>{d.memberCount}人</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                    <Button onPress={() => rename(d.id, d.name)} variant="outline" size="sm">
+                      変更
+                    </Button>
+                    <Button onPress={() => remove(d.id)} variant="destructive" size="sm">
+                      削除
+                    </Button>
+                  </View>
+                </View>
+              </Card>
+            ))}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
-
-

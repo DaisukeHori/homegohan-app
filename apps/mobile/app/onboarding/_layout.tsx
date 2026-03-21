@@ -1,23 +1,17 @@
 import { Redirect, Stack } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
 
+import { LoadingState } from "../../src/components/ui";
 import { useAuth } from "../../src/providers/AuthProvider";
+import { colors } from "../../src/theme";
 
 export default function OnboardingLayout() {
   const { session, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
-      </View>
-    );
+    return <LoadingState style={{ backgroundColor: colors.bg }} />;
   }
 
   if (!session) return <Redirect href="/login" />;
 
   return <Stack screenOptions={{ headerShown: false }} />;
 }
-
-
-

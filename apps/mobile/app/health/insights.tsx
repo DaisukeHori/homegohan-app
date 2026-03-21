@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, ChipSelector, EmptyState, LoadingState, PageHeader, StatCard, StatusBadge } from "../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Insight = {
@@ -55,51 +58,156 @@ export default function HealthInsightsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>インサイト</Text>
-      <Link href="/health">健康トップへ</Link>
+    <View style={styles.screen}>
+      <PageHeader
+        title="インサイト"
+        right={
+          <Link href="/health">
+            <Text style={styles.linkText}>健康トップへ</Text>
+          </Link>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.container}>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-        <Text style={{ fontWeight: "900" }}>カウント</Text>
-        <Text>未読: {unreadCount}</Text>
-        <Text>アラート: {alertCount}</Text>
-        <Pressable onPress={() => setUnreadOnly((v) => !v)} style={{ padding: 12, borderRadius: 12, backgroundColor: unreadOnly ? "#E07A5F" : "#333", alignItems: "center" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{unreadOnly ? "未読のみ: ON" : "未読のみ: OFF"}</Text>
-        </Pressable>
+      <View style={styles.statsRow}>
+        <StatCard
+          icon={<Ionicons name="mail-unread-outline" size={22} color={colors.accent} />}
+          label="未読"
+          value={unreadCount}
+          accentColor={colors.accentLight}
+        />
+        <StatCard
+          icon={<Ionicons name="warning-outline" size={22} color={colors.warning} />}
+          label="アラート"
+          value={alertCount}
+          accentColor={colors.warningLight}
+        />
       </View>
 
+      <ChipSelector
+        options={[
+          { value: "all", label: "すべて" },
+          { value: "unread", label: "未読のみ" },
+        ]}
+        selected={unreadOnly ? "unread" : "all"}
+        onSelect={(v) => setUnreadOnly(v === "unread")}
+      />
+
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="インサイトを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={styles.errorRow}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>インサイトがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="bulb-outline" size={40} color={colors.textMuted} />}
+          message="インサイトがありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={styles.list}>
           {items.map((i) => (
-            <View key={i.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: i.is_alert ? "#FFF3E0" : "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {i.title} {i.is_read ? "" : "（未読）"}
-              </Text>
-              <Text style={{ color: "#666" }}>{i.summary}</Text>
-              <Text style={{ color: "#999" }}>{new Date(i.created_at).toLocaleString("ja-JP")}</Text>
-              {!i.is_read ? (
-                <Pressable onPress={() => markRead(i.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333", alignSelf: "flex-start" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>既読にする</Text>
-                </Pressable>
-              ) : null}
-            </View>
+            <Card key={i.id} variant={i.is_alert ? "warning" : "default"}>
+              <View style={styles.insightHeader}>
+                <View style={styles.insightTitleRow}>
+                  {i.is_alert && <Ionicons name="alert-circle" size={18} color={colors.warning} />}
+                  <Text style={styles.insightTitle}>{i.title}</Text>
+                </View>
+                {!i.is_read && <StatusBadge variant="alert" label="未読" />}
+              </View>
+              <Text style={styles.insightSummary}>{i.summary}</Text>
+              <Text style={styles.insightDate}>{new Date(i.created_at).toLocaleString("ja-JP")}</Text>
+              {!i.is_read && (
+                <Button onPress={() => markRead(i.id)} variant="primary" size="sm" style={styles.markReadBtn}>
+                  <Ionicons name="checkmark-outline" size={14} color="#FFFFFF" />
+                  <Text style={styles.markReadText}>既読にする</Text>
+                </Button>
+              )}
+            </Card>
           ))}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <Ionicons name="refresh-outline" size={16} color={colors.textLight} />
+        <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>更新</Text>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
 
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  linkText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  statsRow: {
+    flexDirection: "row",
+    gap: spacing.md,
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.error,
+    fontWeight: "600",
+    flex: 1,
+  },
+  list: {
+    gap: spacing.md,
+  },
+  insightHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: spacing.sm,
+  },
+  insightTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    flex: 1,
+  },
+  insightTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.text,
+    flex: 1,
+  },
+  insightSummary: {
+    fontSize: 14,
+    color: colors.textLight,
+    lineHeight: 20,
+  },
+  insightDate: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  markReadBtn: {
+    alignSelf: "flex-start",
+    marginTop: spacing.sm,
+  },
+  markReadText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+});

@@ -1,8 +1,13 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui/Input";
 import { getApi } from "../../../src/lib/api";
+import { colors, radius, spacing } from "../../../src/theme";
+import { typography } from "../../../src/theme/typography";
 
 type RecipeDetail = {
   id: string;
@@ -105,62 +110,124 @@ export default function RecipeEditPage() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
+      <View style={styles.centered}>
+        <LoadingState message="読み込み中..." />
       </View>
     );
   }
 
   if (!recipe) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <Text>読み込みに失敗しました。</Text>
+      <View style={styles.centered}>
+        <EmptyState
+          icon={<Ionicons name="alert-circle-outline" size={40} color={colors.error} />}
+          message="読み込みに失敗しました。"
+        />
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>レシピ編集</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="レシピ編集" />
+      <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
 
-      <View style={{ gap: 8, padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white" }}>
-        <Text style={{ fontWeight: "900" }}>基本</Text>
-        <TextInput value={name} onChangeText={setName} placeholder="レシピ名" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput
+      <Card style={{ gap: spacing.md }}>
+        <SectionHeader title="基本" right={<Ionicons name="document-text-outline" size={18} color={colors.accent} />} />
+        <Input label="レシピ名" value={name} onChangeText={setName} placeholder="レシピ名" />
+        <Input
+          label="説明（任意）"
           value={description}
           onChangeText={setDescription}
           placeholder="説明（任意）"
           multiline
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 80 }}
+          style={{ minHeight: 80 }}
         />
-        <Pressable
+        <Button
           onPress={() => setIsPublic((v) => !v)}
-          style={{ padding: 12, borderRadius: 12, backgroundColor: isPublic ? "#E07A5F" : "#333", alignItems: "center" }}
+          variant={isPublic ? "primary" : "secondary"}
         >
-          <Text style={{ color: "white", fontWeight: "900" }}>{isPublic ? "公開: ON" : "公開: OFF"}</Text>
-        </Pressable>
-      </View>
+          <Ionicons name={isPublic ? "eye-outline" : "eye-off-outline"} size={18} color={isPublic ? "#FFF" : colors.text} />
+          <Text style={{ color: isPublic ? "#FFF" : colors.text, fontWeight: "700", fontSize: 15 }}>
+            {isPublic ? "公開: ON" : "公開: OFF"}
+          </Text>
+        </Button>
+      </Card>
 
-      <View style={{ gap: 8, padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white" }}>
-        <Text style={{ fontWeight: "900" }}>材料（1行=1材料）</Text>
-        <TextInput value={ingredientsText} onChangeText={setIngredientsText} multiline style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 140 }} />
-      </View>
+      <Card style={{ gap: spacing.md }}>
+        <SectionHeader title="材料（1行=1材料）" right={<Ionicons name="leaf-outline" size={18} color={colors.accent} />} />
+        <Input
+          value={ingredientsText}
+          onChangeText={setIngredientsText}
+          multiline
+          style={{ minHeight: 140 }}
+        />
+      </Card>
 
-      <View style={{ gap: 8, padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white" }}>
-        <Text style={{ fontWeight: "900" }}>手順（1行=1手順）</Text>
-        <TextInput value={stepsText} onChangeText={setStepsText} multiline style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 140 }} />
-      </View>
+      <Card style={{ gap: spacing.md }}>
+        <SectionHeader title="手順（1行=1手順）" right={<Ionicons name="list-outline" size={18} color={colors.accent} />} />
+        <Input
+          value={stepsText}
+          onChangeText={setStepsText}
+          multiline
+          style={{ minHeight: 140 }}
+        />
+      </Card>
 
-      <Pressable onPress={submit} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-        <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "更新中..." : "更新"}</Text>
+      <Button onPress={submit} loading={isSubmitting} variant="primary" size="lg">
+        {isSubmitting ? "更新中..." : "更新"}
+      </Button>
+
+      <Pressable onPress={() => router.back()} style={styles.cancelButton}>
+        <Ionicons name="close-outline" size={18} color={colors.textMuted} />
+        <Text style={styles.cancelText}>キャンセル</Text>
       </Pressable>
-
-      <Pressable onPress={() => router.back()} style={{ alignItems: "center" }}>
-        <Text style={{ color: "#666" }}>戻る</Text>
-      </Pressable>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
-
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  centered: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  backText: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  cancelButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  cancelText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});

@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, Input, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
+import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type BloodTest = {
@@ -143,92 +146,248 @@ export default function BloodTestsPage() {
     }
   }
 
-  return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>血液検査</Text>
-      <Link href="/health">健康トップへ</Link>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>追加</Text>
-
-        <TextInput value={testDate} onChangeText={setTestDate} placeholder="test_date（YYYY-MM-DD）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={facility} onChangeText={setFacility} placeholder="施設名（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <TextInput value={totalCholesterol} onChangeText={setTotalCholesterol} placeholder="総コレステロール" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={ldl} onChangeText={setLdl} placeholder="LDL" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={hdl} onChangeText={setHdl} placeholder="HDL" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <TextInput value={tg} onChangeText={setTg} placeholder="中性脂肪" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={fastingGlucose} onChangeText={setFastingGlucose} placeholder="空腹時血糖" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={hba1c} onChangeText={setHba1c} placeholder="HbA1c" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <TextInput value={ast} onChangeText={setAst} placeholder="AST" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={alt} onChangeText={setAlt} placeholder="ALT" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={ggtp} onChangeText={setGgtp} placeholder="γ-GTP" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <TextInput value={creatinine} onChangeText={setCreatinine} placeholder="Cr" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={egfr} onChangeText={setEgfr} placeholder="eGFR" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={uricAcid} onChangeText={setUricAcid} placeholder="尿酸" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <TextInput value={bun} onChangeText={setBun} placeholder="BUN" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <TextInput value={hb} onChangeText={setHb} placeholder="Hb(ヘモグロビン)" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        </View>
-
-        <TextInput value={note} onChangeText={setNote} placeholder="メモ（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-
-        <Pressable onPress={create} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "登録中..." : "登録"}</Text>
-        </Pressable>
+  function ResultValue({ label, value }: { label: string; value: number | null }) {
+    if (value === null || value === undefined) return null;
+    return (
+      <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>{label}</Text>
+        <Text style={styles.resultValue}>{value}</Text>
       </View>
+    );
+  }
 
-      <Text style={{ fontWeight: "900" }}>一覧</Text>
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
+  return (
+    <View style={styles.screen}>
+      <PageHeader
+        title="血液検査"
+        right={
+          <Link href="/health">
+            <Text style={styles.linkText}>健康トップへ</Text>
+          </Link>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.container}>
+
+      <Card>
+        <SectionHeader
+          title="検査結果を追加"
+          right={<Ionicons name="add-circle-outline" size={20} color={colors.accent} />}
+        />
+
+        <View style={styles.formFields}>
+          <Input label="検査日" value={testDate} onChangeText={setTestDate} placeholder="YYYY-MM-DD" />
+          <Input label="施設名（任意）" value={facility} onChangeText={setFacility} placeholder="施設名" />
+
+          <Text style={styles.groupLabel}>脂質</Text>
+          <View style={styles.inputRow}>
+            <Input value={totalCholesterol} onChangeText={setTotalCholesterol} placeholder="総コレステロール" keyboardType="number-pad" containerStyle={styles.flex1} />
+            <Input value={ldl} onChangeText={setLdl} placeholder="LDL" keyboardType="number-pad" containerStyle={styles.flex1} />
+            <Input value={hdl} onChangeText={setHdl} placeholder="HDL" keyboardType="number-pad" containerStyle={styles.flex1} />
+          </View>
+
+          <Text style={styles.groupLabel}>糖代謝</Text>
+          <View style={styles.inputRow}>
+            <Input value={tg} onChangeText={setTg} placeholder="中性脂肪" keyboardType="number-pad" containerStyle={styles.flex1} />
+            <Input value={fastingGlucose} onChangeText={setFastingGlucose} placeholder="空腹時血糖" keyboardType="number-pad" containerStyle={styles.flex1} />
+            <Input value={hba1c} onChangeText={setHba1c} placeholder="HbA1c" keyboardType="decimal-pad" containerStyle={styles.flex1} />
+          </View>
+
+          <Text style={styles.groupLabel}>肝機能</Text>
+          <View style={styles.inputRow}>
+            <Input value={ast} onChangeText={setAst} placeholder="AST" keyboardType="number-pad" containerStyle={styles.flex1} />
+            <Input value={alt} onChangeText={setAlt} placeholder="ALT" keyboardType="number-pad" containerStyle={styles.flex1} />
+            <Input value={ggtp} onChangeText={setGgtp} placeholder="y-GTP" keyboardType="number-pad" containerStyle={styles.flex1} />
+          </View>
+
+          <Text style={styles.groupLabel}>腎機能</Text>
+          <View style={styles.inputRow}>
+            <Input value={creatinine} onChangeText={setCreatinine} placeholder="Cr" keyboardType="decimal-pad" containerStyle={styles.flex1} />
+            <Input value={egfr} onChangeText={setEgfr} placeholder="eGFR" keyboardType="decimal-pad" containerStyle={styles.flex1} />
+            <Input value={uricAcid} onChangeText={setUricAcid} placeholder="尿酸" keyboardType="decimal-pad" containerStyle={styles.flex1} />
+          </View>
+
+          <Text style={styles.groupLabel}>その他</Text>
+          <View style={styles.inputRow}>
+            <Input value={bun} onChangeText={setBun} placeholder="BUN" keyboardType="decimal-pad" containerStyle={styles.flex1} />
+            <Input value={hb} onChangeText={setHb} placeholder="Hb" keyboardType="decimal-pad" containerStyle={styles.flex1} />
+          </View>
+
+          <Input label="メモ（任意）" value={note} onChangeText={setNote} placeholder="メモ" />
+
+          <Button onPress={create} disabled={isSubmitting} loading={isSubmitting}>
+            {isSubmitting ? "登録中..." : "登録"}
+          </Button>
         </View>
+      </Card>
+
+      <SectionHeader title="一覧" />
+
+      {isLoading ? (
+        <LoadingState message="検査結果を読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={styles.errorRow}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>データがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="flask-outline" size={40} color={colors.textMuted} />}
+          message="データがありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={styles.list}>
           {items.map((r) => (
-            <View key={r.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>{r.test_date}</Text>
-              {r.test_facility ? <Text style={{ color: "#666" }}>{r.test_facility}</Text> : null}
-              <Text style={{ color: "#333" }}>
-                TC {r.total_cholesterol ?? "-"} / LDL {r.ldl_cholesterol ?? "-"} / HDL {r.hdl_cholesterol ?? "-"} / TG {r.triglycerides ?? "-"}
-              </Text>
-              <Text style={{ color: "#333" }}>
-                Glu {r.fasting_glucose ?? "-"} / HbA1c {r.hba1c ?? "-"}
-              </Text>
-              <Text style={{ color: "#333" }}>
-                AST {r.ast ?? "-"} / ALT {r.alt ?? "-"} / γ-GTP {r.gamma_gtp ?? "-"}
-              </Text>
-              <Text style={{ color: "#333" }}>
-                Cr {r.creatinine ?? "-"} / eGFR {r.egfr ?? "-"} / UA {r.uric_acid ?? "-"} / BUN {r.bun ?? "-"} / Hb {r.hemoglobin ?? "-"}
-              </Text>
-              {r.note ? <Text style={{ color: "#666" }}>📝 {r.note}</Text> : null}
-            </View>
+            <Card key={r.id}>
+              <View style={styles.recordHeader}>
+                <View style={styles.recordDateRow}>
+                  <Ionicons name="calendar" size={16} color={colors.accent} />
+                  <Text style={styles.recordDate}>{r.test_date}</Text>
+                </View>
+                {r.test_facility ? (
+                  <Text style={styles.facilityText}>{r.test_facility}</Text>
+                ) : null}
+              </View>
+
+              <View style={styles.resultGrid}>
+                <ResultValue label="TC" value={r.total_cholesterol} />
+                <ResultValue label="LDL" value={r.ldl_cholesterol} />
+                <ResultValue label="HDL" value={r.hdl_cholesterol} />
+                <ResultValue label="TG" value={r.triglycerides} />
+                <ResultValue label="Glu" value={r.fasting_glucose} />
+                <ResultValue label="HbA1c" value={r.hba1c} />
+                <ResultValue label="AST" value={r.ast} />
+                <ResultValue label="ALT" value={r.alt} />
+                <ResultValue label="y-GTP" value={r.gamma_gtp} />
+                <ResultValue label="Cr" value={r.creatinine} />
+                <ResultValue label="eGFR" value={r.egfr} />
+                <ResultValue label="UA" value={r.uric_acid} />
+                <ResultValue label="BUN" value={r.bun} />
+                <ResultValue label="Hb" value={r.hemoglobin} />
+              </View>
+
+              {r.note ? (
+                <View style={styles.noteRow}>
+                  <Ionicons name="document-text-outline" size={14} color={colors.textMuted} />
+                  <Text style={styles.noteText}>{r.note}</Text>
+                </View>
+              ) : null}
+            </Card>
           ))}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <Ionicons name="refresh-outline" size={16} color={colors.textLight} />
+        <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>更新</Text>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
 
-
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  linkText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  formFields: {
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  groupLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  inputRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  flex1: {
+    flex: 1,
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.error,
+    fontWeight: "600",
+    flex: 1,
+  },
+  list: {
+    gap: spacing.md,
+  },
+  recordHeader: {
+    marginBottom: spacing.md,
+  },
+  recordDateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  recordDate: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  facilityText: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+    marginLeft: spacing["2xl"],
+  },
+  resultGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  resultItem: {
+    backgroundColor: colors.bg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+    minWidth: 70,
+    alignItems: "center",
+  },
+  resultLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  resultValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.text,
+    marginTop: 2,
+  },
+  noteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    backgroundColor: colors.bg,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  noteText: {
+    fontSize: 13,
+    color: colors.textLight,
+    flex: 1,
+  },
+});

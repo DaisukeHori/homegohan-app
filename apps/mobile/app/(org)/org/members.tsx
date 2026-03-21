@@ -1,8 +1,12 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { colors, spacing } from "../../../src/theme";
 
 type Member = {
   id: string;
@@ -13,6 +17,7 @@ type Member = {
 };
 
 export default function OrgMembersPage() {
+  const router = useRouter();
   const [items, setItems] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,56 +67,77 @@ export default function OrgMembersPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>メンバー</Text>
-
-      <View style={{ gap: 8 }}>
-        <Link href="/org/dashboard">ダッシュボードへ</Link>
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>ユーザー作成（組織内）</Text>
-        <TextInput value={email} onChangeText={setEmail} placeholder="email" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput
-          value={password}
-          onChangeText={setPassword}
-          placeholder="password"
-          secureTextEntry
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-        <TextInput value={nickname} onChangeText={setNickname} placeholder="nickname" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <Pressable onPress={createUser} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "作成中..." : "作成"}</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: spacing["4xl"] }}>
+      {/* Header */}
+      <View style={{ paddingTop: 56, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.push("/org/dashboard")} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={{ color: "#999" }}>※ メール送信は未実装。初期パスワードでログインできます。</Text>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, flex: 1 }}>メンバー</Text>
+        <Pressable onPress={load} hitSlop={8}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
+        </Pressable>
       </View>
 
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
-      ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
-      ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>メンバーがいません。</Text>
-      ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((m) => (
-            <View key={m.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}>
-              <Text style={{ fontWeight: "900" }}>{m.nickname ?? "(no name)"}</Text>
-              <Text style={{ color: "#666" }}>roles: {(m.roles ?? []).join(", ") || "(none)"}</Text>
-              <Text style={{ color: "#666" }}>dept: {m.department ?? "-"}</Text>
-              <Text style={{ color: "#999" }}>{m.id}</Text>
+      <View style={{ paddingHorizontal: spacing.xl, gap: spacing.lg }}>
+        {/* Create Form */}
+        <Card>
+          <SectionHeader title="ユーザー作成（組織内）" />
+          <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+            <Input value={email} onChangeText={setEmail} placeholder="example@email.com" label="メールアドレス" keyboardType="email-address" autoCapitalize="none" />
+            <Input value={password} onChangeText={setPassword} placeholder="パスワード" label="パスワード" secureTextEntry />
+            <Input value={nickname} onChangeText={setNickname} placeholder="ニックネーム" label="ニックネーム" />
+            <Button onPress={createUser} loading={isSubmitting} disabled={isSubmitting}>
+              {isSubmitting ? "作成中..." : "作成"}
+            </Button>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="information-circle" size={16} color={colors.textMuted} />
+              <Text style={{ fontSize: 12, color: colors.textMuted, flex: 1 }}>メール送信は未実装。初期パスワードでログインできます。</Text>
             </View>
-          ))}
-        </View>
-      )}
+          </View>
+        </Card>
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+        {/* List */}
+        <SectionHeader title="メンバー一覧" />
+
+        {isLoading ? (
+          <LoadingState message="メンバーを読み込み中..." />
+        ) : error ? (
+          <Card variant="error">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="alert-circle" size={20} color={colors.error} />
+              <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+            </View>
+          </Card>
+        ) : items.length === 0 ? (
+          <EmptyState icon={<Ionicons name="people-outline" size={40} color={colors.textMuted} />} message="メンバーがいません。" />
+        ) : (
+          <View style={{ gap: spacing.md }}>
+            {items.map((m) => (
+              <Card key={m.id}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accentLight, alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="person" size={22} color={colors.accent} />
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{m.nickname ?? "(no name)"}</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <Ionicons name="shield-checkmark" size={12} color={colors.textMuted} />
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>{(m.roles ?? []).join(", ") || "(none)"}</Text>
+                    </View>
+                    {m.department ? (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                        <Ionicons name="business" size={12} color={colors.textMuted} />
+                        <Text style={{ fontSize: 13, color: colors.textMuted }}>{m.department}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+              </Card>
+            ))}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
-
-

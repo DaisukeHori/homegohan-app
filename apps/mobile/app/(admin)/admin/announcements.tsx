@@ -1,7 +1,11 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
 type Announcement = {
@@ -92,62 +96,100 @@ export default function AdminAnnouncementsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>Announcements</Text>
-      <Link href="/admin">Admin Home</Link>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>作成</Text>
-        <TextInput value={title} onChangeText={setTitle} placeholder="タイトル" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput
-          value={content}
-          onChangeText={setContent}
-          placeholder="内容"
-          multiline
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 120 }}
-        />
-        <Pressable onPress={() => setIsPublic((v) => !v)} style={{ padding: 12, borderRadius: 12, backgroundColor: isPublic ? "#E07A5F" : "#333", alignItems: "center" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isPublic ? "公開: ON" : "公開: OFF"}</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Pressable onPress={create} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "作成中..." : "作成"}</Text>
-        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Announcements</Text>
       </View>
 
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
+      {/* Create Form */}
+      <Card>
+        <View style={{ gap: spacing.md }}>
+          <SectionHeader title="新規作成" />
+          <Input value={title} onChangeText={setTitle} placeholder="タイトル" />
+          <Input
+            value={content}
+            onChangeText={setContent}
+            placeholder="内容"
+            multiline
+            style={{ minHeight: 120, textAlignVertical: "top" }}
+          />
+          <Pressable
+            onPress={() => setIsPublic((v) => !v)}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: spacing.sm,
+              paddingVertical: spacing.md,
+              paddingHorizontal: spacing.lg,
+              borderRadius: radius.md,
+              backgroundColor: isPublic ? colors.accentLight : colors.bg,
+              borderWidth: 1,
+              borderColor: isPublic ? colors.accent : colors.border,
+            }}
+          >
+            <Ionicons name={isPublic ? "eye" : "eye-off"} size={20} color={isPublic ? colors.accent : colors.textMuted} />
+            <Text style={{ fontSize: 15, fontWeight: "700", color: isPublic ? colors.accent : colors.textMuted }}>
+              {isPublic ? "公開: ON" : "公開: OFF"}
+            </Text>
+          </Pressable>
+          <Button onPress={create} loading={isSubmitting} disabled={isSubmitting}>
+            {isSubmitting ? "作成中..." : "作成"}
+          </Button>
         </View>
+      </Card>
+
+      {/* List */}
+      <SectionHeader
+        title="一覧"
+        right={
+          <Pressable onPress={load} hitSlop={8}>
+            <Ionicons name="refresh" size={20} color={colors.textMuted} />
+          </Pressable>
+        }
+      />
+
+      {isLoading ? (
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>お知らせがありません。</Text>
+        <EmptyState icon={<Ionicons name="megaphone-outline" size={40} color={colors.textMuted} />} message="お知らせがありません。" />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((a) => (
-            <View key={a.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {a.title} {a.isPublic ? "" : "（非公開）"}
-              </Text>
-              <Text style={{ color: "#666" }}>{a.content.substring(0, 120)}{a.content.length > 120 ? "..." : ""}</Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable onPress={() => togglePublic(a)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>{a.isPublic ? "非公開にする" : "公開にする"}</Text>
-                </Pressable>
-                <Pressable onPress={() => remove(a.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                </Pressable>
+            <Card key={a.id}>
+              <View style={{ gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="megaphone" size={18} color={colors.accent} />
+                  <Text style={{ flex: 1, fontSize: 15, fontWeight: "700", color: colors.text }}>{a.title}</Text>
+                  <StatusBadge variant={a.isPublic ? "completed" : "pending"} label={a.isPublic ? "公開" : "非公開"} />
+                </View>
+                <Text style={{ fontSize: 13, color: colors.textMuted, lineHeight: 20 }}>
+                  {a.content.substring(0, 120)}{a.content.length > 120 ? "..." : ""}
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textMuted }}>{new Date(a.createdAt).toLocaleString("ja-JP")}</Text>
+                <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs }}>
+                  <Button onPress={() => togglePublic(a)} variant="secondary" size="sm">
+                    {a.isPublic ? "非公開にする" : "公開にする"}
+                  </Button>
+                  <Button onPress={() => remove(a.id)} variant="destructive" size="sm">
+                    削除
+                  </Button>
+                </View>
               </View>
-            </View>
+            </Card>
           ))}
         </View>
       )}
-
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
     </ScrollView>
   );
 }
-
-

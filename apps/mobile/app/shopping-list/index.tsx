@@ -1,10 +1,20 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Button } from "../../src/components/ui/Button";
+import { Card } from "../../src/components/ui/Card";
+import { EmptyState } from "../../src/components/ui/EmptyState";
+import { Input } from "../../src/components/ui/Input";
+import { LoadingState } from "../../src/components/ui/LoadingState";
+import { PageHeader } from "../../src/components/ui/PageHeader";
+import { SectionHeader } from "../../src/components/ui/SectionHeader";
+import { StatusBadge } from "../../src/components/ui/StatusBadge";
 import { getApi } from "../../src/lib/api";
 import { getActiveShoppingListId } from "../../src/lib/mealPlan";
 import { supabase } from "../../src/lib/supabase";
+import { colors, radius, spacing } from "../../src/theme";
 
 type QuantityVariant = {
   display: string;
@@ -115,11 +125,11 @@ export default function ShoppingListPage() {
 
   async function toggleVariant(item: Item) {
     if (!item.quantity_variants || item.quantity_variants.length <= 1) return;
-    
+
     const nextIndex = ((item.selected_variant_index ?? 0) + 1) % item.quantity_variants.length;
     try {
       const api = getApi();
-      const response = await api.patch(`/api/shopping-list/${item.id}`, { selectedVariantIndex: nextIndex });
+      const response = await api.patch<{ item?: any }>(`/api/shopping-list/${item.id}`, { selectedVariantIndex: nextIndex });
       if (response.item) {
         setItems((prev) => prev.map((x) => (x.id === item.id ? {
           ...x,
@@ -154,8 +164,8 @@ export default function ShoppingListPage() {
   async function regenerate() {
     if (isRegenerating) return;
     Alert.alert(
-      "献立から再生成", 
-      "AIが材料を整理します。手動追加した項目は残ります。", 
+      "献立から再生成",
+      "AIが材料を整理します。手動追加した項目は残ります。",
       [
         { text: "キャンセル", style: "cancel" },
         {
@@ -164,8 +174,8 @@ export default function ShoppingListPage() {
             setIsRegenerating(true);
             try {
               const api = getApi();
-              const response = await api.post("/api/shopping-list/regenerate", {});
-              
+              const response = await api.post<{ requestId?: string }>("/api/shopping-list/regenerate", {});
+
               // 非同期処理：requestIdが返ってくるのでポーリング
               if (response.requestId) {
                 // ポーリングで完了を待つ
@@ -173,7 +183,7 @@ export default function ShoppingListPage() {
                 const maxAttempts = 60; // 最大2分
                 const poll = async () => {
                   try {
-                    const statusRes = await api.get(`/api/shopping-list/regenerate/status?requestId=${response.requestId}`);
+                    const statusRes = await api.get<{ status: string; result?: any }>(`/api/shopping-list/regenerate/status?requestId=${response.requestId}`);
                     if (statusRes.status === 'completed') {
                       if (statusRes.result?.stats?.totalServings) {
                         setTotalServings(statusRes.result.stats.totalServings);
@@ -191,7 +201,7 @@ export default function ShoppingListPage() {
                     throw e;
                   }
                 };
-                
+
                 const pollInterval = setInterval(async () => {
                   attempts++;
                   if (attempts > maxAttempts) {
@@ -212,10 +222,10 @@ export default function ShoppingListPage() {
                     Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
                   }
                 }, 2000);
-                
+
                 return; // 非同期処理中なので即座にreturn
               }
-              
+
               await load();
             } catch (e: any) {
               Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
@@ -229,167 +239,205 @@ export default function ShoppingListPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ fontSize: 20, fontWeight: "900" }}>買い物リスト</Text>
-          {totalServings !== null && totalServings > 0 && (
-            <View style={{ backgroundColor: "#FDF0ED", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
-              <Text style={{ fontSize: 12, fontWeight: "700", color: "#E07A5F" }}>{totalServings}食分</Text>
-            </View>
-          )}
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="買い物リスト"
+        right={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            {totalServings !== null && totalServings > 0 && (
+              <View style={{ backgroundColor: colors.accentLight, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm }}>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.accent }}>{totalServings}食分</Text>
+              </View>
+            )}
+            <Button
+              onPress={regenerate}
+              disabled={isRegenerating}
+              loading={isRegenerating}
+              size="sm"
+              variant="secondary"
+            >
+              {isRegenerating ? (
+                <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>整理中...</Text>
+              ) : (
+                <>
+                  <Ionicons name="sparkles" size={14} color={colors.accent} />
+                  <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>再生成</Text>
+                </>
+              )}
+            </Button>
+          </View>
+        }
+      />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+
+      <View style={{ flexDirection: "row", gap: spacing.md }}>
+        <Link href="/menus/weekly" asChild>
+          <Pressable style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="restaurant-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontWeight: "600", fontSize: 14 }}>献立へ</Text>
+          </Pressable>
+        </Link>
+        <Link href="/home" asChild>
+          <Pressable style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="home-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontWeight: "600", fontSize: 14 }}>ホームへ</Text>
+          </Pressable>
+        </Link>
+      </View>
+
+      {/* Add item form */}
+      <Card>
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title="追加" />
+          <Input
+            value={newName}
+            onChangeText={setNewName}
+            placeholder="例: 牛乳"
+          />
+          <Input
+            value={newCategory}
+            onChangeText={setNewCategory}
+            placeholder="カテゴリ（例: 野菜）"
+          />
+          <Input
+            value={newQuantity}
+            onChangeText={setNewQuantity}
+            placeholder="数量（任意: 2本、200g など）"
+          />
+          <Button
+            onPress={addItem}
+            disabled={isSubmitting}
+            loading={isSubmitting}
+          >
+            {isSubmitting ? "追加中..." : "追加"}
+          </Button>
         </View>
-        <Pressable 
-          onPress={regenerate} 
-          disabled={isRegenerating}
-          style={{ 
-            paddingVertical: 8, 
-            paddingHorizontal: 10, 
-            borderRadius: 10, 
-            backgroundColor: isRegenerating ? "#666" : "#333",
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6
-          }}
-        >
-          {isRegenerating ? (
-            <>
-              <ActivityIndicator size="small" color="white" />
-              <Text style={{ color: "white", fontWeight: "900" }}>整理中...</Text>
-            </>
-          ) : (
-            <Text style={{ color: "white", fontWeight: "900" }}>再生成</Text>
-          )}
-        </Pressable>
-      </View>
+      </Card>
 
-      <View style={{ gap: 8 }}>
-        <Link href="/menus/weekly">献立へ</Link>
-        <Link href="/home">ホームへ</Link>
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>追加</Text>
-        <TextInput
-          value={newName}
-          onChangeText={setNewName}
-          placeholder="例: 牛乳"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-        <TextInput
-          value={newCategory}
-          onChangeText={setNewCategory}
-          placeholder="カテゴリ（例: 野菜）"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-        <TextInput
-          value={newQuantity}
-          onChangeText={setNewQuantity}
-          placeholder="数量（任意: 2本、200g など）"
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-        />
-        <Pressable
-          onPress={addItem}
-          disabled={isSubmitting}
-          style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#E07A5F" }}
-        >
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "追加中..." : "追加"}</Text>
-        </Pressable>
-      </View>
-
+      {/* Shopping list items */}
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="買い物リストを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>買い物リストは空です。</Text>
+        <EmptyState
+          icon={<Ionicons name="cart-outline" size={48} color={colors.textMuted} />}
+          message="買い物リストは空です。"
+          actionLabel="献立から生成"
+          onAction={regenerate}
+        />
       ) : (
-        <View style={{ gap: 12 }}>
+        <View style={{ gap: spacing.md }}>
           {grouped.map(([category, arr]) => (
-            <View key={category} style={{ gap: 8 }}>
-              <Text style={{ fontWeight: "900" }}>{category}</Text>
+            <View key={category} style={{ gap: spacing.sm }}>
+              <SectionHeader title={category} />
               {arr.map((it) => (
-                <View
+                <Card
                   key={it.id}
                   style={{
-                    padding: 12,
-                    borderWidth: 1,
-                    borderColor: "#eee",
-                    borderRadius: 12,
-                    backgroundColor: it.is_checked ? "#E8F5E9" : "white",
-                    gap: 6,
+                    backgroundColor: it.is_checked ? colors.successLight : colors.card,
                   }}
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Text style={{ fontWeight: "900", flex: 1 }}>
-                      {it.is_checked ? "✅ " : "⬜️ "}
-                      {it.item_name}
-                    </Text>
-                    {/* AI/手動バッジ */}
-                    <View 
-                      style={{ 
-                        paddingHorizontal: 6, 
-                        paddingVertical: 2, 
-                        borderRadius: 4,
-                        backgroundColor: it.source === 'generated' ? '#E8F5E9' : '#FFF3E0'
-                      }}
-                    >
-                      <Text style={{ 
-                        fontSize: 10, 
-                        fontWeight: "700",
-                        color: it.source === 'generated' ? '#2E7D32' : '#E65100'
-                      }}>
-                        {it.source === 'generated' ? 'AI' : '手動'}
+                  <View style={{ gap: spacing.sm }}>
+                    {/* Item header row */}
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <Pressable
+                        onPress={() => toggleChecked(it.id, !it.is_checked)}
+                        hitSlop={8}
+                      >
+                        <Ionicons
+                          name={it.is_checked ? "checkmark-circle" : "ellipse-outline"}
+                          size={24}
+                          color={it.is_checked ? colors.success : colors.textMuted}
+                        />
+                      </Pressable>
+                      <Text
+                        style={{
+                          fontWeight: "700",
+                          fontSize: 15,
+                          flex: 1,
+                          color: it.is_checked ? colors.textMuted : colors.text,
+                          textDecorationLine: it.is_checked ? "line-through" : "none",
+                        }}
+                      >
+                        {it.item_name}
                       </Text>
+                      <StatusBadge variant={it.source === 'generated' ? 'ai' : 'manual'} />
+                    </View>
+
+                    {/* Quantity (tap to toggle variant) */}
+                    {it.quantity && (
+                      <Pressable
+                        onPress={() => toggleVariant(it)}
+                        disabled={!it.quantity_variants || it.quantity_variants.length <= 1}
+                        style={{
+                          alignSelf: "flex-start",
+                          paddingHorizontal: spacing.sm,
+                          paddingVertical: spacing.xs,
+                          borderRadius: radius.sm,
+                          backgroundColor: it.quantity_variants && it.quantity_variants.length > 1 ? colors.bg : "transparent",
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: spacing.xs,
+                        }}
+                      >
+                        <Text style={{ color: colors.textLight, fontSize: 14 }}>
+                          {it.quantity}
+                        </Text>
+                        {it.quantity_variants && it.quantity_variants.length > 1 && (
+                          <Ionicons name="sync-outline" size={14} color={colors.textMuted} />
+                        )}
+                      </Pressable>
+                    )}
+
+                    {/* Action buttons */}
+                    <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                      <Button
+                        onPress={() => toggleChecked(it.id, !it.is_checked)}
+                        variant={it.is_checked ? "outline" : "secondary"}
+                        size="sm"
+                      >
+                        <Ionicons
+                          name={it.is_checked ? "arrow-undo-outline" : "checkmark-outline"}
+                          size={16}
+                          color={it.is_checked ? colors.accent : colors.text}
+                        />
+                        <Text style={{
+                          fontWeight: "700",
+                          fontSize: 13,
+                          color: it.is_checked ? colors.accent : colors.text,
+                        }}>
+                          {it.is_checked ? "戻す" : "チェック"}
+                        </Text>
+                      </Button>
+                      <Button
+                        onPress={() => deleteItem(it.id)}
+                        variant="destructive"
+                        size="sm"
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
+                        <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>削除</Text>
+                      </Button>
                     </View>
                   </View>
-                  
-                  {/* 数量（タップで切り替え） */}
-                  {it.quantity && (
-                    <Pressable 
-                      onPress={() => toggleVariant(it)}
-                      disabled={!it.quantity_variants || it.quantity_variants.length <= 1}
-                      style={{ 
-                        alignSelf: "flex-start",
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 6,
-                        backgroundColor: it.quantity_variants && it.quantity_variants.length > 1 ? "#f0f0f0" : "transparent"
-                      }}
-                    >
-                      <Text style={{ color: "#666" }}>
-                        {it.quantity}
-                        {it.quantity_variants && it.quantity_variants.length > 1 && " ⟳"}
-                      </Text>
-                    </Pressable>
-                  )}
-                  
-                  <View style={{ flexDirection: "row", gap: 10 }}>
-                    <Pressable
-                      onPress={() => toggleChecked(it.id, !it.is_checked)}
-                      style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}
-                    >
-                      <Text style={{ color: "white", fontWeight: "900" }}>{it.is_checked ? "戻す" : "チェック"}</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => deleteItem(it.id)}
-                      style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}
-                    >
-                      <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                    </Pressable>
-                  </View>
-                </View>
+                </Card>
               ))}
             </View>
           ))}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      {/* Refresh button */}
+      <Button onPress={load} variant="ghost" size="sm" style={{ alignSelf: "center", marginTop: spacing.sm }}>
+        <Ionicons name="refresh-outline" size={16} color={colors.textMuted} />
+        <Text style={{ color: colors.textMuted, fontSize: 14 }}>更新</Text>
+      </Button>
     </ScrollView>
+    </View>
   );
 }

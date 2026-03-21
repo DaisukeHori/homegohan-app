@@ -1,8 +1,12 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
+import { colors, spacing } from "../../../src/theme";
 
 type Invite = {
   id: string;
@@ -18,6 +22,7 @@ type Invite = {
 };
 
 export default function OrgInvitesPage() {
+  const router = useRouter();
   const [items, setItems] = useState<Invite[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,59 +96,100 @@ export default function OrgInvitesPage() {
     ]);
   }
 
+  function getInviteStatus(invite: Invite): { variant: "completed" | "alert" | "pending"; label: string } {
+    if (invite.isAccepted) return { variant: "completed", label: "承諾済み" };
+    if (invite.isExpired) return { variant: "alert", label: "期限切れ" };
+    return { variant: "pending", label: "未承諾" };
+  }
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>招待</Text>
-
-      <View style={{ gap: 8 }}>
-        <Link href="/org/dashboard">ダッシュボードへ</Link>
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>招待作成</Text>
-        <TextInput value={email} onChangeText={setEmail} placeholder="email" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={role} onChangeText={setRole} placeholder="role（member/manager/admin）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <Pressable onPress={createInvite} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "作成中..." : "作成"}</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: spacing["4xl"] }}>
+      {/* Header */}
+      <View style={{ paddingTop: 56, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.push("/org/dashboard")} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, flex: 1 }}>招待</Text>
+        <Pressable onPress={load} hitSlop={8}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
-      ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
-      ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>招待がありません。</Text>
-      ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((i) => {
-            const inviteUrl = baseUrl ? `${baseUrl}/invite/${i.token}` : `(token) ${i.token}`;
-            return (
-              <View key={i.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}>
-                <Text style={{ fontWeight: "900" }}>{i.email}</Text>
-                <Text style={{ color: "#666" }}>
-                  role: {i.role} / dept: {i.departmentName ?? "-"}
-                </Text>
-                <Text style={{ color: "#666" }}>
-                  期限: {i.expiresAt} {i.isExpired ? "（期限切れ）" : ""} {i.isAccepted ? "（承諾済み）" : ""}
-                </Text>
-                <Text style={{ color: "#999" }}>{inviteUrl}</Text>
-                <Pressable onPress={() => remove(i.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00", alignSelf: "flex-start", marginTop: 6 }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                </Pressable>
-              </View>
-            );
-          })}
-        </View>
-      )}
+      <View style={{ paddingHorizontal: spacing.xl, gap: spacing.lg }}>
+        {/* Create Form */}
+        <Card>
+          <SectionHeader title="招待を作成" />
+          <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+            <Input value={email} onChangeText={setEmail} placeholder="example@email.com" label="メールアドレス" keyboardType="email-address" autoCapitalize="none" />
+            <Input value={role} onChangeText={setRole} placeholder="member / manager / admin" label="ロール" />
+            <Button onPress={createInvite} loading={isSubmitting} disabled={isSubmitting}>
+              {isSubmitting ? "作成中..." : "招待を作成"}
+            </Button>
+          </View>
+        </Card>
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+        {/* List */}
+        <SectionHeader title="招待一覧" />
+
+        {isLoading ? (
+          <LoadingState message="招待を読み込み中..." />
+        ) : error ? (
+          <Card variant="error">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="alert-circle" size={20} color={colors.error} />
+              <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+            </View>
+          </Card>
+        ) : items.length === 0 ? (
+          <EmptyState icon={<Ionicons name="mail-outline" size={40} color={colors.textMuted} />} message="招待がありません。" />
+        ) : (
+          <View style={{ gap: spacing.md }}>
+            {items.map((inv) => {
+              const inviteUrl = baseUrl ? `${baseUrl}/invite/${inv.token}` : `(token) ${inv.token}`;
+              const status = getInviteStatus(inv);
+              return (
+                <Card key={inv.id}>
+                  <View style={{ gap: spacing.sm }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flex: 1 }}>
+                        <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.blueLight, alignItems: "center", justifyContent: "center" }}>
+                          <Ionicons name="mail" size={18} color={colors.blue} />
+                        </View>
+                        <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text, flex: 1 }}>{inv.email}</Text>
+                      </View>
+                      <StatusBadge variant={status.variant} label={status.label} />
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <Ionicons name="shield-checkmark" size={14} color={colors.textMuted} />
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>ロール: {inv.role}</Text>
+                    </View>
+                    {inv.departmentName ? (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                        <Ionicons name="business" size={14} color={colors.textMuted} />
+                        <Text style={{ fontSize: 13, color: colors.textMuted }}>部署: {inv.departmentName}</Text>
+                      </View>
+                    ) : null}
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <Ionicons name="time" size={14} color={colors.textMuted} />
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>期限: {inv.expiresAt}</Text>
+                    </View>
+                    <Text style={{ fontSize: 11, color: colors.textMuted }} numberOfLines={1} ellipsizeMode="middle">
+                      {inviteUrl}
+                    </Text>
+                    {!inv.isAccepted ? (
+                      <View style={{ marginTop: spacing.xs }}>
+                        <Button onPress={() => remove(inv.id)} variant="destructive" size="sm">
+                          削除
+                        </Button>
+                      </View>
+                    ) : null}
+                  </View>
+                </Card>
+              );
+            })}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
-
-

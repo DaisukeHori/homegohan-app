@@ -1,7 +1,11 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState, ChipSelector } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
 type ModerationItem = {
@@ -17,6 +21,25 @@ type ModerationItem = {
   outputContent?: string | null;
   flagReason?: string | null;
 };
+
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "resolved", label: "Resolved" },
+  { value: "rejected", label: "Rejected" },
+];
+
+function typeIcon(type: string): { name: keyof typeof Ionicons.glyphMap; color: string } {
+  switch (type) {
+    case "meal":
+      return { name: "restaurant", color: colors.accent };
+    case "recipe":
+      return { name: "book", color: colors.purple };
+    case "ai_content":
+      return { name: "sparkles", color: colors.warning };
+    default:
+      return { name: "flag", color: colors.textMuted };
+  }
+}
 
 export default function AdminModerationPage() {
   const [status, setStatus] = useState("pending");
@@ -72,65 +95,93 @@ export default function AdminModerationPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>Moderation</Text>
-      <Link href="/admin">Admin Home</Link>
-
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        {["pending", "resolved", "rejected"].map((s) => (
-          <Pressable key={s} onPress={() => setStatus(s)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: status === s ? "#E07A5F" : "#eee" }}>
-            <Text style={{ fontWeight: "900", color: status === s ? "white" : "#333" }}>{s}</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+          <Pressable onPress={() => router.back()} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
           </Pressable>
-        ))}
+          <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Moderation</Text>
+        </View>
+        <Pressable onPress={load} hitSlop={8}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
+        </Pressable>
       </View>
 
-      <TextInput
+      {/* Status Filter */}
+      <ChipSelector
+        options={STATUS_OPTIONS}
+        selected={status}
+        onSelect={setStatus}
+      />
+
+      {/* Note */}
+      <Input
         value={note}
         onChangeText={setNote}
         placeholder="操作メモ（任意）"
-        style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 12 }}
       />
 
+      {/* List */}
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>対象がありません。</Text>
+        <EmptyState icon={<Ionicons name="shield-checkmark-outline" size={40} color={colors.textMuted} />} message="対象がありません。" />
       ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((it) => (
-            <View key={`${it.type}-${it.id}`} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {it.type} / {it.flagType ?? it.status ?? ""}
-              </Text>
-              <Text style={{ color: "#666" }}>{it.reason ?? it.flagReason ?? it.outputContent ?? "-"}</Text>
-              <Text style={{ color: "#999" }}>{new Date(it.createdAt).toLocaleString("ja-JP")}</Text>
-              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                <Pressable onPress={() => act(it, "approve")} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>承認</Text>
-                </Pressable>
-                <Pressable onPress={() => act(it, "reject")} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                  <Text style={{ color: "white", fontWeight: "900" }}>却下</Text>
-                </Pressable>
-                {it.type !== "ai_content" ? (
-                  <Pressable onPress={() => act(it, "delete", true)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}>
-                    <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            </View>
-          ))}
+        <View style={{ gap: spacing.sm }}>
+          {items.map((it) => {
+            const icon = typeIcon(it.type);
+            return (
+              <Card key={`${it.type}-${it.id}`}>
+                <View style={{ gap: spacing.sm }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                    <View style={{ width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}>
+                      <Ionicons name={icon.name as any} size={18} color={icon.color} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{it.type}</Text>
+                    </View>
+                    <StatusBadge
+                      variant={it.status === "pending" ? "pending" : it.status === "resolved" ? "completed" : "alert"}
+                      label={it.flagType ?? it.status ?? "-"}
+                    />
+                  </View>
+
+                  <Text style={{ fontSize: 13, color: colors.textMuted, lineHeight: 20 }}>
+                    {it.reason ?? it.flagReason ?? it.outputContent ?? "-"}
+                  </Text>
+
+                  <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                    {new Date(it.createdAt).toLocaleString("ja-JP")}
+                  </Text>
+
+                  <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.xs }}>
+                    <Button onPress={() => act(it, "approve")} variant="secondary" size="sm">
+                      承認
+                    </Button>
+                    <Button onPress={() => act(it, "reject")} variant="secondary" size="sm">
+                      却下
+                    </Button>
+                    {it.type !== "ai_content" ? (
+                      <Button onPress={() => act(it, "delete", true)} variant="destructive" size="sm">
+                        削除
+                      </Button>
+                    ) : null}
+                  </View>
+                </View>
+              </Card>
+            );
+          })}
         </View>
       )}
-
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
     </ScrollView>
   );
 }
-
-

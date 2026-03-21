@@ -1,8 +1,11 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link, router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { colors, spacing } from "../../src/theme";
 
 type Session = {
   id: string;
@@ -56,54 +59,88 @@ export default function AiSessionsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>AI相談</Text>
-        <Pressable
-          onPress={createSession}
-          style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#333" }}
-        >
-          <Text style={{ color: "white", fontWeight: "900" }}>{isCreating ? "作成中..." : "新規"}</Text>
-        </Pressable>
-      </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="AI相談"
+        right={
+          <Button onPress={createSession} loading={isCreating} size="sm">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <Ionicons name="add" size={16} color="#FFFFFF" />
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>
+                {isCreating ? "作成中..." : "新規"}
+              </Text>
+            </View>
+          </Button>
+        }
+      />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
-      <View style={{ gap: 8 }}>
-        <Link href="/ai/important">重要メッセージ一覧</Link>
-        <Link href="/home">ホームへ</Link>
+      <View style={{ flexDirection: "row", gap: spacing.md }}>
+        <Link href="/ai/important" style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="star-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>重要メッセージ一覧</Text>
+          </View>
+        </Link>
+        <Link href="/home" style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="home-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>ホームへ</Text>
+          </View>
+        </Link>
       </View>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="セッションを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+          </View>
+        </Card>
       ) : sessions.length === 0 ? (
-        <Text style={{ color: "#666" }}>アクティブなセッションがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="chatbubbles-outline" size={48} color={colors.textMuted} />}
+          message="アクティブなセッションがありません。"
+          actionLabel="新しい相談を始める"
+          onAction={createSession}
+        />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {sessions.map((s) => (
-            <Pressable
+            <ListItem
               key={s.id}
+              title={s.title}
+              subtitle={`${s.messageCount} messages / ${new Date(s.updatedAt).toLocaleString("ja-JP")}`}
               onPress={() => router.push(`/ai/${s.id}`)}
-              style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}
-            >
-              <Text style={{ fontWeight: "900" }}>{s.title}</Text>
-              <Text style={{ color: "#666" }}>
-                {s.messageCount} messages / {new Date(s.updatedAt).toLocaleString("ja-JP")}
-              </Text>
-              {s.summary ? <Text style={{ color: "#999" }}>{s.summary}</Text> : null}
-            </Pressable>
+              left={
+                <View
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor: colors.successLight,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="chatbubble-ellipses-outline" size={20} color={colors.success} />
+                </View>
+              }
+              right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
+            />
           ))}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Ionicons name="reload-outline" size={16} color={colors.textLight} />
+          <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 14 }}>更新</Text>
+        </View>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-
-

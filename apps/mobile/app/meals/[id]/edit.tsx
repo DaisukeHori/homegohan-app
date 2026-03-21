@@ -1,10 +1,21 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, Input, LoadingState, PageHeader, SectionHeader } from "../../../src/components/ui";
+import { colors, spacing, radius } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
-type Mode = "cook" | "out" | "buy" | "skip";
+type Mode = "cook" | "out" | "buy" | "skip" | "quick";
+
+const MODE_OPTIONS: { value: Mode; label: string; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
+  { value: "cook", label: "自炊", icon: "flame", color: colors.success },
+  { value: "quick", label: "時短", icon: "flash", color: colors.blue },
+  { value: "buy", label: "中食", icon: "bag", color: colors.purple },
+  { value: "out", label: "外食", icon: "restaurant", color: colors.warning },
+  { value: "skip", label: "スキップ", icon: "close-circle", color: colors.textMuted },
+];
 
 export default function MealEditPage() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,7 +34,6 @@ export default function MealEditPage() {
 
   useEffect(() => {
     let cancelled = false;
-
     async function load() {
       if (!id) return;
       setIsLoading(true);
@@ -46,11 +56,8 @@ export default function MealEditPage() {
         if (!cancelled) setIsLoading(false);
       }
     }
-
     load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [id]);
 
   function toNumberOrNull(s: string): number | null {
@@ -89,97 +96,103 @@ export default function MealEditPage() {
     }
   }
 
-  if (isLoading) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
+  if (isLoading) return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="食事を編集" />
+      <LoadingState />
+    </View>
+  );
 
   if (error) {
     return (
-      <View style={{ flex: 1, padding: 16, gap: 12, justifyContent: "center" }}>
-        <Text style={{ color: "#c00" }}>{error}</Text>
-        <Pressable onPress={() => router.back()} style={{ alignItems: "center" }}>
-          <Text style={{ color: "#666" }}>戻る</Text>
-        </Pressable>
+      <View style={{ flex: 1, backgroundColor: colors.bg }}>
+        <PageHeader title="食事を編集" />
+        <View style={{ flex: 1, padding: spacing.lg, justifyContent: "center", gap: spacing.md }}>
+          <Card variant="error">
+            <Text style={{ color: colors.error }}>{error}</Text>
+          </Card>
+          <Button variant="ghost" onPress={() => router.back()}>戻る</Button>
+        </View>
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>食事を編集</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="食事を編集" />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+      {/* 料理名 */}
+      <Input label="料理名" value={dishName} onChangeText={setDishName} placeholder="例: 鮭の塩焼き定食" />
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>料理名</Text>
-        <TextInput value={dishName} onChangeText={setDishName} placeholder="例: 鮭の塩焼き定食" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-      </View>
-
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>モード</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {(
-            [
-              { value: "cook", label: "自炊" },
-              { value: "out", label: "外食" },
-              { value: "buy", label: "中食" },
-              { value: "skip", label: "スキップ" },
-            ] as const
-          ).map((opt) => {
-            const selected = mode === opt.value;
-            return (
-              <Pressable
-                key={opt.value}
-                onPress={() => setMode(opt.value)}
-                style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 10,
-                  borderRadius: 999,
-                  backgroundColor: selected ? "#E07A5F" : "#eee",
-                }}
-              >
-                <Text style={{ color: selected ? "white" : "#333", fontWeight: "900" }}>{opt.label}</Text>
-              </Pressable>
-            );
-          })}
+      {/* モード */}
+      <Card>
+        <View style={{ gap: spacing.md }}>
+          <SectionHeader title="モード" />
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {MODE_OPTIONS.map((opt) => {
+              const selected = mode === opt.value;
+              return (
+                <Pressable
+                  key={opt.value}
+                  onPress={() => setMode(opt.value)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                    paddingVertical: spacing.sm,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: radius.full,
+                    backgroundColor: selected ? opt.color : colors.bg,
+                    borderWidth: 1,
+                    borderColor: selected ? opt.color : colors.border,
+                  }}
+                >
+                  <Ionicons name={opt.icon} size={14} color={selected ? "#fff" : opt.color} />
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: selected ? "#fff" : colors.text }}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
-      </View>
+      </Card>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>メモ（任意）</Text>
-        <TextInput
-          value={description}
-          onChangeText={setDescription}
-          placeholder="例: 野菜を増やしたい"
-          multiline
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 80 }}
-        />
-      </View>
+      {/* メモ */}
+      <Input
+        label="メモ（任意）"
+        value={description}
+        onChangeText={setDescription}
+        placeholder="例: 野菜を増やしたい"
+        multiline
+      />
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>栄養（任意）</Text>
-        <TextInput value={caloriesKcal} onChangeText={setCaloriesKcal} placeholder="カロリー(kcal)" keyboardType="numeric" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={proteinG} onChangeText={setProteinG} placeholder="タンパク質(g)" keyboardType="numeric" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={fatG} onChangeText={setFatG} placeholder="脂質(g)" keyboardType="numeric" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={carbsG} onChangeText={setCarbsG} placeholder="炭水化物(g)" keyboardType="numeric" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={cookingTimeMinutes} onChangeText={setCookingTimeMinutes} placeholder="調理時間(分)" keyboardType="numeric" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-      </View>
+      {/* 栄養 */}
+      <Card>
+        <View style={{ gap: spacing.md }}>
+          <SectionHeader title="栄養（任意）" />
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Input label="kcal" value={caloriesKcal} onChangeText={setCaloriesKcal} keyboardType="numeric" placeholder="500" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Input label="P (g)" value={proteinG} onChangeText={setProteinG} keyboardType="numeric" placeholder="20" />
+            </View>
+          </View>
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Input label="F (g)" value={fatG} onChangeText={setFatG} keyboardType="numeric" placeholder="15" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Input label="C (g)" value={carbsG} onChangeText={setCarbsG} keyboardType="numeric" placeholder="60" />
+            </View>
+          </View>
+          <Input label="調理時間 (分)" value={cookingTimeMinutes} onChangeText={setCookingTimeMinutes} keyboardType="numeric" placeholder="30" />
+        </View>
+      </Card>
 
-      <Pressable
-        onPress={save}
-        disabled={isSaving}
-        style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSaving ? "#999" : "#333" }}
-      >
-        <Text style={{ color: "white", fontWeight: "900" }}>{isSaving ? "保存中..." : "保存"}</Text>
-      </Pressable>
-
-      <Pressable onPress={() => router.back()} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>戻る</Text>
-      </Pressable>
+      <Button onPress={save} loading={isSaving}>
+        {isSaving ? "保存中..." : "保存"}
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-

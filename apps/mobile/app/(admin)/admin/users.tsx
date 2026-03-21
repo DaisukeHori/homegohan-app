@@ -1,7 +1,11 @@
-import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
+import { Input } from "../../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
 type UserRow = {
@@ -81,66 +85,116 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>Users</Text>
-
-      <View style={{ gap: 8 }}>
-        <Link href="/admin">Admin Home</Link>
-        <TextInput value={q} onChangeText={setQ} placeholder="検索（nickname or id）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 12 }} />
-        <Pressable onPress={load} style={{ padding: 12, borderRadius: 12, backgroundColor: "#333", alignItems: "center" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>検索</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Users</Text>
       </View>
 
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
+      {/* Search */}
+      <Card>
+        <View style={{ gap: spacing.md }}>
+          <SectionHeader title="検索" />
+          <Input
+            value={q}
+            onChangeText={setQ}
+            placeholder="nickname or id で検索"
+          />
+          <Button onPress={load}>
+            検索
+          </Button>
         </View>
+      </Card>
+
+      {/* List */}
+      {isLoading ? (
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>ユーザーがいません。</Text>
+        <EmptyState icon={<Ionicons name="people-outline" size={40} color={colors.textMuted} />} message="ユーザーがいません。" />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((u) => (
-            <View key={u.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {u.nickname ?? "(no name)"} {u.isBanned ? "🚫" : ""}
-              </Text>
-              <Text style={{ color: "#666" }}>roles: {(u.roles ?? []).join(", ") || "(none)"}</Text>
-              <Text style={{ color: "#666" }}>org: {u.organizationId ?? "-"} / dept: {u.department ?? "-"}</Text>
-              <Text style={{ color: "#999" }}>{u.id}</Text>
+            <Card key={u.id}>
+              <View style={{ gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <View
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: radius.full,
+                      backgroundColor: u.isBanned ? colors.errorLight : colors.blueLight,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons name={u.isBanned ? "ban" : "person"} size={20} color={u.isBanned ? colors.error : colors.blue} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>
+                      {u.nickname ?? "(no name)"}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{u.id}</Text>
+                  </View>
+                  {u.isBanned ? (
+                    <StatusBadge variant="alert" label="BAN" />
+                  ) : null}
+                </View>
 
-              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                {u.isBanned ? (
-                  <Pressable onPress={() => unban(u.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                    <Text style={{ color: "white", fontWeight: "900" }}>BAN解除</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable onPress={() => ban(u.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}>
-                    <Text style={{ color: "white", fontWeight: "900" }}>BAN</Text>
-                  </Pressable>
-                )}
+                <View style={{ paddingLeft: 52, gap: spacing.xs }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Ionicons name="shield" size={14} color={colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                      roles: {(u.roles ?? []).join(", ") || "(none)"}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Ionicons name="business" size={14} color={colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                      org: {u.organizationId ?? "-"} / dept: {u.department ?? "-"}
+                    </Text>
+                  </View>
+                </View>
 
-                <Pressable
-                  onPress={() => setRole(u.id, Array.from(new Set([...(u.roles ?? []), "support", "user"])))}
-                  style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}
-                >
-                  <Text style={{ color: "white", fontWeight: "900" }}>support付与</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setRole(u.id, (u.roles ?? []).filter((r) => r !== "support").concat("user"))}
-                  style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}
-                >
-                  <Text style={{ color: "white", fontWeight: "900" }}>support解除</Text>
-                </Pressable>
+                <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.xs }}>
+                  {u.isBanned ? (
+                    <Button onPress={() => unban(u.id)} variant="secondary" size="sm">
+                      BAN解除
+                    </Button>
+                  ) : (
+                    <Button onPress={() => ban(u.id)} variant="destructive" size="sm">
+                      BAN
+                    </Button>
+                  )}
+                  <Button
+                    onPress={() => setRole(u.id, Array.from(new Set([...(u.roles ?? []), "support", "user"])))}
+                    variant="secondary"
+                    size="sm"
+                  >
+                    support付与
+                  </Button>
+                  <Button
+                    onPress={() => setRole(u.id, (u.roles ?? []).filter((r) => r !== "support").concat("user"))}
+                    variant="secondary"
+                    size="sm"
+                  >
+                    support解除
+                  </Button>
+                </View>
               </View>
-            </View>
+            </Card>
           ))}
         </View>
       )}
     </ScrollView>
   );
 }
-
-

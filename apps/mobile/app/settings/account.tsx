@@ -1,8 +1,12 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
+import { colors, spacing } from "../../src/theme";
+import { typography } from "../../src/theme/typography";
 
 export default function AccountSettingsPage() {
   async function deleteAccount() {
@@ -25,25 +29,51 @@ export default function AccountSettingsPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>アカウント</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="アカウント" />
+      <ScrollView contentContainerStyle={styles.container}>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900", color: "#c00" }}>危険な操作</Text>
-        <Text style={{ color: "#666" }}>
+      <Card variant="error" style={{ gap: spacing.md }}>
+        <SectionHeader
+          title="危険な操作"
+          right={<Ionicons name="warning-outline" size={20} color={colors.error} />}
+        />
+        <Text style={typography.body}>
           アカウント削除は取り消しできません。必要なデータは事前に控えてください。
         </Text>
-        <Pressable onPress={deleteAccount} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: "#c00" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>アカウント削除</Text>
-        </Pressable>
-      </View>
-
-      <Pressable onPress={() => router.back()} style={{ alignItems: "center" }}>
-        <Text style={{ color: "#666" }}>戻る</Text>
-      </Pressable>
+        <Button onPress={deleteAccount} variant="destructive" size="lg">
+          <Ionicons name="trash-outline" size={18} color="#FFF" />
+          <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 16 }}>アカウント削除</Text>
+        </Button>
+      </Card>
     </ScrollView>
+    </View>
   );
 }
 
-
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  backText: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});

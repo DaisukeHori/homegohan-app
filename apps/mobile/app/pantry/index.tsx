@@ -1,9 +1,19 @@
+import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Button } from "../../src/components/ui/Button";
+import { Card } from "../../src/components/ui/Card";
+import { EmptyState } from "../../src/components/ui/EmptyState";
+import { Input } from "../../src/components/ui/Input";
+import { LoadingState } from "../../src/components/ui/LoadingState";
+import { PageHeader } from "../../src/components/ui/PageHeader";
+import { SectionHeader } from "../../src/components/ui/SectionHeader";
+import { StatusBadge } from "../../src/components/ui/StatusBadge";
 import { getApi } from "../../src/lib/api";
+import { colors, radius, shadows, spacing } from "../../src/theme";
 
 type PantryItem = {
   id: string;
@@ -232,112 +242,226 @@ export default function PantryPage() {
     ]);
   }
 
+  function getFreshnessColor(freshness: string): string {
+    switch (freshness.toLowerCase()) {
+      case "fresh": return colors.success;
+      case "good": return colors.success;
+      case "ok": return colors.warning;
+      case "old": return colors.error;
+      default: return colors.textMuted;
+    }
+  }
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>冷蔵庫</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="冷蔵庫" subtitle="食材を管理しましょう" />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
-      <View style={{ gap: 8 }}>
-        <Link href="/menus/weekly/request">献立生成（冷蔵庫写真解析）へ</Link>
-        <Link href="/home">ホームへ</Link>
+      <View style={{ flexDirection: "row", gap: spacing.md }}>
+        <Link href="/menus/weekly/request" asChild>
+          <Pressable style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontWeight: "600", fontSize: 14 }}>献立生成へ</Text>
+          </Pressable>
+        </Link>
+        <Link href="/home" asChild>
+          <Pressable style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="home-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontWeight: "600", fontSize: 14 }}>ホームへ</Text>
+          </Pressable>
+        </Link>
       </View>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>追加</Text>
-        <TextInput value={name} onChangeText={setName} placeholder="例: キャベツ" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={amount} onChangeText={setAmount} placeholder="量（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={category} onChangeText={setCategory} placeholder="category（例: vegetable）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <TextInput value={expirationDate} onChangeText={setExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-        <Pressable onPress={add} disabled={isSubmitting} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSubmitting ? "#999" : "#E07A5F" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "追加中..." : "追加"}</Text>
-        </Pressable>
-      </View>
+      {/* Manual add form */}
+      <Card>
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title="追加" />
+          <Input value={name} onChangeText={setName} placeholder="例: キャベツ" />
+          <Input value={amount} onChangeText={setAmount} placeholder="量（任意）" />
+          <Input value={category} onChangeText={setCategory} placeholder="category（例: vegetable）" />
+          <Input value={expirationDate} onChangeText={setExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" />
+          <Button onPress={add} disabled={isSubmitting} loading={isSubmitting}>
+            {isSubmitting ? "追加中..." : "追加"}
+          </Button>
+        </View>
+      </Card>
 
-      <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-        <Text style={{ fontWeight: "900" }}>写真で冷蔵庫を解析 → 追加</Text>
-        <Pressable
-          onPress={analyzeFridge}
-          disabled={isAnalyzing}
-          style={{ padding: 12, borderRadius: 12, backgroundColor: isAnalyzing ? "#999" : "#333", alignItems: "center" }}
-        >
-          <Text style={{ color: "white", fontWeight: "900" }}>{isAnalyzing ? "解析中..." : "写真を選ぶ"}</Text>
-        </Pressable>
-        {analysisSummary ? <Text style={{ color: "#666" }}>{analysisSummary}</Text> : null}
-        {detected.length ? (
-          <>
-            <Pressable onPress={addDetectedAll} style={{ padding: 12, borderRadius: 12, backgroundColor: "#E07A5F", alignItems: "center" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>検出食材を一括追加（{detected.length}件）</Text>
-            </Pressable>
-            <View style={{ gap: 8 }}>
+      {/* Photo analysis */}
+      <Card>
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader
+            title="写真で冷蔵庫を解析"
+            right={<Ionicons name="camera-outline" size={20} color={colors.accent} />}
+          />
+          <Button
+            onPress={analyzeFridge}
+            disabled={isAnalyzing}
+            loading={isAnalyzing}
+            variant="secondary"
+          >
+            <Ionicons name="image-outline" size={18} color={isAnalyzing ? "#FFFFFF" : colors.text} />
+            <Text style={{ color: isAnalyzing ? "#FFFFFF" : colors.text, fontWeight: "700", fontSize: 15 }}>
+              {isAnalyzing ? "解析中..." : "写真を選ぶ"}
+            </Text>
+          </Button>
+
+          {analysisSummary ? (
+            <View style={{ backgroundColor: colors.bg, padding: spacing.md, borderRadius: radius.md }}>
+              <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" }}>
+                <Ionicons name="information-circle-outline" size={18} color={colors.accent} style={{ marginTop: 2 }} />
+                <Text style={{ color: colors.textLight, flex: 1, fontSize: 14, lineHeight: 20 }}>{analysisSummary}</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {detected.length > 0 ? (
+            <View style={{ gap: spacing.sm }}>
+              <Button onPress={addDetectedAll} variant="primary">
+                <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
+                <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 15 }}>
+                  検出食材を一括追加（{detected.length}件）
+                </Text>
+              </Button>
               {detected.map((i, idx) => (
-                <View key={`${i.name}-${idx}`} style={{ padding: 10, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "#fafafa", gap: 4 }}>
-                  <Text style={{ fontWeight: "900" }}>{i.name}</Text>
-                  <Text style={{ color: "#666" }}>
-                    {i.category} / {i.quantity} / freshness: {i.freshness} / daysRemaining: {i.daysRemaining}
-                  </Text>
-                  <Pressable onPress={() => addDetectedOne(i)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333", alignSelf: "flex-start" }}>
-                    <Text style={{ color: "white", fontWeight: "900" }}>追加</Text>
-                  </Pressable>
-                </View>
+                <Card key={`${i.name}-${idx}`} style={{ backgroundColor: colors.bg }}>
+                  <View style={{ gap: spacing.sm }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <Text style={{ fontWeight: "700", fontSize: 15, color: colors.text }}>{i.name}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                        <View style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                          backgroundColor: getFreshnessColor(i.freshness),
+                        }} />
+                        <Text style={{ fontSize: 12, color: colors.textMuted }}>{i.freshness}</Text>
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                        <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+                        <Text style={{ fontSize: 13, color: colors.textMuted }}>{i.category}</Text>
+                      </View>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                        <Ionicons name="cube-outline" size={14} color={colors.textMuted} />
+                        <Text style={{ fontSize: 13, color: colors.textMuted }}>{i.quantity}</Text>
+                      </View>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                        <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                        <Text style={{ fontSize: 13, color: colors.textMuted }}>残り{i.daysRemaining}日</Text>
+                      </View>
+                    </View>
+                    <Button
+                      onPress={() => addDetectedOne(i)}
+                      variant="secondary"
+                      size="sm"
+                      style={{ alignSelf: "flex-start" }}
+                    >
+                      <Ionicons name="add-outline" size={16} color={colors.text} />
+                      <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>追加</Text>
+                    </Button>
+                  </View>
+                </Card>
               ))}
             </View>
-          </>
-        ) : (
-          <Text style={{ color: "#999" }}>未解析 / 検出結果なし</Text>
-        )}
-      </View>
-
-      {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
+          ) : (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm }}>
+              <Ionicons name="scan-outline" size={18} color={colors.textMuted} />
+              <Text style={{ color: colors.textMuted, fontSize: 14 }}>未解析 / 検出結果なし</Text>
+            </View>
+          )}
         </View>
-      ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
-      ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>冷蔵庫は空です。</Text>
-      ) : (
-        <View style={{ gap: 10 }}>
-          {items.map((it) => (
-            <View key={it.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-              <Text style={{ fontWeight: "900" }}>
-                {it.name} {it.amount ? `（${it.amount}）` : ""}
-              </Text>
-              <Text style={{ color: "#666" }}>category: {it.category ?? "-"} / 期限: {it.expirationDate ?? "-"}</Text>
+      </Card>
 
-              {editingId === it.id ? (
-                <View style={{ gap: 8, marginTop: 6 }}>
-                  <TextInput value={editName} onChangeText={setEditName} placeholder="食材名" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-                  <TextInput value={editAmount} onChangeText={setEditAmount} placeholder="量（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-                  <TextInput value={editCategory} onChangeText={setEditCategory} placeholder="category（例: vegetable）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-                  <TextInput value={editExpirationDate} onChangeText={setEditExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-                  <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
-                    <Pressable onPress={saveEdit} disabled={isSavingEdit} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: isSavingEdit ? "#999" : "#333" }}>
-                      <Text style={{ color: "white", fontWeight: "900" }}>{isSavingEdit ? "保存中..." : "保存"}</Text>
-                    </Pressable>
-                    <Pressable onPress={() => setEditingId(null)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: "#eee" }}>
-                      <Text style={{ fontWeight: "900" }}>キャンセル</Text>
-                    </Pressable>
+      {/* Pantry items list */}
+      {isLoading ? (
+        <LoadingState message="冷蔵庫の中身を読み込み中..." />
+      ) : error ? (
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon={<Ionicons name="nutrition-outline" size={48} color={colors.textMuted} />}
+          message="冷蔵庫は空です。"
+          actionLabel="写真で追加"
+          onAction={analyzeFridge}
+        />
+      ) : (
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title={`食材一覧（${items.length}件）`} />
+          {items.map((it) => (
+            <Card key={it.id}>
+              <View style={{ gap: spacing.sm }}>
+                {/* Item header */}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="nutrition-outline" size={20} color={colors.accent} />
+                  <Text style={{ fontWeight: "700", fontSize: 15, color: colors.text, flex: 1 }}>
+                    {it.name}
+                    {it.amount ? (
+                      <Text style={{ fontWeight: "400", color: colors.textLight }}>{`  ${it.amount}`}</Text>
+                    ) : null}
+                  </Text>
+                </View>
+
+                {/* Meta info */}
+                <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>{it.category ?? "-"}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>期限: {it.expirationDate ?? "-"}</Text>
                   </View>
                 </View>
-              ) : (
-                <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
-                  <Pressable onPress={() => startEdit(it)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-                    <Text style={{ color: "white", fontWeight: "900" }}>編集</Text>
-                  </Pressable>
-                  <Pressable onPress={() => remove(it.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00" }}>
-                    <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
+
+                {/* Edit form (inline) */}
+                {editingId === it.id ? (
+                  <View style={{ gap: spacing.sm, marginTop: spacing.xs }}>
+                    <Input value={editName} onChangeText={setEditName} placeholder="食材名" />
+                    <Input value={editAmount} onChangeText={setEditAmount} placeholder="量（任意）" />
+                    <Input value={editCategory} onChangeText={setEditCategory} placeholder="category（例: vegetable）" />
+                    <Input value={editExpirationDate} onChangeText={setEditExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" />
+                    <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+                      <Button onPress={saveEdit} disabled={isSavingEdit} loading={isSavingEdit} size="sm">
+                        <Ionicons name="checkmark-outline" size={16} color="#FFFFFF" />
+                        <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>
+                          {isSavingEdit ? "保存中..." : "保存"}
+                        </Text>
+                      </Button>
+                      <Button onPress={() => setEditingId(null)} variant="secondary" size="sm">
+                        <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>キャンセル</Text>
+                      </Button>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.xs }}>
+                    <Button onPress={() => startEdit(it)} variant="secondary" size="sm">
+                      <Ionicons name="create-outline" size={16} color={colors.text} />
+                      <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>編集</Text>
+                    </Button>
+                    <Button onPress={() => remove(it.id)} variant="destructive" size="sm">
+                      <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
+                      <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>削除</Text>
+                    </Button>
+                  </View>
+                )}
+              </View>
+            </Card>
           ))}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      {/* Refresh button */}
+      <Button onPress={load} variant="ghost" size="sm" style={{ alignSelf: "center", marginTop: spacing.sm }}>
+        <Ionicons name="refresh-outline" size={16} color={colors.textMuted} />
+        <Text style={{ color: colors.textMuted, fontSize: 14 }}>更新</Text>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-

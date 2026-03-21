@@ -1,130 +1,208 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+
+import { Card } from "../../src/components/ui";
+import { colors, radius, shadows, spacing } from "../../src/theme";
 
 // モバイル版: 初回ウェルカム画面 (OB-UI-06)
 export default function OnboardingWelcome() {
   return (
     <ScrollView
-      contentContainerStyle={{
-        flexGrow: 1,
-        padding: 24,
-        justifyContent: "center",
-        alignItems: "center",
-        gap: 24,
-      }}
-      style={{ backgroundColor: "#FFF7ED" }}
+      contentContainerStyle={styles.container}
+      style={styles.scroll}
     >
-      {/* アイコン */}
-      <View
-        style={{
-          width: 100,
-          height: 100,
-          borderRadius: 50,
-          backgroundColor: "#FF8A65",
-          justifyContent: "center",
-          alignItems: "center",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.15,
-          shadowRadius: 12,
-          elevation: 8,
-        }}
-      >
-        <Text style={{ fontSize: 40 }}>🍳</Text>
+      {/* Hero icon */}
+      <View style={styles.heroIcon}>
+        <Ionicons name="restaurant" size={48} color="#FFFFFF" />
       </View>
 
-      {/* タイトル */}
-      <View style={{ alignItems: "center", gap: 8 }}>
-        <Text
-          style={{
-            fontSize: 28,
-            fontWeight: "800",
-            color: "#1F2937",
-            textAlign: "center",
-          }}
-        >
-          はじめまして！
-        </Text>
-        <Text
-          style={{
-            fontSize: 16,
-            color: "#6B7280",
-            textAlign: "center",
-            lineHeight: 24,
-          }}
-        >
+      {/* Title */}
+      <View style={styles.titleSection}>
+        <Text style={styles.title}>はじめまして！</Text>
+        <Text style={styles.subtitle}>
           私はあなたの食生活をサポートする{"\n"}
           AI栄養士「ほめゴハン」です。
         </Text>
       </View>
 
-      {/* 説明カード */}
-      <View
-        style={{
-          backgroundColor: "rgba(255,255,255,0.8)",
-          borderRadius: 16,
-          padding: 20,
-          width: "100%",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: 14,
-            color: "#4B5563",
-            textAlign: "center",
-            lineHeight: 22,
-            marginBottom: 12,
-          }}
-        >
-          あなたに最適な食事プランを作成するため、{"\n"}
-          いくつか質問させてください。
-        </Text>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-          }}
-        >
-          <Text style={{ fontSize: 12, color: "#9CA3AF" }}>⏱️</Text>
-          <Text style={{ fontSize: 12, color: "#9CA3AF" }}>所要時間: 約3〜5分</Text>
+      {/* Feature cards */}
+      <View style={styles.features}>
+        <View style={styles.featureRow}>
+          <View style={styles.featureIconWrap}>
+            <Ionicons name="nutrition" size={22} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.featureTitle}>栄養バランス管理</Text>
+            <Text style={styles.featureDesc}>あなたに最適な栄養目標を設定</Text>
+          </View>
+        </View>
+        <View style={styles.featureRow}>
+          <View style={styles.featureIconWrap}>
+            <Ionicons name="calendar" size={22} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.featureTitle}>献立提案</Text>
+            <Text style={styles.featureDesc}>毎週のメニューを自動で提案</Text>
+          </View>
+        </View>
+        <View style={styles.featureRow}>
+          <View style={styles.featureIconWrap}>
+            <Ionicons name="cart" size={22} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.featureTitle}>買い物リスト</Text>
+            <Text style={styles.featureDesc}>必要な食材をまとめて管理</Text>
+          </View>
         </View>
       </View>
 
-      {/* ボタン */}
-      <View style={{ width: "100%", gap: 12, marginTop: 8 }}>
+      {/* Info card */}
+      <Card style={styles.infoCard}>
+        <Text style={styles.infoText}>
+          あなたに最適な食事プランを作成するため、{"\n"}
+          いくつか質問させてください。
+        </Text>
+        <View style={styles.timeRow}>
+          <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+          <Text style={styles.timeText}>所要時間: 約3〜5分</Text>
+        </View>
+      </Card>
+
+      {/* Buttons */}
+      <View style={styles.buttonGroup}>
         <Pressable
           onPress={() => router.push("/onboarding/questions")}
-          style={{
-            backgroundColor: "#333",
-            paddingVertical: 18,
-            borderRadius: 999,
-            alignItems: "center",
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.2,
-            shadowRadius: 8,
-            elevation: 4,
-          }}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] },
+          ]}
         >
-          <Text style={{ color: "white", fontWeight: "700", fontSize: 16 }}>
-            はじめる
-          </Text>
+          <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
+          <Text style={styles.primaryButtonText}>はじめる</Text>
         </Pressable>
 
         <Pressable
           onPress={() => router.replace("/(tabs)/home")}
-          style={{ alignItems: "center", paddingVertical: 12 }}
+          style={styles.skipButton}
         >
-          <Text style={{ color: "#9CA3AF", fontSize: 14 }}>あとで設定する</Text>
+          <Text style={styles.skipButtonText}>あとで設定する</Text>
         </Pressable>
       </View>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  scroll: {
+    backgroundColor: "#FFF7ED",
+  },
+  container: {
+    flexGrow: 1,
+    padding: spacing["2xl"],
+    justifyContent: "center",
+    alignItems: "center",
+    gap: spacing["2xl"],
+  },
+  heroIcon: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: colors.accent,
+    justifyContent: "center",
+    alignItems: "center",
+    ...shadows.lg,
+  },
+  titleSection: {
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: "900",
+    color: colors.text,
+    textAlign: "center",
+  },
+  subtitle: {
+    fontSize: 16,
+    color: colors.textLight,
+    textAlign: "center",
+    lineHeight: 24,
+  },
+  features: {
+    width: "100%",
+    gap: spacing.lg,
+    paddingHorizontal: spacing.sm,
+  },
+  featureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  featureIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentLight,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  featureTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  featureDesc: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  infoCard: {
+    width: "100%",
+    alignItems: "center",
+  },
+  infoText: {
+    fontSize: 14,
+    color: colors.textLight,
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: spacing.md,
+  },
+  timeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  timeText: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  buttonGroup: {
+    width: "100%",
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  primaryButton: {
+    backgroundColor: colors.accent,
+    paddingVertical: 18,
+    borderRadius: radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    ...shadows.lg,
+  },
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+    fontSize: 17,
+  },
+  skipButton: {
+    alignItems: "center",
+    paddingVertical: spacing.md,
+  },
+  skipButtonText: {
+    color: colors.textMuted,
+    fontSize: 14,
+  },
+});

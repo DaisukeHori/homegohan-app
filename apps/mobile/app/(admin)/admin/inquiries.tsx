@@ -1,7 +1,10 @@
-import { Link, router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState, ChipSelector } from "../../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
 type InquiryRow = {
@@ -14,6 +17,27 @@ type InquiryRow = {
   status: string;
   createdAt: string;
 };
+
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "resolved", label: "Resolved" },
+  { value: "closed", label: "Closed" },
+];
+
+function statusVariant(s: string): "completed" | "pending" | "generating" | "alert" | "info" {
+  switch (s) {
+    case "resolved":
+    case "closed":
+      return "completed";
+    case "in_progress":
+      return "generating";
+    case "pending":
+      return "pending";
+    default:
+      return "info";
+  }
+}
 
 export default function AdminInquiriesPage() {
   const [status, setStatus] = useState("pending");
@@ -40,49 +64,67 @@ export default function AdminInquiriesPage() {
   }, [status]);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>Inquiries</Text>
-      <Link href="/admin">Admin Home</Link>
-
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        {["pending", "in_progress", "resolved", "closed"].map((s) => (
-          <Pressable key={s} onPress={() => setStatus(s)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: status === s ? "#E07A5F" : "#eee" }}>
-            <Text style={{ fontWeight: "900", color: status === s ? "white" : "#333" }}>{s}</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+          <Pressable onPress={() => router.back()} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
           </Pressable>
-        ))}
+          <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Inquiries</Text>
+        </View>
+        <Pressable onPress={load} hitSlop={8}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
+        </Pressable>
       </View>
 
+      {/* Status Filter */}
+      <ChipSelector
+        options={STATUS_OPTIONS}
+        selected={status}
+        onSelect={setStatus}
+        scrollable
+      />
+
+      {/* List */}
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>問い合わせがありません。</Text>
+        <EmptyState icon={<Ionicons name="chatbubbles-outline" size={40} color={colors.textMuted} />} message="問い合わせがありません。" />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((i) => (
-            <Pressable
-              key={i.id}
-              onPress={() => router.push(`/admin/inquiries/${i.id}`)}
-              style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 4 }}
-            >
-              <Text style={{ fontWeight: "900" }}>{i.subject}</Text>
-              <Text style={{ color: "#666" }}>
-                {i.inquiryType} / {i.status} / {i.userName ?? i.email}
-              </Text>
-              <Text style={{ color: "#999" }}>{new Date(i.createdAt).toLocaleString("ja-JP")}</Text>
-            </Pressable>
+            <Card key={i.id} onPress={() => router.push(`/admin/inquiries/${i.id}`)}>
+              <View style={{ gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="chatbubble-ellipses" size={18} color={colors.accent} />
+                  <Text style={{ flex: 1, fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
+                    {i.subject}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+                  <StatusBadge variant={statusVariant(i.status)} label={i.status} />
+                  <Text style={{ fontSize: 12, color: colors.textMuted }}>{i.inquiryType}</Text>
+                </View>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>{i.userName ?? i.email}</Text>
+                  <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                    {new Date(i.createdAt).toLocaleString("ja-JP")}
+                  </Text>
+                </View>
+              </View>
+            </Card>
           ))}
         </View>
       )}
-
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
     </ScrollView>
   );
 }
-
-

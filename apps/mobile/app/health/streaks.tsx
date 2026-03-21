@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, SectionHeader, StatCard } from "../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Streak = {
@@ -85,60 +88,210 @@ export default function HealthStreaksPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>連続記録</Text>
-      <Link href="/health">健康トップへ</Link>
+    <View style={styles.screen}>
+      <PageHeader
+        title="連続記録"
+        right={
+          <Link href="/health">
+            <Text style={styles.linkText}>健康トップへ</Text>
+          </Link>
+        }
+      />
+      <ScrollView contentContainerStyle={styles.container}>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="ストリークを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={styles.errorRow}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        </Card>
       ) : !data ? (
-        <Text style={{ color: "#666" }}>データがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="flame-outline" size={40} color={colors.textMuted} />}
+          message="データがありません。"
+        />
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>daily_record</Text>
-            <Text style={{ color: "#333" }}>current: {data.streak.current_streak}日</Text>
-            <Text style={{ color: "#333" }}>longest: {data.streak.longest_streak}日</Text>
-            <Text style={{ color: "#666" }}>last: {data.streak.last_activity_date ?? "-"}</Text>
-            <Text style={{ color: "#666" }}>start: {data.streak.streak_start_date ?? "-"}</Text>
-            <Text style={{ color: "#666" }}>total: {data.streak.total_records}</Text>
-            {data.nextBadge ? (
-              <Text style={{ color: "#666" }}>
-                next badge: {data.nextBadge}日（あと{data.daysToNextBadge ?? "-"}日）
-              </Text>
-            ) : (
-              <Text style={{ color: "#666" }}>next badge: なし</Text>
-            )}
+          <View style={styles.statsRow}>
+            <StatCard
+              icon={<Ionicons name="flame" size={22} color={colors.streak} />}
+              label="現在の連続"
+              value={data.streak.current_streak}
+              unit="日"
+              accentColor={colors.warningLight}
+            />
+            <StatCard
+              icon={<Ionicons name="trophy" size={22} color={colors.warning} />}
+              label="最長記録"
+              value={data.streak.longest_streak}
+              unit="日"
+              accentColor={colors.warningLight}
+            />
           </View>
 
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>直近7日</Text>
-            <Text style={{ color: "#666" }}>今週の記録数: {data.weeklyRecordCount}/7</Text>
-            {weekly.map((d) => (
-              <Text key={d.date} style={{ color: d.recorded ? "#333" : "#999" }}>
-                {d.recorded ? "✓" : "·"} {d.date}
-              </Text>
-            ))}
-          </View>
+          <Card>
+            <SectionHeader
+              title="daily_record"
+              right={<Ionicons name="stats-chart-outline" size={18} color={colors.accent} />}
+            />
+            <View style={styles.detailGrid}>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>最終記録</Text>
+                <Text style={styles.detailValue}>{data.streak.last_activity_date ?? "-"}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>開始日</Text>
+                <Text style={styles.detailValue}>{data.streak.streak_start_date ?? "-"}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>合計記録数</Text>
+                <Text style={styles.detailValue}>{data.streak.total_records}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>次のバッジ</Text>
+                <Text style={styles.detailValue}>
+                  {data.nextBadge ? `${data.nextBadge}日（あと${data.daysToNextBadge ?? "-"}日）` : "なし"}
+                </Text>
+              </View>
+            </View>
+          </Card>
 
-          <Pressable onPress={reset} style={{ padding: 12, borderRadius: 12, backgroundColor: "#c00", alignItems: "center" }}>
-            <Text style={{ color: "white", fontWeight: "900" }}>リセット（テスト用）</Text>
-          </Pressable>
+          <Card>
+            <SectionHeader
+              title="直近7日"
+              right={
+                <Text style={styles.weeklyCount}>
+                  {data.weeklyRecordCount}/7
+                </Text>
+              }
+            />
+            <ProgressBar
+              value={data.weeklyRecordCount}
+              max={7}
+              color={colors.streak}
+              style={styles.weeklyProgress}
+            />
+            <View style={styles.weekGrid}>
+              {weekly.map((d) => (
+                <View key={d.date} style={styles.dayItem}>
+                  <View
+                    style={[
+                      styles.dayDot,
+                      { backgroundColor: d.recorded ? colors.success : colors.border },
+                    ]}
+                  >
+                    {d.recorded && (
+                      <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                    )}
+                  </View>
+                  <Text style={[styles.dayText, d.recorded && styles.dayTextRecorded]}>
+                    {d.date.slice(5)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </Card>
+
+          <Button onPress={reset} variant="destructive" size="sm">
+            <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
+            <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>リセット（テスト用）</Text>
+          </Button>
         </>
       )}
 
-      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-        <Pressable onPress={load}>
-          <Text style={{ color: "#666" }}>更新</Text>
-        </Pressable>
-      </View>
+      <Button onPress={load} variant="ghost" size="sm">
+        <Ionicons name="refresh-outline" size={16} color={colors.textLight} />
+        <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>更新</Text>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
 
-
-
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  container: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: spacing["4xl"],
+  },
+  linkText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.error,
+    fontWeight: "600",
+    flex: 1,
+  },
+  statsRow: {
+    flexDirection: "row",
+    gap: spacing.md,
+  },
+  detailGrid: {
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  detailLabel: {
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  detailValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  weeklyCount: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: colors.streak,
+  },
+  weeklyProgress: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  weekGrid: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  dayItem: {
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  dayDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dayText: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  dayTextRecorded: {
+    color: colors.text,
+    fontWeight: "600",
+  },
+});

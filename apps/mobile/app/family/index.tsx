@@ -1,9 +1,12 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, Input, ListItem, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
+import { colors, spacing } from "../../src/theme";
 
 type FamilyMemberLite = {
   id: string;
@@ -108,77 +111,143 @@ export default function FamilyPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>家族</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="家族" />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
-      <View style={{ gap: 8 }}>
-        <Link href="/home">ホームへ</Link>
+      <View style={{ gap: spacing.sm }}>
+        <Link href="/home" style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+            <Ionicons name="home-outline" size={16} color={colors.accent} />
+            <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>ホームへ</Text>
+          </View>
+        </Link>
       </View>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="家族情報を読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+          </View>
+        </Card>
       ) : !group ? (
-        <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-          <Text style={{ fontWeight: "900" }}>家族グループ作成</Text>
-          <TextInput value={groupName} onChangeText={setGroupName} placeholder="グループ名" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-          <Pressable onPress={createGroup} disabled={isCreatingGroup} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isCreatingGroup ? "#999" : "#333" }}>
-            <Text style={{ color: "white", fontWeight: "900" }}>{isCreatingGroup ? "作成中..." : "作成"}</Text>
-          </Pressable>
-          <Text style={{ color: "#666" }}>※ 1ユーザーにつき家族グループは1つまでです。</Text>
-        </View>
+        <Card>
+          <SectionHeader
+            title="家族グループ作成"
+            right={<Ionicons name="people" size={20} color={colors.accent} />}
+          />
+          <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+            <Input
+              label="グループ名"
+              value={groupName}
+              onChangeText={setGroupName}
+              placeholder="グループ名"
+            />
+            <Button onPress={createGroup} loading={isCreatingGroup}>
+              {isCreatingGroup ? "作成中..." : "作成"}
+            </Button>
+            <Text style={{ fontSize: 12, color: colors.textMuted }}>
+              ※ 1ユーザーにつき家族グループは1つまでです。
+            </Text>
+          </View>
+        </Card>
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>{group.name}</Text>
-            <Text style={{ color: "#666" }}>メンバー: {group.memberCount}人</Text>
-          </View>
-
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>メンバー追加</Text>
-            <TextInput value={memberName} onChangeText={setMemberName} placeholder="名前" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-            <TextInput
-              value={memberRelation}
-              onChangeText={setMemberRelation}
-              placeholder="relation（例: child/spouse/other）"
-              style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }}
-            />
-            <Pressable onPress={addMember} disabled={isAddingMember} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isAddingMember ? "#999" : "#E07A5F" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>{isAddingMember ? "追加中..." : "追加"}</Text>
-            </Pressable>
-          </View>
-
-          <View style={{ gap: 10 }}>
-            {group.members?.map((m) => (
-              <View key={m.id} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-                <Text style={{ fontWeight: "900" }}>
-                  {m.name}（{m.relation}）
-                </Text>
-                <Text style={{ color: "#666" }}>
-                  {m.height ? `${m.height}cm` : ""} {m.weight ? `${m.weight}kg` : ""}
-                </Text>
-                {m.relation !== "self" ? (
-                  <Pressable onPress={() => deactivateMember(m.id)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#c00", alignSelf: "flex-start" }}>
-                    <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-                  </Pressable>
-                ) : (
-                  <Text style={{ color: "#999" }}>（オーナー）</Text>
-                )}
+          <Card>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+              <View
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: colors.accentLight,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="people" size={24} color={colors.accent} />
               </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text }}>{group.name}</Text>
+                <Text style={{ fontSize: 13, color: colors.textMuted }}>メンバー: {group.memberCount}人</Text>
+              </View>
+            </View>
+          </Card>
+
+          <Card>
+            <SectionHeader
+              title="メンバー追加"
+              right={<Ionicons name="person-add-outline" size={18} color={colors.accent} />}
+            />
+            <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+              <Input
+                label="名前"
+                value={memberName}
+                onChangeText={setMemberName}
+                placeholder="名前"
+              />
+              <Input
+                label="関係"
+                value={memberRelation}
+                onChangeText={setMemberRelation}
+                placeholder="relation（例: child/spouse/other）"
+              />
+              <Button onPress={addMember} loading={isAddingMember}>
+                {isAddingMember ? "追加中..." : "追加"}
+              </Button>
+            </View>
+          </Card>
+
+          <SectionHeader title="メンバー一覧" />
+          <View style={{ gap: spacing.sm }}>
+            {group.members?.map((m) => (
+              <ListItem
+                key={m.id}
+                title={`${m.name}（${m.relation}）`}
+                subtitle={[m.height ? `${m.height}cm` : "", m.weight ? `${m.weight}kg` : ""].filter(Boolean).join(" ") || undefined}
+                left={
+                  <View
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: m.relation === "self" ? colors.accentLight : colors.blueLight,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name={m.relation === "self" ? "person" : "person-outline"}
+                      size={18}
+                      color={m.relation === "self" ? colors.accent : colors.blue}
+                    />
+                  </View>
+                }
+                right={
+                  m.relation !== "self" ? (
+                    <Button onPress={() => deactivateMember(m.id)} variant="destructive" size="sm">
+                      <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
+                    </Button>
+                  ) : (
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>オーナー</Text>
+                  )
+                }
+              />
             ))}
           </View>
         </>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Ionicons name="reload-outline" size={16} color={colors.textLight} />
+          <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 14 }}>更新</Text>
+        </View>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-
-

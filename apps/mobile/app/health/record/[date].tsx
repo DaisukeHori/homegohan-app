@@ -1,7 +1,10 @@
-import { Link, router, useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, Input, LoadingState, PageHeader, SectionHeader } from "../../../src/components/ui";
+import { colors, spacing, radius } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
 type HealthRecord = {
@@ -38,6 +41,20 @@ function toInt(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function DiffIndicator({ current, previous, unit, lower }: { current: string; previous: number | null; unit: string; lower?: boolean }) {
+  if (previous == null || !current.trim()) return null;
+  const val = parseFloat(current);
+  if (!Number.isFinite(val)) return null;
+  const diff = val - previous;
+  if (diff === 0) return null;
+  const isGood = lower ? diff < 0 : diff > 0;
+  return (
+    <Text style={{ fontSize: 11, color: isGood ? colors.success : colors.error, fontWeight: "600" }}>
+      {diff > 0 ? "+" : ""}{diff.toFixed(1)} {unit}
+    </Text>
+  );
+}
+
 export default function HealthRecordDetailPage() {
   const params = useLocalSearchParams<{ date?: string | string[] }>();
   const date = useMemo(() => {
@@ -62,13 +79,13 @@ export default function HealthRecordDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   function hydrateForm(r: HealthRecord | null) {
-    setWeight(r?.weight === null || r?.weight === undefined ? "" : String(r.weight));
-    setBodyFat(r?.body_fat_percentage === null || r?.body_fat_percentage === undefined ? "" : String(r.body_fat_percentage));
-    setSys(r?.systolic_bp === null || r?.systolic_bp === undefined ? "" : String(r.systolic_bp));
-    setDia(r?.diastolic_bp === null || r?.diastolic_bp === undefined ? "" : String(r.diastolic_bp));
-    setSleepHours(r?.sleep_hours === null || r?.sleep_hours === undefined ? "" : String(r.sleep_hours));
-    setSteps(r?.step_count === null || r?.step_count === undefined ? "" : String(r.step_count));
-    setWater(r?.water_intake === null || r?.water_intake === undefined ? "" : String(r.water_intake));
+    setWeight(r?.weight == null ? "" : String(r.weight));
+    setBodyFat(r?.body_fat_percentage == null ? "" : String(r.body_fat_percentage));
+    setSys(r?.systolic_bp == null ? "" : String(r.systolic_bp));
+    setDia(r?.diastolic_bp == null ? "" : String(r.diastolic_bp));
+    setSleepHours(r?.sleep_hours == null ? "" : String(r.sleep_hours));
+    setSteps(r?.step_count == null ? "" : String(r.step_count));
+    setWater(r?.water_intake == null ? "" : String(r.water_intake));
     setNote(r?.daily_note ?? "");
   }
 
@@ -151,75 +168,129 @@ export default function HealthRecordDetailPage() {
 
   if (!date) {
     return (
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>健康記録</Text>
-        <Text style={{ color: "#c00" }}>date が指定されていません。</Text>
-        <Link href="/health/record">一覧へ戻る</Link>
-      </ScrollView>
+      <View style={{ flex: 1, backgroundColor: colors.bg }}>
+        <PageHeader title="健康記録詳細" />
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+          <Card variant="error">
+            <Text style={{ color: colors.error }}>日付が指定されていません。</Text>
+          </Card>
+        </ScrollView>
+      </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: "900" }}>健康記録（{date}）</Text>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Link href="/health/record">一覧へ</Link>
-        <Link href="/health">健康トップ</Link>
-      </View>
-
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title="健康記録詳細" />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <Text style={{ color: colors.error }}>{error}</Text>
+        </Card>
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>前日比較（あれば）</Text>
-            <Text style={{ color: "#666" }}>体重: {previous?.weight ?? "-"}</Text>
-            <Text style={{ color: "#666" }}>体脂肪: {previous?.body_fat_percentage ?? "-"}</Text>
-            <Text style={{ color: "#666" }}>
-              血圧: {previous?.systolic_bp ?? "-"} / {previous?.diastolic_bp ?? "-"}
-            </Text>
-          </View>
+          {/* 前日比較 */}
+          {previous && (
+            <Card>
+              <View style={{ gap: spacing.md }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="trending-up" size={18} color={colors.blue} />
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }}>前日との比較</Text>
+                </View>
+                <View style={{ flexDirection: "row", gap: spacing.lg }}>
+                  {previous.weight != null && (
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>体重</Text>
+                      <Text style={{ fontSize: 16, fontWeight: "700", color: colors.purple }}>{previous.weight} kg</Text>
+                      <DiffIndicator current={weight} previous={previous.weight} unit="kg" lower />
+                    </View>
+                  )}
+                  {previous.body_fat_percentage != null && (
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>体脂肪</Text>
+                      <Text style={{ fontSize: 16, fontWeight: "700", color: colors.warning }}>{previous.body_fat_percentage}%</Text>
+                      <DiffIndicator current={bodyFat} previous={previous.body_fat_percentage} unit="%" lower />
+                    </View>
+                  )}
+                  {previous.systolic_bp != null && (
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 13, color: colors.textMuted }}>血圧</Text>
+                      <Text style={{ fontSize: 16, fontWeight: "700", color: colors.error }}>
+                        {previous.systolic_bp}/{previous.diastolic_bp}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </Card>
+          )}
 
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 10 }}>
-            <Text style={{ fontWeight: "900" }}>入力</Text>
-
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <TextInput value={weight} onChangeText={setWeight} placeholder="体重(kg)" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-              <TextInput value={bodyFat} onChangeText={setBodyFat} placeholder="体脂肪(%)" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
+          {/* 身体データ */}
+          <Card>
+            <View style={{ gap: spacing.md }}>
+              <SectionHeader title="身体データ" />
+              <View style={{ flexDirection: "row", gap: spacing.md }}>
+                <View style={{ flex: 1 }}>
+                  <Input label="体重 (kg)" value={weight} onChangeText={setWeight} keyboardType="decimal-pad" placeholder="60.2" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Input label="体脂肪 (%)" value={bodyFat} onChangeText={setBodyFat} keyboardType="decimal-pad" placeholder="20.5" />
+                </View>
+              </View>
             </View>
+          </Card>
 
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <TextInput value={sys} onChangeText={setSys} placeholder="収縮期(mmHg)" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-              <TextInput value={dia} onChangeText={setDia} placeholder="拡張期(mmHg)" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
+          {/* 血圧 */}
+          <Card>
+            <View style={{ gap: spacing.md }}>
+              <SectionHeader title="血圧" />
+              <View style={{ flexDirection: "row", gap: spacing.md }}>
+                <View style={{ flex: 1 }}>
+                  <Input label="収縮期 (mmHg)" value={sys} onChangeText={setSys} keyboardType="number-pad" placeholder="120" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Input label="拡張期 (mmHg)" value={dia} onChangeText={setDia} keyboardType="number-pad" placeholder="80" />
+                </View>
+              </View>
             </View>
+          </Card>
 
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <TextInput value={sleepHours} onChangeText={setSleepHours} placeholder="睡眠(時間)" keyboardType="decimal-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-              <TextInput value={steps} onChangeText={setSteps} placeholder="歩数" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-              <TextInput value={water} onChangeText={setWater} placeholder="水(ml)" keyboardType="number-pad" style={{ flex: 1, borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
+          {/* 生活データ */}
+          <Card>
+            <View style={{ gap: spacing.md }}>
+              <SectionHeader title="生活データ" />
+              <View style={{ flexDirection: "row", gap: spacing.md }}>
+                <View style={{ flex: 1 }}>
+                  <Input label="睡眠 (時間)" value={sleepHours} onChangeText={setSleepHours} keyboardType="decimal-pad" placeholder="7.5" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Input label="歩数" value={steps} onChangeText={setSteps} keyboardType="number-pad" placeholder="8000" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Input label="水 (ml)" value={water} onChangeText={setWater} keyboardType="number-pad" placeholder="2000" />
+                </View>
+              </View>
             </View>
+          </Card>
 
-            <TextInput value={note} onChangeText={setNote} placeholder="メモ（任意）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
+          {/* メモ */}
+          <Input label="メモ" value={note} onChangeText={setNote} placeholder="今日の体調など" multiline />
 
-            <Pressable onPress={save} disabled={isSaving} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSaving ? "#999" : "#333" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>{isSaving ? "保存中..." : "保存"}</Text>
-            </Pressable>
+          {/* アクション */}
+          <Button onPress={save} loading={isSaving}>
+            {isSaving ? "保存中..." : "保存"}
+          </Button>
 
-            {record ? (
-              <Pressable onPress={remove} style={{ padding: 12, borderRadius: 12, alignItems: "center", backgroundColor: "#c00" }}>
-                <Text style={{ color: "white", fontWeight: "900" }}>削除</Text>
-              </Pressable>
-            ) : null}
-          </View>
+          {record && (
+            <Button variant="destructive" onPress={remove}>
+              この記録を削除
+            </Button>
+          )}
         </>
       )}
     </ScrollView>
+    </View>
   );
 }
-
-
-

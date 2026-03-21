@@ -1,7 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, ChipSelector, EmptyState, LoadingState, PageHeader, SectionHeader, StatusBadge } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { colors, spacing } from "../../src/theme";
 
 type ComparisonResponse = {
   rankings: Array<{
@@ -22,6 +25,12 @@ type ComparisonResponse = {
   periodStart: string;
   periodEnd: string;
 };
+
+const PERIOD_OPTIONS = [
+  { value: "daily" as const, label: "日" },
+  { value: "weekly" as const, label: "週" },
+  { value: "monthly" as const, label: "月" },
+];
 
 export default function ComparisonPage() {
   const [periodType, setPeriodType] = useState<"daily" | "weekly" | "monthly">("weekly");
@@ -59,86 +68,101 @@ export default function ComparisonPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>比較</Text>
-        <Pressable onPress={trigger} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#333" }}>
-          <Text style={{ color: "white", fontWeight: "900" }}>再計算</Text>
-        </Pressable>
-      </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="比較"
+        right={
+          <Button onPress={trigger} variant="primary" size="sm">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <Ionicons name="refresh" size={16} color="#FFFFFF" />
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>再計算</Text>
+            </View>
+          </Button>
+        }
+      />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        {(["daily", "weekly", "monthly"] as const).map((p) => (
-          <Pressable
-            key={p}
-            onPress={() => setPeriodType(p)}
-            style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: periodType === p ? "#E07A5F" : "#eee" }}
-          >
-            <Text style={{ fontWeight: "900", color: periodType === p ? "white" : "#333" }}>
-              {p === "daily" ? "日" : p === "weekly" ? "週" : "月"}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <ChipSelector
+        options={PERIOD_OPTIONS}
+        selected={periodType}
+        onSelect={setPeriodType}
+      />
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="ランキングを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+          </View>
+        </Card>
       ) : !data ? (
-        <Text style={{ color: "#666" }}>データがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="bar-chart-outline" size={48} color={colors.textMuted} />}
+          message="データがありません。"
+        />
       ) : (
         <>
-          <Text style={{ color: "#666" }}>
+          <Text style={{ fontSize: 13, color: colors.textMuted }}>
             期間: {data.periodStart} 〜 {data.periodEnd}
           </Text>
 
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>ハイライト</Text>
+          <Card>
+            <SectionHeader title="ハイライト" right={<Ionicons name="sparkles" size={18} color={colors.accent} />} />
             {data.highlights?.length ? (
-              data.highlights.map((h, idx) => (
-                <Text key={idx}>
-                  {h.icon} {h.message}
-                </Text>
-              ))
-            ) : (
-              <Text style={{ color: "#666" }}>まだありません。</Text>
-            )}
-          </View>
-
-          <View style={{ gap: 12 }}>
-            {data.rankings?.map((m) => (
-              <View key={m.metric.code} style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-                <Text style={{ fontWeight: "900" }}>{m.metric.name}</Text>
-                {m.segments.map((s) => (
-                  <View key={`${m.metric.code}-${s.segment.code}`} style={{ gap: 4 }}>
-                    <Text style={{ fontWeight: "900" }}>
-                      {s.segment.name}: {s.rank}/{s.totalUsers}（{Math.round(s.percentile)}%）
-                    </Text>
-                    <Text style={{ color: "#666" }}>
-                      値: {s.value}
-                      {m.metric.unit ? ` ${m.metric.unit}` : ""} / 平均: {s.avgValue ?? "-"} / 平均比: {s.vsAvgRate ? `${Math.round(s.vsAvgRate)}%` : "-"}
-                    </Text>
-                    {s.prize ? (
-                      <Text>
-                        {s.prize.icon} {s.prize.message}
-                      </Text>
-                    ) : null}
+              <View style={{ gap: spacing.sm }}>
+                {data.highlights.map((h, idx) => (
+                  <View key={idx} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                    <Text style={{ fontSize: 16 }}>{h.icon}</Text>
+                    <Text style={{ fontSize: 14, color: colors.textLight, flex: 1 }}>{h.message}</Text>
                   </View>
                 ))}
               </View>
+            ) : (
+              <Text style={{ fontSize: 14, color: colors.textMuted }}>まだありません。</Text>
+            )}
+          </Card>
+
+          <View style={{ gap: spacing.md }}>
+            {data.rankings?.map((m) => (
+              <Card key={m.metric.code}>
+                <SectionHeader title={m.metric.name} />
+                <View style={{ gap: spacing.md }}>
+                  {m.segments.map((s) => (
+                    <View key={`${m.metric.code}-${s.segment.code}`} style={{ gap: spacing.xs }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                        <Ionicons name="podium-outline" size={16} color={colors.accent} />
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }}>
+                          {s.segment.name}: {s.rank}/{s.totalUsers}（{Math.round(s.percentile)}%）
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 13, color: colors.textMuted, marginLeft: spacing["2xl"] }}>
+                        値: {s.value}
+                        {m.metric.unit ? ` ${m.metric.unit}` : ""} / 平均: {s.avgValue ?? "-"} / 平均比: {s.vsAvgRate ? `${Math.round(s.vsAvgRate)}%` : "-"}
+                      </Text>
+                      {s.prize ? (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, marginLeft: spacing["2xl"] }}>
+                          <Text style={{ fontSize: 14 }}>{s.prize.icon}</Text>
+                          <Text style={{ fontSize: 13, color: colors.accent, fontWeight: "600" }}>{s.prize.message}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              </Card>
             ))}
           </View>
         </>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Ionicons name="reload-outline" size={16} color={colors.textLight} />
+          <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 14 }}>更新</Text>
+        </View>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-

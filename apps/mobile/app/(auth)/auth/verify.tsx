@@ -1,8 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
-import { Link, Redirect, router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
+import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { extractSupabaseLinkParams } from "../../../src/lib/deeplink";
 import { supabase } from "../../../src/lib/supabase";
 
@@ -60,21 +62,91 @@ export default function VerifyPage() {
   if (hasSession) return <Redirect href="/(tabs)/home" />;
 
   return (
-    <View style={{ flex: 1, padding: 20, justifyContent: "center", gap: 12 }}>
-      <Text style={{ fontSize: 24, fontWeight: "700" }}>メール確認</Text>
-      {isProcessing ? (
-        <Text style={{ color: "#666" }}>確認中...</Text>
-      ) : (
-        <>
-          <Text style={{ color: "#666" }}>
-            {isDone ? "確認が完了しました。ログインしてください。" : "確認できませんでした。"}
-          </Text>
-          <Button title="ログインへ" onPress={() => router.replace("/login")} />
-          <Link href="/login">ログインへ移動</Link>
-        </>
-      )}
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {/* 戻るボタン */}
+      <Pressable
+        onPress={() => router.back()}
+        style={{ position: "absolute", top: 56, left: spacing.lg, zIndex: 10 }}
+        hitSlop={12}
+      >
+        <Ionicons name="chevron-back" size={24} color={colors.text} />
+      </Pressable>
+
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: spacing.xl }}>
+        {/* ヘッダー */}
+        <View style={{ alignItems: "center", marginBottom: 32 }}>
+          <View style={{
+            width: 64, height: 64, borderRadius: 20,
+            backgroundColor: isProcessing ? colors.blue : isDone ? colors.success : colors.accent,
+            alignItems: "center", justifyContent: "center",
+            marginBottom: spacing.md, ...shadows.md,
+          }}>
+            <Ionicons
+              name={isProcessing ? "mail-outline" : isDone ? "checkmark-circle-outline" : "close-circle-outline"}
+              size={32}
+              color="#fff"
+            />
+          </View>
+          <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>メール確認</Text>
+        </View>
+
+        {isProcessing ? (
+          <View style={{
+            backgroundColor: colors.card, borderRadius: radius.lg,
+            padding: spacing.xl, alignItems: "center", gap: spacing.md,
+            borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+            width: "100%",
+          }}>
+            <ActivityIndicator size="large" color={colors.accent} />
+            <Text style={{ fontSize: 15, color: colors.textMuted }}>確認中...</Text>
+          </View>
+        ) : (
+          <View style={{
+            backgroundColor: colors.card, borderRadius: radius.lg,
+            padding: spacing.xl, alignItems: "center", gap: spacing.lg,
+            borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+            width: "100%",
+          }}>
+            {isDone ? (
+              <View style={{
+                backgroundColor: colors.successLight, borderRadius: radius.lg,
+                padding: spacing.md, flexDirection: "row", alignItems: "center",
+                gap: spacing.sm, width: "100%",
+              }}>
+                <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+                <Text style={{ fontSize: 14, color: colors.success, flex: 1 }}>
+                  確認が完了しました。ログインしてください。
+                </Text>
+              </View>
+            ) : (
+              <View style={{
+                backgroundColor: colors.errorLight, borderRadius: radius.lg,
+                padding: spacing.md, flexDirection: "row", alignItems: "center",
+                gap: spacing.sm, width: "100%",
+              }}>
+                <Ionicons name="warning-outline" size={20} color={colors.error} />
+                <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>
+                  確認できませんでした。
+                </Text>
+              </View>
+            )}
+
+            {/* ログインボタン */}
+            <Pressable
+              onPress={() => router.replace("/login")}
+              style={({ pressed }) => ({
+                backgroundColor: colors.accent,
+                borderRadius: radius.lg, paddingVertical: 16,
+                alignItems: "center", ...shadows.md,
+                opacity: pressed ? 0.9 : 1,
+                width: "100%",
+              })}
+            >
+              <Text style={{ color: "#fff", fontSize: 16, fontWeight: "800" }}>ログインへ</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
-
-

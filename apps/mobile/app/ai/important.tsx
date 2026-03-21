@@ -1,8 +1,11 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { colors, spacing } from "../../src/theme";
 
 type ImportantMessage = {
   id: string;
@@ -37,44 +40,80 @@ export default function AiImportantMessagesPage() {
   }, []);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>重要メッセージ</Text>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: "#666" }}>戻る</Text>
-        </Pressable>
-      </View>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader
+        title="重要メッセージ"
+        right={
+          <Button onPress={() => router.back()} variant="ghost" size="sm">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <Ionicons name="arrow-back" size={16} color={colors.textLight} />
+              <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 13 }}>戻る</Text>
+            </View>
+          </Button>
+        }
+      />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="メッセージを読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+          </View>
+        </Card>
       ) : items.length === 0 ? (
-        <Text style={{ color: "#666" }}>重要メッセージがありません。</Text>
+        <EmptyState
+          icon={<Ionicons name="star-outline" size={48} color={colors.textMuted} />}
+          message="重要メッセージがありません。"
+        />
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: spacing.sm }}>
           {items.map((m) => (
-            <Pressable
-              key={m.id}
-              onPress={() => router.push(`/ai/${m.session.id}`)}
-              style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}
-            >
-              <Text style={{ fontWeight: "900" }}>{m.session.title}</Text>
-              <Text style={{ color: "#666" }}>{new Date(m.createdAt).toLocaleString("ja-JP")}</Text>
-              <Text style={{ color: "#333" }}>{m.content}</Text>
-              {m.reason ? <Text style={{ color: "#999" }}>理由: {m.reason}</Text> : null}
-            </Pressable>
+            <Card key={m.id} onPress={() => router.push(`/ai/${m.session.id}`)}>
+              <View style={{ gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <View
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: colors.warningLight,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons name="star" size={16} color={colors.warning} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }}>{m.session.title}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                      {new Date(m.createdAt).toLocaleString("ja-JP")}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </View>
+                <Text style={{ fontSize: 14, color: colors.textLight, lineHeight: 20 }}>{m.content}</Text>
+                {m.reason ? (
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.xs }}>
+                    <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} style={{ marginTop: 1 }} />
+                    <Text style={{ fontSize: 12, color: colors.textMuted, flex: 1 }}>理由: {m.reason}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </Card>
           ))}
         </View>
       )}
 
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
+      <Button onPress={load} variant="ghost" size="sm">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Ionicons name="reload-outline" size={16} color={colors.textLight} />
+          <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 14 }}>更新</Text>
+        </View>
+      </Button>
     </ScrollView>
+    </View>
   );
 }
-
-

@@ -1,7 +1,12 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../../src/components/ui";
+import { Input } from "../../../../src/components/ui";
+import { ChipSelector } from "../../../../src/components/ui";
+import { colors, spacing, radius, shadows } from "../../../../src/theme";
 import { getApi } from "../../../../src/lib/api";
 
 type Inquiry = {
@@ -18,6 +23,27 @@ type Inquiry = {
   updatedAt: string;
   resolvedAt: string | null;
 };
+
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "resolved", label: "Resolved" },
+  { value: "closed", label: "Closed" },
+];
+
+function statusVariant(s: string): "completed" | "pending" | "generating" | "alert" | "info" {
+  switch (s) {
+    case "resolved":
+    case "closed":
+      return "completed";
+    case "in_progress":
+      return "generating";
+    case "pending":
+      return "pending";
+    default:
+      return "info";
+  }
+}
 
 export default function AdminInquiryDetailPage() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -67,51 +93,88 @@ export default function AdminInquiryDetailPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>Inquiry</Text>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: "#666" }}>戻る</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
+        <Text style={{ flex: 1, fontSize: 22, fontWeight: "800", color: colors.text }} numberOfLines={1}>
+          Inquiry Detail
+        </Text>
       </View>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{error}</Text>
+          </View>
+          <Button onPress={load} variant="outline" size="sm" style={{ marginTop: spacing.md }}>
+            再試行
+          </Button>
+        </Card>
       ) : !inquiry ? (
-        <Text style={{ color: "#666" }}>見つかりませんでした。</Text>
+        <EmptyState icon={<Ionicons name="search-outline" size={40} color={colors.textMuted} />} message="見つかりませんでした。" />
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>{inquiry.subject}</Text>
-            <Text style={{ color: "#666" }}>
-              {inquiry.inquiryType} / {inquiry.status} / {inquiry.userName ?? inquiry.email}
-            </Text>
-            <Text style={{ color: "#333" }}>{inquiry.message}</Text>
-          </View>
+          {/* Inquiry Detail */}
+          <Card>
+            <View style={{ gap: spacing.md }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Ionicons name="chatbubble-ellipses" size={20} color={colors.accent} />
+                <Text style={{ flex: 1, fontSize: 17, fontWeight: "800", color: colors.text }}>{inquiry.subject}</Text>
+              </View>
 
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>更新</Text>
-            <TextInput value={status} onChangeText={setStatus} placeholder="status（pending/in_progress/resolved/closed）" style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10 }} />
-            <TextInput
-              value={adminNotes}
-              onChangeText={setAdminNotes}
-              placeholder="管理メモ"
-              multiline
-              style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 100 }}
-            />
-            <Pressable onPress={save} disabled={isSaving} style={{ padding: 14, borderRadius: 12, alignItems: "center", backgroundColor: isSaving ? "#999" : "#333" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>{isSaving ? "保存中..." : "保存"}</Text>
-            </Pressable>
-          </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+                <StatusBadge variant={statusVariant(inquiry.status)} label={inquiry.status} />
+                <Text style={{ fontSize: 12, color: colors.textMuted }}>{inquiry.inquiryType}</Text>
+              </View>
+
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                <Ionicons name="person" size={14} color={colors.textMuted} />
+                <Text style={{ fontSize: 13, color: colors.textMuted }}>{inquiry.userName ?? inquiry.email}</Text>
+              </View>
+
+              <View style={{ backgroundColor: colors.bg, borderRadius: radius.md, padding: spacing.md }}>
+                <Text style={{ fontSize: 14, color: colors.textLight, lineHeight: 22 }}>{inquiry.message}</Text>
+              </View>
+
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                {new Date(inquiry.createdAt).toLocaleString("ja-JP")}
+              </Text>
+            </View>
+          </Card>
+
+          {/* Update Form */}
+          <Card>
+            <View style={{ gap: spacing.md }}>
+              <SectionHeader title="ステータス更新" />
+
+              <ChipSelector
+                options={STATUS_OPTIONS}
+                selected={status}
+                onSelect={setStatus}
+              />
+
+              <Input
+                label="管理メモ"
+                value={adminNotes}
+                onChangeText={setAdminNotes}
+                placeholder="管理メモを入力..."
+                multiline
+                style={{ minHeight: 100, textAlignVertical: "top" }}
+              />
+
+              <Button onPress={save} loading={isSaving} disabled={isSaving}>
+                {isSaving ? "保存中..." : "保存"}
+              </Button>
+            </View>
+          </Card>
         </>
       )}
     </ScrollView>
   );
 }
-
-
-

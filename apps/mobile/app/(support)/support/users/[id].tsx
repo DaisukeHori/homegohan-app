@@ -1,8 +1,11 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
+import { Button, Card, EmptyState, Input, LoadingState, SectionHeader, StatCard, StatusBadge } from "../../../../src/components/ui";
 import { getApi } from "../../../../src/lib/api";
+import { colors, spacing, radius } from "../../../../src/theme";
 
 type SupportUserDetail = {
   user: {
@@ -74,77 +77,119 @@ export default function SupportUserDetailPage() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "900" }}>ユーザー</Text>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: "#666" }}>戻る</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["4xl"] }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, paddingTop: 56 }}>
+        <Pressable onPress={() => router.back()} style={{ padding: spacing.xs }}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text, flex: 1 }}>ユーザー詳細</Text>
+        <Pressable onPress={load} style={{ padding: spacing.sm }}>
+          <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
       {isLoading ? (
-        <View style={{ paddingTop: 12 }}>
-          <ActivityIndicator />
-        </View>
+        <LoadingState message="読み込み中..." />
       ) : error ? (
-        <Text style={{ color: "#c00" }}>{error}</Text>
+        <Card variant="error">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 14, flex: 1 }}>{error}</Text>
+          </View>
+        </Card>
       ) : !data ? (
-        <Text style={{ color: "#666" }}>見つかりませんでした。</Text>
+        <EmptyState icon={<Ionicons name="person-outline" size={40} color={colors.textMuted} />} message="見つかりませんでした。" />
       ) : (
         <>
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>{data.user.nickname ?? "(no name)"}</Text>
-            <Text style={{ color: "#666" }}>roles: {(data.user.roles ?? []).join(", ")}</Text>
-            <Text style={{ color: "#666" }}>
-              org: {data.user.organizationId ?? "-"} / banned: {data.user.isBanned ? "YES" : "NO"}
-            </Text>
-            <Text style={{ color: "#666" }}>login: {data.user.loginCount ?? 0} / last: {data.user.lastLoginAt ?? "-"}</Text>
-            <Text style={{ color: "#666" }}>profile: {data.user.profileCompleteness ?? 0}%</Text>
-            <Text style={{ color: "#999" }}>{data.user.id}</Text>
-          </View>
-
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 6 }}>
-            <Text style={{ fontWeight: "900" }}>概要</Text>
-            <Text>mealCount: {data.stats.mealCount}</Text>
-            <Text>aiSessionCount(30d): {data.stats.aiSessionCount}</Text>
-          </View>
-
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>ノート追加</Text>
-            <TextInput
-              value={note}
-              onChangeText={setNote}
-              placeholder="サポートメモ"
-              multiline
-              style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 10, minHeight: 80 }}
-            />
-            <Pressable onPress={addNote} disabled={isSubmitting} style={{ padding: 12, borderRadius: 12, backgroundColor: isSubmitting ? "#999" : "#333", alignItems: "center" }}>
-              <Text style={{ color: "white", fontWeight: "900" }}>{isSubmitting ? "追加中..." : "追加"}</Text>
-            </Pressable>
-          </View>
-
-          <View style={{ padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12, backgroundColor: "white", gap: 8 }}>
-            <Text style={{ fontWeight: "900" }}>既存ノート</Text>
-            {(data.notes ?? []).length === 0 ? (
-              <Text style={{ color: "#666" }}>なし</Text>
-            ) : (
-              data.notes.map((n) => (
-                <View key={n.id} style={{ padding: 10, borderWidth: 1, borderColor: "#eee", borderRadius: 10, gap: 4 }}>
-                  <Text style={{ color: "#333" }}>{n.note}</Text>
-                  <Text style={{ color: "#999" }}>{new Date(n.created_at).toLocaleString("ja-JP")}</Text>
+          <Card>
+            <View style={{ gap: spacing.sm }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: data.user.isBanned ? colors.errorLight : colors.accentLight, alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name={data.user.isBanned ? "ban-outline" : "person"} size={24} color={data.user.isBanned ? colors.error : colors.accent} />
                 </View>
-              ))
-            )}
+                <View style={{ flex: 1, gap: 2 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                    <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>{data.user.nickname ?? "(no name)"}</Text>
+                    {data.user.isBanned && <StatusBadge variant="alert" label="BAN" />}
+                  </View>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>{data.user.id}</Text>
+                </View>
+              </View>
+
+              <View style={{ backgroundColor: colors.bg, borderRadius: radius.md, padding: spacing.md, gap: spacing.xs, marginTop: spacing.xs }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>Roles</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>{(data.user.roles ?? []).join(", ")}</Text>
+                </View>
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>Organization</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>{data.user.organizationId ?? "-"}</Text>
+                </View>
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>Login count</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>{data.user.loginCount ?? 0}</Text>
+                </View>
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>Last login</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>{data.user.lastLoginAt ?? "-"}</Text>
+                </View>
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>Profile</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>{data.user.profileCompleteness ?? 0}%</Text>
+                </View>
+              </View>
+            </View>
+          </Card>
+
+          <SectionHeader title="利用状況" />
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <StatCard
+              icon={<Ionicons name="restaurant-outline" size={22} color={colors.accent} />}
+              label="食事記録"
+              value={data.stats.mealCount}
+              accentColor={colors.accentLight}
+            />
+            <StatCard
+              icon={<Ionicons name="chatbox-ellipses-outline" size={22} color={colors.purple} />}
+              label="AIセッション(30d)"
+              value={data.stats.aiSessionCount}
+              accentColor={colors.purpleLight}
+            />
           </View>
+
+          <SectionHeader title="ノート追加" />
+          <Card>
+            <View style={{ gap: spacing.sm }}>
+              <Input
+                value={note}
+                onChangeText={setNote}
+                placeholder="サポートメモ"
+                multiline
+                style={{ minHeight: 80, textAlignVertical: "top" }}
+              />
+              <Button onPress={addNote} loading={isSubmitting} disabled={isSubmitting}>
+                {isSubmitting ? "追加中..." : "追加"}
+              </Button>
+            </View>
+          </Card>
+
+          <SectionHeader title="既存ノート" />
+          {(data.notes ?? []).length === 0 ? (
+            <EmptyState icon={<Ionicons name="document-text-outline" size={36} color={colors.textMuted} />} message="ノートがありません。" />
+          ) : (
+            <View style={{ gap: spacing.sm }}>
+              {data.notes.map((n) => (
+                <Card key={n.id}>
+                  <View style={{ gap: spacing.xs }}>
+                    <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{n.note}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{new Date(n.created_at).toLocaleString("ja-JP")}</Text>
+                  </View>
+                </Card>
+              ))}
+            </View>
+          )}
         </>
       )}
-
-      <Pressable onPress={load} style={{ alignItems: "center", marginTop: 8 }}>
-        <Text style={{ color: "#666" }}>更新</Text>
-      </Pressable>
     </ScrollView>
   );
 }
-
-
-
