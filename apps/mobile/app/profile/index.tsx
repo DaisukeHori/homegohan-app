@@ -1,97 +1,336 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { Card, ListItem, PageHeader } from "../../src/components/ui";
+import { Button, Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
+import { getApi } from "../../src/lib/api";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 
+type TabType = "basic" | "goals" | "sports" | "health" | "diet" | "cooking" | "lifestyle";
+
+const TABS: { id: TabType; label: string; icon: string }[] = [
+  { id: "basic", label: "基本", icon: "👤" },
+  { id: "goals", label: "目標", icon: "🎯" },
+  { id: "sports", label: "競技", icon: "🏆" },
+  { id: "health", label: "健康", icon: "❤️" },
+  { id: "diet", label: "食事", icon: "🍽️" },
+  { id: "cooking", label: "調理", icon: "👨‍🍳" },
+  { id: "lifestyle", label: "生活", icon: "🏠" },
+];
+
+const FITNESS_GOALS = [
+  { value: "lose_weight", label: "減量", icon: "🏃" },
+  { value: "build_muscle", label: "筋肉増加", icon: "💪" },
+  { value: "improve_energy", label: "エネルギーUP", icon: "⚡" },
+  { value: "improve_skin", label: "美肌", icon: "✨" },
+  { value: "gut_health", label: "腸活", icon: "🌿" },
+  { value: "immunity", label: "免疫力", icon: "🛡️" },
+  { value: "focus", label: "集中力", icon: "🧠" },
+  { value: "gain_weight", label: "増量", icon: "📈" },
+];
+
+const HEALTH_CONDITIONS = ["高血圧", "糖尿病", "脂質異常症", "貧血", "痛風", "骨粗しょう症", "睡眠障害", "ストレス"];
+
+const WORK_STYLES = [
+  { value: "sedentary", label: "デスクワーク" },
+  { value: "light_active", label: "オフィス" },
+  { value: "moderately_active", label: "立ち仕事" },
+  { value: "very_active", label: "肉体労働" },
+  { value: "student", label: "学生" },
+  { value: "homemaker", label: "主婦/主夫" },
+];
+
+const COOKING_EXP = [
+  { value: "beginner", label: "初心者" },
+  { value: "intermediate", label: "中級者" },
+  { value: "advanced", label: "上級者" },
+];
+
 export default function ProfilePage() {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile: ctxProfile, refresh: refreshProfile } = useProfile();
 
-  const displayName = profile?.nickname || user?.email?.split("@")[0] || "ゲスト";
+  const [profileData, setProfileData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>("basic");
+  const [editForm, setEditForm] = useState<any>({});
+  const [badgeCount, setBadgeCount] = useState(0);
+
+  useEffect(() => {
+    async function load() {
+      setIsLoading(true);
+      try {
+        const api = getApi();
+        const data = await api.get<any>("/api/profile");
+        setProfileData(data);
+        setEditForm(data);
+
+        try {
+          const badgeRes = await api.get<{ badges: any[] }>("/api/badges");
+          setBadgeCount(badgeRes.badges?.filter((b: any) => b.earned).length ?? 0);
+        } catch {}
+      } catch (e: any) {
+        console.error("Profile fetch error:", e);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  const displayName = profileData?.nickname || ctxProfile?.nickname || user?.email?.split("@")[0] || "ゲスト";
+
+  function updateField(field: string, value: any) {
+    setEditForm((prev: any) => ({ ...prev, [field]: value }));
+  }
+
+  function toggleArrayItem(field: string, value: string) {
+    const current = (editForm[field] as string[]) || [];
+    if (current.includes(value)) {
+      updateField(field, current.filter((v: string) => v !== value));
+    } else {
+      updateField(field, [...current, value]);
+    }
+  }
+
+  async function handleSave() {
+    setIsSaving(true);
+    try {
+      const api = getApi();
+      const updated = await api.put<any>("/api/profile", editForm);
+      setProfileData(updated);
+      setEditForm(updated);
+      setIsEditing(false);
+      await refreshProfile();
+    } catch (e: any) {
+      Alert.alert("更新失敗", e?.message ?? "プロフィールの更新に失敗しました。");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.bg }}>
+        <PageHeader title="マイページ" />
+        <LoadingState />
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <PageHeader title="マイページ" />
+      <PageHeader
+        title="マイページ"
+        right={
+          isEditing ? (
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Pressable onPress={() => { setEditForm(profileData); setIsEditing(false); }}>
+                <Text style={{ fontSize: 15, color: colors.textMuted, fontWeight: "600" }}>キャンセル</Text>
+              </Pressable>
+              <Pressable onPress={handleSave} disabled={isSaving}>
+                <Text style={{ fontSize: 15, color: colors.accent, fontWeight: "700" }}>
+                  {isSaving ? "保存中..." : "保存"}
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable onPress={() => setIsEditing(true)}>
+              <Text style={{ fontSize: 15, color: colors.accent, fontWeight: "700" }}>編集</Text>
+            </Pressable>
+          )
+        }
+      />
 
-      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: 120 }}>
         {/* プロフィールカード */}
         <Card>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-            <View style={{
-              width: 52, height: 52, borderRadius: 26,
-              backgroundColor: colors.accentLight,
-              alignItems: "center", justifyContent: "center",
-            }}>
+            <View style={s.avatar}>
               <Ionicons name="person" size={28} color={colors.accent} />
             </View>
             <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 18, fontWeight: "700", color: colors.text }}>
-                {displayName}
-              </Text>
+              <Text style={{ fontSize: 18, fontWeight: "700", color: colors.text }}>{displayName}</Text>
               <Text style={{ fontSize: 14, color: colors.textMuted }}>{user?.email ?? ""}</Text>
+            </View>
+            <View style={s.badgePill}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.accent }}>🏅 {badgeCount}</Text>
             </View>
           </View>
         </Card>
 
-        {/* メニュー */}
+        {/* タブバー */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -spacing.lg }} contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.xs }}>
+          {TABS.map((tab) => (
+            <Pressable
+              key={tab.id}
+              onPress={() => setActiveTab(tab.id)}
+              style={[s.tab, activeTab === tab.id && s.tabActive]}
+            >
+              <Text style={{ fontSize: 14 }}>{tab.icon}</Text>
+              <Text style={[s.tabLabel, activeTab === tab.id && s.tabLabelActive]}>{tab.label}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {/* ── タブコンテンツ ── */}
+        {activeTab === "basic" && (
+          <Card>
+            <Text style={s.cardTitle}>基本情報</Text>
+            <Field label="ニックネーム" value={editForm.nickname} editing={isEditing} onChange={(v) => updateField("nickname", v)} />
+            <Field label="年齢" value={editForm.age?.toString()} editing={isEditing} onChange={(v) => updateField("age", v ? parseInt(v) : null)} keyboardType="number-pad" />
+            <Field label="性別" value={editForm.gender === "male" ? "男性" : editForm.gender === "female" ? "女性" : "未設定"} editing={false} />
+            <Field label="身長 (cm)" value={editForm.height?.toString()} editing={isEditing} onChange={(v) => updateField("height", v ? parseFloat(v) : null)} keyboardType="decimal-pad" />
+            <Field label="体重 (kg)" value={editForm.weight?.toString()} editing={isEditing} onChange={(v) => updateField("weight", v ? parseFloat(v) : null)} keyboardType="decimal-pad" />
+            <Field label="職業" value={editForm.occupation} editing={isEditing} onChange={(v) => updateField("occupation", v)} />
+          </Card>
+        )}
+
+        {activeTab === "goals" && (
+          <Card>
+            <Text style={s.cardTitle}>目標</Text>
+            <Text style={s.fieldLabel}>フィットネス目標</Text>
+            <View style={s.chipWrap}>
+              {FITNESS_GOALS.map((g) => {
+                const selected = (editForm.fitnessGoals || []).includes(g.value);
+                return (
+                  <Pressable
+                    key={g.value}
+                    onPress={() => isEditing && toggleArrayItem("fitnessGoals", g.value)}
+                    style={[s.chip, selected && s.chipSelected]}
+                  >
+                    <Text style={{ fontSize: 14 }}>{g.icon}</Text>
+                    <Text style={[s.chipText, selected && { color: "#fff" }]}>{g.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Field label="目標体重 (kg)" value={editForm.targetWeight?.toString()} editing={isEditing} onChange={(v) => updateField("targetWeight", v ? parseFloat(v) : null)} keyboardType="decimal-pad" />
+          </Card>
+        )}
+
+        {activeTab === "sports" && (
+          <Card>
+            <Text style={s.cardTitle}>競技・運動</Text>
+            <Field label="主要スポーツ" value={editForm.primarySport} editing={isEditing} onChange={(v) => updateField("primarySport", v)} />
+            <Field label="週の運動回数" value={editForm.exerciseFrequency?.toString()} editing={isEditing} onChange={(v) => updateField("exerciseFrequency", v ? parseInt(v) : null)} keyboardType="number-pad" />
+            <Field label="運動強度" value={editForm.exerciseIntensity} editing={isEditing} onChange={(v) => updateField("exerciseIntensity", v)} />
+          </Card>
+        )}
+
+        {activeTab === "health" && (
+          <Card>
+            <Text style={s.cardTitle}>健康状態</Text>
+            <Text style={s.fieldLabel}>気になる症状</Text>
+            <View style={s.chipWrap}>
+              {HEALTH_CONDITIONS.map((c) => {
+                const selected = (editForm.healthConditions || []).includes(c);
+                return (
+                  <Pressable
+                    key={c}
+                    onPress={() => isEditing && toggleArrayItem("healthConditions", c)}
+                    style={[s.chip, selected && s.chipSelected]}
+                  >
+                    <Text style={[s.chipText, selected && { color: "#fff" }]}>{c}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Card>
+        )}
+
+        {activeTab === "diet" && (
+          <Card>
+            <Text style={s.cardTitle}>食事</Text>
+            <Field label="アレルギー" value={(editForm.dietFlags?.allergies || []).join("、")} editing={false} />
+            <Field label="苦手な食材" value={(editForm.dietFlags?.dislikes || []).join("、")} editing={false} />
+          </Card>
+        )}
+
+        {activeTab === "cooking" && (
+          <Card>
+            <Text style={s.cardTitle}>調理</Text>
+            <Text style={s.fieldLabel}>料理経験</Text>
+            <View style={s.chipWrap}>
+              {COOKING_EXP.map((c) => {
+                const selected = editForm.cookingExperience === c.value;
+                return (
+                  <Pressable
+                    key={c.value}
+                    onPress={() => isEditing && updateField("cookingExperience", c.value)}
+                    style={[s.chip, selected && s.chipSelected]}
+                  >
+                    <Text style={[s.chipText, selected && { color: "#fff" }]}>{c.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Field label="平日の調理時間 (分)" value={editForm.weekdayCookingMinutes?.toString()} editing={isEditing} onChange={(v) => updateField("weekdayCookingMinutes", v ? parseInt(v) : null)} keyboardType="number-pad" />
+          </Card>
+        )}
+
+        {activeTab === "lifestyle" && (
+          <Card>
+            <Text style={s.cardTitle}>生活</Text>
+            <Text style={s.fieldLabel}>仕事・活動スタイル</Text>
+            <View style={s.chipWrap}>
+              {WORK_STYLES.map((w) => {
+                const selected = editForm.workStyle === w.value;
+                return (
+                  <Pressable
+                    key={w.value}
+                    onPress={() => isEditing && updateField("workStyle", w.value)}
+                    style={[s.chip, selected && s.chipSelected]}
+                  >
+                    <Text style={[s.chipText, selected && { color: "#fff" }]}>{w.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Field label="家族人数" value={editForm.familySize?.toString()} editing={isEditing} onChange={(v) => updateField("familySize", v ? parseInt(v) : null)} keyboardType="number-pad" />
+          </Card>
+        )}
+
+        {/* ── リンクメニュー ── */}
         <View style={{ gap: spacing.sm }}>
           <ListItem
             title="栄養目標"
             subtitle="目標値の確認・再計算"
             onPress={() => router.push("/profile/nutrition-targets")}
-            left={
-              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.successLight, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="nutrition-outline" size={18} color={colors.success} />
-              </View>
-            }
+            left={<View style={[s.menuIcon, { backgroundColor: colors.successLight }]}><Ionicons name="nutrition-outline" size={18} color={colors.success} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
             title="プロフィールを見直す"
-            subtitle="オンボーディング"
+            subtitle="オンボーディングをやり直す"
             onPress={() => router.push("/onboarding")}
-            left={
-              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.blueLight, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="refresh-outline" size={18} color={colors.blue} />
-              </View>
-            }
+            left={<View style={[s.menuIcon, { backgroundColor: colors.blueLight }]}><Ionicons name="refresh-outline" size={18} color={colors.blue} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
             title="バッジ"
             subtitle="獲得した実績"
             onPress={() => router.push("/badges")}
-            left={
-              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.warningLight, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="trophy-outline" size={18} color={colors.warning} />
-              </View>
-            }
+            left={<View style={[s.menuIcon, { backgroundColor: colors.warningLight }]}><Ionicons name="trophy-outline" size={18} color={colors.warning} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
             title="比較"
             subtitle="他のユーザーと比較"
             onPress={() => router.push("/comparison")}
-            left={
-              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.purpleLight, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="bar-chart-outline" size={18} color={colors.purple} />
-              </View>
-            }
+            left={<View style={[s.menuIcon, { backgroundColor: colors.purpleLight }]}><Ionicons name="bar-chart-outline" size={18} color={colors.purple} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
             title="家族管理"
             subtitle="家族アカウント"
             onPress={() => router.push("/family")}
-            left={
-              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.accentLight, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="people-outline" size={18} color={colors.accent} />
-              </View>
-            }
+            left={<View style={[s.menuIcon, { backgroundColor: colors.accentLight }]}><Ionicons name="people-outline" size={18} color={colors.accent} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
         </View>
@@ -99,3 +338,99 @@ export default function ProfilePage() {
     </View>
   );
 }
+
+function Field({ label, value, editing, onChange, keyboardType }: {
+  label: string;
+  value?: string | null;
+  editing: boolean;
+  onChange?: (v: string) => void;
+  keyboardType?: "default" | "number-pad" | "decimal-pad";
+}) {
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      {editing && onChange ? (
+        <TextInput
+          style={s.fieldInput}
+          value={value ?? ""}
+          onChangeText={onChange}
+          keyboardType={keyboardType ?? "default"}
+          placeholderTextColor={colors.textMuted}
+        />
+      ) : (
+        <Text style={s.fieldValue}>{value || "未設定"}</Text>
+      )}
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  avatar: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: colors.accentLight,
+    alignItems: "center", justifyContent: "center",
+  },
+  badgePill: {
+    backgroundColor: colors.accentLight,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  tab: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: radius.full,
+    backgroundColor: "#fff",
+    borderWidth: 1, borderColor: "#E5E7EB",
+  },
+  tabActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  tabLabel: {
+    fontSize: 13, fontWeight: "700", color: "#4B5563",
+  },
+  tabLabelActive: {
+    color: "#fff",
+  },
+  cardTitle: {
+    fontSize: 16, fontWeight: "800", color: "#1F2937", marginBottom: spacing.md,
+  },
+  field: {
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  fieldLabel: {
+    fontSize: 12, fontWeight: "700", color: "#6B7280", marginBottom: 4,
+  },
+  fieldValue: {
+    fontSize: 15, fontWeight: "600", color: "#1F2937",
+  },
+  fieldInput: {
+    fontSize: 15, fontWeight: "600", color: "#1F2937",
+    backgroundColor: "#F9FAFB",
+    paddingHorizontal: spacing.md, paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1, borderColor: "#E5E7EB",
+  },
+  chipWrap: {
+    flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginBottom: spacing.sm,
+  },
+  chip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: 1, borderColor: "#E5E7EB",
+    backgroundColor: "#fff",
+  },
+  chipSelected: {
+    backgroundColor: colors.accent, borderColor: colors.accent,
+  },
+  chipText: {
+    fontSize: 13, fontWeight: "600", color: "#4B5563",
+  },
+  menuIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: "center", justifyContent: "center",
+  },
+});
