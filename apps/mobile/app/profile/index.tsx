@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { Button, Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -60,6 +61,10 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<TabType>("basic");
   const [editForm, setEditForm] = useState<any>({});
   const [badgeCount, setBadgeCount] = useState(0);
+  const [weekStartDay, setWeekStartDay] = useState<"sunday" | "monday">("monday");
+  const [notifications, setNotifications] = useState(true);
+  const [autoAnalyze, setAutoAnalyze] = useState(true);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -82,6 +87,28 @@ export default function ProfilePage() {
     }
     load();
   }, []);
+
+  // Fetch week start day
+  useEffect(() => {
+    (async () => {
+      const { data: { user: u } } = await supabase.auth.getUser();
+      if (!u) return;
+      const { data: p } = await supabase.from("user_profiles").select("week_start_day").eq("id", u.id).single();
+      if (p?.week_start_day) setWeekStartDay(p.week_start_day as "sunday" | "monday");
+    })();
+  }, []);
+
+  async function handleWeekStartDayChange(newValue: "sunday" | "monday") {
+    setWeekStartDay(newValue);
+    const { data: { user: u } } = await supabase.auth.getUser();
+    if (!u) return;
+    await supabase.from("user_profiles").update({ week_start_day: newValue }).eq("id", u.id);
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.replace("/login");
+  }
 
   const displayName = profileData?.nickname || ctxProfile?.nickname || user?.email?.split("@")[0] || "ゲスト";
 
@@ -334,6 +361,108 @@ export default function ProfilePage() {
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
         </View>
+
+        {/* ── 設定セクション ── */}
+        <View style={{ gap: spacing.sm }}>
+          <Text style={{ fontSize: 11, fontWeight: "800", color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>設定</Text>
+          <Card>
+            <View style={{ gap: 0 }}>
+              {/* 通知 */}
+              <View style={s.settingRow}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <View style={[s.menuIcon, { backgroundColor: colors.blueLight }]}>
+                    <Ionicons name="notifications-outline" size={18} color={colors.blue} />
+                  </View>
+                  <Text style={s.settingLabel}>通知</Text>
+                </View>
+                <Switch value={notifications} onValueChange={setNotifications} trackColor={{ true: colors.accent }} />
+              </View>
+
+              {/* 自動解析 */}
+              <View style={s.settingRow}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <View style={[s.menuIcon, { backgroundColor: colors.purpleLight }]}>
+                    <Ionicons name="sparkles-outline" size={18} color={colors.purple} />
+                  </View>
+                  <Text style={s.settingLabel}>自動解析</Text>
+                </View>
+                <Switch value={autoAnalyze} onValueChange={setAutoAnalyze} trackColor={{ true: colors.accent }} />
+              </View>
+
+              {/* 週の開始日 */}
+              <View style={s.settingRow}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <View style={[s.menuIcon, { backgroundColor: colors.successLight }]}>
+                    <Ionicons name="calendar-outline" size={18} color={colors.success} />
+                  </View>
+                  <View>
+                    <Text style={s.settingLabel}>週の開始日</Text>
+                    <Text style={{ fontSize: 11, color: colors.textMuted }}>カレンダーの開始曜日</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: "row", gap: 4 }}>
+                  <Pressable
+                    onPress={() => handleWeekStartDayChange("sunday")}
+                    style={[s.dayPill, weekStartDay === "sunday" && s.dayPillActive]}
+                  >
+                    <Text style={[s.dayPillText, weekStartDay === "sunday" && s.dayPillTextActive]}>日曜</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleWeekStartDayChange("monday")}
+                    style={[s.dayPill, weekStartDay === "monday" && s.dayPillActive]}
+                  >
+                    <Text style={[s.dayPillText, weekStartDay === "monday" && s.dayPillTextActive]}>月曜</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Card>
+        </View>
+
+        {/* ── サポート ── */}
+        <View style={{ gap: spacing.sm }}>
+          <Text style={{ fontSize: 11, fontWeight: "800", color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>サポート</Text>
+          <ListItem
+            title="利用規約"
+            onPress={() => Linking.openURL("https://homegohan.app/terms")}
+            left={<View style={[s.menuIcon, { backgroundColor: colors.bg }]}><Ionicons name="document-text-outline" size={18} color={colors.textLight} /></View>}
+            right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
+          />
+          <ListItem
+            title="プライバシーポリシー"
+            onPress={() => Linking.openURL("https://homegohan.app/privacy")}
+            left={<View style={[s.menuIcon, { backgroundColor: colors.bg }]}><Ionicons name="lock-closed-outline" size={18} color={colors.textLight} /></View>}
+            right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
+          />
+          <ListItem
+            title="お問い合わせ"
+            onPress={() => Linking.openURL("mailto:support@homegohan.jp")}
+            left={<View style={[s.menuIcon, { backgroundColor: colors.bg }]}><Ionicons name="mail-outline" size={18} color={colors.textLight} /></View>}
+            right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
+          />
+        </View>
+
+        {/* ── ログアウト ── */}
+        <Pressable
+          onPress={() => {
+            Alert.alert(
+              "ログアウトしますか？",
+              "ログアウトしてもデータは保持されます。\nまたすぐにお会いしましょう。",
+              [
+                { text: "キャンセル", style: "cancel" },
+                { text: "ログアウト", style: "destructive", onPress: handleLogout },
+              ]
+            );
+          }}
+          style={s.logoutButton}
+        >
+          <Ionicons name="log-out-outline" size={18} color={colors.error} />
+          <Text style={{ fontSize: 15, fontWeight: "700", color: colors.error }}>ログアウト</Text>
+        </Pressable>
+
+        <Text style={{ textAlign: "center", fontSize: 11, color: colors.textMuted, marginTop: spacing.sm }}>
+          Version 1.0.0{"\n"}© 2025 ほめゴハン
+        </Text>
       </ScrollView>
     </View>
   );
@@ -432,5 +561,41 @@ const s = StyleSheet.create({
   menuIcon: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: "center", justifyContent: "center",
+  },
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  settingLabel: {
+    fontSize: 14, fontWeight: "700", color: colors.text,
+  },
+  dayPill: {
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: colors.bg,
+  },
+  dayPillActive: {
+    backgroundColor: colors.accent,
+  },
+  dayPillText: {
+    fontSize: 12, fontWeight: "700", color: colors.textMuted,
+  },
+  dayPillTextActive: {
+    color: "#fff",
+  },
+  logoutButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingVertical: 16,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: "#FEE2E2",
+    backgroundColor: "#FFF5F5",
   },
 });
