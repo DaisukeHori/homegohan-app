@@ -47,8 +47,24 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       .eq("id", user.id)
       .maybeSingle();
 
-    if (error || !data) {
-      // 未オンボーディング（プロフィール未作成）などを想定
+    if (error) {
+      // クエリエラー → プロフィール未作成ではなくエラーなので、ホームに通す
+      console.error("[ProfileProvider] Supabase query error:", error.message);
+      setProfile({
+        id: user.id,
+        nickname: null,
+        roles: [],
+        organizationId: null,
+        onboardingStartedAt: null,
+        onboardingCompletedAt: "skip", // エラー時はオンボーディングにリダイレクトしない
+        onboardingProgress: null,
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    if (!data) {
+      // プロフィール未作成 → オンボーディングへ
       setProfile({
         id: user.id,
         nickname: null,

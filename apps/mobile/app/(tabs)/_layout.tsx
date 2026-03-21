@@ -20,12 +20,13 @@ export default function TabsLayout() {
 
   if (!session) return <Redirect href="/" />;
 
-  if (profile?.onboardingCompletedAt) {
-    // 完了済み → そのまま表示
-  } else if (profile?.onboardingStartedAt) {
-    return <Redirect href="/onboarding/resume" />;
-  } else {
-    return <Redirect href="/onboarding/welcome" />;
+  // profileがnullの場合（ロード直後等）はリダイレクトせずそのまま表示
+  if (profile && !profile.onboardingCompletedAt) {
+    if (profile.onboardingStartedAt) {
+      return <Redirect href="/onboarding/resume" />;
+    } else {
+      return <Redirect href="/onboarding/welcome" />;
+    }
   }
 
   return (
