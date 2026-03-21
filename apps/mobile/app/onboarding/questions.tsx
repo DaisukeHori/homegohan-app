@@ -673,320 +673,255 @@ export default function OnboardingQuestions() {
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + spacing.md }]}
-      style={styles.scroll}
-    >
-      {/* Header: back + progress */}
-      <View style={styles.headerRow}>
-        {stepHistory.length > 0 ? (
-          <Pressable onPress={handleBack} style={styles.backButton} hitSlop={12}>
-            <Ionicons name="chevron-back" size={22} color={colors.text} />
-          </Pressable>
-        ) : (
-          <View style={{ width: 36 }} />
-        )}
-        <View style={{ flex: 1 }}>
-          <ProgressBar
-            value={progress.current}
-            max={progress.total}
-            height={6}
-            label={`${progress.current} / ${progress.total}`}
-            showPercentage
-          />
-        </View>
-      </View>
-
-      {/* Question text */}
-      <View style={styles.questionSection}>
-        {getQuestionText()
-          .split("\n")
-          .map((line, i) => (
-            <Text key={i} style={styles.questionText}>
-              {line}
-            </Text>
-          ))}
-      </View>
-
-      {/* Text input */}
-      {currentQuestion.type === "text" ? (
-        <View style={styles.inputGroup}>
-          <TextInput
-            autoFocus
-            placeholder={currentQuestion.placeholder}
-            placeholderTextColor={colors.textMuted}
-            value={inputValue}
-            onChangeText={setInputValue}
-            style={styles.textInput}
-          />
-          <Pressable
-            onPress={() => {
-              if (!inputValue.trim()) return;
-              handleAnswer(inputValue.trim());
-            }}
-            disabled={!inputValue.trim()}
-            style={[
-              styles.nextButton,
-              !inputValue.trim() && styles.nextButtonDisabled,
-            ]}
-          >
-            <Text style={styles.nextButtonText}>{isSubmitting ? "保存中..." : "次へ"}</Text>
-            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-          </Pressable>
-        </View>
-      ) : null}
-
-      {/* Number input */}
-      {currentQuestion.type === "number" ? (
-        <View style={styles.inputGroup}>
-          <TextInput
-            autoFocus
-            keyboardType="number-pad"
-            placeholder={currentQuestion.placeholder}
-            placeholderTextColor={colors.textMuted}
-            value={inputValue}
-            onChangeText={(v) => setInputValue(v.replace(/[^0-9]/g, ""))}
-            style={styles.textInput}
-          />
-          <Pressable
-            onPress={() => {
-              if (!isNumberValid) return;
-              handleAnswer(numberValue);
-            }}
-            disabled={!isNumberValid}
-            style={[
-              styles.nextButton,
-              !isNumberValid && styles.nextButtonDisabled,
-            ]}
-          >
-            <Text style={styles.nextButtonText}>{isSubmitting ? "保存中..." : "次へ"}</Text>
-            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-          </Pressable>
-        </View>
-      ) : null}
-
-      {/* Choice */}
-      {currentQuestion.type === "choice" ? (
-        <View style={styles.inputGroup}>
-          {(currentQuestion.options || []).map((opt) => (
-            <Card
-              key={opt.value}
-              onPress={() => handleAnswer(opt.value)}
-              style={styles.choiceCard}
-            >
-              <View style={styles.choiceContent}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.choiceLabel}>{opt.label}</Text>
-                  {opt.description ? (
-                    <Text style={styles.choiceDescription}>{opt.description}</Text>
-                  ) : null}
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              </View>
-            </Card>
-          ))}
-        </View>
-      ) : null}
-
-      {/* Multi choice */}
-      {currentQuestion.type === "multi_choice" ? (
-        <View style={styles.inputGroup}>
-          <View style={styles.chipWrap}>
-            {(currentQuestion.options || []).map((opt) => {
-              const selected = selectedMulti.includes(opt.value);
-              return (
-                <Pressable
-                  key={opt.value}
-                  onPress={() => handleMultiSelect(opt.value)}
-                  style={[
-                    styles.chip,
-                    selected && styles.chipSelected,
-                  ]}
-                >
-                  {selected ? (
-                    <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
-                  ) : null}
-                  <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                    {opt.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={styles.actionRow}>
-            {canSkip ? (
-              <Pressable
-                onPress={() => handleAnswer(null)}
-                style={styles.skipActionButton}
-              >
-                <Text style={styles.skipActionText}>スキップ</Text>
+    <View style={[styles.screenContainer, { paddingTop: insets.top }]}>
+      {/* ── Header: back + progress ── */}
+      <View style={styles.headerSection}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            {stepHistory.length > 0 && (
+              <Pressable onPress={handleBack} style={styles.backButton} hitSlop={12}>
+                <Ionicons name="chevron-back" size={18} color="#666" />
               </Pressable>
-            ) : null}
-            <Pressable
-              onPress={() => {
-                if (!isMultiReady) return;
-                handleAnswer(selectedMulti);
-              }}
-              disabled={!isMultiReady}
-              style={[
-                styles.nextButton,
-                { flex: 1 },
-                !isMultiReady && styles.nextButtonDisabled,
-              ]}
-            >
-              <Text style={styles.nextButtonText}>{isSubmitting ? "保存中..." : "次へ"}</Text>
-              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-            </Pressable>
+            )}
+            <Text style={styles.headerLabel}>
+              Setup Profile
+            </Text>
+          </View>
+          <Text style={styles.headerCounter}>{progress.current} / {progress.total}</Text>
+        </View>
+        {/* Progress bar */}
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${(progress.current / progress.total) * 100}%` }]} />
+        </View>
+      </View>
+
+      {/* ── Main: avatar + question ── */}
+      <ScrollView contentContainerStyle={styles.mainSection} keyboardShouldPersistTaps="handled">
+        {/* AI Avatar */}
+        <View style={styles.avatarWrap}>
+          <View style={styles.avatarPulse} />
+          <View style={styles.avatar}>
+            <Text style={{ fontSize: 28 }}>🍳</Text>
           </View>
         </View>
-      ) : null}
 
-      {/* Tags */}
-      {currentQuestion.type === "tags" ? (
-        <View style={styles.inputGroup}>
-          {tags.length > 0 ? (
-            <View style={styles.chipWrap}>
-              {tags.map((t) => (
-                <Pressable
-                  key={t}
-                  onPress={() => removeTag(t)}
-                  style={styles.tagBadge}
-                >
-                  <Text style={styles.tagBadgeText}>{t}</Text>
-                  <Ionicons name="close-circle" size={16} color={colors.accent} />
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
+        {/* Question text */}
+        <View style={styles.questionSection}>
+          {getQuestionText()
+            .split("\n")
+            .map((line, i) => (
+              <Text key={i} style={styles.questionText}>
+                {line}
+              </Text>
+            ))}
+        </View>
+      </ScrollView>
 
-          <View style={styles.tagInputRow}>
+      {/* ── Input area (bottom) ── */}
+      <ScrollView style={styles.inputScroll} contentContainerStyle={styles.inputSection} keyboardShouldPersistTaps="handled">
+
+        {/* Text input */}
+        {currentQuestion.type === "text" && (
+          <View style={styles.inputRow}>
             <TextInput
+              autoFocus
               placeholder={currentQuestion.placeholder}
               placeholderTextColor={colors.textMuted}
-              value={tagInput}
-              onChangeText={setTagInput}
-              onSubmitEditing={() => addTag(tagInput)}
+              value={inputValue}
+              onChangeText={setInputValue}
+              onSubmitEditing={() => { if (inputValue.trim()) handleAnswer(inputValue.trim()); }}
               style={[styles.textInput, { flex: 1 }]}
             />
             <Pressable
-              onPress={() => addTag(tagInput)}
-              style={styles.addTagButton}
+              onPress={() => { if (inputValue.trim()) handleAnswer(inputValue.trim()); }}
+              disabled={!inputValue.trim()}
+              style={[styles.arrowButton, !inputValue.trim() && styles.arrowButtonDisabled]}
             >
-              <Ionicons name="add" size={22} color="#FFFFFF" />
+              <Ionicons name="arrow-forward" size={20} color="#fff" />
             </Pressable>
           </View>
+        )}
 
-          {currentQuestion.suggestions?.length ? (
-            <View style={styles.chipWrap}>
-              {currentQuestion.suggestions.slice(0, 8).map((s) => (
-                <Pressable
-                  key={s}
-                  onPress={() => addTag(s)}
-                  style={styles.suggestionChip}
-                >
-                  <Text style={styles.suggestionChipText}>{s}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-
-          <View style={styles.actionRow}>
-            {canSkip ? (
-              <Pressable
-                onPress={() => handleAnswer(null)}
-                style={styles.skipActionButton}
-              >
-                <Text style={styles.skipActionText}>スキップ</Text>
-              </Pressable>
-            ) : null}
+        {/* Number input */}
+        {currentQuestion.type === "number" && (
+          <View style={styles.inputRow}>
+            <TextInput
+              autoFocus
+              keyboardType="number-pad"
+              placeholder={currentQuestion.placeholder}
+              placeholderTextColor={colors.textMuted}
+              value={inputValue}
+              onChangeText={(v) => setInputValue(v.replace(/[^0-9]/g, ""))}
+              onSubmitEditing={() => { if (isNumberValid) handleAnswer(numberValue); }}
+              style={[styles.textInput, { flex: 1 }]}
+            />
             <Pressable
-              onPress={() => {
-                if (!hasTags) return;
-                handleAnswer(tags);
-              }}
-              disabled={!hasTags}
-              style={[
-                styles.nextButton,
-                { flex: 1 },
-                !hasTags && styles.nextButtonDisabled,
-              ]}
+              onPress={() => { if (isNumberValid) handleAnswer(numberValue); }}
+              disabled={!isNumberValid}
+              style={[styles.arrowButton, !isNumberValid && styles.arrowButtonDisabled]}
             >
-              <Text style={styles.nextButtonText}>{isSubmitting ? "保存中..." : "次へ"}</Text>
-              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+              <Ionicons name="arrow-forward" size={20} color="#fff" />
             </Pressable>
           </View>
-        </View>
-      ) : null}
+        )}
 
-      {/* Custom stats */}
-      {currentQuestion.type === "custom_stats" ? (
-        <View style={styles.inputGroup}>
-          <View style={styles.statsRow}>
-            <View style={styles.statsField}>
-              <Text style={styles.statsLabel}>年齢</Text>
-              <TextInput
-                keyboardType="number-pad"
-                placeholder="25"
-                placeholderTextColor={colors.textMuted}
-                value={answers.age || ""}
-                onChangeText={(v) => setAnswers((prev) => ({ ...prev, age: v }))}
-                style={styles.textInput}
-              />
+        {/* Choice — outline buttons (matching web) */}
+        {currentQuestion.type === "choice" && (
+          <View style={styles.choiceGroup}>
+            {(currentQuestion.options || []).map((opt) => (
+              <Pressable
+                key={opt.value}
+                onPress={() => handleAnswer(opt.value)}
+                style={({ pressed }) => [styles.choiceButton, pressed && { backgroundColor: colors.accent, borderColor: colors.accent }]}
+              >
+                {({ pressed }) => (
+                  <View style={{ gap: 2 }}>
+                    <Text style={[styles.choiceLabel, pressed && { color: "#fff" }]}>{opt.label}</Text>
+                    {opt.description ? (
+                      <Text style={[styles.choiceDescription, pressed && { color: "rgba(255,255,255,0.7)" }]}>{opt.description}</Text>
+                    ) : null}
+                  </View>
+                )}
+              </Pressable>
+            ))}
+          </View>
+        )}
+
+        {/* Multi choice — grid buttons (matching web) */}
+        {currentQuestion.type === "multi_choice" && (
+          <View style={{ gap: spacing.md }}>
+            <View style={styles.multiGrid}>
+              {(currentQuestion.options || []).map((opt) => {
+                const selected = selectedMulti.includes(opt.value);
+                return (
+                  <Pressable
+                    key={opt.value}
+                    onPress={() => handleMultiSelect(opt.value)}
+                    style={[styles.multiButton, selected && styles.multiButtonSelected]}
+                  >
+                    <Text style={[styles.multiButtonText, selected && { color: "#fff" }]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
-            <View style={styles.statsField}>
-              <Text style={styles.statsLabel}>職業</Text>
-              <TextInput
-                placeholder="会社員"
-                placeholderTextColor={colors.textMuted}
-                value={answers.occupation || ""}
-                onChangeText={(v) => setAnswers((prev) => ({ ...prev, occupation: v }))}
-                style={styles.textInput}
-              />
+            <View style={styles.actionRow}>
+              {canSkip && (
+                <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+                  <Text style={styles.skipButtonText}>スキップ</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => { if (isMultiReady) handleAnswer(selectedMulti); }}
+                disabled={!isMultiReady}
+                style={[styles.nextButton, !isMultiReady && styles.nextButtonDisabled]}
+              >
+                <Text style={styles.nextButtonText}>次へ</Text>
+              </Pressable>
             </View>
           </View>
-          <View style={styles.statsRow}>
-            <View style={styles.statsField}>
-              <Text style={styles.statsLabel}>身長 (cm)</Text>
+        )}
+
+        {/* Tags */}
+        {currentQuestion.type === "tags" && (
+          <View style={{ gap: spacing.md }}>
+            {tags.length > 0 && (
+              <View style={styles.tagWrap}>
+                {tags.map((t) => (
+                  <Pressable key={t} onPress={() => removeTag(t)} style={styles.tagBadge}>
+                    <Text style={styles.tagBadgeText}>{t}</Text>
+                    <Text style={{ color: colors.accent, fontWeight: "800" }}>×</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {currentQuestion.suggestions?.length ? (
+              <View style={styles.tagWrap}>
+                {currentQuestion.suggestions.filter((s) => !tags.includes(s)).map((s) => (
+                  <Pressable key={s} onPress={() => addTag(s)} style={styles.suggestionChip}>
+                    <Text style={styles.suggestionChipText}>+ {s}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+
+            <View style={styles.inputRow}>
               <TextInput
-                keyboardType="number-pad"
-                placeholder="170"
+                placeholder={currentQuestion.placeholder}
                 placeholderTextColor={colors.textMuted}
-                value={answers.height || ""}
-                onChangeText={(v) => setAnswers((prev) => ({ ...prev, height: v }))}
-                style={styles.textInput}
+                value={tagInput}
+                onChangeText={setTagInput}
+                onSubmitEditing={() => addTag(tagInput)}
+                style={[styles.textInput, { flex: 1 }]}
               />
+              <Pressable onPress={() => addTag(tagInput)} style={styles.addTagButton}>
+                <Text style={{ color: colors.text, fontWeight: "700", fontSize: 14 }}>追加</Text>
+              </Pressable>
             </View>
-            <View style={styles.statsField}>
-              <Text style={styles.statsLabel}>体重 (kg)</Text>
-              <TextInput
-                keyboardType="number-pad"
-                placeholder="60"
-                placeholderTextColor={colors.textMuted}
-                value={answers.weight || ""}
-                onChangeText={(v) => setAnswers((prev) => ({ ...prev, weight: v }))}
-                style={styles.textInput}
-              />
+
+            <View style={styles.actionRow}>
+              {canSkip && (
+                <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+                  <Text style={styles.skipButtonText}>スキップ</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => { if (hasTags) handleAnswer(tags); }}
+                disabled={!hasTags}
+                style={[styles.nextButton, !hasTags && styles.nextButtonDisabled]}
+              >
+                <Text style={styles.nextButtonText}>次へ</Text>
+              </Pressable>
             </View>
           </View>
+        )}
 
-          <Pressable
-            onPress={() => handleAnswer("completed")}
-            disabled={!answers.age || !answers.height || !answers.weight}
-            style={[
-              styles.nextButton,
-              (!answers.age || !answers.height || !answers.weight) && styles.nextButtonDisabled,
-            ]}
-          >
-            <Text style={styles.nextButtonText}>次へ</Text>
-            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-          </Pressable>
-        </View>
-      ) : null}
+        {/* Custom stats */}
+        {currentQuestion.type === "custom_stats" && (
+          <View style={{ gap: spacing.md }}>
+            <View style={styles.statsRow}>
+              <View style={styles.statsField}>
+                <Text style={styles.statsLabel}>年齢</Text>
+                <TextInput keyboardType="number-pad" placeholder="25" placeholderTextColor={colors.textMuted}
+                  value={answers.age || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, age: v }))}
+                  style={[styles.textInput, { textAlign: "center" }]} />
+              </View>
+              <View style={styles.statsField}>
+                <Text style={styles.statsLabel}>職業</Text>
+                <TextInput placeholder="会社員" placeholderTextColor={colors.textMuted}
+                  value={answers.occupation || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, occupation: v }))}
+                  style={[styles.textInput, { textAlign: "center" }]} />
+              </View>
+            </View>
+            <View style={styles.statsRow}>
+              <View style={styles.statsField}>
+                <Text style={styles.statsLabel}>身長 (cm)</Text>
+                <TextInput keyboardType="number-pad" placeholder="170" placeholderTextColor={colors.textMuted}
+                  value={answers.height || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, height: v }))}
+                  style={[styles.textInput, { textAlign: "center" }]} />
+              </View>
+              <View style={styles.statsField}>
+                <Text style={styles.statsLabel}>体重 (kg)</Text>
+                <TextInput keyboardType="number-pad" placeholder="60" placeholderTextColor={colors.textMuted}
+                  value={answers.weight || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, weight: v }))}
+                  style={[styles.textInput, { textAlign: "center" }]} />
+              </View>
+            </View>
+            <Pressable
+              onPress={() => handleAnswer("completed")}
+              disabled={!answers.age || !answers.height || !answers.weight}
+              style={[styles.nextButton, (!answers.age || !answers.height || !answers.weight) && styles.nextButtonDisabled]}
+            >
+              <Text style={styles.nextButtonText}>次へ</Text>
+            </Pressable>
+          </View>
+        )}
 
       {/* Servings grid */}
       {currentQuestion.type === "servings_grid" ? (
-        <View style={styles.inputGroup}>
+        <View style={{ gap: spacing.md }}>
           <Text style={styles.gridHint}>
             各セルをタップして人数を変更できます
           </Text>
@@ -1092,196 +1027,281 @@ export default function OnboardingQuestions() {
         </View>
       ) : null}
 
-      {/* Abort button */}
-      <Pressable
-        onPress={() => {
-          Alert.alert(
-            "確認",
-            "オンボーディングを中断しますか？（あとで設定から再開できます）",
-            [
-              { text: "続ける", style: "cancel" },
-              { text: "中断", style: "destructive", onPress: () => router.replace("/(tabs)/home") },
-            ]
-          );
-        }}
-        style={styles.abortButton}
-      >
-        <Text style={styles.abortText}>中断</Text>
-      </Pressable>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: {
+  /* ── Layout ── */
+  screenContainer: {
+    flex: 1,
     backgroundColor: "#FFF7ED",
   },
-  container: {
-    flexGrow: 1,
-    padding: spacing.lg,
-    justifyContent: "center",
-    gap: spacing.lg,
+  headerSection: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
   },
-  progressSection: {
-    gap: spacing.xs,
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  headerLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#9CA3AF",
+    textTransform: "uppercase",
+    letterSpacing: 2,
+  },
+  headerCounter: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#9CA3AF",
+    letterSpacing: 1,
+  },
+  backButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  progressTrack: {
+    width: "100%",
+    height: 8,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  mainSection: {
+    flexGrow: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing["2xl"],
+    gap: spacing.xl,
+  },
+  avatarWrap: {
+    width: 80,
+    height: 80,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarPulse: {
+    position: "absolute",
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "rgba(251,146,60,0.15)",
+  },
+  avatar: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: "#fff",
+    ...shadows.lg,
   },
   questionSection: {
     gap: spacing.sm,
+    alignItems: "center",
   },
   questionText: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text,
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#1F2937",
+    textAlign: "center",
+    lineHeight: 30,
   },
-  inputGroup: {
+  /* ── Input area ── */
+  inputScroll: {
+    maxHeight: "55%",
+  },
+  inputSection: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing["2xl"],
+    gap: spacing.md,
+  },
+  inputRow: {
+    flexDirection: "row",
     gap: spacing.sm,
   },
   textInput: {
     borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.card,
-    fontSize: 15,
+    borderColor: "#E5E7EB",
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: "#fff",
+    fontSize: 16,
     color: colors.text,
   },
-  nextButton: {
-    backgroundColor: colors.accent,
-    padding: 14,
-    borderRadius: radius.md,
+  arrowButton: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.lg,
+    backgroundColor: "#1F2937",
     alignItems: "center",
     justifyContent: "center",
+  },
+  arrowButtonDisabled: {
+    backgroundColor: "#D1D5DB",
+  },
+  /* ── Choice ── */
+  choiceGroup: {
+    gap: spacing.sm,
+  },
+  choiceButton: {
+    paddingVertical: 16,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#fff",
+  },
+  choiceLabel: {
+    fontWeight: "700",
+    fontSize: 15,
+    color: "#4B5563",
+  },
+  choiceDescription: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  /* ── Multi choice ── */
+  multiGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  multiButton: {
+    width: "48%",
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 2,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#fff",
+    alignItems: "center",
+  },
+  multiButtonSelected: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  multiButtonText: {
+    fontWeight: "700",
+    fontSize: 13,
+    color: "#4B5563",
+  },
+  actionRow: {
     flexDirection: "row",
     gap: spacing.sm,
-    ...shadows.md,
+  },
+  skipButton: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: radius.xl,
+    alignItems: "center",
+  },
+  skipButtonText: {
+    fontWeight: "700",
+    color: "#9CA3AF",
+    fontSize: 15,
+  },
+  nextButton: {
+    flex: 1,
+    backgroundColor: "#1F2937",
+    paddingVertical: 16,
+    borderRadius: radius.xl,
+    alignItems: "center",
+    justifyContent: "center",
   },
   nextButtonDisabled: {
-    backgroundColor: colors.textMuted,
-    ...shadows.sm,
+    backgroundColor: "#D1D5DB",
   },
   nextButtonText: {
     color: "#FFFFFF",
     fontWeight: "700",
     fontSize: 15,
   },
-  choiceCard: {
-    padding: spacing.lg,
-  },
-  choiceContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  choiceLabel: {
-    fontWeight: "700",
-    fontSize: 15,
-    color: colors.text,
-  },
-  choiceDescription: {
-    color: colors.textLight,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  chipWrap: {
+  /* ── Tags ── */
+  tagWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.sm,
-  },
-  chip: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    flexDirection: "row",
-    alignItems: "center",
     gap: spacing.xs,
-  },
-  chipSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  chipText: {
-    color: colors.text,
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  chipTextSelected: {
-    color: "#FFFFFF",
-  },
-  actionRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-  skipActionButton: {
-    flex: 1,
-    padding: 14,
-    borderRadius: radius.md,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  skipActionText: {
-    fontWeight: "700",
-    color: colors.textLight,
-    fontSize: 15,
   },
   tagBadge: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: radius.full,
-    backgroundColor: colors.accentLight,
+    backgroundColor: "#FFF7ED",
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
+    gap: 4,
   },
   tagBadgeText: {
     fontWeight: "700",
     color: colors.accent,
-    fontSize: 14,
-  },
-  tagInputRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-  addTagButton: {
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-    justifyContent: "center",
-    alignItems: "center",
-    ...shadows.sm,
-  },
-  suggestionChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  suggestionChipText: {
-    fontWeight: "600",
-    color: colors.textLight,
     fontSize: 13,
   },
+  addTagButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  suggestionChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: radius.full,
+    backgroundColor: "#F3F4F6",
+  },
+  suggestionChipText: {
+    fontWeight: "700",
+    color: "#4B5563",
+    fontSize: 12,
+  },
+  /* ── Stats ── */
   statsRow: {
     flexDirection: "row",
-    gap: spacing.sm,
+    gap: spacing.md,
   },
   statsField: {
     flex: 1,
     gap: spacing.xs,
   },
   statsLabel: {
-    color: colors.textLight,
+    color: "#6B7280",
     fontWeight: "700",
-    fontSize: 14,
+    fontSize: 12,
   },
+  /* ── Grid ── */
   gridHint: {
-    color: colors.textLight,
+    color: "#6B7280",
     fontSize: 13,
     textAlign: "center",
   },
@@ -1298,7 +1318,7 @@ const styles = StyleSheet.create({
   },
   gridHeaderText: {
     fontWeight: "700",
-    color: colors.text,
+    color: "#374151",
     fontSize: 14,
   },
   gridRow: {
@@ -1308,7 +1328,7 @@ const styles = StyleSheet.create({
   },
   gridDayLabel: {
     fontWeight: "700",
-    color: colors.text,
+    color: "#374151",
     fontSize: 14,
   },
   gridCell: {
@@ -1326,8 +1346,8 @@ const styles = StyleSheet.create({
     borderColor: colors.success,
   },
   gridCellInactive: {
-    backgroundColor: colors.bg,
-    borderColor: colors.border,
+    backgroundColor: "#F9FAFB",
+    borderColor: "#E5E7EB",
   },
   gridButton: {
     padding: 8,
@@ -1358,23 +1378,9 @@ const styles = StyleSheet.create({
   },
   legendText: {
     fontSize: 12,
-    color: colors.textLight,
+    color: "#6B7280",
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.card,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+  /* ── Calculating ── */
   calculatingContainer: {
     flex: 1,
     backgroundColor: "#FFF7ED",
@@ -1384,36 +1390,30 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
   },
   calculatingIcon: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: colors.accentLight,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: "#FFF7ED",
     justifyContent: "center",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#FED7AA",
     marginBottom: spacing.sm,
   },
   calculatingTitle: {
     fontSize: 22,
     fontWeight: "800",
-    color: colors.text,
+    color: "#1F2937",
   },
   calculatingSubtitle: {
     fontSize: 14,
-    color: colors.textLight,
+    color: "#6B7280",
     textAlign: "center",
     lineHeight: 22,
   },
   calculatingHint: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: "#9CA3AF",
     marginTop: spacing.md,
-  },
-  abortButton: {
-    marginTop: spacing.xl,
-    alignItems: "center",
-  },
-  abortText: {
-    color: colors.textMuted,
-    fontSize: 14,
   },
 });
