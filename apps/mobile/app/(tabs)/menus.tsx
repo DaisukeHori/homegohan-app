@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button, Card, EmptyState, LoadingState, SectionHeader, StatusBadge } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -31,6 +32,7 @@ type DaySummary = {
 };
 
 export default function MenusScreen() {
+  const insets = useSafeAreaInsets();
   const [days, setDays] = useState<DaySummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasPlan, setHasPlan] = useState(false);
@@ -79,7 +81,8 @@ export default function MenusScreen() {
   const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: insets.top + spacing.md, padding: spacing.lg, gap: spacing.lg }}>
+      <Text style={{ fontSize: 24, fontWeight: "800", color: colors.text, marginBottom: spacing.xs }}>献立</Text>
       {isLoading ? (
         <LoadingState />
       ) : !hasPlan ? (
