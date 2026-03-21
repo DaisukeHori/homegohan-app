@@ -297,7 +297,7 @@ function ProfilePageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gray-50 pb-40">
       
       {/* ヘッダーエリア */}
       <div className="relative h-56 bg-gradient-to-br from-orange-400 to-orange-500 overflow-hidden">
@@ -305,14 +305,35 @@ function ProfilePageContent() {
           <div className="absolute top-10 left-10 w-32 h-32 rounded-full bg-white/30" />
           <div className="absolute bottom-0 right-0 w-48 h-48 rounded-full bg-white/20 -mb-20 -mr-20" />
         </div>
-        <div className="absolute top-0 right-0 p-6 z-10">
-          <Button 
-            variant="ghost" 
+        <div className="absolute top-0 left-0 right-0 p-6 z-10 flex justify-between">
+          <Button
+            variant="ghost"
             className="text-white hover:bg-white/20"
-            onClick={() => setIsEditing(true)}
+            onClick={() => router.push('/settings')}
           >
-            <Icons.Edit className="w-6 h-6" />
+            <Icons.Settings className="w-6 h-6" />
           </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              className="text-white hover:bg-white/20"
+              onClick={() => setIsEditing(true)}
+            >
+              <Icons.Edit className="w-6 h-6" />
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-white hover:bg-white/20"
+              onClick={async () => {
+                if (!confirm('ログアウトしますか？')) return;
+                const supabase = createClient();
+                await supabase.auth.signOut();
+                router.push('/login');
+              }}
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -509,7 +530,7 @@ function ProfilePageContent() {
           <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
             <button
               onClick={() => router.push('/settings')}
-              className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors text-left"
+              className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors text-left border-b border-gray-50"
             >
               <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-xl">
                 ⚙️
@@ -520,6 +541,21 @@ function ProfilePageContent() {
               </div>
               <div className="text-gray-300">
                 <Icons.ChevronRight className="w-5 h-5" />
+              </div>
+            </button>
+            <button
+              onClick={async () => {
+                const supabase = createClient();
+                await supabase.auth.signOut();
+                router.push('/login');
+              }}
+              className="w-full flex items-center gap-4 p-4 hover:bg-red-50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center text-xl">
+                👋
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-red-500 text-sm">ログアウト</p>
               </div>
             </button>
           </div>
