@@ -215,11 +215,15 @@ export default function MealNewPage() {
   async function takePhoto() {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) { Alert.alert("権限が必要です", "カメラへのアクセスを許可してください。"); return; }
-    const res = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.8 });
-    if (res.canceled) return;
-    const a = res.assets?.[0];
-    if (!a?.base64) { Alert.alert("失敗", "画像の取得に失敗しました。"); return; }
-    setPhotos((prev) => [...prev, { uri: a.uri, base64: a.base64 as string, mimeType: (a as any).mimeType ?? "image/jpeg" }]);
+    try {
+      const res = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.8 });
+      if (res.canceled) return;
+      const a = res.assets?.[0];
+      if (!a?.base64) { Alert.alert("失敗", "画像の取得に失敗しました。"); return; }
+      setPhotos((prev) => [...prev, { uri: a.uri, base64: a.base64 as string, mimeType: (a as any).mimeType ?? "image/jpeg" }]);
+    } catch {
+      Alert.alert("カメラが使用できません", "このデバイスではカメラが利用できません。「写真を選ぶ」をお試しください。");
+    }
   }
 
   function removePhoto(index: number) { setPhotos((prev) => prev.filter((_, i) => i !== index)); }

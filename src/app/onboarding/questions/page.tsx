@@ -477,6 +477,7 @@ function OnboardingQuestionsContent() {
   const isResume = searchParams.get('resume') === 'true';
   
   const [currentStep, setCurrentStep] = useState(0);
+  const [stepHistory, setStepHistory] = useState<number[]>([]);
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [inputValue, setInputValue] = useState("");
   const [selectedMulti, setSelectedMulti] = useState<string[]>([]);
@@ -485,6 +486,7 @@ function OnboardingQuestionsContent() {
   const [isTyping, setIsTyping] = useState(false);
   const [isLoading, setIsLoading] = useState(isResume);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCalculating, setIsCalculating] = useState(false);
 
   // 再開時は進捗を復元
   useEffect(() => {
@@ -571,6 +573,17 @@ function OnboardingQuestionsContent() {
     }
   };
 
+  const handleBack = () => {
+    if (stepHistory.length === 0) return;
+    const prevStep = stepHistory[stepHistory.length - 1];
+    setStepHistory(prev => prev.slice(0, -1));
+    setCurrentStep(prevStep);
+    setInputValue("");
+    setSelectedMulti([]);
+    setTags([]);
+    setTagInput("");
+  };
+
   const handleAnswer = async (value: any) => {
     const newAnswers = { ...answers, [currentQuestion.id]: value };
     setAnswers(newAnswers);
@@ -583,17 +596,18 @@ function OnboardingQuestionsContent() {
 
     if (nextStep !== -1) {
       setIsTyping(true);
-      
+      setStepHistory(prev => [...prev, currentStep]);
+
       // リアルタイム保存（非同期）
       saveProgress(nextStep, newAnswers);
-      
+
       setTimeout(() => {
         setCurrentStep(nextStep);
         setIsTyping(false);
       }, 600);
     } else {
-      setIsTyping(true);
-      
+      setIsCalculating(true);
+
       // 完了処理
       try {
         await fetch('/api/onboarding/complete', { method: 'POST' });
@@ -603,7 +617,7 @@ function OnboardingQuestionsContent() {
 
       setTimeout(() => {
         router.push("/onboarding/complete");
-      }, 1500);
+      }, 2500);
     }
   };
 
@@ -663,6 +677,23 @@ function OnboardingQuestionsContent() {
     );
   }
 
+  if (isCalculating) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex items-center justify-center">
+        <div className="text-center space-y-6">
+          <div className="mx-auto w-24 h-24 rounded-full bg-orange-100 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-orange-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900">栄養設計を計算中...</h2>
+          <p className="text-sm text-gray-500 leading-relaxed">
+            入力いただいた情報をもとに<br />最適な栄養目標を計算しています
+          </p>
+          <p className="text-xs text-gray-400 mt-4">このまましばらくお待ちください</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentQuestion) {
     return null;
   }
@@ -676,7 +707,19 @@ function OnboardingQuestionsContent() {
         {/* ヘッダー：進捗 */}
         <div className="w-full pt-6 sm:pt-8 lg:pt-12">
           <div className="flex items-center justify-between text-xs sm:text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 sm:mb-4">
-            <span>Setup Profile {isSaving && <span className="text-orange-400">(保存中...)</span>}</span>
+            <div className="flex items-center gap-3">
+              {stepHistory.length > 0 && (
+                <button
+                  onClick={handleBack}
+                  className="w-8 h-8 rounded-full border border-gray-200 bg-white flex items-center justify-center hover:bg-gray-50 transition-colors"
+                >
+                  <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+              <span>Setup Profile {isSaving && <span className="text-orange-400">(保存中...)</span>}</span>
+            </div>
             <div className="flex items-center gap-4">
               <span>{progress.current} / {progress.total}</span>
               <button

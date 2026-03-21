@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState, ProgressBar } from "../../src/components/ui";
 import { calculateNutritionTargets } from "../../src/lib/nutritionTargets";
@@ -451,8 +452,10 @@ export default function OnboardingQuestions() {
   const { refresh: refreshProfile, profile } = useProfile();
   const params = useLocalSearchParams();
   const isResume = params.resume === "true";
+  const insets = useSafeAreaInsets();
 
   const [currentStep, setCurrentStep] = useState(0);
+  const [stepHistory, setStepHistory] = useState<number[]>([]);
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [inputValue, setInputValue] = useState("");
   const [selectedMulti, setSelectedMulti] = useState<string[]>([]);
@@ -460,6 +463,7 @@ export default function OnboardingQuestions() {
   const [tags, setTags] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(isResume);
+  const [isCalculating, setIsCalculating] = useState(false);
 
   // 再開時は進捗を復元
   useEffect(() => {
@@ -501,6 +505,17 @@ export default function OnboardingQuestions() {
       text = text.replace(`{${key}}`, String(answers[key] ?? ""));
     });
     return text;
+  }
+
+  function handleBack() {
+    if (stepHistory.length === 0) return;
+    const prevStep = stepHistory[stepHistory.length - 1];
+    setStepHistory((prev) => prev.slice(0, -1));
+    setCurrentStep(prevStep);
+    setInputValue("");
+    setSelectedMulti([]);
+    setTags([]);
+    setTagInput("");
   }
 
   function handleMultiSelect(value: string) {
@@ -584,14 +599,14 @@ export default function OnboardingQuestions() {
 
     const next = getNextQuestion(currentStep, newAnswers);
     if (next !== -1) {
-      // リアルタイム保存
+      setStepHistory((prev) => [...prev, currentStep]);
       saveProgress(next, newAnswers);
       setCurrentStep(next);
       return;
     }
 
-    // 完了: DBに保存
-    setIsSubmitting(true);
+    // 完了: 計算中画面を表示してからDBに保存
+    setIsCalculating(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) throw new Error("Unauthorized");
@@ -638,24 +653,48 @@ export default function OnboardingQuestions() {
     return <LoadingState message="前回の進捗を読み込み中..." style={{ backgroundColor: "#FFF7ED" }} />;
   }
 
+  if (isCalculating) {
+    return (
+      <View style={[styles.calculatingContainer, { paddingTop: insets.top }]}>
+        <View style={styles.calculatingIcon}>
+          <ActivityIndicator size="large" color={colors.accent} />
+        </View>
+        <Text style={styles.calculatingTitle}>栄養設計を計算中...</Text>
+        <Text style={styles.calculatingSubtitle}>
+          入力いただいた情報をもとに{"\n"}最適な栄養目標を計算しています
+        </Text>
+        <Text style={styles.calculatingHint}>このまましばらくお待ちください</Text>
+      </View>
+    );
+  }
+
   if (!currentQuestion) {
     return null;
   }
 
   return (
     <ScrollView
-      contentContainerStyle={styles.container}
+      contentContainerStyle={[styles.container, { paddingTop: insets.top + spacing.md }]}
       style={styles.scroll}
     >
-      {/* Progress bar */}
-      <View style={styles.progressSection}>
-        <ProgressBar
-          value={progress.current}
-          max={progress.total}
-          height={6}
-          label={`${progress.current} / ${progress.total}`}
-          showPercentage
-        />
+      {/* Header: back + progress */}
+      <View style={styles.headerRow}>
+        {stepHistory.length > 0 ? (
+          <Pressable onPress={handleBack} style={styles.backButton} hitSlop={12}>
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </Pressable>
+        ) : (
+          <View style={{ width: 36 }} />
+        )}
+        <View style={{ flex: 1 }}>
+          <ProgressBar
+            value={progress.current}
+            max={progress.total}
+            height={6}
+            label={`${progress.current} / ${progress.total}`}
+            showPercentage
+          />
+        </View>
       </View>
 
       {/* Question text */}
@@ -1320,6 +1359,54 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 12,
     color: colors.textLight,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  calculatingContainer: {
+    flex: 1,
+    backgroundColor: "#FFF7ED",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing["2xl"],
+    gap: spacing.lg,
+  },
+  calculatingIcon: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.accentLight,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  calculatingTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  calculatingSubtitle: {
+    fontSize: 14,
+    color: colors.textLight,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  calculatingHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: spacing.md,
   },
   abortButton: {
     marginTop: spacing.xl,
