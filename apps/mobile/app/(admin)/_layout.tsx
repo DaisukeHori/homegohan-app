@@ -28,7 +28,7 @@ export default function AdminLayout() {
     );
   }
 
-  return <Stack screenOptions={{ headerShown: true }} />;
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
 
 

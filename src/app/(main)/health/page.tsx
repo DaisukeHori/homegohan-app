@@ -81,7 +81,7 @@ export default function HealthDashboardPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -174,7 +174,7 @@ export default function HealthDashboardPage() {
       const date = new Date();
       date.setDate(date.getDate() - i);
       days.push({
-        date: date.toISOString().split('T')[0],
+        date: `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`,
         day: ['日', '月', '火', '水', '木', '金', '土'][date.getDay()],
         dayNum: date.getDate(),
         isToday: i === 0,

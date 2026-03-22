@@ -69,13 +69,17 @@ export default function RecipeDetailPage() {
 
   async function toggleLike() {
     if (!recipe) return;
-    const api = getApi();
-    if (recipe.isLiked) {
-      await api.del(`${apiPath}/like`);
-    } else {
-      await api.post(`${apiPath}/like`, {});
+    try {
+      const api = getApi();
+      if (recipe.isLiked) {
+        await api.del(`${apiPath}/like`);
+      } else {
+        await api.post(`${apiPath}/like`, {});
+      }
+      await load();
+    } catch (e: any) {
+      Alert.alert("失敗", e?.message ?? "操作に失敗しました。");
     }
-    await load();
   }
 
   function normalizeIngredients(raw: any): Array<{ name: string; amount?: string }> {
@@ -99,9 +103,13 @@ export default function RecipeDetailPage() {
       Alert.alert("追加できません", "材料が空です。");
       return;
     }
-    const api = getApi();
-    await api.post("/api/shopping-list/add-recipe", { ingredients });
-    Alert.alert("追加しました", "買い物リストに追加しました。");
+    try {
+      const api = getApi();
+      await api.post("/api/shopping-list/add-recipe", { ingredients });
+      Alert.alert("追加しました", "買い物リストに追加しました。");
+    } catch (e: any) {
+      Alert.alert("追加失敗", e?.message ?? "買い物リストへの追加に失敗しました。");
+    }
   }
 
   async function postComment() {

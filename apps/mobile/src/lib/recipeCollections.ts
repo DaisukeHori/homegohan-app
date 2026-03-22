@@ -55,7 +55,11 @@ export async function addRecipeToCollection(collectionId: string, recipeId: stri
   if (updErr) throw updErr;
 
   // 補助テーブル（存在する場合）も更新（重複はPKで抑止）
-  await supabase.from("recipe_collection_items").insert({ collection_id: collectionId, recipe_id: recipeId }).throwOnError();
+  try {
+    await supabase.from("recipe_collection_items").insert({ collection_id: collectionId, recipe_id: recipeId });
+  } catch {
+    // テーブルが存在しない場合は無視
+  }
 }
 
 export async function removeRecipeFromCollection(collectionId: string, recipeId: string): Promise<void> {
