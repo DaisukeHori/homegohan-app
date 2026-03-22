@@ -354,10 +354,24 @@ export default function ProfilePage() {
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
+            title="レシピ"
+            subtitle="保存したレシピを管理"
+            onPress={() => router.push("/recipes")}
+            left={<View style={[s.menuIcon, { backgroundColor: colors.accentLight }]}><Ionicons name="book-outline" size={18} color={colors.accent} /></View>}
+            right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
+          />
+          <ListItem
             title="家族管理"
             subtitle="家族アカウント"
             onPress={() => router.push("/family")}
             left={<View style={[s.menuIcon, { backgroundColor: colors.accentLight }]}><Ionicons name="people-outline" size={18} color={colors.accent} /></View>}
+            right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
+          />
+          <ListItem
+            title="設定"
+            subtitle="通知・週の開始日・アカウント"
+            onPress={() => router.push("/(tabs)/settings")}
+            left={<View style={[s.menuIcon, { backgroundColor: colors.bg }]}><Ionicons name="settings-outline" size={18} color={colors.textLight} /></View>}
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
         </View>

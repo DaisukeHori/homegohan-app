@@ -82,19 +82,22 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="health"
+        name="comparison"
         options={{
-          title: "健康",
-          tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
+          title: "比較",
+          tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="settings"
+        name="profile"
         options={{
-          title: "設定",
-          tabBarIcon: ({ color, size }) => <Ionicons name="settings" size={size} color={color} />,
+          title: "マイページ",
+          tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
         }}
       />
+      {/* タブバーに表示しないが(tabs)グループ内に必要なファイル */}
+      <Tabs.Screen name="health" options={{ href: null }} />
+      <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>
   );
 }
