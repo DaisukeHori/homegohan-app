@@ -105,7 +105,13 @@ export default function WeeklyRequestPage() {
     setIsSubmitting(true);
 
     try {
-      const ws = getWeekStart(new Date(startDate));
+      const parsedDate = new Date(startDate + "T00:00:00");
+      if (isNaN(parsedDate.getTime())) {
+        Alert.alert("入力エラー", "日付の形式が正しくありません。YYYY-MM-DD形式で入力してください。");
+        setIsSubmitting(false);
+        return;
+      }
+      const ws = getWeekStart(parsedDate);
       const weekStartStr = formatLocalDate(ws);
 
       const useFridgeFirst = selectedThemes.includes("冷蔵庫の食材を優先");
@@ -123,7 +129,7 @@ export default function WeeklyRequestPage() {
       await api.post("/api/ai/menu/weekly/request", {
         startDate: weekStartStr,
         note: noteForApi,
-        familySize: parseInt(familySize || "1"),
+        familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
         cheatDay: cheatDay.trim() || null,
         preferences: { useFridgeFirst, quickMeals, japaneseStyle, healthy, ingredients },
       });

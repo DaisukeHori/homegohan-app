@@ -59,7 +59,8 @@ interface TodayMeal {
 }
 
 const DOW = ["日", "月", "火", "水", "木", "金", "土"];
-const todayStr = formatLocalDate(new Date());
+// todayStr is computed fresh on each fetchAll call, not cached at module level
+function getTodayStr() { return formatLocalDate(new Date()); }
 
 export const useHomeData = (userId: string | undefined) => {
   const [loading, setLoading] = useState(true);
@@ -116,7 +117,7 @@ export const useHomeData = (userId: string | undefined) => {
     const { data: dayData } = await supabase
       .from("user_daily_meals")
       .select(`id, day_date, planned_meals(id, meal_type, mode, dish_name, calories_kcal, is_completed, image_url)`)
-      .eq("day_date", todayStr)
+      .eq("day_date", getTodayStr())
       .eq("user_id", uid)
       .maybeSingle();
 
@@ -147,7 +148,7 @@ export const useHomeData = (userId: string | undefined) => {
         .select(`day_date, planned_meals(mode, is_completed)`)
         .eq("user_id", uid)
         .gte("day_date", formatLocalDate(thirtyDaysAgo))
-        .lte("day_date", todayStr)
+        .lte("day_date", getTodayStr())
         .order("day_date", { ascending: false });
 
       if (daysData && daysData.length > 0) {
@@ -159,7 +160,7 @@ export const useHomeData = (userId: string | undefined) => {
           );
           if (hasCompletedCook) {
             streak++;
-          } else if (day.day_date < todayStr) {
+          } else if (day.day_date < getTodayStr()) {
             break;
           }
         }
@@ -180,7 +181,7 @@ export const useHomeData = (userId: string | undefined) => {
         .select(`day_date, planned_meals(mode, is_completed, calories_kcal)`)
         .eq("user_id", uid)
         .gte("day_date", formatLocalDate(sevenDaysAgo))
-        .lte("day_date", todayStr)
+        .lte("day_date", getTodayStr())
         .order("day_date");
 
       if (daysData) {
@@ -227,7 +228,7 @@ export const useHomeData = (userId: string | undefined) => {
         .select(`day_date, planned_meals(mode, is_completed)`)
         .eq("user_id", uid)
         .gte("day_date", formatLocalDate(firstOfMonth))
-        .lte("day_date", todayStr);
+        .lte("day_date", getTodayStr());
 
       if (daysData) {
         let cookCount = 0;
@@ -248,7 +249,7 @@ export const useHomeData = (userId: string | undefined) => {
   async function fetchHealthSummary(uid: string) {
     try {
       const [todayRes, streakRes, weightsRes, goalRes, alertRes] = await Promise.all([
-        supabase.from("health_records").select("*").eq("user_id", uid).eq("record_date", todayStr).maybeSingle(),
+        supabase.from("health_records").select("*").eq("user_id", uid).eq("record_date", getTodayStr()).maybeSingle(),
         supabase.from("health_streaks").select("current_streak").eq("user_id", uid).eq("streak_type", "daily_record").maybeSingle(),
         supabase.from("health_records").select("weight, record_date").eq("user_id", uid).not("weight", "is", null).order("record_date", { ascending: false }).limit(2),
         supabase.from("health_goals").select("target_value").eq("user_id", uid).eq("goal_type", "weight").eq("status", "active").maybeSingle(),
@@ -287,7 +288,7 @@ export const useHomeData = (userId: string | undefined) => {
         .select("*")
         .eq("user_id", uid)
         .lte("expiration_date", formatLocalDate(threeDaysLater))
-        .gte("expiration_date", todayStr)
+        .gte("expiration_date", getTodayStr())
         .order("expiration_date");
 
       if (data) setExpiringItems(data);
@@ -391,7 +392,7 @@ export const useHomeData = (userId: string | undefined) => {
         .from("daily_activity_logs")
         .select("*")
         .eq("user_id", uid)
-        .eq("date", todayStr)
+        .eq("date", getTodayStr())
         .maybeSingle();
       if (data) setActivityLevel(data.feeling);
     } catch (e) {
@@ -404,7 +405,7 @@ export const useHomeData = (userId: string | undefined) => {
     setActivityLevel(level);
     await supabase
       .from("daily_activity_logs")
-      .upsert({ user_id: userId, date: todayStr, feeling: level }, { onConflict: "user_id, date" });
+      .upsert({ user_id: userId, date: getTodayStr(), feeling: level }, { onConflict: "user_id, date" });
 
     if (level === "rest") setSuggestion("今日は運動量が少なめです。夕食の炭水化物を半分にして調整しましょう。");
     else if (level === "active") setSuggestion("ナイスワークアウト！夕食でタンパク質を多めに摂り、筋肉の回復を促しましょう。");
@@ -446,7 +447,7 @@ export const useHomeData = (userId: string | undefined) => {
         .from("user_performance_checkins")
         .upsert({
           user_id: userId,
-          checkin_date: todayStr,
+          checkin_date: getTodayStr(),
           sleep_hours: checkinData.sleepHours,
           sleep_quality: checkinData.sleepQuality,
           fatigue: checkinData.fatigue,

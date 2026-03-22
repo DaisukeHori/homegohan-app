@@ -36,9 +36,12 @@ export default function HealthQuickRecordPage() {
     try {
       const api = getApi();
       const body: any = { record_date: recordDate };
-      if (weight) body.weight = parseFloat(weight);
-      if (moodScore) body.mood_score = moodScore;
-      if (sleepQuality) body.sleep_quality = sleepQuality;
+      if (weight) {
+        const w = parseFloat(weight);
+        if (Number.isFinite(w) && w > 0) body.weight = w;
+      }
+      if (moodScore != null) body.mood_score = moodScore;
+      if (sleepQuality != null) body.sleep_quality = sleepQuality;
 
       const res = await api.post<any>("/api/health/records/quick", body);
       Alert.alert("記録しました", res?.message ?? "保存しました。");

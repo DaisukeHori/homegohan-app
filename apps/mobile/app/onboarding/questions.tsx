@@ -641,6 +641,7 @@ export default function OnboardingQuestions() {
       await refreshProfile();
       router.replace("/onboarding/complete");
     } catch (e: any) {
+      setIsCalculating(false);
       Alert.alert("保存失敗", e?.message ?? "保存に失敗しました。");
     } finally {
       setIsSubmitting(false);

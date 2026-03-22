@@ -52,12 +52,17 @@ export default function HealthGoalsPage() {
     if (isSubmitting) return;
     const tv = targetValue.trim();
     if (!tv) return;
+    const numTv = Number(tv);
+    if (!Number.isFinite(numTv) || numTv <= 0) {
+      Alert.alert("入力エラー", "目標値は正の数値を入力してください。");
+      return;
+    }
     setIsSubmitting(true);
     try {
       const api = getApi();
       await api.post("/api/health/goals", {
         goal_type: goalType,
-        target_value: Number(tv),
+        target_value: numTv,
         target_unit: targetUnit || "kg",
         target_date: targetDate.trim() || null,
       });
@@ -188,9 +193,16 @@ export default function HealthGoalsPage() {
                 />
                 <View style={styles.goalActions}>
                   <Button
-                    onPress={() => updateCurrent(g.id, (g.current_value ?? g.target_value) as number)}
+                    onPress={() => {
+                      if (g.current_value == null) {
+                        Alert.alert("データなし", "現在の値がまだ記録されていません。先に健康記録を入力してください。");
+                        return;
+                      }
+                      updateCurrent(g.id, g.current_value as number);
+                    }}
                     variant="secondary"
                     size="sm"
+                    disabled={g.current_value == null}
                   >
                     <Ionicons name="refresh-outline" size={14} color={colors.text} />
                     <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>最新値で再計算</Text>

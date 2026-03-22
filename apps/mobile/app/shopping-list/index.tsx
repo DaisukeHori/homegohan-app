@@ -223,14 +223,16 @@ export default function ShoppingListPage() {
                   }
                 }, 2000);
 
-                return; // 非同期処理中なので即座にreturn
+                // ポーリング中は return して finally に行かせない
+                // (setIsRegenerating(false) はポーリング内で処理)
+                return;
               }
 
               await load();
-            } catch (e: any) {
-              Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
-            } finally {
               setIsRegenerating(false);
+            } catch (e: any) {
+              setIsRegenerating(false);
+              Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
             }
           },
         },

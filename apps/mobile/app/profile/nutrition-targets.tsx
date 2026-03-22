@@ -183,10 +183,14 @@ export default function NutritionTargetsPage() {
 
           {/* PFCバランス */}
           {(() => {
-            const total = (targets.protein_g || 0) + (targets.fat_g || 0) + (targets.carbs_g || 0);
+            // PFC比はカロリーベースで計算 (P:4kcal/g, F:9kcal/g, C:4kcal/g)
+            const pCal = (targets.protein_g || 0) * 4;
+            const fCal = (targets.fat_g || 0) * 9;
+            const cCal = (targets.carbs_g || 0) * 4;
+            const total = pCal + fCal + cCal;
             if (total === 0) return null;
-            const pPct = Math.round(((targets.protein_g || 0) / total) * 100);
-            const fPct = Math.round(((targets.fat_g || 0) / total) * 100);
+            const pPct = Math.round((pCal / total) * 100);
+            const fPct = Math.round((fCal / total) * 100);
             const cPct = 100 - pPct - fPct;
             return (
               <Card>

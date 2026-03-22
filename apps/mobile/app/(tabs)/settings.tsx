@@ -70,10 +70,10 @@ export default function SettingsTab() {
   }, [user]);
 
   async function handleWeekStartDayChange(newValue: WeekStartDay) {
+    if (!user) return;
     setWeekStartDay(newValue);
     setSavingWeekStart(true);
     try {
-      if (!user) return;
       await supabase
         .from("user_profiles")
         .update({ week_start_day: newValue })
@@ -86,7 +86,9 @@ export default function SettingsTab() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch {}
     router.replace("/");
   }
 

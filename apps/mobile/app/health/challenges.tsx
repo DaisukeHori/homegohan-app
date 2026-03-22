@@ -48,7 +48,7 @@ export default function HealthChallengesPage() {
   const [customTarget, setCustomTarget] = useState("");
 
   const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittingTemplateId, setSubmittingTemplateId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -78,8 +78,8 @@ export default function HealthChallengesPage() {
   }, [customTarget]);
 
   async function create(templateId: string) {
-    if (isSubmitting) return;
-    setIsSubmitting(true);
+    if (submittingTemplateId) return;
+    setSubmittingTemplateId(templateId);
     try {
       const api = getApi();
       await api.post("/api/health/challenges", {
@@ -92,7 +92,7 @@ export default function HealthChallengesPage() {
     } catch (e: any) {
       Alert.alert("失敗", e?.message ?? "作成に失敗しました。");
     } finally {
-      setIsSubmitting(false);
+      setSubmittingTemplateId(null);
     }
   }
 
@@ -172,12 +172,12 @@ export default function HealthChallengesPage() {
                 </View>
                 <Button
                   onPress={() => create(t.id)}
-                  disabled={isSubmitting}
-                  loading={isSubmitting}
+                  disabled={!!submittingTemplateId}
+                  loading={submittingTemplateId === t.id}
                   size="sm"
                   style={styles.startBtn}
                 >
-                  {isSubmitting ? "作成中..." : "開始"}
+                  {submittingTemplateId === t.id ? "作成中..." : "開始"}
                 </Button>
               </Card>
             ))}

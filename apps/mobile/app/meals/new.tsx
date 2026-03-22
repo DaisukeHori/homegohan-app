@@ -7,10 +7,26 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button, Card, SectionHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { buildPhotoDishList } from "../../../../lib/meal-image";
-import { cancelPendingMealImageJobs } from "../../../../lib/meal-image-jobs";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
+
+// Inlined from lib/meal-image to avoid importing server-side code
+interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
+function buildPhotoDishList(dishes: MealImageDish[], imageUrl: string | null): MealImageDish[] {
+  const isSingle = dishes.length <= 1;
+  return dishes.map((dish) => ({
+    ...dish,
+    image_url: isSingle && imageUrl ? imageUrl : null,
+    image_source: "meal_photo",
+    image_status: isSingle ? "ready" : "stale",
+    image_generated_at: new Date().toISOString(),
+  }));
+}
+
+// Inlined from lib/meal-image-jobs
+async function cancelPendingMealImageJobs({ supabase: sb, plannedMealId, reason }: { supabase: any; plannedMealId: string; reason: string }) {
+  await sb.from("meal_image_jobs").update({ status: "cancelled", cancelled_reason: reason }).eq("planned_meal_id", plannedMealId).in("status", ["pending", "processing"]);
+}
 
 // ─── Types ───────────────────────────────────────────
 type Step = "mode-select" | "capture" | "analyzing" | "result" | "select-date"
@@ -274,6 +290,7 @@ export default function MealNewPage() {
   }
 
   async function analyzeHealthCheckup() {
+    if (photos.length === 0) { Alert.alert("写真がありません", "先に写真を撮影してください。"); return; }
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();
@@ -287,6 +304,7 @@ export default function MealNewPage() {
   }
 
   async function analyzeWeightScale() {
+    if (photos.length === 0) { Alert.alert("写真がありません", "先に写真を撮影してください。"); return; }
     setStep("analyzing"); setIsAnalyzing(true);
     try {
       const api = getApi();

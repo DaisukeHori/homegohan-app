@@ -8,6 +8,13 @@ import { Button, Card, LoadingState, ProgressBar, SectionHeader } from "../../sr
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 // ─── Types ───────────────────────────────────────────
 interface HealthRecord {
   id: string;
@@ -64,7 +71,7 @@ function getWeekDays() {
     const d = new Date();
     d.setDate(d.getDate() - i);
     days.push({
-      date: d.toISOString().split("T")[0],
+      date: formatLocalDate(d),
       day: DAYS[d.getDay()],
       dayNum: d.getDate(),
       isToday: i === 0,
@@ -107,7 +114,7 @@ export default function HealthDashboardTab() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const today = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const today = useMemo(() => formatLocalDate(new Date()), []);
   const weekDays = useMemo(() => getWeekDays(), []);
 
   const fetchData = useCallback(async () => {

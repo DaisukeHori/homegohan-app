@@ -13,6 +13,7 @@ export default function VerifyPage() {
   const params = useMemo(() => (url ? extractSupabaseLinkParams(url) : null), [url]);
   const [isProcessing, setIsProcessing] = useState(true);
   const [isDone, setIsDone] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,6 +39,7 @@ export default function VerifyPage() {
           if (error) throw error;
         }
       } catch (e: any) {
+        if (!cancelled) setHasError(true);
         Alert.alert("確認失敗", e?.message ?? "確認に失敗しました。");
       } finally {
         if (!cancelled) {
@@ -53,13 +55,15 @@ export default function VerifyPage() {
     };
   }, [params?.code, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
 
-  // すでにログインできている場合はホームへ
+  // 認証成功後のみホームへリダイレクト
   const [hasSession, setHasSession] = useState(false);
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setHasSession(!!data.session));
-  }, [isDone]);
+    if (isDone && !hasError) {
+      supabase.auth.getSession().then(({ data }) => setHasSession(!!data.session));
+    }
+  }, [isDone, hasError]);
 
-  if (hasSession) return <Redirect href="/(tabs)/home" />;
+  if (hasSession && isDone && !hasError) return <Redirect href="/(tabs)/home" />;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -107,7 +111,7 @@ export default function VerifyPage() {
             borderWidth: 1, borderColor: colors.border, ...shadows.sm,
             width: "100%",
           }}>
-            {isDone ? (
+            {isDone && !hasError ? (
               <View style={{
                 backgroundColor: colors.successLight, borderRadius: radius.lg,
                 padding: spacing.md, flexDirection: "row", alignItems: "center",

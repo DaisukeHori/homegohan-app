@@ -95,7 +95,7 @@ export default function ProfilePage() {
       if (!u) return;
       const { data: p } = await supabase.from("user_profiles").select("week_start_day").eq("id", u.id).single();
       if (p?.week_start_day) setWeekStartDay(p.week_start_day as "sunday" | "monday");
-    })();
+    })().catch(console.error);
   }, []);
 
   async function handleWeekStartDayChange(newValue: "sunday" | "monday") {

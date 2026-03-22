@@ -33,8 +33,9 @@ export default function SignupScreen() {
         options: { emailRedirectTo },
       });
       if (error) throw error;
-      Alert.alert("確認してください", "確認メールを送信しました。メール内のリンクから認証してください。");
-      router.replace("/(auth)/login");
+      Alert.alert("確認してください", "確認メールを送信しました。メール内のリンクから認証してください。", [
+        { text: "OK", onPress: () => router.replace("/(auth)/login") },
+      ]);
     } catch (e: any) {
       Alert.alert("登録失敗", e?.message ?? "登録に失敗しました。");
     } finally {

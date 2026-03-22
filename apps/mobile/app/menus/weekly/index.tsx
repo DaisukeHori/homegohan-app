@@ -299,6 +299,7 @@ export default function WeeklyMenuPage() {
         dayDate: selectedDate,
         mealType,
       });
+      await loadData();
     } catch (e: any) {
       setError(e?.message ?? "再生成に失敗しました。");
     } finally {

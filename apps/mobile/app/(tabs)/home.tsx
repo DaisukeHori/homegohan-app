@@ -189,7 +189,7 @@ export default function HomeScreen() {
                   {healthSummary.latestWeight ?? "-"}
                   <Text style={{ fontSize: 11, fontWeight: "500", color: colors.textMuted }}> kg</Text>
                 </Text>
-                {healthSummary.weightChange !== null && (
+                {healthSummary.weightChange !== null && healthSummary.weightChange !== 0 && (
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 2, marginTop: 2 }}>
                     <Ionicons
                       name={healthSummary.weightChange < 0 ? "trending-down" : "trending-up"}
