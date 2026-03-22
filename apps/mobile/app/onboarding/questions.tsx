@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Card, LoadingState, ProgressBar } from "../../src/components/ui";
+import { Card, LoadingState } from "../../src/components/ui";
 import { calculateNutritionTargets } from "../../src/lib/nutritionTargets";
 import { supabase } from "../../src/lib/supabase";
 import { useProfile } from "../../src/providers/ProfileProvider";
@@ -899,13 +899,13 @@ export default function OnboardingQuestions() {
             <View style={styles.statsRow}>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>身長 (cm)</Text>
-                <TextInput keyboardType="number-pad" placeholder="170" placeholderTextColor={colors.textMuted}
+                <TextInput keyboardType="decimal-pad" placeholder="170" placeholderTextColor={colors.textMuted}
                   value={answers.height || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, height: v }))}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>体重 (kg)</Text>
-                <TextInput keyboardType="number-pad" placeholder="60" placeholderTextColor={colors.textMuted}
+                <TextInput keyboardType="decimal-pad" placeholder="60" placeholderTextColor={colors.textMuted}
                   value={answers.weight || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, weight: v }))}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
@@ -958,10 +958,16 @@ export default function OnboardingQuestions() {
 
                   const updateValue = (newValue: number) => {
                     const clampedValue = Math.max(0, Math.min(10, newValue));
-                    const updatedConfig = { ...currentConfig };
-                    if (!updatedConfig.byDayMeal) updatedConfig.byDayMeal = {};
-                    if (!updatedConfig.byDayMeal[day.key]) updatedConfig.byDayMeal[day.key] = {};
-                    updatedConfig.byDayMeal[day.key][meal.key] = clampedValue;
+                    const updatedConfig = {
+                      ...currentConfig,
+                      byDayMeal: {
+                        ...currentConfig.byDayMeal,
+                        [day.key]: {
+                          ...(currentConfig.byDayMeal?.[day.key] || {}),
+                          [meal.key]: clampedValue,
+                        },
+                      },
+                    };
                     setAnswers((prev) => ({ ...prev, servings_config: updatedConfig }));
                   };
 

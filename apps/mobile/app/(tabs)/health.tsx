@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Button, Card, LoadingState, ProgressBar, SectionHeader } from "../../src/components/ui";
+import { Button, Card, LoadingState, ProgressBar } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 

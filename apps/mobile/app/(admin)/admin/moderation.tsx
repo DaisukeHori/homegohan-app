@@ -3,9 +3,9 @@ import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
-import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState, ChipSelector } from "../../../src/components/ui";
+import { Card, Button, StatusBadge, LoadingState, EmptyState, ChipSelector } from "../../../src/components/ui";
 import { Input } from "../../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../../src/theme";
+import { colors, spacing, radius } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
 type ModerationItem = {

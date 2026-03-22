@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs, Redirect, router } from "expo-router";
-import { ActivityIndicator, Pressable, View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 
 import { colors } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";

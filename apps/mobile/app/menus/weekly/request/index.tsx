@@ -61,7 +61,7 @@ export default function WeeklyRequestPage() {
     }
 
     const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"] as any,
       base64: true,
       quality: 0.8,
     });

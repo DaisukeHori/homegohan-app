@@ -7,7 +7,6 @@ import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui
 import { Input } from "../../src/components/ui/Input";
 import { getApi } from "../../src/lib/api";
 import { colors, spacing } from "../../src/theme";
-import { typography } from "../../src/theme/typography";
 
 export default function RecipeNewPage() {
   const [name, setName] = useState("");

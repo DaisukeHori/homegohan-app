@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Link, router } from "expo-router";
+import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Card, Button, EmptyState, LoadingState, ProgressBar, StatCard, SectionHeader, StatusBadge } from "../../src/components/ui";
+import { Card, Button, EmptyState, LoadingState, StatCard } from "../../src/components/ui";
 import { colors, spacing, shadows, radius } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";

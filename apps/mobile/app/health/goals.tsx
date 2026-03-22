@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, Input, LoadingState, PageHeader, ProgressBar, SectionHeader } from "../../src/components/ui";
-import { colors, spacing, radius } from "../../src/theme";
+import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Goal = {

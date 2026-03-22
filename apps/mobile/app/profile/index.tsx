@@ -3,12 +3,12 @@ import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
-import { Button, Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
+import { Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
-import { colors, spacing, radius, shadows } from "../../src/theme";
+import { colors, spacing, radius } from "../../src/theme";
 
 type TabType = "basic" | "goals" | "sports" | "health" | "diet" | "cooking" | "lifestyle";
 

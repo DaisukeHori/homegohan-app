@@ -5,7 +5,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { Card, EmptyState, LoadingState, SectionHeader, StatCard } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
-import { colors, spacing, radius } from "../../../src/theme";
+import { colors, spacing } from "../../../src/theme";
 
 type DbStats = {
   tableCounts: Record<string, number>;

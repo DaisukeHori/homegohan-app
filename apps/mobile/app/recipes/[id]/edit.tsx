@@ -6,8 +6,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../../src/components/ui";
 import { Input } from "../../../src/components/ui/Input";
 import { getApi } from "../../../src/lib/api";
-import { colors, radius, spacing } from "../../../src/theme";
-import { typography } from "../../../src/theme/typography";
+import { colors, spacing } from "../../../src/theme";
 
 type RecipeDetail = {
   id: string;

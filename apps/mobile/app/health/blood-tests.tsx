@@ -48,7 +48,7 @@ export default function BloodTestsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [testDate, setTestDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [testDate, setTestDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; });
   const [facility, setFacility] = useState("");
   const [totalCholesterol, setTotalCholesterol] = useState("");
   const [ldl, setLdl] = useState("");

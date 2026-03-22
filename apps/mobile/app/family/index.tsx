@@ -3,7 +3,7 @@ import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 
-import { Button, Card, EmptyState, Input, ListItem, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
+import { Button, Card, Input, ListItem, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { colors, spacing } from "../../src/theme";

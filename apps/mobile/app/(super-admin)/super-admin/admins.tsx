@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
-import { Card, EmptyState, LoadingState, SectionHeader, StatusBadge } from "../../../src/components/ui";
+import { Card, EmptyState, LoadingState } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
 import { colors, spacing, radius } from "../../../src/theme";
 

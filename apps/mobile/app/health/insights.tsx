@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, EmptyState, LoadingState, PageHeader, StatCard, StatusBadge } from "../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../src/theme";
+import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Insight = {

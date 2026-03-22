@@ -3,7 +3,7 @@ import { Link, router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../../src/components/ui";
+import { Button, Card, EmptyState, LoadingState, PageHeader } from "../../../src/components/ui";
 import { removeRecipeFromCollection, type RecipeCollection } from "../../../src/lib/recipeCollections";
 import { supabase } from "../../../src/lib/supabase";
 import { colors, spacing } from "../../../src/theme";

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../src/theme";
+import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type HealthRecord = {

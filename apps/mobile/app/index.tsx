@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link, Redirect } from "expo-router";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
-import { Button, Card } from "../src/components/ui";
 import { colors, spacing, shadows, radius } from "../src/theme";
 import { useAuth } from "../src/providers/AuthProvider";
 

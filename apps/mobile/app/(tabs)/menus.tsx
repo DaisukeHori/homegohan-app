@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Button, Card, EmptyState, LoadingState, SectionHeader, StatusBadge } from "../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../src/theme";
+import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../src/components/ui";
+import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 const formatLocalDate = (date: Date): string => {

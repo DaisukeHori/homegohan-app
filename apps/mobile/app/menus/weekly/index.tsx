@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 
-import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, SectionHeader, StatusBadge } from "../../../src/components/ui";
+import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, StatusBadge } from "../../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";

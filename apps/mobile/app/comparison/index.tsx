@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 
-import { Button, Card, ChipSelector, EmptyState, LoadingState, PageHeader, SectionHeader, StatusBadge } from "../../src/components/ui";
+import { Button, Card, ChipSelector, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { colors, spacing } from "../../src/theme";
 

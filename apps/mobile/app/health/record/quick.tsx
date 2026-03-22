@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
-import { Button, Card, Input, PageHeader, SectionHeader } from "../../../src/components/ui";
+import { Button, Card, Input, PageHeader } from "../../../src/components/ui";
 import { colors, spacing, radius } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
@@ -24,7 +24,7 @@ const SLEEP_OPTIONS = [
 ];
 
 export default function HealthQuickRecordPage() {
-  const [recordDate, setRecordDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [recordDate, setRecordDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; });
   const [weight, setWeight] = useState("");
   const [moodScore, setMoodScore] = useState<number | null>(null);
   const [sleepQuality, setSleepQuality] = useState<number | null>(null);

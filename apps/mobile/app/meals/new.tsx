@@ -5,8 +5,8 @@ import { useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Button, Card, SectionHeader } from "../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../src/theme";
+import { Button, Card } from "../../src/components/ui";
+import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 
@@ -222,7 +222,7 @@ export default function MealNewPage() {
   async function pickFromLibrary() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("権限が必要です", "写真ライブラリへのアクセスを許可してください。"); return; }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsMultipleSelection: true, base64: true, quality: 0.8, selectionLimit: 4 });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"] as any, allowsMultipleSelection: true, base64: true, quality: 0.8, selectionLimit: 4 });
     if (res.canceled) return;
     const items = (res.assets || []).filter((a) => !!a.base64).map((a) => ({ uri: a.uri, base64: a.base64 as string, mimeType: (a as any).mimeType ?? "image/jpeg" }));
     setPhotos((prev) => [...prev, ...items]);
@@ -378,7 +378,7 @@ export default function MealNewPage() {
     try {
       const api = getApi();
       await api.post("/api/health/checkups", {
-        checkup_date: healthData.checkupDate || new Date().toISOString().split("T")[0],
+        checkup_date: healthData.checkupDate || (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(),
         facility_name: healthData.facilityName, height: healthData.height, weight: healthData.weight, bmi: healthData.bmi,
         blood_pressure_systolic: healthData.bloodPressureSystolic, blood_pressure_diastolic: healthData.bloodPressureDiastolic,
         hemoglobin: healthData.hemoglobin, hba1c: healthData.hba1c, fasting_glucose: healthData.fastingGlucose,

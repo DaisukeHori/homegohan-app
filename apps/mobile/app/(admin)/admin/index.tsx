@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Link, router } from "expo-router";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { Card, Button, SectionHeader, StatCard, LoadingState, EmptyState } from "../../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../../src/theme";
+import { colors, spacing, radius } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 
 type AdminStats = {

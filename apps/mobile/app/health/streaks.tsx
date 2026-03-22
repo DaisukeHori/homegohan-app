@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, SectionHeader, StatCard } from "../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../src/theme";
+import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type Streak = {
@@ -27,7 +27,7 @@ type StreakResponse = {
 };
 
 function toYmd(d: Date): string {
-  return d.toISOString().split("T")[0];
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export default function HealthStreaksPage() {

@@ -1,12 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { Input } from "../../src/components/ui/Input";
 import { getApi } from "../../src/lib/api";
-import { colors, radius, shadows, spacing } from "../../src/theme";
+import { colors, radius, spacing } from "../../src/theme";
 import { typography } from "../../src/theme/typography";
 
 type RecipeDetail = {

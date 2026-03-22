@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Image, ScrollView, Text, View } from "react-native";
 
-import { Button, Card, LoadingState, PageHeader, ProgressBar, SectionHeader, StatusBadge } from "../../src/components/ui";
-import { colors, spacing, radius, shadows } from "../../src/theme";
+import { Button, Card, LoadingState, PageHeader, SectionHeader, StatusBadge } from "../../src/components/ui";
+import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
 type PlannedMealDetail = {

@@ -5,7 +5,7 @@ import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, Input, LoadingState, SectionHeader } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
-import { colors, spacing, radius } from "../../../src/theme";
+import { colors, spacing } from "../../../src/theme";
 
 type SettingRow = {
   key: string;

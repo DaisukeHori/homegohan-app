@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+
 import { useEffect, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 

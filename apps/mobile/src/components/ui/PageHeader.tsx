@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { ReactNode } from 'react';
 import { Pressable, Text, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing, shadows } from '../../theme';
+import { colors, spacing } from '../../theme';
 
 type PageHeaderProps = {
   title: string;

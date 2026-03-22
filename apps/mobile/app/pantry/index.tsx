@@ -11,9 +11,9 @@ import { Input } from "../../src/components/ui/Input";
 import { LoadingState } from "../../src/components/ui/LoadingState";
 import { PageHeader } from "../../src/components/ui/PageHeader";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
-import { StatusBadge } from "../../src/components/ui/StatusBadge";
+
 import { getApi } from "../../src/lib/api";
-import { colors, radius, shadows, spacing } from "../../src/theme";
+import { colors, radius, spacing } from "../../src/theme";
 
 type PantryItem = {
   id: string;
@@ -137,12 +137,15 @@ export default function PantryPage() {
     return "other";
   }
 
-  const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
 
   function addDaysToDate(dateStr: string, days: number): string {
     const d = new Date(dateStr);
     d.setDate(d.getDate() + days);
-    return d.toISOString().split("T")[0];
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
 
   async function analyzeFridge() {
@@ -152,7 +155,7 @@ export default function PantryPage() {
       return;
     }
     const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       base64: true,
       quality: 0.8,
     });
