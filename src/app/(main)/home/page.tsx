@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
@@ -96,6 +96,9 @@ export default function HomePage() {
   const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
   const [checkinSubmitting, setCheckinSubmitting] = useState(false);
+  const [checkinFeedback, setCheckinFeedback] = useState<
+    { type: 'success' | 'error'; message: string } | null
+  >(null);
   const [checkinForm, setCheckinForm] = useState({
     sleepHours: 7,
     sleepQuality: 3,
@@ -103,6 +106,13 @@ export default function HomePage() {
     focus: 3,
     hunger: 3,
   });
+
+  // チェックインのフィードバックは数秒で自動的にフェードアウト
+  useEffect(() => {
+    if (!checkinFeedback) return;
+    const timer = setTimeout(() => setCheckinFeedback(null), 4000);
+    return () => clearTimeout(timer);
+  }, [checkinFeedback]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -408,6 +418,39 @@ export default function HomePage() {
         </div>
 
         {/* ========== Performance OS v3: 次の一手 + 30秒チェックイン ========== */}
+        {/* チェックイン送信後のフィードバック (Bug-9) */}
+        <AnimatePresence>
+          {checkinFeedback && (
+            <motion.div
+              key="checkin-feedback"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              role="status"
+              aria-live="polite"
+              data-testid="checkin-feedback"
+              className="mb-4 rounded-2xl p-3 flex items-center gap-2 border"
+              style={{
+                background:
+                  checkinFeedback.type === 'success'
+                    ? colors.successLight
+                    : '#FFEBEE',
+                borderColor:
+                  checkinFeedback.type === 'success'
+                    ? colors.success
+                    : colors.error,
+                color:
+                  checkinFeedback.type === 'success'
+                    ? colors.success
+                    : colors.error,
+              }}
+            >
+              <span className="text-sm font-bold">
+                {checkinFeedback.message}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         {(performanceAnalysis?.nextAction || !performanceAnalysis?.todayCheckin) && (
           <div className="mb-6">
             {/* 次の一手（分析が有効な場合） */}
@@ -525,6 +568,7 @@ export default function HomePage() {
                         <button
                           onClick={async () => {
                             setCheckinSubmitting(true);
+                            setCheckinFeedback(null);
                             const result = await submitPerformanceCheckin({
                               sleepHours: checkinForm.sleepHours,
                               sleepQuality: checkinForm.sleepQuality,
@@ -535,6 +579,15 @@ export default function HomePage() {
                             setCheckinSubmitting(false);
                             if (result.success) {
                               setShowCheckin(false);
+                              setCheckinFeedback({
+                                type: 'success',
+                                message: '✅ チェックインを保存しました！',
+                              });
+                            } else {
+                              setCheckinFeedback({
+                                type: 'error',
+                                message: '保存に失敗しました。再試行してください。',
+                              });
                             }
                           }}
                           disabled={checkinSubmitting}

@@ -325,7 +325,17 @@ export default function AIChatBubble() {
   }, []);
 
   // チャットを開く
-  const openChat = async () => {
+  // Bug-6: 隣接 UI からの誤クリックでチャットが意図せず開くのを防ぐため、
+  // event を受け取って stopPropagation し、既にモーダルが開いている場合は無視する。
+  const openChat = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (showDayMenuModal) {
+      // 別のモーダルが開いている間はチャットを開かない
+      return;
+    }
     setIsOpen(true);
     setHasUnread(false);
     const authenticated = await fetchSessions();
@@ -724,8 +734,11 @@ export default function AIChatBubble() {
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
             onClick={openChat}
+            type="button"
+            aria-label="AIアドバイザーを開く"
+            data-testid="ai-chat-floating-button"
             className="fixed bottom-24 right-4 z-[40] w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
-            style={{ 
+            style={{
               background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.warning} 100%)`,
             }}
           >
@@ -1176,7 +1189,13 @@ export default function AIChatBubble() {
 
               <div className="flex gap-2">
                 <button
-                  onClick={() => setShowDayMenuModal(false)}
+                  type="button"
+                  onClick={(e) => {
+                    // Bug-6: 「キャンセル」のクリックが背後の AI フローティングボタンへ
+                    // 伝播してチャットが開いてしまう事象を防ぐ
+                    e.stopPropagation();
+                    setShowDayMenuModal(false);
+                  }}
                   className="flex-1 py-3 rounded-xl"
                   style={{ background: colors.border, color: colors.textLight, fontSize: 14, fontWeight: 500 }}
                 >
