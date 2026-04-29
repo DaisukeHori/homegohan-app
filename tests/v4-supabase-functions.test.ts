@@ -141,16 +141,16 @@ describe("V4 Supabase Functions - step utils", () => {
       expect(computeMaxFixesForRange({ days: 7, issuesCount: 0 })).toBe(0);
     });
 
-    it("caps at 2 per 7 days (when issues are abundant)", () => {
-      expect(computeMaxFixesForRange({ days: 7, issuesCount: 999 })).toBe(2);
+    it("caps at 6 per 7 days (DEFAULT_STEP2_FIXES_PER_WEEK=6, when issues are abundant)", () => {
+      expect(computeMaxFixesForRange({ days: 7, issuesCount: 999 })).toBe(6);
     });
 
-    it("scales to 4 fixes for 14 days", () => {
-      expect(computeMaxFixesForRange({ days: 14, issuesCount: 999 })).toBe(4);
+    it("scales to 12 fixes for 14 days (2 weeks * 6/week, capped at DEFAULT_STEP2_MAX_FIXES_CAP=12)", () => {
+      expect(computeMaxFixesForRange({ days: 14, issuesCount: 999 })).toBe(12);
     });
 
-    it("scales to 10 fixes for 31 days", () => {
-      expect(computeMaxFixesForRange({ days: 31, issuesCount: 999 })).toBe(10);
+    it("scales to 12 fixes for 31 days (5 weeks * 6/week = 30, capped at DEFAULT_STEP2_MAX_FIXES_CAP=12)", () => {
+      expect(computeMaxFixesForRange({ days: 31, issuesCount: 999 })).toBe(12);
     });
 
     it("does not exceed issuesCount", () => {

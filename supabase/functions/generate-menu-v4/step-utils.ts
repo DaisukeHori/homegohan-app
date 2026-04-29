@@ -158,7 +158,7 @@ export function computeWeeksFromDays(days: number): number {
 
 /**
  * V3の「最大2件修正（週7日）」をV4の任意期間にスケールさせる。
- * 例: 31日 -> ceil(31/7)=5週 -> 10件（cap=12）
+ * 例: 31日 -> ceil(31/7)=5週 -> 5*6=30件 -> cap=12で上限12件
  */
 export function computeMaxFixesForRange(params: {
   days: number;
