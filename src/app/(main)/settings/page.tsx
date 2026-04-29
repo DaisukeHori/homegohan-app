@@ -244,7 +244,6 @@ export default function SettingsPage() {
              <button
                type="button"
                onClick={handleExportData}
-               aria-label="自分のデータを JSON でエクスポート"
                disabled={exporting}
                className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
              >
@@ -261,7 +260,6 @@ export default function SettingsPage() {
              <button
                type="button"
                onClick={handleTrainerShareInfo}
-               aria-label="トレーナーと共有について"
                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
              >
                <div className="flex items-center gap-3">
