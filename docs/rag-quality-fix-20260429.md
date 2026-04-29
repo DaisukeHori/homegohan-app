@@ -93,6 +93,32 @@ psql ... -c "REINDEX INDEX CONCURRENTLY public.idx_dataset_menu_sets_embedding_h
 | 親子丼 (recipes_hybrid) | 5 | 1.000 | 親子丼 |
 | 味噌汁 (recipes_hybrid) | 5 | 0.638 | とろろ味噌汁 |
 
+## End-to-End verification
+
+`generate-menu-v5` Edge Function を実際に呼び出して、修正後 RPC が本物のパイプラインで動くことを確認した。
+
+**手順:**
+1. テストユーザーを `auth.users` + `user_profiles` で作成
+2. `weekly_menu_requests` に「減塩の和食、子どもも食べられる夕食」のリクエストを INSERT (`mode=single_meal`, `target_meal_type=dinner`)
+3. `POST /functions/v1/generate-menu-v5` を SR_KEY で呼び出し → 202 processing
+4. 15 秒後にステータス確認 → `status=completed`, `current_step=3`, `error_message=null`
+5. `planned_meals` と `generated_data` を検証
+6. テストデータ全削除 (planned_meals 1件、user_daily_meals 1件、weekly_menu_requests 1件、user_profiles、auth.users)
+
+**結果:**
+
+- RAG が **24 件**の `dataset_menu_sets` を取得し、`referenceSummary` に主菜/副菜/汁物/主食/その他で分類して LLM へ渡された
+- 候補に「フライパン一つで揚げない鯖の甘酢あんかけ」「揚げない パンプキンコロッケ」「塩分控えめ かれいの煮付け」など、**減塩×子ども向けに即した献立**が並んだ
+- LLM が候補を参考に最終献立を組み上げた:
+  - **主菜**: フライパン一つで揚げない鯖の南蛮漬け
+  - **副菜**: 小松菜と油揚げの胡麻和え
+  - **副菜**: かぼちゃとひじきの煮物
+  - **AI解説**: 「減塩仕様で甘酸っぱい主菜と胡麻の風味豊かな副菜で子どもも喜ぶ献立です」
+  - 栄養: 911 kcal, 塩分 3.2 g
+- `planned_meals` テーブルに 1 件の dinner レコードが正しく保存された
+
+これは `search_menu_examples` 修正前なら 0 件返却で V5 がコンテキスト無しで生成するか即エラーで止まる可能性があったケースだが、**修正後は完全な生成パイプラインが 15 秒で完走**することを確認した。修正の RPC 戻り値型 (`vector(1024)`, `numeric→string`) が V5 / `reference-menu-utils.ts` / `template-catalog.ts` の `DatasetMenuSetRaw` 型契約と完全に一致していることも実走で証明された。
+
 ## Performance impact
 
 iterative scan を有効化しても実測レイテンシは ef=40 と同等（ネットワーク往復が支配的、HNSW probe 自体は数 ms オーダー）。`max_scan_tuples=20000` は最悪ケースの上限値で、通常クエリではここまで到達しない。
