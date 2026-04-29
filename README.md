@@ -50,6 +50,39 @@ npm run lint
 npm run mobile:start
 ```
 
+## テスト
+
+### ユニット / インテグレーション (Vitest)
+
+```bash
+npm run test
+```
+
+`tests/e2e/` は vitest の除外対象です (`vitest.config.ts` の `exclude` を参照)。
+
+### E2E (Playwright)
+
+ローカル (開発サーバー自動起動):
+
+```bash
+npm run test:e2e
+```
+
+既存サーバー・本番環境に対して実行する場合は `PLAYWRIGHT_BASE_URL` を指定します:
+
+```bash
+PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npm run test:e2e
+```
+
+E2E テスト用ユーザーの認証情報は環境変数 `E2E_USER_EMAIL` / `E2E_USER_PASSWORD` で渡します。  
+CI では GitHub Secrets に同名で登録してください。
+
+## CI
+
+`.github/workflows/e2e.yml` が PR (および手動トリガー) で Playwright E2E を実行します。  
+対象パス: `src/**`, `tests/e2e/**`, `playwright.config.ts`, `package.json`, `package-lock.json`。  
+レポートは `playwright-report` artifact として 14 日間保持されます。
+
 ## Notes
 
 - 認証・DB・Storage は Supabase を利用しています。
