@@ -1,6 +1,25 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+// いいね状態取得
+export async function GET(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const supabase = await createClient();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { data } = await supabase
+    .from('recipe_likes')
+    .select('user_id')
+    .eq('recipe_id', params.id)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  return NextResponse.json({ liked: !!data });
+}
+
 // いいね追加
 export async function POST(
   request: Request,

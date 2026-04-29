@@ -1617,6 +1617,8 @@ export default function WeeklyMenuPage() {
   // Recipe Modal
   const [selectedRecipe, setSelectedRecipe] = useState<string | null>(null);
   const [selectedRecipeData, setSelectedRecipeData] = useState<any>(null);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [isFavoriteLoading, setIsFavoriteLoading] = useState(false);
   
   // AI Preview
   const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
@@ -1658,6 +1660,19 @@ export default function WeeklyMenuPage() {
   const [imageReferencePreviews, setImageReferencePreviews] = useState<string[]>([]);
   const [isGeneratingMealImage, setIsGeneratingMealImage] = useState(false);
   const imageGenerateInputRef = useRef<HTMLInputElement>(null);
+
+  // レシピモーダルが開いたとき、お気に入り状態を取得
+  useEffect(() => {
+    if (!selectedRecipe) {
+      setIsFavorite(false);
+      return;
+    }
+    const encodedId = encodeURIComponent(selectedRecipe);
+    fetch(`/api/recipes/${encodedId}/like`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data) setIsFavorite(data.liked); })
+      .catch(() => {/* 取得失敗は無視 */});
+  }, [selectedRecipe]);
 
   const openAddMealModal = (mealType: MealType, dayIndex: number) => {
     setAddMealKey(mealType);
@@ -3088,6 +3103,27 @@ export default function WeeklyMenuPage() {
           : i
       ));
     });
+  };
+
+  // お気に入りトグル (楽観的更新 + 失敗時ロールバック)
+  const handleToggleFavorite = async () => {
+    if (!selectedRecipe || isFavoriteLoading) return;
+    const prev = isFavorite;
+    setIsFavorite(!prev);
+    setIsFavoriteLoading(true);
+    try {
+      const encodedId = encodeURIComponent(selectedRecipe);
+      const method = prev ? 'DELETE' : 'POST';
+      const res = await fetch(`/api/recipes/${encodedId}/like`, { method });
+      if (!res.ok) {
+        // rollback
+        setIsFavorite(prev);
+      }
+    } catch {
+      setIsFavorite(prev);
+    } finally {
+      setIsFavoriteLoading(false);
+    }
   };
 
   // Add recipe ingredients to shopping list
@@ -6342,8 +6378,20 @@ export default function WeeklyMenuPage() {
                   </div>
                 </div>
                 <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <Heart size={18} color={colors.textMuted} />
+                  <button
+                    onClick={handleToggleFavorite}
+                    disabled={isFavoriteLoading}
+                    aria-pressed={isFavorite}
+                    aria-label={isFavorite ? 'お気に入りから削除' : 'お気に入りに追加'}
+                    className="w-11 h-11 rounded-full flex items-center justify-center transition-colors active:scale-95 transition-transform"
+                    style={{ background: isFavorite ? '#FFF0F0' : colors.bg }}
+                    data-testid="favorite-button"
+                  >
+                    <Heart
+                      size={18}
+                      color={isFavorite ? '#FF6B6B' : colors.textMuted}
+                      fill={isFavorite ? '#FF6B6B' : 'none'}
+                    />
                   </button>
                   <button
                     onClick={addRecipeToShoppingList}
