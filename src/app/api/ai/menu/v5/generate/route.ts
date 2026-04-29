@@ -1,10 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { waitUntil } from '@vercel/functions';
 import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
-import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
-import { markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { createLogger } from '@/lib/db-logger';
 import type {
   TargetSlot,
@@ -89,7 +86,7 @@ function getTodayStr(): string {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
 }
 
-export const maxDuration = 300;
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -144,7 +141,6 @@ export async function POST(request: Request) {
       const foundIds = new Set((plannedMeals || []).map((meal) => meal.id));
       const missing = plannedMealIds.filter((id) => !foundIds.has(id));
       if (missing.length > 0) {
-        // plannedMealId が見つからない場合はクリアして新規作成パスに進む
         console.warn(`[v5/generate] ${missing.length} plannedMealId(s) not found, clearing: ${missing.join(', ')}`);
         for (const slot of plannedSlots) {
           if (slot.plannedMealId && missing.includes(slot.plannedMealId)) {
@@ -241,13 +237,28 @@ export async function POST(request: Request) {
       ? (body.constraints as MenuGenerationConstraints)
       : {};
 
+    // バックグラウンドジョブとしてキューに追加し、即座に requestId を返す
+    const params = {
+      userId: user.id,
+      requestId: null as string | null, // INSERT 後に取得
+      targetSlots,
+      existingMenus,
+      fridgeItems,
+      userProfile,
+      seasonalContext,
+      constraints,
+      note: body?.note || null,
+      familySize: toOptionalInt(body?.familySize) ?? userProfile.family_size ?? 1,
+      ultimateMode: Boolean(body?.ultimateMode),
+    };
+
     const { data: requestData, error: insertError } = await supabase
       .from('weekly_menu_requests')
       .insert({
         user_id: user.id,
         start_date: startDate,
         mode: 'v5',
-        status: 'processing',
+        status: 'queued',
         current_step: 1,
         prompt: body?.note || '',
         constraints,
@@ -255,8 +266,9 @@ export async function POST(request: Request) {
         progress: {
           currentStep: 0,
           totalSteps: targetSlots.length,
-          message: 'V5 generation started',
+          message: '生成キューに追加しました',
         },
+        generated_data: { ...params, requestId: undefined },
       })
       .select('id')
       .single();
@@ -265,45 +277,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: insertError?.message || 'Failed to create request' }, { status: 500 });
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    // generated_data に requestId を埋め込む
+    await supabase
+      .from('weekly_menu_requests')
+      .update({ generated_data: { ...params, requestId: requestData.id } })
+      .eq('id', requestData.id);
 
-    const invokeResult = await callGenerateMenuV5WithRetry({
-      supabaseUrl,
-      serviceRoleKey,
-      payload: {
-        userId: user.id,
+    return NextResponse.json(
+      {
+        status: 'queued',
+        message: '献立生成をキューに追加しました',
         requestId: requestData.id,
-        targetSlots,
-        existingMenus,
-        fridgeItems,
-        userProfile,
-        seasonalContext,
-        constraints,
-        note: body?.note || null,
-        familySize: toOptionalInt(body?.familySize) ?? userProfile.family_size ?? 1,
-        ultimateMode: Boolean(body?.ultimateMode),
+        totalSlots: targetSlots.length,
       },
-    });
-
-    if (!invokeResult.ok) {
-      await markWeeklyMenuRequestFailed({
-        supabase,
-        requestId: requestData.id,
-        errorMessage: invokeResult.errorMessage,
-      });
-      return NextResponse.json({ error: invokeResult.errorMessage }, { status: 500 });
-    }
-
-    waitUntil(invokeResult.response.text().then(() => {}));
-
-    return NextResponse.json({
-      status: 'processing',
-      message: 'V5 generation started',
-      requestId: requestData.id,
-      totalSlots: targetSlots.length,
-      attempts: invokeResult.attempts,
-    });
+      { status: 202 },
+    );
   } catch (error: any) {
     console.error('V5 API error', error);
     const logger = _userId

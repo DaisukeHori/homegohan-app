@@ -21,15 +21,15 @@ export async function GET(request: Request) {
     console.log('🔍 Pending check - input date:', date);
     console.log('🔍 Pending check - user_id:', user.id);
 
-    // ユーザーの最新の pending または processing の週間生成リクエストを確認
+    // ユーザーの最新の queued / pending / processing の週間生成リクエストを確認
     // start_date に関係なく、最新のリクエストを返す（リロード時の復元を確実にするため）
-    // mode='weekly', mode='v4', mode=null のすべてを対象
+    // mode='weekly', mode='v4', mode='v5', mode=null のすべてを対象
     const { data: pendingRequest, error } = await supabase
       .from('weekly_menu_requests')
       .select('id, status, mode, start_date, created_at, updated_at')
       .eq('user_id', user.id)
-      .or('mode.eq.weekly,mode.eq.v4,mode.is.null')
-      .in('status', ['pending', 'processing'])
+      .or('mode.eq.weekly,mode.eq.v4,mode.eq.v5,mode.is.null')
+      .in('status', ['queued', 'pending', 'processing'])
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
@@ -46,7 +46,8 @@ export async function GET(request: Request) {
       const updatedAt = pendingRequest.updated_at ? new Date(pendingRequest.updated_at) : null;
       const createdAt = pendingRequest.created_at ? new Date(pendingRequest.created_at) : null;
       const lastTouched = updatedAt ?? createdAt ?? null;
-      const isStale = lastTouched ? lastTouched < staleBefore : true;
+      // queued は cron が 1 分ごとに処理するため stale 判定から除外する
+      const isStale = pendingRequest.status !== 'queued' && (lastTouched ? lastTouched < staleBefore : true);
 
       if (isStale) {
         // stale リクエストを failed に更新

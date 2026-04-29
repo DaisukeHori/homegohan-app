@@ -36,6 +36,7 @@ export async function GET(request: Request) {
     }
 
     const updatedAt = request.updated_at ? new Date(request.updated_at) : null;
+    // queued は cron が 1 分ごとに処理するため stale 判定から除外する
     const isStale = (request.status === 'pending' || request.status === 'processing')
       && updatedAt
       && updatedAt < staleBefore;
@@ -66,6 +67,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       status: request.status,
       errorMessage: request.error_message,
+      error_message: request.error_message,
       updatedAt: request.updated_at,
       progress: request.progress,
     });

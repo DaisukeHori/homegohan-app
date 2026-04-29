@@ -861,6 +861,10 @@ export default function WeeklyMenuPage() {
     completedSlots?: number;
     isUltimateMode?: boolean;
   } | null>(null);
+  // 生成失敗時のエラーモーダル状態
+  const [generationFailedError, setGenerationFailedError] = useState<string | null>(null);
+  // 失敗時のリトライ用リクエスト ID（DB から再 INSERT するのではなく、再エンキュー）
+  const [generationFailedRequestId, setGenerationFailedRequestId] = useState<string | null>(null);
 
   // Meal Plan再取得関数（キャッシュも更新）
   const refreshMealPlan = useCallback(async () => {
@@ -2133,7 +2137,8 @@ export default function WeeklyMenuPage() {
           localStorage.removeItem('singleMealGenerating');
           cleanupPolling();
           cleanupRealtime();
-          alert('献立の生成に失敗しました。もう一度お試しください。');
+          setGenerationFailedError(data.error_message || '献立の生成に失敗しました。もう一度お試しください。');
+          setGenerationFailedRequestId(requestId);
         }
       } catch (e) {
         console.error('Polling error:', e);
@@ -2230,9 +2235,10 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
-              alert('献立の生成に失敗しました。もう一度お試しください。');
+              setGenerationFailedError((newData as any).error_message || '献立の生成に失敗しました。もう一度お試しください。');
+              setGenerationFailedRequestId(requestId);
             }
-            // status === 'pending' or 'processing' の場合は継続して監視
+            // status === 'queued' / 'pending' / 'processing' の場合は継続して監視
           } catch (err) {
             console.error('❌ Realtime handler error:', err);
           }
@@ -4956,6 +4962,44 @@ export default function WeeklyMenuPage() {
 
       {/* === Profile Reminder Banner === */}
       <ProfileReminderBanner />
+
+      {/* === 生成失敗エラーモーダル === */}
+      {generationFailedError && (
+        <div
+          data-testid="generation-failed-modal"
+          className="mx-3 mt-2 px-3.5 py-3 rounded-xl flex flex-col gap-2"
+          style={{ background: colors.card, border: `1px solid ${colors.border}` }}
+        >
+          <div className="flex items-center gap-2">
+            <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>献立生成に失敗しました</span>
+          </div>
+          <p style={{ fontSize: 12, color: colors.textMuted }}>{generationFailedError}</p>
+          <div className="flex gap-2 mt-1">
+            <button
+              data-testid="generation-retry-button"
+              onClick={() => {
+                setGenerationFailedError(null);
+                setGenerationFailedRequestId(null);
+                setShowV4Modal(true);
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+              style={{ background: colors.accent, color: '#fff' }}
+            >
+              もう一度試す
+            </button>
+            <button
+              onClick={() => {
+                setGenerationFailedError(null);
+                setGenerationFailedRequestId(null);
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs"
+              style={{ background: colors.border, color: colors.text }}
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* === AI Banner === */}
       {isGenerating ? (
