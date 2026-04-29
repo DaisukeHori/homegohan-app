@@ -104,22 +104,42 @@ export default function SignupPage() {
         <form onSubmit={handleEmailSignup} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email">メールアドレス</Label>
-            <Input 
-              id="email" 
+            <Input
+              id="email"
               name="email"
-              type="email" 
-              placeholder="name@example.com" 
+              type="email"
+              placeholder="name@example.com"
               required
+              onInvalid={(e) => {
+                const target = e.target as HTMLInputElement;
+                if (target.validity.valueMissing) {
+                  target.setCustomValidity('メールアドレスを入力してください');
+                } else if (target.validity.typeMismatch) {
+                  target.setCustomValidity('メールアドレスの形式が正しくありません');
+                } else {
+                  target.setCustomValidity('');
+                }
+              }}
+              onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
               className="py-6 rounded-xl border-gray-200 focus:ring-2 focus:ring-[#FF8A65]/20 focus:border-[#FF8A65] transition-all"
             />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">パスワード</Label>
-            <Input 
-              id="password" 
+            <Input
+              id="password"
               name="password"
-              type="password" 
+              type="password"
               required
+              onInvalid={(e) => {
+                const target = e.target as HTMLInputElement;
+                if (target.validity.valueMissing) {
+                  target.setCustomValidity('パスワードを入力してください');
+                } else {
+                  target.setCustomValidity('');
+                }
+              }}
+              onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
               className="py-6 rounded-xl border-gray-200 focus:ring-2 focus:ring-[#FF8A65]/20 focus:border-[#FF8A65] transition-all"
             />
           </div>

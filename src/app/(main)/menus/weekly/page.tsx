@@ -6124,10 +6124,10 @@ export default function WeeklyMenuPage() {
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '80vh' }}
+                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl overflow-hidden"
+                style={{ background: colors.card, maxHeight: '90vh' }}
               >
-                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <div className="flex items-center gap-2">
                     <BookOpen size={18} color={colors.accent} />
                     <span style={{ fontSize: 15, fontWeight: 600 }}>{selectedRecipe}</span>
@@ -6136,7 +6136,7 @@ export default function WeeklyMenuPage() {
                     <X size={14} color={colors.textLight} />
                   </button>
                 </div>
-                <div className="flex-1 p-4 overflow-auto">
+                <div className="flex-1 min-h-0 p-4 overflow-y-auto">
                   {/* 基本情報 */}
                   <div className="flex flex-wrap gap-3 mb-4">
                     {selectedRecipeData?.role && (
@@ -6278,12 +6278,12 @@ export default function WeeklyMenuPage() {
                     })()}
                   </div>
                 </div>
-                <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+                <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}` }}>
                   <button className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
                     <Heart size={18} color={colors.textMuted} />
                   </button>
-                  <button 
-                    onClick={addRecipeToShoppingList} 
+                  <button
+                    onClick={addRecipeToShoppingList}
                     className="flex-1 p-3 rounded-xl font-semibold text-[14px] flex items-center justify-center gap-2 active:scale-95 transition-transform" 
                     style={{ background: colors.accent, color: '#fff' }}
                   >
