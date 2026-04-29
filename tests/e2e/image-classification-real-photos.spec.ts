@@ -67,7 +67,7 @@ const STEP_HEADINGS: Record<string, string> = {
 };
 
 for (const sample of SAMPLES) {
-  test(`auto classify (real): ${sample.note} → ${sample.expectedStep}`, async ({ authedPage }) => {
+  test(`auto classify (real): ${sample.note} [${sample.file}] → ${sample.expectedStep}`, async ({ authedPage }) => {
     test.setTimeout(120_000);
 
     // 1. /meals/new に移動
