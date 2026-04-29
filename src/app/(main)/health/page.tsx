@@ -337,11 +337,12 @@ export default function HealthDashboardPage() {
             </div>
             <div className="grid grid-cols-3 gap-3">
               {/* 体重 */}
-              <div 
+              <div
                 className="p-3 rounded-xl text-center"
                 style={{ backgroundColor: colors.bg }}
               >
-                <Scale size={20} className="mx-auto mb-1" style={{ color: colors.accent }} />
+                <Scale size={20} className="mx-auto mb-1" style={{ color: colors.accent }} aria-hidden="true" />
+                <p className="text-xs font-medium mb-0.5" style={{ color: colors.textMuted }}>体重</p>
                 <p className="text-lg font-bold" style={{ color: colors.text }}>
                   {todayRecord.weight || '-'}
                 </p>
@@ -364,19 +365,20 @@ export default function HealthDashboardPage() {
               </div>
 
               {/* 気分 */}
-              <div 
+              <div
                 className="p-3 rounded-xl text-center"
                 style={{ backgroundColor: colors.bg }}
               >
                 {todayRecord.mood_score ? (
                   <>
                     {todayRecord.mood_score >= 4 ? (
-                      <Smile size={20} className="mx-auto mb-1" style={{ color: colors.success }} />
+                      <Smile size={20} className="mx-auto mb-1" style={{ color: colors.success }} aria-hidden="true" />
                     ) : todayRecord.mood_score <= 2 ? (
-                      <Frown size={20} className="mx-auto mb-1" style={{ color: colors.error }} />
+                      <Frown size={20} className="mx-auto mb-1" style={{ color: colors.error }} aria-hidden="true" />
                     ) : (
-                      <Meh size={20} className="mx-auto mb-1" style={{ color: colors.warning }} />
+                      <Meh size={20} className="mx-auto mb-1" style={{ color: colors.warning }} aria-hidden="true" />
                     )}
+                    <p className="text-xs font-medium mb-0.5" style={{ color: colors.textMuted }}>気分</p>
                     <p className="text-lg font-bold" style={{ color: colors.text }}>
                       {todayRecord.mood_score}
                     </p>
@@ -384,24 +386,28 @@ export default function HealthDashboardPage() {
                   </>
                 ) : (
                   <>
-                    <Meh size={20} className="mx-auto mb-1" style={{ color: colors.textMuted }} />
+                    <Meh size={20} className="mx-auto mb-1" style={{ color: colors.textMuted }} aria-hidden="true" />
+                    <p className="text-xs font-medium mb-0.5" style={{ color: colors.textMuted }}>気分</p>
                     <p className="text-lg font-bold" style={{ color: colors.textMuted }}>-</p>
-                    <p className="text-xs" style={{ color: colors.textMuted }}>気分</p>
+                    <p className="text-xs" style={{ color: colors.textMuted }}>未記録</p>
                   </>
                 )}
               </div>
 
               {/* 睡眠 */}
-              <div 
+              <div
                 className="p-3 rounded-xl text-center"
                 style={{ backgroundColor: colors.bg }}
               >
-                <Moon size={20} className="mx-auto mb-1" style={{ color: colors.purple }} />
+                <Moon size={20} className="mx-auto mb-1" style={{ color: colors.purple }} aria-hidden="true" />
+                <p className="text-xs font-medium mb-0.5" style={{ color: colors.textMuted }}>
+                  {todayRecord.sleep_hours ? '睡眠時間' : '睡眠の質'}
+                </p>
                 <p className="text-lg font-bold" style={{ color: colors.text }}>
                   {todayRecord.sleep_hours || todayRecord.sleep_quality || '-'}
                 </p>
                 <p className="text-xs" style={{ color: colors.textMuted }}>
-                  {todayRecord.sleep_hours ? '時間' : todayRecord.sleep_quality ? '/ 5' : '睡眠'}
+                  {todayRecord.sleep_hours ? '時間' : todayRecord.sleep_quality ? '/ 5' : '未記録'}
                 </p>
               </div>
             </div>

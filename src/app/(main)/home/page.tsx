@@ -887,8 +887,8 @@ export default function HomePage() {
               <div className="space-y-2">
                 <div className="flex justify-between items-center p-2.5 rounded-lg" style={{ background: colors.accentLight }}>
                   <div className="flex items-center gap-2">
-                    <Flame size={14} color={colors.accent} />
-                    <span className="text-xs font-medium text-gray-600">カロリー</span>
+                    <Flame size={14} color={colors.accent} aria-hidden="true" />
+                    <span className="text-xs font-medium text-gray-600">今日の献立合計</span>
                   </div>
                   <span className="text-sm font-bold" style={{ color: colors.accent }}>{dailySummary.totalCalories} kcal</span>
                 </div>

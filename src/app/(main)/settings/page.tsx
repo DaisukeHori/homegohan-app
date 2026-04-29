@@ -75,6 +75,45 @@ export default function SettingsPage() {
     setSettings(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const [exporting, setExporting] = useState(false);
+  const handleExportData = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await fetch('/api/account/export', { method: 'GET' });
+      if (!res.ok) {
+        if (res.status === 401) {
+          router.push('/login');
+          return;
+        }
+        throw new Error(`Export failed: ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const today = new Date().toISOString().slice(0, 10);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `homegohan-export-${today}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert('エクスポートに失敗しました。時間をおいて再度お試しください。');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleTrainerShareInfo = () => {
+    alert(
+      'トレーナー連携機能は近日公開予定です。\n' +
+      '現状、データシェア設定の ON/OFF は記録のみで、外部共有は行っていません。\n' +
+      '正式リリースまで今しばらくお待ちください。'
+    );
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push('/login');
@@ -202,27 +241,38 @@ export default function SettingsPage() {
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">データとプライバシー</h2>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
              
-             <button className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors">
+             <button
+               type="button"
+               onClick={handleExportData}
+               aria-label="自分のデータを JSON でエクスポート"
+               disabled={exporting}
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+             >
                <div className="flex items-center gap-3">
-                 <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-green-500">☁️</div>
+                 <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-green-500" aria-hidden="true">☁️</div>
                  <div className="text-left">
-                   <span className="font-bold text-gray-700">データをエクスポート</span>
-                   <p className="text-xs text-gray-400">CSV, JSON, PDF形式で出力</p>
+                   <span className="font-bold text-gray-700">{exporting ? 'エクスポート中…' : 'データをエクスポート'}</span>
+                   <p className="text-xs text-gray-400">JSON 形式（GDPR データポータビリティ対応）</p>
                  </div>
                </div>
-               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
 
-             <div className="flex items-center justify-between p-4">
+             <button
+               type="button"
+               onClick={handleTrainerShareInfo}
+               aria-label="トレーナーと共有について"
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
                <div className="flex items-center gap-3">
-                 <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500">📊</div>
-                 <div>
-                   <span className="font-bold text-gray-700">トレーナーと共有</span>
-                   <p className="text-xs text-gray-400">栄養士やジムと連携</p>
+                 <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500" aria-hidden="true">📊</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">トレーナーと共有（準備中）</span>
+                   <p className="text-xs text-gray-400">栄養士やジムと連携・近日公開予定</p>
                  </div>
                </div>
-               <Switch checked={settings.dataShare} onChange={() => toggle('dataShare')} />
-             </div>
+               <span className="text-xs text-gray-400">{settings.dataShare ? '記録ON' : '記録OFF'}</span>
+             </button>
 
           </div>
         </div>
