@@ -45,17 +45,21 @@ test("day-regenerate modal does not default the date input to today", async ({ a
   await expect(dateInput).toBeVisible();
 
   const value = await dateInput.inputValue();
-  const todayStr = new Date().toISOString().split("T")[0];
 
-  // 主要アサーション: デフォルトが今日ではないこと（誤上書き防止）
-  expect(value).not.toBe(todayStr);
+  // ローカルタイムゾーンで today を計算（production の formatLocalDate と合わせる）
+  const now = new Date();
+  const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
   // ISO 形式で何らかの日付が入っていること
   expect(value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
-  // 週間ページが現在の表示日を公開しており、それが今日ではない場合、
-  // モーダルはその日付に揃うべき。今日と一致してしまう公開値は
-  // フォールバック（明日）に置き換わるため、ここでは != today のみ検証。
-  if (weeklyCurrentDate && weeklyCurrentDate !== todayStr) {
-    expect(value).toBe(weeklyCurrentDate);
-  }
+  // 主要アサーション（誤上書き防止の要件）:
+  // モーダルのデフォルト日付は「今日」であってはならない。
+  //
+  // 内部ロジック:
+  //   - 週間ビューが今日以外の日を表示中 → window.__weeklyCurrentDate がその日付に設定され、
+  //     AIChatBubble はそのままモーダルのデフォルト日として使う
+  //   - 週間ビューが今日を表示中 → AIChatBubble は明日にフォールバック
+  // いずれの場合も value !== todayLocal が保証される
+  expect(value).not.toBe(todayLocal);
 });

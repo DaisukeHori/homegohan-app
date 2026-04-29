@@ -8,13 +8,27 @@ import { test, expect } from "./fixtures/auth";
 
 test("health page today's record cards have visible labels (or empty-state CTA)", async ({ authedPage }) => {
   await authedPage.goto("/health");
-  // データありユーザー: 3カード (体重/気分/睡眠) のラベルが見える
+  // データありユーザー: 「今日の記録」見出し + 3カード (体重/気分/睡眠) のラベルが見える
   // データなしユーザー: 「今日の記録をつける」CTA が見える
-  // どちらにせよ「今日の記録」見出しは必ず見える
-  await expect(authedPage.getByRole("heading", { name: "今日の記録" })).toBeVisible({ timeout: 15_000 });
-
+  // 「今日の記録」見出しは todayRecord がある場合のみ描画されるため、必須とは扱わない
   const weightLabel = authedPage.getByText("体重", { exact: true });
   const ctaButton = authedPage.getByText("今日の記録をつける", { exact: true });
+
+  // ページが安定するまで待機（見出しか CTA のどちらかが出現するまで）
+  await authedPage
+    .waitForFunction(
+      () =>
+        document.querySelector('[class*="font-semibold"]')?.textContent?.includes("今日の記録") ||
+        Array.from(document.querySelectorAll("p,button")).some(
+          (el) => el.textContent?.trim() === "今日の記録をつける",
+        ),
+      undefined,
+      { timeout: 15_000 },
+    )
+    .catch(() => {
+      // タイムアウトしてもテスト本体を続行（下の isVisible で判定する）
+    });
+
   const hasData = await weightLabel.first().isVisible({ timeout: 1_500 }).catch(() => false);
 
   if (hasData) {
