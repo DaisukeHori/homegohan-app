@@ -153,7 +153,30 @@ export default function AIChatBubble() {
   const [showMessageMenu, setShowMessageMenu] = useState<string | null>(null);
   const [isClosingSession, setIsClosingSession] = useState(false);
   const [showDayMenuModal, setShowDayMenuModal] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  // Bug-5 (#21): Default to the date currently displayed on the weekly menu
+  // page (published via window.__weeklyCurrentDate). If unavailable, fall back
+  // to *tomorrow* rather than today to avoid silently overwriting today's
+  // existing menu when the user opens this modal for a future day.
+  const computeDefaultDayMenuDate = (): string => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (typeof window !== 'undefined') {
+      const fromWeekly = (window as any).__weeklyCurrentDate;
+      if (typeof fromWeekly === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fromWeekly)) {
+        if (fromWeekly !== todayStr) return fromWeekly;
+      }
+    }
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  };
+  const [selectedDate, setSelectedDate] = useState<string>(() => computeDefaultDayMenuDate());
+
+  // Recompute default whenever the modal is opened, so it picks up the
+  // latest currently-displayed date from the weekly page.
+  const openDayMenuModal = () => {
+    setSelectedDate(computeDefaultDayMenuDate());
+    setShowDayMenuModal(true);
+  };
   const [v4Progress, setV4Progress] = useState<string | null>(null);
 
   // V4 献立生成フック
@@ -1030,7 +1053,7 @@ export default function AIChatBubble() {
                 style={{ background: colors.card, borderColor: colors.border }}
               >
                 <button
-                  onClick={() => setShowDayMenuModal(true)}
+                  onClick={openDayMenuModal}
                   disabled={isSending || isGeneratingDayMenu}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border whitespace-nowrap hover:bg-gray-50 transition-colors"
                   style={{ borderColor: colors.primary, opacity: (isSending || isGeneratingDayMenu) ? 0.5 : 1 }}

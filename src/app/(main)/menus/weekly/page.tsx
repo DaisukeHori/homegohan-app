@@ -2214,7 +2214,23 @@ export default function WeeklyMenuPage() {
     const idx = weekDates.findIndex(d => d.dateStr === todayStr);
     if (idx !== -1) setSelectedDayIndex(idx);
   }, [weekStart]);
-  
+
+  // Bug-5 (#21): Publish currently displayed date so the AI chat bubble's
+  // "1日献立変更" modal can default to it instead of always defaulting to today
+  // (which risks overwriting today's existing menu when the user actually
+  // wanted to regenerate a future day).
+  useEffect(() => {
+    const dateStr = weekDates[selectedDayIndex]?.dateStr;
+    if (typeof window !== 'undefined' && dateStr) {
+      (window as any).__weeklyCurrentDate = dateStr;
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        try { delete (window as any).__weeklyCurrentDate; } catch { /* noop */ }
+      }
+    };
+  }, [selectedDayIndex, weekDates]);
+
   // Fetch AI hint when stats change
   useEffect(() => {
     if (currentPlan?.days && currentPlan.days.length > 0) {
