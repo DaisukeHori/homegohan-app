@@ -8,8 +8,28 @@ import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+// パスワード強度バリデーション
+// 要件: 8文字以上 / 英字を含む / 数字を含む
+function validatePassword(password: string): string | null {
+  if (!password) {
+    return 'パスワードを入力してください';
+  }
+  if (password.length < 8) {
+    return 'パスワードは8文字以上で入力してください';
+  }
+  if (!/[A-Za-z]/.test(password)) {
+    return 'パスワードには英字を含めてください';
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'パスワードには数字を含めてください';
+  }
+  return null;
+}
+
 export default function SignupPage() {
   const [isLoading, setIsLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const router = useRouter();
   const supabase = createClient();
 
@@ -33,10 +53,20 @@ export default function SignupPage() {
 
   const handleEmailSignup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setIsLoading(true);
+    setFormError(null);
     const formData = new FormData(e.currentTarget);
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
+
+    // クライアント側でパスワード強度をチェック (Bug-33)
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setPasswordError(pwdError);
+      return;
+    }
+    setPasswordError(null);
+
+    setIsLoading(true);
 
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -49,7 +79,12 @@ export default function SignupPage() {
 
       if (error) {
         console.error('Signup error:', error);
-        alert(`登録に失敗しました: ${error.message}`);
+        // Supabase エラーを日本語化してインライン表示
+        const messages: Record<string, string> = {
+          'Password should be at least 6 characters.': 'パスワードは8文字以上で入力してください',
+          'User already registered': 'このメールアドレスは既に登録されています',
+        };
+        setFormError(messages[error.message] ?? `登録に失敗しました: ${error.message}`);
         return;
       }
 
@@ -63,9 +98,18 @@ export default function SignupPage() {
       }
     } catch (error: any) {
       console.error('Signup error:', error);
-      alert(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
+      setFormError(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handlePasswordInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // ユーザーが修正中のエラー消去 (入力に応じて再評価して即時フィードバック)
+    const value = e.target.value;
+    if (passwordError) {
+      const next = validatePassword(value);
+      setPasswordError(next);
     }
   };
 
@@ -131,6 +175,8 @@ export default function SignupPage() {
               name="password"
               type="password"
               required
+              aria-invalid={passwordError ? 'true' : 'false'}
+              aria-describedby={passwordError ? 'password-error' : 'password-hint'}
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
                 if (target.validity.valueMissing) {
@@ -139,10 +185,31 @@ export default function SignupPage() {
                   target.setCustomValidity('');
                 }
               }}
-              onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-              className="py-6 rounded-xl border-gray-200 focus:ring-2 focus:ring-[#FF8A65]/20 focus:border-[#FF8A65] transition-all"
+              onInput={(e) => {
+                (e.target as HTMLInputElement).setCustomValidity('');
+                handlePasswordInput(e as unknown as React.ChangeEvent<HTMLInputElement>);
+              }}
+              className={`py-6 rounded-xl focus:ring-2 transition-all ${
+                passwordError
+                  ? 'border-red-400 focus:ring-red-200 focus:border-red-500'
+                  : 'border-gray-200 focus:ring-[#FF8A65]/20 focus:border-[#FF8A65]'
+              }`}
             />
+            {passwordError ? (
+              <p id="password-error" role="alert" className="text-xs text-red-600 font-medium">
+                {passwordError}
+              </p>
+            ) : (
+              <p id="password-hint" className="text-xs text-gray-400">
+                8文字以上、英字と数字を含めてください
+              </p>
+            )}
           </div>
+          {formError && (
+            <p role="alert" className="text-sm text-red-600 font-medium bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+              {formError}
+            </p>
+          )}
           <Button 
             type="submit"
             disabled={isLoading}

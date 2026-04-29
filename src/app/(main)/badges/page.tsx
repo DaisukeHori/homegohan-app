@@ -45,6 +45,7 @@ export default function BadgesPage() {
   const [loading, setLoading] = useState(true);
   const [earnedCount, setEarnedCount] = useState(0);
   const [newEarned, setNewEarned] = useState(false);
+  const [selectedBadge, setSelectedBadge] = useState<BadgeWithStatus | null>(null);
 
   useEffect(() => {
     const fetchBadges = async () => {
@@ -149,38 +150,127 @@ export default function BadgesPage() {
       ) : (
         <div className="px-6 grid grid-cols-2 md:grid-cols-3 gap-4">
           {badges.map((badge, i) => (
-            <motion.div
+            <motion.button
               key={badge.code}
+              type="button"
+              onClick={() => setSelectedBadge(badge)}
+              aria-label={`${badge.name} の詳細を見る`}
+              data-testid="badge-card"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: i * 0.05 }}
-              className={`aspect-square rounded-3xl p-4 flex flex-col items-center justify-center text-center relative overflow-hidden group transition-all duration-300 ${
-                badge.earned 
-                  ? 'bg-white shadow-md border border-gray-50 hover:shadow-lg hover:-translate-y-1' 
-                  : 'bg-gray-100 opacity-60'
+              className={`aspect-square rounded-3xl p-4 flex flex-col items-center justify-center text-center relative overflow-hidden group transition-all duration-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#FF8A65]/40 ${
+                badge.earned
+                  ? 'bg-white shadow-md border border-gray-50 hover:shadow-lg hover:-translate-y-1'
+                  : 'bg-gray-100 opacity-60 hover:opacity-80'
               }`}
             >
               {badge.earned && (
-                 <div className="absolute inset-0 bg-gradient-to-tr from-orange-50 to-transparent opacity-50" />
+                 <div className="absolute inset-0 bg-gradient-to-tr from-orange-50 to-transparent opacity-50 pointer-events-none" />
               )}
 
               <div className={`text-5xl mb-4 transition-transform duration-300 ${badge.earned ? 'group-hover:scale-110 drop-shadow-md' : 'grayscale opacity-50 blur-[2px]'}`}>
                 {badge.icon}
               </div>
-              
+
               <h3 className={`font-bold text-sm mb-1 leading-tight ${badge.earned ? 'text-gray-900' : 'text-gray-500'}`}>
                 {badge.name}
               </h3>
-              
+
               {!badge.earned && (
-                <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm p-2">
+                <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm p-2 pointer-events-none">
                    <p className="text-xs font-bold text-gray-700">{badge.description}</p>
                 </div>
               )}
-            </motion.div>
+            </motion.button>
           ))}
         </div>
       )}
+
+      {/* バッジ詳細モーダル */}
+      <AnimatePresence>
+        {selectedBadge && (
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="badge-detail-title"
+            data-testid="badge-detail-modal"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-4 bg-black/40"
+            onClick={() => setSelectedBadge(null)}
+          >
+            <motion.div
+              initial={{ y: 40, scale: 0.95, opacity: 0 }}
+              animate={{ y: 0, scale: 1, opacity: 1 }}
+              exit={{ y: 40, scale: 0.95, opacity: 0 }}
+              transition={{ type: "spring", damping: 26, stiffness: 320 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedBadge(null)}
+                aria-label="閉じる"
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600"
+              >
+                ×
+              </button>
+
+              <div className="text-center">
+                <div className={`text-7xl mb-4 ${selectedBadge.earned ? 'drop-shadow-md' : 'grayscale opacity-60'}`}>
+                  {selectedBadge.icon}
+                </div>
+                <h2 id="badge-detail-title" className="text-xl font-bold text-gray-900 mb-1">
+                  {selectedBadge.name}
+                </h2>
+                <span
+                  className={`inline-block text-xs font-bold px-3 py-1 rounded-full ${
+                    selectedBadge.earned ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                  }`}
+                >
+                  {selectedBadge.earned ? '取得済み' : '未取得'}
+                </span>
+              </div>
+
+              <div className="mt-6 space-y-4">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+                    取得条件
+                  </p>
+                  <p className="text-sm text-gray-700 leading-relaxed">
+                    {selectedBadge.description || '条件は近日公開予定です。'}
+                  </p>
+                </div>
+
+                {selectedBadge.earned && selectedBadge.obtainedAt && (
+                  <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+                      取得日時
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      {new Date(selectedBadge.obtainedAt).toLocaleDateString('ja-JP', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedBadge(null)}
+                className="mt-6 w-full py-3 rounded-full bg-[#FF8A65] hover:bg-[#FF7043] text-white font-bold transition-colors"
+              >
+                閉じる
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
