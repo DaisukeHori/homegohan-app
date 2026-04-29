@@ -2,6 +2,10 @@
 Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / Expo** でスマホアプリ化し、
 **App Store / Google Play 公開（EAS Build/Submit）**まで到達する。
 
+> **Status: 2026-04-29 update — フェーズ 0〜3 および 5 はほぼ実装完了。残るはフェーズ 4 の実 EAS Build / Submit と Pass 1〜10 検証。**
+>
+> 詳細実装状況は本ファイル末尾の「実装スナップショット (2026-04-29)」セクション参照。本チェックリストの旧フォーマットは履歴として保持する。
+
 ---
 
 ## 方針（重要）
@@ -156,3 +160,76 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 - [ ] Pass 10: ストア要件（権限文言/プライバシー/削除導線/審査NG）
 
 
+
+---
+
+## 実装スナップショット (2026-04-29)
+
+ファイルツリー実測ベース。チェックボックスはコード上の存在＋行数による状態評価。
+
+### 公開ページ — 全 10 画面実装済み
+- [x] `/about` (`apps/mobile/app/(public)/about.tsx`)
+- [x] `/company`
+- [x] `/contact`
+- [x] `/faq`
+- [x] `/guide`
+- [x] `/legal`
+- [x] `/news`
+- [x] `/pricing`
+- [x] `/privacy`
+- [x] `/terms`
+
+### フェーズ 1 — 認証 / ナビゲーション (実装済み)
+- [x] login / signup
+- [x] auth/forgot-password / auth/reset-password / auth/verify
+- [x] expo-router の (auth) / (tabs) / (admin) / (org) / (super-admin) / (support) / (public)
+
+### フェーズ 2 — 日常導線 (実装済み)
+- [x] ホーム `app/(tabs)/home.tsx` (694 行)
+- [x] 週間献立 `app/menus/weekly/index.tsx` (631 行) + `app/menus/weekly/request/index.tsx`
+- [x] 食事記録 `app/meals/new.tsx` (1,045 行) + `app/meals/[id].tsx` + `app/meals/[id]/edit.tsx`
+- [x] AI相談 `app/ai/index.tsx` + `app/ai/[sessionId].tsx` + `app/ai/important.tsx`
+
+### フェーズ 3 — 健康・買い物・冷蔵庫 (実装済み)
+- [x] 健康記録 `app/health/record/index.tsx` + `app/health/record/[date].tsx` + `app/health/record/quick.tsx`
+- [x] グラフ / インサイト `app/health/graphs.tsx` (320 行) / `app/health/insights.tsx` (213 行)
+- [x] 健康目標 / チャレンジ / 血液検査 / ストリーク / 設定
+- [x] 買い物リスト `app/shopping-list/index.tsx` (445 行)
+- [x] 冷蔵庫 `app/pantry/index.tsx` (470 行)
+
+### フェーズ 5 — 完全移植 (実装済み)
+- [x] レシピ機能 `app/recipes/` 配下: index / new / [id] / [id]/edit / collections / collections/[id] / collections/select
+- [x] 比較 `app/comparison/`、バッジ `app/badges/`、家族 `app/family/`、プロフィール `app/profile/` + `app/profile/nutrition-targets.tsx`
+- [x] 管理系 `(admin)`: index / users / organizations / inquiries / inquiries/[id] / moderation / announcements / audit-logs
+- [x] 組織 `(org)`: dashboard / members / invites / departments / challenges / settings
+- [x] スーパー管理 `(super-admin)`: index / admins / database / feature-flags / settings
+- [x] サポート `(support)`: index / inquiries / inquiries/[id] / users / users/[id]
+
+### フェーズ 4 — EAS / ストア準備 (大半完了、実 build/submit が残)
+- [x] iOS bundleId `com.homegohan.app` (`apps/mobile/app.json`)
+- [x] Android package `com.homegohan.app`
+- [x] App Icon `./assets/icon.png` / Splash `./assets/splash.png` 設定
+- [x] iOS Info.plist 権限文言: NSCameraUsageDescription, NSPhotoLibraryUsageDescription, NSPhotoLibraryAddUsageDescription
+- [x] Android permissions: CAMERA, READ_MEDIA_IMAGES, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, POST_NOTIFICATIONS
+- [x] expo-router / expo-image-picker / expo-notifications プラグイン設定
+- [x] `apps/mobile/eas.json` の development / preview / production プロファイル
+- [ ] **EAS Build (preview → production) を実行**
+- [ ] **EAS Submit (TestFlight / Google Play 内部テスト)**
+- [ ] **本番審査の提出**
+- [ ] プライバシーポリシー / 利用規約 / 退会・データ削除導線の最終確認
+
+### Pass 1〜10 検証 (未着手)
+- [ ] Pass 1: 画面網羅性
+- [ ] Pass 2: API網羅性
+- [ ] Pass 3: 認証 / セッション
+- [ ] Pass 4: RLS / 権限
+- [ ] Pass 5: AI 機能 (Edge Functions / 長時間処理 / 失敗時 / リトライ)
+- [ ] Pass 6: 画像 / アップロード
+- [ ] Pass 7: データ整合性
+- [ ] Pass 8: UX
+- [ ] Pass 9: パフォーマンス
+- [ ] Pass 10: ストア要件
+
+### 残作業の本数
+- **コードのフェーズ実装は実質完了**
+- **残るはフェーズ 4 の実 build/submit と Pass 1〜10 の品質ゲート**

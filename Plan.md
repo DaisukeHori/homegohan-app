@@ -1,5 +1,9 @@
 # Plan: V4汎用献立生成（generate-menu-v4）ステップ実行方式（V3踏襲）
 
+> **Status: 2026-04-29 — SUPERSEDED.** V4 は本 Plan のとおり `executeStep1_Generate` 〜 `executeStep5_RegenerateWithAdvice` の 5 ステップ実行方式で実装完了し、`tests/v4-supabase-functions.test.ts` には 34 ケース（当初想定 20 ケース超過）が存在する。ただし 2026-03-20 のコミット `6d716f2` で **V5 が default engine になり**（feature flags `menu_generation_v5_wrapped: true`, `menu_generation_v5_direct: true`）、V5 は Step1〜6 + Ultimate Mode の構成を持つ。新規開発は V5 側で行うため、本 Plan は履歴として保持する。
+>
+> 関連完了記録: `docs/rag-quality-fix-20260429.md`（V4/V5 両方が依存する RAG レイヤーの 2026-04-29 修正）。
+
 ## 目的
 - V4（`supabase/functions/generate-menu-v4`）を **V3のステップ実行方式（自己トリガ＋継続）** に揃え、最大31日/93スロットでもタイムアウト・再開性・品質（レビュー/修正）を担保する。
 - V4は「渡された`targetSlots`だけを生成/更新する」原則を維持しつつ、**V3のLLM運用（検索→日単位生成→レビュー→必要枠だけ修正）** を“超参考”で移植する。
