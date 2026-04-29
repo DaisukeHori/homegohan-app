@@ -745,16 +745,24 @@ export default function HomePage() {
                           }`}
                         >
                           <div className="flex items-center gap-3">
-                            {/* 完了チェック */}
+                            {/* 完了チェック (Bug-10: ヒット領域 44x44 確保) */}
                             <button
+                              type="button"
                               onClick={() => toggleMealCompletion(meal.id, meal.isCompleted)}
-                              className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all"
-                              style={{
-                                border: meal.isCompleted ? 'none' : `2px solid ${colors.border}`,
-                                background: meal.isCompleted ? colors.success : 'transparent',
-                              }}
+                              aria-label={meal.isCompleted ? `${mealConfig.label}を未完了に戻す` : `${mealConfig.label}を完了にする`}
+                              aria-pressed={meal.isCompleted}
+                              data-testid={`meal-toggle-${meal.mealType}`}
+                              className="min-w-[44px] min-h-[44px] -m-1.5 p-1.5 flex items-center justify-center flex-shrink-0 cursor-pointer"
                             >
-                              {meal.isCompleted && <Check size={16} color="#fff" />}
+                              <span
+                                className="w-8 h-8 rounded-full flex items-center justify-center transition-all"
+                                style={{
+                                  border: meal.isCompleted ? 'none' : `2px solid ${colors.border}`,
+                                  background: meal.isCompleted ? colors.success : 'transparent',
+                                }}
+                              >
+                                {meal.isCompleted && <Check size={16} color="#fff" />}
+                              </span>
                             </button>
 
                             {/* 画像 */}
@@ -930,10 +938,10 @@ export default function HomePage() {
                     />
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-3xl font-black text-gray-900">{completionRate}%</span>
+                    <span data-testid="home-progress-percent" className="text-3xl font-black text-gray-900">{completionRate}%</span>
                   </div>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">{dailySummary.completedCount} / {dailySummary.totalCount} 食完了</p>
+                <p data-testid="home-progress-fraction" className="text-xs text-gray-500 mt-2">{dailySummary.completedCount} / {dailySummary.totalCount} 食完了</p>
               </div>
 
               {/* 統計 */}

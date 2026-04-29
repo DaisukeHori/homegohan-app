@@ -652,13 +652,24 @@ function ProfilePageContent() {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>年齢</Label>
-                        <Input 
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="profile-age-input">年齢</Label>
+                          {!editForm.age && (
+                            <span
+                              data-testid="profile-age-empty-badge"
+                              className="text-orange-600 text-[10px] font-bold px-2 py-0.5 bg-orange-50 rounded"
+                            >
+                              未入力
+                            </span>
+                          )}
+                        </div>
+                        <Input
+                          id="profile-age-input"
                           type="number"
-                          value={editForm.age || ''} 
+                          value={editForm.age ?? ''}
                           onChange={(e) => updateField('age', parseInt(e.target.value) || null)}
-                          className="rounded-xl"
-                          placeholder="30"
+                          className="rounded-xl placeholder:italic placeholder:text-gray-400"
+                          placeholder="例: 30"
                         />
                       </div>
                       <div className="space-y-2">
@@ -685,23 +696,45 @@ function ProfilePageContent() {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>身長 (cm)</Label>
-                        <Input 
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="profile-height-input">身長 (cm)</Label>
+                          {!editForm.height && (
+                            <span
+                              data-testid="profile-height-empty-badge"
+                              className="text-orange-600 text-[10px] font-bold px-2 py-0.5 bg-orange-50 rounded"
+                            >
+                              未入力
+                            </span>
+                          )}
+                        </div>
+                        <Input
+                          id="profile-height-input"
                           type="number"
-                          value={editForm.height || ''} 
+                          value={editForm.height ?? ''}
                           onChange={(e) => updateField('height', parseFloat(e.target.value) || null)}
-                          className="rounded-xl"
-                          placeholder="170"
+                          className="rounded-xl placeholder:italic placeholder:text-gray-400"
+                          placeholder="例: 170"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>体重 (kg)</Label>
-                        <Input 
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="profile-weight-input">体重 (kg)</Label>
+                          {!editForm.weight && (
+                            <span
+                              data-testid="profile-weight-empty-badge"
+                              className="text-orange-600 text-[10px] font-bold px-2 py-0.5 bg-orange-50 rounded"
+                            >
+                              未入力
+                            </span>
+                          )}
+                        </div>
+                        <Input
+                          id="profile-weight-input"
                           type="number"
-                          value={editForm.weight || ''} 
+                          value={editForm.weight ?? ''}
                           onChange={(e) => updateField('weight', parseFloat(e.target.value) || null)}
-                          className="rounded-xl"
-                          placeholder="65"
+                          className="rounded-xl placeholder:italic placeholder:text-gray-400"
+                          placeholder="例: 65"
                         />
                       </div>
                     </div>

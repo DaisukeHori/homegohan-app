@@ -833,27 +833,29 @@ export const useHomeData = () => {
     }
   };
 
-  // 食事完了をトグル
+  // 食事完了をトグル (Bug-10: 楽観的UI更新 + 失敗時ロールバック)
   const toggleMealCompletion = async (mealId: string, currentStatus: boolean) => {
     const newStatus = !currentStatus;
-    
+
     // 楽観的UI更新
     setTodayPlan(prev => {
       if (!prev) return prev;
       return {
         ...prev,
-        meals: prev.meals.map(m => 
-          m.id === mealId 
+        meals: prev.meals.map(m =>
+          m.id === mealId
             ? { ...m, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null }
             : m
         ),
       };
     });
 
-    // サマリー更新
+    // サマリー更新（completedCount を即時反映 → 進捗 % が即更新）
     setDailySummary(prev => ({
       ...prev,
-      completedCount: newStatus ? prev.completedCount + 1 : prev.completedCount - 1,
+      completedCount: newStatus
+        ? Math.min(prev.completedCount + 1, prev.totalCount)
+        : Math.max(prev.completedCount - 1, 0),
     }));
 
     // DB更新
@@ -867,7 +869,26 @@ export const useHomeData = () => {
 
     if (error) {
       console.error('Toggle completion error:', error);
-      fetchHomeData();
+      // ロールバック: 楽観的更新を元に戻す
+      setTodayPlan(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          meals: prev.meals.map(m =>
+            m.id === mealId
+              ? { ...m, isCompleted: currentStatus, completedAt: currentStatus ? m.completedAt : null }
+              : m
+          ),
+        };
+      });
+      setDailySummary(prev => ({
+        ...prev,
+        completedCount: newStatus
+          ? Math.max(prev.completedCount - 1, 0)
+          : Math.min(prev.completedCount + 1, prev.totalCount),
+      }));
+      // 念のためリフェッチでサーバー真値に同期
+      void fetchHomeData();
     }
   };
 
