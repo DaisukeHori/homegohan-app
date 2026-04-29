@@ -328,8 +328,8 @@ export default function SettingsPage() {
             ログアウト
           </Button>
           <p className="text-center text-xs text-gray-400">
-            Version 1.0.0 (Build 20250125)<br/>
-            © 2025 ほめゴハン
+            Version {process.env.NEXT_PUBLIC_APP_VERSION ?? 'v1.0.0'} (Build {process.env.NEXT_PUBLIC_BUILD_DATE ?? '20260430'})<br/>
+            &copy; {new Date().getFullYear()} ほめゴハン
           </p>
         </div>
 

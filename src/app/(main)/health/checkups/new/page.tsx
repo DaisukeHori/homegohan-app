@@ -382,35 +382,47 @@ export default function NewHealthCheckupPage() {
             )}
 
             <div className="space-y-3 pt-4">
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={handleUploadAndAnalyze}
-                disabled={uploading || analyzing}
-                className="w-full py-4 rounded-full text-white font-bold flex items-center justify-center gap-2"
-                style={{ backgroundColor: colors.accent, opacity: (uploading || analyzing) ? 0.7 : 1 }}
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 size={20} className="animate-spin" />
-                    アップロード中...
-                  </>
-                ) : analyzing ? (
-                  <>
-                    <Sparkles size={20} />
-                    AI解析中...
-                  </>
-                ) : imagePreview ? (
-                  <>
-                    <Sparkles size={20} />
-                    AIで読み取る
-                  </>
-                ) : (
-                  '手動で入力する'
-                )}
-              </motion.button>
+              {imagePreview ? (
+                <motion.button
+                  type="button"
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleUploadAndAnalyze}
+                  disabled={uploading || analyzing}
+                  className="w-full py-4 rounded-full text-white font-bold flex items-center justify-center gap-2"
+                  style={{ backgroundColor: colors.accent, opacity: (uploading || analyzing) ? 0.7 : 1 }}
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 size={20} className="animate-spin" />
+                      アップロード中...
+                    </>
+                  ) : analyzing ? (
+                    <>
+                      <Sparkles size={20} />
+                      AI解析中...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={20} />
+                      AIで読み取る
+                    </>
+                  )}
+                </motion.button>
+              ) : (
+                <motion.button
+                  type="button"
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setStep('confirm')}
+                  className="w-full py-4 rounded-full text-white font-bold flex items-center justify-center gap-2"
+                  style={{ backgroundColor: colors.accent }}
+                >
+                  手動で入力する
+                </motion.button>
+              )}
 
               {imagePreview && (
                 <button
+                  type="button"
                   onClick={handleSkipUpload}
                   className="w-full py-3 text-sm"
                   style={{ color: colors.textMuted }}
@@ -529,6 +541,7 @@ export default function NewHealthCheckupPage() {
             )}
 
             <motion.button
+              type="button"
               whileTap={{ scale: 0.98 }}
               onClick={handleSave}
               disabled={saving}
