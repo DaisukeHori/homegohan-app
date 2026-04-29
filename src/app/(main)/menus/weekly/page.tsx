@@ -2740,8 +2740,12 @@ export default function WeeklyMenuPage() {
           }
           setSuccessMessage({
             title: '買い物リストを更新しました ✓',
-            message: data.result?.stats 
-              ? `${data.result.stats.outputCount}件の材料（${data.result.stats.mergedCount}件を統合）`
+            message: data.result?.stats
+              ? (() => {
+                  const stats = data.result.stats;
+                  const inputCount = (stats as { inputCount?: number }).inputCount ?? stats.outputCount + stats.mergedCount;
+                  return `${inputCount}件の材料を ${stats.outputCount}件にまとめました（重複 ${stats.mergedCount}件を統合）`;
+                })()
               : '買い物リストを再生成しました'
           });
           setIsRegeneratingShoppingList(false);
@@ -2811,13 +2815,17 @@ export default function WeeklyMenuPage() {
             } catch (fetchErr) {
               console.error('❌ Failed to fetch shopping list:', fetchErr);
             }
-            const servingsDisplay = newData.result?.stats?.totalServings 
-              ? ` (合計${newData.result.stats.totalServings}食分)` 
+            const servingsDisplay = newData.result?.stats?.totalServings
+              ? `・合計 ${newData.result.stats.totalServings}食分`
               : '';
             setSuccessMessage({
               title: '買い物リストを更新しました ✓',
-              message: newData.result?.stats 
-                ? `${newData.result.stats.outputCount}件の材料（${newData.result.stats.mergedCount}件を統合）${servingsDisplay}`
+              message: newData.result?.stats
+                ? (() => {
+                    const stats = newData.result!.stats!;
+                    const inputCount = stats.inputCount ?? stats.outputCount + stats.mergedCount;
+                    return `${inputCount}件の材料を ${stats.outputCount}件にまとめました（重複 ${stats.mergedCount}件を統合${servingsDisplay}）`;
+                  })()
                 : '買い物リストを再生成しました'
             });
             setIsRegeneratingShoppingList(false);
@@ -4598,19 +4606,37 @@ export default function WeeklyMenuPage() {
             </div>
           </div>
           <div className="flex gap-1.5">
-            <button onClick={() => setActiveModal('stats')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-              <BarChart3 size={16} color={colors.textLight} />
+            <button
+              type="button"
+              onClick={() => setActiveModal('stats')}
+              aria-label="栄養分析を見る"
+              className="w-[34px] h-[34px] rounded-full flex items-center justify-center"
+              style={{ background: colors.bg }}
+            >
+              <BarChart3 size={16} color={colors.textLight} aria-hidden="true" />
             </button>
-            <button onClick={() => setActiveModal('fridge')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative" style={{ background: expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.dangerLight : colors.bg }}>
-              <Refrigerator size={16} color={expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.danger : colors.textLight} />
+            <button
+              type="button"
+              onClick={() => setActiveModal('fridge')}
+              aria-label="冷蔵庫を確認"
+              className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative"
+              style={{ background: expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.dangerLight : colors.bg }}
+            >
+              <Refrigerator size={16} color={expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.danger : colors.textLight} aria-hidden="true" />
               {expiringItems.length > 0 && (
                 <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: colors.warning }}>
                   <span style={{ fontSize: 9, fontWeight: 700, color: '#fff' }}>{expiringItems.length}</span>
                 </div>
               )}
             </button>
-            <button onClick={() => setActiveModal('shopping')} className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative" style={{ background: colors.bg }}>
-              <ShoppingCart size={16} color={colors.textLight} />
+            <button
+              type="button"
+              onClick={() => setActiveModal('shopping')}
+              aria-label="買い物リストを開く"
+              className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative"
+              style={{ background: colors.bg }}
+            >
+              <ShoppingCart size={16} color={colors.textLight} aria-hidden="true" />
               {shoppingList.filter(i => !i.isChecked).length > 0 && (
                 <div className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
                   <span style={{ fontSize: 9, fontWeight: 700, color: '#fff' }}>{shoppingList.filter(i => !i.isChecked).length}</span>
@@ -4758,11 +4784,13 @@ export default function WeeklyMenuPage() {
         {/* Day Tabs with Week Navigation */}
         <div className="flex items-center py-0 pb-2.5" style={{ borderBottom: `1px solid ${colors.border}` }}>
           {/* 前の週ボタン */}
-          <button 
+          <button
+            type="button"
             onClick={goToPreviousWeek}
+            aria-label="前の週"
             className="flex flex-col items-center justify-center px-1.5 py-1 rounded-lg hover:bg-gray-100 transition-colors"
           >
-            <ChevronLeft size={16} color={colors.textMuted} />
+            <ChevronLeft size={16} color={colors.textMuted} aria-hidden="true" />
             <span style={{ fontSize: 8, color: colors.textMuted, whiteSpace: 'nowrap' }}>前の週</span>
           </button>
           
@@ -4800,11 +4828,13 @@ export default function WeeklyMenuPage() {
           </div>
           
           {/* 翌週ボタン */}
-          <button 
+          <button
+            type="button"
             onClick={goToNextWeek}
+            aria-label="翌週"
             className="flex flex-col items-center justify-center px-1.5 py-1 rounded-lg hover:bg-gray-100 transition-colors"
           >
-            <ChevronRight size={16} color={colors.textMuted} />
+            <ChevronRight size={16} color={colors.textMuted} aria-hidden="true" />
             <span style={{ fontSize: 8, color: colors.textMuted, whiteSpace: 'nowrap' }}>翌週</span>
           </button>
         </div>
@@ -5877,26 +5907,12 @@ export default function WeeklyMenuPage() {
                         </span>
                       </button>
                       
-                      {/* 1週間分 */}
-                      <button
-                        onClick={() => setShoppingRange({ ...shoppingRange, type: 'week' })}
-                        className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
-                        style={{ 
-                          background: shoppingRange.type === 'week' ? colors.accent : colors.bg,
-                          border: `1px solid ${shoppingRange.type === 'week' ? colors.accent : colors.border}`
-                        }}
-                      >
-                        <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'week' ? '#fff' : colors.text }}>
-                          1週間分
-                        </span>
-                      </button>
-                      
-                      {/* ○○日分 */}
+                      {/* ○○日分 (時系列順: 明後日 < N日分 < 1週間) */}
                       <div>
                         <button
                           onClick={() => setShoppingRange({ ...shoppingRange, type: 'days' })}
                           className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
-                          style={{ 
+                          style={{
                             background: shoppingRange.type === 'days' ? colors.accent : colors.bg,
                             border: `1px solid ${shoppingRange.type === 'days' ? colors.accent : colors.border}`
                           }}
@@ -5905,7 +5921,7 @@ export default function WeeklyMenuPage() {
                             {shoppingRange.daysCount}日分
                           </span>
                         </button>
-                        
+
                         {shoppingRange.type === 'days' && (
                           <div className="pl-4 pt-2 flex items-center gap-2">
                             <input
@@ -5921,6 +5937,20 @@ export default function WeeklyMenuPage() {
                           </div>
                         )}
                       </div>
+
+                      {/* 1週間分 */}
+                      <button
+                        onClick={() => setShoppingRange({ ...shoppingRange, type: 'week' })}
+                        className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+                        style={{
+                          background: shoppingRange.type === 'week' ? colors.accent : colors.bg,
+                          border: `1px solid ${shoppingRange.type === 'week' ? colors.accent : colors.border}`
+                        }}
+                      >
+                        <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'week' ? '#fff' : colors.text }}>
+                          1週間分
+                        </span>
+                      </button>
                     </div>
                     
                     {/* 次へボタン */}
