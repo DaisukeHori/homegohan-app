@@ -509,15 +509,15 @@ export function V4GenerateModal({
                   </div>
                 </div>
 
-                {/* Ultimate Mode Toggle */}
-                <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: ultimateMode ? colors.accentLight : colors.bg }}>
+                {/* Ultimate Mode Toggle — locked until Premium plan is available */}
+                <div className="mb-6 p-4 rounded-xl" style={{ backgroundColor: colors.bg, opacity: 0.7 }}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div
                         className="w-10 h-10 rounded-full flex items-center justify-center"
-                        style={{ backgroundColor: ultimateMode ? colors.accent : colors.border }}
+                        style={{ backgroundColor: colors.border }}
                       >
-                        <Wand2 size={18} style={{ color: ultimateMode ? '#fff' : colors.textMuted }} />
+                        <Wand2 size={18} style={{ color: colors.textMuted }} />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
@@ -529,30 +529,27 @@ export function V4GenerateModal({
                             <Crown size={10} />
                             Premium
                           </span>
+                          <span className="text-xs" style={{ color: colors.textMuted }}>準備中</span>
                         </div>
                         <p className="text-xs" style={{ color: colors.textLight }}>
                           AIが献立を自動で見直し、より栄養バランスの良い献立に改善
                         </p>
                       </div>
                     </div>
-                    {/* Toggle */}
+                    {/* Toggle — disabled until Premium plan launches */}
                     <button
-                      onClick={() => setUltimateMode(!ultimateMode)}
-                      className="relative w-14 h-8 rounded-full flex-shrink-0 transition-colors duration-200"
-                      style={{ backgroundColor: ultimateMode ? colors.accent : '#E5E7EB' }}
+                      disabled
+                      data-testid="ultimate-mode-toggle"
+                      onClick={() => alert('究極モードは Premium プラン準備中です。今しばらくお待ちください。')}
+                      className="relative w-14 h-8 rounded-full flex-shrink-0 transition-colors duration-200 cursor-not-allowed"
+                      style={{ backgroundColor: '#E5E7EB' }}
                     >
                       <span
                         className="absolute top-1 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-200"
-                        style={{ left: ultimateMode ? 'calc(100% - 28px)' : '4px' }}
+                        style={{ left: '4px' }}
                       />
                     </button>
                   </div>
-                  {ultimateMode && (
-                    <div className="mt-3 flex items-center gap-2 text-xs" style={{ color: colors.accent }}>
-                      <Sparkles size={12} />
-                      <span>生成後にAIが栄養バランスをチェックして自動改善します</span>
-                    </div>
-                  )}
                 </div>
 
                 {/* Free text note */}
