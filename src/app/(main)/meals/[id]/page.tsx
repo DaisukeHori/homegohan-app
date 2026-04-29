@@ -475,13 +475,13 @@ export default function MealDetailPage({ params }: { params: { id: string } }) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm pointer-events-none"
           >
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}
-              className="bg-white rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl"
+              className="bg-white rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl pointer-events-auto"
             >
               <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">
                 <Trash2 size={28} color="#ef4444" />

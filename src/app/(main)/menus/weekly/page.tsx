@@ -5186,12 +5186,13 @@ export default function WeeklyMenuPage() {
                   {AI_CONDITIONS.map((text, i) => {
                     const isSelected = selectedConditions.includes(text);
                     return (
-                      <button 
-                        key={i} 
+                      <button
+                        key={i}
+                        data-testid={`ai-condition-${text}`}
                         onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
                         className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
-                        style={{ 
-                          background: isSelected ? colors.accentLight : colors.bg, 
+                        style={{
+                          background: isSelected ? colors.accentLight : colors.bg,
                           color: isSelected ? colors.accent : colors.text,
                           border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
                         }}
@@ -6706,12 +6707,13 @@ export default function WeeklyMenuPage() {
                   {AI_CONDITIONS.map((text, i) => {
                     const isSelected = selectedConditions.includes(text);
                     return (
-                      <button 
-                        key={i} 
+                      <button
+                        key={i}
+                        data-testid={`weekly-condition-${text}`}
                         onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
                         className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
-                        style={{ 
-                          background: isSelected ? colors.accentLight : colors.bg, 
+                        style={{
+                          background: isSelected ? colors.accentLight : colors.bg,
                           color: isSelected ? colors.accent : colors.text,
                           border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
                         }}
@@ -6723,7 +6725,7 @@ export default function WeeklyMenuPage() {
                   })}
                   <div className="mt-4">
                     <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
-                    <textarea 
+                    <textarea
                       value={aiChatInput}
                       onChange={(e) => setAiChatInput(e.target.value)}
                       placeholder="例: 昨日カレーだったので違うものがいい、野菜多めで..."
@@ -6834,12 +6836,13 @@ export default function WeeklyMenuPage() {
                   {AI_CONDITIONS.map((text, i) => {
                     const isSelected = selectedConditions.includes(text);
                     return (
-                      <button 
-                        key={i} 
+                      <button
+                        key={i}
+                        data-testid={`regen-condition-${text}`}
                         onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
                         className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
-                        style={{ 
-                          background: isSelected ? colors.accentLight : colors.bg, 
+                        style={{
+                          background: isSelected ? colors.accentLight : colors.bg,
                           color: isSelected ? colors.accent : colors.text,
                           border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
                         }}
@@ -6851,7 +6854,7 @@ export default function WeeklyMenuPage() {
                   })}
                   <div className="mt-4">
                     <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
-                    <textarea 
+                    <textarea
                       value={aiChatInput}
                       onChange={(e) => setAiChatInput(e.target.value)}
                       placeholder="例: もっとヘルシーに、魚料理がいい..."
