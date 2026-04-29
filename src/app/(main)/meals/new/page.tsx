@@ -320,7 +320,20 @@ export default function MealCaptureModal() {
   });
   
   const [isSaving, setIsSaving] = useState(false);
-  
+
+  // analyzing ステップに 45 秒の上限タイマー — タイムアウト時は classify-failed に遷移
+  useEffect(() => {
+    if (step !== 'analyzing') return;
+    const timer = setTimeout(() => {
+      setDetectedDescription('AI 解析がタイムアウトしました。もう一度お試しください');
+      setDetectedType('unknown');
+      setDetectedConfidence(0);
+      setClassificationCandidates([]);
+      setStep('classify-failed');
+    }, 45_000);
+    return () => clearTimeout(timer);
+  }, [step]);
+
   const weekDates = getWeekDates(weekStart);
   const todayStr = formatLocalDate(new Date());
 

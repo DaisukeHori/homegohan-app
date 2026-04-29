@@ -60,7 +60,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
     }
 
-    const { data, error } = await supabase.functions.invoke('analyze-meal-photo', {
+    const invokePromise = supabase.functions.invoke('analyze-meal-photo', {
       body: {
         images: imageDataArray,
         mealId,
@@ -69,6 +69,12 @@ export async function POST(request: Request) {
         userId: user.id,
       },
     });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('AI タイムアウト')), 25_000),
+    );
+
+    const { data, error } = await Promise.race([invokePromise, timeoutPromise]) as Awaited<typeof invokePromise>;
 
     if (error) {
       throw new Error(`Edge Function invoke failed: ${error.message}`);
@@ -112,6 +118,14 @@ export async function POST(request: Request) {
       catalogMatches,
     });
   } catch (error: any) {
+    const isTimeout = error instanceof Error && error.message === 'AI タイムアウト';
+    if (isTimeout) {
+      console.error('Analyze Meal Photo: AI timeout after 25s');
+      return NextResponse.json(
+        { error: 'AI が応答しませんでした、もう一度お試しください' },
+        { status: 504 },
+      );
+    }
     console.error('Analyze Meal Photo Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

@@ -133,6 +133,7 @@ async function requestClassification(
     maxOutputTokens: 96,
     model: CLASSIFY_MODEL,
     retryOnParseFailure: false,
+    signal: AbortSignal.timeout(25_000),
   });
 
   return {
@@ -153,6 +154,7 @@ async function requestMealAnalysis(
     maxOutputTokens: 1024,
     model: CLASSIFY_MODEL,
     retryOnParseFailure: false,
+    signal: AbortSignal.timeout(25_000),
   });
 
   const normalized = normalizeMealRecognitionResult(data);
@@ -225,6 +227,15 @@ export async function POST(request: Request) {
       modelUsed: model,
     });
   } catch (error: any) {
+    const isTimeout = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+    if (isTimeout) {
+      console.error('Photo Classification: AI timeout after 25s');
+      return NextResponse.json(
+        { error: 'AI が応答しませんでした、もう一度お試しください' },
+        { status: 504 },
+      );
+    }
+
     const rawTexts = [
       typeof error?.rawText === 'string' ? error.rawText : '',
       typeof error?.firstRawText === 'string' ? error.firstRawText : '',

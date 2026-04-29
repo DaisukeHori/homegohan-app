@@ -13,6 +13,7 @@ interface GenerateGeminiJsonOptions {
   maxOutputTokens?: number;
   model?: string;
   retryOnParseFailure?: boolean;
+  signal?: AbortSignal;
 }
 
 const STRICT_JSON_INSTRUCTIONS = [
@@ -95,6 +96,7 @@ async function requestGeminiRawText({
   temperature,
   maxOutputTokens,
   model,
+  signal,
 }: {
   prompt: string;
   schema: Record<string, unknown>;
@@ -102,6 +104,7 @@ async function requestGeminiRawText({
   temperature: number;
   maxOutputTokens: number;
   model: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const apiKey = getGoogleAiApiKey();
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -110,6 +113,7 @@ async function requestGeminiRawText({
       'Content-Type': 'application/json',
       'x-goog-api-key': apiKey,
     },
+    signal,
     body: JSON.stringify({
       contents: [{
         parts: [
@@ -179,6 +183,7 @@ export async function generateGeminiJson<T>({
   maxOutputTokens = 2048,
   model = process.env.GEMINI_VISION_MODEL || DEFAULT_GEMINI_VISION_MODEL,
   retryOnParseFailure = true,
+  signal,
 }: GenerateGeminiJsonOptions): Promise<{ data: T; model: string; rawText: string }> {
   const effectiveOptions = {
     prompt,
@@ -187,6 +192,7 @@ export async function generateGeminiJson<T>({
     temperature,
     maxOutputTokens,
     model,
+    signal,
   };
 
   const rawText = await requestGeminiRawText(effectiveOptions);
@@ -210,6 +216,7 @@ export async function generateGeminiJson<T>({
       model,
       schema,
       images,
+      signal,
     });
 
     try {

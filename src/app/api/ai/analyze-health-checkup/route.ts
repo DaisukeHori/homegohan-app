@@ -39,6 +39,7 @@ export async function POST(request: Request) {
       images: [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }],
       temperature: 0.1,
       maxOutputTokens: 4096,
+      signal: AbortSignal.timeout(25_000),
     });
 
     const extractedData = normalizeHealthCheckupExtractedData(data);
@@ -52,6 +53,14 @@ export async function POST(request: Request) {
       modelUsed: model,
     });
   } catch (error: any) {
+    const isTimeout = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+    if (isTimeout) {
+      console.error('Health Checkup Analysis: AI timeout after 25s');
+      return NextResponse.json(
+        { error: 'AI が応答しませんでした、もう一度お試しください' },
+        { status: 504 },
+      );
+    }
     console.error('Health Checkup Analysis Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
