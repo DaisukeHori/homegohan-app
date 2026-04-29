@@ -25,9 +25,10 @@ import {
 
 type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range' | 'single_day';
 
-// LocalStorage keys for persisting range settings
+// LocalStorage key for persisting range settings.
+// NOTE: v4_include_existing is intentionally NOT persisted – it is a
+// destructive flag that must default to false every time the modal opens.
 const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
-const STORAGE_KEY_INCLUDE_EXISTING = 'v4_include_existing';
 
 interface V4GenerateModalProps {
   isOpen: boolean;
@@ -115,12 +116,6 @@ export function V4GenerateModal({
 
   // 初期化: localStorageから設定を復元し、今日を基準に日付を設定
   useEffect(() => {
-    // includeExistingを復元
-    const savedIncludeExisting = localStorage.getItem(STORAGE_KEY_INCLUDE_EXISTING);
-    if (savedIncludeExisting !== null) {
-      setIncludeExisting(savedIncludeExisting === 'true');
-    }
-
     // 保存された日数を復元
     const savedRangeDays = localStorage.getItem(STORAGE_KEY_RANGE_DAYS);
     if (savedRangeDays) {
@@ -151,10 +146,13 @@ export function V4GenerateModal({
     }
   }, [rangeStart, rangeEnd, todayStr, daysBetween]);
 
-  // includeExistingが変更されたら保存
+  // モーダルが開くたびに includeExisting を安全なデフォルト (false) にリセット
+  // 「既存の献立も作り直す」は破壊的操作のため、毎回明示的にONにする必要がある
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_INCLUDE_EXISTING, String(includeExisting));
-  }, [includeExisting]);
+    if (isOpen) {
+      setIncludeExisting(false);
+    }
+  }, [isOpen]);
 
   // rangeStart/rangeEndのsetterをラップして、過去日付の場合は今日に調整
   // 開始日が終了日より後になった場合は終了日を開始日に合わせる

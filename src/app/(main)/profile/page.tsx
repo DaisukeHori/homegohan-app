@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { motion, AnimatePresence } from "framer-motion";
+import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { toUserProfile } from "@/lib/converter";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
@@ -326,6 +327,7 @@ function ProfilePageContent() {
               className="text-white hover:bg-white/20"
               onClick={async () => {
                 if (!confirm('ログアウトしますか？')) return;
+                clearUserScopedLocalStorage();
                 const supabase = createClient();
                 await supabase.auth.signOut();
                 router.push('/login');
@@ -545,6 +547,7 @@ function ProfilePageContent() {
             </button>
             <button
               onClick={async () => {
+                clearUserScopedLocalStorage();
                 const supabase = createClient();
                 await supabase.auth.signOut();
                 router.push('/login');

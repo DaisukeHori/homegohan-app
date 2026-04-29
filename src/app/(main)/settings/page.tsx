@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 
 type WeekStartDay = 'sunday' | 'monday';
 
@@ -115,6 +116,7 @@ export default function SettingsPage() {
   };
 
   const handleLogout = async () => {
+    clearUserScopedLocalStorage();
     await supabase.auth.signOut();
     router.push('/login');
   };
