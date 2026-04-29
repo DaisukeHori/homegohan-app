@@ -2,6 +2,10 @@ import type { GeneratedMeal, MealType } from "../_shared/meal-generator.ts";
 import type { SlotPlan } from "./diversity-scheduler.ts";
 import type { MealDiversityFingerprint } from "./diversity-fingerprint.ts";
 import { fingerprintGeneratedMeal } from "./diversity-fingerprint.ts";
+import {
+  getProteinSuperCategoryLabel,
+  type ProteinSuperCategory,
+} from "./diversity-taxonomy.ts";
 
 type TargetSlotLike = {
   date: string;
@@ -16,11 +20,13 @@ export type ViolationCode =
   | "heavy_main_overbuilt"
   | "stacked_salty_items"
   | "same_day_main_family_duplicate"
+  | "same_day_super_protein_duplicate"
   | "adjacent_main_family_duplicate"
   | "adjacent_breakfast_template_duplicate"
   | "seed_template_reused"
   | "cluster_reuse_nearby"
   | "weekly_family_overuse"
+  | "weekly_super_protein_overuse"
   | "weekly_breakfast_template_overuse"
   | "brief_mismatch";
 
@@ -216,6 +222,7 @@ export function validateGeneratedMeals(params: {
   const bySignature = new Map<string, string>();
   const byDishName = new Map<string, string>();
   const mainFamilyWindow = new Map<string, string[]>();
+  const proteinSuperWindow = new Map<ProteinSuperCategory, string[]>();
   const breakfastTemplateWindow = new Map<string, string[]>();
 
   for (const existing of existingFingerprints) {
@@ -395,6 +402,30 @@ export function validateGeneratedMeals(params: {
       });
     }
 
+    // 同日 super-category 重複 (朝/昼/夕すべてのペア対象)
+    // 既存の same_day_main_family_duplicate は lunch↔dinner のみ + family レベル。
+    // これは「鮭(grilled_salmon)+鮭(foil_salmon)」のように family が異なる「魚同士」を捕える。
+    if (fingerprint.proteinSuperCategory === "fish" || fingerprint.proteinSuperCategory === "meat") {
+      const sameDaySuperSibling = orderedSlots.find((other) => {
+        if (other.date !== slot.date) return false;
+        if (other.mealType === slot.mealType) return false;
+        const otherKey = getSlotKey(other.date, other.mealType);
+        const otherFingerprint = fingerprints[otherKey];
+        return otherFingerprint?.proteinSuperCategory === fingerprint.proteinSuperCategory;
+      });
+      if (sameDaySuperSibling && !hasHardViolation(violations, "same_day_super_protein_duplicate", slotKey)) {
+        violations.push({
+          code: "same_day_super_protein_duplicate",
+          severity: "soft",
+          date: slot.date,
+          mealType: slot.mealType,
+          slotKey,
+          message: `同日内で${getProteinSuperCategoryLabel(fingerprint.proteinSuperCategory)}が複数回登場しています(朝・昼・夕の異なる時間帯で重複)。`,
+          relatedSlotKeys: [getSlotKey(sameDaySuperSibling.date, sameDaySuperSibling.mealType)],
+        });
+      }
+    }
+
     if (plan?.requiredMainDishFamily && plan.requiredMainDishFamily !== fingerprint.mainDishFamily) {
       const briefMismatchSeverity: ViolationSeverity = slot.mealType === "breakfast"
         ? (plan.requiredProteinFamily
@@ -468,6 +499,45 @@ export function validateGeneratedMeals(params: {
         relatedSlotKeys: sameFamilyWindow.filter((other) => other !== slotKey),
       });
     }
+
+    // 7日窓 super-category (魚/肉) overuse チェック
+    const superSlots = proteinSuperWindow.get(fingerprint.proteinSuperCategory) ?? [];
+    const sameSuperWindow = superSlots.filter((otherSlotKey) => {
+      const [otherDate] = otherSlotKey.split(":");
+      return getDayDistance(slot.date, otherDate) <= 6;
+    });
+    const superThresholds: Partial<Record<ProteinSuperCategory, { soft: number; hard: number }>> = {
+      fish: { soft: 4, hard: 6 },
+      meat: { soft: 5, hard: 7 },
+      // egg / tofu / mixed / other はチェックしない (栄養的にバランス取りやすい)
+    };
+    const superThreshold = superThresholds[fingerprint.proteinSuperCategory];
+    if (superThreshold) {
+      const newCount = sameSuperWindow.length + 1; // 自分を含めた回数
+      if (newCount >= superThreshold.hard) {
+        violations.push({
+          code: "weekly_super_protein_overuse",
+          severity: "hard",
+          date: slot.date,
+          mealType: slot.mealType,
+          slotKey,
+          message: `7日窓で${getProteinSuperCategoryLabel(fingerprint.proteinSuperCategory)}が${newCount}回登場しており、栄養多様性が著しく損なわれています。`,
+          relatedSlotKeys: sameSuperWindow,
+        });
+      } else if (newCount >= superThreshold.soft) {
+        violations.push({
+          code: "weekly_super_protein_overuse",
+          severity: "soft",
+          date: slot.date,
+          mealType: slot.mealType,
+          slotKey,
+          message: `7日窓で${getProteinSuperCategoryLabel(fingerprint.proteinSuperCategory)}が${newCount}回登場しています。多様性のため別カテゴリへの差し替えを推奨します。`,
+          relatedSlotKeys: sameSuperWindow,
+        });
+      }
+    }
+    superSlots.push(slotKey);
+    proteinSuperWindow.set(fingerprint.proteinSuperCategory, superSlots);
 
     const sameBreakfastWindow = slot.mealType === "breakfast"
       ? (breakfastTemplateWindow.get(fingerprint.breakfastTemplate) ?? []).filter((otherSlotKey) => {

@@ -1,5 +1,5 @@
 import type { MealDiversityFingerprint } from "./diversity-fingerprint.ts";
-import { isHighSodiumFamily, normalizeMenuText, type SodiumMode } from "./diversity-taxonomy.ts";
+import { isHighSodiumFamily, normalizeMenuText, toProteinSuperCategory, type SodiumMode } from "./diversity-taxonomy.ts";
 import { clusterMenuTemplates, type MealType, type MenuTemplate, type MenuTemplateCluster } from "./template-catalog.ts";
 
 export type TargetSlotLike = {
@@ -300,6 +300,18 @@ function countProteinWithinWindow(fingerprints: MealDiversityFingerprint[], fami
   return fingerprints.filter((fingerprint) => fingerprint.proteinFamily === family && getDayDistance(fingerprint.date, date) <= days).length;
 }
 
+function countSuperProteinWithinWindow(
+  fingerprints: MealDiversityFingerprint[],
+  superCategory: string,
+  date: string,
+  days: number,
+): number {
+  return fingerprints.filter((fingerprint) => {
+    const fpSuper = toProteinSuperCategory(fingerprint.proteinFamily);
+    return fpSuper === superCategory && getDayDistance(fingerprint.date, date) <= days;
+  }).length;
+}
+
 function selectBestTemplate(params: {
   slot: TargetSlotLike;
   candidates: MenuTemplate[];
@@ -337,6 +349,8 @@ function selectBestTemplate(params: {
     let score = 1000;
     score -= countFamilyWithinWindow(params.priorFingerprints, candidate.mainDishFamily, params.slot.date, 6) * 120;
     score -= countProteinWithinWindow(params.priorFingerprints, candidate.proteinFamily, params.slot.date, 6) * 80;
+    const candidateSuper = toProteinSuperCategory(candidate.proteinFamily);
+    score -= countSuperProteinWithinWindow(params.priorFingerprints, candidateSuper, params.slot.date, 6) * 60;
     score -= params.usedClusterIds.has(candidate.clusterId) ? 240 : 0;
     score -= params.sameDaySelectedFamilies.has(candidate.mainDishFamily) ? 700 : 0;
     score -= params.slot.mealType === "breakfast" && candidate.breakfastTemplate === "other_breakfast" ? 40 : 0;
@@ -427,6 +441,7 @@ export function planDiversityForRange(params: {
       mainDishName: selected.mainDishName,
       mainDishFamily: selected.mainDishFamily,
       proteinFamily: selected.proteinFamily,
+      proteinSuperCategory: toProteinSuperCategory(selected.proteinFamily),
       breakfastTemplate: selected.breakfastTemplate,
       soupKind: selected.soupKind,
       dishNames: selected.dishes.map((dish) => String(dish.name ?? "")).filter(Boolean),

@@ -5,9 +5,11 @@ import {
   inferBreakfastTemplate,
   inferSoupKind,
   normalizeMenuText,
+  toProteinSuperCategory,
   type BreakfastTemplate,
   type MainDishFamily,
   type ProteinFamily,
+  type ProteinSuperCategory,
   type SodiumMode,
   type SoupKind,
 } from "./diversity-taxonomy.ts";
@@ -38,6 +40,7 @@ export type MealDiversityFingerprint = {
   mainDishName: string;
   mainDishFamily: MainDishFamily;
   proteinFamily: ProteinFamily;
+  proteinSuperCategory: ProteinSuperCategory;
   breakfastTemplate: BreakfastTemplate;
   soupKind: SoupKind;
   dishNames: string[];
@@ -122,12 +125,14 @@ export function fingerprintGeneratedMeal(params: {
   const dishNames = normalizeDishNames(dishes);
   const mainDishName = pickMainDishName(dishes);
   const signature = buildMealSignatureFromDishes(dishes);
+  const proteinFamily = classifyProteinFamily(mainDishName);
   return {
     date: params.date,
     mealType: params.mealType,
     mainDishName,
     mainDishFamily: classifyMainDishFamily(mainDishName),
-    proteinFamily: classifyProteinFamily(mainDishName),
+    proteinFamily,
+    proteinSuperCategory: toProteinSuperCategory(proteinFamily),
     breakfastTemplate: params.mealType === "breakfast" ? inferBreakfastTemplate(dishNames) : "other_breakfast",
     soupKind: inferSoupKind(dishNames),
     dishNames,
@@ -152,6 +157,7 @@ export function fingerprintTemplate(params: {
     mainDishName: params.template.mainDishName,
     mainDishFamily: params.template.mainDishFamily,
     proteinFamily: params.template.proteinFamily,
+    proteinSuperCategory: toProteinSuperCategory(params.template.proteinFamily),
     breakfastTemplate: params.template.breakfastTemplate,
     soupKind: params.template.soupKind,
     dishNames,
@@ -164,12 +170,14 @@ export function fingerprintTemplate(params: {
 
 export function fingerprintExistingMenu(menu: MinimalExistingMenu): MealDiversityFingerprint {
   const normalizedName = String(menu.dishName ?? "").trim();
+  const proteinFamily = classifyProteinFamily(normalizedName);
   return {
     date: menu.date,
     mealType: menu.mealType,
     mainDishName: normalizedName,
     mainDishFamily: classifyMainDishFamily(normalizedName),
-    proteinFamily: classifyProteinFamily(normalizedName),
+    proteinFamily,
+    proteinSuperCategory: toProteinSuperCategory(proteinFamily),
     breakfastTemplate: menu.mealType === "breakfast" ? inferBreakfastTemplate([normalizedName]) : "other_breakfast",
     soupKind: inferSoupKind([normalizedName]),
     dishNames: normalizedName ? [normalizedName] : [],

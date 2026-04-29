@@ -223,3 +223,56 @@ export function isHighSodiumFamily(family: MainDishFamily): boolean {
     || family === "miso_fish"
     || family === "noodle_soup";
 }
+
+// ===== Protein Super-Category (PR: 魚偏重バグ修正) =====
+// salmon / mackerel / other_fish を「魚」、chicken / pork を「肉」に集約し、
+// validator が「魚全体」「肉全体」レベルで偏りを検出できるようにする。
+
+export const PROTEIN_SUPER_CATEGORIES = [
+  "fish",
+  "meat",
+  "egg",
+  "tofu",
+  "mixed",
+  "other",
+] as const;
+
+export type ProteinSuperCategory = (typeof PROTEIN_SUPER_CATEGORIES)[number];
+
+export function toProteinSuperCategory(family: ProteinFamily): ProteinSuperCategory {
+  switch (family) {
+    case "salmon":
+    case "mackerel":
+    case "other_fish":
+      return "fish";
+    case "chicken":
+    case "pork":
+      return "meat";
+    case "egg":
+      return "egg";
+    case "tofu":
+      return "tofu";
+    case "mixed":
+      return "mixed";
+    case "other":
+    default:
+      return "other";
+  }
+}
+
+export function getProteinSuperCategoryLabel(superCategory: ProteinSuperCategory): string {
+  switch (superCategory) {
+    case "fish":
+      return "魚";
+    case "meat":
+      return "肉";
+    case "egg":
+      return "卵";
+    case "tofu":
+      return "豆腐";
+    case "mixed":
+      return "ミックス";
+    default:
+      return "その他";
+  }
+}
