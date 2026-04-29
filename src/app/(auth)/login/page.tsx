@@ -81,11 +81,17 @@ function LoginContent() {
           .select('roles, nickname, onboarding_started_at, onboarding_completed_at')
           .eq('id', user.id)
           .single();
-        
+
         const roles = profile?.roles || [];
-        
+
+        // セッション切れリダイレクト元の URL があれば優先して戻る
+        const nextParam = searchParams.get('next');
+        const safeNext = nextParam && nextParam.startsWith('/') ? nextParam : null;
+
         if (roles.includes('admin') || roles.includes('super_admin')) {
           router.push('/admin');
+        } else if (safeNext) {
+          router.push(safeNext);
         } else if (profile?.onboarding_completed_at) {
           // オンボーディング完了済み → ホームへ
           router.push('/home');

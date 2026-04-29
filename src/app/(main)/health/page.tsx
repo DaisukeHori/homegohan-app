@@ -80,6 +80,9 @@ export default function HealthDashboardPage() {
   const [quickSleep, setQuickSleep] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedDateRecord, setSelectedDateRecord] = useState<HealthRecord | null>(null);
+  const [loadingSelectedDate, setLoadingSelectedDate] = useState(false);
 
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
 
@@ -125,6 +128,28 @@ export default function HealthDashboardPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  const handleDaySelect = async (date: string) => {
+    if (date === today) {
+      setSelectedDate(null);
+      setSelectedDateRecord(null);
+      return;
+    }
+    setSelectedDate(date);
+    setLoadingSelectedDate(true);
+    try {
+      const res = await fetch(`/api/health/records/${date}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedDateRecord(data.record ?? null);
+      } else {
+        setSelectedDateRecord(null);
+      }
+    } catch {
+      setSelectedDateRecord(null);
+    }
+    setLoadingSelectedDate(false);
+  };
 
   const handleQuickSave = async () => {
     if (!quickWeight && quickMood === null && quickSleep === null) {
@@ -263,14 +288,22 @@ export default function HealthDashboardPage() {
           <div className="flex gap-2 mt-4">
             {weekDays.map((day) => {
               const hasRecord = weeklyRecords.includes(day.date);
+              const isSelected = selectedDate === day.date || (day.isToday && selectedDate === null);
               return (
-                <div
+                <button
                   key={day.date}
-                  className={`flex-1 text-center py-2 rounded-lg ${
-                    day.isToday ? 'ring-2 ring-white' : ''
+                  type="button"
+                  aria-label={`${day.day}${day.dayNum}日${hasRecord ? '（記録あり）' : ''}`}
+                  aria-pressed={isSelected}
+                  onClick={() => handleDaySelect(day.date)}
+                  className={`flex-1 text-center py-2 rounded-lg transition-all ${
+                    isSelected ? 'ring-2 ring-white' : ''
                   }`}
-                  style={{ 
-                    backgroundColor: hasRecord ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)'
+                  style={{
+                    backgroundColor: hasRecord ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                    cursor: 'pointer',
+                    border: 'none',
+                    outline: 'none',
                   }}
                 >
                   <div className="text-white/60 text-xs">{day.day}</div>
@@ -278,12 +311,107 @@ export default function HealthDashboardPage() {
                   {hasRecord && (
                     <CheckCircle2 size={12} className="mx-auto mt-1" color="white" />
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
         </motion.div>
       </div>
+
+      {/* 過去日選択時のレコード表示 */}
+      <AnimatePresence>
+        {selectedDate && (
+          <motion.div
+            key={selectedDate}
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="px-4 mb-4"
+          >
+            <div
+              className="p-4 rounded-2xl"
+              style={{
+                backgroundColor: colors.card,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+              }}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold" style={{ color: colors.text }}>
+                  {selectedDate} の記録
+                </h3>
+                <Link
+                  href={`/health/record?date=${selectedDate}`}
+                  className="text-sm flex items-center gap-1"
+                  style={{ color: colors.accent }}
+                >
+                  {selectedDateRecord ? '詳細を編集' : '記録を追加'} <ChevronRight size={16} />
+                </Link>
+              </div>
+              {loadingSelectedDate ? (
+                <div className="flex justify-center py-4">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                  >
+                    <Activity size={24} style={{ color: colors.accent }} />
+                  </motion.div>
+                </div>
+              ) : selectedDateRecord ? (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-xl text-center" style={{ backgroundColor: colors.bg }}>
+                    <Scale size={20} className="mx-auto mb-1" style={{ color: colors.accent }} aria-hidden="true" />
+                    <p className="text-xs font-medium mb-0.5" style={{ color: colors.textMuted }}>体重</p>
+                    <p className="text-lg font-bold" style={{ color: colors.text }}>{selectedDateRecord.weight || '-'}</p>
+                    <p className="text-xs" style={{ color: colors.textMuted }}>kg</p>
+                  </div>
+                  <div className="p-3 rounded-xl text-center" style={{ backgroundColor: colors.bg }}>
+                    {selectedDateRecord.mood_score ? (
+                      selectedDateRecord.mood_score >= 4 ? (
+                        <Smile size={20} className="mx-auto mb-1" style={{ color: colors.success }} aria-hidden="true" />
+                      ) : selectedDateRecord.mood_score <= 2 ? (
+                        <Frown size={20} className="mx-auto mb-1" style={{ color: colors.error }} aria-hidden="true" />
+                      ) : (
+                        <Meh size={20} className="mx-auto mb-1" style={{ color: colors.warning }} aria-hidden="true" />
+                      )
+                    ) : (
+                      <Meh size={20} className="mx-auto mb-1" style={{ color: colors.textMuted }} aria-hidden="true" />
+                    )}
+                    <p className="text-xs font-medium mb-0.5" style={{ color: colors.textMuted }}>気分</p>
+                    <p className="text-lg font-bold" style={{ color: colors.text }}>
+                      {selectedDateRecord.mood_score || '-'}
+                    </p>
+                    <p className="text-xs" style={{ color: colors.textMuted }}>{selectedDateRecord.mood_score ? '/ 5' : '未記録'}</p>
+                  </div>
+                  <div className="p-3 rounded-xl text-center" style={{ backgroundColor: colors.bg }}>
+                    <Moon size={20} className="mx-auto mb-1" style={{ color: colors.purple }} aria-hidden="true" />
+                    <p className="text-xs font-medium mb-0.5" style={{ color: colors.textMuted }}>
+                      {selectedDateRecord.sleep_hours ? '睡眠時間' : '睡眠の質'}
+                    </p>
+                    <p className="text-lg font-bold" style={{ color: colors.text }}>
+                      {selectedDateRecord.sleep_hours || selectedDateRecord.sleep_quality || '-'}
+                    </p>
+                    <p className="text-xs" style={{ color: colors.textMuted }}>
+                      {selectedDateRecord.sleep_hours ? '時間' : selectedDateRecord.sleep_quality ? '/ 5' : '未記録'}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-4 text-center">
+                  <p className="text-sm" style={{ color: colors.textMuted }}>この日の記録はありません</p>
+                  <Link
+                    href={`/health/record?date=${selectedDate}`}
+                    className="inline-flex items-center gap-1 mt-3 px-4 py-2 rounded-xl text-sm font-medium text-white"
+                    style={{ backgroundColor: colors.accent }}
+                  >
+                    <Plus size={16} />
+                    記録を追加
+                  </Link>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* クイック記録ボタン / 今日の記録サマリー */}
       <div className="px-4 mb-4">
