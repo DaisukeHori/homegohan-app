@@ -39,7 +39,7 @@ test.describe("AI chat response within 30 seconds (Bug-29)", () => {
     // ローディングバブルは content="" かつ isStreaming=true なので、
     // 非空テキストが含まれる assistant バブルを待つ
     await expect(
-      authedPage.locator('[data-testid="ai-message-bubble"]').filter({ hasNotText: "" })
+      authedPage.locator('[data-testid="ai-message-bubble"]').filter({ hasNotText: "" }).first()
     ).toBeVisible({ timeout: 30_000 });
   });
 
@@ -68,7 +68,7 @@ test.describe("AI chat response within 30 seconds (Bug-29)", () => {
 
     // 30秒以内に送信ボタンが再び操作可能になること（isSending=false になった証拠）
     await expect(
-      authedPage.locator('[data-testid="ai-message-bubble"]').filter({ hasNotText: "" })
+      authedPage.locator('[data-testid="ai-message-bubble"]').filter({ hasNotText: "" }).first()
     ).toBeVisible({ timeout: 30_000 });
   });
 });

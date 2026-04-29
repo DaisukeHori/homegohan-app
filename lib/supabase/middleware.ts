@@ -60,14 +60,37 @@ export async function updateSession(request: NextRequest) {
   }
 
   // ページナビゲーションの場合は getUser() で認証を確認
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // エラー時は安全側に倒して /login へリダイレクトする
+  let user: { id: string } | null = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch {
+    // getUser() が例外を投げた場合 (ネットワークエラー等) は未認証扱いにする
+    user = null
+  }
 
-  const publicPaths = ['/', '/login', '/signup', '/auth', '/onboarding']
-  const isPublicPath = publicPaths.some(path => 
-    request.nextUrl.pathname === path || 
-    request.nextUrl.pathname.startsWith(path + '/')
+  // 認証不要のパス (ホワイトリスト)
+  // 注: '/' エントリの startsWith チェックは '//' になるため '/home' は含まれない
+  const publicPaths = [
+    '/',
+    '/login',
+    '/signup',
+    '/auth',
+    '/onboarding',
+    '/about',
+    '/pricing',
+    '/guide',
+    '/faq',
+    '/contact',
+    '/legal',
+    '/company',
+    '/news',
+  ]
+  const isPublicPath = publicPaths.some(
+    (path) =>
+      request.nextUrl.pathname === path ||
+      request.nextUrl.pathname.startsWith(path + '/'),
   )
 
   if (!user && !isPublicPath) {

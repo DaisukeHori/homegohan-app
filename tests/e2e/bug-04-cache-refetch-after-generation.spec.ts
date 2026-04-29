@@ -120,19 +120,32 @@ test("navigating away and back does not show 0 kcal for a just-generated day", a
   await authedPage.waitForLoadState("networkidle");
 
   const prevWeekButton = authedPage
-    .getByRole("button", { name: /前週/ })
+    .getByRole("button", { name: /前の週|前週/ })
+    .or(authedPage.locator("button[aria-label='前の週']"))
     .or(authedPage.locator("button[aria-label='前週']"))
     .first();
   await prevWeekButton.click();
   await authedPage.waitForLoadState("networkidle");
 
-  // 献立データがある場合、「0 kcal」が表示されていないことを確認
-  // (データが空のときは 0 kcal 表示が正常なので、何かデータがある場合のみ確認)
+  // 献立データがある場合のみ「0 kcal が混在していない」ことを確認
+  // (データが空 = 0 kcal のみの週は正常なのでチェックしない)
   const calorieCells = await authedPage.locator("text=/\\d+ kcal/").all();
 
+  // 全テキストを収集
+  const allTexts: string[] = [];
   for (const cell of calorieCells) {
     const text = await cell.textContent();
-    // 0 kcal が表示されている場合はバグ
+    if (text !== null) allTexts.push(text.trim());
+  }
+
+  const hasNonZero = allTexts.some((t) => t.match(/^[1-9]\d* kcal$/));
+  if (!hasNonZero) {
+    // 献立未生成の週 → 0 kcal 表示は正常。スキップ
+    return;
+  }
+
+  // 非ゼロの週でかつ 0 kcal が混在していればバグ
+  for (const text of allTexts) {
     expect(text).not.toMatch(/^0 kcal$/);
   }
 });

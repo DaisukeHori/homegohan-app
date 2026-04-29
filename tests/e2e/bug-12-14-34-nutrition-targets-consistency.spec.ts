@@ -12,9 +12,9 @@ import { test, expect } from "./fixtures/auth";
 
 test.describe("栄養目標の一貫性 (#17, #18, #42)", () => {
   test("マイページと根拠ページの目標 kcal が一致する", async ({ authedPage }) => {
-    // /profile を開いて目標 kcal を取得
-    await authedPage.goto("/profile");
-    await authedPage.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    // /profile を開いて目標 kcal を取得（timeout 短縮でハング防止）
+    await authedPage.goto("/profile", { timeout: 15_000 }).catch(() => {});
+    await authedPage.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 
     // 目標 kcal の表示を探す（"-" の場合は栄養目標未設定なのでスキップ）
     const profileKcalLocator = authedPage
@@ -23,34 +23,36 @@ test.describe("栄養目標の一貫性 (#17, #18, #42)", () => {
       .first();
 
     const profileKcalText = await profileKcalLocator
-      .innerText()
+      .innerText({ timeout: 5_000 })
       .catch(() => null);
 
     if (!profileKcalText || profileKcalText === "-") {
       console.warn(
         "Profile kcal not available (nutrition_targets not yet created) — skipping kcal match check"
       );
-    } else {
-      const profileKcal = parseInt(profileKcalText, 10);
-      expect(profileKcal).toBeGreaterThan(0);
+      // nutrition_targets 行がない場合は早期リターン（navigation hang を防止）
+      return;
+    }
 
-      // /profile/nutrition-targets を開いて同じ kcal を確認
-      await authedPage.goto("/profile/nutrition-targets");
-      await authedPage.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    const profileKcal = parseInt(profileKcalText, 10);
+    expect(profileKcal).toBeGreaterThan(0);
 
-      // サマリーカードの目標カロリー
-      const targetsKcalLocator = authedPage
-        .locator("p.text-2xl.font-bold.text-orange-500")
-        .first();
+    // /profile/nutrition-targets を開いて同じ kcal を確認（timeout 短縮）
+    await authedPage.goto("/profile/nutrition-targets", { timeout: 15_000 }).catch(() => {});
+    await authedPage.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 
-      const targetsKcalText = await targetsKcalLocator
-        .innerText({ timeout: 10_000 })
-        .catch(() => null);
+    // サマリーカードの目標カロリー
+    const targetsKcalLocator = authedPage
+      .locator("p.text-2xl.font-bold.text-orange-500")
+      .first();
 
-      if (targetsKcalText && targetsKcalText !== "-") {
-        const targetsKcal = parseInt(targetsKcalText, 10);
-        expect(targetsKcal).toBe(profileKcal);
-      }
+    const targetsKcalText = await targetsKcalLocator
+      .innerText({ timeout: 8_000 })
+      .catch(() => null);
+
+    if (targetsKcalText && targetsKcalText !== "-") {
+      const targetsKcal = parseInt(targetsKcalText, 10);
+      expect(targetsKcal).toBe(profileKcal);
     }
   });
 

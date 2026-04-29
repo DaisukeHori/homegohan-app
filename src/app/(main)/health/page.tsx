@@ -130,7 +130,8 @@ export default function HealthDashboardPage() {
   }, [fetchData]);
 
   const handleDaySelect = async (date: string) => {
-    if (date === today) {
+    // 今日のセル、または既に選択中の日をクリック → パネルを閉じる
+    if (date === today || date === selectedDate) {
       setSelectedDate(null);
       setSelectedDateRecord(null);
       return;
