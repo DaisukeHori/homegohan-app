@@ -63,11 +63,15 @@ test("existing-meals checkbox defaults to unchecked each time the modal opens", 
   await expect(targetCheckbox).toBeChecked();
 
   // ============================================================
-  // モーダルを閉じる (× ボタン or Escape)
+  // モーダルを閉じる (× ボタンをクリック)
   // ============================================================
-  await authedPage.keyboard.press("Escape");
-  // 少し待ってモーダルが閉じたことを確認
-  await authedPage.waitForTimeout(500);
+  // V4GenerateModal は Escape キーを処理しないため、× ボタンを明示的にクリックする。
+  // モーダルのオーバーレイ外側 (左上端) をクリックすると handleClose が呼ばれて閉じる。
+  // V4GenerateModal の overlay div は onClick={handleClose} を持つ。
+  await authedPage.mouse.click(5, 5);
+  // モーダルが閉じるまで待つ: モーダル内の「期間を指定」テキストが消えることを確認
+  // (V4GenerateModal の range mode 説明テキスト = モーダルが開いている証拠)
+  await authedPage.getByText('開始〜終了を選んで生成').waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
 
   // ============================================================
   // Round 2: 再オープン → チェックボックスは OFF にリセットされているべき

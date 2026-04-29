@@ -42,7 +42,10 @@ test.describe("badge detail modal opens on click", () => {
     await expect(dialog.getByText("取得条件")).toBeVisible();
 
     // 4. 閉じるボタンでモーダルが閉じる
-    await dialog.getByRole("button", { name: "閉じる" }).first().click();
+    // モーダル下部の「閉じる」ボタン (テキストボタン) を使う。
+    // 上部の × ボタン (aria-label="閉じる") は emoji div に pointer-events がある場合に
+    // クリックをブロックされる可能性があるため、最後にマッチするボタンを使用する。
+    await dialog.getByRole("button", { name: "閉じる" }).last().click();
     await expect(dialog).toBeHidden({ timeout: 3_000 });
   });
 });

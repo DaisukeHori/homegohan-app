@@ -219,7 +219,10 @@ export default function BadgesPage() {
               </button>
 
               <div className="text-center">
-                <div className={`text-7xl mb-4 ${selectedBadge.earned ? 'drop-shadow-md' : 'grayscale opacity-60'}`}>
+                <div
+                  aria-hidden="true"
+                  className={`text-7xl mb-4 pointer-events-none ${selectedBadge.earned ? 'drop-shadow-md' : 'grayscale opacity-60'}`}
+                >
                   {selectedBadge.icon}
                 </div>
                 <h2 id="badge-detail-title" className="text-xl font-bold text-gray-900 mb-1">

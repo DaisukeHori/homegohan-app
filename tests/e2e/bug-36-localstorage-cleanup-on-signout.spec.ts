@@ -78,9 +78,19 @@ test("user-scoped localStorage keys are cleared after sign-out", async ({ authed
     return;
   }
 
-  // ログアウトボタンをクリック（確認ダイアログがある場合は承認）
-  authedPage.on("dialog", (dialog) => dialog.accept());
+  // ログアウトボタンをクリック
+  // /settings のログアウトボタンは確認モーダル (React) を開く。
+  // ネイティブ dialog ではないので、モーダル内の「ログアウト」ボタンを改めてクリックする。
+  authedPage.on("dialog", (dialog) => dialog.accept()); // ネイティブ dialog 対応（念のため）
   await logoutButton.click();
+
+  // 確認モーダルが開いた場合は、モーダル内の「ログアウト」ボタンをクリックする
+  // モーダル内のボタンはテキストが「ログアウト」の2番目のボタン (最初は開くボタン自体)
+  const confirmButton = authedPage.locator('button').filter({ hasText: /^ログアウト$/ }).last();
+  const confirmVisible = await confirmButton.isVisible({ timeout: 3_000 }).catch(() => false);
+  if (confirmVisible) {
+    await confirmButton.click();
+  }
 
   // ログインページにリダイレクトされるまで待つ
   await authedPage.waitForURL((url) => url.pathname.startsWith("/login"), { timeout: 15_000 });
