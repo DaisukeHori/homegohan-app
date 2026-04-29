@@ -937,7 +937,7 @@ export async function POST(
           let aiContent = '';
 
           try {
-            // knowledge-gptをストリーミングで呼び出し
+            // knowledge-gptをストリーミングで呼び出し（25秒タイムアウト）
             const knowledgeGptRes = await fetch(`${supabaseUrl}/functions/v1/knowledge-gpt`, {
               method: 'POST',
               headers: {
@@ -949,6 +949,7 @@ export async function POST(
                 mode: 'chat',
                 stream: true,
               }),
+              signal: AbortSignal.timeout(25000),
             });
 
             if (!knowledgeGptRes.ok || !knowledgeGptRes.body) {
@@ -1087,7 +1088,39 @@ export async function POST(
 
           } catch (error: any) {
             console.error('Streaming error:', error);
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\n\n`));
+            // エラー時でも必ずassistantメッセージをDBに書き込んでユーザーに通知する
+            const errorContent = 'すみません、応答の生成中にエラーが発生しました。しばらく待ってから再度お試しください。';
+            try {
+              const { data: errorAiMsg } = await supabase
+                .from('ai_consultation_messages')
+                .insert({
+                  session_id: params.sessionId,
+                  role: 'assistant',
+                  content: errorContent,
+                })
+                .select()
+                .single();
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                userMessage: {
+                  id: savedUserMessage.id,
+                  content: savedUserMessage.content,
+                  isImportant: false,
+                  createdAt: savedUserMessage.created_at,
+                },
+                aiMessage: {
+                  id: errorAiMsg?.id,
+                  content: errorContent,
+                  proposedActions: null,
+                  createdAt: errorAiMsg?.created_at,
+                },
+                actionExecuted: false,
+                actionResult: null,
+                error: error.message,
+              })}\n\n`));
+            } catch (dbError) {
+              console.error('Failed to write error message to DB:', dbError);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\n\n`));
+            }
           } finally {
             controller.close();
           }
@@ -1120,6 +1153,7 @@ export async function POST(
           messages,
           mode: 'chat', // チャットモード（自然言語での応答）
         }),
+        signal: AbortSignal.timeout(25000),
       });
 
       if (knowledgeGptRes.ok) {
@@ -1132,18 +1166,15 @@ export async function POST(
           model: getFastLLMModel(),
           messages,
           max_completion_tokens: 2000,
+          signal: AbortSignal.timeout(25000),
         } as any);
         aiContent = completion.choices[0]?.message?.content || aiContent;
       }
     } catch (kgError) {
-      // エラー時もフォールバック
-      console.error('knowledge-gpt error, falling back to OpenAI:', kgError);
-      const completion = await openai.chat.completions.create({
-        model: getFastLLMModel(),
-        messages,
-        max_completion_tokens: 2000,
-      } as any);
-      aiContent = completion.choices[0]?.message?.content || aiContent;
+      // タイムアウト・エラー時はエラーメッセージをそのままDBに書き込む
+      const isTimeout = kgError instanceof Error && (kgError.name === 'TimeoutError' || kgError.name === 'AbortError');
+      console.error(isTimeout ? 'knowledge-gpt timeout:' : 'knowledge-gpt error:', kgError);
+      aiContent = 'すみません、応答の生成中にエラーが発生しました。しばらく待ってから再度お試しください。';
     }
 
     // アクション提案を抽出

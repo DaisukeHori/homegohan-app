@@ -416,12 +416,17 @@ export default function AIChatBubble() {
       },
     ]);
 
+    // クライアント側タイムアウト（28秒）: サーバーが応答しない場合にユーザーへ通知
+    const clientAbortController = new AbortController();
+    const clientTimeoutId = setTimeout(() => clientAbortController.abort(), 28000);
+
     try {
       // ストリーミングモードでAPI呼び出し
       const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage }),
+        signal: clientAbortController.signal,
       });
 
       if (!res.ok) {
@@ -457,9 +462,19 @@ export default function AIChatBubble() {
             try {
               const parsed = JSON.parse(data);
 
-              // 最終データ（メタ情報含む）
+              // 最終データ（メタ情報含む、またはエラー応答）
               if (parsed.userMessage && parsed.aiMessage) {
                 finalData = parsed;
+                continue;
+              }
+
+              // サーバー側エラー（DB書き込み失敗など）: ユーザーメッセージなしのエラーのみ
+              if (parsed.error && !parsed.userMessage) {
+                setMessages(prev => prev.map(m =>
+                  m.id === tempAiMsgId
+                    ? { ...m, content: '応答に失敗しました。再試行してください。', isStreaming: false }
+                    : m
+                ));
                 continue;
               }
 
@@ -530,12 +545,20 @@ export default function AIChatBubble() {
         ));
       }
 
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to send message:', e);
-      // エラー時は一時メッセージを削除してエラー表示
-      setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAiMsgId));
-      alert('メッセージの送信に失敗しました');
+      // エラー時はユーザーメッセージは残し、AI側にエラーメッセージを表示（サイレントにしない）
+      const isTimeout = e?.name === 'AbortError' || e?.name === 'TimeoutError';
+      const errorText = isTimeout
+        ? '応答に時間がかかりすぎました。しばらく待ってから再度お試しください。'
+        : '応答に失敗しました。再試行してください。';
+      setMessages(prev => prev.map(m =>
+        m.id === tempAiMsgId
+          ? { ...m, content: errorText, isStreaming: false }
+          : m
+      ));
     } finally {
+      clearTimeout(clientTimeoutId);
       setIsSending(false);
     }
   };
@@ -915,6 +938,7 @@ export default function AIChatBubble() {
                           
                           <div
                             className="px-3 py-2 rounded-2xl markdown-content"
+                            data-testid={msg.role === 'assistant' ? 'ai-message-bubble' : undefined}
                             style={{
                               background: msg.role === 'user' ? colors.primary : colors.card,
                               color: msg.role === 'user' ? '#fff' : colors.text,
@@ -929,7 +953,7 @@ export default function AIChatBubble() {
                                 {msg.content}
                               </p>
                             ) : (
-                              <div 
+                              <div
                                 className="markdown-body"
                                 style={{ fontSize: 14, lineHeight: 1.6 }}
                               >
