@@ -8,7 +8,13 @@
  * Bug-fix: #17 / #42 — ルート間で PAL の計算入力が微妙に異なっていたことを防ぐ。
  */
 
-import type { NutritionCalculatorInput } from "@homegohan/core";
+import type {
+  NutritionCalculatorInput,
+  Gender,
+  NutritionGoal,
+  WeightChangeRate,
+  PregnancyStatus,
+} from "@homegohan/core";
 
 /**
  * DB の user_profiles 行（スネークケース）から NutritionCalculatorInput を組み立てる。
@@ -25,18 +31,18 @@ export function buildNutritionCalculatorInput(
   return {
     id: userId,
     age: profile.age as number | null | undefined,
-    gender: profile.gender as string | null | undefined,
+    gender: profile.gender as Gender | null | undefined,
     height: profile.height as number | null | undefined,
     weight: profile.weight as number | null | undefined,
-    work_style: profile.work_style as string | null | undefined,
-    exercise_intensity: profile.exercise_intensity as string | null | undefined,
+    work_style: profile.work_style as NutritionCalculatorInput["work_style"],
+    exercise_intensity: profile.exercise_intensity as NutritionCalculatorInput["exercise_intensity"],
     exercise_frequency: profile.exercise_frequency as number | null | undefined,
     exercise_duration_per_session: profile.exercise_duration_per_session as number | null | undefined,
-    nutrition_goal: profile.nutrition_goal as string | null | undefined,
-    weight_change_rate: profile.weight_change_rate as string | null | undefined,
+    nutrition_goal: profile.nutrition_goal as NutritionGoal | null | undefined,
+    weight_change_rate: profile.weight_change_rate as WeightChangeRate | null | undefined,
     health_conditions: (profile.health_conditions as string[] | null | undefined) ?? [],
     medications: (profile.medications as string[] | null | undefined) ?? [],
-    pregnancy_status: profile.pregnancy_status as string | null | undefined,
+    pregnancy_status: profile.pregnancy_status as PregnancyStatus | null | undefined,
     ...(extra?.performance_profile !== undefined
       ? { performance_profile: extra.performance_profile as NutritionCalculatorInput["performance_profile"] }
       : {}),

@@ -43,6 +43,7 @@
     "supabase",
     "tests",
     "apps/mobile",
-    "packages"
+    "packages",
+    "homegohan-app"
   ]
 }
