@@ -601,8 +601,8 @@ export default function WeeklyMenuPage() {
   // V4 AIアシスタントモーダル
   const [showV4Modal, setShowV4Modal] = useState(false);
 
-  // 完了モーダル用
-  const [successMessage, setSuccessMessage] = useState<{ title: string; message: string } | null>(null);
+  // 完了モーダル用（refreshOnDismiss: OKを押したときに献立データを再取得するか）
+  const [successMessage, setSuccessMessage] = useState<{ title: string; message: string; refreshOnDismiss?: boolean } | null>(null);
   
   // Week Navigation
   const [weekStart, setWeekStart] = useState<Date>(getWeekStart(new Date()));
@@ -900,7 +900,7 @@ export default function WeeklyMenuPage() {
       setIsGenerating(false);
       setGenerationProgress(null);  // 進捗表示をクリア
       refreshMealPlan();
-      setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' });
+      setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
     },
     onError: (error) => {
       console.error('V4 generation error:', error);
@@ -935,7 +935,7 @@ export default function WeeklyMenuPage() {
           console.log('[restore] Generation already completed');
           localStorage.removeItem('v4MenuGenerating');
           refreshMealPlan();
-          setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' });
+          setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
           return;
         }
 
@@ -1043,7 +1043,7 @@ export default function WeeklyMenuPage() {
             setGenerationProgress(null);
             localStorage.removeItem('v4MenuGenerating');
             refreshMealPlan();
-            setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' });
+            setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
             return;
           }
           if (progress.status === 'failed') {
@@ -1097,7 +1097,62 @@ export default function WeeklyMenuPage() {
       
       // Subscribe to progress updates
       if (result?.requestId) {
-        v4Generation.subscribeToProgress(result.requestId, (progress) => {
+        const v4RequestId = result.requestId;
+
+        // Bug-3対策: Realtimeが切断しても進捗バーが消えないようにポーリングフォールバックを開始
+        // Realtimeが完了を拾えなかった場合に5秒ごとにサーバステータスを確認する
+        if (v4PollingIntervalRef.current) {
+          clearInterval(v4PollingIntervalRef.current);
+        }
+        // Realtime側で解決済みかどうかを共有するフラグ（setInterval closure内からも更新できるようrefを使う）
+        const v4ResolvedRef = { current: false };
+        v4PollingIntervalRef.current = setInterval(async () => {
+          if (v4ResolvedRef.current) {
+            clearInterval(v4PollingIntervalRef.current!);
+            v4PollingIntervalRef.current = null;
+            return;
+          }
+          try {
+            const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${v4RequestId}`);
+            if (!statusRes.ok) return;
+            const { status, progress: dbProgress } = await statusRes.json();
+            if (v4ResolvedRef.current) return; // Realtimeが先に完了を処理した
+            if (status === 'completed') {
+              v4ResolvedRef.current = true;
+              clearInterval(v4PollingIntervalRef.current!);
+              v4PollingIntervalRef.current = null;
+              // Realtimeが完了を拾えなかった場合のフォールバック処理
+              setIsGenerating(false);
+              setGenerationProgress(null);
+              refreshMealPlan();
+              setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
+              localStorage.removeItem('v4MenuGenerating');
+            } else if (status === 'failed') {
+              v4ResolvedRef.current = true;
+              clearInterval(v4PollingIntervalRef.current!);
+              v4PollingIntervalRef.current = null;
+              setIsGenerating(false);
+              setGenerationProgress(null);
+              localStorage.removeItem('v4MenuGenerating');
+              alert('献立の生成に失敗しました。もう一度お試しください。');
+            } else if (dbProgress) {
+              // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
+              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress));
+            }
+          } catch {
+            // ポーリングエラーは無視して継続
+          }
+        }, 5000);
+
+        v4Generation.subscribeToProgress(v4RequestId, (progress) => {
+          // Realtimeが端末ステータスを受信したらポーリングを停止する
+          if (progress.status === 'completed' || progress.status === 'failed') {
+            v4ResolvedRef.current = true;
+            if (v4PollingIntervalRef.current) {
+              clearInterval(v4PollingIntervalRef.current);
+              v4PollingIntervalRef.current = null;
+            }
+          }
           // Edge Functionからの progress: { currentStep, totalSteps, message, completedSlots, totalSlots }
           // フロントエンドが期待: { phase, message, percentage }
           // PROGRESS_PHASES の phase 名に合わせる
@@ -1215,6 +1270,10 @@ export default function WeeklyMenuPage() {
   useEffect(() => {
     return () => {
       cleanupRealtime();
+      if (v4PollingIntervalRef.current) {
+        clearInterval(v4PollingIntervalRef.current);
+        v4PollingIntervalRef.current = null;
+      }
     };
   }, [cleanupRealtime]);
   
@@ -1789,6 +1848,9 @@ export default function WeeklyMenuPage() {
   
   // フォールバックポーリング用の参照
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // V4生成のRealtimeが切断した場合のフォールバックポーリング用の参照
+  const v4PollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // 週データキャッシュ（前後の週をプリフェッチして高速化）
   const weekDataCache = useRef<Map<string, { plan: WeekPlan | null; shoppingList: ShoppingListItem[]; fetchedAt: number }>>(new Map());
@@ -7428,7 +7490,10 @@ export default function WeeklyMenuPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setSuccessMessage(null)}
+              onClick={() => {
+                if (successMessage?.refreshOnDismiss) refreshMealPlan();
+                setSuccessMessage(null);
+              }}
               className="fixed inset-0 z-[300]"
               style={{ background: 'rgba(0,0,0,0.5)' }}
             />
@@ -7456,7 +7521,13 @@ export default function WeeklyMenuPage() {
                   {successMessage.message}
                 </p>
                 <button
-                  onClick={() => setSuccessMessage(null)}
+                  onClick={() => {
+                    // Bug-4対策: 生成完了モーダルを閉じる際に献立データを再取得してキャッシュ不整合を防ぐ
+                    if (successMessage?.refreshOnDismiss) {
+                      refreshMealPlan();
+                    }
+                    setSuccessMessage(null);
+                  }}
                   className="w-full p-3 rounded-xl font-semibold"
                   style={{ background: colors.accent, color: '#fff' }}
                 >
