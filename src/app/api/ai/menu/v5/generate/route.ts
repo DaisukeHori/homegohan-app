@@ -5,6 +5,7 @@ import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { createLogger } from '@/lib/db-logger';
 import type {
   TargetSlot,
   ExistingMenuContext,
@@ -92,6 +93,7 @@ export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
+  let _userId: string | undefined;
 
   try {
     const body = await request.json().catch(() => ({}));
@@ -104,6 +106,7 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    _userId = user.id;
 
     const targetSlots = body?.resolveExistingMeals
       ? await resolveExistingTargetSlots({
@@ -303,6 +306,10 @@ export async function POST(request: Request) {
     });
   } catch (error: any) {
     console.error('V5 API error', error);
+    const logger = _userId
+      ? createLogger('api/ai/menu/v5/generate').withUser(_userId)
+      : createLogger('api/ai/menu/v5/generate');
+    logger.error('V5 献立生成でエラーが発生しました', error);
     return NextResponse.json({ error: error.message || 'Unknown error' }, { status: 500 });
   }
 }

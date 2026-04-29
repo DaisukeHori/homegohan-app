@@ -8,6 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import { analyzeWithEvidence, ImageInput, GeminiAnalysisResult } from '../_shared/nutrition-pipeline.ts'
 import { buildPhotoDishList } from '../_shared/meal-image.ts'
 import { cancelPendingMealImageJobs } from '../_shared/meal-image-jobs.ts'
+import { createLogger } from '../_shared/db-logger.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -123,6 +124,7 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('Edge function error:', error)
+    createLogger('analyze-meal-photo').error('ハンドラでエラーが発生しました', error)
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
@@ -263,5 +265,10 @@ async function analyzeMealPhotoBackgroundTask({
 
   } catch (error: any) {
     console.error(`❌ Photo analysis v2 failed:`, error.message)
+    createLogger('analyze-meal-photo').withUser(userId).error(
+      '写真解析バックグラウンドタスクでエラーが発生しました',
+      error,
+      { mealId, mealType },
+    )
   }
 }

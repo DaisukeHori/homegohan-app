@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { createLogger } from '@/lib/db-logger';
 
 /**
  * GDPR データポータビリティ用: 自分のデータを JSON でダウンロード。
@@ -10,11 +11,14 @@ import { NextResponse } from 'next/server';
  */
 export async function GET() {
   const supabase = await createClient();
+  let _userId: string | undefined;
+  try {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const userId = user.id;
+  _userId = userId;
 
   const tables = [
     'user_profiles',
@@ -71,4 +75,12 @@ export async function GET() {
       'Cache-Control': 'no-store',
     },
   });
+  } catch (error: any) {
+    console.error('Account export error:', error);
+    const logger = _userId
+      ? createLogger('api/account/export').withUser(_userId)
+      : createLogger('api/account/export');
+    logger.error('アカウントデータエクスポートでエラーが発生しました', error);
+    return NextResponse.json({ error: error.message || 'Export failed' }, { status: 500 });
+  }
 }

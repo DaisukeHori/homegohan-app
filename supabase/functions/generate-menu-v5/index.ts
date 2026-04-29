@@ -35,6 +35,7 @@ import {
   buildWeekDataFromMeals,
   type NutritionFeedbackResult,
 } from "../_shared/nutrition-feedback.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 import {
   fetchWithRetry,
   isRetryableError,
@@ -3392,6 +3393,11 @@ Deno.serve(async (req: Request) => {
         );
       } catch (error: any) {
         console.error("generate-menu-v5 background error:", error);
+        createLogger("generate-menu-v5", requestId ?? undefined).withUser(userId ?? "unknown").error(
+          "バックグラウンド処理でエラーが発生しました",
+          error,
+          { requestId, step: currentStep },
+        );
         await runSupabaseQuery(
           () => supabase
             .from("weekly_menu_requests")
@@ -3430,6 +3436,11 @@ Deno.serve(async (req: Request) => {
     );
   } catch (error: any) {
     console.error("generate-menu-v5 handler error:", error);
+    createLogger("generate-menu-v5", requestId ?? undefined).withUser(userId ?? "unknown").error(
+      "ハンドラでエラーが発生しました",
+      error,
+      { requestId },
+    );
     if (requestId) {
       try {
         await runSupabaseQuery(

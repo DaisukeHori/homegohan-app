@@ -5,6 +5,7 @@ import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
+import { createLogger } from '@/lib/db-logger';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -97,10 +98,13 @@ function buildNoteForAi(input: {
 
 export async function POST(request: Request) {
   const supabase = await createClient();
+  let _userId: string | undefined;
+  let _startDate: string | undefined;
 
   try {
     const body = await request.json().catch(() => ({}));
     const startDate = body?.startDate;
+    _startDate = startDate;
 
     // preferences / constraints は呼び出し元によって名称が揺れるため両対応
     const rawConstraints = (body?.preferences ?? body?.constraints) as unknown;
@@ -127,6 +131,7 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    _userId = user.id;
 
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = getTodayStr();
@@ -261,6 +266,10 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     console.error("API Error:", error);
+    const logger = _userId
+      ? createLogger('api/ai/menu/weekly/request').withUser(_userId)
+      : createLogger('api/ai/menu/weekly/request');
+    logger.error('週次献立リクエストでエラーが発生しました', error, { startDate: _startDate });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

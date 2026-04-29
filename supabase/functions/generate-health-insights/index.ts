@@ -2,6 +2,7 @@ import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +39,9 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  let _userId: string | undefined;
+  let _periodType: string | undefined;
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
@@ -60,9 +64,11 @@ Deno.serve(async (req) => {
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    _userId = user.id;
 
     const body = await req.json();
     const periodType = body.period_type || 'weekly'; // 'daily', 'weekly', 'monthly'
+    _periodType = periodType;
 
     // 期間を計算
     const endDate = new Date();
@@ -164,6 +170,11 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error("Error:", error);
+    createLogger("generate-health-insights").withUser(_userId ?? "unknown").error(
+      "ヘルスインサイト生成でエラーが発生しました",
+      error,
+      { periodType: _periodType },
+    );
     return new Response(
       JSON.stringify({ error: error.message || "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

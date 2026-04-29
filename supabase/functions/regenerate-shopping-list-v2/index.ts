@@ -11,6 +11,7 @@ import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 
 // ============================================
 // CORS
@@ -595,6 +596,11 @@ async function processRegeneration(
     console.log(`[processRegeneration] withOpenAIUsageContext completed successfully`);
   } catch (error) {
     console.error("Regeneration error:", error);
+    createLogger("regenerate-shopping-list-v2").withUser(userId).error(
+      "買い物リスト再生成でエラーが発生しました",
+      error,
+      { requestId, startDate, endDate },
+    );
     await markFailed(
       supabase,
       requestId,
@@ -641,6 +647,10 @@ Deno.serve(async (req: Request) => {
     );
   } catch (error) {
     console.error("Handler error:", error);
+    createLogger("regenerate-shopping-list-v2").error(
+      "ハンドラでエラーが発生しました",
+      error,
+    );
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : "Unknown error",

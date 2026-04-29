@@ -5,6 +5,7 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts'
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
+import { createLogger } from "../_shared/db-logger.ts";
 import OpenAI from "openai";
 import { createFastLLMClient, getFastLLMModel } from "../_shared/fast-llm.ts";
 import {
@@ -474,6 +475,7 @@ Deno.serve(async (req) => {
             controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
           } catch (e: any) {
             console.error("Streaming error:", e);
+            createLogger("knowledge-gpt").error("ストリーミング処理でエラーが発生しました", e);
             const errorData = { error: { message: e?.message ?? String(e) } };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorData)}\n\n`));
           } finally {
@@ -533,6 +535,7 @@ Deno.serve(async (req) => {
 
   } catch (e: any) {
     console.error("knowledge-gpt error:", e);
+    createLogger("knowledge-gpt").error("ハンドラでエラーが発生しました", e);
     return new Response(
       JSON.stringify({
         error: {
