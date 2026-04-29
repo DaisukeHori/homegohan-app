@@ -11,7 +11,6 @@ import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { toUserProfile } from "@/lib/converter";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
-import { calculateDailyCalories, calculateNutritionTarget } from "@/lib/nutrition-calculator";
 import { ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 
 type TabType = 'basic' | 'goals' | 'sports' | 'health' | 'diet' | 'cooking' | 'lifestyle';
@@ -111,6 +110,14 @@ function ProfilePageContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<UserProfile>>({});
   const [isLoading, setIsLoading] = useState(true);
+  // nutrition_targets テーブルからの読み込み（#17: マイページ kcal を根拠ページと一致させる）
+  const [dbNutritionTarget, setDbNutritionTarget] = useState<{
+    dailyCalories: number;
+    protein: number;
+    fat: number;
+    carbs: number;
+    fiber: number;
+  } | null>(null);
 
   // 未入力項目ガイドモード
   const [isGuidedMode, setIsGuidedMode] = useState(false);
@@ -170,6 +177,26 @@ function ProfilePageContent() {
           }
         } catch (e) {
           console.error("Badge fetch error", e);
+        }
+
+        // #17: nutrition_targets テーブルから読み込んでマイページ kcal を根拠ページと一致させる
+        try {
+          const ntRes = await fetch('/api/nutrition/targets');
+          if (ntRes.ok) {
+            const ntData = await ntRes.json();
+            if (ntData.targets) {
+              const t = ntData.targets;
+              setDbNutritionTarget({
+                dailyCalories: t.dailyCalories,
+                protein: t.proteinG,
+                fat: t.fatG,
+                carbs: t.carbsG,
+                fiber: t.fiberG,
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Nutrition targets fetch error", e);
         }
       }
 
@@ -286,8 +313,8 @@ function ProfilePageContent() {
     updateField('performanceProfile', newProfile);
   };
 
-  // 栄養目標の計算
-  const nutritionTarget = profile ? calculateNutritionTarget(profile) : null;
+  // #17: ローカル再計算は廃止。nutrition_targets テーブルからの読み込みを使用（根拠ページと一致させる）
+  const nutritionTarget = dbNutritionTarget;
 
   if (isLoading) {
     return (

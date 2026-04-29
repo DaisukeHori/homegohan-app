@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { calculateNutritionTargets, type NutritionCalculatorInput } from '@homegohan/core';
+import { calculateNutritionTargets } from '@homegohan/core';
+import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input';
 
 /**
  * 栄養目標の取得・更新API
@@ -39,24 +40,8 @@ export async function GET() {
         .eq('id', user.id)
         .single();
 
-      // 共通モジュールで計算
-      const calculatorInput: NutritionCalculatorInput = {
-        id: user.id,
-        age: profile?.age,
-        gender: profile?.gender,
-        height: profile?.height,
-        weight: profile?.weight,
-        work_style: profile?.work_style,
-        exercise_intensity: profile?.exercise_intensity,
-        exercise_frequency: profile?.exercise_frequency,
-        exercise_duration_per_session: profile?.exercise_duration_per_session,
-        nutrition_goal: profile?.nutrition_goal,
-        weight_change_rate: profile?.weight_change_rate,
-        health_conditions: profile?.health_conditions,
-        medications: profile?.medications,
-        pregnancy_status: profile?.pregnancy_status,
-      };
-
+      // 共通ヘルパーで入力を組み立て（4ルート一致保証）
+      const calculatorInput = buildNutritionCalculatorInput(profile ?? {}, user.id);
       const { targetData } = calculateNutritionTargets(calculatorInput);
       
       return NextResponse.json({

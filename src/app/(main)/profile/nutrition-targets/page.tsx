@@ -214,7 +214,19 @@ export default function NutritionTargetsExplainPage() {
           className="bg-white rounded-2xl p-6 shadow-sm"
         >
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-gray-900">目標サマリー</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-gray-900">目標サマリー</h2>
+              {/* #17 Task4: defaults_applied バッジ（未入力フィールドがある場合に概算であることを明示） */}
+              {basis?.missing_fields && basis.missing_fields.length > 0 && (
+                <span
+                  data-testid="defaults-applied-badge"
+                  className="text-[10px] font-bold px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full border border-yellow-300"
+                  title={`未入力: ${basis.missing_fields.join(', ')} のためデフォルト値で概算`}
+                >
+                  ⚠️ 概算
+                </span>
+              )}
+            </div>
             {targets?.last_calculated_at && (
               <span className="text-xs text-gray-400">
                 {new Date(targets.last_calculated_at).toLocaleDateString('ja-JP')} 計算
@@ -319,7 +331,10 @@ export default function NutritionTargetsExplainPage() {
           </div>
 
           {basis?.missing_fields && basis.missing_fields.length > 0 && (
-            <div className="mt-4 p-3 bg-yellow-50 rounded-lg">
+            <div
+              data-testid="missing-fields-warning"
+              className="mt-4 p-3 bg-yellow-50 rounded-lg"
+            >
               <p className="text-xs text-yellow-700">
                 ⚠️ 未入力の項目があります: {basis.missing_fields.join(', ')}
                 <br />
