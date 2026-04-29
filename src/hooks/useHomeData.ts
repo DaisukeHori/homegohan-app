@@ -767,6 +767,34 @@ export const useHomeData = () => {
         return { success: false, error: error.message };
       }
 
+      // 30秒チェックインの睡眠データを health_records に明示的にマッピングして同期する。
+      // マッピング仕様:
+      //   sleepHours   → health_records.sleep_hours  (睡眠時間)
+      //   sleepQuality → health_records.sleep_quality (睡眠の質 1-5)
+      //   fatigue / focus / hunger は health_records には書き込まない
+      //     (疲労度・集中力・空腹感は user_performance_checkins 専用の指標であり、
+      //      health_records.mood_score / overall_condition とは別概念のため誤マッピングを防止)
+      const hasSleepData =
+        checkinData.sleepHours !== undefined ||
+        checkinData.sleepQuality !== undefined;
+      if (hasSleepData) {
+        try {
+          await fetch('/api/health/records/quick', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              record_date: todayStr,
+              ...(checkinData.sleepHours !== undefined && { sleep_hours: checkinData.sleepHours }),
+              ...(checkinData.sleepQuality !== undefined && { sleep_quality: checkinData.sleepQuality }),
+              // mood_score は意図的に送信しない (sleep_quality が mood に誤マッピングされるのを防ぐ)
+            }),
+          });
+        } catch (syncErr) {
+          // 健康記録への同期失敗はチェックイン自体の成否には影響させない
+          console.warn('Health record sync after checkin failed:', syncErr);
+        }
+      }
+
       // チェックイン後に分析を再取得
       await fetchPerformanceAnalysis(authUser.id);
 

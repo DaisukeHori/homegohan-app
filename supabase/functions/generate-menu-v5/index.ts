@@ -2518,7 +2518,15 @@ async function executeStep2_Review(
       const nextAttempt = Number(hardAttemptCounts[attemptKey] ?? 0) + 1;
       hardAttemptCounts[attemptKey] = nextAttempt;
       if (nextAttempt > 4) {
-        throw new Error(`V5 hard violation did not converge: ${violation.code} ${violation.slotKey}`);
+        // 4回試行しても収束しない場合は、そのスロットのバイオレーションを受け入れて続行する
+        // (throwするとEdge Functionがサイレント失敗し、ユーザーには何も届かないため)
+        console.warn(
+          `[V5] hard violation did not converge after ${nextAttempt - 1} retries, accepting slot as-is:`,
+          violation.code,
+          violation.slotKey,
+        );
+        fixedCount++;
+        continue;
       }
 
       const replanned = replanSlotForViolation({
