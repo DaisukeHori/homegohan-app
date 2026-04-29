@@ -82,21 +82,26 @@ export default function HealthGraphsPage() {
   }, [fetchData]);
 
   // グラフデータを生成
-  const getGraphData = () => {
-    if (records.length === 0) return { data: [], min: 0, max: 100, avg: 0 };
+  const getGraphData = (): {
+    data: { date: string; value: number | null }[];
+    min: number | null;
+    max: number | null;
+    avg: number | null;
+  } => {
+    if (records.length === 0) return { data: [], min: null, max: null, avg: null };
 
     let values: { date: string; value: number | null }[] = [];
-    
+
     // 期間内の全日付を生成
     const days = period === 'week' ? 7 : period === 'month' ? 30 : period === '3months' ? 90 : 365;
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days + 1);
-    
+
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
       const dateStr = d.toISOString().split('T')[0];
       const record = records.find(r => r.record_date === dateStr);
-      
+
       let value: number | null = null;
       if (record) {
         switch (metric) {
@@ -118,7 +123,7 @@ export default function HealthGraphsPage() {
     }
 
     const validValues = values.filter(v => v.value !== null).map(v => v.value as number);
-    if (validValues.length === 0) return { data: values, min: 0, max: 100, avg: 0 };
+    if (validValues.length === 0) return { data: values, min: null, max: null, avg: null };
 
     const min = Math.min(...validValues);
     const max = Math.max(...validValues);
@@ -128,6 +133,7 @@ export default function HealthGraphsPage() {
   };
 
   const { data: graphData, min, max, avg } = getGraphData();
+  const formatStat = (v: number | null) => (v === null ? '-' : v.toFixed(1));
 
   // 変化を計算
   const getChange = () => {
@@ -144,6 +150,7 @@ export default function HealthGraphsPage() {
   // SVGグラフを描画
   const renderGraph = () => {
     if (graphData.length === 0) return null;
+    if (min === null || max === null) return null;
 
     const width = 320;
     const height = 180;
@@ -387,31 +394,31 @@ export default function HealthGraphsPage() {
       {/* 統計カード */}
       <div className="px-4 mb-4">
         <div className="grid grid-cols-3 gap-3">
-          <div 
+          <div
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
             <p className="text-xs mb-1" style={{ color: colors.textMuted }}>最小</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
-              {min.toFixed(1)}
+              {formatStat(min)}
             </p>
           </div>
-          <div 
+          <div
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
             <p className="text-xs mb-1" style={{ color: colors.textMuted }}>平均</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
-              {avg.toFixed(1)}
+              {formatStat(avg)}
             </p>
           </div>
-          <div 
+          <div
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
             <p className="text-xs mb-1" style={{ color: colors.textMuted }}>最大</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
-              {max.toFixed(1)}
+              {formatStat(max)}
             </p>
           </div>
         </div>
