@@ -14,6 +14,9 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   workers: isCI ? 2 : undefined,
   reporter: isCI ? [["github"], ["html", { open: "never", outputFolder: "tests/e2e/.report" }]] : "list",
+  // グローバルセットアップでログインを 1 回だけ行い storageState を生成する。
+  // 全 worker が共有することで auth fixture の都度ログインによるタイムアウト連鎖を防ぐ。
+  globalSetup: "./tests/e2e/global-setup.ts",
   use: {
     baseURL,
     trace: "on-first-retry",
@@ -21,6 +24,8 @@ export default defineConfig({
     video: "retain-on-failure",
     locale: "ja-JP",
     timezoneId: "Asia/Tokyo",
+    // global-setup で生成した認証済み storageState を全テストで共有
+    storageState: "tests/e2e/.auth/user.json",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
