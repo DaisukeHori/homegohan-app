@@ -27,6 +27,8 @@
     "@google/genai": "^1.44.0",
     "@supabase/ssr": "^0.1.0",
     "@supabase/supabase-js": "^2.78.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.37.0",
     "@vercel/functions": "^3.3.4",
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.24",
