@@ -91,11 +91,12 @@ export async function POST(request: Request) {
 
     // 各アイテムを処理
     for (const ingredient of ingredients) {
-      if (!ingredient.name) {
+      if (!ingredient.name?.trim()) {
         results.skipped++;
         continue;
       }
 
+      const trimmedName = ingredient.name.trim();
       const category = mapCategory(ingredient.category);
       const expirationDate = ingredient.expirationDate || estimateExpirationDate(ingredient.daysRemaining);
 
@@ -105,7 +106,7 @@ export async function POST(request: Request) {
           .from('pantry_items')
           .insert({
             user_id: user.id,
-            name: ingredient.name,
+            name: trimmedName,
             amount: ingredient.amount || null,
             category,
             expiration_date: expirationDate,
@@ -127,7 +128,7 @@ export async function POST(request: Request) {
           .from('pantry_items')
           .select('id')
           .eq('user_id', user.id)
-          .eq('name', ingredient.name)
+          .eq('name', trimmedName)
           .maybeSingle();
 
         if (existing) {
@@ -157,7 +158,7 @@ export async function POST(request: Request) {
             .from('pantry_items')
             .insert({
               user_id: user.id,
-              name: ingredient.name,
+              name: trimmedName,
               amount: ingredient.amount || null,
               category,
               expiration_date: expirationDate,
