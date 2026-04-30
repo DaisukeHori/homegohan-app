@@ -143,11 +143,74 @@ export async function POST(request: Request) {
 
     if (error) throw error;
 
-    // #138: セッション作成時のシステムメッセージDB書き込みを削除。
-    // システムプロンプトは messages/route.ts の buildSystemPrompt() で動的に構築され、
-    // DB には保存しない（二重管理の解消）。
+    // 過去のセッション要約を整形
+    const pastSessionsInfo = pastSessions && pastSessions.length > 0
+      ? `【過去の相談履歴（最新10件）】
+${pastSessions.map((s: any) => {
+  const keyFacts = s.context_snapshot?.key_facts || [];
+  const userInsights = s.context_snapshot?.user_insights || [];
+  return `
+■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP') : '日付不明'}）
+  概要: ${s.summary || '要約なし'}
+  トピック: ${(s.key_topics || []).join(', ') || 'なし'}
+  ${keyFacts.length > 0 ? `重要な事実:
+${keyFacts.map((f: any) => `    - [${f.category}] ${f.date ? f.date + ': ' : ''}${f.content}`).join('\n')}` : ''}
+  ${userInsights.length > 0 ? `判明したこと: ${userInsights.join(', ')}` : ''}`;
+}).join('\n')}`
+      : '';
 
-    return NextResponse.json({
+    // 重要メッセージを整形
+    const importantMessagesInfo = importantMessages && importantMessages.length > 0
+      ? `【ユーザーが重要とマークした過去の会話（最新20件）】
+${importantMessages.map((m: any) => `- ${m.content.substring(0, 150)}${m.content.length > 150 ? '...' : ''} ${m.importance_reason ? `(理由: ${m.importance_reason})` : ''}`).join('\n')}`
+      : '';
+
+    // システムメッセージを追加
+    await supabase
+      .from('ai_consultation_messages')
+      .insert({
+        session_id: data.id,
+        role: 'system',
+        content: `あなたは「ほめゴハン」のAI栄養アドバイザーです。
+ユーザーの食事や健康について相談に乗り、具体的なアドバイスを提供します。
+
+【重要な行動指針】
+1. まず褒める：ユーザーの努力や良い点を見つけて褒める
+2. 共感する：ユーザーの悩みや状況に寄り添う
+3. 具体的に提案：実行可能な具体的なアドバイスを提供
+4. アクション提案：必要に応じて献立の作成や変更を提案
+5. 過去の相談内容を踏まえて、一貫性のあるアドバイスを提供
+
+【ユーザー情報】
+${JSON.stringify(contextSnapshot.profile, null, 2)}
+
+【最近の食事傾向】
+${recentMeals?.length || 0}件の食事記録があります。
+
+${pastSessionsInfo}
+
+${importantMessagesInfo}
+
+あなたはユーザーの代わりに以下のアクションを実行できます：
+- generate_day_menu: 特定の日の献立を作成
+- generate_week_menu: 1週間の献立を作成
+- update_meal: 既存の献立を変更
+- add_to_shopping_list: 買い物リストに追加
+- suggest_recipe: レシピを提案
+
+アクションを提案する場合は、以下の形式でJSONを含めてください：
+\`\`\`action
+{
+  "type": "アクション種類",
+  "params": { ... }
+}
+\`\`\`
+
+【重要】過去の相談で判明したユーザーの好みや傾向、設定した目標を覚えておき、一貫性のあるアドバイスを心がけてください。`,
+        metadata: { isSystemPrompt: true },
+      });
+
+    return NextResponse.json({ 
       success: true, 
       session: {
         id: data.id,
