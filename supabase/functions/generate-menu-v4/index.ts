@@ -819,6 +819,8 @@ type V4GeneratedData = {
   nutritionTargets?: any | null;
   userContext?: any;
   userSummary?: string;
+  /** お気に入りレシピ名一覧 (#104) */
+  likedRecipes?: string[];
   references?: MenuReference[];
   referenceSummary?: string;
 
@@ -1191,6 +1193,26 @@ async function executeStep1_Generate(
     }
   }
 
+  // お気に入りレシピ取得 (#104)
+  let likedRecipes: string[] = generatedData.likedRecipes ?? [];
+  if (likedRecipes.length === 0) {
+    try {
+      const likedData = await runSupabaseQuery<any[]>(
+        () => supabase
+          .from("recipe_likes")
+          .select("recipe_id")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(30),
+        `recipe_likes.context:${userId}`,
+        [],
+      );
+      likedRecipes = (likedData as any[]).map((r) => String(r.recipe_id)).filter(Boolean);
+    } catch {
+      likedRecipes = [];
+    }
+  }
+
   const userContext =
     generatedData.userContext ??
     buildUserContextForPrompt({
@@ -1202,9 +1224,30 @@ async function executeStep1_Generate(
       healthGuidance,
     });
 
-  const userSummary =
+  const baseSummary =
     generatedData.userSummary ??
     buildUserSummary(promptProfile, nutritionTargets, note, promptConstraints, healthCheckups, healthGuidance);
+
+  // お気に入りレシピをプロンプトに追加（#104 + #113: 週内重複防止）
+  const todayForDedup = getTodayStr();
+  const weekStartForDedup = dates[0] ? addDays(dates[0], -7) : addDays(todayForDedup, -7);
+  // 今週すでに献立に含まれているお気に入りレシピ（重複防止 #113）
+  const usedLikedRecipesThisWeek = new Set(
+    existingMenus
+      .filter((m) => m.date >= weekStartForDedup && m.date <= todayForDedup)
+      .map((m) => m.dishName),
+  );
+  const availableLikedRecipes = likedRecipes.filter((r) => !usedLikedRecipesThisWeek.has(r));
+  const alreadyUsedLiked = likedRecipes.filter((r) => usedLikedRecipesThisWeek.has(r));
+
+  let likedRecipesSection = "";
+  if (availableLikedRecipes.length > 0) {
+    likedRecipesSection += `\n\n【お気に入りレシピ（積極的に取り入れてください）】\n${availableLikedRecipes.slice(0, 20).join("、")}`;
+  }
+  if (alreadyUsedLiked.length > 0) {
+    likedRecipesSection += `\n\n【お気に入りレシピ（今週すでに使用済み・重複を避けてください）】\n${alreadyUsedLiked.slice(0, 10).join("、")}`;
+  }
+  const userSummary = baseSummary + likedRecipesSection;
 
   const references: MenuReference[] =
     generatedData.references ??
@@ -1395,6 +1438,7 @@ async function executeStep1_Generate(
     nutritionTargets,
     userContext,
     userSummary,
+    likedRecipes,
     references,
     referenceSummary,
     healthCheckups,
