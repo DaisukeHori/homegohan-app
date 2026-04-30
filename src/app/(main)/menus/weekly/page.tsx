@@ -5095,24 +5095,27 @@ export default function WeeklyMenuPage() {
               const isPast = day.dateStr < todayStr;
               return (
                 <button
+                  type="button"
                   key={day.dateStr}
                   onClick={() => {
                     setSelectedDayIndex(idx);
                     setIsDayNutritionExpanded(false);
                   }}
+                  aria-label={`${day.date.getMonth() + 1}月${day.date.getDate()}日 ${day.dayOfWeek}`}
+                  aria-pressed={isSelected}
                   className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all relative"
                   style={{
-                    background: isSelected 
-                      ? (isPast ? colors.textMuted : colors.accent) 
+                    background: isSelected
+                      ? (isPast ? colors.textMuted : colors.accent)
                       : (isPast ? 'rgba(0,0,0,0.03)' : 'transparent'),
                     border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
                   }}
                 >
                   <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
-                  <span style={{ 
-                    fontSize: 13, 
-                    fontWeight: 600, 
-                    color: isSelected ? '#fff' : isPast ? colors.textMuted : isWeekend ? colors.accent : colors.text 
+                  <span style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: isSelected ? '#fff' : isPast ? colors.textMuted : isWeekend ? colors.accent : colors.text
                   }}>{day.dayOfWeek}</span>
                 </button>
               );
