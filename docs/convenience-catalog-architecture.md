@@ -570,6 +570,42 @@ OpenAI に任せないもの:
 - `src/app/api/catalog/products/[id]/route.ts`
 - `supabase/migrations/<timestamp>_create_catalog_tables.sql`
 
+## Current Cron Schedules
+
+以下のスケジュールが `supabase/migrations/20260430200000_catalog_cron_schedules.sql` で登録される。
+実行基盤は `pg_cron` + `pg_net` + `public.invoke_catalog_import()` ヘルパー関数。
+
+| ジョブ名 | Edge Function | スケジュール (UTC) | JST 換算 |
+|---|---|---|---|
+| `catalog-import-seven` | `import-seven-eleven-catalog` | 毎日 03:00 | 毎日 12:00 |
+| `catalog-import-familymart` | `import-familymart-catalog` | 毎日 03:15 | 毎日 12:15 |
+| `catalog-import-lawson` | `import-lawson-catalog` | 毎日 03:30 | 毎日 12:30 |
+| `catalog-import-natural-lawson` | `import-natural-lawson-catalog` | 毎日 03:45 | 毎日 12:45 |
+| `catalog-import-ministop` | `import-ministop-catalog` | 毎日 04:00 | 毎日 13:00 |
+
+### 手動 trigger API
+
+管理者は以下の API エンドポイントから任意のタイミングで取り込みを実行できる。
+
+```
+POST /api/admin/catalog/import
+Content-Type: application/json
+
+{ "sourceCode": "seven_eleven_jp" }
+```
+
+有効な `sourceCode` 値: `seven_eleven_jp`, `familymart_jp`, `lawson_jp`, `natural_lawson_jp`, `ministop_jp`
+
+実装: `src/app/api/admin/catalog/import/route.ts`
+
+### 前提: Dashboard 操作
+
+migration 適用前に Supabase Dashboard → Database → Extensions で以下を有効化する必要がある:
+- `pg_cron`
+- `pg_net`
+
+また `app.cron_secret` GUC を SQL Editor で設定する（`ENV_SETUP.md` 参照）。
+
 ## Operational Risks
 - robots.txt / 利用規約の確認が必要
 - 画像URL直参照が不安定なら storage へ保存する必要がある
