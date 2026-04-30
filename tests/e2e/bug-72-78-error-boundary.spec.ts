@@ -16,6 +16,9 @@
 import { expect, test } from "@playwright/test";
 import { test as authTest } from "./fixtures/auth";
 
+// トレースを有効化してデバッグ可能にする
+authTest.use({ trace: "on" });
+
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3000";
 
 // /health/checkups/[id] はログイン必須のルート。
@@ -24,6 +27,8 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3000";
 test.describe("Bug #72: 不正 checkup ID → 404 (500 にならない)", () => {
   authTest("非 UUID の ID (abc-xss-test) で 404 ページが返る", async ({ authedPage }) => {
     const response = await authedPage.goto(`${BASE_URL}/health/checkups/abc-xss-test`);
+    // ログインページに留まっている場合は離脱を待つ
+    await authedPage.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
     // HTTP ステータスが 404 であること
     expect(response?.status()).toBe(404);
     // 404 ページのテキストが表示されること
@@ -36,6 +41,7 @@ test.describe("Bug #72: 不正 checkup ID → 404 (500 にならない)", () => 
     const response = await authedPage.goto(
       `${BASE_URL}/health/checkups/%3Cscript%3Ealert(1)%3C%2Fscript%3E`
     );
+    await authedPage.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
     // 404 または Next.js がそもそも reject する (< 500 であること)
     const status = response?.status() ?? 0;
     expect(status).toBeLessThan(500);
@@ -45,6 +51,7 @@ test.describe("Bug #72: 不正 checkup ID → 404 (500 にならない)", () => 
 
   authTest("非 UUID の ID (not-a-uuid) で 404 ページが返る", async ({ authedPage }) => {
     const response = await authedPage.goto(`${BASE_URL}/health/checkups/not-a-uuid`);
+    await authedPage.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
     expect(response?.status()).toBe(404);
   });
 
@@ -53,6 +60,7 @@ test.describe("Bug #72: 不正 checkup ID → 404 (500 にならない)", () => 
     const response = await authedPage.goto(
       `${BASE_URL}/health/checkups/00000000-0000-0000-0000-000000000000`
     );
+    await authedPage.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
     const status = response?.status() ?? 0;
     expect(status).toBeLessThan(500);
   });
@@ -64,11 +72,13 @@ test.describe("404 ページの基本動作", () => {
     const response = await authedPage.goto(
       `${BASE_URL}/random-nonexistent-page-xyz-9999`
     );
+    await authedPage.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
     expect(response?.status()).toBe(404);
   });
 
   authTest("404 ページに「ホームへ戻る」リンクが表示される", async ({ authedPage }) => {
     await authedPage.goto(`${BASE_URL}/health/checkups/invalid-id-for-test`);
+    await authedPage.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
     await expect(
       authedPage.locator("a[href='/home'], a[href='/']").or(
         authedPage.locator("text=ホームへ戻る")

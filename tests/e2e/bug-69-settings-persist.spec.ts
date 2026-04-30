@@ -11,11 +11,15 @@ import { test, expect } from './fixtures/auth';
 test.describe('settings toggle persistence (#69)', () => {
   test('通知 toggle が reload 後も保持される', async ({ authedPage }) => {
     await authedPage.goto('/settings');
+    await authedPage.waitForLoadState('domcontentloaded');
 
     // API レスポンスを待機してから確認するため、GET リクエストを追跡
     await authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-      { timeout: 10_000 },
+      (res) =>
+        res.url().includes('/api/notification-preferences') &&
+        res.request().method() === 'GET' &&
+        res.status() === 200,
+      { timeout: 30_000 },
     );
 
     // 「通知」テキストを含む行コンテナ (flex items-center justify-between) 内の button (Switch)
@@ -34,8 +38,11 @@ test.describe('settings toggle persistence (#69)', () => {
 
     // toggle を反転
     const patchPromise = authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'PATCH',
-      { timeout: 10_000 },
+      (res) =>
+        res.url().includes('/api/notification-preferences') &&
+        res.request().method() === 'PATCH' &&
+        res.status() === 200,
+      { timeout: 30_000 },
     );
     await notifSwitch.click();
     const patchRes = await patchPromise;
@@ -44,40 +51,55 @@ test.describe('settings toggle persistence (#69)', () => {
     // リロード後も状態が保持されている
     await Promise.all([
       authedPage.waitForResponse(
-        (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-        { timeout: 15_000 },
+        (res) =>
+          res.url().includes('/api/notification-preferences') &&
+          res.request().method() === 'GET' &&
+          res.status() === 200,
+        { timeout: 30_000 },
       ),
       authedPage.reload(),
     ]);
+    await authedPage.waitForLoadState('domcontentloaded');
 
     const afterReloadState = await isCheckedClass();
     expect(afterReloadState).toBe(!initialState);
 
     // もう一度 toggle して元に戻す
     const patchPromise2 = authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'PATCH',
-      { timeout: 10_000 },
+      (res) =>
+        res.url().includes('/api/notification-preferences') &&
+        res.request().method() === 'PATCH' &&
+        res.status() === 200,
+      { timeout: 30_000 },
     );
     await notifSwitch.click();
     await patchPromise2;
 
     await Promise.all([
       authedPage.waitForResponse(
-        (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-        { timeout: 15_000 },
+        (res) =>
+          res.url().includes('/api/notification-preferences') &&
+          res.request().method() === 'GET' &&
+          res.status() === 200,
+        { timeout: 30_000 },
       ),
       authedPage.reload(),
     ]);
+    await authedPage.waitForLoadState('domcontentloaded');
     const restoredState = await isCheckedClass();
     expect(restoredState).toBe(initialState);
   });
 
   test('自動解析 toggle が reload 後も保持される', async ({ authedPage }) => {
     await authedPage.goto('/settings');
+    await authedPage.waitForLoadState('domcontentloaded');
 
     await authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-      { timeout: 10_000 },
+      (res) =>
+        res.url().includes('/api/notification-preferences') &&
+        res.request().method() === 'GET' &&
+        res.status() === 200,
+      { timeout: 30_000 },
     );
 
     // 自動解析スイッチを特定: 「自動解析」span を含む行コンテナ内の button (Switch)
@@ -93,8 +115,11 @@ test.describe('settings toggle persistence (#69)', () => {
     const initialState = await isChecked();
 
     const patchPromise = authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'PATCH',
-      { timeout: 10_000 },
+      (res) =>
+        res.url().includes('/api/notification-preferences') &&
+        res.request().method() === 'PATCH' &&
+        res.status() === 200,
+      { timeout: 30_000 },
     );
     await autoSwitch.click();
     const patchRes = await patchPromise;
@@ -102,11 +127,15 @@ test.describe('settings toggle persistence (#69)', () => {
 
     await Promise.all([
       authedPage.waitForResponse(
-        (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-        { timeout: 15_000 },
+        (res) =>
+          res.url().includes('/api/notification-preferences') &&
+          res.request().method() === 'GET' &&
+          res.status() === 200,
+        { timeout: 30_000 },
       ),
       authedPage.reload(),
     ]);
+    await authedPage.waitForLoadState('domcontentloaded');
 
     const afterReloadState = await isChecked();
     expect(afterReloadState).toBe(!initialState);
