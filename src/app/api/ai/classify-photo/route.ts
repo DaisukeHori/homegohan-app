@@ -31,13 +31,6 @@ function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult 
   if (pair) {
     const recoveredType = pair[1] as PhotoType;
     const recoveredConf = Number(pair[2]);
-    // unknown かつ confidence が低い場合は文脈から meal を再推測
-    if (recoveredType === 'unknown' && recoveredConf < 0.5) {
-      const mealHints = /\b(food|meal|dish|plate|bowl|rice|soup|bento|定食|弁当|食事|料理|皿|茶碗|丼)\b/i;
-      if (mealHints.test(rawText)) {
-        return normalizeClassifyPhotoResult({ type: 'meal', confidence: 0.65 });
-      }
-    }
     return normalizeClassifyPhotoResult({
       type: recoveredType,
       confidence: recoveredConf,
@@ -46,19 +39,14 @@ function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult 
 
   const typeOnly = rawText.match(/"type"\s*:\s*"(meal|fridge|health_checkup|weight_scale|unknown)"/);
   if (!typeOnly) {
-    // 型が見当たらない場合は meal として回収（classify-failed を防ぐ）
-    return normalizeClassifyPhotoResult({ type: 'meal', confidence: 0.5 });
+    // 型が見当たらない場合は unknown を返す
+    return normalizeClassifyPhotoResult({ type: 'unknown', confidence: 0.0 });
   }
 
   const recoveredType = typeOnly[1] as PhotoType;
-  // unknown は meal にフォールバック（classify-failed を絶対に返さない）
-  if (recoveredType === 'unknown') {
-    return normalizeClassifyPhotoResult({ type: 'meal', confidence: 0.5 });
-  }
-
   return normalizeClassifyPhotoResult({
     type: recoveredType,
-    confidence: 0.7,
+    confidence: recoveredType === 'unknown' ? 0.0 : 0.7,
   });
 }
 
@@ -66,32 +54,30 @@ function buildPrompt(imageCount: number): string {
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
   return `この${imageCountText}画像セットの主な用途を判別してください。
 
-【絶対禁止ルール】食事・料理の写真に対して "unknown" や "classify-failed" を返すことは厳禁です。
-器、皿、食材、食卓、トレイが写っている場合は必ず "meal" を返してください。
+まず「これは食事・料理の写真ですか？」を判断してください。
+明確に食事・料理だと判断できる場合のみ "meal" を返してください。
 
 以下の4つのカテゴリから最も適切なものを選んでください：
 
 1. "meal" - 食事・料理の写真
    【例】定食（米飯＋主菜＋副菜＋汁物）、単品料理、弁当、丼、ラーメン、
         パスタ、サラダ、ケーキ、カフェの飲み物、和食、洋食、中華。
-        器・トレイ・食材の盛り付けが写っていれば必ず "meal" を選んでください。
-        疑わしい場合は "meal" を選んでください。
+        料理が明確に写っている場合に選んでください。
 2. "fridge" - 冷蔵庫の中身や買い物食材の写真（冷蔵庫の内部が写っている場合）
 3. "health_checkup" - 健康診断結果や検査票など紙の書類のみ
 4. "weight_scale" - 体重計や体組成計のディスプレイ写真のみ
 
 判定ルール:
 - 複数枚ある場合は、画像全体を見て最も一貫したカテゴリを選んでください
-- 料理・食事の画像（器、盛り付け、食卓、弁当箱）は **絶対に "meal"** を選んでください
 - 体重計ディスプレイ写真は必ず "weight_scale" を最優先で判定してください
 - 紙の健康診断結果と体重計ディスプレイは厳密に区別してください
-- 食べ物・飲み物・料理が少しでも写っている場合は "meal" を返してください
-- "unknown" は本当に4カテゴリのどれにも一切当てはまらない場合のみ使用してください
-- 迷った場合は "meal" を選んでください（誤分類より未分類の方が問題です）
+- 料理・食事が明確に写っている場合は "meal" を返してください
+- 4カテゴリのどれにも当てはまらない場合や、画像が不鮮明・空白・テスト画像の場合は "unknown" を返してください
+- 判定に自信がない場合は confidence を低く設定してください
 
 JSON では次の2項目だけ返してください:
-- "type": 上記4カテゴリのいずれか（"meal" / "fridge" / "health_checkup" / "weight_scale"）
-- "confidence": 0.0 から 1.0 の小数
+- "type": 上記4カテゴリのいずれか（"meal" / "fridge" / "health_checkup" / "weight_scale" / "unknown"）
+- "confidence": 0.0 から 1.0 の小数（判定に自信がない場合は低い値を設定する）
 
 説明文や候補配列は返さないでください。`;
 }
@@ -152,6 +138,24 @@ function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): str
 const CLASSIFY_CONFIDENCE_THRESHOLD = 0.5;
 const CLASSIFY_RETRY_TEMPERATURE = 0.4;
 
+// 画像の最小バイトサイズ（1px ブランク JPEG 等の極小画像を除外するための閾値）
+// 通常の 100x100px JPEG でも数 KB 以上になるため、1000 バイト未満は無効とみなす
+const MIN_IMAGE_BYTES = 1000;
+
+/**
+ * base64 画像が最低品質要件を満たしているか検証する。
+ * 極小・空白画像（例: 1px ブランク JPEG）は unknown を強制して AI 呼び出しをスキップする。
+ */
+function isImageSufficientQuality(images: ImageInput[]): boolean {
+  for (const image of images) {
+    if (!image.base64 || image.base64.length === 0) return false;
+    // base64 文字数からバイト数を近似 (実際のバイト数 ≈ base64 長 × 3/4)
+    const approxBytes = Math.floor(image.base64.length * 0.75);
+    if (approxBytes < MIN_IMAGE_BYTES) return false;
+  }
+  return true;
+}
+
 async function requestClassification(
   images: ImageInput[],
   temperature = 0.1,
@@ -211,14 +215,13 @@ async function requestClassificationWithRetry(
     return best;
   }
 
-  // すべてのリトライで unknown になった場合は meal にフォールバック
-  // （写真が存在する以上、何らかの食事関連コンテンツである可能性が最も高い）
-  console.warn('Photo Classification: all retries returned unknown, forcing meal fallback', {
+  // すべてのリトライで unknown になった場合は unknown を返す
+  console.warn('Photo Classification: all retries returned unknown, returning unknown', {
     firstConf: first.result.confidence,
     candidateCount: candidates.length,
   });
   return {
-    result: normalizeClassifyPhotoResult({ type: 'meal', confidence: 0.5 }),
+    result: normalizeClassifyPhotoResult({ type: 'unknown', confidence: first.result.confidence }),
     model: first.model,
   };
 }
@@ -262,9 +265,41 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image Base64 is required' }, { status: 400 });
     }
 
+    // #151: 極小・空白画像（例: 1px ブランク JPEG）は AI に送らず unknown を返す
+    if (!isImageSufficientQuality(images)) {
+      console.warn('Photo Classification: image rejected due to insufficient quality (too small)', {
+        imageCount: images.length,
+        approxBytesFirst: images[0] ? Math.floor(images[0].base64.length * 0.75) : 0,
+      });
+      return NextResponse.json({
+        type: 'unknown',
+        confidence: 0.0,
+        description: '画像が小さすぎるか無効です',
+        modelUsed: CLASSIFY_MODEL,
+      });
+    }
+
     const classifyStartedAt = Date.now();
     const { result: initialResult, model } = await requestClassificationWithRetry(images);
     const classifyElapsedMs = Date.now() - classifyStartedAt;
+
+    // #151: confidence 閾値チェック — 低信頼度の分類は unknown として扱う
+    const FINAL_CONFIDENCE_THRESHOLD = 0.6;
+    if (initialResult.confidence < FINAL_CONFIDENCE_THRESHOLD && initialResult.type !== 'unknown') {
+      console.info('Photo Classification: confidence below threshold, treating as unknown', {
+        type: initialResult.type,
+        confidence: initialResult.confidence,
+        threshold: FINAL_CONFIDENCE_THRESHOLD,
+      });
+      // 信頼度が低すぎる場合は unknown として扱うが、元の型情報は candidates に保持する
+      const lowConfResult = normalizeClassifyPhotoResult({
+        type: 'unknown',
+        confidence: initialResult.confidence,
+        candidates: [{ type: initialResult.type, confidence: initialResult.confidence }],
+      });
+      return NextResponse.json({ ...lowConfResult, modelUsed: model });
+    }
+
     let result: ClassifyPhotoResult | ClassifyPhotoWithMealAnalysisResult = initialResult;
 
     if (images.length > 1 && !resolveClassifyPhotoType(initialResult).type) {
