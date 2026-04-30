@@ -135,7 +135,7 @@ export default function FavoritesPage() {
           <ChevronLeft size={20} color={colors.textLight} />
         </button>
         <div style={{ flex: 1 }}>
-          <div
+          <h1
             style={{
               display: "flex",
               alignItems: "center",
@@ -143,11 +143,12 @@ export default function FavoritesPage() {
               fontWeight: 700,
               fontSize: 18,
               color: colors.text,
+              margin: 0,
             }}
           >
             <Heart size={20} color={colors.favRed} fill={colors.favRed} />
             お気に入りレシピ
-          </div>
+          </h1>
           {!loading && (
             <p style={{ fontSize: 12, color: colors.textMuted, margin: 0 }}>
               {total} 件
