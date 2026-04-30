@@ -31,16 +31,33 @@ export default function SettingsPage() {
 
   const [settings, setSettings] = useState({
     notifications: true,
-    dataShare: true,
+    dataShare: false,
     autoAnalyze: true
   });
 
   const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>('monday');
   const [savingWeekStart, setSavingWeekStart] = useState(false);
 
-  // Fetch current week start day setting
+  // mount 時に notification_preferences から設定を取得
   useEffect(() => {
     const fetchSettings = async () => {
+      const res = await fetch('/api/notification-preferences');
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.settings) {
+        setSettings({
+          notifications: json.settings.notifications_enabled,
+          autoAnalyze: json.settings.auto_analyze_enabled,
+          dataShare: json.settings.data_share_enabled,
+        });
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  // Fetch current week start day setting
+  useEffect(() => {
+    const fetchWeekStart = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data: profile } = await supabase
@@ -52,7 +69,7 @@ export default function SettingsPage() {
         setWeekStartDay(profile.week_start_day as WeekStartDay);
       }
     };
-    fetchSettings();
+    fetchWeekStart();
   }, [supabase]);
 
   const handleWeekStartDayChange = async (newValue: WeekStartDay) => {
@@ -72,8 +89,24 @@ export default function SettingsPage() {
     }
   };
 
-  const toggle = (key: keyof typeof settings) => {
-    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
+  const toggle = async (key: keyof typeof settings) => {
+    const newValue = !settings[key];
+    setSettings(prev => ({ ...prev, [key]: newValue }));
+    try {
+      const apiKey =
+        key === 'notifications' ? 'notifications_enabled' :
+        key === 'autoAnalyze' ? 'auto_analyze_enabled' :
+        'data_share_enabled';
+      const res = await fetch('/api/notification-preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [apiKey]: newValue }),
+      });
+      if (!res.ok) throw new Error('save failed');
+    } catch {
+      setSettings(prev => ({ ...prev, [key]: !newValue }));
+      alert('設定の保存に失敗しました');
+    }
   };
 
   const [exporting, setExporting] = useState(false);
