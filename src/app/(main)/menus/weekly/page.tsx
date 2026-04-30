@@ -1500,7 +1500,7 @@ export default function WeeklyMenuPage() {
                 const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
                 if (statusRes.ok) {
                   const { status, error_message } = await statusRes.json();
-                  if (status === 'pending' || status === 'processing') {
+                  if (status === 'queued' || status === 'pending' || status === 'processing') {
                     console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
                     setIsGenerating(true);
                     subscribeToRequestStatus(targetDate, requestId);
