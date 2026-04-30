@@ -39,6 +39,17 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     const favBtn = authedPage.locator('[data-testid="favorite-button"]');
     await expect(favBtn).toBeVisible({ timeout: 5_000 });
 
+    // モーダルオープン直後は API でお気に入り状態を取得中のため disabled になる場合がある
+    // disabled が解除されるまで待つ
+    await expect(favBtn).not.toBeDisabled({ timeout: 10_000 });
+
+    // 既にお気に入り登録済みの場合は一度解除してから再登録する
+    const initialPressed = await favBtn.getAttribute("aria-pressed");
+    if (initialPressed === "true") {
+      await favBtn.click();
+      await expect(favBtn).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
+    }
+
     // クリック前は未選択
     await expect(favBtn).toHaveAttribute("aria-pressed", "false");
 
@@ -46,11 +57,15 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     await favBtn.click();
 
     // クリック後 → 選択状態
-    await expect(favBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(favBtn).toHaveAttribute("aria-pressed", "true", { timeout: 10_000 });
 
     // SVG の fill 属性が赤 (#FF6B6B) になっていること
     const heartFill = await favBtn.locator("svg").getAttribute("fill");
     expect(heartFill).toBe("#FF6B6B");
+
+    // クリーンアップ: お気に入りを解除して初期状態に戻す
+    await favBtn.click();
+    await expect(favBtn).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
   });
 
   /**

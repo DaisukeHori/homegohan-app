@@ -7,6 +7,9 @@
  */
 import { test, expect } from './fixtures/auth';
 
+// DB を変更するため並列実行時の干渉を防ぐためシリアルに実行する
+test.describe.configure({ mode: 'serial' });
+
 test.describe('settings toggle persistence (#69)', () => {
   test('通知 toggle が reload 後も保持される', async ({ authedPage }) => {
     await authedPage.goto('/settings');
