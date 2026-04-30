@@ -43,11 +43,9 @@ export async function POST() {
       userId: session.user?.id ?? null,
     })
 
+    // トークンはレスポンスボディに含めない (httpOnly Cookie で管理)
     return NextResponse.json(
-      {
-        accessToken: session.access_token,
-        refreshToken: session.refresh_token,
-      },
+      { ok: true },
       {
         headers: {
           'Cache-Control': 'no-store',
