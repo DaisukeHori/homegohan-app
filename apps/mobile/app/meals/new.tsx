@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
@@ -219,12 +220,23 @@ export default function MealNewPage() {
   const todayStr = formatLocalDate(new Date());
 
   // ─── Photo helpers ─────────────────────────────────
+
+  /** リサイズ + JPEG 変換して base64 を返す (#174 巨大ボディ対策) */
+  async function resizeAndEncode(uri: string): Promise<{ uri: string; base64: string; mimeType: string }> {
+    const result = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 1280 } }],
+      { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+    );
+    return { uri: result.uri, base64: result.base64 as string, mimeType: "image/jpeg" };
+  }
+
   async function pickFromLibrary() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("権限が必要です", "写真ライブラリへのアクセスを許可してください。"); return; }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"] as any, allowsMultipleSelection: true, base64: true, quality: 0.8, selectionLimit: 4 });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"] as any, allowsMultipleSelection: true, base64: false, quality: 1, selectionLimit: 4 });
     if (res.canceled) return;
-    const items = (res.assets || []).filter((a) => !!a.base64).map((a) => ({ uri: a.uri, base64: a.base64 as string, mimeType: (a as any).mimeType ?? "image/jpeg" }));
+    const items = await Promise.all((res.assets || []).map((a) => resizeAndEncode(a.uri)));
     setPhotos((prev) => [...prev, ...items]);
   }
 
@@ -232,11 +244,12 @@ export default function MealNewPage() {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) { Alert.alert("権限が必要です", "カメラへのアクセスを許可してください。"); return; }
     try {
-      const res = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.8 });
+      const res = await ImagePicker.launchCameraAsync({ base64: false, quality: 1 });
       if (res.canceled) return;
       const a = res.assets?.[0];
-      if (!a?.base64) { Alert.alert("失敗", "画像の取得に失敗しました。"); return; }
-      setPhotos((prev) => [...prev, { uri: a.uri, base64: a.base64 as string, mimeType: (a as any).mimeType ?? "image/jpeg" }]);
+      if (!a?.uri) { Alert.alert("失敗", "画像の取得に失敗しました。"); return; }
+      const photo = await resizeAndEncode(a.uri);
+      setPhotos((prev) => [...prev, photo]);
     } catch {
       Alert.alert("カメラが使用できません", "このデバイスではカメラが利用できません。「写真を選ぶ」をお試しください。");
     }
