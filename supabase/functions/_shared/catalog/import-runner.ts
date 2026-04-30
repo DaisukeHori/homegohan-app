@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../cors.ts";
 import { createLogger, generateRequestId } from "../db-logger.ts";
+import { requireServiceRole } from "../auth.ts";
 import { firecrawlScrapeStructured } from "../firecrawl-client.ts";
 import {
   cleanupCatalogExtract,
@@ -92,6 +93,15 @@ const DETAIL_SCHEMA: Record<string, unknown> = {
 export async function handleCatalogImportRequest(req: Request, options: HandlerOptions) {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  // バッチ専用: CRON_SECRET 認証（Firecrawl / LLM コスト保護）
+  const authErr = requireServiceRole(req);
+  if (authErr) {
+    return new Response(authErr.body, {
+      status: authErr.status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const requestId = generateRequestId();
