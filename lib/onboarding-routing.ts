@@ -56,12 +56,12 @@ export function resolveOnboardingRedirect(input: OnboardingRedirectInput): strin
     return null;
   }
 
-  // #268: not_started ユーザーは /onboarding/questions にも直アクセス不可
+  // #268: not_started ユーザーは resume/complete には直アクセス不可
+  // /onboarding/questions は welcome → questions のフローで必要なため許可する
   if (
     pathname === "/onboarding" ||
     pathname === "/onboarding/resume" ||
-    pathname === "/onboarding/complete" ||
-    pathname === "/onboarding/questions"
+    pathname === "/onboarding/complete"
   ) {
     return "/onboarding/welcome";
   }
