@@ -44,9 +44,24 @@ export async function POST(
 
   try {
     const body = await request.json();
-    
-    if (!body.content || body.content.trim().length === 0) {
+
+    // #259: content 長さ制限 (1〜5000文字)
+    const content = typeof body.content === 'string' ? body.content.trim() : '';
+    if (content.length === 0) {
       return NextResponse.json({ error: 'コメントを入力してください' }, { status: 400 });
+    }
+    if (content.length > 5000) {
+      return NextResponse.json({ error: 'コメントは5000文字以内で入力してください' }, { status: 400 });
+    }
+
+    // #260: rating validation (1〜5の整数のみ許可)
+    let rating: number | null = null;
+    if (body.rating !== undefined && body.rating !== null) {
+      const r = Number(body.rating);
+      if (!Number.isInteger(r) || r < 1 || r > 5) {
+        return NextResponse.json({ error: 'ratingは1〜5の整数で入力してください' }, { status: 400 });
+      }
+      rating = r;
     }
 
     const { data, error } = await supabase
@@ -54,8 +69,8 @@ export async function POST(
       .insert({
         recipe_id: params.id,
         user_id: user.id,
-        content: body.content.trim(),
-        rating: body.rating || null,
+        content,
+        rating,
       })
       .select(`
         id,
