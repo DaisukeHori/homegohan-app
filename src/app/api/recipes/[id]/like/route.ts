@@ -17,12 +17,13 @@ async function refreshLikeCount(
 
   const likeCount = count ?? 0;
 
-  // recipe_uuid カラムで照合し、TEXT-only ID でも recipes.like_count を同期する
+  // recipe_id はレシピ名 (TEXT) であるため、recipes.name で照合して like_count を同期する
+  // #258: TEXT-only legacy の recipe_id に対して recipes.like_count を直接 UPDATE する
   await supabase
     .from('recipes')
     .update({ like_count: likeCount })
-    .eq('recipe_uuid', recipeId)
-    .then(() => {/* 失敗しても無視 — UUID 未登録レシピは対象外 */});
+    .eq('name', recipeId)
+    .then(() => {/* 失敗しても無視 — 名前未登録レシピは対象外 */});
 
   return likeCount;
 }
