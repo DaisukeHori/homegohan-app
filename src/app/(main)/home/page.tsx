@@ -112,6 +112,18 @@ export default function HomePage() {
   } = useHomeData();
 
   const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
+
+  // #199: Escape キーで週間統計モーダルを閉じる
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showWeeklyDetail) {
+        setShowWeeklyDetail(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showWeeklyDetail]);
+
   const [showCheckin, setShowCheckin] = useState(false);
   const [checkinSubmitting, setCheckinSubmitting] = useState(false);
   const [checkinFeedback, setCheckinFeedback] = useState<
@@ -1102,6 +1114,9 @@ export default function HomePage() {
               className="fixed inset-0 bg-black/60 z-[60] backdrop-blur-sm"
             />
             <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="weekly-stats-title"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
@@ -1112,7 +1127,7 @@ export default function HomePage() {
                 <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mb-6 lg:hidden" />
                 
                 <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-bold text-gray-900">今週の統計</h2>
+                  <h2 id="weekly-stats-title" className="text-xl font-bold text-gray-900">今週の統計</h2>
                   <button onClick={() => setShowWeeklyDetail(false)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
                     <X size={20} color={colors.textLight} />
                   </button>

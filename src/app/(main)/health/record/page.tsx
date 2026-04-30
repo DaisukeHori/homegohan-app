@@ -254,8 +254,9 @@ export default function HealthRecordPage() {
           {expandedSections.body && (
             <div className="px-4 pb-4 space-y-4">
               <div>
-                <label className="block text-sm mb-1" style={{ color: colors.textLight }}>体重 (kg)</label>
+                <label htmlFor="health-weight" className="block text-sm mb-1" style={{ color: colors.textLight }}>体重 (kg)</label>
                 <input
+                  id="health-weight"
                   type="number"
                   step="0.1"
                   value={formData.weight}
@@ -266,8 +267,9 @@ export default function HealthRecordPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm mb-1" style={{ color: colors.textLight }}>体脂肪率 (%)</label>
+                <label htmlFor="health-body-fat" className="block text-sm mb-1" style={{ color: colors.textLight }}>体脂肪率 (%)</label>
                 <input
+                  id="health-body-fat"
                   type="number"
                   step="0.1"
                   value={formData.body_fat_percentage}
@@ -305,22 +307,24 @@ export default function HealthRecordPage() {
             <div className="px-4 pb-4 space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: colors.textLight }}>収縮期血圧</label>
+                  <label htmlFor="health-systolic-bp" className="block text-sm mb-1" style={{ color: colors.textLight }}>収縮期血圧</label>
                   <input
                     type="number"
                     value={formData.systolic_bp}
-                    onChange={(e) => setFormData({ ...formData, systolic_bp: e.target.value })}
+                    id="health-systolic-bp"
+                  onChange={(e) => setFormData({ ...formData, systolic_bp: e.target.value })}
                     placeholder="120"
                     className="w-full p-3 rounded-xl"
                     style={{ backgroundColor: colors.bg, color: colors.text }}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: colors.textLight }}>拡張期血圧</label>
+                  <label htmlFor="health-diastolic-bp" className="block text-sm mb-1" style={{ color: colors.textLight }}>拡張期血圧</label>
                   <input
                     type="number"
                     value={formData.diastolic_bp}
-                    onChange={(e) => setFormData({ ...formData, diastolic_bp: e.target.value })}
+                    id="health-diastolic-bp"
+                  onChange={(e) => setFormData({ ...formData, diastolic_bp: e.target.value })}
                     placeholder="80"
                     className="w-full p-3 rounded-xl"
                     style={{ backgroundColor: colors.bg, color: colors.text }}
@@ -329,23 +333,25 @@ export default function HealthRecordPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: colors.textLight }}>脈拍 (bpm)</label>
+                  <label htmlFor="health-heart-rate" className="block text-sm mb-1" style={{ color: colors.textLight }}>脈拍 (bpm)</label>
                   <input
                     type="number"
                     value={formData.heart_rate}
-                    onChange={(e) => setFormData({ ...formData, heart_rate: e.target.value })}
+                    id="health-heart-rate"
+                  onChange={(e) => setFormData({ ...formData, heart_rate: e.target.value })}
                     placeholder="70"
                     className="w-full p-3 rounded-xl"
                     style={{ backgroundColor: colors.bg, color: colors.text }}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: colors.textLight }}>体温 (℃)</label>
+                  <label htmlFor="health-body-temp" className="block text-sm mb-1" style={{ color: colors.textLight }}>体温 (℃)</label>
                   <input
                     type="number"
                     step="0.1"
                     value={formData.body_temp}
-                    onChange={(e) => setFormData({ ...formData, body_temp: e.target.value })}
+                    id="health-body-temp"
+                  onChange={(e) => setFormData({ ...formData, body_temp: e.target.value })}
                     placeholder="36.5"
                     className="w-full p-3 rounded-xl"
                     style={{ backgroundColor: colors.bg, color: colors.text }}
@@ -379,11 +385,12 @@ export default function HealthRecordPage() {
           {expandedSections.lifestyle && (
             <div className="px-4 pb-4 space-y-4">
               <div>
-                <label className="block text-sm mb-1" style={{ color: colors.textLight }}>睡眠時間 (時間)</label>
+                <label htmlFor="health-sleep-hours" className="block text-sm mb-1" style={{ color: colors.textLight }}>睡眠時間 (時間)</label>
                 <input
                   type="number"
                   step="0.5"
                   value={formData.sleep_hours}
+                  id="health-sleep-hours"
                   onChange={(e) => setFormData({ ...formData, sleep_hours: e.target.value })}
                   placeholder="7.0"
                   className="w-full p-3 rounded-xl"
@@ -400,23 +407,25 @@ export default function HealthRecordPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: colors.textLight }}>水分摂取 (ml)</label>
+                  <label htmlFor="health-water-intake" className="block text-sm mb-1" style={{ color: colors.textLight }}>水分摂取 (ml)</label>
                   <input
                     type="number"
                     step="100"
                     value={formData.water_intake}
-                    onChange={(e) => setFormData({ ...formData, water_intake: e.target.value })}
+                    id="health-water-intake"
+                  onChange={(e) => setFormData({ ...formData, water_intake: e.target.value })}
                     placeholder="2000"
                     className="w-full p-3 rounded-xl"
                     style={{ backgroundColor: colors.bg, color: colors.text }}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: colors.textLight }}>歩数</label>
+                  <label htmlFor="health-step-count" className="block text-sm mb-1" style={{ color: colors.textLight }}>歩数</label>
                   <input
                     type="number"
                     value={formData.step_count}
-                    onChange={(e) => setFormData({ ...formData, step_count: e.target.value })}
+                    id="health-step-count"
+                  onChange={(e) => setFormData({ ...formData, step_count: e.target.value })}
                     placeholder="8000"
                     className="w-full p-3 rounded-xl"
                     style={{ backgroundColor: colors.bg, color: colors.text }}
@@ -424,10 +433,11 @@ export default function HealthRecordPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm mb-1" style={{ color: colors.textLight }}>便通 (回)</label>
+                <label htmlFor="health-bowel-movement" className="block text-sm mb-1" style={{ color: colors.textLight }}>便通 (回)</label>
                 <input
                   type="number"
                   value={formData.bowel_movement}
+                  id="health-bowel-movement"
                   onChange={(e) => setFormData({ ...formData, bowel_movement: e.target.value })}
                   placeholder="1"
                   className="w-full p-3 rounded-xl"

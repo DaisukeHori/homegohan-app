@@ -827,6 +827,7 @@ export default function AIChatBubble() {
                 </button>
                 <button
                   onClick={() => setIsOpen(false)}
+                  aria-label="AIチャットを閉じる"
                   className="p-2 rounded-full hover:bg-gray-100"
                 >
                   <X size={18} color={colors.textMuted} />
@@ -1225,6 +1226,7 @@ export default function AIChatBubble() {
                   <button
                     onClick={sendMessage}
                     disabled={!inputText.trim() || isSending || !currentSessionId}
+                    aria-label="メッセージを送信"
                     className="w-10 h-10 rounded-full flex items-center justify-center"
                     style={{
                       background: inputText.trim() ? colors.primary : colors.border,
