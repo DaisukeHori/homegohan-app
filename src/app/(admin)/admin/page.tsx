@@ -24,6 +24,7 @@ interface DailyCompletion {
 interface ModeDistribution {
   name: string;
   value: number;
+  [key: string]: unknown;
 }
 
 const MODE_COLORS: Record<string, string> = {
