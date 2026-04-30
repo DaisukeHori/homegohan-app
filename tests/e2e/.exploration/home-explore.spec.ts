@@ -210,13 +210,11 @@ test("7. 30-second check-in: condition button → submit → feedback shown", as
     const recordBtn = page.getByRole("button", { name: /記録する/ }).first();
     const recordBtnVisible = await recordBtn.isVisible({ timeout: 3_000 }).catch(() => false);
     if (!recordBtnVisible) {
-      // チェックイン UI が存在しない (実装差異) → skip
       console.log("[7] チェックイン UI が見つからない");
       test.skip(true, "check-in UI not found — may not be implemented in this env");
       return;
     }
     await recordBtn.click();
-    // 旧 UI: submit ボタン
     const submitBtn = page.getByRole("button", { name: /チェックイン完了/ });
     const submitVisible = await submitBtn.isVisible({ timeout: 5_000 }).catch(() => false);
     if (submitVisible) {
@@ -235,7 +233,6 @@ test("7. 30-second check-in: condition button → submit → feedback shown", as
     .first();
   const feedbackVisible = await feedback.isVisible({ timeout: 8_000 }).catch(() => false);
 
-  // フィードバックが出るか、ページが更新されていること
   const pageHasUpdate = feedbackVisible ||
     (await page.getByText("今日のチェックイン完了！").isVisible({ timeout: 3_000 }).catch(() => false));
 
@@ -409,7 +406,6 @@ test("13. bottom navigation: tab transitions (mobile)", async ({ authedPage: pag
     }
   }
   if (!menuLinkClicked) {
-    // フォールバック: 直接ナビゲート
     await page.goto("/menus/weekly");
   }
   await expect(page).toHaveURL(/\/menus\/weekly/, { timeout: 5_000 });

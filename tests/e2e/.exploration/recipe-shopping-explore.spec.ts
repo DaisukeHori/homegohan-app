@@ -183,7 +183,6 @@ test("S3: ハートボタン: クリックで aria-pressed 変化確認", async 
   if (!favVisible) {
     await ss(page, "S3-no-fav-button");
     console.log("INFO: ハートボタンが見つからない — 献立データがないか実装変更の可能性あり");
-    // データなし/実装変更の場合は探索記録として返す (fail にしない)
     return;
   }
 

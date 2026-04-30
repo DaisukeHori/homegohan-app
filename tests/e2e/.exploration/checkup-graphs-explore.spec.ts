@@ -538,29 +538,23 @@ test.describe("9. /health/challenges — チャレンジ機能", () => {
     await login(page);
     await page.goto(`${BASE_URL}/health/challenges`, { waitUntil: "networkidle" });
 
-    // 修正: ヘッダー内の + ボタンを header 配下に限定 (AI chat floating button を回避)
-    // 「チャレンジを選ぶ」ボタンがある場合はそちらを優先
+    // 修正: 「チャレンジを選ぶ」ボタン優先、なければ header 内 + ボタンに限定 (AI chat floating button を回避)
     const selectChallengeBtn = page.getByRole("button", { name: "チャレンジを選ぶ" });
     const hasBtnText = await selectChallengeBtn.isVisible({ timeout: 3_000 }).catch(() => false);
     if (hasBtnText) {
       await selectChallengeBtn.click();
     } else {
-      // header 内の + ボタンを使う
       const headerPlusBtn = page.locator("header button").filter({ has: page.locator("svg") }).first();
       const hasHeaderBtn = await headerPlusBtn.isVisible({ timeout: 3_000 }).catch(() => false);
       if (hasHeaderBtn) {
         await headerPlusBtn.click();
       } else {
-        // フォールバック: a[href] ではなく JS クリックで + ボタンをクリック
         await page.evaluate(() => {
           const btns = Array.from(document.querySelectorAll("button"));
           const plusBtn = btns.find(
-            (b) =>
-              b.querySelector("svg") &&
-              !b.closest('[style*="fixed"], [class*="fixed"]') &&
-              b.closest("header, [class*=\"header\"]")
+            (b) => b.querySelector("svg") && b.closest("header, [class*='header']")
           );
-          if (plusBtn) plusBtn.click();
+          if (plusBtn) (plusBtn as HTMLElement).click();
         });
       }
     }
@@ -594,11 +588,9 @@ test.describe("9. /health/challenges — チャレンジ機能", () => {
         await page.evaluate(() => {
           const btns = Array.from(document.querySelectorAll("button"));
           const plusBtn = btns.find(
-            (b) =>
-              b.querySelector("svg") &&
-              b.closest("header, [class*=\"header\"]")
+            (b) => b.querySelector("svg") && b.closest("header, [class*='header']")
           );
-          if (plusBtn) plusBtn.click();
+          if (plusBtn) (plusBtn as HTMLElement).click();
         });
       }
     }
