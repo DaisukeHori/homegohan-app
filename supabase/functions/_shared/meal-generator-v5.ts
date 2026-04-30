@@ -1,8 +1,11 @@
 /**
- * V5 向けの prompt 層。
+ * V5 向けの prompt 層（generate-menu-v5 専用）。
  *
- * V4 の meal-generator をベースにしつつ、sample seed / family brief /
+ * meal-generator.ts をベースにしつつ、sample seed / family brief /
  * breakfast template / forbidden names / sodium mode を明示的に prompt へ注入する。
+ *
+ * #208: meal-generator.ts と meal-generator-v5.ts の二重並存解消は将来タスク。
+ * v5 固有ロジックをここに集約し、meal-generator.ts は v4/v5 共通型として維持する。
  */
 
 import { SINGLE_SERVING_PROMPT_GUIDANCE } from "./generation-serving.ts";

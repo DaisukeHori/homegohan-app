@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts';
 import { requireServiceRole } from '../_shared/auth.ts';
+import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -21,13 +22,16 @@ Deno.serve(async (req) => {
     });
   }
 
+  const requestId = generateRequestId();
+  const logger = createLogger('aggregate-org-stats', requestId);
+
   try {
     const { date, organizationId } = await req.json().catch(() => ({}));
     
     // 対象日付（指定なければ今日）
     const targetDateStr = date || new Date().toISOString().split('T')[0];
 
-    console.log(`Aggregating stats for date: ${targetDateStr}`);
+    logger.info(`Aggregating stats for date: ${targetDateStr}`);
 
     // 1. 集計対象の組織を取得
     let orgQuery = supabaseAdmin.from('organizations').select('id');
@@ -48,7 +52,7 @@ Deno.serve(async (req) => {
         .eq('organization_id', org.id);
       
       if (memError) {
-        console.error(`Error fetching members for org ${org.id}`, memError);
+        logger.error(`Error fetching members for org ${org.id}`, memError);
         continue;
       }
 
@@ -80,7 +84,7 @@ Deno.serve(async (req) => {
         .in('meal_plan_days.meal_plans.user_id', memberIds);
 
       if (mealError) {
-        console.error(`Error fetching planned_meals for org ${org.id}`, mealError);
+        logger.error(`Error fetching planned_meals for org ${org.id}`, mealError);
         continue;
       }
 
@@ -144,7 +148,7 @@ Deno.serve(async (req) => {
     });
 
   } catch (error: any) {
-    console.error('Aggregation error:', error);
+    logger.error('Aggregation error', error);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,

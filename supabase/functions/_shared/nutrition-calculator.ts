@@ -1,3 +1,9 @@
+/**
+ * @deprecated nutrition-calculator-v2.ts が正式版。
+ * このファイルは save-meal.ts の emptyNutrition / NutritionTotals 型で参照されています。
+ * 完全統合後に nutrition-calculator-v2.ts へ一本化する予定。
+ * 新規コードでは nutrition-calculator-v2.ts を使用してください。
+ */
 import {
   DATASET_EMBEDDING_API_KEY_ENV,
   DATASET_EMBEDDING_DIMENSIONS,
