@@ -16,7 +16,7 @@ test.describe("Favorites system (#104 #106 #109)", () => {
     await authedPage.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
 
     // ページタイトルを確認
-    await expect(authedPage.locator("text=お気に入りレシピ")).toBeVisible({ timeout: 8000 });
+    await expect(authedPage.getByRole("heading", { name: "お気に入りレシピ", exact: true })).toBeVisible({ timeout: 8000 });
   });
 
   test("GET /favorites page shows empty state when no favorites", async ({ authedPage }) => {

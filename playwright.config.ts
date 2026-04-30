@@ -7,9 +7,6 @@ const useExistingServer = !!process.env.PLAYWRIGHT_BASE_URL;
 export default defineConfig({
   testDir: "./tests/e2e",
   outputDir: "tests/e2e/.output",
-  // #310 #323 対応: globalSetup で 1 回だけログインして storageState をキャッシュ
-  // → 各テストでの重複ログインを削減し Supabase auth rate limit を回避する
-  globalSetup: "./tests/e2e/fixtures/global-setup.ts",
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
@@ -17,6 +14,10 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   workers: isCI ? 2 : undefined,
   reporter: isCI ? [["github"], ["html", { open: "never", outputFolder: "tests/e2e/.report" }]] : "list",
+  // グローバルセットアップでログインを 1 回だけ行い storageState を生成する。
+  // 全 worker が共有することで auth fixture の都度ログインによるタイムアウト連鎖を防ぐ。
+  // #310 #311 #323 対応
+  globalSetup: "./tests/e2e/global-setup.ts",
   use: {
     baseURL,
     trace: "on-first-retry",
@@ -24,6 +25,8 @@ export default defineConfig({
     video: "retain-on-failure",
     locale: "ja-JP",
     timezoneId: "Asia/Tokyo",
+    // global-setup で生成した認証済み storageState を全テストで共有
+    storageState: "tests/e2e/.auth/user.json",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },

@@ -476,180 +476,181 @@ export default function HomePage() {
             </motion.div>
           )}
         </AnimatePresence>
-        {(performanceAnalysis?.nextAction || !performanceAnalysis?.todayCheckin) && (
+        {/* 次の一手（分析が有効な場合） */}
+        {performanceAnalysis?.nextAction && (
           <div className="mb-6">
-            {/* 次の一手（分析が有効な場合） */}
-            {performanceAnalysis?.nextAction && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mb-4"
-              >
-                <div className="bg-gradient-to-r from-purple-500 to-indigo-500 text-white p-4 rounded-2xl shadow-lg relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
-                  <div className="flex items-start gap-3">
-                    <Target size={18} className="flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 relative z-10">
-                      <p className="text-xs font-bold text-white/80 mb-0.5">🎯 今日の次の一手</p>
-                      <p className="text-sm font-medium leading-relaxed">
-                        {performanceAnalysis.nextAction.actionType === 'increase_calories' && 'カロリーを少し増やしましょう'}
-                        {performanceAnalysis.nextAction.actionType === 'decrease_calories' && 'カロリーを少し減らしましょう'}
-                        {performanceAnalysis.nextAction.actionType === 'increase_protein' && 'タンパク質を増やしましょう'}
-                        {performanceAnalysis.nextAction.actionType === 'increase_carbs' && '炭水化物を増やしましょう'}
-                        {performanceAnalysis.nextAction.actionType === 'improve_sleep' && '睡眠の質を改善しましょう'}
-                        {performanceAnalysis.nextAction.actionType === 'reduce_fatigue' && '疲労回復を優先しましょう'}
-                        {performanceAnalysis.nextAction.actionType === 'maintain' && '現状を維持しましょう'}
-                      </p>
-                      <p className="text-xs text-white/70 mt-1">{performanceAnalysis.nextAction.reason}</p>
-                    </div>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-4"
+            >
+              <div className="bg-gradient-to-r from-purple-500 to-indigo-500 text-white p-4 rounded-2xl shadow-lg relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
+                <div className="flex items-start gap-3">
+                  <Target size={18} className="flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 relative z-10">
+                    <p className="text-xs font-bold text-white/80 mb-0.5">🎯 今日の次の一手</p>
+                    <p className="text-sm font-medium leading-relaxed">
+                      {performanceAnalysis.nextAction.actionType === 'increase_calories' && 'カロリーを少し増やしましょう'}
+                      {performanceAnalysis.nextAction.actionType === 'decrease_calories' && 'カロリーを少し減らしましょう'}
+                      {performanceAnalysis.nextAction.actionType === 'increase_protein' && 'タンパク質を増やしましょう'}
+                      {performanceAnalysis.nextAction.actionType === 'increase_carbs' && '炭水化物を増やしましょう'}
+                      {performanceAnalysis.nextAction.actionType === 'improve_sleep' && '睡眠の質を改善しましょう'}
+                      {performanceAnalysis.nextAction.actionType === 'reduce_fatigue' && '疲労回復を優先しましょう'}
+                      {performanceAnalysis.nextAction.actionType === 'maintain' && '現状を維持しましょう'}
+                    </p>
+                    <p className="text-xs text-white/70 mt-1">{performanceAnalysis.nextAction.reason}</p>
                   </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* 30秒チェックイン（未完了の場合） */}
-            {!performanceAnalysis?.todayCheckin && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-white rounded-2xl p-4 shadow-sm border border-purple-100"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Activity size={16} style={{ color: colors.purple }} />
-                    <span className="text-sm font-bold" style={{ color: colors.text }}>30秒チェックイン</span>
-                  </div>
-                  <button
-                    onClick={() => setShowCheckin(!showCheckin)}
-                    className="text-xs px-3 py-1 rounded-full font-bold transition-all"
-                    style={{
-                      background: showCheckin ? colors.purple : colors.purpleLight,
-                      color: showCheckin ? 'white' : colors.purple,
-                    }}
-                  >
-                    {showCheckin ? '閉じる' : '記録する'}
-                  </button>
-                </div>
-
-                <AnimatePresence>
-                  {showCheckin && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="space-y-4 pt-3 border-t" style={{ borderColor: colors.border }}>
-                        {/* 睡眠時間 */}
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-medium" style={{ color: colors.textLight }}>😴 睡眠時間</span>
-                            <span className="text-sm font-bold" style={{ color: colors.text }}>{checkinForm.sleepHours}時間</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="3"
-                            max="12"
-                            step="0.5"
-                            value={checkinForm.sleepHours}
-                            onChange={(e) => setCheckinForm({ ...checkinForm, sleepHours: parseFloat(e.target.value) })}
-                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                          />
-                        </div>
-
-                        {/* 各項目（5段階） */}
-                        {[
-                          { key: 'sleepQuality', label: '💤 睡眠の質', options: ['悪い', 'やや悪い', '普通', '良い', '最高'] },
-                          { key: 'fatigue', label: '😫 疲労度', options: ['元気', 'やや疲れ', '普通', '疲れ', 'ヘトヘト'] },
-                          { key: 'focus', label: '🎯 集中力', options: ['低い', 'やや低い', '普通', '良い', '最高'] },
-                          { key: 'hunger', label: '🍽️ 空腹感', options: ['ない', '少し', '普通', 'ある', 'すごくある'] },
-                        ].map((item) => (
-                          <div key={item.key}>
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-medium" style={{ color: colors.textLight }}>{item.label}</span>
-                              <span className="text-xs" style={{ color: colors.textMuted }}>
-                                {item.options[(checkinForm as any)[item.key] - 1]}
-                              </span>
-                            </div>
-                            <div className="flex gap-1">
-                              {[1, 2, 3, 4, 5].map((val) => (
-                                <button
-                                  key={val}
-                                  onClick={() => setCheckinForm({ ...checkinForm, [item.key]: val })}
-                                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                    (checkinForm as any)[item.key] === val
-                                      ? 'bg-purple-500 text-white'
-                                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                  }`}
-                                >
-                                  {val}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* 送信ボタン */}
-                        <button
-                          onClick={async () => {
-                            setCheckinSubmitting(true);
-                            setCheckinFeedback(null);
-                            const result = await submitPerformanceCheckin({
-                              sleepHours: checkinForm.sleepHours,
-                              sleepQuality: checkinForm.sleepQuality,
-                              fatigue: checkinForm.fatigue,
-                              focus: checkinForm.focus,
-                              hunger: checkinForm.hunger,
-                            });
-                            setCheckinSubmitting(false);
-                            if (result.success) {
-                              setShowCheckin(false);
-                              setCheckinFeedback({
-                                type: 'success',
-                                message: '✅ チェックインを保存しました！',
-                              });
-                            } else {
-                              setCheckinFeedback({
-                                type: 'error',
-                                message: '保存に失敗しました。再試行してください。',
-                              });
-                            }
-                          }}
-                          disabled={checkinSubmitting}
-                          className="w-full py-3 rounded-xl font-bold text-white transition-all"
-                          style={{ background: checkinSubmitting ? colors.textMuted : colors.purple }}
-                        >
-                          {checkinSubmitting ? '保存中...' : '✓ チェックイン完了'}
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {!showCheckin && (
-                  <p className="text-xs" style={{ color: colors.textMuted }}>
-                    {performanceAnalysis?.eligibilityReason || '毎日のチェックインで、あなたに最適な栄養提案ができるようになります'}
-                  </p>
-                )}
-              </motion.div>
-            )}
-
-            {/* チェックイン完了済みの場合 */}
-            {performanceAnalysis?.todayCheckin && !performanceAnalysis?.nextAction && (
-              <div className="bg-green-50 border border-green-100 rounded-2xl p-4 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
-                  <Check size={16} style={{ color: colors.success }} />
-                </div>
-                <div>
-                  <p className="text-sm font-bold" style={{ color: colors.success }}>今日のチェックイン完了！</p>
-                  <p className="text-xs" style={{ color: colors.textMuted }}>
-                    {performanceAnalysis.eligibilityReason || '7日分のデータが揃うと分析が始まります'}
-                  </p>
                 </div>
               </div>
-            )}
+            </motion.div>
           </div>
         )}
+
+        {/* 30秒チェックイン or 完了メッセージ */}
+        <div className="mb-6">
+          {/* 30秒チェックイン（未完了の場合） */}
+          {!performanceAnalysis?.todayCheckin && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white rounded-2xl p-4 shadow-sm border border-purple-100"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Activity size={16} style={{ color: colors.purple }} />
+                  <span className="text-sm font-bold" style={{ color: colors.text }}>30秒チェックイン</span>
+                </div>
+                <button
+                  onClick={() => setShowCheckin(!showCheckin)}
+                  className="text-xs px-3 py-1 rounded-full font-bold transition-all"
+                  style={{
+                    background: showCheckin ? colors.purple : colors.purpleLight,
+                    color: showCheckin ? 'white' : colors.purple,
+                  }}
+                >
+                  {showCheckin ? '閉じる' : '記録する'}
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {showCheckin && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="space-y-4 pt-3 border-t" style={{ borderColor: colors.border }}>
+                      {/* 睡眠時間 */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium" style={{ color: colors.textLight }}>😴 睡眠時間</span>
+                          <span className="text-sm font-bold" style={{ color: colors.text }}>{checkinForm.sleepHours}時間</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="3"
+                          max="12"
+                          step="0.5"
+                          value={checkinForm.sleepHours}
+                          onChange={(e) => setCheckinForm({ ...checkinForm, sleepHours: parseFloat(e.target.value) })}
+                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        />
+                      </div>
+
+                      {/* 各項目（5段階） */}
+                      {[
+                        { key: 'sleepQuality', label: '💤 睡眠の質', options: ['悪い', 'やや悪い', '普通', '良い', '最高'] },
+                        { key: 'fatigue', label: '😫 疲労度', options: ['元気', 'やや疲れ', '普通', '疲れ', 'ヘトヘト'] },
+                        { key: 'focus', label: '🎯 集中力', options: ['低い', 'やや低い', '普通', '良い', '最高'] },
+                        { key: 'hunger', label: '🍽️ 空腹感', options: ['ない', '少し', '普通', 'ある', 'すごくある'] },
+                      ].map((item) => (
+                        <div key={item.key}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium" style={{ color: colors.textLight }}>{item.label}</span>
+                            <span className="text-xs" style={{ color: colors.textMuted }}>
+                              {item.options[(checkinForm as any)[item.key] - 1]}
+                            </span>
+                          </div>
+                          <div className="flex gap-1">
+                            {[1, 2, 3, 4, 5].map((val) => (
+                              <button
+                                key={val}
+                                onClick={() => setCheckinForm({ ...checkinForm, [item.key]: val })}
+                                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                  (checkinForm as any)[item.key] === val
+                                    ? 'bg-purple-500 text-white'
+                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                }`}
+                              >
+                                {val}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* 送信ボタン */}
+                      <button
+                        onClick={async () => {
+                          setCheckinSubmitting(true);
+                          setCheckinFeedback(null);
+                          const result = await submitPerformanceCheckin({
+                            sleepHours: checkinForm.sleepHours,
+                            sleepQuality: checkinForm.sleepQuality,
+                            fatigue: checkinForm.fatigue,
+                            focus: checkinForm.focus,
+                            hunger: checkinForm.hunger,
+                          });
+                          setCheckinSubmitting(false);
+                          if (result.success) {
+                            setShowCheckin(false);
+                            setCheckinFeedback({
+                              type: 'success',
+                              message: '✅ チェックインを保存しました！',
+                            });
+                          } else {
+                            setCheckinFeedback({
+                              type: 'error',
+                              message: '保存に失敗しました。再試行してください。',
+                            });
+                          }
+                        }}
+                        disabled={checkinSubmitting}
+                        className="w-full py-3 rounded-xl font-bold text-white transition-all"
+                        style={{ background: checkinSubmitting ? colors.textMuted : colors.purple }}
+                      >
+                        {checkinSubmitting ? '保存中...' : '✓ チェックイン完了'}
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {!showCheckin && (
+                <p className="text-xs" style={{ color: colors.textMuted }}>
+                  {performanceAnalysis?.eligibilityReason || '毎日のチェックインで、あなたに最適な栄養提案ができるようになります'}
+                </p>
+              )}
+            </motion.div>
+          )}
+
+          {/* チェックイン完了済みの場合 */}
+          {performanceAnalysis?.todayCheckin && (
+            <div className="bg-green-50 border border-green-100 rounded-2xl p-4 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                <Check size={16} style={{ color: colors.success }} />
+              </div>
+              <div>
+                <p className="text-sm font-bold" style={{ color: colors.success }}>今日のチェックイン完了！</p>
+                <p className="text-xs" style={{ color: colors.textMuted }}>
+                  {performanceAnalysis.eligibilityReason || '7日分のデータが揃うと分析が始まります'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* AIサジェスト */}
         <AnimatePresence mode="wait">
