@@ -1,4 +1,5 @@
-import { test as base, expect, type Page } from "@playwright/test";
+import { test as base, expect, type Page, type BrowserContext } from "@playwright/test";
+import * as fs from "fs";
 
 export const E2E_USER = {
   email: process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local",
@@ -10,6 +11,9 @@ const LOGIN_TIMEOUT_MS = 90_000;
 // リトライ設定: rate limit / 一時的な遅延に耐えるための指数バックオフ
 const MAX_LOGIN_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 2_000;
+
+/** globalSetup が保存した storageState ファイルのパス */
+const STORAGE_STATE_PATH = "tests/e2e/.auth/user.json";
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,6 +90,28 @@ export async function login(page: Page): Promise<void> {
   throw new Error(
     `[auth fixture] ${MAX_LOGIN_RETRIES} 回試行後もログイン失敗: ${lastError}`,
   );
+}
+
+/**
+ * multi-context テスト (#311 対応) 向けのヘルパー。
+ * browser.newContext() に globalSetup が生成した storageState を渡して
+ * 認証済みコンテキストを作成する。pageB も認証済み状態で起動できる。
+ *
+ * 使用例:
+ *   const contextB = await newAuthedContext(browser);
+ *   const pageB = await contextB.newPage();
+ */
+export async function newAuthedContext(
+  browser: import("@playwright/test").Browser,
+  extraOptions: Parameters<import("@playwright/test").Browser["newContext"]>[0] = {},
+): Promise<BrowserContext> {
+  const storagePath = fs.existsSync(STORAGE_STATE_PATH)
+    ? STORAGE_STATE_PATH
+    : undefined;
+  return browser.newContext({
+    storageState: storagePath,
+    ...extraOptions,
+  });
 }
 
 type AuthFixtures = {

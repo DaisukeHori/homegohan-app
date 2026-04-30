@@ -16,6 +16,7 @@ export default defineConfig({
   reporter: isCI ? [["github"], ["html", { open: "never", outputFolder: "tests/e2e/.report" }]] : "list",
   // グローバルセットアップでログインを 1 回だけ行い storageState を生成する。
   // 全 worker が共有することで auth fixture の都度ログインによるタイムアウト連鎖を防ぐ。
+  // #310 #311 #323 対応
   globalSetup: "./tests/e2e/global-setup.ts",
   use: {
     baseURL,

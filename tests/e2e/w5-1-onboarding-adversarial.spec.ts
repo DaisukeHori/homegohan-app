@@ -16,7 +16,7 @@
  */
 
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
-import { login } from "./fixtures/auth";
+import { login, newAuthedContext } from "./fixtures/auth";
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
@@ -142,16 +142,16 @@ test.describe("A. 完了後の動作", () => {
   test("A-3: 完了後に別コンテキストでログイン → onboarding は出ない", async ({
     browser,
   }) => {
-    // コンテキスト A で完了状態を作る
-    const ctxA = await browser.newContext();
+    // コンテキスト A で完了状態を作る (storageState 適用でログイン回数削減)
+    const ctxA = await newAuthedContext(browser);
     const pageA = await ctxA.newPage();
     await login(pageA);
     await resetOnboarding(pageA);
     await completeOnboardingViaApi(pageA);
     await ctxA.close();
 
-    // コンテキスト B（別ブラウザ相当）でログイン
-    const ctxB = await browser.newContext();
+    // コンテキスト B（別ブラウザ相当）でログイン (storageState 適用)
+    const ctxB = await newAuthedContext(browser);
     const pageB = await ctxB.newPage();
     await login(pageB);
     await pageB.goto(`${BASE_URL}/onboarding`);
@@ -302,7 +302,8 @@ test.describe("B. 中断 / 再開", () => {
   test("B-8: 2タブで同時に onboarding を開いてもエラーにならない", async ({
     browser,
   }) => {
-    const ctx = await browser.newContext();
+    // storageState で認証済みコンテキストを作成し login() 回数を削減
+    const ctx = await newAuthedContext(browser);
     const pageA = await ctx.newPage();
     await login(pageA);
     await resetOnboarding(pageA);
@@ -488,7 +489,8 @@ test.describe("B. 中断 / 再開", () => {
   test("B-12: タブを強制クローズして新タブで再開すると進捗が復元される", async ({
     browser,
   }) => {
-    const ctx = await browser.newContext();
+    // storageState で認証済みコンテキストを作成し login() 回数を削減
+    const ctx = await newAuthedContext(browser);
     const page1 = await ctx.newPage();
     await login(page1);
     await resetOnboarding(page1);
@@ -1052,7 +1054,8 @@ test.describe("D. 並列 / 競合", () => {
   test("D-21: 2タブで同時に完了させてもエラーにならない", async ({
     browser,
   }) => {
-    const ctx = await browser.newContext();
+    // #311 対応: storageState を適用して認証済みコンテキストで両タブを起動する
+    const ctx = await newAuthedContext(browser);
     const pageA = await ctx.newPage();
     await login(pageA);
     await resetOnboarding(pageA);
@@ -1118,7 +1121,8 @@ test.describe("D. 並列 / 競合", () => {
   test("D-22: タブ A で完了後にタブ B で進んでも completed_at は消えない", async ({
     browser,
   }) => {
-    const ctx = await browser.newContext();
+    // #311 対応: storageState を適用して pageB も認証済み状態で起動する
+    const ctx = await newAuthedContext(browser);
     const pageA = await ctx.newPage();
     await login(pageA);
     await resetOnboarding(pageA);
