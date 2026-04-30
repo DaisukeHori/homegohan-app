@@ -352,7 +352,7 @@ async function triggerNextV5Step(
   }, {
     label: `triggerNextV5Step:${requestId}`,
     retries: 2,
-    timeoutMs: 10000,
+    timeoutMs: 30000,
   });
 }
 
@@ -3451,6 +3451,7 @@ Deno.serve(async (req: Request) => {
           error,
           { requestId, step: currentStep },
         );
+        // #122: CAS guard — 既に completed/failed の場合は上書きしない
         await runSupabaseQuery(
           () => supabase
             .from("weekly_menu_requests")
@@ -3459,7 +3460,8 @@ Deno.serve(async (req: Request) => {
               error_message: error?.message ?? String(error),
               updated_at: new Date().toISOString(),
             })
-            .eq("id", requestId!),
+            .eq("id", requestId!)
+            .in("status", ["queued", "processing"]),
           `weekly_menu_requests.fail_background:${requestId}`,
           null,
           10000,
@@ -3496,6 +3498,7 @@ Deno.serve(async (req: Request) => {
     );
     if (requestId) {
       try {
+        // #122: CAS guard — 既に completed/failed の場合は上書きしない
         await runSupabaseQuery(
           () => supabase
             .from("weekly_menu_requests")
@@ -3504,7 +3507,8 @@ Deno.serve(async (req: Request) => {
               error_message: error?.message ?? String(error),
               updated_at: new Date().toISOString(),
             })
-            .eq("id", requestId),
+            .eq("id", requestId)
+            .in("status", ["queued", "processing"]),
           `weekly_menu_requests.fail:${requestId}`,
           null,
           10000,

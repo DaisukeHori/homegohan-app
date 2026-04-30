@@ -18,7 +18,7 @@ export async function POST() {
     .from('weekly_menu_requests')
     .select('id, status, created_at')
     .eq('user_id', user.id)
-    .in('status', ['pending', 'processing'])
+    .in('status', ['queued', 'pending', 'processing'])
     .lt('created_at', fiveMinutesAgo);
 
   if (fetchError) {
@@ -60,7 +60,7 @@ export async function GET() {
     .from('weekly_menu_requests')
     .select('id, mode, status, created_at, updated_at')
     .eq('user_id', user.id)
-    .in('status', ['pending', 'processing'])
+    .in('status', ['queued', 'pending', 'processing'])
     .order('created_at', { ascending: false })
     .limit(10);
 

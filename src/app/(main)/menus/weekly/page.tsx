@@ -1103,7 +1103,10 @@ export default function WeeklyMenuPage() {
       }
     };
 
-    restoreGeneration();
+    restoreGeneration().finally(() => {
+      // #120: restoreGeneration 完了後に checkPendingRequests を許可
+      isRestoringRef.current = false;
+    });
   }, []);  // マウント時のみ実行
 
   // V4 生成ハンドラー
@@ -1247,28 +1250,82 @@ export default function WeeklyMenuPage() {
               percentage = 50;
             }
           }
-          // Step 3 (75-100%): 保存フェーズ
+          // Step 3 (75-100% for 3-step normal mode / 38-48% for 6-step Ultimate Mode)
           else if (currentStep === 3) {
-            if (message.includes('栄養計算') || message.includes('栄養')) {
-              phase = 'calculating';
-              percentage = 80;
-            } else if (message.includes('保存中')) {
-              phase = 'saving';
-              // (0/16) のような部分から進捗を抽出
+            const isUltimateMode = (progress.totalSteps || 3) === 6;
+            if (isUltimateMode) {
+              // Ultimate Mode Step 3: 栄養計算フェーズ (38-48%)
+              if (message.includes('完了')) {
+                phase = 'step3_complete';
+                percentage = 48;
+              } else {
+                phase = 'calculating';
+                percentage = 42;
+              }
+            } else {
+              // 通常モード Step 3: 保存フェーズ (75-100%)
+              if (message.includes('栄養計算') || message.includes('栄養')) {
+                phase = 'calculating';
+                percentage = 80;
+              } else if (message.includes('保存中')) {
+                phase = 'saving';
+                // (0/16) のような部分から進捗を抽出
+                const match = message.match(/(\d+)\/(\d+)/);
+                if (match) {
+                  const current = parseInt(match[1]);
+                  const total = parseInt(match[2]);
+                  percentage = 88 + Math.round((current / Math.max(total, 1)) * 10); // 88-98%
+                } else {
+                  percentage = 90;
+                }
+              } else if (message.includes('完了') || message.includes('保存しました')) {
+                phase = 'completed';
+                percentage = 100;
+              } else {
+                phase = 'saving';
+                percentage = 88;
+              }
+            }
+          }
+          // Step 4 (48-62%): Ultimate Mode 栄養バランス詳細分析
+          else if (currentStep === 4) {
+            phase = 'nutrition_analyzing';
+            const match = message.match(/(\d+)\/(\d+)/);
+            if (match) {
+              const current = parseInt(match[1]);
+              const total = parseInt(match[2]);
+              percentage = 50 + Math.round((current / Math.max(total, 1)) * 12);
+            } else {
+              percentage = 55;
+            }
+          }
+          // Step 5 (62-82%): Ultimate Mode 献立改善
+          else if (currentStep === 5) {
+            phase = 'improving';
+            const match = message.match(/(\d+)\/(\d+)/);
+            if (match) {
+              const current = parseInt(match[1]);
+              const total = parseInt(match[2]);
+              percentage = 65 + Math.round((current / Math.max(total, 1)) * 17);
+            } else {
+              percentage = 70;
+            }
+          }
+          // Step 6 (82-100%): Ultimate Mode 最終保存
+          else if (currentStep === 6) {
+            if (message.includes('完了') || message.includes('完成')) {
+              phase = 'completed';
+              percentage = 100;
+            } else {
+              phase = 'final_saving';
               const match = message.match(/(\d+)\/(\d+)/);
               if (match) {
                 const current = parseInt(match[1]);
                 const total = parseInt(match[2]);
-                percentage = 88 + Math.round((current / Math.max(total, 1)) * 10); // 88-98%
+                percentage = 85 + Math.round((current / Math.max(total, 1)) * 13);
               } else {
                 percentage = 90;
               }
-            } else if (message.includes('完了') || message.includes('保存しました')) {
-              phase = 'completed';
-              percentage = 100;
-            } else {
-              phase = 'saving';
-              percentage = 88;
             }
           }
           
@@ -1292,6 +1349,9 @@ export default function WeeklyMenuPage() {
   
   // 生成中状態のチェックが進行中かどうかを追跡（重複API呼び出し防止）
   const isCheckingPendingRef = useRef(false);
+
+  // #120: restoreGeneration が完了するまで checkPendingRequests をブロックするフラグ
+  const isRestoringRef = useRef(true);
   
   // Realtime サブスクリプションをクリーンアップする関数
   const cleanupRealtime = useCallback(() => {
@@ -1320,7 +1380,9 @@ export default function WeeklyMenuPage() {
     if (isGenerating || generatingMeal) return;
     // 既にチェック中なら何もしない（重複API呼び出し防止）
     if (isCheckingPendingRef.current) return;
-    
+    // #120: restoreGeneration が完了するまで待機（二重起動防止）
+    if (isRestoringRef.current) return;
+
     const checkPendingRequests = async () => {
       // チェック開始をマーク
       isCheckingPendingRef.current = true;
@@ -2145,6 +2207,19 @@ export default function WeeklyMenuPage() {
     const poll = async () => {
       try {
         const res = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        // #142: 401 はセッション切れ → ポーリング停止して /login にリダイレクト
+        if (res.status === 401) {
+          console.warn('[poll] Session expired (401). Stopping polling and redirecting to /login.');
+          cleanupPolling();
+          cleanupRealtime();
+          setIsGenerating(false);
+          setGeneratingMeal(null);
+          setGenerationProgress(null);
+          localStorage.removeItem('weeklyMenuGenerating');
+          localStorage.removeItem('singleMealGenerating');
+          window.location.href = '/login';
+          return;
+        }
         if (!res.ok) return;
         const data = await res.json();
         
