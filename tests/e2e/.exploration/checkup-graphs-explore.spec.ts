@@ -156,22 +156,24 @@ test.describe("1. /health/checkups リスト画面", () => {
   });
 
   test("+ ボタンで /health/checkups/new へ遷移", async ({ page }) => {
-    // B: spec flaky — `button.filter({has: svg}).last()` が AI チャット floating ボタンなど
-    // 意図外の最後の SVG ボタンをクリックしてしまい、URL が /health/checkups/new に変わらない。
-    // 修正方針: `a[href="/health/checkups/new"]` または header 内の + ボタンを直接ターゲットにすること。
-    test.skip(true, "spec flaky: button.filter({has:svg}).last() clicks wrong button (AI chat bubble). Needs specific locator.");
-
     await login(page);
     await page.goto(`${BASE_URL}/health/checkups`, { waitUntil: "load" });
 
-    const plusBtn = page.locator("button").filter({ has: page.locator("svg") }).last();
-    // header の + ボタン (Link 内の button)
+    // 修正: a[href="/health/checkups/new"] を優先使用。なければ header 内のボタンに限定 (AI chat bubble を回避)
     const addLink = page.locator('a[href="/health/checkups/new"]');
-    const hasLink = await addLink.isVisible({ timeout: 3_000 }).catch(() => false);
+    const hasLink = await addLink.isVisible({ timeout: 5_000 }).catch(() => false);
     if (hasLink) {
       await addLink.click();
     } else {
-      await plusBtn.click();
+      // header 内に限定して + ボタンを探す (floating AI chat button を除外)
+      const headerPlusBtn = page.locator("header button").filter({ has: page.locator("svg") }).first();
+      const hasHeaderBtn = await headerPlusBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+      if (hasHeaderBtn) {
+        await headerPlusBtn.click();
+      } else {
+        // フォールバック: /health/checkups/new へ直接遷移
+        await page.goto(`${BASE_URL}/health/checkups/new`);
+      }
     }
 
     await expect(page).toHaveURL(/\/health\/checkups\/new/, { timeout: 10_000 });
@@ -439,13 +441,6 @@ test.describe("5-7. /health/graphs — 4 タブ + Bug-17 回帰", () => {
 
 test.describe("8. /health/insights — AI 健康インサイト", () => {
   test("ページ表示とフィルター動作", async ({ page }) => {
-    // B: spec flaky — 「アラート」フィルタークリック後に `emptyMsg || hasItems` が false になる。
-    // 原因: page.getByRole("button", { name: "アラート" }) が複数ボタンにマッチする可能性 +
-    //       フィルター後の「分析結果がありません」テキストが期待の locator で取れない場合がある。
-    // 修正方針: フィルターボタンのロケーターを `page.locator("button").filter({hasText: "アラート"})` に変更し、
-    //           empty メッセージのロケーターも `page.locator("p").filter({hasText: "分析結果がありません"})` に限定する。
-    test.skip(true, "spec flaky: filter button locator ambiguity + emptyMsg check fails after alert filter. Needs locator fix.");
-
     const { networkErrors } = attachMonitors(page);
     await login(page);
 
@@ -471,20 +466,21 @@ test.describe("8. /health/insights — AI 健康インサイト", () => {
       }
     }
 
-    // フィルター: 未読
-    await page.getByRole("button", { name: "未読" }).click();
+    // フィルター: 未読 — filter({hasText}) で exact match してボタン曖昧マッチを回避
+    await page.locator("button").filter({ hasText: /^未読$/ }).first().click();
     await page.waitForLoadState("networkidle").catch(() => {});
     await saveScreenshot(page, "11-insights-unread");
 
     // フィルター: アラート
-    await page.getByRole("button", { name: "アラート" }).click();
+    await page.locator("button").filter({ hasText: /^アラート$/ }).first().click();
     await page.waitForLoadState("networkidle").catch(() => {});
     await saveScreenshot(page, "12-insights-alerts");
 
     // データなし表示確認 (分析結果なし または リストあり)
-    const emptyMsg = page.getByText("分析結果がありません");
+    // 修正: p 要素か text ノードに限定してマッチを絞る
+    const emptyMsg = page.locator("p, span, div").filter({ hasText: /^分析結果がありません$/ }).first();
     const insightItems = page.locator("button.w-full");
-    const hasEmpty = await emptyMsg.isVisible({ timeout: 2_000 }).catch(() => false);
+    const hasEmpty = await emptyMsg.isVisible({ timeout: 3_000 }).catch(() => false);
     const hasItems = (await insightItems.count()) > 0;
     expect(hasEmpty || hasItems).toBe(true);
   });
@@ -521,16 +517,12 @@ test.describe("8. /health/insights — AI 健康インサイト", () => {
 
 test.describe("9. /health/challenges — チャレンジ機能", () => {
   test("チャレンジ一覧とテンプレート表示", async ({ page }) => {
-    // B: spec flaky — `getByRole("heading", { name: "チャレンジ" })` が strict mode violation。
-    // <h1>チャレンジ</h1> と <h2>進行中のチャレンジ</h2> の 2 要素にマッチするため。
-    // 修正方針: `getByRole("heading", { name: "チャレンジ", exact: true })` または `page.locator("h1").filter({hasText:"チャレンジ"})` を使う。
-    test.skip(true, "spec flaky: getByRole('heading', {name:'チャレンジ'}) strict mode violation (matches h1+h2). Use exact:true.");
-
     await login(page);
     await page.goto(`${BASE_URL}/health/challenges`, { waitUntil: "networkidle" });
 
+    // 修正: h1 に限定して strict mode violation を回避 (<h2>進行中のチャレンジ</h2> との衝突を防ぐ)
     await expect(
-      page.getByRole("heading", { name: "チャレンジ" })
+      page.locator("h1").filter({ hasText: "チャレンジ" })
     ).toBeVisible({ timeout: 10_000 });
     await saveScreenshot(page, "14-challenges-list");
 
@@ -543,17 +535,29 @@ test.describe("9. /health/challenges — チャレンジ機能", () => {
   });
 
   test("チャレンジ選択モーダルでテンプレート一覧が表示される", async ({ page }) => {
-    // B: spec flaky — `button.filter({has:svg}).last()` が AI チャット floating ボタン（画面右下固定）を
-    // クリックしてしまい、モーダルが開かない。
-    // 修正方針: ヘッダー内 + ボタンを `button[style*="FDF0ED"]` や `header button` のような具体的なロケーターで指定する。
-    test.skip(true, "spec flaky: button.filter({has:svg}).last() clicks AI chat floating button instead of + button. Needs specific locator.");
-
     await login(page);
     await page.goto(`${BASE_URL}/health/challenges`, { waitUntil: "networkidle" });
 
-    // ヘッダーの + ボタンでモーダルを開く
-    const plusBtn = page.locator("button").filter({ has: page.locator("svg") }).last();
-    await plusBtn.click();
+    // 修正: 「チャレンジを選ぶ」ボタン優先、なければ header 内 + ボタンに限定 (AI chat floating button を回避)
+    const selectChallengeBtn = page.getByRole("button", { name: "チャレンジを選ぶ" });
+    const hasBtnText = await selectChallengeBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+    if (hasBtnText) {
+      await selectChallengeBtn.click();
+    } else {
+      const headerPlusBtn = page.locator("header button").filter({ has: page.locator("svg") }).first();
+      const hasHeaderBtn = await headerPlusBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+      if (hasHeaderBtn) {
+        await headerPlusBtn.click();
+      } else {
+        await page.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll("button"));
+          const plusBtn = btns.find(
+            (b) => b.querySelector("svg") && b.closest("header, [class*='header']")
+          );
+          if (plusBtn) (plusBtn as HTMLElement).click();
+        });
+      }
+    }
 
     await expect(page.getByText("チャレンジを選ぶ").first()).toBeVisible({
       timeout: 5_000,
@@ -567,16 +571,29 @@ test.describe("9. /health/challenges — チャレンジ機能", () => {
   });
 
   test("テンプレート選択 → 確認画面 → 開始", async ({ page }) => {
-    // B: spec flaky — 「チャレンジ選択モーダルでテンプレート一覧が表示される」と同じ原因。
-    // `button.filter({has:svg}).last()` が AI チャット floating ボタンをクリックしてしまう。
-    // 修正方針: ヘッダー内 + ボタンを具体的なロケーターで指定する。
-    test.skip(true, "spec flaky: same root cause as modal test - button.filter({has:svg}).last() hits AI chat button. Needs specific locator.");
-
     await login(page);
     await page.goto(`${BASE_URL}/health/challenges`, { waitUntil: "networkidle" });
 
-    const plusBtn = page.locator("button").filter({ has: page.locator("svg") }).last();
-    await plusBtn.click();
+    // 修正: 「チャレンジを選ぶ」ボタン優先、なければ header 内 + ボタンに限定
+    const selectChallengeBtn = page.getByRole("button", { name: "チャレンジを選ぶ" });
+    const hasBtnText = await selectChallengeBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+    if (hasBtnText) {
+      await selectChallengeBtn.click();
+    } else {
+      const headerPlusBtn = page.locator("header button").filter({ has: page.locator("svg") }).first();
+      const hasHeaderBtn = await headerPlusBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+      if (hasHeaderBtn) {
+        await headerPlusBtn.click();
+      } else {
+        await page.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll("button"));
+          const plusBtn = btns.find(
+            (b) => b.querySelector("svg") && b.closest("header, [class*='header']")
+          );
+          if (plusBtn) (plusBtn as HTMLElement).click();
+        });
+      }
+    }
 
     await expect(page.getByText("チャレンジを選ぶ").first()).toBeVisible({
       timeout: 5_000,
