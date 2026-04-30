@@ -113,23 +113,28 @@ export async function updateSession(request: NextRequest) {
 
   if (user) {
     // user_profiles からオンボーディング状態を取得
-    const { data: profile } = await supabase
+    // #348: error を必ず捕捉し、DB 参照失敗時はリダイレクト判定をスキップする
+    // (RLS 拒否・カラム不在・ネットワーク障害などで data=null になった場合に
+    //  not_started 扱いで /onboarding/welcome へ飛ばしてしまうバグを防ぐ)
+    const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
       .select('roles, onboarding_started_at, onboarding_completed_at')
       .eq('id', user.id)
       .maybeSingle()
 
-    const redirectPath = resolveOnboardingRedirect({
-      pathname: request.nextUrl.pathname,
-      roles: profile?.roles || [],
-      onboardingStartedAt: profile?.onboarding_started_at ?? null,
-      onboardingCompletedAt: profile?.onboarding_completed_at ?? null,
-    })
+    if (!profileError) {
+      const redirectPath = resolveOnboardingRedirect({
+        pathname: request.nextUrl.pathname,
+        roles: profile?.roles || [],
+        onboardingStartedAt: profile?.onboarding_started_at ?? null,
+        onboardingCompletedAt: profile?.onboarding_completed_at ?? null,
+      })
 
-    if (redirectPath && redirectPath !== request.nextUrl.pathname) {
-      const url = request.nextUrl.clone()
-      url.pathname = redirectPath
-      return NextResponse.redirect(url)
+      if (redirectPath && redirectPath !== request.nextUrl.pathname) {
+        const url = request.nextUrl.clone()
+        url.pathname = redirectPath
+        return NextResponse.redirect(url)
+      }
     }
   }
 
