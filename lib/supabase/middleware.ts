@@ -102,6 +102,15 @@ export async function updateSession(request: NextRequest) {
       request.nextUrl.pathname.startsWith(path + '/'),
   )
 
+  // 一時デバッグ: 認証判定の状態をログ出力
+  console.log('[mw-debug]', JSON.stringify({
+    pathname: request.nextUrl.pathname,
+    user: user ? 'authed' : 'null',
+    getUserFailed,
+    isPublicPath,
+    cookies: Array.from(request.cookies.getAll().map(c => c.name)),
+  }));
+
   if (!user && !isPublicPath) {
     const url = request.nextUrl.clone()
     const next = request.nextUrl.pathname + (request.nextUrl.search ?? '')
