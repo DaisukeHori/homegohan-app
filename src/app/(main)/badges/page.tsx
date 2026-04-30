@@ -29,6 +29,30 @@ const ICON_MAP: Record<string, string> = {
   'hello_ai': '🤖',
   'planner': '📝',
   'legend_100': '👑',
+  // 健康記録系
+  'health_record_7d': '📊',
+  'health_record_14d': '📈',
+  'health_record_30d': '📅',
+  'health_record_60d': '🗓️',
+  'health_record_100d': '💯',
+  'target_weight': '🎯',
+  'first_checkup': '🩺',
+  'first_challenge': '🏆',
+  // 比較・ランキング系
+  'comparison_rank_1': '🥇',
+  'comparison_top3': '🥈',
+  'comparison_top5p': '🥉',
+  'comparison_top10p': '🏅',
+  'comparison_top25p': '⭐',
+  'comparison_avg_exceed': '📊',
+  'comparison_avg20p': '📈',
+  'comparison_avg50p': '📉',
+  'comparison_improve10': '📈',
+  'comparison_improve20': '🚀',
+  'comparison_improve50': '🌟',
+  'comparison_breakfast_champ': '🌅',
+  'comparison_veggie_champ': '🥬',
+  'comparison_streak_champ': '🔥',
 };
 
 // ランク定義

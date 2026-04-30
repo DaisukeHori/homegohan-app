@@ -921,6 +921,96 @@ export default function AIChatBubble() {
                 </div>
               ) : (
                 <>
+                  {/* Suggested prompts: welcome メッセージのみ表示、かつ messages.length === 1 の時のみ */}
+                  {messages.length === 1 && messages[0]?.id === 'welcome' && (
+                    <div className="flex flex-col gap-2 mt-2 mb-1">
+                      {[
+                        '献立を提案してほしい',
+                        '冷蔵庫の食材で作れるものは?',
+                        '今日の栄養バランスは?',
+                        '来週の献立を作りたい',
+                      ].map((prompt) => (
+                        <button
+                          key={prompt}
+                          onClick={async () => {
+                            if (!currentSessionId || isSending) return;
+                            setInputText('');
+                            setIsSending(true);
+                            const tempUserMsgId = `temp-user-${Date.now()}`;
+                            const tempAiMsgId = `temp-ai-${Date.now()}`;
+                            setMessages(prev => [
+                              ...prev,
+                              { id: tempUserMsgId, role: 'user', content: prompt, createdAt: new Date().toISOString() },
+                              { id: tempAiMsgId, role: 'assistant', content: '', createdAt: new Date().toISOString(), isStreaming: true },
+                            ]);
+                            const clientAbortController = new AbortController();
+                            const clientTimeoutId = setTimeout(() => clientAbortController.abort(), 28000);
+                            try {
+                              const res = await fetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ message: prompt }),
+                                signal: clientAbortController.signal,
+                              });
+                              if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
+                              const reader = res.body?.getReader();
+                              if (!reader) throw new Error('No reader available');
+                              const decoder = new TextDecoder();
+                              let accumulatedContent = '';
+                              let finalData: any = null;
+                              while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                const chunk = decoder.decode(value, { stream: true });
+                                for (const line of chunk.split('\n')) {
+                                  if (!line.startsWith('data: ')) continue;
+                                  const data = line.slice(6);
+                                  if (data === '[DONE]') continue;
+                                  try {
+                                    const parsed = JSON.parse(data);
+                                    if (parsed.userMessage && parsed.aiMessage) { finalData = parsed; continue; }
+                                    if (parsed.error && !parsed.userMessage) {
+                                      setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: '応答に失敗しました。再試行してください。', isStreaming: false } : m));
+                                      continue;
+                                    }
+                                    if (parsed.choices?.[0]?.delta?.content) {
+                                      accumulatedContent += parsed.choices[0].delta.content;
+                                      setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: accumulatedContent } : m));
+                                    }
+                                  } catch { /* ignore */ }
+                                }
+                              }
+                              if (finalData) {
+                                setMessages(prev => prev.map(m => {
+                                  if (m.id === tempUserMsgId) return { ...m, id: finalData.userMessage.id, isImportant: finalData.userMessage.isImportant || false };
+                                  if (m.id === tempAiMsgId) return { ...m, id: finalData.aiMessage.id, content: accumulatedContent || finalData.aiMessage.content, proposedActions: finalData.aiMessage.proposedActions ? { ...finalData.aiMessage.proposedActions, actionId: finalData.aiMessage.id } : null, isStreaming: false };
+                                  return m;
+                                }));
+                              } else {
+                                setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: accumulatedContent, isStreaming: false } : m));
+                              }
+                            } catch (e: any) {
+                              const isTimeout = e?.name === 'AbortError' || e?.name === 'TimeoutError';
+                              setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: isTimeout ? '応答に時間がかかりすぎました。しばらく待ってから再度お試しください。' : '応答に失敗しました。再試行してください。', isStreaming: false } : m));
+                            } finally {
+                              clearTimeout(clientTimeoutId);
+                              setIsSending(false);
+                            }
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl border hover:bg-gray-50 transition-colors"
+                          style={{
+                            borderColor: colors.border,
+                            background: colors.card,
+                            fontSize: 13,
+                            color: colors.textLight,
+                          }}
+                        >
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   {messages.map((msg) => (
                     <div key={msg.id} className="group relative">
                       {/* メッセージバブル */}

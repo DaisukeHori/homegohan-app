@@ -1306,6 +1306,12 @@ export default function WeeklyMenuPage() {
             if (cleanupData.cleaned > 0) {
               console.log('🧹 自動クリーンアップ完了:', cleanupData.cleaned, '件のスタックしたリクエストを停止');
             }
+          } else if (!cleanupRes.ok) {
+            // #77: 5xx エラー時もユーザーに通知
+            console.error('自動クリーンアップ API エラー:', cleanupRes.status);
+            if (cleanupRes.status >= 500) {
+              setSuccessMessage({ title: 'エラー', message: 'サーバーに一時的な問題が発生しました。しばらく待ってから再読み込みしてください。' });
+            }
           }
         } catch (e) {
           console.warn('自動クリーンアップに失敗:', e);
@@ -1315,6 +1321,11 @@ export default function WeeklyMenuPage() {
         try {
           const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
           console.log('🔍 weeklyRes status:', weeklyRes.status);
+          // #77: pending API 5xx をユーザー可視エラーに昇格
+          if (weeklyRes.status >= 500) {
+            console.error('weekly pending API エラー:', weeklyRes.status);
+            setSuccessMessage({ title: 'エラー', message: '献立生成状況の確認中にエラーが発生しました。ページを再読み込みしてください。' });
+          }
           if (weeklyRes.ok) {
             const data = await weeklyRes.json();
             console.log('🔍 weeklyRes data:', data);
@@ -3036,7 +3047,16 @@ export default function WeeklyMenuPage() {
 
   // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {
-    if (!currentPlan || isRegeneratingShoppingList) return;
+    if (isRegeneratingShoppingList) return;
+    // #73: 献立データが存在しない場合はサイレント失敗を防ぎ、メッセージを表示して終了
+    if (!currentPlan || currentPlan.days.every(d => !d.meals?.length)) {
+      setSuccessMessage({
+        title: '生成できません',
+        message: 'この週には献立データがありません。先に献立を作成してください。',
+      });
+      setActiveModal(null);
+      return;
+    }
     setIsRegeneratingShoppingList(true);
     setShoppingListProgress({ phase: 'starting', message: '開始中...', percentage: 0 });
     

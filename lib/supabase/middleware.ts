@@ -62,12 +62,21 @@ export async function updateSession(request: NextRequest) {
   // ページナビゲーションの場合は getUser() で認証を確認
   // エラー時は安全側に倒して /login へリダイレクトする
   let user: { id: string } | null = null
+  let getUserFailed = false
   try {
     const { data } = await supabase.auth.getUser()
     user = data.user
   } catch {
-    // getUser() が例外を投げた場合 (ネットワークエラー等) は未認証扱いにする
+    // #86: getUser() が例外を投げた場合 (ネットワークエラー等) は未認証扱いにする
+    // RSC payload fetch 時はリダイレクトよりも 200 を返す方が安全なため、フラグを立てる
     user = null
+    getUserFailed = true
+  }
+
+  // #86: RSC payload fetch (_rsc クエリパラメータ) 時に getUser が例外を投げた場合は
+  // リダイレクトせず supabaseResponse を返す（RSC fetch failure を防止）
+  if (getUserFailed && request.nextUrl.searchParams.has('_rsc')) {
+    return supabaseResponse
   }
 
   // 認証不要のパス (ホワイトリスト)

@@ -814,13 +814,15 @@ function ProfilePageContent() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>目標期限</Label>
-                        <Input 
+                        <Label>目標期限（YYYY/MM/DD 形式）</Label>
+                        <Input
                           type="date"
-                          value={editForm.targetDate || ''} 
+                          value={editForm.targetDate || ''}
                           onChange={(e) => updateField('targetDate', e.target.value || null)}
                           className="rounded-xl"
+                          lang="ja-JP"
                         />
+                        {/* browser の date input は locale 依存のため、ラベルで形式を明示 */}
                       </div>
                     </div>
                   </div>

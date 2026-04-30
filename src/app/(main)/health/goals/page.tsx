@@ -59,6 +59,7 @@ export default function HealthGoalsPage() {
     target_date: '',
   });
   const [creating, setCreating] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null); // #87: window.confirm 廃止
 
   useEffect(() => {
     fetchGoals();
@@ -107,13 +108,18 @@ export default function HealthGoalsPage() {
   };
 
   const handleDeleteGoal = async (id: string) => {
-    if (!confirm('この目標を削除しますか？')) return;
+    // #87: window.confirm を React modal に置換（PWA/headless 対応）
+    setDeleteConfirm(id);
+  };
 
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const id = deleteConfirm;
+    setDeleteConfirm(null);
     try {
       const res = await fetch(`/api/health/goals/${id}`, {
         method: 'DELETE',
       });
-
       if (res.ok) {
         fetchGoals();
       }
@@ -313,6 +319,53 @@ export default function HealthGoalsPage() {
           )}
         </>
       )}
+
+      {/* 目標削除確認モーダル (#87: window.confirm 廃止) */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center px-4"
+            onClick={() => setDeleteConfirm(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <Trash2 size={20} style={{ color: colors.error }} />
+                </div>
+                <h3 className="font-bold text-lg" style={{ color: colors.text }}>目標を削除</h3>
+              </div>
+              <p className="text-sm mb-6" style={{ color: colors.textLight }}>
+                この目標を削除しますか？この操作は取り消せません。
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setDeleteConfirm(null)}
+                  className="flex-1 py-3 rounded-xl font-medium"
+                  style={{ backgroundColor: colors.border, color: colors.textLight }}
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  className="flex-1 py-3 rounded-xl font-bold text-white"
+                  style={{ backgroundColor: colors.error }}
+                >
+                  削除する
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 目標作成モーダル */}
       <AnimatePresence>
