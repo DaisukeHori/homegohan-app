@@ -152,6 +152,7 @@ export default function AIChatBubble() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [showMessageMenu, setShowMessageMenu] = useState<string | null>(null);
   const [isClosingSession, setIsClosingSession] = useState(false);
+  const [isToggling, setIsToggling] = useState(false); // #125: 連続クリック防止フラグ
   const [showDayMenuModal, setShowDayMenuModal] = useState(false);
   // Bug-5 (#21): Default to the date currently displayed on the weekly menu
   // page (published via window.__weeklyCurrentDate). If unavailable, fall back
@@ -327,6 +328,7 @@ export default function AIChatBubble() {
   // チャットを開く
   // Bug-6: 隣接 UI からの誤クリックでチャットが意図せず開くのを防ぐため、
   // event を受け取って stopPropagation し、既にモーダルが開いている場合は無視する。
+  // #125: isToggling フラグで連続クリックによる二重表示を防止する。
   const openChat = async (e?: React.MouseEvent) => {
     if (e) {
       e.stopPropagation();
@@ -336,23 +338,31 @@ export default function AIChatBubble() {
       // 別のモーダルが開いている間はチャットを開かない
       return;
     }
+    // #125: transition 中の連続クリックを弾く
+    if (isToggling) return;
+    setIsToggling(true);
     setIsOpen(true);
     setHasUnread(false);
-    const authenticated = await fetchSessions();
-    
-    if (!authenticated) {
-      return; // 認証されていない場合は何もしない
-    }
-    
-    // 既存のアクティブセッションがあればそれを使う、なければ新規作成
-    if (sessions.length > 0 && !currentSessionId) {
-      const activeSession = sessions.find(s => s.messageCount > 0) || sessions[0];
-      setCurrentSessionId(activeSession.id);
-      await fetchMessages(activeSession.id);
-    } else if (!currentSessionId) {
-      await createNewSession();
-    } else {
-      await fetchMessages(currentSessionId);
+    try {
+      const authenticated = await fetchSessions();
+
+      if (!authenticated) {
+        return; // 認証されていない場合は何もしない
+      }
+
+      // 既存のアクティブセッションがあればそれを使う、なければ新規作成
+      if (sessions.length > 0 && !currentSessionId) {
+        const activeSession = sessions.find(s => s.messageCount > 0) || sessions[0];
+        setCurrentSessionId(activeSession.id);
+        await fetchMessages(activeSession.id);
+      } else if (!currentSessionId) {
+        await createNewSession();
+      } else {
+        await fetchMessages(currentSessionId);
+      }
+    } finally {
+      // #125: アニメーション完了まで少し待ってからフラグを解除
+      setTimeout(() => setIsToggling(false), 400);
     }
   };
 
@@ -498,6 +508,12 @@ export default function AIChatBubble() {
 
       // ストリーム完了後：メッセージを最終状態に更新
       if (finalData) {
+        // #126: コンテキスト切替後に空応答になるケースをフォールバック表示
+        const resolvedContent = accumulatedContent || finalData.aiMessage.content || '';
+        const displayContent = resolvedContent.trim()
+          ? resolvedContent
+          : '応答の取得中にコンテキストが切り替わりました。もう一度お試しください。';
+
         setMessages(prev => prev.map(m => {
           if (m.id === tempUserMsgId) {
             return {
@@ -510,7 +526,7 @@ export default function AIChatBubble() {
             return {
               ...m,
               id: finalData.aiMessage.id,
-              content: accumulatedContent || finalData.aiMessage.content,
+              content: displayContent,
               proposedActions: finalData.aiMessage.proposedActions ? {
                 ...finalData.aiMessage.proposedActions,
                 actionId: finalData.aiMessage.id,
@@ -538,9 +554,13 @@ export default function AIChatBubble() {
         }
       } else {
         // finalDataがない場合（フォールバック）
+        // #126: accumulatedContent が空の場合もエラー表示する
+        const fallbackContent = accumulatedContent.trim()
+          ? accumulatedContent
+          : '応答に失敗しました。再試行してください。';
         setMessages(prev => prev.map(m =>
           m.id === tempAiMsgId
-            ? { ...m, content: accumulatedContent, isStreaming: false }
+            ? { ...m, content: fallbackContent, isStreaming: false }
             : m
         ));
       }
@@ -774,7 +794,8 @@ export default function AIChatBubble() {
       </AnimatePresence>
 
       {/* チャットウィンドウ */}
-      <AnimatePresence>
+      {/* #125: mode='wait' でアニメーション完了を待ち、二重表示を防止 */}
+      <AnimatePresence mode="wait">
         {isOpen && (
           <motion.div
             initial={{ opacity: 0, y: 100, scale: 0.9 }}
