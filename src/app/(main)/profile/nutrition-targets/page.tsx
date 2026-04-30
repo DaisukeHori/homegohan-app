@@ -132,29 +132,50 @@ export default function NutritionTargetsExplainPage() {
           return;
         }
 
-        // プロフィールと栄養目標を取得
-        const [profileRes, targetsRes] = await Promise.all([
-          supabase.from('user_profiles').select('*').eq('id', user.id).single(),
-          supabase.from('nutrition_targets').select('*').eq('user_id', user.id).single(),
-        ]);
+        // プロフィールを取得
+        const profileRes = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
 
         if (profileRes.data) {
           setProfile(profileRes.data as ProfileData);
         }
 
-        if (targetsRes.data) {
-          setTargets(targetsRes.data as NutritionTargetsData);
-        } else if (!targetsRes.error || targetsRes.error.code === 'PGRST116') {
-          // 栄養目標がない場合は計算を実行
-          const calcRes = await fetch('/api/nutrition-targets/calculate', {
-            method: 'POST',
-          });
-          if (calcRes.ok) {
-            // 再取得
-            const { data } = await supabase.from('nutrition_targets').select('*').eq('user_id', user.id).single();
-            if (data) {
-              setTargets(data as NutritionTargetsData);
-            }
+        // 栄養目標は /api/nutrition/targets 経由で取得（auto_calculate 時はその場で再計算される）
+        // これによりマイページ (/profile) と同一の値が表示される（Bug #17 修正）
+        const targetsRes = await fetch('/api/nutrition/targets');
+        if (targetsRes.ok) {
+          const targetsJson = await targetsRes.json();
+          if (targetsJson.targets) {
+            const t = targetsJson.targets;
+            // API は camelCase で返すため NutritionTargetsData の snake_case にマッピング
+            setTargets({
+              id: t.id,
+              daily_calories: t.dailyCalories,
+              protein_g: t.proteinG,
+              fat_g: t.fatG,
+              carbs_g: t.carbsG,
+              fiber_g: t.fiberG,
+              sodium_g: t.sodiumG,
+              potassium_mg: t.potassiumMg,
+              calcium_mg: t.calciumMg,
+              iron_mg: t.ironMg,
+              zinc_mg: t.zincMg,
+              vitamin_a_ug: t.vitaminAUg,
+              vitamin_b1_mg: t.vitaminB1Mg,
+              vitamin_b2_mg: t.vitaminB2Mg,
+              vitamin_b6_mg: t.vitaminB6Mg,
+              vitamin_b12_ug: t.vitaminB12Ug,
+              vitamin_c_mg: t.vitaminCMg,
+              vitamin_d_ug: t.vitaminDUg,
+              vitamin_e_mg: t.vitaminEMg,
+              vitamin_k_ug: t.vitaminKUg,
+              folic_acid_ug: t.folicAcidUg,
+              iodine_ug: t.iodineUg,
+              phosphorus_mg: t.phosphorusMg,
+              cholesterol_mg: t.cholesterolMg,
+              calculation_basis: t.calculationBasis,
+              last_calculated_at: t.lastCalculatedAt,
+              auto_calculate: t.autoCalculate,
+            } as NutritionTargetsData);
           }
         }
       } catch (e) {
