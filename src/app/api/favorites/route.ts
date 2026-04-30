@@ -6,8 +6,35 @@ import { NextResponse } from 'next/server';
  * GET /api/favorites
  * ログインユーザーのお気に入りレシピ一覧を返す (#109)
  * recipe_likes テーブルから recipe_id (dish name) を取得する
- * #302: recipe_uuid カラムが存在しない場合の 500 を修正
+ * #302: id / recipe_uuid カラムが本番 DB に存在しない場合の 500 を修正
  */
+
+/** フィルタ・ソート・ページングを適用したクエリを実行する (any 型で柔軟に処理) */
+async function queryFavorites(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  columns: string,
+  params: { userId: string; query: string; sort: string; offset: number; limit: number },
+) {
+  let q: any = supabase
+    .from('recipe_likes')
+    .select(columns, { count: 'exact' })
+    .eq('user_id', params.userId);
+
+  if (params.query) q = q.ilike('recipe_id', `%${params.query}%`);
+
+  switch (params.sort) {
+    case 'oldest': q = q.order('created_at', { ascending: true }); break;
+    case 'name':   q = q.order('recipe_id',   { ascending: true }); break;
+    default:       q = q.order('created_at',   { ascending: false });
+  }
+
+  return (await q.range(params.offset, params.offset + params.limit - 1)) as {
+    data: any[] | null;
+    error: { code: string; message: string } | null;
+    count: number | null;
+  };
+}
+
 export async function GET(request: Request) {
   const requestId = generateRequestId();
   const logger = createLogger('GET /api/favorites', requestId);
@@ -23,76 +50,40 @@ export async function GET(request: Request) {
   const offset = Number(searchParams.get('offset') ?? '0');
   const query = searchParams.get('q')?.trim() ?? '';
   const sort = searchParams.get('sort') ?? 'newest'; // newest | oldest | name
+  const params = { userId: user.id, query, sort, offset, limit };
+
+  // カラムリスト: フル → id なし → 最小セット の順でフォールバック
+  // 本番 DB で id / recipe_uuid が CREATE TABLE IF NOT EXISTS のスキップで
+  // 追加されていない場合に 500 を回避する (#302)
+  const columnSets = [
+    'id, recipe_id, recipe_uuid, created_at',
+    'user_id, recipe_id, recipe_uuid, created_at',
+    'user_id, recipe_id, created_at',
+  ];
 
   try {
-    // recipe_uuid は ADD COLUMN IF NOT EXISTS で追加済みだが、
-    // 本番 DB に未適用の場合でも id/recipe_id/created_at は必ず存在するため
-    // recipe_uuid を別途フォールバック付きで取得する (#302)
-    let dbQuery = supabase
-      .from('recipe_likes')
-      .select('id, recipe_id, recipe_uuid, created_at', { count: 'exact' })
-      .eq('user_id', user.id);
+    let lastError: { code: string; message: string } | null = null;
 
-    // テキスト検索
-    if (query) {
-      dbQuery = dbQuery.ilike('recipe_id', `%${query}%`);
-    }
-
-    // ソート
-    switch (sort) {
-      case 'oldest':
-        dbQuery = dbQuery.order('created_at', { ascending: true });
-        break;
-      case 'name':
-        dbQuery = dbQuery.order('recipe_id', { ascending: true });
-        break;
-      default: // newest
-        dbQuery = dbQuery.order('created_at', { ascending: false });
-    }
-
-    dbQuery = dbQuery.range(offset, offset + limit - 1);
-
-    let result = await dbQuery;
-
-    // recipe_uuid カラムが存在しない場合 (column not found) は
-    // recipe_uuid を除いたクエリでリトライして 500 を回避する (#302)
-    if (result.error && (result.error.message?.includes('recipe_uuid') || result.error.code === '42703')) {
-      userLogger.warn('recipe_uuid column not found, retrying without it', { error: result.error.message });
-      let fallbackQuery = supabase
-        .from('recipe_likes')
-        .select('id, recipe_id, created_at', { count: 'exact' })
-        .eq('user_id', user.id);
-
-      if (query) {
-        fallbackQuery = fallbackQuery.ilike('recipe_id', `%${query}%`);
+    for (const columns of columnSets) {
+      const r = await queryFavorites(supabase, columns, params);
+      if (!r.error) {
+        return NextResponse.json({
+          favorites: (r.data ?? []).map((row: any) => ({
+            id: row.id ?? `${row.user_id}:${row.recipe_id}`,
+            recipeName: row.recipe_id,
+            recipeUuid: row.recipe_uuid ?? null,
+            likedAt: row.created_at,
+          })),
+          total: r.count ?? 0,
+        });
       }
-
-      switch (sort) {
-        case 'oldest':
-          fallbackQuery = fallbackQuery.order('created_at', { ascending: true });
-          break;
-        case 'name':
-          fallbackQuery = fallbackQuery.order('recipe_id', { ascending: true });
-          break;
-        default:
-          fallbackQuery = fallbackQuery.order('created_at', { ascending: false });
-      }
-
-      fallbackQuery = fallbackQuery.range(offset, offset + limit - 1);
-      result = await fallbackQuery as typeof result;
+      // 42703 = column not found → 次の columns セットを試す
+      if (r.error.code !== '42703') throw r.error;
+      lastError = r.error;
+      userLogger.warn(`column not found (${r.error.message}), retrying with narrower select`);
     }
 
-    if (result.error) throw result.error;
-
-    return NextResponse.json({
-      favorites: (result.data ?? []).map((row: any) => ({
-        id: row.id,
-        recipeName: row.recipe_id,
-        recipeUuid: row.recipe_uuid ?? null,
-        likedAt: row.created_at,
-      })),
-      total: result.count ?? 0,
-    });
+    throw lastError ?? new Error('Failed to query recipe_likes');
   } catch (error: any) {
     userLogger.error('Favorites fetch error', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
