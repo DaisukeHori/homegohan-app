@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
-// コメント一覧取得
+// コメント一覧取得 (user_id は公開しない)
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
@@ -15,7 +15,6 @@ export async function GET(
       content,
       rating,
       created_at,
-      user_id,
       user_profiles(nickname)
     `)
     .eq('recipe_id', params.id)
@@ -27,7 +26,6 @@ export async function GET(
     id: c.id,
     content: c.content,
     rating: c.rating,
-    userId: c.user_id,
     authorName: c.user_profiles?.nickname || '匿名',
     createdAt: c.created_at,
   }));

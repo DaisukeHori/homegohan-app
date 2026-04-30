@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 async function sendAdminNotification(inquiry: {
   id: string;
@@ -50,7 +50,36 @@ async function sendAdminNotification(inquiry: {
   }
 }
 
-export async function POST(request: Request) {
+// IP ベース簡易レートリミット: 10req / 60s / IP (in-memory)
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT_MAX) return false;
+  entry.count++;
+  return true;
+}
+
+export async function POST(request: NextRequest) {
+  // レートリミットチェック
+  const ip =
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    request.headers.get('x-real-ip') ??
+    'unknown';
+  if (!checkRateLimit(ip)) {
+    return NextResponse.json(
+      { error: 'リクエストが多すぎます。しばらく時間をおいてからお試しください。' },
+      { status: 429 }
+    );
+  }
+
   const supabase = await createClient();
   
   try {
