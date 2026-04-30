@@ -71,9 +71,8 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
   /**
    * お気に入り登録後にリロードしても状態が保持される (API が persist していること)
    */
-  // リロード後の永続化テストはモーダルクローズ方法が不安定なため skip
-  // (「閉じる」ボタンがページ遷移を引き起こす場合がある)
-  test.skip("favorite state persists after page reload", async ({ authedPage }) => {
+  // 修正: モーダルクローズに Escape キーを優先使用してページ遷移を回避
+  test("favorite state persists after page reload", async ({ authedPage }) => {
     await authedPage.goto("/menus/weekly");
     await authedPage.waitForLoadState("networkidle");
 
