@@ -1,6 +1,19 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 
+// #277: XSS ペイロードを除去するシンプルなサニタイズ関数
+function sanitizeText(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;')
+    .trim()
+    .slice(0, 100) // ニックネームの最大長を制限
+}
+
 // オンボーディング進捗保存API (OB-API-01)
 export async function POST(request: Request) {
   try {
@@ -30,7 +43,7 @@ export async function POST(request: Request) {
     // 現在のプロファイルを取得
     const { data: existingProfile } = await supabase
       .from('user_profiles')
-      .select('onboarding_started_at')
+      .select('onboarding_started_at, onboarding_completed_at')
       .eq('id', user.id)
       .single()
 
@@ -46,8 +59,14 @@ export async function POST(request: Request) {
       updates.onboarding_started_at = now
     }
 
+    // #276: upsert で completed_at を上書きしないよう既存値を保持
+    if (existingProfile?.onboarding_completed_at) {
+      updates.onboarding_completed_at = existingProfile.onboarding_completed_at
+    }
+
     // 回答内容を対応カラムにも反映（リアルタイム同期）
-    if (answers.nickname) updates.nickname = answers.nickname
+    // #277: nickname は XSS ペイロードを除去してから保存
+    if (answers.nickname) updates.nickname = sanitizeText(answers.nickname)
     if (answers.gender) updates.gender = answers.gender
     if (answers.age) {
       updates.age = parseInt(answers.age)

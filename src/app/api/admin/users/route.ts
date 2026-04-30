@@ -31,8 +31,19 @@ export async function GET(request: Request) {
     .select('*', { count: 'exact' });
 
   // フィルター
+  // #273 PostgREST injection 対策: .or() による生文字列埋め込みを廃止し、カラム別に安全分岐
   if (query) {
-    dbQuery = dbQuery.or(`nickname.ilike.%${query}%,id.eq.${query}`);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (uuidRegex.test(query)) {
+      // UUID 形式: id の完全一致のみ（.or() は使わない）
+      dbQuery = dbQuery.eq('id', query);
+    } else {
+      // ニックネーム部分一致: 制御文字・記号を除去して長さを制限
+      const sanitized = query.replace(/[^\p{L}\p{N}\s\-_.@]/gu, '').slice(0, 100);
+      if (sanitized.length > 0) {
+        dbQuery = dbQuery.ilike('nickname', `%${sanitized}%`);
+      }
+    }
   }
   if (role) {
     // 配列にroleが含まれているかチェック
@@ -78,4 +89,3 @@ export async function GET(request: Request) {
     },
   });
 }
-
