@@ -42,11 +42,13 @@ test.describe('settings toggle persistence (#69)', () => {
     expect(patchRes.status()).toBe(200);
 
     // リロード後も状態が保持されている
-    await authedPage.reload();
-    await authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-      { timeout: 10_000 },
-    );
+    await Promise.all([
+      authedPage.waitForResponse(
+        (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
+        { timeout: 15_000 },
+      ),
+      authedPage.reload(),
+    ]);
 
     const afterReloadState = await isCheckedClass();
     expect(afterReloadState).toBe(!initialState);
@@ -59,11 +61,13 @@ test.describe('settings toggle persistence (#69)', () => {
     await notifSwitch.click();
     await patchPromise2;
 
-    await authedPage.reload();
-    await authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-      { timeout: 10_000 },
-    );
+    await Promise.all([
+      authedPage.waitForResponse(
+        (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
+        { timeout: 15_000 },
+      ),
+      authedPage.reload(),
+    ]);
     const restoredState = await isCheckedClass();
     expect(restoredState).toBe(initialState);
   });
@@ -96,11 +100,13 @@ test.describe('settings toggle persistence (#69)', () => {
     const patchRes = await patchPromise;
     expect(patchRes.status()).toBe(200);
 
-    await authedPage.reload();
-    await authedPage.waitForResponse(
-      (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
-      { timeout: 10_000 },
-    );
+    await Promise.all([
+      authedPage.waitForResponse(
+        (res) => res.url().includes('/api/notification-preferences') && res.request().method() === 'GET',
+        { timeout: 15_000 },
+      ),
+      authedPage.reload(),
+    ]);
 
     const afterReloadState = await isChecked();
     expect(afterReloadState).toBe(!initialState);
