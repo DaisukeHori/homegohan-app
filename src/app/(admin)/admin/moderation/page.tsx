@@ -1,182 +1,268 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Image from "next/image";
-import { createClient } from "@/lib/supabase/client";
-import { ChefHat, Store, UtensilsCrossed, Zap, Check, X } from 'lucide-react';
+import { AlertTriangle, ChefHat, FileText, Bot, RefreshCw } from 'lucide-react';
 
-interface PlannedMealWithUser {
+interface MealFlag {
   id: string;
-  dish_name: string;
-  meal_type: string;
-  mode: string;
-  image_url: string | null;
-  is_completed: boolean;
-  created_at: string;
-  calories_kcal: number | null;
-  user_id: string;
-  user_daily_meals: {
-    day_date: string;
-  } | null;
-  user_profiles: {
-    nickname: string | null;
-  } | null;
+  type: 'meal';
+  targetId: string;
+  userId: string;
+  flagType: string;
+  reason: string;
+  status: string;
+  createdAt: string;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  resolutionNote: string | null;
 }
 
-const MODE_ICONS: Record<string, typeof ChefHat> = {
-  cook: ChefHat,
-  quick: Zap,
-  buy: Store,
-  out: UtensilsCrossed,
-};
+interface RecipeFlag {
+  id: string;
+  type: 'recipe';
+  targetId: string;
+  reporterId: string;
+  flagType: string;
+  reason: string;
+  status: string;
+  createdAt: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+}
 
-const MODE_COLORS: Record<string, string> = {
-  cook: 'text-green-600 bg-green-50',
-  quick: 'text-blue-600 bg-blue-50',
-  buy: 'text-purple-600 bg-purple-50',
-  out: 'text-orange-600 bg-orange-50',
+interface AiFlag {
+  id: string;
+  type: 'ai_content';
+  userId: string;
+  contentType: string;
+  outputContent: string;
+  flagReason: string;
+  createdAt: string;
+}
+
+interface ModerationData {
+  mealFlags: MealFlag[];
+  recipeFlags: RecipeFlag[];
+  aiFlags: AiFlag[];
+  counts: {
+    meal: number;
+    recipe: number;
+    ai: number;
+  };
+}
+
+type TabType = 'meal' | 'recipe' | 'ai';
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: 'bg-yellow-100 text-yellow-800',
+  resolved: 'bg-green-100 text-green-800',
+  dismissed: 'bg-gray-100 text-gray-600',
 };
 
 export default function ModerationPage() {
-  const [meals, setMeals] = useState<PlannedMealWithUser[]>([]);
+  const [data, setData] = useState<ModerationData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabType>('meal');
+  const [status, setStatus] = useState<string>('pending');
 
-  const fetchMeals = useCallback(async () => {
-    const supabase = createClient();
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    
-    // planned_mealsをJOINして取得（日付ベースモデル）
-    const { data, error } = await supabase
-      .from('planned_meals')
-      .select(`
-        id,
-        dish_name,
-        meal_type,
-        mode,
-        image_url,
-        is_completed,
-        created_at,
-        calories_kcal,
-        user_id,
-        user_daily_meals(day_date),
-        user_profiles:user_id(nickname)
-      `)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    
-    if (error) {
-      console.error('Error fetching meals:', error);
-    } else if (data) {
-      setMeals(data as unknown as PlannedMealWithUser[]);
+    try {
+      const res = await fetch(`/api/admin/moderation?status=${status}`);
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+      } else {
+        console.error('Failed to fetch moderation data:', res.statusText);
+      }
+    } catch (err) {
+      console.error('Error fetching moderation data:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, []);
+  }, [status]);
 
   useEffect(() => {
-    void fetchMeals();
-  }, [fetchMeals]);
+    void fetchData();
+  }, [fetchData]);
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("本当に削除しますか？この操作は取り消せません。")) return;
-    const supabase = createClient();
-    const { error } = await supabase.from('planned_meals').delete().eq('id', id);
-    if (error) {
-      alert("削除に失敗しました");
-    } else {
-      setMeals(prev => prev.filter(m => m.id !== id));
-    }
-  };
+  const tabs = [
+    { key: 'meal' as TabType, label: '食事フラグ', icon: ChefHat, count: data?.counts.meal ?? 0 },
+    { key: 'recipe' as TabType, label: 'レシピフラグ', icon: FileText, count: data?.counts.recipe ?? 0 },
+    { key: 'ai' as TabType, label: 'AIコンテンツ', icon: Bot, count: data?.counts.ai ?? 0 },
+  ];
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">献立一覧（モデレーション）</h1>
-        <button 
-          onClick={fetchMeals} 
-          className="px-4 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 text-sm font-bold transition-colors"
-        >
-          更新
-        </button>
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={20} className="text-orange-500" />
+          <h1 className="text-2xl font-bold text-gray-900">モデレーション</h1>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Status filter */}
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+          >
+            <option value="pending">未処理</option>
+            <option value="resolved">解決済み</option>
+            <option value="dismissed">却下済み</option>
+          </select>
+          <button
+            onClick={fetchData}
+            className="flex items-center gap-1 px-4 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 text-sm font-medium transition-colors"
+          >
+            <RefreshCw size={14} />
+            更新
+          </button>
+        </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.key
+                  ? 'border-[#E07A5F] text-[#E07A5F]'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Icon size={16} />
+              {tab.label}
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                activeTab === tab.key ? 'bg-[#E07A5F] text-white' : 'bg-gray-100 text-gray-600'
+              }`}>
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Content */}
       {loading ? (
         <div className="text-center py-12 text-gray-400">読み込み中...</div>
-      ) : meals.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">献立データがありません</div>
+      ) : !data ? (
+        <div className="text-center py-12 text-gray-400">データを取得できませんでした</div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {meals.map((meal) => {
-            const ModeIcon = MODE_ICONS[meal.mode] || ChefHat;
-            const modeColor = MODE_COLORS[meal.mode] || 'text-gray-600 bg-gray-50';
-            const nickname = meal.user_profiles?.nickname || 'Unknown';
-            const dayDate = meal.user_daily_meals?.day_date || '';
-            
-            return (
-              <div key={meal.id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 group">
-                <div className="relative h-40 bg-gray-100">
-                  {meal.image_url ? (
-                    <Image src={meal.image_url} fill alt={meal.dish_name} className="object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <ModeIcon size={48} className="text-gray-300" />
-                    </div>
-                  )}
-                  
-                  {/* 完了バッジ */}
-                  {meal.is_completed && (
-                    <div className="absolute top-2 left-2 bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1">
-                      <Check size={12} />
-                      完了
-                    </div>
-                  )}
-                  
-                  {/* 削除ボタン */}
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
-                      onClick={() => handleDelete(meal.id)}
-                      className="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg hover:bg-red-600 flex items-center gap-1"
-                    >
-                      <X size={12} />
-                      削除
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="p-4">
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-gray-400 font-medium mb-1">
-                        {dayDate} • {new Date(meal.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                      <p className="font-bold text-gray-900 truncate">{meal.dish_name}</p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className={`text-xs px-2 py-1 rounded font-bold uppercase ${modeColor}`}>
-                        {meal.meal_type}
-                      </span>
+        <>
+          {/* Meal Flags Tab */}
+          {activeTab === 'meal' && (
+            <div className="space-y-4">
+              {data.mealFlags.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">食事フラグがありません</div>
+              ) : (
+                data.mealFlags.map((flag) => (
+                  <div key={flag.id} className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs text-gray-400">meal:{flag.targetId?.slice(0, 8)}...</span>
+                          <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-bold">
+                            {flag.flagType}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold ${STATUS_COLORS[flag.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {flag.status}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-700">{flag.reason || '理由なし'}</p>
+                        <p className="text-xs text-gray-400">
+                          報告者: {flag.userId?.slice(0, 8)}... | {new Date(flag.createdAt).toLocaleString('ja-JP')}
+                        </p>
+                        {flag.resolutionNote && (
+                          <p className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
+                            解決メモ: {flag.resolutionNote}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  
-                  <div className="flex justify-between items-center">
-                    <p className="text-xs text-gray-500">
-                      User: <span className="font-bold text-gray-700">{nickname}</span>
-                    </p>
-                    <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${modeColor}`}>
-                      <ModeIcon size={12} />
-                      <span className="text-xs font-bold">{meal.mode}</span>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Recipe Flags Tab */}
+          {activeTab === 'recipe' && (
+            <div className="space-y-4">
+              {data.recipeFlags.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">レシピフラグがありません</div>
+              ) : (
+                data.recipeFlags.map((flag) => (
+                  <div key={flag.id} className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs text-gray-400">recipe:{flag.targetId?.slice(0, 8)}...</span>
+                          <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">
+                            {flag.flagType}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold ${STATUS_COLORS[flag.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {flag.status}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-700">{flag.reason || '理由なし'}</p>
+                        <p className="text-xs text-gray-400">
+                          報告者: {flag.reporterId?.slice(0, 8)}... | {new Date(flag.createdAt).toLocaleString('ja-JP')}
+                        </p>
+                        {flag.reviewedAt && (
+                          <p className="text-xs text-blue-600">
+                            レビュー済み: {new Date(flag.reviewedAt).toLocaleString('ja-JP')}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  
-                  {meal.calories_kcal && (
-                    <p className="text-xs text-gray-400 mt-2">
-                      {meal.calories_kcal} kcal
-                    </p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* AI Content Tab */}
+          {activeTab === 'ai' && (
+            <div className="space-y-4">
+              {data.aiFlags.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">AIコンテンツフラグがありません</div>
+              ) : (
+                data.aiFlags.map((flag) => (
+                  <div key={flag.id} className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">
+                          {flag.contentType}
+                        </span>
+                        <span className="font-mono text-xs text-gray-400">
+                          user:{flag.userId?.slice(0, 8)}...
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {new Date(flag.createdAt).toLocaleString('ja-JP')}
+                        </span>
+                      </div>
+                      {flag.flagReason && (
+                        <p className="text-sm font-medium text-red-600">
+                          フラグ理由: {flag.flagReason}
+                        </p>
+                      )}
+                      {flag.outputContent && (
+                        <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 font-mono whitespace-pre-wrap text-xs">
+                          {flag.outputContent}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
