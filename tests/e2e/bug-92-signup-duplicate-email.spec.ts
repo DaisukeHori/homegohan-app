@@ -25,11 +25,11 @@ test.describe("Bug-92: 重複メールアドレスの signup 処理", () => {
     await page.locator('form button[type="submit"]').click();
 
     // エラーアラートが /signup 画面に表示されること
-    const errorAlert = page.getByRole("alert");
+    // getByRole("alert") は passwordError の <p role="alert"> も含む可能性あり
+    // formError の <p role="alert"> を明示的に絞り込み、テキストが入るまで待つ (#244)
+    const errorAlert = page.locator('p[role="alert"]');
     await expect(errorAlert).toBeVisible({ timeout: 10_000 });
-
-    const text = (await errorAlert.textContent()) ?? "";
-    expect(text).toMatch(/既に登録|ログイン/);
+    await expect(errorAlert).toHaveText(/既に登録|ログイン/, { timeout: 10_000 });
 
     // /auth/verify に遷移していないこと
     await expect(page).toHaveURL(/\/signup$/, { timeout: 5_000 });
