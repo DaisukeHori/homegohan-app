@@ -208,6 +208,36 @@ export default function SettingsPage() {
     router.push('/login');
   };
 
+  // アカウント削除
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const DELETE_KEYWORD = '削除します';
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== DELETE_KEYWORD || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? `Delete failed: ${res.status}`);
+      }
+      clearUserScopedLocalStorage();
+      await supabase.auth.signOut();
+      broadcastSignOut();
+      router.push('/login');
+    } catch (err) {
+      console.error('[delete account]', err);
+      alert('アカウントの削除に失敗しました。時間をおいて再度お試しください。');
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative">
       
@@ -423,8 +453,8 @@ export default function SettingsPage() {
 
         {/* セクション 5: アクション */}
         <div>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => setShowLogoutModal(true)}
             className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
           >
@@ -436,12 +466,36 @@ export default function SettingsPage() {
           </p>
         </div>
 
+        {/* セクション 6: アカウント削除 */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">危険ゾーン</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-red-100 overflow-hidden">
+            <div className="p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center text-red-500" aria-hidden="true">🗑️</div>
+                <div>
+                  <p className="font-bold text-gray-700">アカウントを削除</p>
+                  <p className="text-xs text-gray-400">すべてのデータが完全に削除されます。この操作は取り消せません。</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="w-full py-3 rounded-xl border border-red-300 text-red-600 font-bold hover:bg-red-50 transition-colors text-sm"
+                aria-label="アカウントを削除する"
+              >
+                アカウントを削除する
+              </button>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       {/* ログアウト確認モーダル */}
       <AnimatePresence>
         {showLogoutModal && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -462,15 +516,71 @@ export default function SettingsPage() {
                 またすぐにお会いしましょう。
               </p>
               <div className="flex flex-col gap-3">
-                <button 
+                <button
                   onClick={handleLogout}
                   className="w-full py-3 rounded-full bg-[#333] text-white font-bold hover:bg-black transition-colors shadow-lg"
                 >
                   ログアウト
                 </button>
-                <button 
+                <button
                   onClick={() => setShowLogoutModal(false)}
                   className="w-full py-3 rounded-full font-bold text-gray-500 hover:bg-gray-100 transition-colors"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* アカウント削除確認モーダル */}
+      <AnimatePresence>
+        {showDeleteModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm pointer-events-none"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl p-8 w-full max-w-sm text-center shadow-2xl pointer-events-auto"
+            >
+              <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-6 text-3xl">
+                ⚠️
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">アカウントを削除しますか？</h3>
+              <p className="text-gray-500 mb-6 text-sm">
+                すべての食事記録・設定・データが<strong className="text-red-600">完全に削除</strong>されます。<br/>
+                この操作は取り消せません。
+              </p>
+              <p className="text-sm text-gray-600 mb-2 text-left">
+                確認のため「<span className="font-bold text-red-600">{DELETE_KEYWORD}</span>」と入力してください
+              </p>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder={DELETE_KEYWORD}
+                aria-label="削除確認テキスト入力"
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-6 focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-transparent"
+              />
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleteConfirmText !== DELETE_KEYWORD || deleting}
+                  aria-label="アカウントを完全に削除する"
+                  className="w-full py-3 rounded-full bg-red-600 text-white font-bold hover:bg-red-700 transition-colors shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {deleting ? '削除中…' : 'アカウントを削除'}
+                </button>
+                <button
+                  onClick={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}
+                  disabled={deleting}
+                  className="w-full py-3 rounded-full font-bold text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-40"
                 >
                   キャンセル
                 </button>
