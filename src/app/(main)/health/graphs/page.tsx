@@ -38,6 +38,8 @@ interface HealthRecord {
   diastolic_bp?: number;
   sleep_hours?: number;
   sleep_quality?: number;
+  /** health_checkups 由来のデータかどうか */
+  fromCheckup?: boolean;
 }
 
 export default function HealthGraphsPage() {
@@ -57,14 +59,50 @@ export default function HealthGraphsPage() {
     startDate.setDate(startDate.getDate() - days);
     
     try {
-      const res = await fetch(`/api/health/records?start_date=${formatLocalDate(startDate)}&limit=365`);
-      if (res.ok) {
-        const data = await res.json();
-        setRecords(data.records || []);
+      const [recordsRes, checkupsRes, goalsRes] = await Promise.all([
+        fetch(`/api/health/records?start_date=${formatLocalDate(startDate)}&limit=365`),
+        fetch(`/api/health/checkups?limit=365`),
+        fetch('/api/health/goals?status=active'),
+      ]);
+
+      const mergedRecords: HealthRecord[] = [];
+
+      if (recordsRes.ok) {
+        const data = await recordsRes.json();
+        for (const r of (data.records || [])) {
+          mergedRecords.push(r);
+        }
       }
 
-      // 目標体重を取得
-      const goalsRes = await fetch('/api/health/goals?status=active');
+      if (checkupsRes.ok) {
+        const data = await checkupsRes.json();
+        for (const c of (data.checkups || [])) {
+          // checkup_date が期間内のものだけ
+          if (c.checkup_date < formatLocalDate(startDate)) continue;
+          // 同じ日付がすでに health_records にあれば weight/bp のみ補完
+          const existing = mergedRecords.find(r => r.record_date === c.checkup_date);
+          if (existing) {
+            if (c.weight != null && existing.weight == null) existing.weight = c.weight;
+            if (c.blood_pressure_systolic != null && existing.systolic_bp == null) {
+              existing.systolic_bp = c.blood_pressure_systolic;
+              existing.diastolic_bp = c.blood_pressure_diastolic;
+            }
+          } else {
+            mergedRecords.push({
+              record_date: c.checkup_date,
+              weight: c.weight ?? undefined,
+              systolic_bp: c.blood_pressure_systolic ?? undefined,
+              diastolic_bp: c.blood_pressure_diastolic ?? undefined,
+              fromCheckup: true,
+            });
+          }
+        }
+      }
+
+      // 日付降順でソート（gridsを日付昇順で表示するため reversed later in getGraphData）
+      mergedRecords.sort((a, b) => b.record_date.localeCompare(a.record_date));
+      setRecords(mergedRecords);
+
       if (goalsRes.ok) {
         const goalsData = await goalsRes.json();
         const weightGoal = goalsData.goals?.find((g: any) => g.goal_type === 'weight');
@@ -84,14 +122,14 @@ export default function HealthGraphsPage() {
 
   // グラフデータを生成
   const getGraphData = (): {
-    data: { date: string; value: number | null }[];
+    data: { date: string; value: number | null; fromCheckup?: boolean }[];
     min: number | null;
     max: number | null;
     avg: number | null;
   } => {
     if (records.length === 0) return { data: [], min: null, max: null, avg: null };
 
-    let values: { date: string; value: number | null }[] = [];
+    let values: { date: string; value: number | null; fromCheckup?: boolean }[] = [];
 
     // 期間内の全日付を生成
     const days = period === 'week' ? 7 : period === 'month' ? 30 : period === '3months' ? 90 : 365;
@@ -120,7 +158,7 @@ export default function HealthGraphsPage() {
             break;
         }
       }
-      values.push({ date: dateStr, value });
+      values.push({ date: dateStr, value, fromCheckup: record?.fromCheckup });
     }
 
     const validValues = values.filter(v => v.value !== null).map(v => v.value as number);
@@ -164,16 +202,17 @@ export default function HealthGraphsPage() {
     const yMin = min - range * 0.1;
     const yMax = max + range * 0.1;
 
-    const points: { x: number; y: number; value: number | null }[] = graphData.map((d, i) => ({
+    const points: { x: number; y: number; value: number | null; fromCheckup?: boolean }[] = graphData.map((d, i) => ({
       x: padding.left + (i / (graphData.length - 1)) * graphWidth,
       y: d.value !== null
         ? padding.top + graphHeight - ((d.value - yMin) / (yMax - yMin)) * graphHeight
         : -1,
       value: d.value,
+      fromCheckup: d.fromCheckup,
     }));
 
     // パスを生成（null値をスキップ）
-    const validPoints = points.filter(p => p.y >= 0);
+    const validPoints = points.filter(p => p.y >= 0) as { x: number; y: number; value: number | null; fromCheckup?: boolean }[];
     const pathD = validPoints.length > 1
       ? `M ${validPoints.map(p => `${p.x},${p.y}`).join(' L ')}`
       : '';
@@ -231,18 +270,28 @@ export default function HealthGraphsPage() {
           strokeLinejoin="round"
         />
 
-        {/* データポイント */}
-        {validPoints.map((p, i) => (
-          <circle
-            key={i}
-            cx={p.x}
-            cy={p.y}
-            r={4}
-            fill={colors.card}
-            stroke={colors.accent}
-            strokeWidth={2}
-          />
-        ))}
+        {/* データポイント (健診由来は菱形で区別) */}
+        {validPoints.map((p, i) =>
+          p.fromCheckup ? (
+            <polygon
+              key={i}
+              points={`${p.x},${p.y - 5} ${p.x + 5},${p.y} ${p.x},${p.y + 5} ${p.x - 5},${p.y}`}
+              fill={colors.purple}
+              stroke={colors.card}
+              strokeWidth={1.5}
+            />
+          ) : (
+            <circle
+              key={i}
+              cx={p.x}
+              cy={p.y}
+              r={4}
+              fill={colors.card}
+              stroke={colors.accent}
+              strokeWidth={2}
+            />
+          )
+        )}
 
         {/* Y軸ラベル */}
         <text x={padding.left - 5} y={padding.top + 5} fontSize={10} fill={colors.textMuted} textAnchor="end">
