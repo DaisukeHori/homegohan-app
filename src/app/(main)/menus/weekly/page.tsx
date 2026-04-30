@@ -26,6 +26,37 @@ import {
 } from 'lucide-react';
 
 // ============================================
+// Utilities
+// ============================================
+
+/**
+ * QuotaExceededError-safe localStorage.setItem (#141).
+ * On quota failure, clears stale generation-tracker keys and retries once.
+ * If it still fails, logs a warning — the UI state is already set in React,
+ * so omitting persistence is acceptable.
+ */
+function safeLocalStorageSetItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      // 旧い生成中状態キーを削除して再試行
+      const staleKeys = ['weeklyMenuGenerating', 'singleMealGenerating', 'shoppingListRegenerating', 'v4MenuGenerating'];
+      for (const k of staleKeys) {
+        if (k !== key) localStorage.removeItem(k);
+      }
+      try {
+        localStorage.setItem(key, value);
+      } catch {
+        console.warn('[weekly] localStorage quota exceeded: 生成状態を永続化できませんでした', key);
+      }
+    } else {
+      console.warn('[weekly] localStorage.setItem failed:', key, e);
+    }
+  }
+}
+
+// ============================================
 // Types & Constants (Reference UI Style)
 // ============================================
 
@@ -3107,7 +3138,7 @@ export default function WeeklyMenuPage() {
         setShoppingListRequestId(requestId);
         
         // localStorageに保存（リロード時復元用）
-        localStorage.setItem('shoppingListRegenerating', JSON.stringify({
+        safeLocalStorageSetItem('shoppingListRegenerating', JSON.stringify({
           requestId,
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
@@ -3273,7 +3304,7 @@ export default function WeeklyMenuPage() {
       const { requestId } = await response.json();
       
       // localStorageに生成中状態を保存（画面遷移しても維持するため）
-      localStorage.setItem('weeklyMenuGenerating', JSON.stringify({
+      safeLocalStorageSetItem('weeklyMenuGenerating', JSON.stringify({
         weekStartDate,
         timestamp: Date.now(),
         requestId,
@@ -3336,7 +3367,7 @@ export default function WeeklyMenuPage() {
         const { requestId } = await res.json();
         
         // localStorageに生成中状態を保存（リロードしても維持するため）
-        localStorage.setItem('singleMealGenerating', JSON.stringify({
+        safeLocalStorageSetItem('singleMealGenerating', JSON.stringify({
           dayIndex: addMealDayIndex,
           mealType: addMealKey,
           dayDate,

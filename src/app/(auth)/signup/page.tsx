@@ -104,8 +104,16 @@ export default function SignupPage() {
       }
     } catch (error: any) {
       console.error('Signup error:', error);
-      setFormError(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
+      // #148: ネットワークエラー時にローディングが固着しないよう明示的に解除
+      setIsLoading(false);
+      const msg = error?.message || error?.toString() || '不明なエラー';
+      setFormError(
+        /network|fetch|failed to fetch/i.test(msg)
+          ? 'ネットワークエラーが発生しました。通信状態をご確認のうえ再度お試しください。'
+          : `予期せぬエラーが発生しました: ${msg}`
+      );
     } finally {
+      // finally でも必ず解除（try 内 return 後も含む）
       setIsLoading(false);
     }
   };

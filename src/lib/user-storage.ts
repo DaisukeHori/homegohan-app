@@ -34,3 +34,17 @@ export function clearUserScopedLocalStorage(): void {
     localStorage.removeItem(key);
   }
 }
+
+/**
+ * Broadcasts a SIGNED_OUT event to other tabs via BroadcastChannel (#145).
+ * Call this after supabase.auth.signOut() to ensure all open tabs redirect.
+ * Safe to call in a non-browser environment (no-op if BroadcastChannel is
+ * not available).
+ */
+export function broadcastSignOut(): void {
+  if (typeof BroadcastChannel === 'undefined') return;
+  const channel = new BroadcastChannel('auth');
+  channel.postMessage('SIGNED_OUT');
+  // Close immediately after posting — we only need a one-shot message.
+  channel.close();
+}
