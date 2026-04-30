@@ -180,7 +180,7 @@ function parseNullableNumber(
   input: PlainObject,
   key: string,
   errors: string[],
-  opts: { integer?: boolean } = {},
+  opts: { integer?: boolean; min?: number; max?: number; label?: string } = {},
 ): number | null | undefined {
   if (!hasOwn(input, key)) return undefined;
 
@@ -201,6 +201,16 @@ function parseNullableNumber(
 
   if (opts.integer && !Number.isInteger(numeric)) {
     errors.push(`${key} must be an integer or null`);
+    return undefined;
+  }
+
+  const label = opts.label ?? key;
+  if (opts.min !== undefined && numeric < opts.min) {
+    errors.push(`${label} は ${opts.min} 以上の値を入力してください`);
+    return undefined;
+  }
+  if (opts.max !== undefined && numeric > opts.max) {
+    errors.push(`${label} は ${opts.max} 以下の値を入力してください`);
     return undefined;
   }
 
@@ -302,6 +312,13 @@ export function sanitizeHealthRecordPayload(
   return parseKnownFields(input, (body, errors) => {
     const data: Record<string, unknown> = {};
 
+    const numericFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
+      weight: { min: 20, max: 300, label: '体重 (kg)' },
+      body_fat_percentage: { min: 1, max: 70, label: '体脂肪率 (%)' },
+      muscle_mass: { min: 5, max: 150, label: '筋肉量 (kg)' },
+      sleep_hours: { min: 0, max: 24, label: '睡眠時間 (h)' },
+      body_temp: { min: 30, max: 45, label: '体温 (°C)' },
+    };
     const numericFields = [
       'weight',
       'body_fat_percentage',
@@ -310,10 +327,23 @@ export function sanitizeHealthRecordPayload(
       'body_temp',
     ] as const;
     for (const field of numericFields) {
-      const value = parseNullableNumber(body, field, errors);
+      const value = parseNullableNumber(body, field, errors, numericFieldOpts[field] ?? {});
       if (value !== undefined) data[field] = value;
     }
 
+    const integerFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
+      systolic_bp: { min: 30, max: 300, label: '収縮期血圧 (mmHg)' },
+      diastolic_bp: { min: 20, max: 200, label: '拡張期血圧 (mmHg)' },
+      heart_rate: { min: 20, max: 300, label: '心拍数 (bpm)' },
+      sleep_quality: { min: 1, max: 10, label: '睡眠の質 (1-10)' },
+      water_intake: { min: 0, max: 10000, label: '水分摂取量 (mL)' },
+      step_count: { min: 0, max: 100000, label: '歩数' },
+      bowel_movement: { min: 0, max: 20, label: '排便回数' },
+      overall_condition: { min: 1, max: 10, label: '全体的な体調 (1-10)' },
+      mood_score: { min: 1, max: 10, label: '気分スコア (1-10)' },
+      energy_level: { min: 1, max: 10, label: 'エネルギーレベル (1-10)' },
+      stress_level: { min: 1, max: 10, label: 'ストレスレベル (1-10)' },
+    };
     const integerFields = [
       'systolic_bp',
       'diastolic_bp',
@@ -328,7 +358,7 @@ export function sanitizeHealthRecordPayload(
       'stress_level',
     ] as const;
     for (const field of integerFields) {
-      const value = parseNullableNumber(body, field, errors, { integer: true });
+      const value = parseNullableNumber(body, field, errors, { integer: true, ...(integerFieldOpts[field] ?? {}) });
       if (value !== undefined) data[field] = value;
     }
 
@@ -386,6 +416,17 @@ export function sanitizeHealthCheckupPayload(input: unknown): ValidationResult<H
       if (value !== undefined) data[field] = value;
     }
 
+    const numericFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
+      height: { min: 50, max: 250, label: '身長 (cm)' },
+      weight: { min: 20, max: 300, label: '体重 (kg)' },
+      bmi: { min: 10, max: 70, label: 'BMI' },
+      waist_circumference: { min: 30, max: 300, label: '腹囲 (cm)' },
+      hemoglobin: { min: 1, max: 25, label: 'ヘモグロビン (g/dL)' },
+      hba1c: { min: 3, max: 15, label: 'HbA1c (%)' },
+      creatinine: { min: 0.1, max: 30, label: 'クレアチニン (mg/dL)' },
+      egfr: { min: 0, max: 150, label: 'eGFR (mL/min/1.73m²)' },
+      uric_acid: { min: 0.5, max: 20, label: '尿酸 (mg/dL)' },
+    };
     const numericFields = [
       'height',
       'weight',
@@ -398,10 +439,22 @@ export function sanitizeHealthCheckupPayload(input: unknown): ValidationResult<H
       'uric_acid',
     ] as const;
     for (const field of numericFields) {
-      const value = parseNullableNumber(body, field, errors);
+      const value = parseNullableNumber(body, field, errors, numericFieldOpts[field] ?? {});
       if (value !== undefined) data[field] = value;
     }
 
+    const integerFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
+      blood_pressure_systolic: { min: 30, max: 300, label: '収縮期血圧 (mmHg)' },
+      blood_pressure_diastolic: { min: 20, max: 200, label: '拡張期血圧 (mmHg)' },
+      fasting_glucose: { min: 20, max: 700, label: '空腹時血糖 (mg/dL)' },
+      total_cholesterol: { min: 50, max: 1000, label: '総コレステロール (mg/dL)' },
+      ldl_cholesterol: { min: 10, max: 700, label: 'LDLコレステロール (mg/dL)' },
+      hdl_cholesterol: { min: 5, max: 200, label: 'HDLコレステロール (mg/dL)' },
+      triglycerides: { min: 10, max: 5000, label: '中性脂肪 (mg/dL)' },
+      ast: { min: 1, max: 5000, label: 'AST (U/L)' },
+      alt: { min: 1, max: 5000, label: 'ALT (U/L)' },
+      gamma_gtp: { min: 1, max: 5000, label: 'γ-GTP (U/L)' },
+    };
     const integerFields = [
       'blood_pressure_systolic',
       'blood_pressure_diastolic',
@@ -415,7 +468,7 @@ export function sanitizeHealthCheckupPayload(input: unknown): ValidationResult<H
       'gamma_gtp',
     ] as const;
     for (const field of integerFields) {
-      const value = parseNullableNumber(body, field, errors, { integer: true });
+      const value = parseNullableNumber(body, field, errors, { integer: true, ...(integerFieldOpts[field] ?? {}) });
       if (value !== undefined) data[field] = value;
     }
 
@@ -436,12 +489,30 @@ export function sanitizeBloodTestPayload(input: unknown): ValidationResult<Blood
       if (value !== undefined) data[field] = value;
     }
 
+    const numericFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
+      hba1c: { min: 3, max: 15, label: 'HbA1c (%)' },
+      creatinine: { min: 0.1, max: 30, label: 'クレアチニン (mg/dL)' },
+      egfr: { min: 0, max: 150, label: 'eGFR (mL/min/1.73m²)' },
+      uric_acid: { min: 0.5, max: 20, label: '尿酸 (mg/dL)' },
+      bun: { min: 1, max: 200, label: 'BUN (mg/dL)' },
+      hemoglobin: { min: 1, max: 25, label: 'ヘモグロビン (g/dL)' },
+    };
     const numericFields = ['hba1c', 'creatinine', 'egfr', 'uric_acid', 'bun', 'hemoglobin'] as const;
     for (const field of numericFields) {
-      const value = parseNullableNumber(body, field, errors);
+      const value = parseNullableNumber(body, field, errors, numericFieldOpts[field] ?? {});
       if (value !== undefined) data[field] = value;
     }
 
+    const integerFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
+      total_cholesterol: { min: 50, max: 1000, label: '総コレステロール (mg/dL)' },
+      ldl_cholesterol: { min: 10, max: 700, label: 'LDLコレステロール (mg/dL)' },
+      hdl_cholesterol: { min: 5, max: 200, label: 'HDLコレステロール (mg/dL)' },
+      triglycerides: { min: 10, max: 5000, label: '中性脂肪 (mg/dL)' },
+      fasting_glucose: { min: 20, max: 700, label: '空腹時血糖 (mg/dL)' },
+      ast: { min: 1, max: 5000, label: 'AST (U/L)' },
+      alt: { min: 1, max: 5000, label: 'ALT (U/L)' },
+      gamma_gtp: { min: 1, max: 5000, label: 'γ-GTP (U/L)' },
+    };
     const integerFields = [
       'total_cholesterol',
       'ldl_cholesterol',
@@ -453,7 +524,7 @@ export function sanitizeBloodTestPayload(input: unknown): ValidationResult<Blood
       'gamma_gtp',
     ] as const;
     for (const field of integerFields) {
-      const value = parseNullableNumber(body, field, errors, { integer: true });
+      const value = parseNullableNumber(body, field, errors, { integer: true, ...(integerFieldOpts[field] ?? {}) });
       if (value !== undefined) data[field] = value;
     }
 
