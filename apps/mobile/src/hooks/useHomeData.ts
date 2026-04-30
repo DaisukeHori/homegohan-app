@@ -417,7 +417,7 @@ export const useHomeData = (userId: string | undefined) => {
     try {
       setPerformanceAnalysis((prev) => ({ ...prev, loading: true }));
       const api = getApi();
-      const data = await api.get<any>(`/api/performance/analysis?userId=${uid}`);
+      const data = await api.get<any>(`/api/performance/analyze?userId=${uid}`);
       if (data) {
         setPerformanceAnalysis({
           eligible: data.eligible ?? false,
