@@ -101,7 +101,7 @@ export async function POST(request: Request) {
 
     // 6. Edge Functionを呼び出し（V5/V4をfeature flagで切り替え）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseServiceKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
     const generator = useV5 ? callGenerateMenuV5WithRetry : callGenerateMenuV4WithRetry;
     const edgeFunctionPromise = generator({

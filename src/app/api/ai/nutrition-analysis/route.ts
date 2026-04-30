@@ -356,7 +356,7 @@ export async function POST(request: Request) {
 
     // generate-menu-v4を呼び出す（同期呼び出し）
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceRoleKey = process.env.SERVICE_ROLE_JWT || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
     // リクエストを作成
     const targetSlots = [{ date: targetDate, mealType: targetMealType, plannedMealId: meal.id }];

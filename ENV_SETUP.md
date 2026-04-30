@@ -11,10 +11,15 @@
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabaseの匿名キー
    - `SUPABASE_SERVICE_ROLE_KEY` - Supabaseのサービスロールキー（サーバーサイドのみ）
 
-2. **Google AI (Gemini) 関連**
+2. **Cron / スケジューラ関連**
+   - `CRON_SECRET` - Vercel Cron からのリクエストを認証するシークレット（未設定の場合、cron エンドポイントは 503 を返す）
+     - Vercel Dashboard → Settings → Environment Variables に設定
+     - ランダムな英数字 32 文字以上を推奨
+
+4. **Google AI (Gemini) 関連**
    - `GOOGLE_AI_STUDIO_API_KEY` または `GOOGLE_GEN_AI_API_KEY` - Google AI APIキー
 
-3. **OpenAI関連**（既存機能用）
+5. **OpenAI関連**（既存機能用）
    - `OPENAI_API_KEY` - OpenAI APIキー
 
 ---
@@ -62,6 +67,9 @@ touch .env.local
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+# Cron Secret (Vercel Cron 認証用)
+CRON_SECRET=your_cron_secret_here
 
 # Google AI (Gemini)
 GOOGLE_AI_STUDIO_API_KEY=your_google_ai_api_key
