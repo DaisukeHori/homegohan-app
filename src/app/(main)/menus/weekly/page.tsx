@@ -972,9 +972,11 @@ export default function WeeklyMenuPage() {
 
         console.log('[restore] Restoring V4 generation progress for requestId:', requestId);
 
-        // まずDBから現在の状態を取得（リロード中に完了していた場合に対応）
-        const currentStatus = await v4Generation.getRequestStatus(requestId);
-        console.log('[restore] Current status from DB:', currentStatus);
+        // まずステータスAPIで現在の状態を取得（リロード中に完了していた場合に対応）
+        // Supabase クライアント直接参照ではなく API 経由とすることで E2E モックが機能する
+        const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        const currentStatus = statusRes.ok ? await statusRes.json() : null;
+        console.log('[restore] Current status from API:', currentStatus);
 
         // すでに完了している場合
         if (currentStatus?.status === 'completed') {
