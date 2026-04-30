@@ -70,13 +70,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'checkup_date is required' }, { status: 400 });
   }
 
-  // 健康診断を保存
+  // #264: 健康診断を保存（UNIQUE 制約に対応するため upsert を使用）
   const { data: checkup, error: insertError } = await supabase
     .from('health_checkups')
-    .insert({
-      user_id: user.id,
-      ...checkupData,
-    })
+    .upsert(
+      {
+        user_id: user.id,
+        ...checkupData,
+      },
+      { onConflict: 'user_id,checkup_date' },
+    )
     .select()
     .single();
 

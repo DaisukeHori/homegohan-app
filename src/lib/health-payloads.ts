@@ -187,6 +187,12 @@ function parseNullableNumber(
   const value = input[key];
   if (value == null || value === '') return null;
 
+  // #267: 16進数 (0x...) や指数表記を含む文字列を除外し、十進数のみ許可
+  if (typeof value === 'string' && !/^-?\d+(\.\d+)?$/.test(value.trim())) {
+    errors.push(`${key} must be a finite number or null`);
+    return undefined;
+  }
+
   const numeric =
     typeof value === 'number'
       ? value

@@ -12,7 +12,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const limit = parseInt(searchParams.get('limit') || '10');
+  // #265: limit に上限を設けて DoS を防ぐ
+  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '10'), 1), 200);
 
   const { data, error } = await supabase
     .from('blood_test_results')
