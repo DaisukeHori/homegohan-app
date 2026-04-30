@@ -73,12 +73,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'shoppingListId is required' }, { status: 400 });
     }
 
+    // #262: itemName が null/undefined/空文字の場合は 400
+    const name = (itemName ?? '').trim();
+    if (!name) {
+      return NextResponse.json({ error: 'itemName is required' }, { status: 400 });
+    }
+
     const { data, error } = await supabase
       .from('shopping_list_items')
       .insert({
         shopping_list_id: shoppingListId,
-        item_name: itemName,
-        normalized_name: itemName, // 手動追加は item_name をそのまま使用
+        item_name: name,
+        normalized_name: name, // 手動追加は item_name をそのまま使用
         category: category || 'その他',
         quantity: quantity,
         quantity_variants: quantity ? [{ display: quantity, unit: '', value: null }] : [],

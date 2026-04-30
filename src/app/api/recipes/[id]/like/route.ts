@@ -3,9 +3,8 @@ import { NextResponse } from 'next/server';
 
 /**
  * like_count を共通で再集計するヘルパー。
- * recipe_id は dish.name (TEXT) であるため、recipe_uuid での JOIN は使わない。
- * トリガー (trg_sync_recipe_like_count) が recipe_uuid ベースの自動同期を担うため、
- * TEXT-only の操作では手動カウントのみ返す（recipes テーブルの更新はスキップ）。
+ * #258: TEXT-only legacy の recipe_id に対しても recipes.like_count を直接 UPDATE して
+ * トリガーが発火しないケースを補完する。
  */
 async function refreshLikeCount(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -15,7 +14,17 @@ async function refreshLikeCount(
     .from('recipe_likes')
     .select('*', { count: 'exact', head: true })
     .eq('recipe_id', recipeId);
-  return count ?? 0;
+
+  const likeCount = count ?? 0;
+
+  // recipe_uuid カラムで照合し、TEXT-only ID でも recipes.like_count を同期する
+  await supabase
+    .from('recipes')
+    .update({ like_count: likeCount })
+    .eq('recipe_uuid', recipeId)
+    .then(() => {/* 失敗しても無視 — UUID 未登録レシピは対象外 */});
+
+  return likeCount;
 }
 
 // いいね状態取得

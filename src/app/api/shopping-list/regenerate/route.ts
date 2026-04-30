@@ -14,9 +14,27 @@ export async function POST(request: Request) {
 
   try {
     const { startDate, endDate, servingsConfig } = await request.json();
-    
+
     if (!startDate || !endDate) {
       return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 });
+    }
+
+    // #261: 日付フォーマット・範囲 validation
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) {
+      return NextResponse.json({ error: 'startDate and endDate must be in YYYY-MM-DD format' }, { status: 400 });
+    }
+    const s = new Date(startDate);
+    const e = new Date(endDate);
+    if (isNaN(s.getTime()) || isNaN(e.getTime())) {
+      return NextResponse.json({ error: 'Invalid date value' }, { status: 400 });
+    }
+    if (s > e) {
+      return NextResponse.json({ error: 'startDate must be before or equal to endDate' }, { status: 400 });
+    }
+    const diffDays = (e.getTime() - s.getTime()) / 86400000;
+    if (diffDays > 14) {
+      return NextResponse.json({ error: 'Date range must be 14 days or less' }, { status: 400 });
     }
 
     // リクエストレコードを作成（日付ベースモデル対応）

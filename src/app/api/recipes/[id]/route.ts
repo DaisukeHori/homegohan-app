@@ -10,20 +10,10 @@ export async function GET(
   const { data: { user } } = await supabase.auth.getUser();
 
   // 閲覧数インクリメントは認証ユーザーのみ (未認証アクセスによる水増しを防ぐ)
+  // #257: SELECT+UPDATE の race を排除するため単一アトミック UPDATE で実施
   if (user) {
     try {
-      const { data: currentRecipe } = await supabase
-        .from('recipes')
-        .select('view_count')
-        .eq('id', params.id)
-        .single();
-
-      if (currentRecipe) {
-        await supabase
-          .from('recipes')
-          .update({ view_count: (currentRecipe.view_count || 0) + 1 })
-          .eq('id', params.id);
-      }
+      await supabase.rpc('increment_recipe_view_count', { recipe_id: params.id });
     } catch (e) {
       // 閲覧数更新エラーは無視
     }
