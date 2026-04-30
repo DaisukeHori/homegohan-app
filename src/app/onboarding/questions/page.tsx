@@ -585,6 +585,11 @@ function OnboardingQuestionsContent() {
   };
 
   const handleAnswer = async (value: any) => {
+    // #271: multi_choice で空配列のまま回答させない
+    if (currentQuestion.type === 'multi_choice' && Array.isArray(value) && value.length === 0) {
+      return;
+    }
+
     const newAnswers = { ...answers, [currentQuestion.id]: value };
     setAnswers(newAnswers);
     setInputValue("");

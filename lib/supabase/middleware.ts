@@ -81,12 +81,13 @@ export async function updateSession(request: NextRequest) {
 
   // 認証不要のパス (ホワイトリスト)
   // 注: '/' エントリの startsWith チェックは '//' になるため '/home' は含まれない
+  // #270: /onboarding/* は原則認証必須。未認証でアクセスできるのは /onboarding/welcome のみ
   const publicPaths = [
     '/',
     '/login',
     '/signup',
     '/auth',
-    '/onboarding',
+    '/onboarding/welcome',
     '/about',
     '/pricing',
     '/guide',
