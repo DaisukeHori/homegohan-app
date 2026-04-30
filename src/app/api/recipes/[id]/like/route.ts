@@ -1,6 +1,23 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+/**
+ * like_count を共通で再集計するヘルパー。
+ * recipe_id は dish.name (TEXT) であるため、recipe_uuid での JOIN は使わない。
+ * トリガー (trg_sync_recipe_like_count) が recipe_uuid ベースの自動同期を担うため、
+ * TEXT-only の操作では手動カウントのみ返す（recipes テーブルの更新はスキップ）。
+ */
+async function refreshLikeCount(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  recipeId: string,
+): Promise<number> {
+  const { count } = await supabase
+    .from('recipe_likes')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipe_id', recipeId);
+  return count ?? 0;
+}
+
 // いいね状態取得
 export async function GET(
   request: Request,
@@ -30,40 +47,19 @@ export async function POST(
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    // 既にいいねしているか確認
-    const { data: existing } = await supabase
-      .from('recipe_likes')
-      .select('user_id')
-      .eq('recipe_id', params.id)
-      .eq('user_id', user.id)
-      .single();
-
-    if (existing) {
-      return NextResponse.json({ error: 'Already liked' }, { status: 400 });
-    }
-
-    // いいね追加
+    // UPSERT で冪等化（重複 insert を防ぐ）
     const { error: insertError } = await supabase
       .from('recipe_likes')
-      .insert({
-        recipe_id: params.id,
-        user_id: user.id,
-      });
+      .upsert(
+        { recipe_id: params.id, user_id: user.id },
+        { onConflict: 'user_id,recipe_id', ignoreDuplicates: true },
+      );
 
     if (insertError) throw insertError;
 
-    // いいね数を更新（手動カウント）
-    const { count: likeCount } = await supabase
-      .from('recipe_likes')
-      .select('*', { count: 'exact', head: true })
-      .eq('recipe_id', params.id);
-    
-    await supabase
-      .from('recipes')
-      .update({ like_count: likeCount || 0 })
-      .eq('id', params.id);
+    const likeCount = await refreshLikeCount(supabase, params.id);
 
-    return NextResponse.json({ success: true, liked: true });
+    return NextResponse.json({ success: true, liked: true, likeCount });
 
   } catch (error: any) {
     console.error('Like error:', error);
@@ -71,7 +67,7 @@ export async function POST(
   }
 }
 
-// いいね削除
+// いいね削除 (#106: DELETE 時も like_count を更新)
 export async function DELETE(
   request: Request,
   { params }: { params: { id: string } }
@@ -89,7 +85,9 @@ export async function DELETE(
 
     if (error) throw error;
 
-    return NextResponse.json({ success: true, liked: false });
+    const likeCount = await refreshLikeCount(supabase, params.id);
+
+    return NextResponse.json({ success: true, liked: false, likeCount });
 
   } catch (error: any) {
     console.error('Unlike error:', error);
