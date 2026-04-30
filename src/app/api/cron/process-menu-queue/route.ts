@@ -51,6 +51,8 @@ export async function GET(req: Request) {
 
     return Response.json({ processed: claimed.id, result });
   } catch (err) {
+    // #122: worker_id 一致条件を追加して二重 status 書き込みを防止
+    // Edge Function が先に status を更新していた場合は上書きしない
     await supabase
       .from('weekly_menu_requests')
       .update({
@@ -58,7 +60,9 @@ export async function GET(req: Request) {
         error_message: err instanceof Error ? err.message : String(err),
         updated_at: new Date().toISOString(),
       })
-      .eq('id', claimed.id);
+      .eq('id', claimed.id)
+      .eq('worker_id', workerId)
+      .in('status', ['queued', 'processing']); // 既に completed/failed の場合は上書きしない
     return Response.json(
       { failed: claimed.id, error: err instanceof Error ? err.message : String(err) },
       { status: 500 },
