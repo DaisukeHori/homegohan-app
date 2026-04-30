@@ -58,6 +58,17 @@ describe("resolveOnboardingRedirect", () => {
     ).toBeNull();
   });
 
+  it("allows in-progress users to reach /onboarding/complete (does not redirect to resume)", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/onboarding/complete",
+        roles: [],
+        onboardingStartedAt: "2026-03-01T00:00:00Z",
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
   it("redirects admins to admin for onboarding routes", () => {
     expect(
       resolveOnboardingRedirect({

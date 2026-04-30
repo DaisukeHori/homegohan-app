@@ -1044,6 +1044,9 @@ function OnboardingQuestionsContent() {
                       <Input
                         type="number"
                         placeholder="170"
+                        min={50}
+                        max={250}
+                        step={0.1}
                         value={answers.height || ''}
                         className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, height: e.target.value})}
@@ -1054,6 +1057,9 @@ function OnboardingQuestionsContent() {
                       <Input
                         type="number"
                         placeholder="60"
+                        min={10}
+                        max={300}
+                        step={0.1}
                         value={answers.weight || ''}
                         className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, weight: e.target.value})}
@@ -1062,7 +1068,11 @@ function OnboardingQuestionsContent() {
                   </div>
                   <Button
                     onClick={() => handleAnswer("completed")}
-                    disabled={!answers.age || !answers.height || !answers.weight}
+                    disabled={
+                      !answers.age ||
+                      !answers.height || Number(answers.height) < 50 || Number(answers.height) > 250 ||
+                      !answers.weight || Number(answers.weight) < 10 || Number(answers.weight) > 300
+                    }
                     className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-3 sm:mt-4 text-sm sm:text-base"
                   >
                     次へ

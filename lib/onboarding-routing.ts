@@ -50,7 +50,7 @@ export function resolveOnboardingRedirect(input: OnboardingRedirectInput): strin
   }
 
   if (status === "in_progress") {
-    if (pathname === "/onboarding" || pathname === "/onboarding/welcome" || pathname === "/onboarding/complete") {
+    if (pathname === "/onboarding" || pathname === "/onboarding/welcome") {
       return "/onboarding/resume";
     }
     return null;
