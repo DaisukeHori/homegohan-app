@@ -46,14 +46,13 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json()
-    const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult, invokedAt } = body as {
+    const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult } = body as {
       images?: ImageInput[];
       imageBase64?: string;
       mimeType?: string;
       mealId?: string;
       mealType?: string;
       prefetchedGeminiResult?: GeminiAnalysisResult;
-      invokedAt?: string;
     }
 
     const imageDataArray: ImageInput[] =
@@ -106,18 +105,28 @@ Deno.serve(async (req) => {
       })
     }
 
+<<<<<<< Updated upstream
     // 非同期でバックグラウンドタスクを実行
-    analyzeMealPhotoBackgroundTask({
+    analyzeMealPhotoBackgroundTask({ 
+=======
+    // 非同期でバックグラウンドタスクを実行（EdgeRuntime.waitUntil で Edge が早期終了しないよう登録）
+    const backgroundPromise = analyzeMealPhotoBackgroundTask({
+>>>>>>> Stashed changes
       images: imageDataArray,
       mealId,
       mealType,
       prefetchedGeminiResult,
       userId: user.id,
-      authHeader,
-      invokedAt,
+      authHeader
     }).catch((error) => {
       console.error('Background task error:', error)
     })
+
+    // @ts-ignore EdgeRuntime
+    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+      // @ts-ignore EdgeRuntime
+      EdgeRuntime.waitUntil(backgroundPromise)
+    }
 
     return new Response(
       JSON.stringify({ message: 'Photo analysis started in background' }),
@@ -134,14 +143,13 @@ Deno.serve(async (req) => {
   }
 })
 
-async function analyzeMealPhotoBackgroundTask({
+async function analyzeMealPhotoBackgroundTask({ 
   images,
   mealId,
   mealType,
   prefetchedGeminiResult,
   userId,
-  authHeader,
-  invokedAt,
+  authHeader
 }: {
   images: ImageInput[];
   mealId: string;
@@ -149,7 +157,6 @@ async function analyzeMealPhotoBackgroundTask({
   prefetchedGeminiResult?: GeminiAnalysisResult;
   userId: string;
   authHeader: string;
-  invokedAt?: string;
 }) {
   console.log(`Starting photo analysis v2 for mealId: ${mealId}, user: ${userId}`)
   
@@ -209,31 +216,6 @@ async function analyzeMealPhotoBackgroundTask({
     const photoDishes = buildPhotoDishList(dishes, imageUrl)
     const dishName = result.dishes.map(d => d.name).join('、')
     
-    // #121: CAS パターン — タイムアウト後の DB 書き込み防止
-    // invokedAt が渡されている場合、DB の updated_at がそれより新しければスキップする
-    if (invokedAt) {
-      const { data: currentMeal, error: fetchError } = await supabase
-        .from('planned_meals')
-        .select('updated_at')
-        .eq('id', mealId)
-        .single()
-
-      if (fetchError) {
-        console.warn('Failed to fetch planned_meal for CAS check:', fetchError.message)
-      } else if (currentMeal?.updated_at) {
-        const currentUpdatedAt = new Date(currentMeal.updated_at).getTime()
-        const invokedAtTime = new Date(invokedAt).getTime()
-        if (currentUpdatedAt > invokedAtTime) {
-          console.warn(`Photo analysis result discarded: DB was already updated after this job was invoked`, {
-            mealId,
-            invokedAt,
-            currentUpdatedAt: currentMeal.updated_at,
-          })
-          return
-        }
-      }
-    }
-
     // planned_mealsを更新（全栄養素）
     try {
       await cancelPendingMealImageJobs({
