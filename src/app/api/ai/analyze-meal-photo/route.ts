@@ -60,6 +60,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
     }
 
+    // #121: タイムアウト後の DB 書き込み防止
+    // mealId がある非同期モードでは invokedAt を Edge Function に渡す。
+    // Edge Function 側はDB更新前に planned_meals.photo_analyzed_at と比較し、
+    // 自分より新しい書き込みが既にある場合は更新をスキップする（CAS パターン）。
+    const invokedAt = new Date().toISOString();
+
     const invokePromise = supabase.functions.invoke('analyze-meal-photo', {
       body: {
         images: imageDataArray,
@@ -67,6 +73,7 @@ export async function POST(request: Request) {
         mealType,
         prefetchedGeminiResult,
         userId: user.id,
+        invokedAt: mealId ? invokedAt : undefined,
       },
     });
 
