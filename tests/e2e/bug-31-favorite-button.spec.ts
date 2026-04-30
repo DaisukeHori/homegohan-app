@@ -116,14 +116,11 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     await favBtn.click();
     await expect(favBtn).toHaveAttribute("aria-pressed", "true");
 
-    // モーダルを閉じる (エスケープキーでも閉じられる)
-    const closed = await authedPage.getByRole("button", { name: /閉じる/ }).first().click()
-      .then(() => true)
-      .catch(() => false);
-    if (!closed) {
-      await authedPage.keyboard.press('Escape');
-      await authedPage.waitForTimeout(500);
-    }
+    // モーダルを閉じる: recipe モーダルの閉じるボタンはアイコンのみ (テキスト "閉じる" なし)
+    // getByRole('button', { name: /閉じる/ }) は別ボタンにヒットしてページ遷移を起こす (#240)
+    // Escape キーで確実にクローズする
+    await authedPage.keyboard.press('Escape');
+    await authedPage.waitForTimeout(500);
 
     // ページをリロード
     await authedPage.reload();
