@@ -1,5 +1,4 @@
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, createUserContent } from '@google/genai';
 
@@ -41,7 +40,7 @@ function getQuotaErrorMessage(rawError: string): string {
 }
 
 export async function POST(request: Request) {
-  const supabase = createClient(cookies());
+  const supabase = await createClient();
 
   try {
     const { prompt, images } = await request.json();
