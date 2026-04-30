@@ -13,6 +13,7 @@ export default function AdminLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(true);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   useEffect(() => {
     const checkAdmin = async () => {
@@ -23,20 +24,21 @@ export default function AdminLayout({
         return;
       }
 
-          // Adminロール確認（複数ロール対応）
-          const { data: profile } = await supabase
-            .from("user_profiles")
-            .select("roles")
-            .eq("id", user.id)
-            .single();
+      // Adminロール確認（複数ロール対応）
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("roles")
+        .eq("id", user.id)
+        .single();
 
-          const roles = profile?.roles || [];
-          if (!roles.includes("admin") && !roles.includes("super_admin")) {
-            alert("管理者権限がありません");
-            router.push("/home");
-            return;
-          }
+      const roles: string[] = profile?.roles || [];
+      if (!roles.includes("admin") && !roles.includes("super_admin")) {
+        alert("管理者権限がありません");
+        router.push("/home");
+        return;
+      }
 
+      setIsSuperAdmin(roles.includes("super_admin"));
       setIsLoading(false);
     };
     void checkAdmin();
@@ -60,6 +62,11 @@ export default function AdminLayout({
     { label: "Audit Logs", href: "/admin/audit-logs", icon: "📋" },
   ];
 
+  const superAdminMenuItems = [
+    { label: "LLM使用量", href: "/super-admin/llm-usage", icon: "🤖" },
+    { label: "DB統計", href: "/super-admin/database", icon: "🗄️" },
+  ];
+
   return (
     <div className="min-h-screen flex bg-gray-100">
       {/* Sidebar */}
@@ -68,7 +75,7 @@ export default function AdminLayout({
           <h1 className="text-xl font-bold tracking-tight">Admin Console</h1>
           <p className="text-xs text-gray-500 mt-1">Homegohan Operations</p>
         </div>
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           {menuItems.map((item) => (
             <Link
               key={item.href}
@@ -83,6 +90,38 @@ export default function AdminLayout({
               {item.label}
             </Link>
           ))}
+
+          {/* super_admin 限定メニュー */}
+          {isSuperAdmin && (
+            <>
+              <div className="pt-4 pb-1">
+                <p className="px-4 text-xs text-gray-600 font-bold uppercase tracking-widest">
+                  Super Admin
+                </p>
+              </div>
+              {superAdminMenuItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                    pathname === item.href
+                      ? "bg-purple-600 text-white font-bold"
+                      : "text-purple-400 hover:bg-gray-800 hover:text-purple-300"
+                  }`}
+                >
+                  <span className="text-xl">{item.icon}</span>
+                  {item.label}
+                </Link>
+              ))}
+              <Link
+                href="/super-admin"
+                className="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-400 hover:bg-gray-800 hover:text-purple-300 transition-colors"
+              >
+                <span className="text-xl">👑</span>
+                Super Admin Console
+              </Link>
+            </>
+          )}
         </nav>
         <div className="p-4 border-t border-gray-800">
           <Link href="/home" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white">
@@ -109,5 +148,3 @@ export default function AdminLayout({
     </div>
   );
 }
-
-
