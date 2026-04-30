@@ -7,6 +7,9 @@ const useExistingServer = !!process.env.PLAYWRIGHT_BASE_URL;
 export default defineConfig({
   testDir: "./tests/e2e",
   outputDir: "tests/e2e/.output",
+  // #310 #323 対応: globalSetup で 1 回だけログインして storageState をキャッシュ
+  // → 各テストでの重複ログインを削減し Supabase auth rate limit を回避する
+  globalSetup: "./tests/e2e/fixtures/global-setup.ts",
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
