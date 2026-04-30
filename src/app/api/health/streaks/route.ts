@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { todayLocal } from '@/lib/date-utils';
 
 // 連続記録の取得
 export async function GET(request: NextRequest) {
@@ -39,11 +40,13 @@ export async function GET(request: NextRequest) {
   // 連続が途切れているかチェック
   let currentStreak = streak || defaultStreak;
   if (streak?.last_activity_date) {
+    // #266: JST の今日を使用して UTC ズレを防ぐ
+    const todayStr = todayLocal();
     const lastDate = new Date(streak.last_activity_date);
-    const today = new Date();
+    const today = new Date(todayStr);
     today.setHours(0, 0, 0, 0);
     lastDate.setHours(0, 0, 0, 0);
-    
+
     const diffDays = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
     
     // 2日以上経過していたら連続が途切れている
@@ -71,9 +74,11 @@ export async function GET(request: NextRequest) {
   }
 
   // 週間の記録状況を取得
-  const weekStart = new Date();
+  // #266: JST の今日を基準に週間開始日を計算
+  const todayDate = new Date(todayLocal());
+  const weekStart = new Date(todayDate);
   weekStart.setDate(weekStart.getDate() - 6);
-  const weekStartStr = weekStart.toISOString().split('T')[0];
+  const weekStartStr = weekStart.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
   const { data: weeklyRecords } = await supabase
     .from('health_records')

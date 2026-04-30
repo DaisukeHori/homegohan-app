@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 import { getUserPlan, checkHistoryLimit } from '@/lib/plan-limits';
+import { todayLocal } from '@/lib/date-utils';
+
+const RECORD_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 // 健康記録の取得
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  
+
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -15,7 +18,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const startDate = searchParams.get('start_date');
   const endDate = searchParams.get('end_date');
-  const limit = parseInt(searchParams.get('limit') || '30');
+  // #265: limit に上限を設けて DoS を防ぐ
+  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '30'), 1), 200);
 
   // フリープラン: 30 日より前のデータは閲覧不可
   if (startDate) {
@@ -65,6 +69,11 @@ export async function POST(request: NextRequest) {
 
   if (typeof record_date !== 'string' || !record_date.trim()) {
     return NextResponse.json({ error: 'record_date is required' }, { status: 400 });
+  }
+
+  // #256: record_date フォーマット検証（YYYY-MM-DD のみ許可）
+  if (!RECORD_DATE_PATTERN.test(record_date.trim())) {
+    return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
   }
 
   const { data: sanitizedRecordData, errors } = sanitizeHealthRecordPayload(recordData, {
@@ -122,7 +131,8 @@ export async function POST(request: NextRequest) {
 
   // user_profilesの体重も更新（最新の記録の場合）
   if ('weight' in sanitizedRecordData && sanitizedRecordData.weight !== null) {
-    const today = new Date().toISOString().split('T')[0];
+    // #266: new Date() UTC ではなく JST の今日を使用
+    const today = todayLocal();
     if (record_date === today) {
       await supabase
         .from('user_profiles')
