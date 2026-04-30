@@ -15,13 +15,24 @@
    - `CRON_SECRET` - Vercel Cron からのリクエストを認証するシークレット（未設定の場合、cron エンドポイントは 503 を返す）
      - Vercel Dashboard → Settings → Environment Variables に設定
      - ランダムな英数字 32 文字以上を推奨
-   - `app.cron_secret` (Supabase DB GUC) - pg_cron から Edge Function を呼び出す際の Bearer トークン
-     - **設定方法**: Supabase Dashboard → SQL Editor で以下を実行:
-       ```sql
-       ALTER DATABASE postgres SET "app.cron_secret" = '<CRON_SECRET と同じ値>';
-       ```
-     - 設定後、Supabase プロジェクトの DB を再起動（または pg_cron worker を restart）すると反映される
-     - 未設定の場合 `current_setting('app.cron_secret', true)` は NULL を返し、Edge Function が 401 エラーになる
+   - `app_cron_secret` (Supabase Vault) - pg_cron から Edge Function を呼び出す際の Bearer トークン
+
+### Catalog cron secret (Supabase Vault)
+
+Supabase Dashboard SQL Editor で以下を 1 度だけ実行:
+
+```sql
+SELECT vault.create_secret(
+  '<Vercel の CRON_SECRET と同値>',
+  'app_cron_secret',
+  'CRON_SECRET for catalog import functions'
+);
+```
+
+確認:
+```sql
+SELECT name FROM vault.secrets WHERE name = 'app_cron_secret';
+```
 
 4. **Google AI (Gemini) 関連**
    - `GOOGLE_AI_STUDIO_API_KEY` または `GOOGLE_GEN_AI_API_KEY` - Google AI APIキー
