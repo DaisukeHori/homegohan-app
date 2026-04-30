@@ -316,18 +316,13 @@ function ProfilePageContent() {
   // #17: ローカル再計算は廃止。nutrition_targets テーブルからの読み込みを使用（根拠ページと一致させる）
   const nutritionTarget = dbNutritionTarget;
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full" />
-      </div>
-    );
-  }
+  // #188: isLoading 中もヘッダー hero を即時表示し LCP を前倒し
+  // 旧: 全画面スピナーで LCP 要素が隠れていた → 削除
 
   return (
     <div className="min-h-screen bg-gray-50 pb-40">
-      
-      {/* ヘッダーエリア */}
+
+      {/* ヘッダーエリア (#188: 常に即時レンダリング → LCP 改善) */}
       <div className="relative h-56 bg-gradient-to-br from-orange-400 to-orange-500 overflow-hidden">
         <div className="absolute inset-0 opacity-20">
           <div className="absolute top-10 left-10 w-32 h-32 rounded-full bg-white/30" />
@@ -369,53 +364,71 @@ function ProfilePageContent() {
 
       <div className="px-6 -mt-20 relative z-10">
         
-        {/* メインIDカード */}
-        <motion.div 
+        {/* メインIDカード (#188: isLoading 中は skeleton を表示) */}
+        <motion.div
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           className="bg-white rounded-3xl p-6 shadow-xl relative overflow-hidden mb-6"
         >
           <div className="absolute top-0 right-0 w-24 h-24 bg-orange-50 rounded-bl-[80px] -z-0" />
-          
-          <div className="flex flex-col items-center relative z-10">
-            <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-orange-400 to-orange-300 mb-4">
-               <div className="w-full h-full rounded-full bg-white border-4 border-white overflow-hidden flex items-center justify-center text-2xl font-bold text-orange-400">
-                 {profile?.nickname?.[0] || user?.email?.[0]?.toUpperCase() || '👤'}
-               </div>
-            </div>
-            
-            <h1 className="text-xl font-bold text-gray-900 mb-1">{profile?.nickname || user?.email?.split('@')[0]}</h1>
-            <p className="text-sm text-gray-400 mb-4">{profile?.goalText || "目標を設定しましょう"}</p>
-            
-            {/* プロファイル完成度 */}
-            <div className="w-full mb-4">
-              <div className="flex justify-between text-xs text-gray-500 mb-1">
-                <span>プロファイル完成度</span>
-                <span>{profile?.profileCompleteness || 0}%</span>
-              </div>
-              <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full transition-all duration-500"
-                  style={{ width: `${profile?.profileCompleteness || 0}%` }}
-                />
+
+          {isLoading ? (
+            /* skeleton */
+            <div className="flex flex-col items-center relative z-10">
+              <div className="w-20 h-20 rounded-full bg-gray-200 animate-pulse mb-4" />
+              <div className="h-5 w-32 bg-gray-200 rounded animate-pulse mb-2" />
+              <div className="h-4 w-48 bg-gray-100 rounded animate-pulse mb-4" />
+              <div className="w-full h-2 bg-gray-100 rounded-full mb-4" />
+              <div className="flex gap-6 w-full justify-center border-t border-gray-100 pt-4">
+                {[0, 1, 2].map(i => (
+                  <div key={i} className="text-center">
+                    <div className="h-6 w-10 bg-gray-200 rounded animate-pulse mx-auto mb-1" />
+                    <div className="h-3 w-8 bg-gray-100 rounded animate-pulse mx-auto" />
+                  </div>
+                ))}
               </div>
             </div>
-            
-            <div className="flex gap-6 w-full justify-center border-t border-gray-100 pt-4">
-              <div className="text-center">
-                 <p className="text-xl font-bold text-gray-900">{badgeCount}</p>
-                 <p className="text-xs font-bold text-gray-400">バッジ</p>
+          ) : (
+            <div className="flex flex-col items-center relative z-10">
+              <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-orange-400 to-orange-300 mb-4">
+                <div className="w-full h-full rounded-full bg-white border-4 border-white overflow-hidden flex items-center justify-center text-2xl font-bold text-orange-400">
+                  {profile?.nickname?.[0] || user?.email?.[0]?.toUpperCase() || '👤'}
+                </div>
               </div>
-              <div className="text-center">
-                 <p className="text-xl font-bold text-orange-500">{nutritionTarget?.dailyCalories || '-'}</p>
-                 <p className="text-xs font-bold text-gray-400">目標kcal</p>
+
+              <h1 className="text-xl font-bold text-gray-900 mb-1">{profile?.nickname || user?.email?.split('@')[0]}</h1>
+              <p className="text-sm text-gray-400 mb-4">{profile?.goalText || "目標を設定しましょう"}</p>
+
+              {/* プロファイル完成度 */}
+              <div className="w-full mb-4">
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>プロファイル完成度</span>
+                  <span>{profile?.profileCompleteness || 0}%</span>
+                </div>
+                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full transition-all duration-500"
+                    style={{ width: `${profile?.profileCompleteness || 0}%` }}
+                  />
+                </div>
               </div>
-              <div className="text-center">
-                 <p className="text-xl font-bold text-gray-900">{profile?.familySize || 1}</p>
-                 <p className="text-xs font-bold text-gray-400">人分</p>
+
+              <div className="flex gap-6 w-full justify-center border-t border-gray-100 pt-4">
+                <div className="text-center">
+                  <p className="text-xl font-bold text-gray-900">{badgeCount}</p>
+                  <p className="text-xs font-bold text-gray-400">バッジ</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-bold text-orange-500">{nutritionTarget?.dailyCalories || '-'}</p>
+                  <p className="text-xs font-bold text-gray-400">目標kcal</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-bold text-gray-900">{profile?.familySize || 1}</p>
+                  <p className="text-xs font-bold text-gray-400">人分</p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </motion.div>
 
         {/* 栄養目標カード */}

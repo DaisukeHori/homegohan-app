@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -10,13 +11,21 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
-import { V4GenerateModal } from "@/components/ai-assistant";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
-import { NutritionRadarChart } from "@/components/NutritionRadarChart";
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS } from "@/lib/nutrition-constants";
 import remarkGfm from "remark-gfm";
+
+// #182: dynamic import で初期バンドルを削減
+const V4GenerateModal = dynamic(
+  () => import("@/components/ai-assistant").then(m => ({ default: m.V4GenerateModal })),
+  { ssr: false }
+);
+const NutritionRadarChart = dynamic(
+  () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
+  { ssr: false }
+);
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,

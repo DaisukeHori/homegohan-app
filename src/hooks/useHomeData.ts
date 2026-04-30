@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
@@ -57,6 +57,8 @@ export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [todayPlan, setTodayPlan] = useState<TodayMealPlan | null>(null);
   const [loading, setLoading] = useState(true);
+  // #191: meal toggle debounce — pending mealId set to prevent duplicate PATCH
+  const pendingToggleRef = useRef<Set<string>>(new Set());
   const [dailySummary, setDailySummary] = useState<DailySummary>({
     totalCalories: 0,
     completedCount: 0,
@@ -863,8 +865,12 @@ export const useHomeData = () => {
     }
   };
 
-  // 食事完了をトグル (Bug-10: 楽観的UI更新 + 失敗時ロールバック)
+  // 食事完了をトグル (Bug-10: 楽観的UI更新 + 失敗時ロールバック, #191: debounce)
   const toggleMealCompletion = async (mealId: string, currentStatus: boolean) => {
+    // #191: 同一 mealId の PATCH が進行中なら無視（連打対策）
+    if (pendingToggleRef.current.has(mealId)) return;
+    pendingToggleRef.current.add(mealId);
+
     const newStatus = !currentStatus;
 
     // 楽観的UI更新
@@ -920,6 +926,9 @@ export const useHomeData = () => {
       // 念のためリフェッチでサーバー真値に同期
       void fetchHomeData();
     }
+
+    // #191: PATCH 完了後に pending を解除
+    pendingToggleRef.current.delete(mealId);
   };
 
   useEffect(() => {
