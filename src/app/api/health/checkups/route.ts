@@ -1,18 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import OpenAI from 'openai';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
-
-// Lazy initialization to avoid build-time errors
-let openaiClient: OpenAI | null = null;
-function getOpenAI(): OpenAI {
-  if (!openaiClient) {
-    openaiClient = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-  }
-  return openaiClient;
-}
+import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 
 // 健康診断一覧を取得
 export async function GET(request: NextRequest) {
@@ -50,7 +39,7 @@ export async function GET(request: NextRequest) {
   });
 }
 
-// 健康診断を新規作成（画像解析 → 個別レビュー → 経年レビュー自動更新）
+// 健康診断を新規作成（UI から OCR 済みの値を受け取り → 個別レビュー → 経年レビュー自動更新）
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -65,28 +54,13 @@ export async function POST(request: NextRequest) {
   }
 
   const rawBody = body as Record<string, unknown>;
-  const imageUrl = typeof rawBody.image_url === 'string' ? rawBody.image_url.trim() : '';
 
   if (typeof rawBody.checkup_date !== 'string' || !rawBody.checkup_date.trim()) {
     return NextResponse.json({ error: 'checkup_date is required' }, { status: 400 });
   }
 
-  let extractedData: Record<string, unknown> = {};
-
-  // 画像がある場合、GPT-5.2 Visionでデータを抽出
-  if (imageUrl) {
-    try {
-      extractedData = await extractDataFromImage(imageUrl);
-    } catch (err) {
-      console.error('Image extraction failed:', err);
-      // エラーでも続行（手動データがあれば使用）
-    }
-  }
-
-  const { data: checkupData, errors } = sanitizeHealthCheckupPayload({
-    ...extractedData,
-    ...rawBody,
-  });
+  // UI 経由の OCR 結果を信頼する。サーバー側で画像再解析しない。
+  const { data: checkupData, errors } = sanitizeHealthCheckupPayload(rawBody);
 
   if (errors.length > 0) {
     return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
@@ -141,60 +115,13 @@ export async function POST(request: NextRequest) {
   });
 }
 
-// 画像からデータを抽出（GPT-5.2 Vision）
-async function extractDataFromImage(imageUrl: string): Promise<Record<string, unknown>> {
-  const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5.2',
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: imageUrl } },
-        {
-          type: 'text',
-          text: `この健康診断結果の画像から以下の検査値を読み取り、JSON形式で返してください。
-読み取れない項目はnullとしてください。数値のみを抽出し、単位は含めないでください。
-
-抽出する項目:
-- height: 身長 (cm)
-- weight: 体重 (kg)
-- bmi: BMI
-- waist_circumference: 腹囲 (cm)
-- blood_pressure_systolic: 収縮期血圧 (mmHg)
-- blood_pressure_diastolic: 拡張期血圧 (mmHg)
-- hemoglobin: ヘモグロビン (g/dL)
-- hba1c: HbA1c (%)
-- fasting_glucose: 空腹時血糖 (mg/dL)
-- total_cholesterol: 総コレステロール (mg/dL)
-- ldl_cholesterol: LDLコレステロール (mg/dL)
-- hdl_cholesterol: HDLコレステロール (mg/dL)
-- triglycerides: 中性脂肪 (mg/dL)
-- ast: AST/GOT (U/L)
-- alt: ALT/GPT (U/L)
-- gamma_gtp: γ-GTP (U/L)
-- creatinine: クレアチニン (mg/dL)
-- egfr: eGFR (mL/min/1.73m²)
-- uric_acid: 尿酸 (mg/dL)
-
-JSONのみを出力してください。`,
-        },
-      ],
-    }],
-    response_format: { type: 'json_object' },
-    max_tokens: 1000,
-  });
-
-  const content = response.choices[0]?.message?.content;
-  if (!content) {
-    throw new Error('Empty response from GPT-5.2');
-  }
-
-  return JSON.parse(content);
-}
-
-// 個別レビューを生成（GPT-5.2）
+// 個別レビューを生成（fast-llm / Grok）
 async function generateIndividualReview(checkup: any): Promise<any> {
-  const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5.2',
+  const client = getFastLLMClient();
+  const model = getFastLLMModel();
+
+  const response = await client.chat.completions.create({
+    model,
     messages: [
       {
         role: 'system',
@@ -236,7 +163,7 @@ eGFR: ${checkup.egfr ?? '-'} mL/min/1.73m²
 
   const content = response.choices[0]?.message?.content;
   if (!content) {
-    throw new Error('Empty response from GPT-5.2');
+    throw new Error('Empty response from LLM');
   }
 
   return JSON.parse(content);
@@ -267,9 +194,12 @@ async function updateLongitudinalReview(supabase: any, userId: string): Promise<
     .eq('id', userId)
     .single();
 
-  // GPT-5.2で経年レビューを生成
-  const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5.2',
+  const client = getFastLLMClient();
+  const model = getFastLLMModel();
+
+  // fast-llm で経年レビューを生成
+  const response = await client.chat.completions.create({
+    model,
     messages: [
       {
         role: 'system',
@@ -317,7 +247,7 @@ LDL: ${c.ldl_cholesterol ?? '-'} mg/dL
 
   const content = response.choices[0]?.message?.content;
   if (!content) {
-    throw new Error('Empty response from GPT-5.2');
+    throw new Error('Empty response from LLM');
   }
 
   const reviewData = JSON.parse(content);

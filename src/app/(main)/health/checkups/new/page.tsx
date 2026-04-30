@@ -113,9 +113,20 @@ export default function NewHealthCheckupPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setError(null);
+
+    // PDF の場合: pdf-lib / canvas 不要 — base64 としてそのまま扱い、
+    // OCR API 側で application/pdf を受け取れるようにする。
+    // プレビューは「PDF選択済み」の表示に留める。
+    if (file.type === 'application/pdf') {
+      setImageFile(file);
+      // PDF は直接 img プレビューできないので null のまま (upload step で別表示)
+      setImagePreview('__pdf__');
+      return;
+    }
+
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
-    setError(null);
   };
 
   const handleUploadAndAnalyze = async () => {
@@ -129,42 +140,69 @@ export default function NewHealthCheckupPage() {
     setError(null);
 
     try {
-      // 1. 画像をアップロード
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        throw new Error('ログインが必要です');
-      }
-
-      const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${imageFile.name.split('.').pop()}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('health-checkups')
-        .upload(fileName, imageFile, {
-          contentType: imageFile.type,
-          upsert: false,
-        });
-
-      if (uploadError) {
-        // バケットが存在しない場合はスキップして手動入力へ
-        console.error('Upload failed:', uploadError);
-        setStep('confirm');
-        return;
-      }
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('health-checkups')
-        .getPublicUrl(fileName);
+      // 1. ファイルをBase64に変換 (画像・PDF 共通)
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(imageFile);
+      });
 
       setUploading(false);
       setAnalyzing(true);
 
-      // 2. 画像解析（実際のAPI呼び出しはPOST時に行う）
-      // ここでは画像URLを保持してconfirmステップへ
-      setFormData(prev => ({ ...prev, image_url: publicUrl } as any));
+      // 2. OCR API を呼んで検査値を抽出 (画像・PDF 共通)
+      const mimeType = imageFile.type || 'image/jpeg';
+      const ocrRes = await fetch('/api/ai/analyze-health-checkup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64,
+          mimeType,
+        }),
+      });
+
+      if (ocrRes.ok) {
+        const ocrData = await ocrRes.json();
+        const extracted = ocrData.extractedData ?? {};
+
+        // camelCase → snake_case マッピングで formData に反映
+        setFormData(prev => ({
+          ...prev,
+          ...(extracted.checkupDate ? { checkup_date: extracted.checkupDate } : {}),
+          ...(extracted.facilityName ? { facility_name: extracted.facilityName } : {}),
+          ...(extracted.checkupType ? { checkup_type: extracted.checkupType } : {}),
+          ...(extracted.height != null ? { height: String(extracted.height) } : {}),
+          ...(extracted.weight != null ? { weight: String(extracted.weight) } : {}),
+          ...(extracted.bmi != null ? { bmi: String(extracted.bmi) } : {}),
+          ...(extracted.waistCircumference != null ? { waist_circumference: String(extracted.waistCircumference) } : {}),
+          ...(extracted.bloodPressureSystolic != null ? { blood_pressure_systolic: String(extracted.bloodPressureSystolic) } : {}),
+          ...(extracted.bloodPressureDiastolic != null ? { blood_pressure_diastolic: String(extracted.bloodPressureDiastolic) } : {}),
+          ...(extracted.hemoglobin != null ? { hemoglobin: String(extracted.hemoglobin) } : {}),
+          ...(extracted.hba1c != null ? { hba1c: String(extracted.hba1c) } : {}),
+          ...(extracted.fastingGlucose != null ? { fasting_glucose: String(extracted.fastingGlucose) } : {}),
+          ...(extracted.totalCholesterol != null ? { total_cholesterol: String(extracted.totalCholesterol) } : {}),
+          ...(extracted.ldlCholesterol != null ? { ldl_cholesterol: String(extracted.ldlCholesterol) } : {}),
+          ...(extracted.hdlCholesterol != null ? { hdl_cholesterol: String(extracted.hdlCholesterol) } : {}),
+          ...(extracted.triglycerides != null ? { triglycerides: String(extracted.triglycerides) } : {}),
+          ...(extracted.ast != null ? { ast: String(extracted.ast) } : {}),
+          ...(extracted.alt != null ? { alt: String(extracted.alt) } : {}),
+          ...(extracted.gammaGtp != null ? { gamma_gtp: String(extracted.gammaGtp) } : {}),
+          ...(extracted.creatinine != null ? { creatinine: String(extracted.creatinine) } : {}),
+          ...(extracted.egfr != null ? { egfr: String(extracted.egfr) } : {}),
+          ...(extracted.uricAcid != null ? { uric_acid: String(extracted.uricAcid) } : {}),
+        }));
+      } else {
+        // OCR 失敗は非致命的。手動入力で続行
+        console.warn('OCR failed, proceeding to manual entry');
+      }
+
       setStep('confirm');
 
     } catch (err: any) {
-      setError(err.message || '画像のアップロードに失敗しました');
+      // OCR エラーは非致命的。手動入力で続行
+      console.warn('OCR error:', err);
+      setStep('confirm');
     } finally {
       setUploading(false);
       setAnalyzing(false);
@@ -329,11 +367,29 @@ export default function NewHealthCheckupPage() {
             className="space-y-4"
           >
             <p className="text-sm" style={{ color: colors.textLight }}>
-              健康診断の結果票を撮影すると、AIが自動で数値を読み取ります。
+              健康診断の結果票を撮影またはPDFをアップロードすると、AIが自動で数値を読み取ります。
             </p>
 
             {/* 画像プレビュー or アップロードエリア */}
-            {imagePreview ? (
+            {imagePreview === '__pdf__' ? (
+              <div className="relative rounded-2xl overflow-hidden flex items-center justify-center p-8" style={{ backgroundColor: colors.accentLight, minHeight: 160 }}>
+                <div className="flex flex-col items-center gap-2">
+                  <Upload size={40} style={{ color: colors.accent }} />
+                  <p className="font-bold text-sm" style={{ color: colors.accent }}>
+                    {imageFile?.name ?? 'PDF選択済み'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setImageFile(null);
+                    setImagePreview(null);
+                  }}
+                  className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 flex items-center justify-center"
+                >
+                  <X size={16} color="white" />
+                </button>
+              </div>
+            ) : imagePreview ? (
               <div className="relative rounded-2xl overflow-hidden">
                 <img
                   src={imagePreview}
@@ -362,7 +418,7 @@ export default function NewHealthCheckupPage() {
                   タップして撮影
                 </p>
                 <p className="text-xs mt-1" style={{ color: colors.textMuted }}>
-                  または画像を選択
+                  または画像・PDFを選択
                 </p>
               </motion.div>
             )}
@@ -370,8 +426,7 @@ export default function NewHealthCheckupPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
-              capture="environment"
+              accept="image/*,application/pdf"
               onChange={handleFileSelect}
               className="hidden"
             />
