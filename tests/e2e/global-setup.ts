@@ -6,6 +6,8 @@
  * tests/e2e/.auth/user.json に保存する。
  * 各テストの authedPage fixture はこのファイルを読み込んで
  * ログイン処理をスキップするため、30s タイムアウト連鎖を回避できる。
+ *
+ * ログイン失敗時は警告を出力して続行する (storageState なしで各テストが個別ログインにフォールバック)。
  */
 
 import { chromium, type FullConfig } from "@playwright/test";
@@ -103,8 +105,11 @@ async function globalSetup(config: FullConfig): Promise<void> {
   }
 
   await browser.close();
-  throw new Error(
-    `[global-setup] ${MAX_RETRIES} 回試行後もログイン失敗: ${lastError}`,
+  // ログイン失敗時はエラーをスローせず警告のみ出力して続行する。
+  // storageState が生成されなかった場合、各テストの authedPage fixture が
+  // 個別ログインにフォールバックする。
+  console.warn(
+    `[global-setup] ${MAX_RETRIES} 回試行後もログイン失敗。storageState なしで続行: ${lastError}`,
   );
 }
 
