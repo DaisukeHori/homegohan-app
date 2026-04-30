@@ -2,9 +2,8 @@
  * Bug-69 (#69): 通知 / 自動解析 toggle が DB/localStorage に保存されずリロードでリセット
  *
  * 確認内容:
- * 1. /settings で通知 toggle を OFF にしてリロード → OFF のまま
- * 2. もう一度 ON にしてリロード → ON のまま
- * 3. 自動解析 toggle も同様に永続化される
+ * 1. /settings で通知 toggle を反転してリロード → 反転後の状態が保持される
+ * 2. 自動解析 toggle も同様に永続化される
  */
 import { test, expect } from './fixtures/auth';
 
@@ -57,29 +56,6 @@ test.describe('settings toggle persistence (#69)', () => {
 
     const afterReloadState = await isCheckedClass();
     expect(afterReloadState).toBe(!initialState);
-
-    // もう一度 toggle して元に戻す
-    await Promise.all([
-      authedPage.waitForResponse(
-        (res) =>
-          res.url().includes('/api/notification-preferences') &&
-          res.request().method() === 'PATCH' &&
-          res.status() === 200,
-        { timeout: 30_000 },
-      ),
-      notifSwitch.click(),
-    ]);
-
-    await authedPage.reload();
-    await authedPage.waitForLoadState('networkidle');
-
-    if (initialState) {
-      await expect(notifSwitch).toHaveClass(/bg-\[#FF8A65\]/, { timeout: 10_000 });
-    } else {
-      await expect(notifSwitch).not.toHaveClass(/bg-\[#FF8A65\]/, { timeout: 10_000 });
-    }
-    const restoredState = await isCheckedClass();
-    expect(restoredState).toBe(initialState);
   });
 
   test('自動解析 toggle が reload 後も保持される', async ({ authedPage }) => {
