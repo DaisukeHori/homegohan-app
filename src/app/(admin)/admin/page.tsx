@@ -210,7 +210,7 @@ export default function AdminDashboard() {
                       borderRadius: '8px',
                       boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                     }}
-                    formatter={(value: number) => [value, '完了数']}
+                    formatter={(value: number | undefined) => [value ?? 0, '完了数']}
                   />
                   <Line
                     type="monotone"
@@ -238,7 +238,7 @@ export default function AdminDashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={modeDistribution}
+                    data={modeDistribution as unknown as Record<string, unknown>[]}
                     dataKey="value"
                     nameKey="name"
                     cx="50%"
@@ -262,7 +262,7 @@ export default function AdminDashboard() {
                       border: '1px solid #e5e7eb',
                       borderRadius: '8px',
                     }}
-                    formatter={(value: number) => [value.toLocaleString(), '件']}
+                    formatter={(value: number | undefined) => [(value ?? 0).toLocaleString(), '件']}
                   />
                   <Legend />
                 </PieChart>
