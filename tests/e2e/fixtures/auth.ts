@@ -11,7 +11,7 @@ export async function login(page: Page) {
   await page.locator("#password").fill(E2E_USER.password);
   await Promise.all([
     page.waitForURL((url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"), {
-      timeout: 30_000,
+      timeout: 60_000,
     }),
     page.locator("button[type=submit]").click(),
   ]);

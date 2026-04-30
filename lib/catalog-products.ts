@@ -133,7 +133,7 @@ const buildSearchClauses = (query: string): string[] => {
   const terms = tokenize(query).slice(0, 3);
   const escapedTerms = unique(
     terms
-      .map((term) => term.replace(/[%*,]/g, "").trim())
+      .map((term) => term.replace(/[%*,'";\\]/g, "").trim())
       .filter((term) => term.length >= 2),
   );
 
