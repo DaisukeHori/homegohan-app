@@ -19,7 +19,8 @@ test("progress bar is restored from localStorage when request is still pending",
   const fakeRequestId = "00000000-0000-0000-0000-000000000001";
   const weekStartDate = new Date();
   weekStartDate.setDate(weekStartDate.getDate() - weekStartDate.getDay() + 1); // 今週月曜
-  const weekStr = weekStartDate.toISOString().slice(0, 10);
+  // ローカル日付でフォーマット（page.tsx の formatLocalDate と一致させる）
+  const weekStr = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
 
   // ステータス API が 'processing' を返すようにモック
   await authedPage.route(`**/api/ai/menu/weekly/status*`, async (route) => {
@@ -84,7 +85,8 @@ test("progress bar is NOT shown when server status is completed on restore", asy
   const fakeRequestId = "00000000-0000-0000-0000-000000000002";
   const weekStartDate = new Date();
   weekStartDate.setDate(weekStartDate.getDate() - weekStartDate.getDay() + 1);
-  const weekStr = weekStartDate.toISOString().slice(0, 10);
+  // ローカル日付でフォーマット（page.tsx の formatLocalDate と一致させる）
+  const weekStr = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
 
   // ステータス API が 'completed' を返すようにモック
   await authedPage.route(`**/api/ai/menu/weekly/status*`, async (route) => {
