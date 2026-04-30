@@ -23,8 +23,8 @@ async function clearSession(page: any) {
   });
 }
 
-/** production がゲストモードを廃止して /login へリダイレクトするまで skip */
-const REDIRECT_EXPECTED = false;
+/** middleware で !isPublicPath に Cache-Control: private, no-store を設定し CDN bypass を解消済み */
+const REDIRECT_EXPECTED = true;
 
 test("unauthenticated access to /home redirects to /login", async ({ page }) => {
   if (!REDIRECT_EXPECTED) {

@@ -132,5 +132,10 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
+  // 認証保護ルートのレスポンスを CDN にキャッシュさせない
+  if (!isPublicPath) {
+    supabaseResponse.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+  }
+
   return supabaseResponse
 }
