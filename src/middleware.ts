@@ -12,9 +12,12 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * - manifest.json (PWA manifest — must not be redirected to /login)
+     * - robots.txt (crawler instructions)
+     * - sw.js / workbox-* (service worker files)
      * Feel free to modify this pattern to include more paths.
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
 
