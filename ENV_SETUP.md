@@ -254,6 +254,19 @@ cat .env.local
 
 ---
 
+## GitHub Actions secrets
+
+migration auto-deploy のため以下の Repository secrets が必要:
+
+- `SUPABASE_ACCESS_TOKEN`: Personal Access Token
+  https://supabase.com/dashboard/account/tokens で生成
+- `SUPABASE_DB_PASSWORD`: 本番 DB password
+  Project Settings → Database → Connection string で取得
+
+設定場所: GitHub リポジトリ → Settings → Secrets and variables → Actions → New repository secret
+
+---
+
 ## 📚 参考リンク
 
 - [Next.js Environment Variables](https://nextjs.org/docs/app/building-your-application/configuring/environment-variables)
