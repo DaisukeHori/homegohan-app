@@ -10,6 +10,7 @@ import {
   Activity, User, Edit, CalendarDays
 } from "lucide-react";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { notifyMenuGenerated } from "@/lib/local-notification";
 
 // シンプルなマークダウンパーサー
 const parseMarkdown = (text: string): string => {
@@ -188,6 +189,7 @@ export default function AIChatBubble() {
   } = useV4MenuGeneration({
     onGenerationComplete: () => {
       setV4Progress(null);
+      notifyMenuGenerated();
       // 成功メッセージをチャットに追加
       setMessages(prev => [...prev, {
         id: `v4-success-${Date.now()}`,
