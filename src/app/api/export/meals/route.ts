@@ -10,11 +10,13 @@ import { NextResponse } from 'next/server';
 function escapeCsv(value: unknown): string {
   if (value === null || value === undefined) return '';
   const str = String(value);
+  // formula injection 防止: =, +, -, @ で始まる場合は ' を prepend (CVE 2014-6364 系)
+  const safe = /^[=+\-@]/.test(str) ? `'${str}` : str;
   // ダブルクォート・カンマ・改行を含む場合はクォートで囲む
-  if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
-    return `"${str.replace(/"/g, '""')}"`;
+  if (safe.includes('"') || safe.includes(',') || safe.includes('\n') || safe.includes('\r')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return str;
+  return safe;
 }
 
 function rowToCsv(cols: unknown[]): string {
