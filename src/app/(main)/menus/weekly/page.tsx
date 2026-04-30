@@ -4694,15 +4694,19 @@ export default function WeeklyMenuPage() {
           
           return (
             <div className="flex gap-2 mt-3">
-              <button 
+              <button
+                type="button"
+                aria-label="AIで再生成"
+                data-testid="meal-regenerate-button"
                 onClick={() => openRegenerateMeal(meal)}
-                className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5" 
+                className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5"
                 style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
               >
                 <Sparkles size={13} color={colors.accent} />
                 <span style={{ fontSize: 12, fontWeight: 500, color: colors.accent }}>AIで変更</span>
               </button>
-              <button 
+              <button
+                type="button"
                 onClick={() => openManualEdit(meal)}
                 className="flex-1 p-2.5 rounded-[10px] flex items-center justify-center gap-1.5"
                 style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
@@ -4711,7 +4715,10 @@ export default function WeeklyMenuPage() {
                 <span style={{ fontSize: 12, fontWeight: 500, color: colors.textLight }}>手動で修正</span>
               </button>
               {canDelete && (
-                <button 
+                <button
+                  type="button"
+                  aria-label="食事を削除"
+                  data-testid="meal-delete-button"
                   onClick={() => openDeleteConfirm(meal)}
                   className="p-2.5 rounded-[10px] flex items-center justify-center"
                   style={{ background: colors.dangerLight, border: `1px solid ${colors.danger}` }}
@@ -5057,7 +5064,7 @@ export default function WeeklyMenuPage() {
       )}
 
       {/* === Main Content === */}
-      <main className="flex-1 p-3 overflow-y-auto">
+      <main className="flex-1 p-3 pb-24 overflow-y-auto">
         {/* 日付ヘッダー（タップで1日の栄養を展開） */}
         <div 
           className="mb-2 px-3 py-2 rounded-xl cursor-pointer transition-all duration-200"
@@ -5734,10 +5741,16 @@ export default function WeeklyMenuPage() {
 
             {/* Shopping List Modal */}
             {activeModal === 'shopping' && (
+              <div className="fixed inset-0 z-[201] pointer-events-none">
+                {/* backdrop: 背後ナビを遮断しモーダルを閉じる (#76) */}
+                <div
+                  className="absolute inset-0 pointer-events-auto"
+                  onClick={() => setActiveModal(null)}
+                />
               <motion.div
                 initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
+                className="absolute bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 flex flex-col rounded-t-3xl pointer-events-auto"
                 style={{ background: colors.card, maxHeight: '75vh' }}
               >
                 <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
@@ -5901,6 +5914,7 @@ export default function WeeklyMenuPage() {
                   </button>
                 </div>
               </motion.div>
+              </div>
             )}
 
             {/* Add Shopping Item Modal */}

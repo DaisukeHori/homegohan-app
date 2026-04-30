@@ -595,17 +595,22 @@ function ProfilePageContent() {
       {/* 編集モーダル */}
       <AnimatePresence>
         {isEditing && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none"
+            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center pointer-events-none"
           >
+            {/* backdrop: pointer-events-auto で背後の操作を遮断しつつモーダルを閉じる */}
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto"
+              onClick={isGuidedMode ? handleGuidedClose : () => setIsEditing(false)}
+            />
             <motion.div
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
-              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col pointer-events-auto"
+              className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col pointer-events-auto relative z-10"
             >
               {/* ヘッダー */}
               <div className="flex justify-between items-center p-6 border-b border-gray-100">
