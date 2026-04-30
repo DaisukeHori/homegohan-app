@@ -90,6 +90,12 @@ export default function SignupPage() {
 
       // メール確認画面へ
       if (data.user && !data.session) {
+        // Supabase の email confirmation 有効時、重複メールアドレスは
+        // silent-success を返し identities が空配列になる
+        if (!data.user.identities || data.user.identities.length === 0) {
+          setFormError('このメールアドレスは既に登録されています。ログインへ進んでください。');
+          return;
+        }
         // メール確認が必要な場合
         router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
       } else if (data.session) {

@@ -104,8 +104,14 @@ function VerifyContent() {
         )}
       </div>
       
-      <div className="pt-8">
-        <Link href="/login" className="text-sm font-bold text-gray-400 hover:text-gray-600">
+      <div className="pt-8 space-y-3 text-center">
+        <p className="text-sm text-gray-400">
+          すでにアカウントをお持ちの場合は{" "}
+          <Link href="/login" className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4">
+            ログインへ
+          </Link>
+        </p>
+        <Link href="/login" className="text-sm font-bold text-gray-400 hover:text-gray-600 block">
           ログイン画面に戻る
         </Link>
       </div>
