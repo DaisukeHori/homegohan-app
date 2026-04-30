@@ -153,34 +153,34 @@ export default function OrgDashboardPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <ScoreCard
-            title="Vitality Score"
+            title="活力スコア"
             value={displayStats.avgScore}
             unit="pts"
-            subtext="Avg. nutritional quality"
+            subtext="栄養バランスの平均スコア"
             color="green"
             icon="🌿"
           />
           <ScoreCard
-            title="Brain Fuel"
+            title="脳エネルギー"
             value={`${displayStats.breakfastRate}%`}
             unit="share"
-            subtext="Breakfast intake ratio"
+            subtext="朝食摂取率"
             color="yellow"
             icon="⚡️"
           />
           <ScoreCard
-            title="Rhythm Risk"
+            title="リズムリスク"
             value={`${displayStats.lateNightRate}%`}
             unit="rate"
-            subtext="Late night meals (Alert > 15%)"
+            subtext="深夜食率（目安: 15%超で注意）"
             color={displayStats.lateNightRate > 15 ? "red" : "blue"}
             icon="🌙"
           />
           <ScoreCard
-            title="Active Rate"
+            title="活動率"
             value={`${displayStats.activeRate}%`}
             unit="active"
-            subtext="Daily active users"
+            subtext="日次アクティブユーザー"
             color="purple"
             icon="🔥"
           />

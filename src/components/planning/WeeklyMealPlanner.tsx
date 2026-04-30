@@ -319,7 +319,7 @@ export const WeeklyMealPlanner = ({ mealPlan, onUpdateMeal }: WeeklyMealPlannerP
             <div>
               <h1 className="text-lg font-bold text-gray-900 leading-none">{mealPlan.title}</h1>
               <p className="text-[10px] text-gray-400 mt-0.5">
-                {new Date(mealPlan.startDate).toLocaleDateString()} - {new Date(mealPlan.endDate).toLocaleDateString()}
+                {new Date(mealPlan.startDate).toLocaleDateString('ja-JP')} - {new Date(mealPlan.endDate).toLocaleDateString('ja-JP')}
               </p>
             </div>
           </div>

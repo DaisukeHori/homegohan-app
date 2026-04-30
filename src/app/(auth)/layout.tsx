@@ -14,7 +14,7 @@ export default function AuthLayout({
            <Image 
              src="https://images.unsplash.com/photo-1490645935967-10de6ba17061?q=80&w=2000&auto=format&fit=crop" 
              fill 
-             alt="Healthy Food" 
+             alt="健康的な食事"
              className="object-cover opacity-60"
            />
            <div className="absolute inset-0 bg-gradient-to-t from-[#2D2D2D] via-[#2D2D2D]/40 to-transparent" />

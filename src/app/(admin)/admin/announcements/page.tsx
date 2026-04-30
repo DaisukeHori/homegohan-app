@@ -124,7 +124,7 @@ export default function AnnouncementsPage() {
                     {item.is_public ? 'PUBLISHED' : 'DRAFT'}
                   </span>
                   <span className="text-xs text-gray-400">
-                    {new Date(item.created_at).toLocaleDateString()}
+                    {new Date(item.created_at).toLocaleDateString('ja-JP')}
                   </span>
                 </div>
                 <h3 className="font-bold text-gray-900">{item.title}</h3>

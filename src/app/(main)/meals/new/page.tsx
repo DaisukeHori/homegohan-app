@@ -1199,7 +1199,7 @@ export default function MealCaptureModal() {
               <div className="relative mb-6">
                 <img
                   src={photoPreviews[0]}
-                  alt="Analyzing"
+                  alt="解析中"
                   className="w-64 h-64 rounded-2xl object-cover opacity-80"
                 />
                 {/* スキャンライン — exit 時に repeat を 0 にして unmount を妨げない */}
@@ -1238,7 +1238,7 @@ export default function MealCaptureModal() {
               {photoPreviews.length > 0 && (
                 <img 
                   src={photoPreviews[0]} 
-                  alt="Result" 
+                  alt="結果"
                   className="w-full h-40 rounded-2xl object-cover" 
                 />
               )}

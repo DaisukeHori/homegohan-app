@@ -12,10 +12,10 @@ import { BackButton } from "@/components/ui/shared/BackButton";
 
 // ステップ定義
 const STEPS = [
-  { id: 1, title: "Ingredients", desc: "冷蔵庫" },
-  { id: 2, title: "Personalize", desc: "設定" },
-  { id: 3, title: "Conditions", desc: "条件" },
-  { id: 4, title: "Confirm", desc: "確認" },
+  { id: 1, title: "材料", desc: "冷蔵庫" },
+  { id: 2, title: "好み", desc: "設定" },
+  { id: 3, title: "条件", desc: "条件" },
+  { id: 4, title: "確認", desc: "確認" },
 ];
 
 export default function MenuRequestWizard() {
@@ -233,7 +233,7 @@ export default function MenuRequestWizard() {
               </div>
 
               <Button onClick={() => setCurrentStep(2)} className="w-full py-6 rounded-full bg-[#333] hover:bg-black font-bold text-white">
-                Next: Personalize
+                次へ: 好み
               </Button>
             </motion.div>
           )}
@@ -299,7 +299,7 @@ export default function MenuRequestWizard() {
                   Back
                 </Button>
                 <Button onClick={() => setCurrentStep(3)} className="flex-1 py-6 rounded-full bg-[#333] hover:bg-black font-bold text-white">
-                  Next: Conditions
+                  次へ: 条件
                 </Button>
               </div>
             </motion.div>
@@ -317,7 +317,7 @@ export default function MenuRequestWizard() {
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-6">
                 
                 <div>
-                  <Label>Start Date</Label>
+                  <Label>開始日</Label>
                   <Input 
                     type="date" 
                     value={formData.startDate} 
@@ -380,7 +380,7 @@ export default function MenuRequestWizard() {
                   Back
                 </Button>
                 <Button onClick={() => setCurrentStep(4)} className="flex-1 py-6 rounded-full bg-[#333] hover:bg-black font-bold text-white">
-                  Next: Confirm
+                  次へ: 確認
                 </Button>
               </div>
             </motion.div>
@@ -400,7 +400,7 @@ export default function MenuRequestWizard() {
                 
                 <div className="space-y-4 text-sm">
                   <div className="flex justify-between border-b border-gray-50 pb-2">
-                    <span className="text-gray-500">Start Date</span>
+                    <span className="text-gray-500">開始日</span>
                     <span className="font-bold">{formData.startDate || "Not set"}</span>
                   </div>
                   <div className="flex justify-between border-b border-gray-50 pb-2">
@@ -422,11 +422,11 @@ export default function MenuRequestWizard() {
                 </div>
 
                 <div className="mt-6">
-                  <Label>Memo to AI</Label>
+                  <Label>AI へのメモ</Label>
                   <textarea
                     value={formData.note}
                     onChange={(e) => setFormData({...formData, note: e.target.value})}
-                    placeholder="Any specific requests?"
+                    placeholder="特別なリクエストは？"
                     className="w-full mt-2 p-3 border border-gray-200 rounded-xl text-sm focus:ring-[#FF8A65]"
                     rows={3}
                   />

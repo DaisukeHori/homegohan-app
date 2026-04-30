@@ -53,13 +53,13 @@ export default function AdminLayout({
   }
 
   const menuItems = [
-    { label: "Dashboard", href: "/admin", icon: "📊" },
-    { label: "Users", href: "/admin/users", icon: "👥" },
-    { label: "Inquiries", href: "/admin/inquiries", icon: "📩" },
-    { label: "Announcements", href: "/admin/announcements", icon: "📢" },
-    { label: "Organizations", href: "/admin/organizations", icon: "🏢" },
-    { label: "Moderation", href: "/admin/moderation", icon: "🛡" },
-    { label: "Audit Logs", href: "/admin/audit-logs", icon: "📋" },
+    { label: "ダッシュボード", href: "/admin", icon: "📊" },
+    { label: "ユーザー", href: "/admin/users", icon: "👥" },
+    { label: "お問い合わせ", href: "/admin/inquiries", icon: "📩" },
+    { label: "お知らせ", href: "/admin/announcements", icon: "📢" },
+    { label: "組織", href: "/admin/organizations", icon: "🏢" },
+    { label: "モデレーション", href: "/admin/moderation", icon: "🛡" },
+    { label: "監査ログ", href: "/admin/audit-logs", icon: "📋" },
   ];
 
   const superAdminMenuItems = [

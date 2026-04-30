@@ -203,9 +203,9 @@ export default function UsersPage() {
                       </div>
                     </td>
                     <td className="p-4 text-sm text-gray-500">
-                      <div>{new Date(user.createdAt).toLocaleDateString()}</div>
+                      <div>{new Date(user.createdAt).toLocaleDateString('ja-JP')}</div>
                       <div className="text-xs text-gray-400 mt-1">
-                        Last login: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : "-"}
+                        Last login: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString('ja-JP') : "-"}
                       </div>
                     </td>
                     <td className="p-4 text-right">
