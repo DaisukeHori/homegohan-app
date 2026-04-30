@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts';
+import { requireServiceRole } from '../_shared/auth.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -9,6 +10,15 @@ const supabaseAdmin = createClient(
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  // バッチ専用: CRON_SECRET 認証
+  const authErr = requireServiceRole(req);
+  if (authErr) {
+    return new Response(authErr.body, {
+      status: authErr.status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   try {
