@@ -28,35 +28,54 @@ type FavoriteItem = {
 
 type SortOption = "newest" | "oldest" | "name";
 
+const PAGE_SIZE = 50;
+
 export default function FavoritesPage() {
   const router = useRouter();
 
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sort, setSort] = useState<SortOption>("newest");
   const [removingId, setRemovingId] = useState<string | null>(null);
+  // #263: offset-based pagination
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
 
-  const fetchFavorites = useCallback(async () => {
-    setLoading(true);
+  const fetchFavorites = useCallback(async (nextOffset = 0) => {
+    if (nextOffset === 0) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
     try {
-      const params = new URLSearchParams({ limit: "100", sort });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(nextOffset), sort });
       if (searchQuery) params.set("q", searchQuery);
       const res = await fetch(`/api/favorites?${params}`);
       if (!res.ok) throw new Error("Failed to fetch favorites");
       const data = await res.json();
-      setFavorites(data.favorites ?? []);
+      const fetched: FavoriteItem[] = data.favorites ?? [];
+      if (nextOffset === 0) {
+        setFavorites(fetched);
+      } else {
+        setFavorites((prev) => [...prev, ...fetched]);
+      }
       setTotal(data.total ?? 0);
+      setOffset(nextOffset + fetched.length);
+      setHasMore(fetched.length === PAGE_SIZE);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, [searchQuery, sort]);
 
   useEffect(() => {
-    fetchFavorites();
+    setOffset(0);
+    fetchFavorites(0);
   }, [fetchFavorites]);
 
   const handleRemove = async (item: FavoriteItem) => {
@@ -136,7 +155,7 @@ export default function FavoritesPage() {
           )}
         </div>
         <button
-          onClick={fetchFavorites}
+          onClick={() => fetchFavorites(0)}
           style={{
             width: 36,
             height: 36,
@@ -342,6 +361,29 @@ export default function FavoritesPage() {
                   </button>
                 </motion.div>
               ))}
+
+              {/* #263: 次の50件ボタン */}
+              {hasMore && (
+                <button
+                  onClick={() => fetchFavorites(offset)}
+                  disabled={loadingMore}
+                  style={{
+                    marginTop: 8,
+                    padding: "12px 16px",
+                    width: "100%",
+                    borderRadius: 16,
+                    border: `1px solid ${colors.border}`,
+                    background: colors.card,
+                    color: colors.textLight,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: loadingMore ? "default" : "pointer",
+                    opacity: loadingMore ? 0.6 : 1,
+                  }}
+                >
+                  {loadingMore ? "読み込み中..." : "次の50件を表示"}
+                </button>
+              )}
             </div>
           </AnimatePresence>
         )}
