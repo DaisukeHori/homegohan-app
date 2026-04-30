@@ -1197,16 +1197,17 @@ export default function MealCaptureModal() {
           >
             {photoPreviews.length > 0 && (
               <div className="relative mb-6">
-                <img 
-                  src={photoPreviews[0]} 
-                  alt="Analyzing" 
-                  className="w-64 h-64 rounded-2xl object-cover opacity-80" 
+                <img
+                  src={photoPreviews[0]}
+                  alt="Analyzing"
+                  className="w-64 h-64 rounded-2xl object-cover opacity-80"
                 />
-                {/* スキャンライン */}
-                <motion.div 
+                {/* スキャンライン — exit 時に repeat を 0 にして unmount を妨げない */}
+                <motion.div
                   initial={{ top: 0 }}
                   animate={{ top: "100%" }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear", repeatType: "loop" }}
                   className="absolute left-0 w-full h-1 rounded-full"
                   style={{ background: `linear-gradient(90deg, transparent, ${colors.accent}, transparent)`, boxShadow: `0 0 20px ${colors.accent}` }}
                 />

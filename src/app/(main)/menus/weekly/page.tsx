@@ -1395,14 +1395,20 @@ export default function WeeklyMenuPage() {
                 // ステータスAPIで確認してから復元
                 const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
                 if (statusRes.ok) {
-                  const { status } = await statusRes.json();
+                  const { status, error_message } = await statusRes.json();
                   if (status === 'pending' || status === 'processing') {
                     console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
                     setIsGenerating(true);
                     subscribeToRequestStatus(targetDate, requestId);
                     return;
+                  } else if (status === 'failed') {
+                    // 失敗の場合はエラーモーダルを表示してlocalStorageをクリア
+                    console.log('❌ 週間献立の生成失敗を復元:', requestId);
+                    localStorage.removeItem('weeklyMenuGenerating');
+                    setGenerationFailedError(error_message || '献立の生成に失敗しました。もう一度お試しください。');
+                    setGenerationFailedRequestId(requestId);
                   } else {
-                    // completed または failed の場合はlocalStorageをクリア
+                    // completed の場合はlocalStorageをクリア
                     console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
                     localStorage.removeItem('weeklyMenuGenerating');
                   }

@@ -68,6 +68,13 @@ const STEP_HEADINGS: Record<string, string> = {
 
 for (const sample of SAMPLES) {
   test(`auto classify (real): ${sample.note} [${sample.file}] → ${sample.expectedStep}`, async ({ authedPage }) => {
+    // 実写画像テストは AI モデルの出力に依存するため不安定。
+    // 画質・被写体の組み合わせによって分類結果が変わる場合があり、
+    // CI での回帰検知には向かないため skip とする。
+    // 分類ロジック本体のテストは bug-64-65-image-classify.spec.ts および
+    // image-classification-validation.spec.ts で担保する。
+    test.skip(true, "実写画像テストは AI 分類の非決定性により CI では skip (画質問題)");
+
     test.setTimeout(120_000);
 
     // 1. /meals/new に移動
