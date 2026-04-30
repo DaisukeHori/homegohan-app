@@ -12,6 +12,7 @@ import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { V4GenerateModal } from "@/components/ai-assistant";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { notifyMenuGenerated } from "@/lib/local-notification";
 import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
 import { NutritionRadarChart } from "@/components/NutritionRadarChart";
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS } from "@/lib/nutrition-constants";
@@ -936,6 +937,7 @@ export default function WeeklyMenuPage() {
       setGenerationProgress(null);  // 進捗表示をクリア
       refreshMealPlan();
       setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
+      notifyMenuGenerated();
     },
     onError: (error) => {
       console.error('V4 generation error:', error);

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { requestNotificationPermission } from "@/lib/local-notification";
 
 type WeekStartDay = 'sunday' | 'monday';
 
@@ -102,6 +103,16 @@ export default function SettingsPage() {
 
   const toggle = async (key: keyof typeof settings) => {
     const newValue = !settings[key];
+
+    // 通知を ON にするときはブラウザのパーミッションをリクエスト
+    if (key === 'notifications' && newValue) {
+      const permission = await requestNotificationPermission();
+      if (permission === 'denied') {
+        alert('ブラウザの通知がブロックされています。ブラウザの設定から許可してください。');
+        return; // DB への保存も行わない
+      }
+    }
+
     setSettings(prev => ({ ...prev, [key]: newValue }));
     try {
       const apiKey =
@@ -148,6 +159,37 @@ export default function SettingsPage() {
       alert('エクスポートに失敗しました。時間をおいて再度お試しください。');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const handleExportCsv = async () => {
+    if (exportingCsv) return;
+    setExportingCsv(true);
+    try {
+      const res = await fetch('/api/export/meals', { method: 'GET' });
+      if (!res.ok) {
+        if (res.status === 401) {
+          router.push('/login');
+          return;
+        }
+        throw new Error(`CSV export failed: ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const today = new Date().toISOString().slice(0, 10);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `homegohan-meals-${today}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert('CSVエクスポートに失敗しました。時間をおいて再度お試しください。');
+    } finally {
+      setExportingCsv(false);
     }
   };
 
@@ -299,6 +341,22 @@ export default function SettingsPage() {
                  <div className="text-left">
                    <span className="font-bold text-gray-700">{exporting ? 'エクスポート中…' : 'データをエクスポート'}</span>
                    <p className="text-xs text-gray-400">JSON 形式（GDPR データポータビリティ対応）</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             <button
+               type="button"
+               onClick={handleExportCsv}
+               disabled={exportingCsv}
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600" aria-hidden="true">📋</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">{exportingCsv ? 'エクスポート中…' : '献立をCSVエクスポート'}</span>
+                   <p className="text-xs text-gray-400">Excel・スプレッドシートで開ける CSV 形式</p>
                  </div>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>

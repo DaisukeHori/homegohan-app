@@ -6,6 +6,7 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../lib/meal-image-jobs';
+import { getUserPlan, checkDailyMealLimit, checkHistoryLimit } from '@/lib/plan-limits';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -22,9 +23,14 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const date = searchParams.get('date');
-    
+
     // 日付が指定されていない場合は今日
     const targetDate = date || new Date().toISOString().split('T')[0];
+
+    // フリープラン: 30 日より前のデータは閲覧不可
+    const plan = await getUserPlan(user.id);
+    const historyLimitError = checkHistoryLimit(targetDate, plan);
+    if (historyLimitError) return historyLimitError;
 
     // user_daily_mealsとplanned_mealsをJOINして取得
     const { data: dailyMeal, error: dayError } = await supabase
@@ -92,6 +98,11 @@ export async function POST(request: Request) {
     if (!date || !mealType || !dishName) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
+
+    // フリープラン: 1 日 3 食の上限チェック
+    const plan = await getUserPlan(user.id);
+    const dailyLimitError = await checkDailyMealLimit(user.id, date, plan);
+    if (dailyLimitError) return dailyLimitError;
 
     const manualImageUrl = typeof imageUrl === 'string' ? imageUrl : undefined;
     const imageModel = process.env.GEMINI_IMAGE_MODEL ?? undefined;
