@@ -1,0 +1,23 @@
+{
+  "pageErrors": [],
+  "consoleErrors": [
+    "Home profile fetch error: {message: TypeError: Failed to fetch, details: TypeError: Failed to fetch\n    at https://homegoha…4.js?dpl=dpl_3Tx5YBcoDGCBjZhMqKHbJT2vhjLz:1:9574), hint: , code: }",
+    "Home profile fetch error: {message: TypeError: Failed to fetch, details: TypeError: Failed to fetch\n    at https://homegoha…4.js?dpl=dpl_3Tx5YBcoDGCBjZhMqKHbJT2vhjLz:1:9574), hint: , code: }",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  ],
+  "networkErrors": [
+    "[5xx] 500 https://homegohan-app.vercel.app/api/ai/menu/weekly/cleanup",
+    "[5xx] 500 https://homegohan-app.vercel.app/api/ai/menu/weekly/pending?date=2026-04-27",
+    "[5xx] 500 https://homegohan-app.vercel.app/api/ai/menu/meal/pending?date=2026-04-27",
+    "[5xx] 500 https://homegohan-app.vercel.app/api/ai/menu/weekly/cleanup",
+    "[5xx] 500 https://homegohan-app.vercel.app/api/ai/menu/weekly/pending?date=2026-04-26",
+    "[5xx] 500 https://homegohan-app.vercel.app/api/ai/menu/meal/pending?date=2026-04-26",
+    "[5xx] 500 https://homegohan-app.vercel.app/api/ai/menu/weekly/pending?date=2026-04-26"
+  ]
+}

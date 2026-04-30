@@ -1,0 +1,7 @@
+{
+  "pageErrors": [],
+  "consoleErrors": [
+    "Failed to fetch RSC payload for https://homegohan-app.vercel.app/health. Falling back to browser navigation. TypeError: Failed to fetch\n    at s (https://homegohan-app.vercel.app/_next/static/chunks/7023-6588174482f206e4.js?dpl=dpl_GEr3EPrXtB59GHujNkuLxwcSN9xX:1:45730)\n    at https://homegohan-app.vercel.app/_next/static/chunks/7023-6588174482f206e4.js?dpl=dpl_GEr3EPrXtB59GHujNkuLxwcSN9xX:1:59279\n    at Object.u [as task] (https://homegohan-app.vercel.app/_next/static/chunks/7023-6588174482f206e4.js?dpl=dpl_GEr3EPrXtB59GHujNkuLxwcSN9xX:1:32117)\n    at c.s (https://homegohan-app.vercel.app/_next/static/chunks/7023-6588174482f206e4.js?dpl=dpl_GEr3EPrXtB59GHujNkuLxwcSN9xX:1:32822)\n    at Object.u [as task] (https://homegohan-app.vercel.app/_next/static/chunks/7023-6588174482f206e4.js?dpl=dpl_GEr3EPrXtB59GHujNkuLxwcSN9xX:1:32179)"
+  ],
+  "networkErrors": []
+}

@@ -1,0 +1,9 @@
+{
+  "pageErrors": [],
+  "consoleErrors": [
+    "Home profile fetch error: {message: TypeError: Failed to fetch, details: TypeError: Failed to fetch\n    at https://homegoha…d.js?dpl=dpl_6XSbUqVcmKSJdJNBDT4zhu2Rgt9H:1:9574), hint: , code: }",
+    "Failed to load resource: the server responded with a status of 404 ()"
+  ],
+  "networkErrors": [],
+  "currentUrl": "https://homegohan-app.vercel.app/menus/weekly/00000000-0000-0000-0000-000000000000"
+}

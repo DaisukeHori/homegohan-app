@@ -1,0 +1,5 @@
+npm error Missing script: "diagnostic:v4-benchmark"
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: /Users/horidaisuke/.npm/_logs/2026-03-19T08_06_31_851Z-debug-0.log
