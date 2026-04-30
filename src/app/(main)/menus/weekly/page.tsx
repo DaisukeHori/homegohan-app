@@ -13,17 +13,21 @@ import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
+// ProfileReminderBanner は dynamic import で lazy load (#322)
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS } from "@/lib/nutrition-constants";
 import remarkGfm from "remark-gfm";
 
-// #182: dynamic import で初期バンドルを削減
+// #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
   () => import("@/components/ai-assistant").then(m => ({ default: m.V4GenerateModal })),
   { ssr: false }
 );
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
+  { ssr: false }
+);
+const ProfileReminderBannerDynamic = dynamic(
+  () => import("@/components/ProfileReminderBanner").then(m => ({ default: m.ProfileReminderBanner })),
   { ssr: false }
 );
 import {
@@ -1382,6 +1386,15 @@ export default function WeeklyMenuPage() {
       }
     };
   }, [cleanupRealtime]);
+
+  // #322: debounce timer cleanup on unmount (メモリリーク防止)
+  useEffect(() => {
+    const timers = toggleDebounceTimerRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
   
   // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
@@ -2800,10 +2813,35 @@ export default function WeeklyMenuPage() {
     } catch (e) { console.error('Failed to update meal:', e); }
   };
   
-  // Toggle completion (can check and uncheck)
+  // #322: meal toggle debounce timer (メモリリーク防止のため cleanup は下の useEffect で実施)
+  const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const pendingToggleWeeklyRef = useRef<Set<string>>(new Set());
+
+  // Toggle completion (can check and uncheck) — debounce 250ms (#322)
   const toggleMealCompletion = async (dayId: string, meal: PlannedMeal) => {
+    const mealId = meal.id ?? '';
+    // 既存タイマーをキャンセル
+    const existing = toggleDebounceTimerRef.current.get(mealId);
+    if (existing) {
+      clearTimeout(existing);
+      toggleDebounceTimerRef.current.delete(mealId);
+    }
+    // PATCH が進行中なら無視
+    if (pendingToggleWeeklyRef.current.has(mealId)) return;
+
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        toggleDebounceTimerRef.current.delete(mealId);
+        resolve();
+      }, 250);
+      toggleDebounceTimerRef.current.set(mealId, timer);
+    });
+
+    if (pendingToggleWeeklyRef.current.has(mealId)) return;
+    pendingToggleWeeklyRef.current.add(mealId);
     const newCompleted = !meal.isCompleted;
-    handleUpdateMeal(dayId, meal.id, { isCompleted: newCompleted });
+    await handleUpdateMeal(dayId, meal.id, { isCompleted: newCompleted });
+    pendingToggleWeeklyRef.current.delete(mealId);
   };
 
   // Add pantry item
@@ -5133,7 +5171,7 @@ export default function WeeklyMenuPage() {
       </div>
 
       {/* === Profile Reminder Banner === */}
-      <ProfileReminderBanner />
+      <ProfileReminderBannerDynamic />
 
       {/* === 生成失敗エラーモーダル === */}
       {generationFailedError && (
