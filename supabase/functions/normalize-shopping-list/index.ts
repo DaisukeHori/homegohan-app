@@ -13,6 +13,7 @@ import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
+import { fetchWithRetry } from "../_shared/network-retry.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 
 // ============================================
@@ -172,7 +173,7 @@ async function callOpenAI(
   prompt: string,
   logger: ReturnType<typeof createLogger>
 ): Promise<NormalizedItem[]> {
-  const response = await fetch(getFastLLMChatCompletionsUrl(), {
+  const response = await fetchWithRetry(getFastLLMChatCompletionsUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -184,13 +185,8 @@ async function callOpenAI(
       max_tokens: 16000, // 200+アイテムのJSON出力に対応
       response_format: { type: "json_object" },
     }),
-  });
+  }, { label: "normalize-shopping-list/llm", timeoutMs: 120000, retries: 2 });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    logger.error("Fast LLM API error", new Error(errorText));
-    throw new Error(`Fast LLM API error: ${response.status}`);
-  }
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;

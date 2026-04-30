@@ -1,9 +1,14 @@
 /**
  * V4 汎用献立生成エンジン
- * 
+ *
  * - 指定されたスロット（targetSlots）のみを生成
  * - 既存データはデフォルトで保護（plannedMealIdがない限り上書きしない）
  * - 季節・イベント・冷蔵庫情報を考慮したLLM生成
+ *
+ * @deprecated generate-menu-v5 が本番主系。本 Edge Function は feature flag
+ *   `menu_generation_v5_direct` / `menu_generation_v5_wrapped` が OFF の
+ *   フォールバックとして残存。utility 層（step-utils / reference-menu-utils / context-utils）
+ *   は v5 から直接 import されているため削除不可。
  */
 
 import { createClient } from "@supabase/supabase-js";

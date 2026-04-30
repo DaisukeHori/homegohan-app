@@ -105,8 +105,13 @@ Deno.serve(async (req) => {
       })
     }
 
+<<<<<<< Updated upstream
     // 非同期でバックグラウンドタスクを実行
     analyzeMealPhotoBackgroundTask({ 
+=======
+    // 非同期でバックグラウンドタスクを実行（EdgeRuntime.waitUntil で Edge が早期終了しないよう登録）
+    const backgroundPromise = analyzeMealPhotoBackgroundTask({
+>>>>>>> Stashed changes
       images: imageDataArray,
       mealId,
       mealType,
@@ -116,6 +121,12 @@ Deno.serve(async (req) => {
     }).catch((error) => {
       console.error('Background task error:', error)
     })
+
+    // @ts-ignore EdgeRuntime
+    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+      // @ts-ignore EdgeRuntime
+      EdgeRuntime.waitUntil(backgroundPromise)
+    }
 
     return new Response(
       JSON.stringify({ message: 'Photo analysis started in background' }),

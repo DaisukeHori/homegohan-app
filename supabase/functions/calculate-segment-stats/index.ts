@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from '../_shared/cors.ts';
+import { requireServiceRole } from '../_shared/auth.ts';
+import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
 
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -15,10 +17,22 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  // バッチ専用: CRON_SECRET 認証
+  const authErr = requireServiceRole(req);
+  if (authErr) {
+    return new Response(authErr.body, {
+      status: authErr.status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const requestId = generateRequestId();
+  const logger = createLogger('calculate-segment-stats', requestId);
+
   try {
     const { periodType = 'weekly', forceRecalc = false } = await req.json().catch(() => ({}));
-    
-    console.log(`Starting segment stats calculation for period: ${periodType}`);
+
+    logger.info(`Starting segment stats calculation for period: ${periodType}`);
 
     // 1. メトリクス定義を取得
     const { data: metrics, error: metricsError } = await supabaseAdmin
@@ -38,11 +52,11 @@ Deno.serve(async (req) => {
 
     // 3. 期間を計算
     const { periodStart, periodEnd } = calculatePeriod(periodType);
-    console.log(`Period: ${periodStart} to ${periodEnd}`);
+    logger.info(`Period: ${periodStart} to ${periodEnd}`);
 
     // 4. 全ユーザーのメトリクスを計算
     const userMetricsMap = await calculateAllUserMetrics(metrics!, periodType, periodStart, periodEnd);
-    console.log(`Calculated metrics for ${userMetricsMap.size} users`);
+    logger.info(`Calculated metrics for ${userMetricsMap.size} users`);
 
     // 5. 各セグメントの統計を計算
     for (const segment of segments!) {
@@ -68,7 +82,7 @@ Deno.serve(async (req) => {
     });
 
   } catch (error: any) {
-    console.error('Segment stats calculation error:', error);
+    logger.error('Segment stats calculation error', error);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
@@ -128,6 +142,148 @@ interface UserMetrics {
   previousMetrics: Map<string, number>;
 }
 
+// =====================================================
+// バルク事前取得ヘルパー（N+1 解消）
+// =====================================================
+
+interface BulkData {
+  mealStreaks: Map<string, number>;
+  breakfastStreaks: Map<string, number>;
+  mealDays: Map<string, number>;
+  periodDays: number;
+  breakfastPlanned: Map<string, number>;
+  breakfastCompleted: Map<string, number>;
+  vegScoreSum: Map<string, number>;
+  vegScoreCount: Map<string, number>;
+  plannedTotal: Map<string, number>;
+  plannedCompleted: Map<string, number>;
+  totalMeals: Map<string, number>;
+}
+
+async function fetchBulkData(periodStart: string, periodEnd: string): Promise<BulkData> {
+  const startDate = new Date(periodStart);
+  const endDate = new Date(periodEnd);
+  const periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+  // 5 クエリを並列実行（ユーザー数×メトリクス数の N+1 を解消）
+  const [mealStreakResult, breakfastStreakResult, mealResult, plannedResult, totalMealResult] =
+    await Promise.all([
+      supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'meal_record'),
+      supabaseAdmin.from('health_streaks').select('user_id, current_streak').eq('streak_type', 'breakfast'),
+      supabaseAdmin.from('meals').select('user_id, eaten_at').gte('eaten_at', periodStart).lte('eaten_at', periodEnd + 'T23:59:59Z'),
+      supabaseAdmin.from('planned_meals').select(`
+        meal_type, is_completed, veg_score,
+        meal_plan_days!inner(day_date, meal_plans!inner(user_id))
+      `).gte('meal_plan_days.day_date', periodStart).lte('meal_plan_days.day_date', periodEnd),
+      supabaseAdmin.from('meals').select('user_id'),
+    ]);
+
+  const mealStreaks = new Map<string, number>(
+    (mealStreakResult.data ?? []).map(r => [r.user_id, r.current_streak ?? 0])
+  );
+  const breakfastStreaks = new Map<string, number>(
+    (breakfastStreakResult.data ?? []).map(r => [r.user_id, r.current_streak ?? 0])
+  );
+
+  const mealDaySetByUser = new Map<string, Set<string>>();
+  for (const row of mealResult.data ?? []) {
+    if (!row.user_id || !row.eaten_at) continue;
+    let s = mealDaySetByUser.get(row.user_id);
+    if (!s) { s = new Set(); mealDaySetByUser.set(row.user_id, s); }
+    s.add(String(row.eaten_at).slice(0, 10));
+  }
+  const mealDays = new Map<string, number>();
+  for (const [uid, s] of mealDaySetByUser) mealDays.set(uid, s.size);
+
+  const breakfastPlanned = new Map<string, number>();
+  const breakfastCompleted = new Map<string, number>();
+  const vegScoreSum = new Map<string, number>();
+  const vegScoreCount = new Map<string, number>();
+  const plannedTotal = new Map<string, number>();
+  const plannedCompleted = new Map<string, number>();
+
+  for (const row of plannedResult.data ?? []) {
+    const userId = (row.meal_plan_days as any)?.meal_plans?.user_id;
+    if (!userId) continue;
+    plannedTotal.set(userId, (plannedTotal.get(userId) ?? 0) + 1);
+    if (row.is_completed) plannedCompleted.set(userId, (plannedCompleted.get(userId) ?? 0) + 1);
+    if (row.meal_type === 'breakfast') {
+      breakfastPlanned.set(userId, (breakfastPlanned.get(userId) ?? 0) + 1);
+      if (row.is_completed) breakfastCompleted.set(userId, (breakfastCompleted.get(userId) ?? 0) + 1);
+    }
+    if (row.veg_score != null) {
+      vegScoreSum.set(userId, (vegScoreSum.get(userId) ?? 0) + (row.veg_score as number));
+      vegScoreCount.set(userId, (vegScoreCount.get(userId) ?? 0) + 1);
+    }
+  }
+
+  const totalMeals = new Map<string, number>();
+  for (const row of totalMealResult.data ?? []) {
+    const uid = (row as any).user_id as string | undefined;
+    if (!uid) continue;
+    totalMeals.set(uid, (totalMeals.get(uid) ?? 0) + 1);
+  }
+
+  return { mealStreaks, breakfastStreaks, mealDays, periodDays, breakfastPlanned, breakfastCompleted, vegScoreSum, vegScoreCount, plannedTotal, plannedCompleted, totalMeals };
+}
+
+function computeMetricFromBulk(userId: string, metricCode: string, bulk: BulkData): number | null {
+  switch (metricCode) {
+    case 'record_streak':
+      return bulk.mealStreaks.get(userId) ?? 0;
+    case 'weekly_record_rate':
+    case 'monthly_record_rate': {
+      const days = bulk.mealDays.get(userId) ?? 0;
+      return bulk.periodDays > 0 ? Math.round((days / bulk.periodDays) * 100) : 0;
+    }
+    case 'breakfast_rate': {
+      const planned = bulk.breakfastPlanned.get(userId) ?? 0;
+      const completed = bulk.breakfastCompleted.get(userId) ?? 0;
+      return planned > 0 ? Math.round((completed / planned) * 100) : 0;
+    }
+    case 'breakfast_streak':
+      return bulk.breakfastStreaks.get(userId) ?? 0;
+    case 'veg_score_avg': {
+      const sum = bulk.vegScoreSum.get(userId) ?? 0;
+      const cnt = bulk.vegScoreCount.get(userId) ?? 0;
+      return cnt > 0 ? Math.round((sum / cnt) * 10) / 10 : 0;
+    }
+    case 'nutrition_score': {
+      const sum = bulk.vegScoreSum.get(userId) ?? 0;
+      const cnt = bulk.vegScoreCount.get(userId) ?? 0;
+      const vegAvg = cnt > 0 ? sum / cnt : 0;
+      return Math.round(vegAvg * 20);
+    }
+    case 'menu_execution_rate': {
+      const total = bulk.plannedTotal.get(userId) ?? 0;
+      const completed = bulk.plannedCompleted.get(userId) ?? 0;
+      return total > 0 ? Math.round((completed / total) * 100) : 0;
+    }
+    case 'total_meals':
+      return bulk.totalMeals.get(userId) ?? 0;
+    default:
+      return null;
+  }
+}
+
+function getPreviousPeriodStart(periodType: string, currentPeriodStart: string): string | null {
+  const currentStart = new Date(currentPeriodStart);
+  switch (periodType) {
+    case 'weekly': {
+      const d = new Date(currentStart);
+      d.setDate(d.getDate() - 7);
+      return d.toISOString().split('T')[0];
+    }
+    case 'monthly': {
+      const d = new Date(currentStart);
+      d.setMonth(d.getMonth() - 1);
+      return d.toISOString().split('T')[0];
+    }
+    default:
+      return null;
+  }
+}
+
 async function calculateAllUserMetrics(
   metricDefs: any[],
   periodType: string,
@@ -136,7 +292,6 @@ async function calculateAllUserMetrics(
 ): Promise<Map<string, UserMetrics>> {
   const userMetricsMap = new Map<string, UserMetrics>();
 
-  // 全ユーザープロファイルを取得
   const { data: profiles, error: profilesError } = await supabaseAdmin
     .from('user_profiles')
     .select('*');
@@ -144,260 +299,70 @@ async function calculateAllUserMetrics(
   if (profilesError) throw profilesError;
   if (!profiles || profiles.length === 0) return userMetricsMap;
 
-  // 各ユーザーのメトリクスを計算
+  // バルク事前取得（N+1 回避: ユーザー数×メトリクス数のクエリ → 固定 5 クエリ）
+  const bulk = await fetchBulkData(periodStart, periodEnd);
+
+  const previousPeriodStart = getPreviousPeriodStart(periodType, periodStart);
+  const prevMetricsByUser = new Map<string, Map<string, number>>();
+  if (previousPeriodStart) {
+    const { data: prevRows } = await supabaseAdmin
+      .from('user_metrics')
+      .select('user_id, metric_id, value')
+      .eq('period_type', periodType)
+      .eq('period_start', previousPeriodStart);
+    for (const row of prevRows ?? []) {
+      if (!prevMetricsByUser.has(row.user_id)) prevMetricsByUser.set(row.user_id, new Map());
+      prevMetricsByUser.get(row.user_id)!.set(row.metric_id, row.value);
+    }
+  }
+
+  const upsertRows: any[] = [];
+
   for (const profile of profiles) {
     const userId = profile.id;
     const metrics = new Map<string, number>();
     const previousMetrics = new Map<string, number>();
 
     for (const metricDef of metricDefs) {
-      const value = await calculateMetricForUser(userId, metricDef, periodStart, periodEnd);
-      if (value !== null) {
-        metrics.set(metricDef.code, value);
-      }
+      const value = computeMetricFromBulk(userId, metricDef.code, bulk);
+      if (value !== null) metrics.set(metricDef.code, value);
 
-      // 前期間の値を取得（改善率計算用）
-      const previousValue = await getPreviousMetricValue(userId, metricDef.id, periodType, periodStart);
-      if (previousValue !== null) {
-        previousMetrics.set(metricDef.code, previousValue);
-      }
+      const prevVal = prevMetricsByUser.get(userId)?.get(metricDef.id);
+      if (prevVal !== undefined && prevVal !== null) previousMetrics.set(metricDef.code, prevVal);
     }
 
-    userMetricsMap.set(userId, {
-      userId,
-      profile,
-      metrics,
-      previousMetrics,
-    });
+    userMetricsMap.set(userId, { userId, profile, metrics, previousMetrics });
 
-    // user_metricsテーブルに保存
-    await saveUserMetrics(userId, metricDefs, metrics, previousMetrics, periodType, periodStart, periodEnd);
-  }
-
-  return userMetricsMap;
-}
-
-async function calculateMetricForUser(
-  userId: string,
-  metricDef: any,
-  periodStart: string,
-  periodEnd: string
-): Promise<number | null> {
-  switch (metricDef.code) {
-    case 'record_streak':
-      return await calculateRecordStreak(userId);
-    
-    case 'weekly_record_rate':
-    case 'monthly_record_rate':
-      return await calculateRecordRate(userId, periodStart, periodEnd);
-    
-    case 'breakfast_rate':
-      return await calculateBreakfastRate(userId, periodStart, periodEnd);
-    
-    case 'breakfast_streak':
-      return await calculateBreakfastStreak(userId);
-    
-    case 'veg_score_avg':
-      return await calculateVegScoreAvg(userId, periodStart, periodEnd);
-    
-    case 'nutrition_score':
-      return await calculateNutritionScore(userId, periodStart, periodEnd);
-    
-    case 'menu_execution_rate':
-      return await calculateMenuExecutionRate(userId, periodStart, periodEnd);
-    
-    case 'total_meals':
-      return await calculateTotalMeals(userId);
-    
-    default:
-      return null;
-  }
-}
-
-// --- 個別メトリクス計算関数 ---
-
-async function calculateRecordStreak(userId: string): Promise<number> {
-  const { data: streak } = await supabaseAdmin
-    .from('health_streaks')
-    .select('current_streak')
-    .eq('user_id', userId)
-    .eq('streak_type', 'meal_record')
-    .single();
-  
-  return streak?.current_streak ?? 0;
-}
-
-async function calculateRecordRate(userId: string, periodStart: string, periodEnd: string): Promise<number> {
-  const { data: meals } = await supabaseAdmin
-    .from('meals')
-    .select('eaten_at')
-    .eq('user_id', userId)
-    .gte('eaten_at', periodStart)
-    .lte('eaten_at', periodEnd + 'T23:59:59Z');
-
-  if (!meals || meals.length === 0) return 0;
-
-  const uniqueDays = new Set(meals.map(m => m.eaten_at.split('T')[0]));
-  const startDate = new Date(periodStart);
-  const endDate = new Date(periodEnd);
-  const totalDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-  
-  return Math.round((uniqueDays.size / totalDays) * 100);
-}
-
-async function calculateBreakfastRate(userId: string, periodStart: string, periodEnd: string): Promise<number> {
-  // planned_mealsから朝食の実行率を計算
-  const { data: meals } = await supabaseAdmin
-    .from('planned_meals')
-    .select(`
-      meal_type,
-      is_completed,
-      meal_plan_days!inner(day_date, meal_plans!inner(user_id))
-    `)
-    .eq('meal_plan_days.meal_plans.user_id', userId)
-    .gte('meal_plan_days.day_date', periodStart)
-    .lte('meal_plan_days.day_date', periodEnd);
-
-  if (!meals || meals.length === 0) return 0;
-
-  const breakfastMeals = meals.filter(m => m.meal_type === 'breakfast');
-  if (breakfastMeals.length === 0) return 0;
-
-  const completedBreakfasts = breakfastMeals.filter(m => m.is_completed);
-  return Math.round((completedBreakfasts.length / breakfastMeals.length) * 100);
-}
-
-async function calculateBreakfastStreak(userId: string): Promise<number> {
-  const { data: streak } = await supabaseAdmin
-    .from('health_streaks')
-    .select('current_streak')
-    .eq('user_id', userId)
-    .eq('streak_type', 'breakfast')
-    .single();
-  
-  return streak?.current_streak ?? 0;
-}
-
-async function calculateVegScoreAvg(userId: string, periodStart: string, periodEnd: string): Promise<number> {
-  const { data: meals } = await supabaseAdmin
-    .from('planned_meals')
-    .select(`
-      veg_score,
-      meal_plan_days!inner(day_date, meal_plans!inner(user_id))
-    `)
-    .eq('meal_plan_days.meal_plans.user_id', userId)
-    .gte('meal_plan_days.day_date', periodStart)
-    .lte('meal_plan_days.day_date', periodEnd)
-    .not('veg_score', 'is', null);
-
-  if (!meals || meals.length === 0) return 0;
-
-  const totalVegScore = meals.reduce((sum, m) => sum + (m.veg_score || 0), 0);
-  return Math.round((totalVegScore / meals.length) * 10) / 10;
-}
-
-async function calculateNutritionScore(userId: string, periodStart: string, periodEnd: string): Promise<number> {
-  // veg_score を 0-100 スケールに変換して平均
-  const vegScore = await calculateVegScoreAvg(userId, periodStart, periodEnd);
-  // 0-5 を 0-100 に変換
-  return Math.round(vegScore * 20);
-}
-
-async function calculateMenuExecutionRate(userId: string, periodStart: string, periodEnd: string): Promise<number> {
-  const { data: meals } = await supabaseAdmin
-    .from('planned_meals')
-    .select(`
-      is_completed,
-      meal_plan_days!inner(day_date, meal_plans!inner(user_id))
-    `)
-    .eq('meal_plan_days.meal_plans.user_id', userId)
-    .gte('meal_plan_days.day_date', periodStart)
-    .lte('meal_plan_days.day_date', periodEnd);
-
-  if (!meals || meals.length === 0) return 0;
-
-  const completedMeals = meals.filter(m => m.is_completed);
-  return Math.round((completedMeals.length / meals.length) * 100);
-}
-
-async function calculateTotalMeals(userId: string): Promise<number> {
-  const { count } = await supabaseAdmin
-    .from('meals')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId);
-
-  return count ?? 0;
-}
-
-async function getPreviousMetricValue(
-  userId: string,
-  metricId: string,
-  periodType: string,
-  currentPeriodStart: string
-): Promise<number | null> {
-  // 前期間の開始日を計算
-  const currentStart = new Date(currentPeriodStart);
-  let previousStart: Date;
-
-  switch (periodType) {
-    case 'weekly':
-      previousStart = new Date(currentStart);
-      previousStart.setDate(previousStart.getDate() - 7);
-      break;
-    case 'monthly':
-      previousStart = new Date(currentStart);
-      previousStart.setMonth(previousStart.getMonth() - 1);
-      break;
-    default:
-      return null;
-  }
-
-  const { data } = await supabaseAdmin
-    .from('user_metrics')
-    .select('value')
-    .eq('user_id', userId)
-    .eq('metric_id', metricId)
-    .eq('period_type', periodType)
-    .eq('period_start', previousStart.toISOString().split('T')[0])
-    .single();
-
-  return data?.value ?? null;
-}
-
-async function saveUserMetrics(
-  userId: string,
-  metricDefs: any[],
-  metrics: Map<string, number>,
-  previousMetrics: Map<string, number>,
-  periodType: string,
-  periodStart: string,
-  periodEnd: string
-): Promise<void> {
-  for (const metricDef of metricDefs) {
-    const value = metrics.get(metricDef.code);
-    if (value === undefined) continue;
-
-    const previousValue = previousMetrics.get(metricDef.code);
-    const changeRate = previousValue && previousValue > 0
-      ? Math.round(((value - previousValue) / previousValue) * 100)
-      : null;
-
-    await supabaseAdmin
-      .from('user_metrics')
-      .upsert({
+    for (const metricDef of metricDefs) {
+      const value = metrics.get(metricDef.code);
+      if (value === undefined) continue;
+      const previousValue = previousMetrics.get(metricDef.code);
+      const changeRate = previousValue && previousValue > 0
+        ? Math.round(((value - previousValue) / previousValue) * 100)
+        : null;
+      upsertRows.push({
         user_id: userId,
         metric_id: metricDef.id,
         period_type: periodType,
         period_start: periodStart,
         period_end: periodEnd,
         value,
-        previous_value: previousValue,
+        previous_value: previousValue ?? null,
         change_rate: changeRate,
         updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'user_id,metric_id,period_type,period_start',
       });
+    }
   }
+
+  // バルク upsert（チャンク分割で Supabase の上限を回避）
+  const CHUNK = 200;
+  for (let i = 0; i < upsertRows.length; i += CHUNK) {
+    await supabaseAdmin
+      .from('user_metrics')
+      .upsert(upsertRows.slice(i, i + CHUNK), { onConflict: 'user_id,metric_id,period_type,period_start' });
+  }
+
+  return userMetricsMap;
 }
 
 // =====================================================
