@@ -76,10 +76,10 @@ export default function MembersPage() {
         <table className="w-full text-left">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              <th className="p-4 text-xs font-bold text-gray-500 uppercase">Nickname</th>
-              <th className="p-4 text-xs font-bold text-gray-500 uppercase">Role</th>
-              <th className="p-4 text-xs font-bold text-gray-500 uppercase">Joined</th>
-              <th className="p-4 text-xs font-bold text-gray-500 uppercase text-right">Status</th>
+              <th className="p-4 text-xs font-bold text-gray-500 uppercase">ニックネーム</th>
+              <th className="p-4 text-xs font-bold text-gray-500 uppercase">役職</th>
+              <th className="p-4 text-xs font-bold text-gray-500 uppercase">参加日</th>
+              <th className="p-4 text-xs font-bold text-gray-500 uppercase text-right">ステータス</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -108,7 +108,7 @@ export default function MembersPage() {
                     </span>
                   </td>
                   <td className="p-4 text-sm text-gray-500 font-mono">
-                    {new Date(member.created_at).toLocaleDateString()}
+                    {new Date(member.created_at).toLocaleDateString('ja-JP')}
                   </td>
                   <td className="p-4 text-right">
                     <span className="inline-block w-2 h-2 rounded-full bg-green-400" />
@@ -159,7 +159,7 @@ export default function MembersPage() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="password">Temporary Password</Label>
+                  <Label htmlFor="password">仮パスワード</Label>
                   <Input
                     id="password"
                     type="password"
