@@ -782,7 +782,7 @@ export default function AIChatBubble() {
             type="button"
             aria-label="AIアドバイザーを開く"
             data-testid="ai-chat-floating-button"
-            className="fixed bottom-24 right-4 z-[40] w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
+            className="fixed bottom-24 right-4 z-[51] w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
             style={{
               background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.warning} 100%)`,
             }}
@@ -804,7 +804,7 @@ export default function AIChatBubble() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 100, scale: 0.9 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed bottom-24 right-4 z-[30] w-[calc(100vw-32px)] max-w-[380px] h-[500px] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+            className="fixed bottom-24 right-4 z-[51] w-[calc(100vw-32px)] max-w-[380px] h-[500px] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
             style={{ background: colors.bg }}
           >
             {/* ヘッダー */}
@@ -849,8 +849,8 @@ export default function AIChatBubble() {
                   <ChevronDown size={18} color={colors.textMuted} />
                 </button>
                 <button
-                  onClick={() => setIsOpen(false)}
-                  aria-label="AIチャットを閉じる"
+                  onClick={() => { setIsOpen(false); setIsToggling(false); }}
+                  aria-label="閉じる"
                   className="p-2 rounded-full hover:bg-gray-100"
                 >
                   <X size={18} color={colors.textMuted} />

@@ -13,17 +13,21 @@ import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
+// ProfileReminderBanner は dynamic import で lazy load (#322)
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS } from "@/lib/nutrition-constants";
 import remarkGfm from "remark-gfm";
 
-// #182: dynamic import で初期バンドルを削減
+// #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
   () => import("@/components/ai-assistant").then(m => ({ default: m.V4GenerateModal })),
   { ssr: false }
 );
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
+  { ssr: false }
+);
+const ProfileReminderBannerDynamic = dynamic(
+  () => import("@/components/ProfileReminderBanner").then(m => ({ default: m.ProfileReminderBanner })),
   { ssr: false }
 );
 import {
@@ -972,9 +976,11 @@ export default function WeeklyMenuPage() {
 
         console.log('[restore] Restoring V4 generation progress for requestId:', requestId);
 
-        // まずDBから現在の状態を取得（リロード中に完了していた場合に対応）
-        const currentStatus = await v4Generation.getRequestStatus(requestId);
-        console.log('[restore] Current status from DB:', currentStatus);
+        // まずステータスAPIで現在の状態を取得（リロード中に完了していた場合に対応）
+        // Supabase クライアント直接参照ではなく API 経由とすることで E2E モックが機能する
+        const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        const currentStatus = statusRes.ok ? await statusRes.json() : null;
+        console.log('[restore] Current status from API:', currentStatus);
 
         // すでに完了している場合
         if (currentStatus?.status === 'completed') {
@@ -1382,6 +1388,15 @@ export default function WeeklyMenuPage() {
       }
     };
   }, [cleanupRealtime]);
+
+  // #322: debounce timer cleanup on unmount (メモリリーク防止)
+  useEffect(() => {
+    const timers = toggleDebounceTimerRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
   
   // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
@@ -1500,7 +1515,7 @@ export default function WeeklyMenuPage() {
                 const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
                 if (statusRes.ok) {
                   const { status, error_message } = await statusRes.json();
-                  if (status === 'pending' || status === 'processing') {
+                  if (status === 'queued' || status === 'pending' || status === 'processing') {
                     console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
                     setIsGenerating(true);
                     subscribeToRequestStatus(targetDate, requestId);
@@ -2800,10 +2815,35 @@ export default function WeeklyMenuPage() {
     } catch (e) { console.error('Failed to update meal:', e); }
   };
   
-  // Toggle completion (can check and uncheck)
+  // #322: meal toggle debounce timer (メモリリーク防止のため cleanup は下の useEffect で実施)
+  const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const pendingToggleWeeklyRef = useRef<Set<string>>(new Set());
+
+  // Toggle completion (can check and uncheck) — debounce 250ms (#322)
   const toggleMealCompletion = async (dayId: string, meal: PlannedMeal) => {
+    const mealId = meal.id ?? '';
+    // 既存タイマーをキャンセル
+    const existing = toggleDebounceTimerRef.current.get(mealId);
+    if (existing) {
+      clearTimeout(existing);
+      toggleDebounceTimerRef.current.delete(mealId);
+    }
+    // PATCH が進行中なら無視
+    if (pendingToggleWeeklyRef.current.has(mealId)) return;
+
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        toggleDebounceTimerRef.current.delete(mealId);
+        resolve();
+      }, 250);
+      toggleDebounceTimerRef.current.set(mealId, timer);
+    });
+
+    if (pendingToggleWeeklyRef.current.has(mealId)) return;
+    pendingToggleWeeklyRef.current.add(mealId);
     const newCompleted = !meal.isCompleted;
-    handleUpdateMeal(dayId, meal.id, { isCompleted: newCompleted });
+    await handleUpdateMeal(dayId, meal.id, { isCompleted: newCompleted });
+    pendingToggleWeeklyRef.current.delete(mealId);
   };
 
   // Add pantry item
@@ -5095,24 +5135,27 @@ export default function WeeklyMenuPage() {
               const isPast = day.dateStr < todayStr;
               return (
                 <button
+                  type="button"
                   key={day.dateStr}
                   onClick={() => {
                     setSelectedDayIndex(idx);
                     setIsDayNutritionExpanded(false);
                   }}
+                  aria-label={`${day.date.getMonth() + 1}月${day.date.getDate()}日 ${day.dayOfWeek}`}
+                  aria-pressed={isSelected}
                   className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all relative"
                   style={{
-                    background: isSelected 
-                      ? (isPast ? colors.textMuted : colors.accent) 
+                    background: isSelected
+                      ? (isPast ? colors.textMuted : colors.accent)
                       : (isPast ? 'rgba(0,0,0,0.03)' : 'transparent'),
                     border: isToday && !isSelected ? `2px solid ${colors.accent}` : 'none',
                   }}
                 >
                   <span style={{ fontSize: 9, color: isSelected ? 'rgba(255,255,255,0.7)' : colors.textMuted }}>{day.date.getDate()}</span>
-                  <span style={{ 
-                    fontSize: 13, 
-                    fontWeight: 600, 
-                    color: isSelected ? '#fff' : isPast ? colors.textMuted : isWeekend ? colors.accent : colors.text 
+                  <span style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: isSelected ? '#fff' : isPast ? colors.textMuted : isWeekend ? colors.accent : colors.text
                   }}>{day.dayOfWeek}</span>
                 </button>
               );
@@ -5133,7 +5176,7 @@ export default function WeeklyMenuPage() {
       </div>
 
       {/* === Profile Reminder Banner === */}
-      <ProfileReminderBanner />
+      <ProfileReminderBannerDynamic />
 
       {/* === 生成失敗エラーモーダル === */}
       {generationFailedError && (

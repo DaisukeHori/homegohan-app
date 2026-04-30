@@ -16,6 +16,19 @@ export async function login(page: Page) {
     page.locator("button[type=submit]").click(),
   ]);
   await expect(page).not.toHaveURL(/\/login/);
+
+  // オンボーディング未完了の場合はAPIで完了させてホームへ誘導する
+  if (page.url().includes("/onboarding")) {
+    await page.evaluate(async () => {
+      try {
+        await fetch("/api/onboarding/complete", { method: "POST", credentials: "include" });
+      } catch {
+        // オンボーディング完了APIのエラーは無視して続行
+      }
+    });
+    await page.goto("/home");
+    await page.waitForURL("**/home", { timeout: 30_000 });
+  }
 }
 
 type AuthFixtures = {

@@ -25,12 +25,19 @@ export async function GET(request: Request) {
   const limit = parseInt(searchParams.get('limit') || '50');
   const offset = (page - 1) * limit;
 
+  // status / inquiryType の enum バリデーション
+  const ALLOWED_STATUSES = ['pending', 'in_progress', 'resolved', 'closed'];
+  if (status && !ALLOWED_STATUSES.includes(status)) {
+    return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
+  }
+  const ALLOWED_INQUIRY_TYPES = ['general', 'bug_report', 'feature_request', 'billing', 'account', 'other'];
+  if (inquiryType && !ALLOWED_INQUIRY_TYPES.includes(inquiryType)) {
+    return NextResponse.json({ error: 'Invalid inquiry type' }, { status: 400 });
+  }
+
   let dbQuery = supabase
     .from('inquiries')
-    .select(`
-      *,
-      user_profiles(nickname)
-    `, { count: 'exact' });
+    .select('*', { count: 'exact' });
 
   if (status) {
     dbQuery = dbQuery.eq('status', status);
@@ -48,7 +55,7 @@ export async function GET(request: Request) {
   const inquiries = (data || []).map((i: any) => ({
     id: i.id,
     userId: i.user_id,
-    userName: i.user_profiles?.nickname || null,
+    userName: null,
     inquiryType: i.inquiry_type,
     email: i.email,
     subject: i.subject,

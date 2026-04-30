@@ -12,7 +12,13 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const streakType = searchParams.get('type') || 'daily_record';
+  const rawType = searchParams.get('type') || 'daily_record';
+
+  const ALLOWED_STREAK_TYPES = ['daily_record', 'meal_record', 'health_record', 'exercise_record'] as const;
+  if (!ALLOWED_STREAK_TYPES.includes(rawType as any)) {
+    return NextResponse.json({ error: 'Invalid streak type' }, { status: 400 });
+  }
+  const streakType = rawType;
 
   // 連続記録を取得
   const { data: streak, error } = await supabase
@@ -108,7 +114,13 @@ export async function DELETE(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const streakType = searchParams.get('type') || 'daily_record';
+  const rawTypeDelete = searchParams.get('type') || 'daily_record';
+
+  const ALLOWED_STREAK_TYPES_DELETE = ['daily_record', 'meal_record', 'health_record', 'exercise_record'] as const;
+  if (!ALLOWED_STREAK_TYPES_DELETE.includes(rawTypeDelete as any)) {
+    return NextResponse.json({ error: 'Invalid streak type' }, { status: 400 });
+  }
+  const streakType = rawTypeDelete;
 
   const { error } = await supabase
     .from('health_streaks')

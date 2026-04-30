@@ -57,8 +57,9 @@ export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [todayPlan, setTodayPlan] = useState<TodayMealPlan | null>(null);
   const [loading, setLoading] = useState(true);
-  // #191: meal toggle debounce — pending mealId set to prevent duplicate PATCH
+  // #191/#322: meal toggle debounce — pending mealId set + 250ms debounce timer
   const pendingToggleRef = useRef<Set<string>>(new Set());
+  const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [dailySummary, setDailySummary] = useState<DailySummary>({
     totalCalories: 0,
     completedCount: 0,
@@ -865,9 +866,28 @@ export const useHomeData = () => {
     }
   };
 
-  // 食事完了をトグル (Bug-10: 楽観的UI更新 + 失敗時ロールバック, #191: debounce)
+  // 食事完了をトグル (Bug-10: 楽観的UI更新 + 失敗時ロールバック, #191/#322: debounce 250ms)
   const toggleMealCompletion = async (mealId: string, currentStatus: boolean) => {
+    // #322: 250ms debounce — 既存タイマーをキャンセルして再スケジュール
+    const existingTimer = toggleDebounceTimerRef.current.get(mealId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      toggleDebounceTimerRef.current.delete(mealId);
+    }
+
     // #191: 同一 mealId の PATCH が進行中なら無視（連打対策）
+    if (pendingToggleRef.current.has(mealId)) return;
+
+    // debounce: 250ms 後に実際の処理を実行
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        toggleDebounceTimerRef.current.delete(mealId);
+        resolve();
+      }, 250);
+      toggleDebounceTimerRef.current.set(mealId, timer);
+    });
+
+    // debounce 待機後、再度 pending チェック（待機中に別のリクエストが始まった可能性）
     if (pendingToggleRef.current.has(mealId)) return;
     pendingToggleRef.current.add(mealId);
 
@@ -930,6 +950,15 @@ export const useHomeData = () => {
     // #191: PATCH 完了後に pending を解除
     pendingToggleRef.current.delete(mealId);
   };
+
+  // #322: debounce timer cleanup on unmount (メモリリーク防止)
+  useEffect(() => {
+    const timers = toggleDebounceTimerRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
 
   useEffect(() => {
     void fetchHomeData();

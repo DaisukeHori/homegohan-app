@@ -1063,7 +1063,7 @@ function OnboardingQuestionsContent() {
                         type="number"
                         placeholder="60"
                         min={10}
-                        max={300}
+                        max={200}
                         step={0.1}
                         value={answers.weight || ''}
                         className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
@@ -1076,7 +1076,7 @@ function OnboardingQuestionsContent() {
                     disabled={
                       !answers.age ||
                       !answers.height || Number(answers.height) < 50 || Number(answers.height) > 250 ||
-                      !answers.weight || Number(answers.weight) < 10 || Number(answers.weight) > 300
+                      !answers.weight || Number(answers.weight) < 10 || Number(answers.weight) > 200
                     }
                     className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-3 sm:mt-4 text-sm sm:text-base"
                   >

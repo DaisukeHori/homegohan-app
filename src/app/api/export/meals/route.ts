@@ -34,6 +34,16 @@ export async function GET(request: Request) {
   const startDate = searchParams.get('start_date');
   const endDate = searchParams.get('end_date');
 
+  // 日付形式バリデーション: YYYY-MM-DD 形式かつ有効な日付のみ許可
+  const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const isValidDate = (s: string) => ISO_DATE_RE.test(s) && !isNaN(new Date(s).getTime());
+  if (startDate && !isValidDate(startDate)) {
+    return NextResponse.json({ error: 'Invalid start_date' }, { status: 400 });
+  }
+  if (endDate && !isValidDate(endDate)) {
+    return NextResponse.json({ error: 'Invalid end_date' }, { status: 400 });
+  }
+
   // user_daily_meals → planned_meals を JOIN
   let query = supabase
     .from('user_daily_meals')
