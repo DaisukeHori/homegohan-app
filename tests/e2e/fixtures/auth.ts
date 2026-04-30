@@ -47,6 +47,9 @@ export async function login(page: Page): Promise<void> {
   for (let attempt = 1; attempt <= MAX_LOGIN_RETRIES; attempt++) {
     try {
       await page.goto("/login");
+      // React ハイドレーションが完了するまで待機する。
+      // ハイドレーション前に submit をクリックすると form が native GET 送信されてしまう。
+      await page.waitForLoadState("networkidle");
       await page.locator("#email").fill(E2E_USER.email);
       await page.locator("#password").fill(E2E_USER.password);
       await Promise.all([

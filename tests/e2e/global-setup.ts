@@ -52,6 +52,9 @@ async function globalSetup(config: FullConfig): Promise<void> {
 
     try {
       await page.goto(`${baseURL}/login`);
+      // React ハイドレーションが完了するまで待機する。
+      // ハイドレーション前に submit をクリックすると form が native GET 送信されてしまう。
+      await page.waitForLoadState("networkidle");
       await page.locator("#email").fill(email);
       await page.locator("#password").fill(password);
 
