@@ -5,6 +5,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { todayLocal } from "@/lib/date-utils";
 import {
   Camera, Upload, X, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity
@@ -60,7 +61,7 @@ interface FormData {
 }
 
 const initialFormData: FormData = {
-  checkup_date: new Date().toISOString().split('T')[0],
+  checkup_date: todayLocal(),
   facility_name: '',
   checkup_type: '定期健診',
   height: '',

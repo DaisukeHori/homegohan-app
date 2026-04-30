@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { formatLocalDate } from "@/lib/date-utils";
 import {
   ArrowLeft, Scale, Heart, Moon, TrendingUp, TrendingDown,
   Calendar, ChevronLeft, ChevronRight, Target
@@ -56,7 +57,7 @@ export default function HealthGraphsPage() {
     startDate.setDate(startDate.getDate() - days);
     
     try {
-      const res = await fetch(`/api/health/records?start_date=${startDate.toISOString().split('T')[0]}&limit=365`);
+      const res = await fetch(`/api/health/records?start_date=${formatLocalDate(startDate)}&limit=365`);
       if (res.ok) {
         const data = await res.json();
         setRecords(data.records || []);
@@ -99,7 +100,7 @@ export default function HealthGraphsPage() {
     startDate.setDate(startDate.getDate() - days + 1);
 
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = formatLocalDate(d);
       const record = records.find(r => r.record_date === dateStr);
 
       let value: number | null = null;

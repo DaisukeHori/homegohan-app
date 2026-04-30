@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { todayLocal } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
 import {
   Scale, Heart, Moon, Droplets, Activity, Thermometer,
@@ -61,7 +62,7 @@ export default function HealthRecordPage() {
     condition: true,
   });
   
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayLocal();
   const [recordDate, setRecordDate] = useState(today);
   
   const [formData, setFormData] = useState<FormData>({

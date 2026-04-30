@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
+import { todayLocal, formatLocalDate } from '@/lib/date-utils';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
   const recordDate =
     typeof body.record_date === 'string' && body.record_date.trim()
       ? body.record_date.trim()
-      : new Date().toISOString().split('T')[0];
+      : todayLocal();
 
   if (!DATE_PATTERN.test(recordDate)) {
     return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
@@ -101,7 +102,7 @@ export async function POST(request: NextRequest) {
   // 前日との比較データを取得
   const yesterday = new Date(recordDate);
   yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  const yesterdayStr = formatLocalDate(yesterday);
 
   const { data: previousRecord } = await supabase
     .from('health_records')
@@ -125,7 +126,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   // user_profilesの体重・体組成も更新（今日の記録の場合）
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayLocal();
   if (recordDate === today) {
     const profileUpdate: Record<string, number> = {};
     if (typeof sanitizedRecord.weight === 'number') profileUpdate.weight = sanitizedRecord.weight;
@@ -166,7 +167,7 @@ async function updateStreak(supabase: any, userId: string, recordDate: string) {
   const today = new Date(recordDate);
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  const yesterdayStr = formatLocalDate(yesterday);
 
   if (streak) {
     const lastDate = streak.last_activity_date;
