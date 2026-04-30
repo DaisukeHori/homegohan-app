@@ -99,8 +99,19 @@ export default function BadgesPage() {
     fetchBadges();
   }, []);
 
+  // #210: Escape キーでバッジ詳細モーダルを閉じる
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedBadge) {
+        setSelectedBadge(null);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedBadge]);
+
   // ランク計算
-  const currentRankIndex = RANKS.findIndex((r, i) => 
+  const currentRankIndex = RANKS.findIndex((r, i) =>
     earnedCount >= r.min && (i === RANKS.length - 1 || earnedCount < RANKS[i+1].min)
   );
   const currentRank = RANKS[currentRankIndex] || RANKS[0];

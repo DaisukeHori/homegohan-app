@@ -9,9 +9,20 @@ import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storag
 
 type WeekStartDay = 'sunday' | 'monday';
 
-// スイッチコンポーネント
-const Switch = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
+// スイッチコンポーネント (#207: role=switch / aria-checked / aria-label 追加)
+const Switch = ({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+}) => (
   <button
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
     onClick={onChange}
     className={`w-12 h-7 rounded-full p-1 transition-colors duration-300 ${checked ? 'bg-[#FF8A65]' : 'bg-gray-200'}`}
   >
@@ -174,7 +185,7 @@ export default function SettingsPage() {
                  <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-500">🔔</div>
                  <span className="font-bold text-gray-700">通知</span>
                </div>
-               <Switch checked={settings.notifications} onChange={() => toggle('notifications')} />
+               <Switch checked={settings.notifications} onChange={() => toggle('notifications')} label="通知を有効化" />
              </div>
 
              <div className="flex items-center justify-between p-4 border-b border-gray-50">
@@ -182,7 +193,7 @@ export default function SettingsPage() {
                  <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500">🤖</div>
                  <span className="font-bold text-gray-700">自動解析</span>
                </div>
-               <Switch checked={settings.autoAnalyze} onChange={() => toggle('autoAnalyze')} />
+               <Switch checked={settings.autoAnalyze} onChange={() => toggle('autoAnalyze')} label="自動解析を有効化" />
              </div>
 
              <div className="flex items-center justify-between p-4">
