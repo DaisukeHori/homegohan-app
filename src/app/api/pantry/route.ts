@@ -36,6 +36,10 @@ export async function POST(request: Request) {
     const json = await request.json();
     const { name, amount, category, expirationDate } = json;
 
+    if (!name?.trim()) {
+      return NextResponse.json({ error: 'name is required' }, { status: 400 });
+    }
+
     const { data, error } = await supabase
       .from('pantry_items')
       .insert({

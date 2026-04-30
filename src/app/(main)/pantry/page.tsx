@@ -189,6 +189,7 @@ export default function PantryPage() {
         </div>
         <button
           onClick={() => fileInputRef.current?.click()}
+          data-testid="add-by-photo-btn"
           className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium"
           style={{ backgroundColor: colors.accent, color: "white" }}
         >
@@ -309,7 +310,10 @@ export default function PantryPage() {
             <RefreshCw size={24} className="animate-spin" style={{ color: colors.accent }} />
           </div>
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-4">
+          <div
+            data-testid="pantry-empty-state"
+            className="flex flex-col items-center justify-center py-16 gap-4"
+          >
             <Package size={48} style={{ color: colors.textMuted }} />
             <p className="text-sm" style={{ color: colors.textMuted }}>食材がありません</p>
             <button
@@ -337,7 +341,11 @@ export default function PantryPage() {
                   <div className="flex items-center gap-2">
                     <p className="font-medium truncate" style={{ color: colors.text }}>{item.name}</p>
                     {item.expirationDate && isExpiringSoon(item.expirationDate) && (
-                      <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: "#FFEBEE", color: colors.error }}>
+                      <span
+                        data-testid="expiry-soon-badge"
+                        className="text-xs px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: "#FFEBEE", color: colors.error }}
+                      >
                         期限間近
                       </span>
                     )}
