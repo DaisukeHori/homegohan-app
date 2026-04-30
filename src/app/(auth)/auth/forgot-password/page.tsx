@@ -18,9 +18,11 @@ export default function ForgotPasswordPage() {
     setError(null);
 
     const supabase = createClient();
-    
+    // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
+    const normalizedEmail = email.trim().toLowerCase();
+
     try {
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
         redirectTo: `${window.location.origin}/auth/reset-password`,
       });
 
@@ -69,7 +71,7 @@ export default function ForgotPasswordPage() {
                   メールを送信しました
                 </h1>
                 <p className="text-sm text-gray-500 mb-6">
-                  <span className="font-medium text-gray-700">{email}</span> 宛に
+                  <span className="font-medium text-gray-700">{email.trim().toLowerCase()}</span> 宛に
                   パスワードリセット用のリンクを送信しました。
                   メールを確認してください。
                 </p>
