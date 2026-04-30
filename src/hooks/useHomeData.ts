@@ -797,8 +797,8 @@ export const useHomeData = () => {
         }
       }
 
-      // チェックイン後に分析を再取得
-      await fetchPerformanceAnalysis(authUser.id);
+      // チェックイン後に分析を再取得（非同期で実行し、フィードバック表示をブロックしない）
+      void fetchPerformanceAnalysis(authUser.id);
 
       return { success: true, data };
     } catch (e) {
