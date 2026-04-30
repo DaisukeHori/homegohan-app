@@ -61,6 +61,14 @@ test.describe('settings toggle persistence (#69)', () => {
     ]);
     await authedPage.waitForLoadState('domcontentloaded');
 
+    // GET レスポンス後に React の state 更新が DOM に反映されるのを待つ
+    // (notifSwitch は reload 後に再解決される locator)
+    if (!initialState) {
+      await expect(notifSwitch).toHaveClass(/bg-\[#FF8A65\]/, { timeout: 10_000 });
+    } else {
+      await expect(notifSwitch).not.toHaveClass(/bg-\[#FF8A65\]/, { timeout: 10_000 });
+    }
+
     const afterReloadState = await isCheckedClass();
     expect(afterReloadState).toBe(!initialState);
 
@@ -86,6 +94,12 @@ test.describe('settings toggle persistence (#69)', () => {
       authedPage.reload(),
     ]);
     await authedPage.waitForLoadState('domcontentloaded');
+    // GET レスポンス後に React の state 更新が DOM に反映されるのを待つ
+    if (initialState) {
+      await expect(notifSwitch).toHaveClass(/bg-\[#FF8A65\]/, { timeout: 10_000 });
+    } else {
+      await expect(notifSwitch).not.toHaveClass(/bg-\[#FF8A65\]/, { timeout: 10_000 });
+    }
     const restoredState = await isCheckedClass();
     expect(restoredState).toBe(initialState);
   });
