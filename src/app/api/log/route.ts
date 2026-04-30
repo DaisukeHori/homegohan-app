@@ -14,15 +14,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // ユーザーIDを取得（認証済みの場合）
-    let userId: string | undefined;
-    try {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      userId = user?.id;
-    } catch {
-      // 認証エラーは無視
+    // 認証チェック: 未認証リクエストは拒否 (fail-closed)
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const userId = user.id;
 
     // service_roleでログを保存
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -32,9 +30,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
     }
 
-    const supabase = createSupabaseClient(supabaseUrl, supabaseServiceKey);
+    const supabaseAdmin = createSupabaseClient(supabaseUrl, supabaseServiceKey);
 
-    const { error } = await supabase.from('app_logs').insert({
+    const { error } = await supabaseAdmin.from('app_logs').insert({
       level,
       source: 'client',
       message,

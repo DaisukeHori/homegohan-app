@@ -110,7 +110,7 @@ export async function GET(request: Request) {
 
     const { data: members, error } = await supabase
       .from('user_profiles')
-      .select('*')
+      .select('id, nickname, roles, created_at, updated_at, organization_id')
       .eq('organization_id', adminProfile.organization_id)
       .order('created_at', { ascending: false });
 
