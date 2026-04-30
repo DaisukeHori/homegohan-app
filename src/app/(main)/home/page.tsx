@@ -216,7 +216,7 @@ export default function HomePage() {
           </div>
 
           {/* 健康記録サマリー */}
-          <Link href="/health">
+          <Link href="/health" prefetch={false}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
