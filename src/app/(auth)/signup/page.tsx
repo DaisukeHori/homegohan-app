@@ -55,7 +55,8 @@ export default function SignupPage() {
     e.preventDefault();
     setFormError(null);
     const formData = new FormData(e.currentTarget);
-    const email = formData.get('email') as string;
+    // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
+    const email = (formData.get('email') as string).trim().toLowerCase();
     const password = formData.get('password') as string;
 
     // クライアント側でパスワード強度をチェック (Bug-33)
@@ -85,15 +86,19 @@ export default function SignupPage() {
           'User already registered': 'このメールアドレスは既に登録されています',
         };
         setFormError(messages[error.message] ?? `登録に失敗しました: ${error.message}`);
+        // #286: エラー確定後に即座にローディングを解除（finally でも解除されるが明示的に）
+        setIsLoading(false);
         return;
       }
 
       // メール確認画面へ
       if (data.user && !data.session) {
         // Supabase の email confirmation 有効時、重複メールアドレスは
-        // silent-success を返し identities が空配列になる
+        // silent-success を返し identities が空配列になる (#286)
         if (!data.user.identities || data.user.identities.length === 0) {
           setFormError('このメールアドレスは既に登録されています。ログインへ進んでください。');
+          // #286: 重複メール時もローディングを解除してボタン固着を防ぐ
+          setIsLoading(false);
           return;
         }
         // メール確認が必要な場合
@@ -104,8 +109,6 @@ export default function SignupPage() {
       }
     } catch (error: any) {
       console.error('Signup error:', error);
-      // #148: ネットワークエラー時にローディングが固着しないよう明示的に解除
-      setIsLoading(false);
       const msg = error?.message || error?.toString() || '不明なエラー';
       setFormError(
         /network|fetch|failed to fetch/i.test(msg)
@@ -113,7 +116,7 @@ export default function SignupPage() {
           : `予期せぬエラーが発生しました: ${msg}`
       );
     } finally {
-      // finally でも必ず解除（try 内 return 後も含む）
+      // #286: finally で必ずローディング解除（すべての return 経路を網羅）
       setIsLoading(false);
     }
   };

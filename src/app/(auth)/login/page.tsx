@@ -9,6 +9,10 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
 
+// #287: rate limit 検知用の定数
+const RATE_LIMIT_KEY = 'auth_last_fail_ts';
+const RATE_LIMIT_WINDOW_MS = 30_000; // 30秒
+
 function LoginContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,10 +53,21 @@ function LoginContent() {
 
   const handleEmailLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setIsLoading(true);
     setError(null);
+
+    // #287: client-side rate limit チェック（30秒以内の再試行を弾く）
+    const lastFailTs = parseInt(localStorage.getItem(RATE_LIMIT_KEY) || '0', 10);
+    const now = Date.now();
+    if (lastFailTs && now - lastFailTs < RATE_LIMIT_WINDOW_MS) {
+      const remaining = Math.ceil((RATE_LIMIT_WINDOW_MS - (now - lastFailTs)) / 1000);
+      setError(`しばらくしてから再度お試しください（あと ${remaining} 秒）`);
+      return;
+    }
+
+    setIsLoading(true);
     const formData = new FormData(e.currentTarget);
-    const email = formData.get('email') as string;
+    // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
+    const email = (formData.get('email') as string).trim().toLowerCase();
     const password = formData.get('password') as string;
 
     try {
@@ -63,8 +78,25 @@ function LoginContent() {
 
       if (error) {
         // エラーコードに応じたメッセージ
-        if (error.message.includes('Invalid login credentials')) {
-          setError('メールアドレスまたはパスワードが正しくありません。');
+        if (
+          error.message.includes('Invalid login credentials') ||
+          error.message.includes('over_email_send_rate_limit') ||
+          error.message.includes('For security purposes') ||
+          error.message.includes('too many requests') ||
+          error.status === 429
+        ) {
+          // #287: rate limit または認証失敗 → 最終失敗時刻を記録
+          localStorage.setItem(RATE_LIMIT_KEY, String(Date.now()));
+          if (
+            error.status === 429 ||
+            error.message.includes('over_email_send_rate_limit') ||
+            error.message.includes('For security purposes') ||
+            error.message.includes('too many requests')
+          ) {
+            setError('しばらくしてから再度お試しください。');
+          } else {
+            setError('メールアドレスまたはパスワードが正しくありません。');
+          }
         } else if (error.message.includes('Email not confirmed')) {
           setError('メールアドレスが確認されていません。確認メールをご確認ください。');
         } else {
@@ -72,6 +104,9 @@ function LoginContent() {
         }
         return;
       }
+
+      // ログイン成功時は失敗タイムスタンプをクリア
+      localStorage.removeItem(RATE_LIMIT_KEY);
 
       // ユーザーロールとオンボーディング状態を確認してリダイレクト先を決定
       const { data: { user } } = await supabase.auth.getUser();
