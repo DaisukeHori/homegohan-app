@@ -219,11 +219,13 @@ export const useHomeData = () => {
         console.error('Home profile fetch error:', profileError);
       }
       
+      // email local part をニックネームとして表示しない (#60)
+      // resolveDisplayName に email を渡さず、nickname / user_metadata のみでフォールバック
       setUser({
         ...authUser,
         nickname: resolveDisplayName({
           nickname: profile?.nickname || null,
-          email: authUser.email || null,
+          email: null,
           userMetadata: authUser.user_metadata ?? null,
         }),
       });
@@ -234,8 +236,8 @@ export const useHomeData = () => {
         .select('*')
         .eq('user_id', authUser.id)
         .eq('date', todayStr)
-        .single();
-      
+        .maybeSingle();
+
       if (activity) {
         setActivityLevel(activity.feeling);
       }
@@ -539,7 +541,7 @@ export const useHomeData = () => {
         .eq('user_id', userId)
         .order('obtained_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (latestData && (latestData as any).badges) {
         const badge = (latestData as any).badges;
@@ -593,7 +595,7 @@ export const useHomeData = () => {
         .select('*')
         .eq('user_id', userId)
         .eq('record_date', todayStr)
-        .single();
+        .maybeSingle();
 
       // 連続記録
       const { data: streak } = await supabase
@@ -601,7 +603,7 @@ export const useHomeData = () => {
         .select('current_streak')
         .eq('user_id', userId)
         .eq('streak_type', 'daily_record')
-        .single();
+        .maybeSingle();
 
       // 最新の体重と昨日の体重
       const { data: recentWeights } = await supabase
@@ -628,7 +630,7 @@ export const useHomeData = () => {
         .eq('user_id', userId)
         .eq('goal_type', 'weight')
         .eq('status', 'active')
-        .single();
+        .maybeSingle();
 
       // アラートがあるか確認
       const { count: alertCount } = await supabase

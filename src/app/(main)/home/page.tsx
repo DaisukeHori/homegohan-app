@@ -66,6 +66,24 @@ const getCurrentMealType = (): MealType => {
 };
 
 export default function HomePage() {
+  // Hydration 対応: new Date() 系は CSR のみで評価する
+  const [clientDate, setClientDate] = useState<string>('');
+  const [greeting, setGreeting] = useState<string>('');
+  const [currentMealTypeState, setCurrentMealTypeState] = useState<MealType>('breakfast');
+  const [todayISODate, setTodayISODate] = useState<string>('');
+
+  useEffect(() => {
+    const now = new Date();
+    setClientDate(now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }));
+    setTodayISODate(now.toISOString().split('T')[0]);
+    const hour = now.getHours();
+    if (hour < 5) setGreeting('おやすみなさい');
+    else if (hour < 11) setGreeting('おはようございます');
+    else if (hour < 17) setGreeting('こんにちは');
+    else setGreeting('こんばんは');
+    setCurrentMealTypeState(getCurrentMealType());
+  }, []);
+
   const {
     user,
     todayPlan,
@@ -114,22 +132,13 @@ export default function HomePage() {
     return () => clearTimeout(timer);
   }, [checkinFeedback]);
 
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 5) return "おやすみなさい";
-    if (hour < 11) return "おはようございます";
-    if (hour < 17) return "こんにちは";
-    return "こんばんは";
-  };
-
-  const completionRate = dailySummary.totalCount > 0 
-    ? Math.round((dailySummary.completedCount / dailySummary.totalCount) * 100) 
+  const completionRate = dailySummary.totalCount > 0
+    ? Math.round((dailySummary.completedCount / dailySummary.totalCount) * 100)
     : 0;
 
-  const currentMealType = getCurrentMealType();
-  const nextMeal = todayPlan?.meals.find(m => 
-    !m.isCompleted && (m.mealType === currentMealType || 
-      ['breakfast', 'lunch', 'dinner'].indexOf(m.mealType) > ['breakfast', 'lunch', 'dinner'].indexOf(currentMealType))
+  const nextMeal = todayPlan?.meals.find(m =>
+    !m.isCompleted && (m.mealType === currentMealTypeState ||
+      ['breakfast', 'lunch', 'dinner'].indexOf(m.mealType) > ['breakfast', 'lunch', 'dinner'].indexOf(currentMealTypeState))
   );
 
   return (
@@ -146,11 +155,15 @@ export default function HomePage() {
           {/* 日付 & プロフィール */}
           <div className="flex justify-between items-start mb-6">
             <div>
-              <p className="text-sm font-medium text-gray-500 mb-1">
-                {new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
+              <p className="text-sm font-medium text-gray-500 mb-1" suppressHydrationWarning>
+                {clientDate}
               </p>
               <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">
-                {getGreeting()}、<span style={{ color: colors.accent }}>{user?.nickname || 'ゲスト'}</span>さん
+                {user === null ? (
+                  <span className="text-gray-400">読み込み中...</span>
+                ) : (
+                  <><span suppressHydrationWarning>{greeting}</span>、<span style={{ color: colors.accent }}>{user.nickname || 'ゲスト'}</span>さん</>
+                )}
               </h1>
             </div>
             <Link href="/profile">
@@ -697,7 +710,7 @@ export default function HomePage() {
                     const meals = todayPlan.meals.filter(m => m.mealType === mealType);
                     const mealConfig = MEAL_CONFIG[mealType];
                     const MealIcon = mealConfig.icon;
-                    const isCurrentMeal = mealType === currentMealType;
+                    const isCurrentMeal = mealType === currentMealTypeState;
                     
                     if (meals.length === 0) {
                       return (
@@ -882,7 +895,7 @@ export default function HomePage() {
               {/* 棒グラフ */}
               <div className="flex items-end justify-between gap-2 h-24">
                 {weeklyStats.days.map((day, i) => {
-                  const isToday = day.date === new Date().toISOString().split('T')[0];
+                  const isToday = todayISODate ? day.date === todayISODate : false;
                   const height = day.mealCount > 0 ? Math.max(day.cookRate, 10) : 5;
                   
                   return (
@@ -980,7 +993,7 @@ export default function HomePage() {
                     return (
                       <div key={item.id} className="flex justify-between items-center">
                         <span className="text-sm text-amber-900">{item.name}</span>
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                        <span suppressHydrationWarning className={`text-xs font-bold px-2 py-0.5 rounded ${
                           daysLeft <= 1 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
                         }`}>
                           {daysLeft <= 0 ? '今日まで' : `あと${daysLeft}日`}
@@ -1121,7 +1134,7 @@ export default function HomePage() {
                 <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">日別詳細</h3>
                 <div className="space-y-2">
                   {weeklyStats.days.map((day) => {
-                    const isToday = day.date === new Date().toISOString().split('T')[0];
+                    const isToday = todayISODate ? day.date === todayISODate : false;
                     return (
                       <div key={day.date} className={`flex items-center justify-between p-3 rounded-xl ${isToday ? 'bg-orange-50 border border-orange-200' : 'bg-gray-50'}`}>
                         <div className="flex items-center gap-3">
