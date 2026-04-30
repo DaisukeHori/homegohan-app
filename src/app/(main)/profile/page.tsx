@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { motion, AnimatePresence } from "framer-motion";
-import { clearUserScopedLocalStorage } from "@/lib/user-storage";
+import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { toUserProfile } from "@/lib/converter";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
@@ -357,6 +357,7 @@ function ProfilePageContent() {
                 clearUserScopedLocalStorage();
                 const supabase = createClient();
                 await supabase.auth.signOut();
+                broadcastSignOut();
                 router.push('/login');
               }}
             >
@@ -577,6 +578,7 @@ function ProfilePageContent() {
                 clearUserScopedLocalStorage();
                 const supabase = createClient();
                 await supabase.auth.signOut();
+                broadcastSignOut();
                 router.push('/login');
               }}
               className="w-full flex items-center gap-4 p-4 hover:bg-red-50 transition-colors text-left"

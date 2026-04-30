@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
 import AIChatBubble from "@/components/AIChatBubble";
 import { createClient } from "@/lib/supabase/client";
+import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 
 // ロール別の管理メニュー
 const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
@@ -48,6 +49,34 @@ export default function MainLayout({
       }
     };
     fetchUserRoles();
+  }, [supabase]);
+
+  // #145: signOut を別タブにも伝播させる
+  useEffect(() => {
+    // Supabase onAuthStateChange で同一タブ内のサインアウトを検知
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        clearUserScopedLocalStorage();
+        window.location.href = '/login';
+      }
+    });
+
+    // BroadcastChannel で別タブからの signOut を受信
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel('auth');
+      channel.addEventListener('message', (e) => {
+        if (e.data === 'SIGNED_OUT') {
+          clearUserScopedLocalStorage();
+          window.location.href = '/login';
+        }
+      });
+    }
+
+    return () => {
+      subscription.unsubscribe();
+      channel?.close();
+    };
   }, [supabase]);
 
   // ロールに応じた管理メニューを取得（複数ロール対応）

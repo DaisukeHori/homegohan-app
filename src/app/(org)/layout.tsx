@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { clearUserScopedLocalStorage } from "@/lib/user-storage";
+import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 
 const orgNavItems = [
   { href: "/org/dashboard", label: "ダッシュボード", icon: "📊" },
@@ -71,6 +71,7 @@ export default function OrgLayout({
   const handleLogout = async () => {
     clearUserScopedLocalStorage();
     await supabase.auth.signOut();
+    broadcastSignOut();
     router.push("/login");
   };
 
