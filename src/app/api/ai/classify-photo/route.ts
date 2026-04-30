@@ -29,19 +29,42 @@ function recoverClassificationFromRawText(rawText: string): ClassifyPhotoResult 
   const pair = rawText.match(pairRegex);
 
   if (pair) {
+    const recoveredType = pair[1] as PhotoType;
+    const recoveredConf = Number(pair[2]);
+    // unknown かつ confidence が低い場合は文脈から meal を再推測
+    if (recoveredType === 'unknown' && recoveredConf < 0.5) {
+      const mealHints = /\b(food|meal|dish|plate|bowl|rice|soup|bento|定食|弁当|食事|料理|皿|茶碗|丼)\b/i;
+      if (mealHints.test(rawText)) {
+        return normalizeClassifyPhotoResult({ type: 'meal', confidence: 0.65 });
+      }
+    }
     return normalizeClassifyPhotoResult({
-      type: pair[1] as PhotoType,
-      confidence: Number(pair[2]),
+      type: recoveredType,
+      confidence: recoveredConf,
     });
   }
 
   const typeOnly = rawText.match(/"type"\s*:\s*"(meal|fridge|health_checkup|weight_scale|unknown)"/);
   if (!typeOnly) {
+    // 型が見当たらない場合でも meal キーワードがあれば meal として回収
+    const mealHints = /\b(food|meal|dish|plate|bowl|rice|soup|bento|定食|弁当|食事|料理|皿|茶碗|丼)\b/i;
+    if (mealHints.test(rawText)) {
+      return normalizeClassifyPhotoResult({ type: 'meal', confidence: 0.65 });
+    }
     return null;
   }
 
+  const recoveredType = typeOnly[1] as PhotoType;
+  // unknown を直接返さず文脈確認
+  if (recoveredType === 'unknown') {
+    const mealHints = /\b(food|meal|dish|plate|bowl|rice|soup|bento|定食|弁当|食事|料理|皿|茶碗|丼)\b/i;
+    if (mealHints.test(rawText)) {
+      return normalizeClassifyPhotoResult({ type: 'meal', confidence: 0.65 });
+    }
+  }
+
   return normalizeClassifyPhotoResult({
-    type: typeOnly[1] as PhotoType,
+    type: recoveredType,
     confidence: 0.7,
   });
 }
@@ -53,15 +76,20 @@ function buildPrompt(imageCount: number): string {
 以下の4つのカテゴリから最も適切なものを選んでください：
 
 1. "meal" - 食事・料理の写真
+   【例】定食（米飯＋主菜＋副菜＋汁物）、単品料理、弁当、丼、ラーメン、
+        パスタ、サラダ、ケーキ、カフェの飲み物。
+        器・トレイ・食材の盛り付けが写っていれば必ず "meal" を選んでください。
 2. "fridge" - 冷蔵庫の中身や買い物食材の写真
 3. "health_checkup" - 健康診断結果や検査票など紙の書類
 4. "weight_scale" - 体重計や体組成計のディスプレイ写真
 
 判定ルール:
 - 複数枚ある場合は、画像全体を見て最も一貫したカテゴリを選んでください
+- 料理・食事の画像（器、盛り付け、食卓）は **必ず "meal"** を選んでください
 - 体重計ディスプレイ写真は必ず "weight_scale" を最優先で判定してください
 - 紙の健康診断結果と体重計ディスプレイは厳密に区別してください
-- 判断が難しい場合のみ "unknown" を選んでください
+- 上記4カテゴリのどれかに明らかに当てはまる場合は "unknown" を絶対に使わないでください
+- 本当に判断がつかない場合のみ "unknown" を選んでください
 
 JSON では次の2項目だけ返してください:
 - "type": 上記4カテゴリのいずれか
@@ -122,14 +150,18 @@ function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): str
 }`;
 }
 
+const CLASSIFY_CONFIDENCE_THRESHOLD = 0.6;
+const CLASSIFY_RETRY_TEMPERATURE = 0.4;
+
 async function requestClassification(
   images: ImageInput[],
+  temperature = 0.1,
 ): Promise<{ result: ClassifyPhotoResult; model: string }> {
   const { data, model } = await generateGeminiJson<ClassifyPhotoResult>({
     prompt: buildPrompt(images.length),
     schema: classifyPhotoSchema as unknown as Record<string, unknown>,
     images,
-    temperature: 0.1,
+    temperature,
     maxOutputTokens: 96,
     model: CLASSIFY_MODEL,
     retryOnParseFailure: false,
@@ -140,6 +172,47 @@ async function requestClassification(
     result: normalizeClassifyPhotoResult(data),
     model,
   };
+}
+
+/**
+ * 1回目の confidence が低い場合に temperature を上げて再分類する。
+ * 最大2回リトライし、最も confidence の高い結果を返す。
+ */
+async function requestClassificationWithRetry(
+  images: ImageInput[],
+): Promise<{ result: ClassifyPhotoResult; model: string }> {
+  const first = await requestClassification(images);
+  if (
+    first.result.type !== 'unknown' &&
+    first.result.confidence >= CLASSIFY_CONFIDENCE_THRESHOLD
+  ) {
+    return first;
+  }
+
+  // confidence が低い / unknown → temperature を上げて最大2回再試行
+  const retries = await Promise.all([
+    requestClassification(images, CLASSIFY_RETRY_TEMPERATURE).catch(() => null),
+    requestClassification(images, CLASSIFY_RETRY_TEMPERATURE).catch(() => null),
+  ]);
+
+  const candidates = [first, ...retries.filter((r): r is NonNullable<typeof r> => r !== null)];
+
+  // unknown でなく confidence が最も高いものを優先
+  const best = candidates
+    .filter((c) => c.result.type !== 'unknown')
+    .sort((a, b) => b.result.confidence - a.result.confidence)[0]
+    ?? candidates.sort((a, b) => b.result.confidence - a.result.confidence)[0];
+
+  if (best !== first) {
+    console.info('Photo Classification: low-confidence retry picked better result', {
+      firstType: first.result.type,
+      firstConf: first.result.confidence,
+      bestType: best.result.type,
+      bestConf: best.result.confidence,
+    });
+  }
+
+  return best;
 }
 
 async function requestMealAnalysis(
@@ -182,7 +255,7 @@ export async function POST(request: Request) {
     }
 
     const classifyStartedAt = Date.now();
-    const { result: initialResult, model } = await requestClassification(images);
+    const { result: initialResult, model } = await requestClassificationWithRetry(images);
     const classifyElapsedMs = Date.now() - classifyStartedAt;
     let result: ClassifyPhotoResult | ClassifyPhotoWithMealAnalysisResult = initialResult;
 

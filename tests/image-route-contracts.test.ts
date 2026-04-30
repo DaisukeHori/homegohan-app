@@ -453,7 +453,8 @@ describe('image route contracts', () => {
     expect(mealAnalysisRequestBody.generationConfig.responseJsonSchema.properties.dishes).toBeDefined();
   });
 
-  it('classify-photo falls back to per-image classification when the batch result is weak', async () => {
+  it('classify-photo retries with higher temperature when the batch result is weak', async () => {
+    // 1回目: unknown (confidence 低い) → retry 2回 → meal が返る
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         candidates: [
@@ -517,11 +518,12 @@ describe('image route contracts', () => {
     }));
 
     expect(response.status).toBe(200);
+    // リトライで meal 0.81 が採用される (unknown より高信頼)
     await expect(response.json()).resolves.toMatchObject({
       type: 'meal',
-      confidence: 0.78,
-      description: '2枚を個別確認した結果',
+      confidence: 0.81,
     });
+    // 初回 1 回 + リトライ 2 回 = 3 回
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
