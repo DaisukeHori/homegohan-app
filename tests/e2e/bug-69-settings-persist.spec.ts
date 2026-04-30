@@ -18,7 +18,11 @@ test.describe('settings toggle persistence (#69)', () => {
       { timeout: 10_000 },
     );
 
-    const notifSwitch = authedPage.locator('button').filter({ has: authedPage.locator('..').filter({ hasText: '通知' }) }).first();
+    // 「通知」テキストを含む行コンテナ (flex items-center justify-between) 内の button (Switch)
+    const notifRow = authedPage.locator('div.flex.items-center.justify-between', {
+      has: authedPage.locator('span', { hasText: '通知' }),
+    }).first();
+    const notifSwitch = notifRow.locator('button').first();
 
     // 現在の状態を確認
     const isCheckedClass = async () => {
@@ -72,13 +76,10 @@ test.describe('settings toggle persistence (#69)', () => {
       { timeout: 10_000 },
     );
 
-    // 自動解析スイッチを特定: 「自動解析」テキストの近くにある button
-    const autoSwitch = authedPage
-      .locator('div')
-      .filter({ hasText: /^自動解析$/ })
-      .locator('xpath=ancestor::div[contains(@class,"flex items-center justify-between")]')
-      .locator('button')
-      .first();
+    // 自動解析スイッチを特定: 「自動解析」span を含む行コンテナ内の button (Switch)
+    const autoSwitch = authedPage.locator('div.flex.items-center.justify-between', {
+      has: authedPage.locator('span', { hasText: '自動解析' }),
+    }).first().locator('button').first();
 
     const isChecked = async () => {
       const cls = await autoSwitch.getAttribute('class');

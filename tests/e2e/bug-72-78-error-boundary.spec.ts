@@ -28,7 +28,7 @@ test.describe("Bug #72: 不正 checkup ID → 404 (500 にならない)", () => 
     expect(response?.status()).toBe(404);
     // 404 ページのテキストが表示されること
     await expect(
-      authedPage.locator("text=ページが見つかりません").or(authedPage.locator("text=404"))
+      authedPage.locator("text=ページが見つかりません").or(authedPage.locator("text=404")).first()
     ).toBeVisible({ timeout: 10_000 });
   });
 

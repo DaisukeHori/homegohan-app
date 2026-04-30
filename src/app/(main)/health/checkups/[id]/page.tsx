@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
+
+export const dynamic = 'force-dynamic';
 import CheckupDetailClient from "./CheckupDetailClient";
 
 const UUID = z.string().uuid();

@@ -760,7 +760,7 @@ export const useHomeData = () => {
           weight: checkinData.weight,
           note: checkinData.note,
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id, checkin_date' })
+        }, { onConflict: 'user_id,checkin_date' })
         .select()
         .single();
 

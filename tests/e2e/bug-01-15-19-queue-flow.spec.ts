@@ -175,7 +175,8 @@ test("failed status shows error modal with retry button", async ({ authedPage })
   );
 
   await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  // networkidle の代わりに domcontentloaded で待機 (SSE 等で networkidle にならない場合がある)
+  await authedPage.waitForLoadState("domcontentloaded");
 
   // エラーモーダルか「もう一度試す」ボタンが表示されるか確認
   const retryButton = authedPage
