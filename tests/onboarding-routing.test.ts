@@ -69,7 +69,7 @@ describe("resolveOnboardingRedirect", () => {
     ).toBeNull();
   });
 
-  it("#268: not_started users are redirected from /onboarding/questions to welcome", () => {
+  it("#349: not_started users can access /onboarding/questions (welcome → questions flow)", () => {
     expect(
       resolveOnboardingRedirect({
         pathname: "/onboarding/questions",
@@ -77,7 +77,7 @@ describe("resolveOnboardingRedirect", () => {
         onboardingStartedAt: null,
         onboardingCompletedAt: null,
       }),
-    ).toBe("/onboarding/welcome");
+    ).toBeNull();
   });
 
   it("redirects admins to admin for onboarding routes", () => {
