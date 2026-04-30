@@ -21,7 +21,7 @@ export async function GET(
     .select('*')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -68,7 +68,7 @@ export async function PUT(
     .select('id')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -112,7 +112,7 @@ export async function DELETE(
     .select('id, image_url')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });

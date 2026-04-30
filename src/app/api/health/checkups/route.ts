@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     .from('health_checkup_longitudinal_reviews')
     .select('*')
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
   return NextResponse.json({
     checkups: data,
