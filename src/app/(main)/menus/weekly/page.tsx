@@ -2659,6 +2659,12 @@ export default function WeeklyMenuPage() {
     return map;
   }, [currentPlan, calendarMealDates]);
 
+  // #91: 今週に献立データが存在するか（買い物リスト生成ボタンの disabled 判定に使用）
+  const hasAnyMealsThisWeek = useMemo(() => {
+    if (!currentPlan) return false;
+    return currentPlan.days.some(d => d.meals && d.meals.length > 0);
+  }, [currentPlan]);
+
   // --- Handlers ---
   
   const handleUpdateMeal = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
@@ -3054,20 +3060,36 @@ export default function WeeklyMenuPage() {
   // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {
     if (isRegeneratingShoppingList) return;
-    // #73: 献立データが存在しない場合はサイレント失敗を防ぎ、メッセージを表示して終了
+    // #73 #91: 献立データが存在しない場合はサイレント失敗を防ぎ、メッセージを表示して終了
     if (!currentPlan || currentPlan.days.every(d => !d.meals?.length)) {
       setSuccessMessage({
-        title: '生成できません',
-        message: 'この週には献立データがありません。先に献立を作成してください。',
+        title: '献立がありません',
+        message: 'この週には献立データがありません。先に献立を生成してください。',
       });
       setActiveModal(null);
       return;
     }
     setIsRegeneratingShoppingList(true);
     setShoppingListProgress({ phase: 'starting', message: '開始中...', percentage: 0 });
-    
+
     // 範囲を計算
     const dateRange = calculateDateRange();
+
+    // #91: 選択した日付範囲に献立データがあるか確認
+    const hasMenuInRange = currentPlan.days.some(d => {
+      if (!d.meals?.length) return false;
+      return d.dayDate >= dateRange.startDate && d.dayDate <= dateRange.endDate;
+    });
+    if (!hasMenuInRange) {
+      setSuccessMessage({
+        title: '献立がありません',
+        message: 'この期間には献立データがありません。先に献立を生成してください。',
+      });
+      setIsRegeneratingShoppingList(false);
+      setShoppingListProgress(null);
+      setActiveModal(null);
+      return;
+    }
     
     try {
       const res = await fetch(`/api/shopping-list/regenerate`, {
@@ -5900,10 +5922,20 @@ export default function WeeklyMenuPage() {
                     <Plus size={14} color={colors.textMuted} />
                     <span style={{ fontSize: 12, color: colors.textMuted }}>追加</span>
                   </button>
-                  <button 
-                    onClick={() => setActiveModal('shoppingRange')} 
+                  <button
+                    onClick={() => {
+                      if (!hasAnyMealsThisWeek) {
+                        setSuccessMessage({
+                          title: '献立がありません',
+                          message: 'この週の献立がありません。先に献立を生成してください。',
+                        });
+                        return;
+                      }
+                      setActiveModal('shoppingRange');
+                    }}
                     disabled={isRegeneratingShoppingList}
-                    className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5 transition-opacity" 
+                    data-testid="shopping-regenerate-button"
+                    className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5 transition-opacity"
                     style={{ background: colors.accent, opacity: isRegeneratingShoppingList ? 0.7 : 1 }}
                   >
                     {isRegeneratingShoppingList ? (
@@ -6291,6 +6323,7 @@ export default function WeeklyMenuPage() {
                         setShoppingRangeStep('range');
                         regenerateShoppingList();
                       }}
+                      data-testid="generate-shopping-list-button"
                       className="w-full mt-2 p-3.5 rounded-xl font-semibold text-[14px] flex items-center justify-center gap-2"
                       style={{ background: colors.accent, color: '#fff' }}
                     >
@@ -7646,10 +7679,10 @@ export default function WeeklyMenuPage() {
                 >
                   <Check size={32} color={colors.success} />
                 </div>
-                <h3 style={{ fontSize: 18, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
+                <h3 data-testid="success-message-title" style={{ fontSize: 18, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
                   {successMessage.title}
                 </h3>
-                <p style={{ fontSize: 14, color: colors.textLight, marginBottom: 20 }}>
+                <p data-testid="success-message-body" style={{ fontSize: 14, color: colors.textLight, marginBottom: 20 }}>
                   {successMessage.message}
                 </p>
                 <button
