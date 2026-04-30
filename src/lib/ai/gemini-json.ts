@@ -161,8 +161,67 @@ export function getGoogleAiApiKey(): string {
   return apiKey;
 }
 
+// #272 SSRF対策: 許可するホスト名のリスト
+// 環境変数 NEXT_PUBLIC_SUPABASE_URL からプロジェクト固有ホストを動的に取得し、静的フォールバックと結合する
+function getAllowedImageHosts(): string[] {
+  const hosts: string[] = [];
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl) {
+    try {
+      const { hostname } = new URL(supabaseUrl);
+      if (hostname) hosts.push(hostname);
+    } catch {
+      // 不正な URL は無視
+    }
+  }
+
+  // 静的フォールバック（上で取得できなかった場合のみ使用）
+  if (!hosts.includes('flmeolcfutuwwbjmzyoz.supabase.co')) {
+    hosts.push('flmeolcfutuwwbjmzyoz.supabase.co');
+  }
+
+  return hosts;
+}
+
+// プライベートIPレンジおよびlink-localを拒否する
+function isPrivateHost(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname === '::1') return true;
+  const privatePatterns = [
+    /^127\./,
+    /^10\./,
+    /^192\.168\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^169\.254\./,
+    /^0\./,
+    /^240\./,
+  ];
+  return privatePatterns.some((p) => p.test(hostname));
+}
+
 export async function fetchImageAsBase64(imageUrl: string): Promise<GeminiImageInput> {
-  const response = await fetch(imageUrl);
+  // #272 SSRF対策: URLパースしてホスト名を検証
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(imageUrl);
+  } catch {
+    throw new Error('Invalid image URL');
+  }
+
+  if (parsedUrl.protocol !== 'https:') {
+    throw new Error('Image URL must use HTTPS');
+  }
+
+  if (isPrivateHost(parsedUrl.hostname)) {
+    throw new Error('Image URL points to a private/internal host');
+  }
+
+  const allowedHosts = getAllowedImageHosts();
+  if (!allowedHosts.includes(parsedUrl.hostname)) {
+    throw new Error(`Image host not allowed: ${parsedUrl.hostname}`);
+  }
+
+  const response = await fetch(imageUrl, { signal: AbortSignal.timeout(10_000) });
   if (!response.ok) {
     throw new Error('Failed to fetch image');
   }

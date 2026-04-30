@@ -1,3 +1,5 @@
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -28,14 +30,14 @@ async function sendAdminNotification(inquiry: {
         to: [adminEmail],
         subject: `[お問い合わせ] ${inquiry.subject}`,
         text: [
-          `新しいお問い合わせが届きました。`,
-          ``,
+          '新しいお問い合わせが届きました。',
+          '',
           `ID: ${inquiry.id}`,
           `種別: ${inquiry.inquiry_type}`,
           `送信者: ${inquiry.email}`,
           `件名: ${inquiry.subject}`,
-          ``,
-          `--- 内容 ---`,
+          '',
+          '--- 内容 ---',
           inquiry.message,
         ].join('\n'),
       }),
@@ -50,12 +52,40 @@ async function sendAdminNotification(inquiry: {
   }
 }
 
-// IP ベース簡易レートリミット: 10req / 60s / IP (in-memory)
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_MS = 60_000;
+// #274 レートリミット: Upstash Redis があれば分散 ratelimit、なければ in-memory フォールバック
+// TODO: env 設定後 ratelimit 有効化 — UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN を設定すること
 
-function checkRateLimit(ip: string): boolean {
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW_SEC = 60;
+const RATE_LIMIT_WINDOW_MS = RATE_LIMIT_WINDOW_SEC * 1000;
+
+// Upstash Redis を使った分散 ratelimiter（env 設定済みの場合のみ初期化）
+let upstashRatelimiter: Ratelimit | null = null;
+if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  try {
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    upstashRatelimiter = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(RATE_LIMIT_MAX, `${RATE_LIMIT_WINDOW_SEC} s`),
+      prefix: 'homegohan:contact:rl',
+    });
+  } catch (err) {
+    console.warn('[contact] Upstash ratelimit 初期化失敗。in-memory フォールバックを使用します。', err);
+  }
+} else {
+  console.warn(
+    '[contact] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です。' +
+    'in-memory レートリミットを使用します（Vercel サーバーレス環境では無効）。',
+  );
+}
+
+// in-memory フォールバック（単一インスタンス内でのみ有効）
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimitInMemory(ip: string): boolean {
   const now = Date.now();
   const entry = rateLimitMap.get(ip);
   if (!entry || now > entry.resetAt) {
@@ -67,21 +97,29 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
+async function checkRateLimit(ip: string): Promise<boolean> {
+  if (upstashRatelimiter) {
+    const { success } = await upstashRatelimiter.limit(ip);
+    return success;
+  }
+  return checkRateLimitInMemory(ip);
+}
+
 export async function POST(request: NextRequest) {
   // レートリミットチェック
   const ip =
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     request.headers.get('x-real-ip') ??
     'unknown';
-  if (!checkRateLimit(ip)) {
+  if (!await checkRateLimit(ip)) {
     return NextResponse.json(
       { error: 'リクエストが多すぎます。しばらく時間をおいてからお試しください。' },
-      { status: 429 }
+      { status: 429 },
     );
   }
 
   const supabase = await createClient();
-  
+
   try {
     const body = await request.json();
     const { inquiryType, email, subject, message } = body;
@@ -90,7 +128,7 @@ export async function POST(request: NextRequest) {
     if (!inquiryType || !email || !subject || !message) {
       return NextResponse.json(
         { error: '必須項目が入力されていません' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -99,7 +137,7 @@ export async function POST(request: NextRequest) {
     if (!emailRegex.test(email)) {
       return NextResponse.json(
         { error: '有効なメールアドレスを入力してください' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -125,7 +163,7 @@ export async function POST(request: NextRequest) {
       console.error('Failed to save inquiry:', error);
       return NextResponse.json(
         { error: 'お問い合わせの保存に失敗しました' },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -142,7 +180,7 @@ export async function POST(request: NextRequest) {
     console.error('Contact API error:', error);
     return NextResponse.json(
       { error: 'サーバーエラーが発生しました' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -170,8 +208,7 @@ export async function GET() {
     console.error('Failed to fetch inquiries:', error);
     return NextResponse.json(
       { error: 'お問い合わせ履歴の取得に失敗しました' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
-

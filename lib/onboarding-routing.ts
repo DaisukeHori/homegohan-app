@@ -56,7 +56,13 @@ export function resolveOnboardingRedirect(input: OnboardingRedirectInput): strin
     return null;
   }
 
-  if (pathname === "/onboarding" || pathname === "/onboarding/resume" || pathname === "/onboarding/complete") {
+  // #268: not_started ユーザーは /onboarding/questions にも直アクセス不可
+  if (
+    pathname === "/onboarding" ||
+    pathname === "/onboarding/resume" ||
+    pathname === "/onboarding/complete" ||
+    pathname === "/onboarding/questions"
+  ) {
     return "/onboarding/welcome";
   }
 
