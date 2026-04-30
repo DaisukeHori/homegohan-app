@@ -1,6 +1,55 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+async function sendAdminNotification(inquiry: {
+  id: string;
+  inquiry_type: string;
+  email: string;
+  subject: string;
+  message: string;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL;
+
+  if (!apiKey || !adminEmail) {
+    console.error('Admin notification skipped: RESEND_API_KEY or ADMIN_NOTIFICATION_EMAIL not set');
+    return;
+  }
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'homegohan <noreply@homegohan.app>',
+        to: [adminEmail],
+        subject: `[お問い合わせ] ${inquiry.subject}`,
+        text: [
+          `新しいお問い合わせが届きました。`,
+          ``,
+          `ID: ${inquiry.id}`,
+          `種別: ${inquiry.inquiry_type}`,
+          `送信者: ${inquiry.email}`,
+          `件名: ${inquiry.subject}`,
+          ``,
+          `--- 内容 ---`,
+          inquiry.message,
+        ].join('\n'),
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error('Admin notification failed:', res.status, body);
+    }
+  } catch (err) {
+    console.error('Admin notification error:', err);
+  }
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   
@@ -51,8 +100,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // TODO: メール通知を送信（管理者へ）
-    // await sendAdminNotification(data);
+    // 管理者へメール通知（env未設定時はsilent succeed）
+    await sendAdminNotification(data);
 
     return NextResponse.json({
       success: true,

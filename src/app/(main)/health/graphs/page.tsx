@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { formatLocalDate } from "@/lib/date-utils";
+import { createClient } from "@/lib/supabase/client";
 import {
   ArrowLeft, Scale, Heart, Moon, TrendingUp, TrendingDown,
   Calendar, ChevronLeft, ChevronRight, Target
@@ -47,6 +48,7 @@ export default function HealthGraphsPage() {
   const [period, setPeriod] = useState<Period>('month');
   const [metric, setMetric] = useState<Metric>('weight');
   const [targetWeight, setTargetWeight] = useState<number | null>(null);
+  const channelRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -80,6 +82,31 @@ export default function HealthGraphsPage() {
 
   useEffect(() => {
     void fetchData();
+  }, [fetchData]);
+
+  // Realtime subscription for health_records
+  useEffect(() => {
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel('health-graphs-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'health_records' },
+        () => { void fetchData(); }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'health_checkups' },
+        () => { void fetchData(); }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   }, [fetchData]);
 
   // グラフデータを生成

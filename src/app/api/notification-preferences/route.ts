@@ -69,27 +69,15 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'No valid fields provided' }, { status: 400 });
   }
 
-  const { data: existing } = await supabase
+  // upsertでselect→分岐を1クエリに集約し、並列アクセス時の競合とレイテンシを解消
+  const result = await supabase
     .from('notification_preferences')
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle();
-
-  let result;
-  if (existing) {
-    result = await supabase
-      .from('notification_preferences')
-      .update({ ...patch, updated_at: new Date().toISOString() })
-      .eq('id', existing.id)
-      .select('notifications_enabled, auto_analyze_enabled, data_share_enabled')
-      .single();
-  } else {
-    result = await supabase
-      .from('notification_preferences')
-      .insert({ user_id: user.id, ...patch })
-      .select('notifications_enabled, auto_analyze_enabled, data_share_enabled')
-      .single();
-  }
+    .upsert(
+      { user_id: user.id, ...patch, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' }
+    )
+    .select('notifications_enabled, auto_analyze_enabled, data_share_enabled')
+    .single();
 
   if (result.error) {
     return NextResponse.json({ error: result.error.message }, { status: 500 });

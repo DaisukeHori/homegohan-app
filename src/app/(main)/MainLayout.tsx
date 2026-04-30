@@ -144,8 +144,12 @@ export default function MainLayout({
           </div>
         )}
 
-        <div className="p-4 border-t border-gray-100">
-           <Link href="/settings" className="flex items-center gap-4 px-4 py-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-xl transition-colors">
+        <div className="p-4 border-t border-gray-100 space-y-1">
+           <Link href="/pantry" className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-colors ${pathname === '/pantry' ? 'bg-orange-50 text-accent font-bold' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}>
+             <Icons.ShoppingBag className="w-5 h-5" />
+             <span>食材管理</span>
+           </Link>
+           <Link href="/settings" className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-colors ${pathname === '/settings' ? 'bg-orange-50 text-accent font-bold' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}>
              <Icons.Settings className="w-5 h-5" />
              <span>設定</span>
            </Link>
