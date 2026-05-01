@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createLogger, generateRequestId } from '@/lib/db-logger'
 import { NextResponse } from 'next/server'
 import { fromUserProfile } from '@/lib/converter'
 import { calculateNutritionTargets } from '@homegohan/core'
@@ -58,6 +59,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const requestId = generateRequestId()
+  const logger = createLogger('POST /api/profile', requestId)
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -118,25 +121,27 @@ export async function POST(request: Request) {
       .single()
 
     if (error) {
-      console.error('Profile update error:', error);
+      logger.error('Profile update error', error);
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
     // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
     const shouldRecalculate = checkShouldRecalculateNutrition(body);
     if (shouldRecalculate) {
-      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data);
+      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data, logger);
     }
 
     return NextResponse.json(data)
   } catch (error: unknown) {
-    console.error('API Error:', error);
+    logger.error('API Error', error);
     const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
 export async function PUT(request: Request) {
+  const requestId = generateRequestId()
+  const logger = createLogger('PUT /api/profile', requestId)
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -179,12 +184,12 @@ export async function PUT(request: Request) {
     // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
     const shouldRecalculate = checkShouldRecalculateNutrition(body);
     if (shouldRecalculate) {
-      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data);
+      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data, logger);
     }
 
     return NextResponse.json(data)
   } catch (error: unknown) {
-    console.error("API Error (PUT /api/profile):", error);
+    logger.error('API Error (PUT /api/profile)', error);
     const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })
   }
@@ -209,7 +214,8 @@ function checkShouldRecalculateNutrition(body: Record<string, unknown>): boolean
 async function recalculateNutritionTargetsIfNeeded(
   supabase: any,
   userId: string,
-  profile: any
+  profile: any,
+  logger: ReturnType<typeof createLogger>
 ): Promise<void> {
   try {
     // 現在の栄養目標を取得
@@ -247,7 +253,7 @@ async function recalculateNutritionTargetsIfNeeded(
     }
   } catch (error) {
     // エラーはログのみ（プロフィール更新自体は成功させる）
-    console.error('Nutrition targets recalculation error:', error);
+    logger.error('Nutrition targets recalculation error', error);
   }
 }
 

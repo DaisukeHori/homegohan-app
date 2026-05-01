@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { NextResponse } from 'next/server';
 
 // レシピ一覧取得
@@ -95,6 +96,8 @@ export async function GET(request: Request) {
 
 // レシピ作成
 export async function POST(request: Request) {
+  const requestId = generateRequestId();
+  const logger = createLogger('POST /api/recipes', requestId);
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -141,7 +144,7 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('Recipe creation error:', error);
+    logger.error('Recipe creation error', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
