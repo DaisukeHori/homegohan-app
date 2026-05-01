@@ -4,11 +4,13 @@ import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
 import { colors, spacing, shadows, radius } from "../src/theme";
 import { useAuth } from "../src/providers/AuthProvider";
+import { useProfile } from "../src/providers/ProfileProvider";
 
 export default function Index() {
-  const { session, isLoading } = useAuth();
+  const { session, isLoading: authLoading } = useAuth();
+  const { profile, isLoading: profileLoading } = useProfile();
 
-  if (isLoading) {
+  if (authLoading || (session && profileLoading)) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>
         <ActivityIndicator color={colors.accent} size="large" />
@@ -16,7 +18,8 @@ export default function Index() {
     );
   }
 
-  if (session) return <Redirect href="/(tabs)/home" />;
+  if (session && !profile?.onboardingCompletedAt) return <Redirect href="/onboarding" />;
+  if (session && profile?.onboardingCompletedAt) return <Redirect href="/(tabs)/home" />;
 
   return (
     <View style={{ flex: 1, backgroundColor: "#FFF7ED" }}>
