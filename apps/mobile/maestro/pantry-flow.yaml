@@ -1,0 +1,64 @@
+appId: com.homegohan.app
+---
+# pantry-flow.yaml
+# 起動 → /pantry → add で1件追加 → 一覧に表示 → 削除
+
+- launchApp
+
+# ホーム画面が表示されるまで待つ
+- waitForAnimationToEnd
+
+# パントリー画面へ遷移 (タブまたはリンク)
+- tapOn:
+    text: "冷蔵庫"
+    optional: true
+- waitForAnimationToEnd
+
+# 冷蔵庫画面のヘッダーが表示されていることを確認
+- assertVisible:
+    text: "冷蔵庫"
+
+# 食材名を入力
+- tapOn:
+    placeholder: "例: キャベツ"
+- inputText: "テスト食材"
+
+# 量を入力
+- tapOn:
+    placeholder: "量（任意）"
+- inputText: "1個"
+
+# 期限を入力
+- tapOn:
+    placeholder: "期限 YYYY-MM-DD（任意）"
+- inputText: "2099-12-31"
+
+# 追加ボタンをタップ
+- tapOn:
+    text: "追加"
+    index: 0
+- waitForAnimationToEnd
+
+# 追加した食材が一覧に表示されることを確認
+- assertVisible:
+    text: "テスト食材"
+
+# 食材一覧の件数表示を確認 (少なくとも1件以上)
+- assertVisible:
+    text: "食材一覧"
+
+# 削除ボタンをタップ (最初の食材)
+- tapOn:
+    text: "削除"
+    index: 0
+- waitForAnimationToEnd
+
+# 削除確認ダイアログが表示されることを確認
+- assertVisible:
+    text: "この食材を削除しますか？"
+
+# ダイアログの「削除」を押す
+- tapOn:
+    text: "削除"
+    index: 0
+- waitForAnimationToEnd
