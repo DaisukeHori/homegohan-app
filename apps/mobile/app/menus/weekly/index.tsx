@@ -7,6 +7,8 @@ import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, Status
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
+import { useProfile } from "../../../src/providers/ProfileProvider";
+import type { WeekStartDay } from "../../../src/providers/ProfileProvider";
 
 type PlannedMealRow = {
   id: string;
@@ -49,11 +51,13 @@ const formatLocalDate = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
-function getWeekStart(date: Date): Date {
+function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
+  const currentDay = d.getDay();
+  const targetDay = weekStartDay === 'sunday' ? 0 : 1;
+  let diff = currentDay - targetDay;
+  if (diff < 0) diff += 7;
+  d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
 }
@@ -79,7 +83,9 @@ const MODE_CONFIG: Record<string, { label: string; color: string; bg: string }> 
 };
 
 export default function WeeklyMenuPage() {
-  const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date()));
+  const { profile } = useProfile();
+  const weekStartDay = profile?.weekStartDay ?? 'monday';
+  const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date(), weekStartDay));
   const weekStartStr = useMemo(() => formatLocalDate(weekStart), [weekStart]);
   const weekEndStr = useMemo(() => {
     const end = new Date(weekStart);
@@ -96,6 +102,10 @@ export default function WeeklyMenuPage() {
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [pendingProgress, setPendingProgress] = useState<PendingProgress | null>(null);
+
+  useEffect(() => {
+    setWeekStart(getWeekStart(new Date(), weekStartDay));
+  }, [weekStartDay]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -153,7 +163,7 @@ export default function WeeklyMenuPage() {
   function shiftWeek(delta: number) {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + delta * 7);
-    setWeekStart(getWeekStart(d));
+    setWeekStart(getWeekStart(d, weekStartDay));
     setSelectedDate(formatLocalDate(d));
   }
 
@@ -308,8 +318,8 @@ export default function WeeklyMenuPage() {
   // Day selector helpers
   const getDayOfWeek = (dateStr: string): string => {
     const d = new Date(dateStr + "T00:00:00");
-    const dayIdx = (d.getDay() + 6) % 7; // Mon=0
-    return DOW[dayIdx] ?? "";
+    const DAY_LABELS_SUN = ["日", "月", "火", "水", "木", "金", "土"];
+    return DAY_LABELS_SUN[d.getDay()] ?? "";
   };
 
   const sortedMeals = useMemo(() => {
