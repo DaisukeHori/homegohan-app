@@ -240,7 +240,31 @@ export default function ProfilePage() {
             <Text style={s.cardTitle}>基本情報</Text>
             <Field label="ニックネーム" value={editForm.nickname} editing={isEditing} onChange={(v) => updateField("nickname", v)} />
             <Field label="年齢" value={editForm.age?.toString()} editing={isEditing} onChange={(v) => updateField("age", v ? parseInt(v) : null)} keyboardType="number-pad" />
-            <Field label="性別" value={editForm.gender === "male" ? "男性" : editForm.gender === "female" ? "女性" : "未設定"} editing={false} />
+            {isEditing ? (
+              <View style={s.field}>
+                <Text style={s.fieldLabel}>性別</Text>
+                <View style={{ flexDirection: "row", gap: spacing.xs, marginTop: 4 }}>
+                  {[
+                    { value: "unspecified", label: "未設定" },
+                    { value: "male", label: "男性" },
+                    { value: "female", label: "女性" },
+                  ].map((opt) => {
+                    const selected = (editForm.gender || "unspecified") === opt.value;
+                    return (
+                      <Pressable
+                        key={opt.value}
+                        onPress={() => updateField("gender", opt.value)}
+                        style={[s.chip, selected && s.chipSelected]}
+                      >
+                        <Text style={[s.chipText, selected && { color: "#fff" }]}>{opt.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : (
+              <Field label="性別" value={editForm.gender === "male" ? "男性" : editForm.gender === "female" ? "女性" : "未設定"} editing={false} />
+            )}
             <Field label="身長 (cm)" value={editForm.height?.toString()} editing={isEditing} onChange={(v) => updateField("height", v ? parseFloat(v) : null)} keyboardType="decimal-pad" />
             <Field label="体重 (kg)" value={editForm.weight?.toString()} editing={isEditing} onChange={(v) => updateField("weight", v ? parseFloat(v) : null)} keyboardType="decimal-pad" />
             <Field label="職業" value={editForm.occupation} editing={isEditing} onChange={(v) => updateField("occupation", v)} />
@@ -303,8 +327,30 @@ export default function ProfilePage() {
         {activeTab === "diet" && (
           <Card>
             <Text style={s.cardTitle}>食事</Text>
-            <Field label="アレルギー" value={(editForm.dietFlags?.allergies || []).join("、")} editing={false} />
-            <Field label="苦手な食材" value={(editForm.dietFlags?.dislikes || []).join("、")} editing={false} />
+            <Field
+              label="アレルギー（カンマ区切り）"
+              value={(editForm.dietFlags?.allergies || []).join("、")}
+              editing={isEditing}
+              onChange={(v) => updateField("dietFlags", {
+                ...editForm.dietFlags,
+                allergies: v.split(/[,、]/).map((s: string) => s.trim()).filter(Boolean),
+              })}
+            />
+            <Field
+              label="苦手な食材（カンマ区切り）"
+              value={(editForm.dietFlags?.dislikes || []).join("、")}
+              editing={isEditing}
+              onChange={(v) => updateField("dietFlags", {
+                ...editForm.dietFlags,
+                dislikes: v.split(/[,、]/).map((s: string) => s.trim()).filter(Boolean),
+              })}
+            />
+            <Field
+              label="好きな食材（カンマ区切り）"
+              value={(editForm.favoriteIngredients || []).join("、")}
+              editing={isEditing}
+              onChange={(v) => updateField("favoriteIngredients", v.split(/[,、]/).map((s: string) => s.trim()).filter(Boolean))}
+            />
           </Card>
         )}
 
