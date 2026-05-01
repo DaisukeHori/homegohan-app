@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Link, router } from "expo-router";
+import { Link, router, useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 import { useState } from "react";
@@ -21,6 +21,7 @@ function GoogleIcon() {
 }
 
 export default function LoginScreen() {
+  const { next } = useLocalSearchParams<{ next?: string }>();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -66,7 +67,36 @@ export default function LoginScreen() {
         password,
       });
       if (error) throw error;
-      router.replace("/");
+
+      // ログイン成功: user_profiles から roles / onboarding 状態を取得して振り分け
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('roles, onboarding_started_at, onboarding_completed_at')
+          .eq('id', user.id)
+          .single();
+
+        const roles: string[] = profile?.roles ?? [];
+
+        // ?next= クエリパラメータがある場合はそのパスへ復帰 (/ 始まりのみ許可)
+        const safeNext = typeof next === 'string' && next.startsWith('/') ? next : null;
+
+        if (roles.includes('admin') || roles.includes('super_admin')) {
+          router.replace('/admin');
+        } else if (safeNext) {
+          router.replace(safeNext as any);
+        } else if (profile?.onboarding_completed_at) {
+          // オンボーディング完了済み → ホームへ
+          router.replace('/(tabs)/home');
+        } else if (profile?.onboarding_started_at) {
+          // オンボーディング進行中 → 再開ページへ
+          router.replace('/onboarding/resume');
+        } else {
+          // 未開始 → 初回ウェルカムへ
+          router.replace('/onboarding/welcome');
+        }
+      }
     } catch (e: any) {
       Alert.alert("ログイン失敗", e?.message ?? "ログインに失敗しました。");
     } finally {
