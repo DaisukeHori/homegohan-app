@@ -879,7 +879,7 @@ export default function HomeScreen() {
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: 60 }}>
                   {weeklyStats.days.map((day) => {
                     const barH = Math.max(4, (day.cookRate / 100) * 48);
-                    const isToday = day.dayOfWeek === DOW[new Date().getDay()];
+                    const isToday = day.date === new Date().toISOString().slice(0, 10);
                     return (
                       <View key={day.date} style={{ alignItems: "center", gap: 4, flex: 1 }}>
                         <View style={{
@@ -1047,7 +1047,7 @@ export default function HomeScreen() {
           <ScrollView showsVerticalScrollIndicator={false}>
             <View style={{ gap: spacing.xs }}>
               {weeklyStats.days.map((day) => {
-                const isToday = day.dayOfWeek === DOW[new Date().getDay()];
+                const isToday = day.date === new Date().toISOString().slice(0, 10);
                 return (
                   <View
                     key={day.date}
