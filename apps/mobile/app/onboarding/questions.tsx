@@ -305,6 +305,53 @@ const QUESTIONS: Question[] = [
     ],
   },
   {
+    id: "body_concerns",
+    text: "体の悩みはありますか？\n（複数選択可、なければスキップ）",
+    type: "multi_choice",
+    allowSkip: true,
+    options: [
+      { label: "冷え性", value: "cold_sensitivity" },
+      { label: "むくみやすい", value: "swelling_prone" },
+      { label: "疲れやすい", value: "fatigue" },
+      { label: "肩こり・腰痛", value: "stiff_shoulders" },
+      { label: "頭痛持ち", value: "headache" },
+      { label: "汗をかきにくい", value: "low_sweating" },
+      { label: "肌荒れ", value: "skin_trouble" },
+      { label: "髪のパサつき", value: "dry_hair" },
+    ],
+  },
+  {
+    id: "sleep_quality",
+    text: "睡眠の質はいかがですか？",
+    type: "choice",
+    options: [
+      { label: "良好", value: "good", description: "よく眠れている" },
+      { label: "普通", value: "average", description: "特に問題なし" },
+      { label: "悪い", value: "poor", description: "睡眠に問題がある" },
+    ],
+  },
+  {
+    id: "stress_level",
+    text: "日々のストレスレベルは？",
+    type: "choice",
+    options: [
+      { label: "低い", value: "low", description: "リラックスできている" },
+      { label: "普通", value: "medium", description: "日常的なストレス" },
+      { label: "高い", value: "high", description: "ストレスを感じている" },
+    ],
+  },
+  {
+    id: "pregnancy_status",
+    text: "妊娠・授乳の状況を教えてください",
+    type: "choice",
+    showIf: (answers) => answers.gender === "female",
+    options: [
+      { label: "該当なし", value: "none", description: "妊娠・授乳中ではない" },
+      { label: "妊娠中", value: "pregnant", description: "現在妊娠中" },
+      { label: "授乳中", value: "nursing", description: "現在授乳中" },
+    ],
+  },
+  {
     id: "medications",
     text: "服用中の薬はありますか？（なければスキップ）",
     type: "multi_choice",
@@ -457,6 +504,14 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.exercise_duration) profile.exerciseDurationPerSession = parseInt(ans.exercise_duration);
   if (ans.work_style) profile.workStyle = ans.work_style;
   if (ans.health_conditions?.length && !ans.health_conditions.includes("none")) profile.healthConditions = ans.health_conditions;
+  if (ans.body_concerns?.length) {
+    profile.coldSensitivity = ans.body_concerns.includes("cold_sensitivity");
+    profile.swellingProne = ans.body_concerns.includes("swelling_prone");
+    profile.bodyConcerns = ans.body_concerns;
+  }
+  if (ans.sleep_quality) profile.sleepQuality = ans.sleep_quality;
+  if (ans.stress_level) profile.stressLevel = ans.stress_level;
+  if (ans.pregnancy_status) profile.pregnancyStatus = ans.pregnancy_status;
   if (ans.medications?.length && !ans.medications.includes("none")) profile.medications = ans.medications;
   if (ans.allergies?.length) profile.dietFlags = { allergies: ans.allergies, dislikes: [] };
   if (ans.cooking_experience) profile.cookingExperience = ans.cooking_experience;
@@ -529,6 +584,11 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.exerciseDurationPerSession !== undefined) updates.exercise_duration_per_session = body.exerciseDurationPerSession;
   if (body.workStyle) updates.work_style = body.workStyle;
   if (body.healthConditions) updates.health_conditions = body.healthConditions;
+  if (body.coldSensitivity !== undefined) updates.cold_sensitivity = body.coldSensitivity;
+  if (body.swellingProne !== undefined) updates.swelling_prone = body.swellingProne;
+  if (body.sleepQuality) updates.sleep_quality = body.sleepQuality;
+  if (body.stressLevel) updates.stress_level = body.stressLevel;
+  if (body.pregnancyStatus) updates.pregnancy_status = body.pregnancyStatus;
   if (body.medications) updates.medications = body.medications;
   if (body.dietFlags) updates.diet_flags = body.dietFlags;
   if (body.cookingExperience) updates.cooking_experience = body.cookingExperience;
