@@ -1296,7 +1296,7 @@ export default function WeeklyMenuPage() {
                       color: isSelected
                         ? "#fff"
                         : isHoliday
-                          ? "#F44336"
+                          ? colors.danger
                           : isToday
                             ? colors.accent
                             : isWeekend
