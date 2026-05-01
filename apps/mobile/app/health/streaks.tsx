@@ -26,6 +26,18 @@ type StreakResponse = {
   weeklyRecordCount: number;
 };
 
+const STREAK_TYPE_LABELS: Record<string, string> = {
+  daily_record: "日次記録",
+  meal_record: "食事記録",
+  health_record: "健康記録",
+  exercise_record: "運動記録",
+  checkin: "チェックイン",
+};
+
+function streakTypeLabel(type: string): string {
+  return STREAK_TYPE_LABELS[type] ?? type;
+}
+
 function toYmd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -134,7 +146,7 @@ export default function HealthStreaksPage() {
 
           <Card>
             <SectionHeader
-              title="daily_record"
+              title={streakTypeLabel(data.streak.streak_type)}
               right={<Ionicons name="stats-chart-outline" size={18} color={colors.accent} />}
             />
             <View style={styles.detailGrid}>
