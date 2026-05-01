@@ -5,7 +5,8 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, Tex
 
 import { LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
-import { getApi } from "../../src/lib/api";
+import { getApi, getApiBaseUrl } from "../../src/lib/api";
+import { supabase } from "../../src/lib/supabase";
 
 type Message = {
   id: string;
@@ -24,6 +25,7 @@ export default function AiSessionPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [streamingContent, setStreamingContent] = useState<string | null>(null);
 
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -60,27 +62,142 @@ export default function AiSessionPage() {
     if (!trimmed || isSending) return;
     setIsSending(true);
     setError(null);
+    setStreamingContent(null);
+
+    const optimistic: Message = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setText("");
 
     try {
-      const api = getApi();
-      const optimistic: Message = {
-        id: `local-${Date.now()}`,
-        role: "user",
-        content: trimmed,
-        createdAt: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, optimistic]);
-      setText("");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token ?? null;
+      const baseUrl = getApiBaseUrl();
+      const url = `${baseUrl}${messagesPath}?stream=true`;
 
-      const res = await api.post<{ success: boolean; message?: any; aiMessage?: any; assistantMessage?: any }>(
-        messagesPath,
-        { message: trimmed }
-      );
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 26000);
 
-      await load();
-      return res;
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ message: trimmed }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+
+      if (!res.body) {
+        // ReadableStream 非対応環境: 通常レスポンスとして処理
+        await load();
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulated = "";
+      let finalHandled = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const raw = line.slice(6);
+          if (raw === "[DONE]") continue;
+
+          let parsed: any;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            continue;
+          }
+
+          // ストリーミングチャンク: choices[0].delta.content
+          const chunk = parsed?.choices?.[0]?.delta?.content;
+          if (chunk) {
+            accumulated += chunk;
+            setStreamingContent(accumulated);
+            continue;
+          }
+
+          // 完了メッセージ: aiMessage フィールドが存在
+          if (parsed?.aiMessage) {
+            finalHandled = true;
+            setStreamingContent(null);
+            const aiMsg: Message = {
+              id: parsed.aiMessage.id ?? `ai-${Date.now()}`,
+              role: "assistant",
+              content: parsed.aiMessage.content ?? accumulated,
+              proposedActions: parsed.aiMessage.proposedActions ?? null,
+              createdAt: parsed.aiMessage.createdAt ?? new Date().toISOString(),
+            };
+            // optimistic ユーザーメッセージを確定 ID に差し替え
+            setMessages((prev) => {
+              const withoutOptimistic = prev.filter((m) => !m.id.startsWith("local-"));
+              const userMsg: Message = parsed.userMessage
+                ? {
+                    id: parsed.userMessage.id,
+                    role: "user",
+                    content: parsed.userMessage.content ?? trimmed,
+                    isImportant: parsed.userMessage.isImportant ?? false,
+                    createdAt: parsed.userMessage.createdAt ?? new Date().toISOString(),
+                  }
+                : optimistic;
+              return [...withoutOptimistic, userMsg, aiMsg];
+            });
+          }
+        }
+      }
+
+      if (!finalHandled) {
+        // ストリームが完了データなしで終了した場合、蓄積テキストをUIに反映してリロード
+        setStreamingContent(null);
+        if (accumulated) {
+          const aiMsg: Message = {
+            id: `ai-${Date.now()}`,
+            role: "assistant",
+            content: accumulated,
+            createdAt: new Date().toISOString(),
+          };
+          setMessages((prev) => {
+            const withoutOptimistic = prev.filter((m) => !m.id.startsWith("local-"));
+            return [...withoutOptimistic, optimistic, aiMsg];
+          });
+        } else {
+          await load();
+        }
+      }
     } catch (e: any) {
-      setError(e?.message ?? "送信に失敗しました。");
+      setStreamingContent(null);
+      if (e?.name === "AbortError") {
+        setError("応答がタイムアウトしました（25秒）。しばらく待ってから再度お試しください。");
+      } else {
+        setError(e?.message ?? "送信に失敗しました。");
+      }
+      // optimistic メッセージを削除
+      setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
     } finally {
       setIsSending(false);
     }
@@ -299,9 +416,9 @@ export default function AiSessionPage() {
                 );
               })}
 
-              {/* 送信中インジケータ */}
+              {/* ストリーミング中: リアルタイム表示 or ドットインジケータ */}
               {isSending && (
-                <View style={{ alignSelf: "flex-start", maxWidth: "60%" }}>
+                <View style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
                   <View
                     style={{
                       padding: spacing.md,
@@ -313,11 +430,17 @@ export default function AiSessionPage() {
                       ...shadows.sm,
                     }}
                   >
-                    <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
-                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textMuted }} />
-                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
-                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
-                    </View>
+                    {streamingContent ? (
+                      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 21 }}>
+                        {streamingContent}
+                      </Text>
+                    ) : (
+                      <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textMuted }} />
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border }} />
+                      </View>
+                    )}
                   </View>
                 </View>
               )}
