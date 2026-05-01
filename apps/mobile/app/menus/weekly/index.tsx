@@ -724,6 +724,7 @@ const MODE_CONFIG: Record<string, { label: string; color: string; bg: string }> 
   buy: { label: "買う", color: colors.purple, bg: colors.purpleLight },
   out: { label: "外食", color: colors.warning, bg: colors.warningLight },
   skip: { label: "なし", color: colors.textMuted, bg: colors.bg },
+  ai_creative: { label: "AI献立", color: colors.accent, bg: colors.accentLight },
 };
 
 export default function WeeklyMenuPage() {
