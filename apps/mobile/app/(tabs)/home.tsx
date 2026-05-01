@@ -2,7 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useMemo, useState, useEffect, useRef } from "react";
-import { Animated, Pressable, ScrollView, Text, View } from "react-native";
+import { Animated, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Svg, Circle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, Button, EmptyState, LoadingState, StatCard } from "../../src/components/ui";
@@ -10,6 +11,8 @@ import { colors, spacing, shadows, radius } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { useHomeData } from "../../src/hooks/useHomeData";
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const MEAL_ORDER = ["breakfast", "lunch", "snack", "dinner", "midnight_snack"] as const;
 const MEAL_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; label: string; color: string }> = {
@@ -62,6 +65,15 @@ const getGreeting = () => {
   return "こんばんは";
 };
 
+const getCurrentMealType = (): string => {
+  const hour = new Date().getHours();
+  if (hour < 10) return "breakfast";
+  if (hour < 14) return "lunch";
+  if (hour < 17) return "snack";
+  if (hour < 21) return "dinner";
+  return "midnight_snack";
+};
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -83,6 +95,8 @@ export default function HomeScreen() {
     activityLevel,
     suggestion,
     performanceAnalysis,
+    announcements,
+    dismissAnnouncement,
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
@@ -128,6 +142,23 @@ export default function HomeScreen() {
   const completionRate = dailySummary.totalCount > 0
     ? Math.round((dailySummary.completedCount / dailySummary.totalCount) * 100)
     : 0;
+
+  // 円形プログレスアニメーション用
+  const PROGRESS_RADIUS = 42;
+  const PROGRESS_CIRCUMFERENCE = 2 * Math.PI * PROGRESS_RADIUS;
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: completionRate,
+      duration: 800,
+      useNativeDriver: false,
+    }).start();
+  }, [completionRate]);
+  const strokeDashoffset = progressAnim.interpolate({
+    inputRange: [0, 100],
+    outputRange: [PROGRESS_CIRCUMFERENCE, 0],
+    extrapolate: "clamp",
+  });
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -179,6 +210,38 @@ export default function HomeScreen() {
             />
           </View>
         </View>
+
+        {/* ========== お知らせバナー ========== */}
+        {announcements.length > 0 && (
+          <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.sm }}>
+            {announcements.map((ann) => (
+              <View
+                key={ann.id}
+                style={{
+                  backgroundColor: "#EFF6FF",
+                  borderWidth: 1,
+                  borderColor: "#BFDBFE",
+                  borderRadius: radius.xl,
+                  padding: spacing.md,
+                  flexDirection: "row",
+                  alignItems: "flex-start",
+                  gap: spacing.sm,
+                }}
+              >
+                <Text style={{ fontSize: 16 }}>📢</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#1E3A8A" }}>{ann.title}</Text>
+                  {ann.content ? (
+                    <Text style={{ fontSize: 12, color: "#1D4ED8", marginTop: 2, lineHeight: 17 }}>{ann.content}</Text>
+                  ) : null}
+                </View>
+                <Pressable onPress={() => dismissAnnouncement(ann.id)} hitSlop={12}>
+                  <Ionicons name="close" size={16} color="#93C5FD" />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
 
         <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg, gap: spacing.lg }}>
 
@@ -527,6 +590,94 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* ========== 今日の進捗 ========== */}
+          <View style={{
+            backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg,
+            borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.md }}>
+              <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
+              <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text }}>今日の進捗</Text>
+            </View>
+
+            {/* 円形プログレスバー */}
+            <View style={{ alignItems: "center", marginBottom: spacing.md }}>
+              <View style={{ width: 112, height: 112 }}>
+                <Svg width="112" height="112" viewBox="0 0 112 112">
+                  {/* 背景トラック */}
+                  <Circle
+                    cx="56"
+                    cy="56"
+                    r={PROGRESS_RADIUS}
+                    stroke={colors.border}
+                    strokeWidth="10"
+                    fill="none"
+                    transform="rotate(-90 56 56)"
+                  />
+                  {/* アニメーション付きプログレス */}
+                  <AnimatedCircle
+                    cx="56"
+                    cy="56"
+                    r={PROGRESS_RADIUS}
+                    stroke={colors.accent}
+                    strokeWidth="10"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeDasharray={PROGRESS_CIRCUMFERENCE}
+                    strokeDashoffset={strokeDashoffset}
+                    transform="rotate(-90 56 56)"
+                  />
+                </Svg>
+                {/* 中央テキスト */}
+                <View style={{
+                  position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                  alignItems: "center", justifyContent: "center",
+                }}>
+                  <Text
+                    testID="home-progress-percent"
+                    style={{ fontSize: 26, fontWeight: "900", color: colors.text }}
+                  >
+                    {completionRate}%
+                  </Text>
+                </View>
+              </View>
+              <Text
+                testID="home-progress-fraction"
+                style={{ fontSize: 12, color: colors.textMuted, marginTop: spacing.sm }}
+              >
+                {dailySummary.completedCount} / {dailySummary.totalCount} 食完了
+              </Text>
+            </View>
+
+            {/* 統計行 */}
+            <View style={{ gap: spacing.sm }}>
+              <View style={{
+                flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                backgroundColor: colors.accentLight, padding: spacing.sm, borderRadius: radius.md,
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                  <Ionicons name="flame" size={14} color={colors.accent} />
+                  <Text style={{ fontSize: 12, fontWeight: "500", color: colors.textLight }}>今日の献立合計</Text>
+                </View>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: colors.accent }}>
+                  {dailySummary.totalCalories} kcal
+                </Text>
+              </View>
+              <View style={{
+                flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                backgroundColor: colors.successLight, padding: spacing.sm, borderRadius: radius.md,
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                  <Ionicons name="restaurant" size={14} color={colors.success} />
+                  <Text style={{ fontSize: 12, fontWeight: "500", color: colors.textLight }}>自炊</Text>
+                </View>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: colors.success }}>
+                  {dailySummary.cookCount}食
+                </Text>
+              </View>
+            </View>
+          </View>
+
           {/* ========== 今日の献立 ========== */}
           <Card>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.md }}>
@@ -556,6 +707,7 @@ export default function HomeScreen() {
                 {sortedMeals.map((m) => {
                   const mealCfg = MEAL_CONFIG[m.meal_type] ?? { icon: "ellipse", label: m.meal_type, color: colors.textMuted };
                   const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
+                  const isCurrentMeal = m.meal_type === getCurrentMealType();
                   return (
                     <Pressable
                       key={m.id}
@@ -577,12 +729,22 @@ export default function HomeScreen() {
                         {m.is_completed && <Ionicons name="checkmark" size={16} color="#fff" />}
                       </View>
 
-                      {/* アイコン */}
-                      <View style={{
-                        width: 44, height: 44, borderRadius: radius.lg, backgroundColor: colors.bg,
-                        alignItems: "center", justifyContent: "center",
-                      }}>
-                        <Ionicons name={mealCfg.icon} size={20} color={mealCfg.color} />
+                      {/* 画像サムネイル */}
+                      <View style={{ width: 56, height: 56, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}>
+                        {m.image_url ? (
+                          <Image source={{ uri: m.image_url }} style={{ width: 56, height: 56 }} resizeMode="cover" />
+                        ) : (
+                          <Ionicons name={mealCfg.icon} size={20} color={mealCfg.color} />
+                        )}
+                        {/* NOW バッジ */}
+                        {isCurrentMeal && !m.is_completed && (
+                          <View style={{
+                            position: "absolute", top: 2, right: 2,
+                            backgroundColor: "#FF6B35", paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4,
+                          }}>
+                            <Text style={{ fontSize: 8, fontWeight: "800", color: "#fff" }}>NOW</Text>
+                          </View>
+                        )}
                       </View>
 
                       {/* 情報 */}
@@ -663,6 +825,25 @@ export default function HomeScreen() {
               </View>
             </Pressable>
           </View>
+
+          {/* ========== レシピブラウズ ========== */}
+          <Pressable
+            onPress={() => router.push("/recipes")}
+            style={{
+              backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md,
+              borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+              flexDirection: "row", alignItems: "center", gap: spacing.sm,
+            }}
+          >
+            <View style={{ width: 36, height: 36, borderRadius: radius.md, backgroundColor: "#FFF3E0", alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="book-outline" size={18} color="#FF6D00" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>レシピをブラウズ</Text>
+              <Text style={{ fontSize: 11, color: colors.textMuted }}>カテゴリ・難易度で絞り込み</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
 
           {/* ========== 週間自炊率グラフ ========== */}
           {weeklyStats.days.length > 0 && (

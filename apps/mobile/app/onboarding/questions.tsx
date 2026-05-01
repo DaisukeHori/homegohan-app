@@ -211,6 +211,22 @@ const QUESTIONS: Question[] = [
       (answers.training_phase === "competition" || answers.training_phase === "cut"),
   },
   {
+    id: "target_weight",
+    text: "目標体重を教えてください",
+    type: "number",
+    placeholder: "例: 55",
+    min: 30,
+    max: 200,
+    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
+  },
+  {
+    id: "target_date",
+    text: "いつまでに達成したいですか？",
+    type: "date",
+    allowSkip: true,
+    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
+  },
+  {
     id: "weight_change_rate",
     text: "どのくらいのペースで変えたいですか？",
     type: "choice",
@@ -333,6 +349,28 @@ const QUESTIONS: Question[] = [
     allowSkip: true,
   },
   {
+    id: "favorite_ingredients",
+    text: "好きな食材を教えてください\n（献立に積極的に入れます）",
+    type: "tags",
+    placeholder: "例: 鶏肉、ブロッコリー、アボカド",
+    suggestions: ["鶏肉", "豚肉", "牛肉", "魚", "エビ", "豆腐", "卵", "ブロッコリー", "ほうれん草", "トマト", "アボカド", "きのこ", "さつまいも", "キャベツ"],
+    allowSkip: true,
+  },
+  {
+    id: "diet_style",
+    text: "食事スタイルを教えてください",
+    type: "choice",
+    allowSkip: true,
+    options: [
+      { label: "通常", value: "normal", description: "特に制限なし" },
+      { label: "ベジタリアン", value: "vegetarian", description: "肉を食べない" },
+      { label: "ヴィーガン", value: "vegan", description: "動物性食品を食べない" },
+      { label: "ペスカタリアン", value: "pescatarian", description: "魚は食べる" },
+      { label: "グルテンフリー", value: "gluten_free", description: "小麦を避ける" },
+      { label: "ケトジェニック", value: "keto", description: "低糖質・高脂質" },
+    ],
+  },
+  {
     id: "cooking_experience",
     text: "料理の経験は？",
     type: "choice",
@@ -427,6 +465,14 @@ const QUESTIONS: Question[] = [
       { label: "IHコンロ", value: "stove:ih" },
     ],
   },
+  {
+    id: "hobbies",
+    text: "趣味を教えてください\n（献立提案の参考にします）",
+    type: "tags",
+    placeholder: "例: 読書、ヨガ、ランニング",
+    suggestions: ["読書", "料理", "ヨガ", "ランニング", "筋トレ", "サイクリング", "登山", "映画", "ゲーム", "旅行", "音楽", "カフェ巡り", "釣り", "キャンプ"],
+    allowSkip: true,
+  },
 ];
 
 function getNextQuestion(fromStep: number, ans: Record<string, any>) {
@@ -456,6 +502,8 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   };
 
   if (ans.nutrition_goal) profile.nutritionGoal = ans.nutrition_goal;
+  if (ans.target_weight) profile.targetWeight = parseFloat(ans.target_weight);
+  if (ans.target_date) profile.targetDate = ans.target_date;
   if (ans.weight_change_rate) profile.weightChangeRate = ans.weight_change_rate;
   if (ans.exercise_types?.length && !ans.exercise_types.includes("none")) profile.exerciseTypes = ans.exercise_types;
   if (ans.exercise_frequency) profile.exerciseFrequency = parseInt(ans.exercise_frequency);
@@ -465,6 +513,9 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.health_conditions?.length && !ans.health_conditions.includes("none")) profile.healthConditions = ans.health_conditions;
   if (ans.medications?.length && !ans.medications.includes("none")) profile.medications = ans.medications;
   if (ans.allergies?.length) profile.dietFlags = { allergies: ans.allergies, dislikes: [] };
+  if (ans.favorite_ingredients?.length) profile.favoriteIngredients = ans.favorite_ingredients;
+  if (ans.diet_style) profile.dietStyle = ans.diet_style;
+  if (ans.hobbies?.length) profile.hobbies = ans.hobbies;
   if (ans.cooking_experience) profile.cookingExperience = ans.cooking_experience;
   if (ans.cooking_time) profile.weekdayCookingMinutes = parseInt(ans.cooking_time);
   if (ans.cuisine_preference?.length) {
@@ -528,6 +579,8 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.height !== undefined && body.height !== null) updates.height = body.height;
   if (body.weight !== undefined && body.weight !== null) updates.weight = body.weight;
   if (body.nutritionGoal) updates.nutrition_goal = body.nutritionGoal;
+  if (body.targetWeight !== undefined && body.targetWeight !== null) updates.target_weight = body.targetWeight;
+  if (body.targetDate) updates.target_date = body.targetDate;
   if (body.weightChangeRate) updates.weight_change_rate = body.weightChangeRate;
   if (body.exerciseTypes) updates.exercise_types = body.exerciseTypes;
   if (body.exerciseFrequency !== undefined) updates.exercise_frequency = body.exerciseFrequency;
@@ -537,6 +590,9 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.healthConditions) updates.health_conditions = body.healthConditions;
   if (body.medications) updates.medications = body.medications;
   if (body.dietFlags) updates.diet_flags = body.dietFlags;
+  if (body.favoriteIngredients) updates.favorite_ingredients = body.favoriteIngredients;
+  if (body.dietStyle) updates.diet_style = body.dietStyle;
+  if (body.hobbies) updates.hobbies = body.hobbies;
   if (body.cookingExperience) updates.cooking_experience = body.cookingExperience;
   if (body.weekdayCookingMinutes !== undefined) updates.weekday_cooking_minutes = body.weekdayCookingMinutes;
   if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;
@@ -648,6 +704,19 @@ export default function OnboardingQuestions() {
     setTags((prev) => prev.filter((x) => x !== t));
   }
 
+  // #408: XSS ペイロードを除去するサニタイズ関数（Web 版 route.ts と同等）
+  function sanitizeText(value: unknown): string {
+    if (typeof value !== "string") return "";
+    return value
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#x27;")
+      .replace(/\//g, "&#x2F;")
+      .trim()
+      .slice(0, 100);
+  }
+
   // リアルタイム保存
   async function saveProgress(step: number, ans: Record<string, any>) {
     try {
@@ -679,13 +748,100 @@ export default function OnboardingQuestions() {
         updates.onboarding_started_at = new Date().toISOString();
       }
 
-      // 回答内容も同時に保存
-      if (ans.nickname) updates.nickname = ans.nickname;
+      // #408: 回答内容を全カラムに反映（Web 版 route.ts L76-147 と同等）
+      if (ans.nickname) updates.nickname = sanitizeText(ans.nickname);
       if (ans.gender) updates.gender = ans.gender;
       if (ans.age) {
         updates.age = parseInt(ans.age);
         updates.age_group = `${Math.floor(parseInt(ans.age) / 10) * 10}s`;
       }
+      if (ans.occupation) updates.occupation = ans.occupation;
+      if (ans.height) updates.height = parseFloat(ans.height);
+      if (ans.weight) updates.weight = parseFloat(ans.weight);
+      if (ans.nutrition_goal) updates.nutrition_goal = ans.nutrition_goal;
+      if (ans.target_weight) updates.target_weight = parseFloat(ans.target_weight);
+      if (ans.target_date) updates.target_date = ans.target_date;
+      if (ans.weight_change_rate) updates.weight_change_rate = ans.weight_change_rate;
+      if (ans.exercise_types && !ans.exercise_types.includes("none")) {
+        updates.exercise_types = ans.exercise_types;
+      }
+      if (ans.exercise_frequency) updates.exercise_frequency = parseInt(ans.exercise_frequency);
+      if (ans.exercise_intensity) updates.exercise_intensity = ans.exercise_intensity;
+      if (ans.exercise_duration) updates.exercise_duration_per_session = parseInt(ans.exercise_duration);
+      if (ans.work_style) updates.work_style = ans.work_style;
+      if (ans.health_conditions && !ans.health_conditions.includes("none")) {
+        updates.health_conditions = ans.health_conditions;
+      }
+      if (ans.body_concerns?.length) {
+        updates.cold_sensitivity = ans.body_concerns.includes("cold_sensitivity");
+        updates.swelling_prone = ans.body_concerns.includes("swelling_prone");
+      }
+      if (ans.sleep_quality) updates.sleep_quality = ans.sleep_quality;
+      if (ans.stress_level) updates.stress_level = ans.stress_level;
+      if (ans.pregnancy_status) updates.pregnancy_status = ans.pregnancy_status;
+      if (ans.medications && !ans.medications.includes("none")) {
+        updates.medications = ans.medications;
+      }
+      if (ans.allergies?.length || ans.dislikes?.length) {
+        updates.diet_flags = {
+          allergies: ans.allergies || [],
+          dislikes: ans.dislikes || [],
+        };
+      }
+      if (ans.favorite_ingredients?.length) updates.favorite_ingredients = ans.favorite_ingredients;
+      if (ans.diet_style) updates.diet_style = ans.diet_style;
+      if (ans.cooking_experience) updates.cooking_experience = ans.cooking_experience;
+      if (ans.cooking_time) updates.weekday_cooking_minutes = parseInt(ans.cooking_time);
+      if (ans.cuisine_preference?.length) {
+        const prefs: Record<string, number> = {};
+        ans.cuisine_preference.forEach((c: string) => {
+          prefs[c] = 5;
+        });
+        updates.cuisine_preferences = prefs;
+      }
+      if (ans.family_size) updates.family_size = parseInt(ans.family_size);
+      if (ans.servings_config) updates.servings_config = ans.servings_config;
+      if (ans.shopping_frequency) updates.shopping_frequency = ans.shopping_frequency;
+      if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") {
+        updates.weekly_food_budget = parseInt(ans.weekly_food_budget);
+      }
+      const appliances: string[] = [];
+      if (ans.kitchen_appliances?.length) appliances.push(...ans.kitchen_appliances);
+      if (ans.stove_type) appliances.push(ans.stove_type);
+      if (appliances.length > 0) updates.kitchen_appliances = appliances;
+      if (ans.hobbies?.length) updates.hobbies = ans.hobbies;
+      if (ans.nutrition_goal === "athlete_performance") {
+        const sportId = ans.sport_type === "custom" ? "custom" : ans.sport_type;
+        const sportName = ans.sport_type === "custom" ? ans.sport_custom_name : null;
+        updates.performance_profile = {
+          sport: {
+            id: sportId || null,
+            name: sportName || null,
+            role: null,
+            experience: ans.sport_experience || "intermediate",
+            phase: ans.training_phase || "training",
+            demandVector: null,
+          },
+          growth: {
+            isUnder18: ans.age ? parseInt(ans.age) < 18 : false,
+            heightChangeRecent: null,
+            growthProtectionEnabled: ans.age ? parseInt(ans.age) < 18 : false,
+          },
+          cut: {
+            enabled: ans.training_phase === "cut",
+            targetWeight: ans.target_weight ? parseFloat(ans.target_weight) : null,
+            targetDate: ans.competition_date || ans.target_date || null,
+            strategy: "gradual",
+          },
+          priorities: {
+            protein: "high",
+            carbs: ans.training_phase === "competition" ? "high" : "moderate",
+            fat: "moderate",
+            hydration: "high",
+          },
+        };
+      }
+
       if (!updates.nickname) updates.nickname = "Guest";
       if (!updates.age_group && !updates.age) updates.age_group = "unspecified";
       if (!updates.gender) updates.gender = "unspecified";

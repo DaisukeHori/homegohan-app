@@ -278,6 +278,7 @@ export default function WeeklyMenuPage() {
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [pendingProgress, setPendingProgress] = useState<PendingProgress | null>(null);
+  const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
 
   useEffect(() => {
     setWeekStart(getWeekStart(new Date(), weekStartDay));
@@ -346,19 +347,22 @@ export default function WeeklyMenuPage() {
   async function checkPending() {
     try {
       const api = getApi();
-      const res = await api.get<{ hasPending: boolean; requestId?: string; status?: string; startDate?: string }>(
+      const res = await api.get<{ hasPending: boolean; requestId?: string; status?: string; startDate?: string; mode?: string }>(
         `/api/ai/menu/weekly/pending?date=${weekStartStr}`
       );
       if (res.hasPending && res.requestId && res.startDate === weekStartStr) {
         setPendingRequestId(res.requestId);
         setPendingStatus(res.status ?? "processing");
+        setPendingIsUltimate(res.mode === "v4" || res.mode === "v5");
         return;
       }
       setPendingRequestId(null);
       setPendingStatus(null);
+      setPendingIsUltimate(false);
     } catch {
       setPendingRequestId(null);
       setPendingStatus(null);
+      setPendingIsUltimate(false);
     }
   }
 
@@ -397,12 +401,14 @@ export default function WeeklyMenuPage() {
             setPendingRequestId(null);
             setPendingStatus(null);
             setPendingProgress(null);
+            setPendingIsUltimate(false);
             Alert.alert("完了", "週間献立の生成が完了しました。");
           }
           if (newRecord.status === "failed") {
             setPendingRequestId(null);
             setPendingStatus(null);
             setPendingProgress(null);
+            setPendingIsUltimate(false);
             setError(newRecord.error_message ?? "週間献立の生成に失敗しました。");
           }
         }
@@ -436,10 +442,12 @@ export default function WeeklyMenuPage() {
           setPendingRequestId(null);
           setPendingStatus(null);
           setPendingProgress(null);
+          setPendingIsUltimate(false);
         } else if (res.status === "failed") {
           setPendingRequestId(null);
           setPendingStatus(null);
           setPendingProgress(null);
+          setPendingIsUltimate(false);
           setError(res.errorMessage ?? "週間献立の生成に失敗しました。");
         }
       } catch {
@@ -590,7 +598,11 @@ export default function WeeklyMenuPage() {
         <>
           {/* AI生成中プログレス */}
           {pendingRequestId && (
-            <ProgressTodoCard progress={pendingProgress} />
+            <ProgressTodoCard
+              progress={pendingProgress}
+              phases={pendingIsUltimate ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
+              defaultMessage={pendingIsUltimate ? "究極モードで献立を生成中..." : "AIが献立を生成中..."}
+            />
           )}
 
           {/* 日付セレクタ — 横並び丸型ピル */}
