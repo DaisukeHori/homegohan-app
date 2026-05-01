@@ -1,0 +1,78 @@
+appId: com.homegohan.app
+---
+# 買い物リスト E2E フロー
+# 前提: ユーザーがログイン済みで、週間献立が少なくとも 1 件登録されていること
+
+# 1. アプリを起動してホーム画面へ
+- launchApp
+
+# 2. タブバーから買い物リスト画面へ遷移
+- tapOn:
+    text: "買い物リスト"
+
+# 3. 買い物リスト画面が表示されることを確認
+- assertVisible:
+    text: "買い物リスト"
+
+# 4. 再生成ボタンをタップ (範囲選択モーダルを開く)
+- tapOn:
+    text: "再生成"
+
+# 5. 範囲選択モーダル — ステップ 1: 1週間分を選択
+- assertVisible:
+    text: "買い物の範囲を選択"
+- tapOn:
+    text: "1週間分"
+
+# 6. 「次へ（人数確認）」をタップ
+- tapOn:
+    text: "次へ（人数確認）"
+
+# 7. 範囲選択モーダル — ステップ 2: 人数確認
+- assertVisible:
+    text: "人数を確認"
+- assertVisible:
+    text: "2"  # デフォルト 2人分
+
+# 8. 生成ボタンをタップ
+- tapOn:
+    text: "この設定で買い物リストを生成"
+
+# 9. 整理中インジケータが表示される (非同期処理中)
+- assertVisible:
+    text: "整理中..."
+
+# 10. 完了ダイアログが表示されるまで待機 (最大 60 秒)
+- waitForAnimationToEnd:
+    timeout: 60000
+
+# 11. 完了ダイアログを閉じる
+- tapOn:
+    text: "OK"
+
+# 12. アイテムが 1 件以上表示されていることを確認
+- assertNotVisible:
+    text: "買い物リストは空です。"
+
+# 13. 最初のアイテムをチェック
+- tapOn:
+    id: "toggle-.*"
+    index: 0
+
+# 14. チェック済みスタイルに変わることを確認
+- assertVisible:
+    text: "戻す"
+    index: 0
+
+# 15. チェックを戻す
+- tapOn:
+    text: "戻す"
+    index: 0
+
+# 16. 献立画面へのリンクが表示されている
+- assertVisible:
+    text: "献立へ"
+
+# 17. ホーム画面へのリンクが表示されている
+- assertVisible:
+    text: "ホームへ"
