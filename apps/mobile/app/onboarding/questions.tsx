@@ -302,6 +302,12 @@ const QUESTIONS: Question[] = [
       { label: "骨粗しょう症", value: "骨粗しょう症" },
       { label: "貧血", value: "貧血" },
       { label: "痛風", value: "痛風" },
+      { label: "便秘・下痢", value: "消化器系" },
+      { label: "不眠・睡眠障害", value: "睡眠障害" },
+      { label: "花粉症・アレルギー", value: "アレルギー" },
+      { label: "甲状腺疾患", value: "甲状腺疾患" },
+      { label: "自律神経失調", value: "自律神経" },
+      { label: "うつ・不安障害", value: "メンタル" },
     ],
   },
   {
