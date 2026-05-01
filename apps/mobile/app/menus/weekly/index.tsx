@@ -735,6 +735,29 @@ export default function WeeklyMenuPage() {
   const [nutritionSheetDay, setNutritionSheetDay] = useState<DayRow | null>(null);
   const [nutritionSheetLabel, setNutritionSheetLabel] = useState("");
 
+  // Radar chart nutrient keys — fetched from profile (falls back to DEFAULT_RADAR_KEYS)
+  const [radarChartNutrients, setRadarChartNutrients] = useState<(keyof DayNutritionTotals)[]>(DEFAULT_RADAR_KEYS);
+
+  useEffect(() => {
+    const fetchRadarProfile = async () => {
+      try {
+        const api = getApi();
+        const profileData = await api.get<any>("/api/profile");
+        if (
+          profileData?.radar_chart_nutrients &&
+          Array.isArray(profileData.radar_chart_nutrients) &&
+          profileData.radar_chart_nutrients.length > 0
+        ) {
+          setRadarChartNutrients(profileData.radar_chart_nutrients as (keyof DayNutritionTotals)[]);
+        }
+      } catch (e) {
+        // API エラー時は DEFAULT_RADAR_KEYS のまま
+        console.error("[WeeklyMenuPage] Failed to fetch radar_chart_nutrients:", e);
+      }
+    };
+    fetchRadarProfile();
+  }, []);
+
   useEffect(() => {
     setWeekStart(getWeekStart(new Date(), weekStartDay));
   }, [weekStartDay]);
@@ -1533,7 +1556,7 @@ export default function WeeklyMenuPage() {
         onClose={() => setNutritionSheetDay(null)}
         day={nutritionSheetDay}
         dateLabel={nutritionSheetLabel}
-        radarKeys={DEFAULT_RADAR_KEYS}
+        radarKeys={radarChartNutrients}
       />
     </View>
   );
