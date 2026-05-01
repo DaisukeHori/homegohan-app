@@ -25,7 +25,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "preview"
+        "EXPO_PUBLIC_APP_ENV": "preview",
+        "EXPO_PUBLIC_EAS_PROJECT_ID": "$EXPO_PUBLIC_EAS_PROJECT_ID"
       }
     },
     "production": {
@@ -38,7 +39,8 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "production"
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_EAS_PROJECT_ID": "$EXPO_PUBLIC_EAS_PROJECT_ID"
       }
     }
   },
