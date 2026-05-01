@@ -52,6 +52,13 @@ interface TodayMeal {
   image_url: string | null;
 }
 
+interface BestMeal {
+  id: string;
+  dish_name: string | null;
+  image_url: string;
+  veg_score: number | null;
+}
+
 const DOW = ["日", "月", "火", "水", "木", "金", "土"];
 // todayStr is computed fresh on each fetchAll call, not cached at module level
 function getTodayStr() { return formatLocalDate(new Date()); }
@@ -79,6 +86,7 @@ export const useHomeData = (userId: string | undefined) => {
   const [shoppingRemaining, setShoppingRemaining] = useState(0);
   const [badgeCount, setBadgeCount] = useState(0);
   const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
+  const [bestMealThisWeek, setBestMealThisWeek] = useState<BestMeal | null>(null);
 
   // ─── Announcements ───
   const [announcements, setAnnouncements] = useState<{ id: string; title: string; content: string }[]>([]);
@@ -103,6 +111,7 @@ export const useHomeData = (userId: string | undefined) => {
         fetchBadgeInfo(userId),
         fetchActivityLevel(userId),
         fetchAnnouncements(),
+        fetchBestMealThisWeek(userId),
       ]);
 
       // Heavier fetches — async
@@ -364,6 +373,46 @@ export const useHomeData = (userId: string | undefined) => {
     }
   }
 
+  async function fetchBestMealThisWeek(uid: string) {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+
+      const { data } = await supabase
+        .from("planned_meals")
+        .select(`
+          id,
+          dish_name,
+          image_url,
+          veg_score,
+          user_daily_meals!inner(
+            day_date,
+            user_id
+          )
+        `)
+        .eq("user_daily_meals.user_id", uid)
+        .gte("user_daily_meals.day_date", formatLocalDate(sevenDaysAgo))
+        .eq("is_completed", true)
+        .not("image_url", "is", null)
+        .order("veg_score", { ascending: false, nullsFirst: false })
+        .limit(1);
+
+      if (data && data.length > 0 && (data[0] as any).image_url) {
+        const row = data[0] as any;
+        setBestMealThisWeek({
+          id: row.id,
+          dish_name: row.dish_name,
+          image_url: row.image_url,
+          veg_score: row.veg_score,
+        });
+      } else {
+        setBestMealThisWeek(null);
+      }
+    } catch (e) {
+      console.error("Best meal fetch error:", e);
+    }
+  }
+
   async function fetchNutritionAnalysis() {
     try {
       setNutritionAnalysis((prev) => ({ ...prev, loading: true }));
@@ -604,6 +653,7 @@ export const useHomeData = (userId: string | undefined) => {
     shoppingRemaining,
     badgeCount,
     latestBadge,
+    bestMealThisWeek,
     activityLevel,
     suggestion,
     performanceAnalysis,

@@ -93,6 +93,7 @@ export default function HomeScreen() {
     shoppingRemaining,
     badgeCount,
     latestBadge,
+    bestMealThisWeek,
     activityLevel,
     suggestion,
     performanceAnalysis,
@@ -944,6 +945,39 @@ export default function HomeScreen() {
               </View>
             )}
           </Pressable>
+
+          {/* ========== 今週のベスト料理 ========== */}
+          {bestMealThisWeek && bestMealThisWeek.image_url && (
+            <View style={{
+              borderRadius: radius.xl, overflow: "hidden",
+              borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+            }}>
+              <View style={{ height: 128 }}>
+                <Image
+                  source={{ uri: bestMealThisWeek.image_url }}
+                  style={{ width: "100%", height: "100%" }}
+                  resizeMode="cover"
+                />
+                <LinearGradient
+                  colors={["transparent", "rgba(0,0,0,0.65)"]}
+                  style={{
+                    position: "absolute", left: 0, right: 0, bottom: 0, top: 0,
+                  }}
+                />
+                <View style={{
+                  position: "absolute", bottom: 0, left: 0, right: 0, padding: spacing.md,
+                }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 4 }}>
+                    <Ionicons name="ribbon" size={12} color="#FFD700" />
+                    <Text style={{ fontSize: 10, fontWeight: "800", color: "#FFD700" }}>今週のベスト</Text>
+                  </View>
+                  <Text style={{ fontSize: 14, fontWeight: "800", color: "#fff" }} numberOfLines={1}>
+                    {bestMealThisWeek.dish_name ?? ""}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
 
