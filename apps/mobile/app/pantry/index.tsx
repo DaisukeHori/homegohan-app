@@ -149,16 +149,46 @@ export default function PantryPage() {
   }
 
   async function analyzeFridge() {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert("権限が必要です", "写真ライブラリへのアクセスを許可してください。");
-      return;
-    }
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      base64: true,
-      quality: 0.8,
+    // ユーザーに入力元を選択させる
+    const source = await new Promise<"camera" | "library" | null>((resolve) => {
+      Alert.alert(
+        "写真の選択",
+        "冷蔵庫の写真をどこから取得しますか？",
+        [
+          { text: "カメラで撮影", onPress: () => resolve("camera") },
+          { text: "ライブラリから選択", onPress: () => resolve("library") },
+          { text: "キャンセル", style: "cancel", onPress: () => resolve(null) },
+        ],
+      );
     });
+    if (!source) return;
+
+    let picked: ImagePicker.ImagePickerResult;
+
+    if (source === "camera") {
+      const camPerm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!camPerm.granted) {
+        Alert.alert("権限が必要です", "カメラへのアクセスを許可してください。");
+        return;
+      }
+      picked = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        base64: true,
+        quality: 0.8,
+      });
+    } else {
+      const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!libPerm.granted) {
+        Alert.alert("権限が必要です", "写真ライブラリへのアクセスを許可してください。");
+        return;
+      }
+      picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        base64: true,
+        quality: 0.8,
+      });
+    }
+
     if (picked.canceled) return;
     const asset = picked.assets?.[0];
     if (!asset?.base64) {
