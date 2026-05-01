@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 
-import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, StatusBadge } from "../../../src/components/ui";
+import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
@@ -56,6 +56,182 @@ function getWeekStart(date: Date): Date {
   d.setDate(diff);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+// AI生成進捗フェーズ定義（Webの PROGRESS_PHASES / ULTIMATE_PROGRESS_PHASES に準拠）
+const PROGRESS_PHASES = [
+  { phase: "user_context", label: "ユーザー情報を取得", threshold: 5 },
+  { phase: "search_references", label: "参考レシピを検索", threshold: 10 },
+  { phase: "generating", label: "献立をAIが作成", threshold: 15 },
+  { phase: "step1_complete", label: "献立生成完了", threshold: 40 },
+  { phase: "reviewing", label: "献立のバランスをチェック", threshold: 45 },
+  { phase: "review_done", label: "改善点を発見", threshold: 55 },
+  { phase: "fixing", label: "改善点を修正", threshold: 60 },
+  { phase: "no_issues", label: "問題なし", threshold: 70 },
+  { phase: "step2_complete", label: "レビュー完了", threshold: 75 },
+  { phase: "calculating", label: "栄養価を計算", threshold: 80 },
+  { phase: "saving", label: "献立を保存", threshold: 88 },
+  { phase: "completed", label: "完了！", threshold: 100 },
+];
+
+const ULTIMATE_PROGRESS_PHASES = [
+  { phase: "user_context", label: "ユーザー情報を取得", threshold: 3 },
+  { phase: "search_references", label: "参考レシピを検索", threshold: 6 },
+  { phase: "generating", label: "献立をAIが作成", threshold: 10 },
+  { phase: "step1_complete", label: "献立生成完了", threshold: 25 },
+  { phase: "reviewing", label: "献立のバランスをチェック", threshold: 28 },
+  { phase: "fixing", label: "改善点を修正", threshold: 32 },
+  { phase: "step2_complete", label: "レビュー完了", threshold: 38 },
+  { phase: "calculating", label: "栄養価を計算", threshold: 42 },
+  { phase: "step3_complete", label: "栄養計算完了", threshold: 48 },
+  { phase: "nutrition_analyzing", label: "栄養バランスを詳細分析", threshold: 55 },
+  { phase: "nutrition_feedback", label: "改善アドバイスを生成", threshold: 62 },
+  { phase: "improving", label: "献立を改善中", threshold: 70 },
+  { phase: "step5_complete", label: "改善完了", threshold: 82 },
+  { phase: "final_saving", label: "最終保存中", threshold: 90 },
+  { phase: "completed", label: "究極の献立が完成！", threshold: 100 },
+];
+
+type PhaseDefinition = { phase: string; label: string; threshold: number };
+
+type ProgressTodoCardProps = {
+  progress: PendingProgress | null;
+  phases?: PhaseDefinition[];
+  defaultMessage?: string;
+};
+
+function ProgressTodoCard({ progress, phases = PROGRESS_PHASES, defaultMessage = "AIが献立を生成中..." }: ProgressTodoCardProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const currentPercentage = progress?.percentage ?? 0;
+  const currentPhase = progress?.phase ?? "";
+  const totalSlots = progress?.totalSlots ?? 0;
+  const totalDays = totalSlots > 0 ? Math.ceil(totalSlots / 3) : 0;
+
+  const dynamicPhases = useMemo(() => {
+    return phases.map((p) => {
+      if (p.phase === "generating" && totalDays > 0) {
+        const dayLabel = totalDays === 1 ? "1日分" : `${totalDays}日分`;
+        return { ...p, label: `${dayLabel}の献立をAIが作成` };
+      }
+      return p;
+    });
+  }, [phases, totalDays]);
+
+  const getPhaseStatus = (phase: PhaseDefinition): "completed" | "in_progress" | "pending" => {
+    if (currentPercentage >= phase.threshold) return "completed";
+    if (
+      currentPhase === phase.phase ||
+      (currentPhase.startsWith(phase.phase.split("_")[0]) && currentPercentage < phase.threshold)
+    )
+      return "in_progress";
+    return "pending";
+  };
+
+  const headerMessage =
+    totalDays > 0
+      ? `献立を生成中...（${progress?.completedSlots ?? 0}/${totalSlots}食、${totalDays}日分）`
+      : (progress?.message ?? defaultMessage);
+
+  return (
+    <View
+      style={{
+        borderRadius: radius.lg,
+        overflow: "hidden",
+        backgroundColor: colors.accent,
+      }}
+    >
+      {/* ヘッダー */}
+      <Pressable
+        onPress={() => setIsExpanded((prev) => !prev)}
+        style={{ padding: spacing.md, gap: spacing.sm }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <ActivityIndicator size="small" color="#fff" />
+          <Text style={{ flex: 1, color: "#fff", fontWeight: "700", fontSize: 13 }}>
+            {headerMessage}
+          </Text>
+          {currentPercentage > 0 && (
+            <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>{currentPercentage}%</Text>
+          )}
+          <Ionicons
+            name={isExpanded ? "chevron-up" : "chevron-down"}
+            size={14}
+            color="rgba(255,255,255,0.7)"
+          />
+        </View>
+        {currentPercentage > 0 && (
+          <View style={{ height: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 3, overflow: "hidden" }}>
+            <View
+              style={{
+                width: `${currentPercentage}%`,
+                height: "100%",
+                backgroundColor: "#fff",
+                borderRadius: 3,
+              }}
+            />
+          </View>
+        )}
+      </Pressable>
+
+      {/* 展開時のフェーズToDoリスト */}
+      {isExpanded && (
+        <View
+          style={{
+            paddingHorizontal: spacing.md,
+            paddingBottom: spacing.md,
+            paddingTop: spacing.sm,
+            borderTopWidth: 1,
+            borderTopColor: "rgba(255,255,255,0.2)",
+            gap: spacing.sm,
+          }}
+        >
+          {dynamicPhases.filter((p) => p.phase !== "failed").map((phase) => {
+            const status = getPhaseStatus(phase);
+            return (
+              <View key={phase.phase} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                {status === "completed" ? (
+                  <View
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: 8,
+                      backgroundColor: "#fff",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons name="checkmark" size={10} color={colors.accent} />
+                  </View>
+                ) : status === "in_progress" ? (
+                  <ActivityIndicator size="small" color="#fff" style={{ width: 16, height: 16 }} />
+                ) : (
+                  <View
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: 8,
+                      borderWidth: 2,
+                      borderColor: "rgba(255,255,255,0.4)",
+                    }}
+                  />
+                )}
+                <Text
+                  style={{
+                    fontSize: 11,
+                    color: status === "pending" ? "rgba(255,255,255,0.5)" : "#fff",
+                    fontWeight: status === "in_progress" ? "600" : "400",
+                  }}
+                >
+                  {phase.label}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
 }
 
 const DOW = ["月", "火", "水", "木", "金", "土", "日"];
@@ -406,25 +582,7 @@ export default function WeeklyMenuPage() {
         <>
           {/* AI生成中プログレス */}
           {pendingRequestId && (
-            <Card variant="accent">
-              <View style={{ gap: spacing.md }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                  <ActivityIndicator size="small" color={colors.accent} />
-                  <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: 14 }}>
-                    {pendingProgress?.message ?? "AIが献立を生成中..."}
-                  </Text>
-                  <StatusBadge variant="generating" label="生成中" />
-                </View>
-                {pendingProgress?.percentage != null && (
-                  <ProgressBar
-                    value={pendingProgress.percentage}
-                    max={100}
-                    color={colors.accent}
-                    showPercentage
-                  />
-                )}
-              </View>
-            </Card>
+            <ProgressTodoCard progress={pendingProgress} />
           )}
 
           {/* 日付セレクタ — 横並び丸型ピル */}
