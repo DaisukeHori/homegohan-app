@@ -31,6 +31,12 @@ export default function VerifyPage() {
         if (params?.code) {
           const { error } = await supabase.auth.exchangeCodeForSession(params.code);
           if (error) throw error;
+        } else if (params?.token_hash && params?.type) {
+          const { error } = await supabase.auth.verifyOtp({
+            token_hash: params.token_hash,
+            type: params.type as "signup" | "email" | "recovery" | "invite",
+          });
+          if (error) throw error;
         } else if (params?.access_token && params?.refresh_token) {
           const { error } = await supabase.auth.setSession({
             access_token: params.access_token,
@@ -53,7 +59,7 @@ export default function VerifyPage() {
     return () => {
       cancelled = true;
     };
-  }, [params?.code, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
+  }, [params?.code, params?.token_hash, params?.type, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
 
   // 認証成功後のみホームへリダイレクト
   const [hasSession, setHasSession] = useState(false);

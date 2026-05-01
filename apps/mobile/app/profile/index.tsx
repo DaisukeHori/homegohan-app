@@ -6,6 +6,7 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextIn
 import { Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
+import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing, radius } from "../../src/theme";
@@ -133,6 +134,7 @@ export default function ProfilePage() {
   }
 
   async function handleLogout() {
+    await clearUserScopedAsyncStorage(user?.id ?? null);
     await supabase.auth.signOut();
     router.replace("/login");
   }
