@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useMemo, useState, useEffect, useRef } from "react";
-import { Animated, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Animated, Image, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
 import { Svg, Circle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -105,6 +105,7 @@ export default function HomeScreen() {
     refetch,
   } = useHomeData(user?.id);
 
+  const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
   const [checkinSubmitting, setCheckinSubmitting] = useState(false);
   const [checkinForm, setCheckinForm] = useState({
@@ -847,7 +848,7 @@ export default function HomeScreen() {
 
           {/* ========== 週間自炊率グラフ ========== */}
           {weeklyStats.days.length > 0 && (
-            <Card>
+            <Card onPress={() => setShowWeeklyDetail(true)}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
@@ -856,7 +857,10 @@ export default function HomeScreen() {
                     </View>
                     <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text }}>今週の自炊率</Text>
                   </View>
-                  <Text style={{ fontSize: 22, fontWeight: "900", color: colors.success }}>{weeklyStats.avgCookRate}%</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Text style={{ fontSize: 22, fontWeight: "900", color: colors.success }}>{weeklyStats.avgCookRate}%</Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                  </View>
                 </View>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: 60 }}>
                   {weeklyStats.days.map((day) => {
@@ -922,6 +926,108 @@ export default function HomeScreen() {
           </Pressable>
         </View>
       </ScrollView>
+
+      {/* ========== 週間詳細モーダル ========== */}
+      <Modal
+        visible={showWeeklyDetail}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowWeeklyDetail(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}
+          onPress={() => setShowWeeklyDetail(false)}
+        />
+        <View style={{
+          backgroundColor: colors.card,
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
+          padding: spacing.lg,
+          paddingBottom: insets.bottom + spacing.lg,
+          maxHeight: "80%",
+          ...shadows.lg,
+        }}>
+          {/* ドラッグハンドル */}
+          <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: spacing.lg }} />
+
+          {/* ヘッダー */}
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>今週の統計</Text>
+            <Pressable
+              onPress={() => setShowWeeklyDetail(false)}
+              style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}
+            >
+              <Ionicons name="close" size={18} color={colors.textLight} />
+            </Pressable>
+          </View>
+
+          {/* サマリー */}
+          <View style={{ flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg }}>
+            <View style={{ flex: 1, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.successLight }}>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 4 }}>自炊率</Text>
+              <Text style={{ fontSize: 28, fontWeight: "900", color: colors.success }}>{weeklyStats.avgCookRate}%</Text>
+            </View>
+            <View style={{ flex: 1, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.accentLight }}>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 4 }}>総食事数</Text>
+              <Text style={{ fontSize: 28, fontWeight: "900", color: colors.accent }}>{weeklyStats.totalMealCount}食</Text>
+            </View>
+          </View>
+
+          {/* 日別詳細 */}
+          <Text style={{ fontSize: 11, fontWeight: "800", color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm }}>
+            日別詳細
+          </Text>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={{ gap: spacing.xs }}>
+              {weeklyStats.days.map((day) => {
+                const isToday = day.dayOfWeek === DOW[new Date().getDay()];
+                return (
+                  <View
+                    key={day.date}
+                    style={{
+                      flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+                      padding: spacing.md, borderRadius: radius.lg,
+                      backgroundColor: isToday ? "#FFF3E0" : colors.bg,
+                      borderWidth: 1, borderColor: isToday ? "#FFCC80" : "transparent",
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                      <Text style={{ fontSize: 14, fontWeight: "800", color: isToday ? colors.accent : colors.text, width: 20 }}>
+                        {day.dayOfWeek}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                        {day.date.slice(5).replace("-", "/")}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                      <Text style={{ fontSize: 12, color: colors.textMuted }}>{day.mealCount}食</Text>
+                      <View style={{ width: 60, height: 6, backgroundColor: colors.border, borderRadius: 3, overflow: "hidden" }}>
+                        <View style={{
+                          height: "100%", width: `${day.cookRate}%`,
+                          backgroundColor: colors.success, borderRadius: 3,
+                        }} />
+                      </View>
+                      <Text style={{ fontSize: 13, fontWeight: "800", color: colors.success, width: 38, textAlign: "right" }}>
+                        {day.cookRate}%
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+
+          <Pressable
+            onPress={() => setShowWeeklyDetail(false)}
+            style={{
+              marginTop: spacing.lg, paddingVertical: 14, borderRadius: radius.xl,
+              backgroundColor: colors.text, alignItems: "center",
+            }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: "800", color: "#fff" }}>閉じる</Text>
+          </Pressable>
+        </View>
+      </Modal>
 
       {/* ========== AIフローティングボタン ========== */}
       <Pressable
