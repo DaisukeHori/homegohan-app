@@ -889,15 +889,35 @@ export default function HomeScreen() {
           {/* ========== 冷蔵庫アラート ========== */}
           {expiringItems.length > 0 && (
             <Card onPress={() => router.push("/pantry")} variant="accent">
-              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md }}>
                 <View style={{ width: 40, height: 40, borderRadius: radius.md, backgroundColor: colors.warning, alignItems: "center", justifyContent: "center" }}>
                   <Ionicons name="alert" size={22} color="#fff" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }}>期限間近の食材が{expiringItems.length}件</Text>
-                  <Text style={{ fontSize: 12, color: colors.textMuted }} numberOfLines={1}>
-                    {expiringItems.slice(0, 3).map((it: any) => it.name || it.item_name).join("、")}
-                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text, marginBottom: spacing.xs }}>期限間近の食材が{expiringItems.length}件</Text>
+                  {expiringItems.slice(0, 3).map((it: any) => {
+                    const expDate = it.expiration_date ?? it.expiry_date ?? it.expirationDate;
+                    const daysLeft = expDate
+                      ? Math.ceil((new Date(expDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                      : null;
+                    const isUrgent = daysLeft !== null && daysLeft <= 1;
+                    const badgeBg = isUrgent ? "#FEE2E2" : "#FEF3C7";
+                    const badgeText = isUrgent ? "#EF4444" : "#F59E0B";
+                    const label = daysLeft === null ? null : daysLeft <= 0 ? "今日まで" : `あと${daysLeft}日`;
+                    return (
+                      <View key={it.id ?? it.item_name ?? it.name} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                        <Text style={{ fontSize: 12, color: colors.text, flex: 1 }} numberOfLines={1}>{it.name ?? it.item_name}</Text>
+                        {label !== null && (
+                          <View style={{ backgroundColor: badgeBg, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2, marginLeft: spacing.xs }}>
+                            <Text style={{ fontSize: 11, fontWeight: "700", color: badgeText }}>{label}</Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                  {expiringItems.length > 3 && (
+                    <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>他{expiringItems.length - 3}件</Text>
+                  )}
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
               </View>
