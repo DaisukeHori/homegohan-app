@@ -1,0 +1,56 @@
+appId: com.homegohan.app
+---
+# オンボーディングフロー E2E テスト
+# 質問 1〜4 を回答して完了画面に到達することを確認する
+
+- launchApp:
+    clearState: true
+
+# ウェルカム画面: 「はじめる」ボタンをタップ
+- assertVisible: ".*はじめ.*"
+- tapOn:
+    text: "はじめる"
+
+# Q1: ニックネーム入力
+- assertVisible: "ニックネーム"
+- tapOn:
+    id: "nickname-input"
+- inputText: "テストユーザー"
+- tapOn:
+    id: "next-button"
+
+# Q2: 性別選択 (female を選ぶ → pregnancy_status が後で表示される)
+- assertVisible: "性別"
+- tapOn:
+    text: "👩 女性"
+
+# Q3: 身体情報 (custom_stats) — 「次へ」をタップして進む
+- assertVisible: "身体情報"
+- tapOn:
+    text: "次へ"
+
+# Q4: 栄養目標
+- assertVisible: "目標"
+- tapOn:
+    text: "⚖️ 現状維持・健康管理"
+
+# 中略: 運動・食事関連の質問をスキップしながら進む
+# (Maestro は assertVisible ベースで進捗を確認)
+
+# 睡眠の質
+- assertVisible: "睡眠"
+- tapOn:
+    text: "😴 良好"
+
+# ストレスレベル
+- assertVisible: "ストレス"
+- tapOn:
+    text: "😌 低い"
+
+# 妊娠・授乳 (gender=female なので表示される)
+- assertVisible: "妊娠"
+- tapOn:
+    text: "🙅‍♀️ 該当なし"
+
+# 完了画面の確認
+- assertVisible: "完了"
