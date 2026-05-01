@@ -102,6 +102,7 @@ export default function HomeScreen() {
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
+    executeNutritionSuggestion,
     submitPerformanceCheckin,
     refetch,
   } = useHomeData(user?.id);
@@ -584,6 +585,16 @@ export default function HomeScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 11, fontWeight: "800", color: "rgba(255,255,255,0.8)", marginBottom: 2 }}>💡 今日のアドバイス</Text>
                   <Text style={{ fontSize: 13, fontWeight: "600", color: "#fff", lineHeight: 20 }}>{suggestion}</Text>
+                  {nutritionAnalysis.suggestion && (
+                    <Pressable
+                      onPress={() => executeNutritionSuggestion()}
+                      style={{ marginTop: spacing.sm }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: "rgba(255,255,255,0.9)", textDecorationLine: "underline" }}>
+                        献立表でAI変更する
+                      </Text>
+                    </Pressable>
+                  )}
                 </View>
                 <Pressable onPress={() => setSuggestion(null)} hitSlop={12}>
                   <Ionicons name="close" size={16} color="rgba(255,255,255,0.6)" />
