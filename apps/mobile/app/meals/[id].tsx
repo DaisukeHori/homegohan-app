@@ -27,6 +27,30 @@ type PlannedMealDetail = {
   protein_g: number | null;
   fat_g: number | null;
   carbs_g: number | null;
+  // 拡張栄養素 (27項目対応)
+  fiber_g: number | null;
+  sugar_g: number | null;
+  sodium_g: number | null;
+  potassium_mg: number | null;
+  calcium_mg: number | null;
+  phosphorus_mg: number | null;
+  iron_mg: number | null;
+  zinc_mg: number | null;
+  iodine_ug: number | null;
+  cholesterol_mg: number | null;
+  vitamin_a_ug: number | null;
+  vitamin_b1_mg: number | null;
+  vitamin_b2_mg: number | null;
+  vitamin_b6_mg: number | null;
+  vitamin_b12_ug: number | null;
+  vitamin_c_mg: number | null;
+  vitamin_d_ug: number | null;
+  vitamin_e_mg: number | null;
+  vitamin_k_ug: number | null;
+  folic_acid_ug: number | null;
+  saturated_fat_g: number | null;
+  monounsaturated_fat_g: number | null;
+  polyunsaturated_fat_g: number | null;
   is_completed: boolean | null;
   completed_at: string | null;
   dishes: Dish[] | null;
@@ -122,11 +146,66 @@ function SimpleMarkdown({ text }: { text: string }) {
   );
 }
 
+/** 栄養素の値を1行表示するコンポーネント */
+function NutritionRow({
+  label,
+  value,
+  unit,
+  decimals = 1,
+}: {
+  label: string;
+  value: number | null | undefined;
+  unit: string;
+  decimals?: number;
+}) {
+  if (value == null) return null;
+  const formatted =
+    decimals === 0
+      ? Math.round(value).toString()
+      : value.toFixed(decimals);
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        justifyContent: "space-between",
+        paddingVertical: 5,
+        borderBottomWidth: 1,
+        borderBottomColor: "#F0EDE8",
+      }}
+    >
+      <Text style={{ fontSize: 13, color: colors.textMuted }}>{label}</Text>
+      <Text style={{ fontSize: 13, color: colors.text, fontWeight: "600" }}>
+        {formatted} {unit}
+      </Text>
+    </View>
+  );
+}
+
+/** 栄養素カテゴリラベル */
+function NutritionSectionLabel({ label }: { label: string }) {
+  return (
+    <Text
+      style={{
+        fontSize: 11,
+        fontWeight: "700",
+        color: colors.textMuted,
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+        marginTop: 10,
+        marginBottom: 2,
+      }}
+    >
+      {label}
+    </Text>
+  );
+}
+
 export default function MealDetailPage() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [meal, setMeal] = useState<PlannedMealDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showAllNutrition, setShowAllNutrition] = useState(false);
 
   // お気に入り状態
   const [isFavorite, setIsFavorite] = useState(false);
@@ -344,6 +423,8 @@ export default function MealDetailPage() {
         <Card>
           <View style={{ gap: spacing.md }}>
             <SectionHeader title="栄養（推定）" />
+
+            {/* 4大栄養素サマリ */}
             <View style={{ flexDirection: "row", gap: spacing.md }}>
               <View style={{ flex: 1, alignItems: "center", padding: spacing.sm, backgroundColor: colors.accentLight, borderRadius: radius.md }}>
                 <Text style={{ fontSize: 20, fontWeight: "800", color: colors.accent }}>{meal.calories_kcal ?? "-"}</Text>
@@ -369,6 +450,61 @@ export default function MealDetailPage() {
                 <View style={{ flex: (meal.protein_g ?? 0) / totalPFC, backgroundColor: colors.blue }} />
                 <View style={{ flex: (meal.fat_g ?? 0) / totalPFC, backgroundColor: colors.warning }} />
                 <View style={{ flex: (meal.carbs_g ?? 0) / totalPFC, backgroundColor: colors.success }} />
+              </View>
+            )}
+
+            {/* 詳細栄養素トグル */}
+            <Pressable
+              onPress={() => setShowAllNutrition((v) => !v)}
+              style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: spacing.xs }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: "700", color: colors.accent }}>
+                {showAllNutrition ? "詳細栄養素を閉じる" : "詳細栄養素を見る（27項目）"}
+              </Text>
+              <Ionicons
+                name={showAllNutrition ? "chevron-up" : "chevron-down"}
+                size={16}
+                color={colors.accent}
+              />
+            </Pressable>
+
+            {/* 詳細栄養素一覧（折りたたみ） */}
+            {showAllNutrition && (
+              <View style={{ gap: 0 }}>
+                {/* 基本 */}
+                <NutritionRow label="エネルギー" value={meal.calories_kcal} unit="kcal" decimals={0} />
+                <NutritionRow label="タンパク質" value={meal.protein_g} unit="g" />
+                <NutritionRow label="脂質" value={meal.fat_g} unit="g" />
+                <NutritionRow label="炭水化物" value={meal.carbs_g} unit="g" />
+                <NutritionRow label="食物繊維" value={meal.fiber_g} unit="g" />
+                <NutritionRow label="糖質" value={meal.sugar_g} unit="g" />
+                {/* ミネラル */}
+                <NutritionSectionLabel label="ミネラル" />
+                <NutritionRow label="塩分" value={meal.sodium_g} unit="g" />
+                <NutritionRow label="カリウム" value={meal.potassium_mg} unit="mg" decimals={0} />
+                <NutritionRow label="カルシウム" value={meal.calcium_mg} unit="mg" decimals={0} />
+                <NutritionRow label="リン" value={meal.phosphorus_mg} unit="mg" decimals={0} />
+                <NutritionRow label="鉄分" value={meal.iron_mg} unit="mg" />
+                <NutritionRow label="亜鉛" value={meal.zinc_mg} unit="mg" />
+                <NutritionRow label="ヨウ素" value={meal.iodine_ug} unit="µg" decimals={0} />
+                <NutritionRow label="コレステロール" value={meal.cholesterol_mg} unit="mg" decimals={0} />
+                {/* ビタミン */}
+                <NutritionSectionLabel label="ビタミン" />
+                <NutritionRow label="ビタミンA" value={meal.vitamin_a_ug} unit="µg" decimals={0} />
+                <NutritionRow label="ビタミンB1" value={meal.vitamin_b1_mg} unit="mg" decimals={2} />
+                <NutritionRow label="ビタミンB2" value={meal.vitamin_b2_mg} unit="mg" decimals={2} />
+                <NutritionRow label="ビタミンB6" value={meal.vitamin_b6_mg} unit="mg" decimals={2} />
+                <NutritionRow label="ビタミンB12" value={meal.vitamin_b12_ug} unit="µg" />
+                <NutritionRow label="ビタミンC" value={meal.vitamin_c_mg} unit="mg" decimals={0} />
+                <NutritionRow label="ビタミンD" value={meal.vitamin_d_ug} unit="µg" />
+                <NutritionRow label="ビタミンE" value={meal.vitamin_e_mg} unit="mg" />
+                <NutritionRow label="ビタミンK" value={meal.vitamin_k_ug} unit="µg" decimals={0} />
+                <NutritionRow label="葉酸" value={meal.folic_acid_ug} unit="µg" decimals={0} />
+                {/* 脂肪酸 */}
+                <NutritionSectionLabel label="脂肪酸" />
+                <NutritionRow label="飽和脂肪酸" value={meal.saturated_fat_g} unit="g" />
+                <NutritionRow label="一価不飽和脂肪酸" value={meal.monounsaturated_fat_g} unit="g" />
+                <NutritionRow label="多価不飽和脂肪酸" value={meal.polyunsaturated_fat_g} unit="g" />
               </View>
             )}
           </View>
