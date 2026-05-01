@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
@@ -499,6 +499,69 @@ export default function WeeklyMenuPage() {
     }
   }
 
+  // #450: 食事完了トグル — 250ms debounce + 二重送信ガード
+  const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const pendingToggleRef = useRef<Set<string>>(new Set());
+
+  const toggleMealCompletion = useCallback(async (meal: PlannedMealRow) => {
+    const mealId = meal.id;
+    // 既存タイマーをキャンセル
+    const existing = toggleDebounceTimerRef.current.get(mealId);
+    if (existing) {
+      clearTimeout(existing);
+      toggleDebounceTimerRef.current.delete(mealId);
+    }
+    // PATCH が進行中なら無視
+    if (pendingToggleRef.current.has(mealId)) return;
+
+    // 楽観的更新
+    const newCompleted = !meal.is_completed;
+    setDays((prev) =>
+      prev.map((d) => ({
+        ...d,
+        planned_meals: d.planned_meals.map((m) =>
+          m.id === mealId ? { ...m, is_completed: newCompleted } : m
+        ),
+      }))
+    );
+
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        toggleDebounceTimerRef.current.delete(mealId);
+        resolve();
+      }, 250);
+      toggleDebounceTimerRef.current.set(mealId, timer);
+    });
+
+    if (pendingToggleRef.current.has(mealId)) return;
+    pendingToggleRef.current.add(mealId);
+    try {
+      const api = getApi();
+      await api.patch(`/api/meal-plans/meals/${mealId}`, { isCompleted: newCompleted });
+    } catch {
+      // 失敗時はロールバック
+      setDays((prev) =>
+        prev.map((d) => ({
+          ...d,
+          planned_meals: d.planned_meals.map((m) =>
+            m.id === mealId ? { ...m, is_completed: meal.is_completed } : m
+          ),
+        }))
+      );
+    } finally {
+      pendingToggleRef.current.delete(mealId);
+    }
+  }, []);
+
+  // タイマーのクリーンアップ
+  useEffect(() => {
+    const ref = toggleDebounceTimerRef.current;
+    return () => {
+      ref.forEach((t) => clearTimeout(t));
+      ref.clear();
+    };
+  }, []);
+
   // Day selector helpers
   const getDayOfWeek = (dateStr: string): string => {
     const d = new Date(dateStr + "T00:00:00");
@@ -736,12 +799,29 @@ export default function WeeklyMenuPage() {
 
                     {/* ステータス & アクション */}
                     <View style={{ alignItems: "center", gap: 4 }}>
-                      {m.is_completed ? (
-                        <StatusBadge variant="completed" label="完了" />
-                      ) : isGenerating ? (
+                      {isGenerating ? (
                         <StatusBadge variant="generating" label="生成中" />
                       ) : (
-                        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                        /* 完了チェックボタン (#450) */
+                        <Pressable
+                          onPress={(e) => { e.stopPropagation(); toggleMealCompletion(m); }}
+                          hitSlop={8}
+                          style={({ pressed }) => ({
+                            width: 32,
+                            height: 32,
+                            borderRadius: 16,
+                            borderWidth: 2,
+                            borderColor: m.is_completed ? colors.success : colors.border,
+                            backgroundColor: m.is_completed ? colors.success : "transparent",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            opacity: pressed ? 0.7 : 1,
+                          })}
+                        >
+                          {m.is_completed && (
+                            <Ionicons name="checkmark" size={18} color="#fff" />
+                          )}
+                        </Pressable>
                       )}
                     </View>
                   </Pressable>
