@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -289,9 +290,10 @@ interface NutritionSheetProps {
   day: DayRow | null;
   dateLabel: string;
   radarKeys: (keyof DayNutritionTotals)[];
+  weekDays: DayRow[];
 }
 
-function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys }: NutritionSheetProps) {
+function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, weekDays }: NutritionSheetProps) {
   const meals = day?.planned_meals ?? [];
   const totals = useMemo(() => calcDayTotals(meals), [meals]);
   const [praiseComment, setPraiseComment]         = useState<string | null>(null);
@@ -313,9 +315,16 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys }: N
 
   async function fetchFeedback(dateStr: string, nutrition: DayNutritionTotals, mealCount: number, forceRefresh = false) {
     setIsLoadingFeedback(true);
+    const weekData = weekDays.map((d) => ({
+      date: d.day_date,
+      meals: d.planned_meals.map((m) => ({
+        title: m.dish_name,
+        calories: m.calories_kcal,
+      })),
+    }));
     try {
       const api = getApi();
-      const res = await api.post<any>("/api/ai/nutrition/feedback", { date: dateStr, nutrition, mealCount, forceRefresh });
+      const res = await api.post<any>("/api/ai/nutrition/feedback", { date: dateStr, nutrition, mealCount, forceRefresh, weekData });
       if (res.cached && (res.feedback || res.praiseComment)) {
         setPraiseComment(res.praiseComment ?? null);
         setAdviceText(res.advice ?? res.feedback ?? null);
@@ -583,17 +592,25 @@ function ProgressTodoCard({ progress, phases = PROGRESS_PHASES, defaultMessage =
     return "pending";
   };
 
+  const isError = currentPhase === "failed";
+
   const headerMessage =
     totalDays > 0
       ? `献立を生成中...（${progress?.completedSlots ?? 0}/${totalSlots}食、${totalDays}日分）`
       : (progress?.message ?? defaultMessage);
 
   return (
-    <View
+    <LinearGradient
+      colors={
+        isError
+          ? ["#ef4444", "#dc2626"]
+          : [colors.accent, colors.purple]
+      }
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
       style={{
         borderRadius: radius.lg,
         overflow: "hidden",
-        backgroundColor: colors.accent,
       }}
     >
       {/* ヘッダー */}
@@ -685,7 +702,7 @@ function ProgressTodoCard({ progress, phases = PROGRESS_PHASES, defaultMessage =
           })}
         </View>
       )}
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -734,6 +751,29 @@ export default function WeeklyMenuPage() {
   // Nutrition sheet state
   const [nutritionSheetDay, setNutritionSheetDay] = useState<DayRow | null>(null);
   const [nutritionSheetLabel, setNutritionSheetLabel] = useState("");
+
+  // Radar chart nutrient keys — fetched from profile (falls back to DEFAULT_RADAR_KEYS)
+  const [radarChartNutrients, setRadarChartNutrients] = useState<(keyof DayNutritionTotals)[]>(DEFAULT_RADAR_KEYS);
+
+  useEffect(() => {
+    const fetchRadarProfile = async () => {
+      try {
+        const api = getApi();
+        const profileData = await api.get<any>("/api/profile");
+        if (
+          profileData?.radar_chart_nutrients &&
+          Array.isArray(profileData.radar_chart_nutrients) &&
+          profileData.radar_chart_nutrients.length > 0
+        ) {
+          setRadarChartNutrients(profileData.radar_chart_nutrients as (keyof DayNutritionTotals)[]);
+        }
+      } catch (e) {
+        // API エラー時は DEFAULT_RADAR_KEYS のまま
+        console.error("[WeeklyMenuPage] Failed to fetch radar_chart_nutrients:", e);
+      }
+    };
+    fetchRadarProfile();
+  }, []);
 
   useEffect(() => {
     setWeekStart(getWeekStart(new Date(), weekStartDay));
@@ -1534,6 +1574,7 @@ export default function WeeklyMenuPage() {
         day={nutritionSheetDay}
         dateLabel={nutritionSheetLabel}
         radarKeys={DEFAULT_RADAR_KEYS}
+        weekDays={days}
       />
     </View>
   );
