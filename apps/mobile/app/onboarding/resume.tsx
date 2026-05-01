@@ -36,6 +36,7 @@ export default function OnboardingResume() {
                   .from("user_profiles")
                   .update({
                     onboarding_started_at: null,
+                    onboarding_completed_at: null,
                     onboarding_progress: null,
                     updated_at: new Date().toISOString(),
                   })
