@@ -211,6 +211,22 @@ const QUESTIONS: Question[] = [
       (answers.training_phase === "competition" || answers.training_phase === "cut"),
   },
   {
+    id: "target_weight",
+    text: "目標体重を教えてください",
+    type: "number",
+    placeholder: "例: 55",
+    min: 30,
+    max: 200,
+    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
+  },
+  {
+    id: "target_date",
+    text: "いつまでに達成したいですか？",
+    type: "date",
+    allowSkip: true,
+    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
+  },
+  {
     id: "weight_change_rate",
     text: "どのくらいのペースで変えたいですか？",
     type: "choice",
@@ -450,6 +466,8 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   };
 
   if (ans.nutrition_goal) profile.nutritionGoal = ans.nutrition_goal;
+  if (ans.target_weight) profile.targetWeight = parseFloat(ans.target_weight);
+  if (ans.target_date) profile.targetDate = ans.target_date;
   if (ans.weight_change_rate) profile.weightChangeRate = ans.weight_change_rate;
   if (ans.exercise_types?.length && !ans.exercise_types.includes("none")) profile.exerciseTypes = ans.exercise_types;
   if (ans.exercise_frequency) profile.exerciseFrequency = parseInt(ans.exercise_frequency);
@@ -522,6 +540,8 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.height !== undefined && body.height !== null) updates.height = body.height;
   if (body.weight !== undefined && body.weight !== null) updates.weight = body.weight;
   if (body.nutritionGoal) updates.nutrition_goal = body.nutritionGoal;
+  if (body.targetWeight !== undefined && body.targetWeight !== null) updates.target_weight = body.targetWeight;
+  if (body.targetDate) updates.target_date = body.targetDate;
   if (body.weightChangeRate) updates.weight_change_rate = body.weightChangeRate;
   if (body.exerciseTypes) updates.exercise_types = body.exerciseTypes;
   if (body.exerciseFrequency !== undefined) updates.exercise_frequency = body.exerciseFrequency;
