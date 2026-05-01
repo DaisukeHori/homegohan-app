@@ -5,6 +5,7 @@ import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
+import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
 import { colors, spacing } from "../../src/theme";
 import { typography } from "../../src/theme/typography";
 
@@ -19,6 +20,8 @@ export default function AccountSettingsPage() {
     if (!ok) return;
 
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      await clearUserScopedAsyncStorage(user?.id ?? null);
       const api = getApi();
       await api.post("/api/account/delete", { confirm: true });
       await supabase.auth.signOut();
