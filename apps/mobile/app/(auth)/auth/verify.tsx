@@ -27,9 +27,18 @@ export default function VerifyPage() {
           return;
         }
 
-        // code or token が付いている場合はセッション確立を試みる
+        // 3 種類の Supabase auth リンク形式に対応:
+        //   1. PKCE/OAuth: code パラメータ
+        //   2. OTP: token_hash + type パラメータ (#438)
+        //   3. Legacy: access_token + refresh_token フラグメント
         if (params?.code) {
           const { error } = await supabase.auth.exchangeCodeForSession(params.code);
+          if (error) throw error;
+        } else if (params?.token_hash && params?.type) {
+          const { error } = await supabase.auth.verifyOtp({
+            token_hash: params.token_hash,
+            type: params.type as "signup" | "email" | "recovery" | "invite",
+          });
           if (error) throw error;
         } else if (params?.access_token && params?.refresh_token) {
           const { error } = await supabase.auth.setSession({
@@ -53,7 +62,7 @@ export default function VerifyPage() {
     return () => {
       cancelled = true;
     };
-  }, [params?.code, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
+  }, [params?.code, params?.token_hash, params?.type, params?.access_token, params?.refresh_token, params?.error, params?.error_description]);
 
   // 認証成功後のみホームへリダイレクト
   const [hasSession, setHasSession] = useState(false);

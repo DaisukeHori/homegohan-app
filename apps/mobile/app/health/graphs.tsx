@@ -1,169 +1,362 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import Svg, { Circle, Line, Path, Polygon, Text as SvgText } from "react-native-svg";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
-type HealthRecord = {
+// ----------------------------------------------------------------
+// 型定義
+// ----------------------------------------------------------------
+type Period = "week" | "month" | "3months" | "year";
+type Metric = "weight" | "body_fat" | "bp" | "sleep";
+
+interface HealthRecord {
   id: string;
   record_date: string;
-  weight: number | null;
-  mood_score: number | null;
-  sleep_quality: number | null;
-};
+  weight?: number | null;
+  body_fat_percentage?: number | null;
+  systolic_bp?: number | null;
+  sleep_hours?: number | null;
+  fromCheckup?: boolean;
+}
 
-function SimpleBarChart({ data, label, unit, color, maxBars = 14 }: {
-  data: { date: string; value: number }[];
-  label: string;
-  unit: string;
+interface CheckupRecord {
+  checkup_date: string;
+  weight?: number | null;
+  blood_pressure_systolic?: number | null;
+}
+
+interface GoalRecord {
+  goal_type: string;
+  target_value: number;
+}
+
+// ----------------------------------------------------------------
+// 折れ線グラフコンポーネント
+// ----------------------------------------------------------------
+interface LineGraphProps {
+  data: { date: string; value: number | null; fromCheckup?: boolean }[];
+  min: number | null;
+  max: number | null;
+  targetValue?: number | null;
   color: string;
-  maxBars?: number;
-}) {
-  const sliced = data.slice(-maxBars);
-  if (sliced.length === 0) return null;
+  period: Period;
+}
 
-  const values = sliced.map((d) => d.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+function LineGraph({ data, min, max, targetValue, color, period }: LineGraphProps) {
+  const svgWidth = 300;
+  const svgHeight = 160;
+  const pad = { top: 20, right: 16, bottom: 28, left: 36 };
+  const gw = svgWidth - pad.left - pad.right;
+  const gh = svgHeight - pad.top - pad.bottom;
+
+  if (data.length === 0 || min === null || max === null) return null;
+
   const range = max - min || 1;
-  const latest = sliced[sliced.length - 1];
-  const prev = sliced.length > 1 ? sliced[sliced.length - 2] : null;
-  const diff = prev ? latest.value - prev.value : null;
+  const yMin = min - range * 0.1;
+  const yMax = max + range * 0.1;
+  const yRange = yMax - yMin;
+
+  const toX = (i: number) =>
+    data.length > 1 ? pad.left + (i / (data.length - 1)) * gw : pad.left + gw / 2;
+  const toY = (v: number) => pad.top + gh - ((v - yMin) / yRange) * gh;
+
+  type ValidPoint = { x: number; y: number; fromCheckup: boolean | undefined };
+  const validPoints: ValidPoint[] = data
+    .map((d, i) => ({ x: toX(i), y: d.value !== null ? toY(d.value) : null, fromCheckup: d.fromCheckup }))
+    .filter((p): p is { x: number; y: number; fromCheckup: boolean | undefined } => p.y !== null);
+
+  const pathD =
+    validPoints.length > 1
+      ? `M ${validPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L ")}`
+      : "";
+
+  const targetY =
+    targetValue != null && targetValue >= yMin && targetValue <= yMax
+      ? toY(targetValue)
+      : null;
+
+  // X軸ラベル: 期間に応じてサンプリング
+  const xLabelIndices: number[] = [];
+  if (data.length > 0) {
+    xLabelIndices.push(0);
+    xLabelIndices.push(data.length - 1);
+    if (period === "3months" || period === "year") {
+      const step = Math.ceil(data.length / 4);
+      for (let i = step; i < data.length - 1; i += step) {
+        xLabelIndices.push(i);
+      }
+    }
+  }
 
   return (
-    <View style={styles.chartCard}>
-      <View style={styles.chartHeader}>
-        <Text style={styles.chartLabel}>{label}</Text>
-        <View style={{ alignItems: "flex-end" }}>
-          <Text style={[styles.chartValue, { color }]}>
-            {latest.value.toFixed(1)}<Text style={styles.chartUnit}> {unit}</Text>
-          </Text>
-          {diff !== null && (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
-              <Ionicons
-                name={diff > 0 ? "trending-up" : diff < 0 ? "trending-down" : "remove"}
-                size={12}
-                color={diff > 0 ? colors.error : diff < 0 ? colors.success : colors.textMuted}
-              />
-              <Text style={{ fontSize: 11, color: diff > 0 ? colors.error : diff < 0 ? colors.success : colors.textMuted }}>
-                {diff > 0 ? "+" : ""}{diff.toFixed(1)}
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Bar chart */}
-      <View style={styles.barsContainer}>
-        {sliced.map((d, i) => {
-          const pct = ((d.value - min) / range) * 0.8 + 0.2; // 20%-100%
-          const isLast = i === sliced.length - 1;
+    <View style={{ alignItems: "center" }}>
+      <Svg width="100%" viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ overflow: "visible" }}>
+        {/* グリッド線 */}
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = pad.top + gh * ratio;
           return (
-            <View key={d.date} style={styles.barCol}>
-              <View style={[styles.bar, {
-                height: pct * 80,
-                backgroundColor: isLast ? color : `${color}40`,
-                borderRadius: 4,
-              }]} />
-              {i % Math.ceil(sliced.length / 5) === 0 || isLast ? (
-                <Text style={styles.barLabel}>{d.date.slice(5)}</Text>
-              ) : (
-                <Text style={styles.barLabel}> </Text>
-              )}
-            </View>
+            <Line
+              key={ratio}
+              x1={pad.left}
+              y1={y}
+              x2={svgWidth - pad.right}
+              y2={y}
+              stroke={colors.border}
+              strokeDasharray="4,4"
+              strokeWidth={1}
+            />
           );
         })}
-      </View>
 
-      {/* Min/Max legend */}
-      <View style={styles.legendRow}>
-        <Text style={styles.legendText}>最小: {min.toFixed(1)} {unit}</Text>
-        <Text style={styles.legendText}>最大: {max.toFixed(1)} {unit}</Text>
-      </View>
+        {/* 目標ライン */}
+        {targetY !== null && (() => {
+          const ty = targetY as number;
+          return (
+            <>
+              <Line
+                x1={pad.left}
+                y1={ty}
+                x2={svgWidth - pad.right}
+                y2={ty}
+                stroke={colors.success}
+                strokeWidth={2}
+                strokeDasharray="6,4"
+              />
+              <SvgText
+                x={svgWidth - pad.right + 4}
+                y={ty + 4}
+                fontSize={9}
+                fill={colors.success}
+              >
+                目標
+              </SvgText>
+            </>
+          );
+        })()}
+
+        {/* 折れ線 */}
+        {pathD !== "" && (
+          <Path
+            d={pathD}
+            fill="none"
+            stroke={color}
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+
+        {/* データポイント */}
+        {validPoints.map((p, i) =>
+          p.fromCheckup ? (
+            // 健診データ: 菱形
+            <Polygon
+              key={i}
+              points={`${p.x},${p.y - 5} ${p.x + 5},${p.y} ${p.x},${p.y + 5} ${p.x - 5},${p.y}`}
+              fill={colors.purple}
+              stroke={colors.card}
+              strokeWidth={1.5}
+            />
+          ) : (
+            <Circle
+              key={i}
+              cx={p.x}
+              cy={p.y}
+              r={4}
+              fill={colors.card}
+              stroke={color}
+              strokeWidth={2}
+            />
+          )
+        )}
+
+        {/* Y軸ラベル */}
+        <SvgText
+          x={pad.left - 4}
+          y={pad.top + 5}
+          fontSize={9}
+          fill={colors.textMuted}
+          textAnchor="end"
+        >
+          {yMax.toFixed(1)}
+        </SvgText>
+        <SvgText
+          x={pad.left - 4}
+          y={pad.top + gh + 3}
+          fontSize={9}
+          fill={colors.textMuted}
+          textAnchor="end"
+        >
+          {yMin.toFixed(1)}
+        </SvgText>
+
+        {/* X軸ラベル */}
+        {xLabelIndices.map((idx) => {
+          const d = data[idx];
+          if (!d) return null;
+          const x = toX(idx);
+          return (
+            <SvgText
+              key={idx}
+              x={x}
+              y={svgHeight - 4}
+              fontSize={9}
+              fill={colors.textMuted}
+              textAnchor="middle"
+            >
+              {d.date.slice(5)}
+            </SvgText>
+          );
+        })}
+      </Svg>
     </View>
   );
 }
 
-function SimpleLineList({ data, label, unit }: {
-  data: { date: string; value: number }[];
-  label: string;
-  unit: string;
-}) {
-  if (data.length === 0) return null;
-
-  const MOOD_LABELS: Record<number, string> = { 1: "😫", 2: "😟", 3: "😐", 4: "😊", 5: "😄" };
-  const SLEEP_LABELS: Record<number, string> = { 1: "😵", 2: "😪", 3: "😐", 4: "😴", 5: "🌟" };
-  const labels = label.includes("気分") ? MOOD_LABELS : label.includes("睡眠") ? SLEEP_LABELS : {};
-
-  return (
-    <View style={styles.chartCard}>
-      <Text style={styles.chartLabel}>{label}（直近7件）</Text>
-      <View style={{ gap: 4, marginTop: spacing.sm }}>
-        {data.slice(-7).map((d) => (
-          <View key={d.date} style={styles.listRow}>
-            <Text style={styles.listDate}>{d.date.slice(5)}</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-              {labels[d.value] && <Text style={{ fontSize: 16 }}>{labels[d.value]}</Text>}
-              <Text style={styles.listValue}>{d.value}{unit}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
-
+// ----------------------------------------------------------------
+// メインページ
+// ----------------------------------------------------------------
 export default function HealthGraphsPage() {
   const [records, setRecords] = useState<HealthRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>("month");
+  const [metric, setMetric] = useState<Metric>("weight");
+  const [targetWeight, setTargetWeight] = useState<number | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       const api = getApi();
-      const res = await api.get<{ records: HealthRecord[] }>("/api/health/records?limit=90");
-      setRecords(res.records ?? []);
+      const days =
+        period === "week" ? 7 : period === "month" ? 30 : period === "3months" ? 90 : 365;
+
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startStr = startDate.toISOString().slice(0, 10);
+
+      const [recordsRes, checkupsRes, goalsRes] = await Promise.all([
+        api.get<{ records: HealthRecord[] }>(
+          `/api/health/records?start_date=${startStr}&limit=365`
+        ),
+        api.get<{ checkups: CheckupRecord[] }>(`/api/health/checkups?limit=365`),
+        api.get<{ goals: GoalRecord[] }>("/api/health/goals?status=active"),
+      ]);
+
+      const merged: HealthRecord[] = [...(recordsRes.records ?? [])];
+
+      // 健診データを補完
+      for (const c of checkupsRes.checkups ?? []) {
+        if (c.checkup_date < startStr) continue;
+        const existing = merged.find((r) => r.record_date === c.checkup_date);
+        if (existing) {
+          if (c.weight != null && existing.weight == null) existing.weight = c.weight;
+          if (c.blood_pressure_systolic != null && existing.systolic_bp == null) {
+            existing.systolic_bp = c.blood_pressure_systolic;
+          }
+        } else {
+          merged.push({
+            id: `checkup-${c.checkup_date}`,
+            record_date: c.checkup_date,
+            weight: c.weight ?? null,
+            systolic_bp: c.blood_pressure_systolic ?? null,
+            fromCheckup: true,
+          });
+        }
+      }
+
+      merged.sort((a, b) => a.record_date.localeCompare(b.record_date));
+      setRecords(merged);
+
+      const weightGoal = (goalsRes.goals ?? []).find((g) => g.goal_type === "weight");
+      setTargetWeight(weightGoal?.target_value ?? null);
     } catch (e: any) {
       setError(e?.message ?? "取得に失敗しました。");
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [period]);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
-  const weights = useMemo(() =>
-    records.filter((r) => typeof r.weight === "number")
-      .map((r) => ({ date: r.record_date, value: r.weight as number }))
-      .sort((a, b) => a.date.localeCompare(b.date)),
-    [records]
-  );
+  // 期間内の全日付スロットを生成し、各日に値をマッピング
+  const graphData = useMemo(() => {
+    const days =
+      period === "week" ? 7 : period === "month" ? 30 : period === "3months" ? 90 : 365;
+    const result: { date: string; value: number | null; fromCheckup?: boolean }[] = [];
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days + 1);
 
-  const moods = useMemo(() =>
-    records.filter((r) => typeof r.mood_score === "number")
-      .map((r) => ({ date: r.record_date, value: r.mood_score as number }))
-      .sort((a, b) => a.date.localeCompare(b.date)),
-    [records]
-  );
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().slice(0, 10);
+      const rec = records.find((r) => r.record_date === dateStr);
+      let value: number | null = null;
+      if (rec) {
+        switch (metric) {
+          case "weight":
+            value = rec.weight ?? null;
+            break;
+          case "body_fat":
+            value = rec.body_fat_percentage ?? null;
+            break;
+          case "bp":
+            value = rec.systolic_bp ?? null;
+            break;
+          case "sleep":
+            value = rec.sleep_hours ?? null;
+            break;
+        }
+      }
+      result.push({ date: dateStr, value, fromCheckup: rec?.fromCheckup });
+    }
+    return result;
+  }, [records, period, metric]);
 
-  const sleeps = useMemo(() =>
-    records.filter((r) => typeof r.sleep_quality === "number")
-      .map((r) => ({ date: r.record_date, value: r.sleep_quality as number }))
-      .sort((a, b) => a.date.localeCompare(b.date)),
-    [records]
-  );
+  const { min, max, avg } = useMemo(() => {
+    const vals = graphData.filter((d) => d.value !== null).map((d) => d.value as number);
+    if (vals.length === 0) return { min: null, max: null, avg: null };
+    const mn = Math.min(...vals);
+    const mx = Math.max(...vals);
+    const av = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return { min: mn, max: mx, avg: av };
+  }, [graphData]);
+
+  const latestValue = useMemo(() => {
+    const valid = graphData.filter((d) => d.value !== null);
+    return valid.length > 0 ? valid[valid.length - 1].value : null;
+  }, [graphData]);
+
+  const change = useMemo(() => {
+    const valid = graphData.filter((d) => d.value !== null);
+    if (valid.length < 2) return null;
+    return parseFloat(((valid[valid.length - 1].value ?? 0) - (valid[0].value ?? 0)).toFixed(2));
+  }, [graphData]);
+
+  const formatStat = (v: number | null) => (v === null ? "-" : v.toFixed(1));
+
+  const metricConfig: Record<Metric, { label: string; unit: string; color: string }> = {
+    weight: { label: "体重", unit: "kg", color: colors.accent },
+    body_fat: { label: "体脂肪率", unit: "%", color: colors.purple },
+    bp: { label: "血圧(収縮期)", unit: "mmHg", color: colors.error },
+    sleep: { label: "睡眠時間", unit: "h", color: colors.blue },
+  };
+
+  const currentMetric = metricConfig[metric];
+  const hasData = graphData.some((d) => d.value !== null);
 
   return (
     <View style={styles.screen}>
       <PageHeader
-        title="グラフ"
+        title="推移グラフ"
         right={
           <Link href="/health">
             <Text style={styles.linkText}>健康トップへ</Text>
@@ -171,7 +364,53 @@ export default function HealthGraphsPage() {
         }
       />
       <ScrollView contentContainerStyle={styles.container}>
+        {/* 指標セレクタ */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+          {(Object.keys(metricConfig) as Metric[]).map((m) => (
+            <TouchableOpacity
+              key={m}
+              onPress={() => setMetric(m)}
+              style={[
+                styles.chip,
+                { backgroundColor: metric === m ? metricConfig[m].color : colors.card },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.chipText,
+                  { color: metric === m ? colors.card : colors.textLight },
+                ]}
+              >
+                {metricConfig[m].label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
 
+        {/* 期間セレクタ */}
+        <View style={styles.periodRow}>
+          {(["week", "month", "3months", "year"] as Period[]).map((p) => (
+            <TouchableOpacity
+              key={p}
+              onPress={() => setPeriod(p)}
+              style={[
+                styles.periodBtn,
+                { backgroundColor: period === p ? colors.accent : colors.card },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.periodText,
+                  { color: period === p ? colors.card : colors.textLight },
+                ]}
+              >
+                {p === "week" ? "1週" : p === "month" ? "1ヶ月" : p === "3months" ? "3ヶ月" : "1年"}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* グラフカード */}
         {isLoading ? (
           <LoadingState message="データを読み込み中..." />
         ) : error ? (
@@ -181,7 +420,7 @@ export default function HealthGraphsPage() {
               <Text style={styles.errorText}>{error}</Text>
             </View>
           </Card>
-        ) : weights.length === 0 && moods.length === 0 && sleeps.length === 0 ? (
+        ) : !hasData ? (
           <EmptyState
             icon={<Ionicons name="analytics-outline" size={48} color={colors.textMuted} />}
             message="データがありません。健康記録を開始しましょう。"
@@ -190,29 +429,143 @@ export default function HealthGraphsPage() {
           />
         ) : (
           <>
-            {weights.length > 0 && (
-              <SimpleBarChart data={weights} label="体重推移" unit="kg" color={colors.accent} />
-            )}
+            {/* メトリクスカード */}
+            <View style={styles.chartCard}>
+              {/* サマリーヘッダー */}
+              <View style={styles.chartHeader}>
+                <View>
+                  <Text style={styles.metricLabel}>{currentMetric.label}の推移</Text>
+                  <View style={styles.valueRow}>
+                    <Text style={[styles.latestValue, { color: currentMetric.color }]}>
+                      {latestValue !== null ? latestValue.toFixed(1) : "-"}
+                    </Text>
+                    <Text style={styles.unitText}>{currentMetric.unit}</Text>
+                  </View>
+                </View>
+                {change !== null && (
+                  <View
+                    style={[
+                      styles.changeBadge,
+                      {
+                        backgroundColor:
+                          change < 0
+                            ? colors.successLight
+                            : change > 0
+                            ? colors.errorLight
+                            : colors.bg,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        change < 0
+                          ? "trending-down"
+                          : change > 0
+                          ? "trending-up"
+                          : "remove"
+                      }
+                      size={14}
+                      color={
+                        change < 0
+                          ? colors.success
+                          : change > 0
+                          ? colors.error
+                          : colors.textMuted
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.changeText,
+                        {
+                          color:
+                            change < 0
+                              ? colors.success
+                              : change > 0
+                              ? colors.error
+                              : colors.textMuted,
+                        },
+                      ]}
+                    >
+                      {change > 0 ? "+" : ""}
+                      {change} {currentMetric.unit}
+                    </Text>
+                  </View>
+                )}
+              </View>
 
-            {moods.length > 0 && (
-              <SimpleLineList data={moods} label="気分スコア" unit="点" />
-            )}
+              {/* 折れ線グラフ */}
+              <LineGraph
+                data={graphData}
+                min={min}
+                max={max}
+                targetValue={metric === "weight" ? targetWeight : null}
+                color={currentMetric.color}
+                period={period}
+              />
 
-            {sleeps.length > 0 && (
-              <SimpleLineList data={sleeps} label="睡眠の質" unit="点" />
+              {/* 凡例 */}
+              <View style={styles.legendRow}>
+                <View style={styles.legendItem}>
+                  <Circle cx={4} cy={4} r={4} />
+                  <View style={[styles.legendDot, { backgroundColor: currentMetric.color }]} />
+                  <Text style={styles.legendText}>実測</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={styles.legendDiamond} />
+                  <Text style={styles.legendText}>健診データ</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* 統計カード */}
+            <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                <Text style={styles.statLabel}>最小</Text>
+                <Text style={styles.statValue}>{formatStat(min)}</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statLabel}>平均</Text>
+                <Text style={styles.statValue}>{formatStat(avg)}</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statLabel}>最大</Text>
+                <Text style={styles.statValue}>{formatStat(max)}</Text>
+              </View>
+            </View>
+
+            {/* 体重目標カード */}
+            {metric === "weight" && targetWeight !== null && (
+              <View style={[styles.goalCard, { backgroundColor: colors.successLight }]}>
+                <Ionicons name="trophy-outline" size={24} color={colors.success} />
+                <View style={{ marginLeft: spacing.md }}>
+                  <Text style={[styles.goalTitle, { color: colors.success }]}>
+                    目標体重: {targetWeight} kg
+                  </Text>
+                  {latestValue !== null && (
+                    <Text style={[styles.goalSub, { color: colors.success }]}>
+                      あと {(latestValue - targetWeight).toFixed(1)} kg
+                    </Text>
+                  )}
+                </View>
+              </View>
             )}
           </>
         )}
 
         <Button onPress={load} variant="ghost" size="sm">
           <Ionicons name="refresh-outline" size={16} color={colors.textLight} />
-          <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>更新</Text>
+          <Text style={{ color: colors.textLight, fontWeight: "700", fontSize: 13 }}>
+            更新
+          </Text>
         </Button>
       </ScrollView>
     </View>
   );
 }
 
+// ----------------------------------------------------------------
+// スタイル
+// ----------------------------------------------------------------
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -228,16 +581,36 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.accent,
   },
-  errorRow: {
+  chipScroll: {
+    flexGrow: 0,
+  },
+  chip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.full,
+    marginRight: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chipText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  periodRow: {
     flexDirection: "row",
-    alignItems: "center",
     gap: spacing.sm,
   },
-  errorText: {
-    fontSize: 14,
-    color: colors.error,
-    fontWeight: "600",
+  periodBtn: {
     flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  periodText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   chartCard: {
     backgroundColor: colors.card,
@@ -252,69 +625,111 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginBottom: spacing.md,
   },
-  chartLabel: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: colors.text,
-  },
-  chartValue: {
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  chartUnit: {
-    fontSize: 12,
-    fontWeight: "600",
+  metricLabel: {
+    fontSize: 13,
     color: colors.textMuted,
+    marginBottom: 2,
   },
-  barsContainer: {
+  valueRow: {
     flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    height: 100,
-    gap: 2,
-  },
-  barCol: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "flex-end",
+    alignItems: "baseline",
     gap: 4,
   },
-  bar: {
-    width: "80%",
-    minHeight: 4,
+  latestValue: {
+    fontSize: 28,
+    fontWeight: "900",
   },
-  barLabel: {
-    fontSize: 8,
+  unitText: {
+    fontSize: 13,
     color: colors.textMuted,
-    textAlign: "center",
+    fontWeight: "600",
+  },
+  changeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  changeText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
   legendRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    gap: spacing.md,
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendDiamond: {
+    width: 8,
+    height: 8,
+    backgroundColor: colors.purple,
+    transform: [{ rotate: "45deg" }],
+  },
   legendText: {
     fontSize: 11,
     color: colors.textMuted,
   },
-  listRow: {
+  statsRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.md,
     alignItems: "center",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  listDate: {
-    fontSize: 13,
-    color: colors.textLight,
+  statLabel: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginBottom: 4,
   },
-  listValue: {
+  statValue: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  goalCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.md,
+    borderRadius: radius.xl,
+  },
+  goalTitle: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text,
+  },
+  goalSub: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.error,
+    fontWeight: "600",
+    flex: 1,
   },
 });
