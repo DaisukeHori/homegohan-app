@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button } from "../../src/components/ui/Button";
 import { Card } from "../../src/components/ui/Card";
@@ -67,6 +67,7 @@ export default function PantryPage() {
   const [detected, setDetected] = useState<FridgeIngredient[]>([]);
   const [saveMode, setSaveMode] = useState<"append" | "replace">("append");
   const [isSavingDetected, setIsSavingDetected] = useState(false);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
 
   async function load() {
     setIsLoading(true);
@@ -210,6 +211,7 @@ export default function PantryPage() {
       return;
     }
 
+    setPreviewUri(asset.uri ?? null);
     setIsAnalyzing(true);
     setAnalysisSummary(null);
     setDetected([]);
@@ -253,7 +255,10 @@ export default function PantryPage() {
         mode: saveMode,
       });
       setDetected((prev) => prev.filter((d) => d !== i));
-      if (detected.length <= 1) setAnalysisSummary(null);
+      if (detected.length <= 1) {
+        setAnalysisSummary(null);
+        setPreviewUri(null);
+      }
       await load();
     } catch (e: any) {
       Alert.alert("追加失敗", e?.message ?? "追加に失敗しました。");
@@ -273,6 +278,7 @@ export default function PantryPage() {
       });
       setDetected([]);
       setAnalysisSummary(null);
+      setPreviewUri(null);
       await load();
     } catch (e: any) {
       Alert.alert("一括追加失敗", e?.message ?? "追加に失敗しました。");
@@ -362,6 +368,14 @@ export default function PantryPage() {
               {isAnalyzing ? "解析中..." : "写真を選ぶ"}
             </Text>
           </Button>
+
+          {previewUri ? (
+            <Image
+              source={{ uri: previewUri }}
+              style={{ width: "100%", height: 200, borderRadius: radius.md, resizeMode: "cover" }}
+              accessibilityLabel="選択した冷蔵庫の写真"
+            />
+          ) : null}
 
           {analysisSummary ? (
             <View style={{ backgroundColor: colors.bg, padding: spacing.md, borderRadius: radius.md }}>
