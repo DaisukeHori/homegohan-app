@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Image, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, Input, PageHeader, SectionHeader } from "../../../../src/components/ui";
 import { getApi } from "../../../../src/lib/api";
 import { colors, radius, spacing } from "../../../../src/theme";
+import { useProfile } from "../../../../src/providers/ProfileProvider";
+import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
 
 const formatLocalDate = (date: Date): string => {
   const y = date.getFullYear();
@@ -15,17 +17,21 @@ const formatLocalDate = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
-function getWeekStart(date: Date): Date {
+function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
+  const currentDay = d.getDay();
+  const targetDay = weekStartDay === 'sunday' ? 0 : 1;
+  let diff = currentDay - targetDay;
+  if (diff < 0) diff += 7;
+  d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
 }
 
 export default function WeeklyRequestPage() {
-  const [startDate, setStartDate] = useState(() => formatLocalDate(getWeekStart(new Date())));
+  const { profile } = useProfile();
+  const weekStartDay = profile?.weekStartDay ?? 'monday';
+  const [startDate, setStartDate] = useState(() => formatLocalDate(getWeekStart(new Date(), weekStartDay)));
   const [familySize, setFamilySize] = useState("1");
   const [cheatDay, setCheatDay] = useState("");
   const [note, setNote] = useState("");
@@ -34,6 +40,10 @@ export default function WeeklyRequestPage() {
   const [fridgeImageUri, setFridgeImageUri] = useState<string | null>(null);
   const [fridgeSummary, setFridgeSummary] = useState<string | null>(null);
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    setStartDate(formatLocalDate(getWeekStart(new Date(), weekStartDay)));
+  }, [weekStartDay]);
 
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -111,7 +121,7 @@ export default function WeeklyRequestPage() {
         setIsSubmitting(false);
         return;
       }
-      const ws = getWeekStart(parsedDate);
+      const ws = getWeekStart(parsedDate, weekStartDay);
       const weekStartStr = formatLocalDate(ws);
 
       const useFridgeFirst = selectedThemes.includes("冷蔵庫の食材を優先");
@@ -160,7 +170,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ marginTop: spacing.sm }}>
           <Input
-            label="週の月曜日推奨"
+            label={weekStartDay === 'sunday' ? "週の日曜日推奨" : "週の月曜日推奨"}
             value={startDate}
             onChangeText={setStartDate}
             placeholder="YYYY-MM-DD"
