@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -583,17 +584,25 @@ function ProgressTodoCard({ progress, phases = PROGRESS_PHASES, defaultMessage =
     return "pending";
   };
 
+  const isError = currentPhase === "failed";
+
   const headerMessage =
     totalDays > 0
       ? `献立を生成中...（${progress?.completedSlots ?? 0}/${totalSlots}食、${totalDays}日分）`
       : (progress?.message ?? defaultMessage);
 
   return (
-    <View
+    <LinearGradient
+      colors={
+        isError
+          ? ["#ef4444", "#dc2626"]
+          : [colors.accent, colors.purple]
+      }
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
       style={{
         borderRadius: radius.lg,
         overflow: "hidden",
-        backgroundColor: colors.accent,
       }}
     >
       {/* ヘッダー */}
@@ -685,7 +694,7 @@ function ProgressTodoCard({ progress, phases = PROGRESS_PHASES, defaultMessage =
           })}
         </View>
       )}
-    </View>
+    </LinearGradient>
   );
 }
 
