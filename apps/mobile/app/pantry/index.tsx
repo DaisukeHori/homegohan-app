@@ -65,6 +65,7 @@ export default function PantryPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
   const [detected, setDetected] = useState<FridgeIngredient[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [saveMode, setSaveMode] = useState<"append" | "replace">("append");
   const [isSavingDetected, setIsSavingDetected] = useState(false);
 
@@ -213,6 +214,7 @@ export default function PantryPage() {
     setIsAnalyzing(true);
     setAnalysisSummary(null);
     setDetected([]);
+    setSuggestions([]);
     try {
       const api = getApi();
       const res = await api.post<{
@@ -226,6 +228,7 @@ export default function PantryPage() {
       });
       setAnalysisSummary(res.summary || null);
       setDetected((res.detailedIngredients ?? []) as any);
+      setSuggestions(res.suggestions ?? []);
     } catch (e: any) {
       Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。");
     } finally {
@@ -253,7 +256,10 @@ export default function PantryPage() {
         mode: saveMode,
       });
       setDetected((prev) => prev.filter((d) => d !== i));
-      if (detected.length <= 1) setAnalysisSummary(null);
+      if (detected.length <= 1) {
+        setAnalysisSummary(null);
+        setSuggestions([]);
+      }
       await load();
     } catch (e: any) {
       Alert.alert("追加失敗", e?.message ?? "追加に失敗しました。");
@@ -273,6 +279,7 @@ export default function PantryPage() {
       });
       setDetected([]);
       setAnalysisSummary(null);
+      setSuggestions([]);
       await load();
     } catch (e: any) {
       Alert.alert("一括追加失敗", e?.message ?? "追加に失敗しました。");
@@ -369,6 +376,20 @@ export default function PantryPage() {
                 <Ionicons name="information-circle-outline" size={18} color={colors.accent} style={{ marginTop: 2 }} />
                 <Text style={{ color: colors.textLight, flex: 1, fontSize: 14, lineHeight: 20 }}>{analysisSummary}</Text>
               </View>
+            </View>
+          ) : null}
+
+          {suggestions.length > 0 ? (
+            <View style={{ backgroundColor: colors.accentLight, padding: spacing.md, borderRadius: radius.md, gap: spacing.xs }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                <Ionicons name="restaurant-outline" size={16} color={colors.accent} />
+                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.accent }}>おすすめレシピ</Text>
+              </View>
+              {suggestions.slice(0, 3).map((s, idx) => (
+                <Text key={idx} style={{ fontSize: 14, color: colors.textLight, lineHeight: 20 }}>
+                  {`・${s}`}
+                </Text>
+              ))}
             </View>
           ) : null}
 
