@@ -12,7 +12,7 @@ import { getApi } from "../../src/lib/api";
 // 型定義
 // ----------------------------------------------------------------
 type Period = "week" | "month" | "3months" | "year";
-type Metric = "weight" | "body_fat" | "bp" | "sleep";
+type Metric = "weight" | "body_fat" | "bp" | "sleep" | "mood" | "energy_level" | "heart_rate" | "body_temp";
 
 interface HealthRecord {
   id: string;
@@ -21,6 +21,10 @@ interface HealthRecord {
   body_fat_percentage?: number | null;
   systolic_bp?: number | null;
   sleep_hours?: number | null;
+  mood_score?: number | null;
+  energy_level?: number | null;
+  heart_rate?: number | null;
+  body_temp?: number | null;
   fromCheckup?: boolean;
 }
 
@@ -314,6 +318,18 @@ export default function HealthGraphsPage() {
           case "sleep":
             value = rec.sleep_hours ?? null;
             break;
+          case "mood":
+            value = rec.mood_score ?? null;
+            break;
+          case "energy_level":
+            value = rec.energy_level ?? null;
+            break;
+          case "heart_rate":
+            value = rec.heart_rate ?? null;
+            break;
+          case "body_temp":
+            value = rec.body_temp ?? null;
+            break;
         }
       }
       result.push({ date: dateStr, value, fromCheckup: rec?.fromCheckup });
@@ -348,6 +364,10 @@ export default function HealthGraphsPage() {
     body_fat: { label: "体脂肪率", unit: "%", color: colors.purple },
     bp: { label: "血圧(収縮期)", unit: "mmHg", color: colors.error },
     sleep: { label: "睡眠時間", unit: "h", color: colors.blue },
+    mood: { label: "気分スコア", unit: "/ 5", color: colors.warning },
+    energy_level: { label: "エネルギー", unit: "/ 5", color: colors.success },
+    heart_rate: { label: "心拍数", unit: "bpm", color: colors.streak },
+    body_temp: { label: "体温", unit: "℃", color: colors.accentDark },
   };
 
   const currentMetric = metricConfig[metric];
