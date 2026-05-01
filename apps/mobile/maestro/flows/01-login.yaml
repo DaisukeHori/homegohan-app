@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+---
+# 01-login: アプリ起動 → ウェルカム画面 → ログイン画面 → メール+パスワード入力 → ホーム画面確認
+- launchApp:
+    clearState: true
+
+# ウェルカム画面で「ログイン」をタップして login.tsx に移動
+- tapOn:
+    text: "ログイン"
+
+# ログイン画面が表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000
+
+# メールアドレス入力
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+
+# パスワード入力
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+
+# ログインボタンタップ
+- tapOn:
+    id: "login-button"
+
+# ホーム画面が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000

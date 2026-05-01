@@ -165,7 +165,7 @@ export default function HomeScreen() {
   });
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="home-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
         {/* ========== ヒーローセクション ========== */}
         <View style={{ backgroundColor: "#FFF7ED", paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: spacing.lg }}>

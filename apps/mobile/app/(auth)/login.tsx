@@ -182,6 +182,7 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView
+      testID="login-screen"
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
@@ -224,6 +225,7 @@ export default function LoginScreen() {
             }}>
               <Ionicons name="mail-outline" size={18} color={colors.textMuted} />
               <TextInput
+                testID="email-input"
                 placeholder="email@example.com"
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="none"
@@ -250,6 +252,7 @@ export default function LoginScreen() {
             }}>
               <Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} />
               <TextInput
+                testID="password-input"
                 placeholder="パスワード"
                 placeholderTextColor={colors.textMuted}
                 secureTextEntry={!showPassword}
@@ -277,6 +280,7 @@ export default function LoginScreen() {
 
           {/* ログインボタン */}
           <Pressable
+            testID="login-button"
             onPress={onSubmit}
             disabled={isSubmitting || rateLimitRemaining > 0}
             style={({ pressed }) => ({
