@@ -1103,6 +1103,38 @@ export default function WeeklyMenuPage() {
     }
   }
 
+  async function toggleMealCompletion(mealId: string, currentCompleted: boolean | null) {
+    const newCompleted = !currentCompleted;
+    // 楽観的 UI 更新
+    setDays(prev =>
+      prev.map(d => ({
+        ...d,
+        planned_meals: d.planned_meals.map(m =>
+          m.id === mealId ? { ...m, is_completed: newCompleted } : m
+        ),
+      }))
+    );
+    try {
+      const { error: supaErr } = await supabase
+        .from("planned_meals")
+        .update({ is_completed: newCompleted })
+        .eq("id", mealId);
+      if (supaErr) throw supaErr;
+      await loadData();
+    } catch (e: any) {
+      // ロールバック
+      setDays(prev =>
+        prev.map(d => ({
+          ...d,
+          planned_meals: d.planned_meals.map(m =>
+            m.id === mealId ? { ...m, is_completed: currentCompleted } : m
+          ),
+        }))
+      );
+      setError(e?.message ?? "更新に失敗しました。");
+    }
+  }
+
   // Day selector helpers
   const getDayOfWeek = (dateStr: string): string => {
     const d = new Date(dateStr + "T00:00:00");
@@ -1453,7 +1485,7 @@ export default function WeeklyMenuPage() {
                 return (
                   <Pressable
                     key={m.id}
-                    onPress={() => router.push(`/meals/${m.id}`)}
+                    onPress={() => toggleMealCompletion(m.id, m.is_completed)}
                     style={({ pressed }) => ({
                       flexDirection: "row",
                       alignItems: "center",
@@ -1517,7 +1549,7 @@ export default function WeeklyMenuPage() {
                       ) : isGenerating ? (
                         <StatusBadge variant="generating" label="生成中" />
                       ) : (
-                        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                        <Ionicons name="checkmark-circle-outline" size={22} color={colors.textMuted} />
                       )}
                     </View>
                   </Pressable>
