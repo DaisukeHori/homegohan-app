@@ -106,6 +106,11 @@ export default function HealthDashboardTab() {
   const [weeklyRecords, setWeeklyRecords] = useState<string[]>([]);
   const [goals, setGoals] = useState<HealthGoal[]>([]);
 
+  // Calendar day selection
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedDateRecord, setSelectedDateRecord] = useState<HealthRecord | null>(null);
+  const [loadingSelectedDate, setLoadingSelectedDate] = useState(false);
+
   // Quick record modal
   const [showQuickRecord, setShowQuickRecord] = useState(false);
   const [quickWeight, setQuickWeight] = useState("");
@@ -156,6 +161,26 @@ export default function HealthDashboardTab() {
     if (!todayRecord?.weight || !yesterdayRecord?.weight) return null;
     return parseFloat((todayRecord.weight - yesterdayRecord.weight).toFixed(2));
   }, [todayRecord, yesterdayRecord]);
+
+  const handleDaySelect = useCallback(async (date: string) => {
+    // 今日のセル、または既に選択中の日をタップ → パネルを閉じる
+    if (date === today || date === selectedDate) {
+      setSelectedDate(null);
+      setSelectedDateRecord(null);
+      return;
+    }
+    setSelectedDate(date);
+    setLoadingSelectedDate(true);
+    try {
+      const api = getApi();
+      const data = await api.get<{ record: HealthRecord | null }>(`/api/health/records/${date}`);
+      setSelectedDateRecord(data.record ?? null);
+    } catch {
+      setSelectedDateRecord(null);
+    } finally {
+      setLoadingSelectedDate(false);
+    }
+  }, [today, selectedDate]);
 
   async function handleQuickSave() {
     if (!quickWeight && quickMood === null && quickSleep === null) return;
@@ -235,23 +260,78 @@ export default function HealthDashboardTab() {
           <View style={styles.weekRow}>
             {weekDays.map((d) => {
               const has = weeklyRecords.includes(d.date);
+              const isSelected = selectedDate === d.date;
               return (
-                <View
+                <Pressable
                   key={d.date}
+                  onPress={() => void handleDaySelect(d.date)}
                   style={[
                     styles.weekDay,
                     { backgroundColor: has ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.1)" },
                     d.isToday && styles.weekDayToday,
+                    isSelected && styles.weekDaySelected,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${d.day}${d.dayNum}日${has ? "（記録あり）" : ""}`}
+                  accessibilityState={{ selected: isSelected }}
                 >
                   <Text style={styles.weekDayLabel}>{d.day}</Text>
                   <Text style={styles.weekDayNum}>{d.dayNum}</Text>
                   {has && <Ionicons name="checkmark-circle" size={12} color="#fff" style={{ marginTop: 2 }} />}
-                </View>
+                </Pressable>
               );
             })}
           </View>
         </View>
+
+        {/* ─── Selected Date Preview ─── */}
+        {selectedDate && (
+          <View style={styles.previewCard}>
+            <View style={styles.previewHeader}>
+              <Text style={styles.previewTitle}>{selectedDate} の記録</Text>
+              <Link href={`/health/record/${selectedDate}` as any} asChild>
+                <Pressable style={styles.seeAllRow}>
+                  <Text style={styles.seeAllText}>{selectedDateRecord ? "詳細を編集" : "記録を追加"}</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.accent} />
+                </Pressable>
+              </Link>
+            </View>
+            {loadingSelectedDate ? (
+              <View style={styles.previewLoading}>
+                <Ionicons name="ellipsis-horizontal" size={24} color={colors.textMuted} />
+              </View>
+            ) : selectedDateRecord ? (
+              <View style={styles.todayGrid}>
+                {/* Weight */}
+                <View style={styles.todayCell}>
+                  <Ionicons name="scale-outline" size={20} color={colors.accent} />
+                  <Text style={styles.todayCellValue}>{selectedDateRecord.weight ?? "-"}</Text>
+                  <Text style={styles.todayCellUnit}>kg</Text>
+                </View>
+                {/* Mood */}
+                <View style={styles.todayCell}>
+                  <Ionicons name={moodStyle(selectedDateRecord.mood_score).icon} size={20} color={moodStyle(selectedDateRecord.mood_score).color} />
+                  <Text style={styles.todayCellValue}>{selectedDateRecord.mood_score ?? "-"}</Text>
+                  <Text style={styles.todayCellUnit}>{selectedDateRecord.mood_score ? "/ 5" : "気分"}</Text>
+                </View>
+                {/* Sleep */}
+                <View style={styles.todayCell}>
+                  <Ionicons name="moon-outline" size={20} color="#7C4DFF" />
+                  <Text style={styles.todayCellValue}>
+                    {selectedDateRecord.sleep_hours ?? selectedDateRecord.sleep_quality ?? "-"}
+                  </Text>
+                  <Text style={styles.todayCellUnit}>
+                    {selectedDateRecord.sleep_hours ? "時間" : selectedDateRecord.sleep_quality ? "/ 5" : "睡眠"}
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.previewEmpty}>
+                <Text style={styles.previewEmptyText}>この日の記録はありません</Text>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* ─── Today's Record or Quick Record Button ─── */}
         {!todayRecord ? (
@@ -603,6 +683,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#fff",
   },
+  weekDaySelected: {
+    borderWidth: 2,
+    borderColor: "#fff",
+    backgroundColor: "rgba(255,255,255,0.45)" as const,
+  },
   weekDayLabel: {
     fontSize: 10,
     color: "rgba(255,255,255,0.6)",
@@ -611,6 +696,37 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
     color: "#fff",
+  },
+
+  // ─── Selected Date Preview ───
+  previewCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadows.sm,
+  },
+  previewHeader: {
+    flexDirection: "row" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "center" as const,
+    marginBottom: spacing.md,
+  },
+  previewTitle: {
+    fontSize: 15,
+    fontWeight: "700" as const,
+    color: colors.text,
+  },
+  previewLoading: {
+    alignItems: "center" as const,
+    paddingVertical: spacing.lg,
+  },
+  previewEmpty: {
+    alignItems: "center" as const,
+    paddingVertical: spacing.lg,
+  },
+  previewEmptyText: {
+    fontSize: 14,
+    color: colors.textMuted,
   },
 
   // ─── Quick Record Button ───
