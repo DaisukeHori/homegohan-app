@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, Text
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState } from "../../src/components/ui";
-import { calculateNutritionTargets } from "../../src/lib/nutritionTargets";
+import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, radius, shadows, spacing } from "../../src/theme";
@@ -63,6 +63,13 @@ type Question =
       id: string;
       text: string;
       type: "servings_grid";
+      showIf?: (answers: Record<string, any>) => boolean;
+    }
+  | {
+      id: string;
+      text: string;
+      type: "date";
+      allowSkip?: boolean;
       showIf?: (answers: Record<string, any>) => boolean;
     };
 
@@ -142,6 +149,82 @@ const QUESTIONS: Question[] = [
       { label: "現状維持・健康管理", value: "maintain", description: "今の体型を維持したい" },
       { label: "競技パフォーマンス", value: "athlete_performance", description: "大会・試合に向けて" },
     ],
+  },
+  // Performance OS v3: アスリート向け追加質問
+  {
+    id: "sport_type",
+    text: "主に取り組んでいる競技は？",
+    type: "choice",
+    showIf: (answers) => answers.nutrition_goal === "athlete_performance",
+    options: [
+      { label: "サッカー", value: "soccer" },
+      { label: "バスケットボール", value: "basketball" },
+      { label: "バレーボール", value: "volleyball" },
+      { label: "野球", value: "baseball" },
+      { label: "テニス", value: "tennis" },
+      { label: "水泳", value: "swimming" },
+      { label: "陸上競技", value: "track_and_field" },
+      { label: "自転車", value: "road_cycling" },
+      { label: "格闘技", value: "martial_arts_general" },
+      { label: "ウェイトリフティング", value: "weightlifting" },
+      { label: "その他", value: "custom" },
+    ],
+  },
+  {
+    id: "sport_custom_name",
+    text: "競技名を入力してください",
+    type: "text",
+    placeholder: "例: トライアスロン",
+    showIf: (answers) =>
+      answers.nutrition_goal === "athlete_performance" && answers.sport_type === "custom",
+  },
+  {
+    id: "sport_experience",
+    text: "競技経験はどのくらいですか？",
+    type: "choice",
+    showIf: (answers) => answers.nutrition_goal === "athlete_performance",
+    options: [
+      { label: "初心者（1年未満）", value: "beginner", description: "始めたばかり" },
+      { label: "中級者（1〜3年）", value: "intermediate", description: "基礎は身についている" },
+      { label: "上級者（3年以上）", value: "advanced", description: "競技会・大会出場レベル" },
+    ],
+  },
+  {
+    id: "training_phase",
+    text: "現在のトレーニング期は？",
+    type: "choice",
+    showIf: (answers) => answers.nutrition_goal === "athlete_performance",
+    options: [
+      { label: "トレーニング期", value: "training", description: "体力・技術向上中" },
+      { label: "試合期", value: "competition", description: "大会・試合シーズン" },
+      { label: "減量期", value: "cut", description: "体重調整中（階級制など）" },
+      { label: "回復期", value: "recovery", description: "オフシーズン・ケガからの復帰" },
+    ],
+  },
+  {
+    id: "competition_date",
+    text: "次の大会・試合はいつですか？",
+    type: "date",
+    allowSkip: true,
+    showIf: (answers) =>
+      answers.nutrition_goal === "athlete_performance" &&
+      (answers.training_phase === "competition" || answers.training_phase === "cut"),
+  },
+  {
+    id: "target_weight",
+    text: "目標体重を教えてください",
+    type: "number",
+    placeholder: "例: 55",
+    min: 30,
+    max: 200,
+    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
+  },
+  {
+    id: "target_date",
+    text: "いつまでに達成したいですか？",
+    type: "date",
+    allowSkip: true,
+    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
   },
   {
     id: "weight_change_rate",
@@ -235,6 +318,12 @@ const QUESTIONS: Question[] = [
       { label: "骨粗しょう症", value: "骨粗しょう症" },
       { label: "貧血", value: "貧血" },
       { label: "痛風", value: "痛風" },
+      { label: "便秘・下痢", value: "消化器系" },
+      { label: "不眠・睡眠障害", value: "睡眠障害" },
+      { label: "花粉症・アレルギー", value: "アレルギー" },
+      { label: "甲状腺疾患", value: "甲状腺疾患" },
+      { label: "自律神経失調", value: "自律神経" },
+      { label: "うつ・不安障害", value: "メンタル" },
     ],
   },
   {
@@ -383,6 +472,8 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   };
 
   if (ans.nutrition_goal) profile.nutritionGoal = ans.nutrition_goal;
+  if (ans.target_weight) profile.targetWeight = parseFloat(ans.target_weight);
+  if (ans.target_date) profile.targetDate = ans.target_date;
   if (ans.weight_change_rate) profile.weightChangeRate = ans.weight_change_rate;
   if (ans.exercise_types?.length && !ans.exercise_types.includes("none")) profile.exerciseTypes = ans.exercise_types;
   if (ans.exercise_frequency) profile.exerciseFrequency = parseInt(ans.exercise_frequency);
@@ -408,6 +499,39 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.stove_type) appliances.push(ans.stove_type);
   if (appliances.length > 0) profile.kitchenAppliances = appliances;
 
+  // Performance OS v3: performance_profile 構築
+  if (ans.nutrition_goal === "athlete_performance") {
+    const sportId = ans.sport_type === "custom" ? "custom" : ans.sport_type;
+    const sportName = ans.sport_type === "custom" ? ans.sport_custom_name : null;
+    profile.performanceProfile = {
+      sport: {
+        id: sportId || null,
+        name: sportName || null,
+        role: null,
+        experience: ans.sport_experience || "intermediate",
+        phase: ans.training_phase || "training",
+        demandVector: null,
+      },
+      growth: {
+        isUnder18: ans.age ? parseInt(ans.age) < 18 : false,
+        heightChangeRecent: null,
+        growthProtectionEnabled: ans.age ? parseInt(ans.age) < 18 : false,
+      },
+      cut: {
+        enabled: ans.training_phase === "cut",
+        targetWeight: ans.target_weight ? parseFloat(ans.target_weight) : null,
+        targetDate: ans.competition_date || ans.target_date || null,
+        strategy: "gradual",
+      },
+      priorities: {
+        protein: "high",
+        carbs: ans.training_phase === "competition" ? "high" : "moderate",
+        fat: "moderate",
+        hydration: "high",
+      },
+    };
+  }
+
   return profile;
 }
 
@@ -422,6 +546,8 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.height !== undefined && body.height !== null) updates.height = body.height;
   if (body.weight !== undefined && body.weight !== null) updates.weight = body.weight;
   if (body.nutritionGoal) updates.nutrition_goal = body.nutritionGoal;
+  if (body.targetWeight !== undefined && body.targetWeight !== null) updates.target_weight = body.targetWeight;
+  if (body.targetDate) updates.target_date = body.targetDate;
   if (body.weightChangeRate) updates.weight_change_rate = body.weightChangeRate;
   if (body.exerciseTypes) updates.exercise_types = body.exerciseTypes;
   if (body.exerciseFrequency !== undefined) updates.exercise_frequency = body.exerciseFrequency;
@@ -439,6 +565,7 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.shoppingFrequency) updates.shopping_frequency = body.shoppingFrequency;
   if (body.weeklyFoodBudget !== undefined) updates.weekly_food_budget = body.weeklyFoodBudget;
   if (body.kitchenAppliances) updates.kitchen_appliances = body.kitchenAppliances;
+  if (body.performanceProfile) updates.performance_profile = body.performanceProfile;
 
   if (!updates.nickname) updates.nickname = "Guest";
   if (!updates.age_group && !updates.age) updates.age_group = "unspecified";
@@ -541,6 +668,19 @@ export default function OnboardingQuestions() {
     setTags((prev) => prev.filter((x) => x !== t));
   }
 
+  // #408: XSS ペイロードを除去するサニタイズ関数（Web 版 route.ts と同等）
+  function sanitizeText(value: unknown): string {
+    if (typeof value !== "string") return "";
+    return value
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#x27;")
+      .replace(/\//g, "&#x2F;")
+      .trim()
+      .slice(0, 100);
+  }
+
   // リアルタイム保存
   async function saveProgress(step: number, ans: Record<string, any>) {
     try {
@@ -572,13 +712,100 @@ export default function OnboardingQuestions() {
         updates.onboarding_started_at = new Date().toISOString();
       }
 
-      // 回答内容も同時に保存
-      if (ans.nickname) updates.nickname = ans.nickname;
+      // #408: 回答内容を全カラムに反映（Web 版 route.ts L76-147 と同等）
+      if (ans.nickname) updates.nickname = sanitizeText(ans.nickname);
       if (ans.gender) updates.gender = ans.gender;
       if (ans.age) {
         updates.age = parseInt(ans.age);
         updates.age_group = `${Math.floor(parseInt(ans.age) / 10) * 10}s`;
       }
+      if (ans.occupation) updates.occupation = ans.occupation;
+      if (ans.height) updates.height = parseFloat(ans.height);
+      if (ans.weight) updates.weight = parseFloat(ans.weight);
+      if (ans.nutrition_goal) updates.nutrition_goal = ans.nutrition_goal;
+      if (ans.target_weight) updates.target_weight = parseFloat(ans.target_weight);
+      if (ans.target_date) updates.target_date = ans.target_date;
+      if (ans.weight_change_rate) updates.weight_change_rate = ans.weight_change_rate;
+      if (ans.exercise_types && !ans.exercise_types.includes("none")) {
+        updates.exercise_types = ans.exercise_types;
+      }
+      if (ans.exercise_frequency) updates.exercise_frequency = parseInt(ans.exercise_frequency);
+      if (ans.exercise_intensity) updates.exercise_intensity = ans.exercise_intensity;
+      if (ans.exercise_duration) updates.exercise_duration_per_session = parseInt(ans.exercise_duration);
+      if (ans.work_style) updates.work_style = ans.work_style;
+      if (ans.health_conditions && !ans.health_conditions.includes("none")) {
+        updates.health_conditions = ans.health_conditions;
+      }
+      if (ans.body_concerns?.length) {
+        updates.cold_sensitivity = ans.body_concerns.includes("cold_sensitivity");
+        updates.swelling_prone = ans.body_concerns.includes("swelling_prone");
+      }
+      if (ans.sleep_quality) updates.sleep_quality = ans.sleep_quality;
+      if (ans.stress_level) updates.stress_level = ans.stress_level;
+      if (ans.pregnancy_status) updates.pregnancy_status = ans.pregnancy_status;
+      if (ans.medications && !ans.medications.includes("none")) {
+        updates.medications = ans.medications;
+      }
+      if (ans.allergies?.length || ans.dislikes?.length) {
+        updates.diet_flags = {
+          allergies: ans.allergies || [],
+          dislikes: ans.dislikes || [],
+        };
+      }
+      if (ans.favorite_ingredients?.length) updates.favorite_ingredients = ans.favorite_ingredients;
+      if (ans.diet_style) updates.diet_style = ans.diet_style;
+      if (ans.cooking_experience) updates.cooking_experience = ans.cooking_experience;
+      if (ans.cooking_time) updates.weekday_cooking_minutes = parseInt(ans.cooking_time);
+      if (ans.cuisine_preference?.length) {
+        const prefs: Record<string, number> = {};
+        ans.cuisine_preference.forEach((c: string) => {
+          prefs[c] = 5;
+        });
+        updates.cuisine_preferences = prefs;
+      }
+      if (ans.family_size) updates.family_size = parseInt(ans.family_size);
+      if (ans.servings_config) updates.servings_config = ans.servings_config;
+      if (ans.shopping_frequency) updates.shopping_frequency = ans.shopping_frequency;
+      if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") {
+        updates.weekly_food_budget = parseInt(ans.weekly_food_budget);
+      }
+      const appliances: string[] = [];
+      if (ans.kitchen_appliances?.length) appliances.push(...ans.kitchen_appliances);
+      if (ans.stove_type) appliances.push(ans.stove_type);
+      if (appliances.length > 0) updates.kitchen_appliances = appliances;
+      if (ans.hobbies?.length) updates.hobbies = ans.hobbies;
+      if (ans.nutrition_goal === "athlete_performance") {
+        const sportId = ans.sport_type === "custom" ? "custom" : ans.sport_type;
+        const sportName = ans.sport_type === "custom" ? ans.sport_custom_name : null;
+        updates.performance_profile = {
+          sport: {
+            id: sportId || null,
+            name: sportName || null,
+            role: null,
+            experience: ans.sport_experience || "intermediate",
+            phase: ans.training_phase || "training",
+            demandVector: null,
+          },
+          growth: {
+            isUnder18: ans.age ? parseInt(ans.age) < 18 : false,
+            heightChangeRecent: null,
+            growthProtectionEnabled: ans.age ? parseInt(ans.age) < 18 : false,
+          },
+          cut: {
+            enabled: ans.training_phase === "cut",
+            targetWeight: ans.target_weight ? parseFloat(ans.target_weight) : null,
+            targetDate: ans.competition_date || ans.target_date || null,
+            strategy: "gradual",
+          },
+          priorities: {
+            protein: "high",
+            carbs: ans.training_phase === "competition" ? "high" : "moderate",
+            fat: "moderate",
+            hydration: "high",
+          },
+        };
+      }
+
       if (!updates.nickname) updates.nickname = "Guest";
       if (!updates.age_group && !updates.age) updates.age_group = "unspecified";
       if (!updates.gender) updates.gender = "unspecified";
@@ -605,7 +832,7 @@ export default function OnboardingQuestions() {
       return;
     }
 
-    // 完了: 計算中画面を表示してからDBに保存
+    // 完了: プロファイルをDBに保存してからサーバーサイドで栄養目標を計算
     setIsCalculating(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
@@ -613,30 +840,16 @@ export default function OnboardingQuestions() {
 
       const profileBody = transformAnswersToProfile(newAnswers);
       const updates = toDbProfileUpdates(profileBody, auth.user.id);
-      updates.onboarding_completed_at = new Date().toISOString();
 
-      const { data: savedProfile, error: profileError } = await supabase
+      const { error: profileError } = await supabase
         .from("user_profiles")
-        .upsert(updates)
-        .select("*")
-        .single();
+        .upsert(updates);
       if (profileError) throw profileError;
 
-      const { targetData } = calculateNutritionTargets(savedProfile);
-
-      const { data: existing } = await supabase
-        .from("nutrition_targets")
-        .select("id")
-        .eq("user_id", auth.user.id)
-        .maybeSingle();
-
-      if (existing) {
-        const { error } = await supabase.from("nutrition_targets").update(targetData).eq("user_id", auth.user.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("nutrition_targets").insert(targetData);
-        if (error) throw error;
-      }
+      // サーバーサイドで performance_profile 構築・fitness_goals/goal_text/
+      // weekly_exercise_minutes 計算・nutrition_targets 保存を一括実行
+      const api = getApi();
+      await api.post("/api/onboarding/complete");
 
       await refreshProfile();
       router.replace("/onboarding/complete");
@@ -919,6 +1132,43 @@ export default function OnboardingQuestions() {
             </Pressable>
           </View>
         )}
+
+      {/* Date input */}
+      {currentQuestion.type === "date" && (
+        <View style={{ gap: spacing.md }}>
+          <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: "center" }}>
+            YYYY-MM-DD 形式で入力してください（例: 2025-08-15）
+          </Text>
+          <View style={styles.inputRow}>
+            <TextInput
+              autoFocus
+              keyboardType="numbers-and-punctuation"
+              placeholder="例: 2025-08-15"
+              placeholderTextColor={colors.textMuted}
+              value={inputValue}
+              onChangeText={setInputValue}
+              onSubmitEditing={() => {
+                if (inputValue.trim()) handleAnswer(inputValue.trim());
+              }}
+              style={[styles.textInput, { flex: 1 }]}
+            />
+            <Pressable
+              onPress={() => {
+                if (inputValue.trim()) handleAnswer(inputValue.trim());
+              }}
+              disabled={!inputValue.trim()}
+              style={[styles.arrowButton, !inputValue.trim() && styles.arrowButtonDisabled]}
+            >
+              <Ionicons name="arrow-forward" size={20} color="#fff" />
+            </Pressable>
+          </View>
+          {canSkip && (
+            <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+              <Text style={styles.skipButtonText}>スキップ</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
 
       {/* Servings grid */}
       {currentQuestion.type === "servings_grid" ? (

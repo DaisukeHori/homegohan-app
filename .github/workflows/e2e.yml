@@ -15,6 +15,14 @@ on:
         description: "Target base URL (default: production)"
         required: false
         default: "https://homegohan-app.vercel.app"
+      full_suite:
+        description: "Run full E2E suite (認証必須テスト含む). PR では常に smoke のみ."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -23,7 +31,8 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # smoke のみなら 10 分で十分。フルスイートは 30 分を上限とする。
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.full_suite == 'true') && 30 || 10 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,7 +51,16 @@ jobs:
           PLAYWRIGHT_BASE_URL: ${{ github.event.inputs.base_url || 'https://homegohan-app.vercel.app' }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
-        run: npx playwright test
+        # PR では認証不要の smoke テストのみ実行する。
+        # GitHub Actions の Egress IP から Supabase Auth へのログインが
+        # rate limit / 遅延で失敗し 30 分 job timeout する問題を回避するため。
+        # フルスイートは workflow_dispatch で full_suite=true を指定して手動実行する。
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.full_suite }}" = "true" ]; then
+            npx playwright test --max-failures=10
+          else
+            npx playwright test tests/e2e/smoke.spec.ts
+          fi
       - if: always()
         uses: actions/upload-artifact@v4
         with:

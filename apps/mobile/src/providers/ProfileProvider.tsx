@@ -3,6 +3,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { supabase } from "../lib/supabase";
 import { useAuth } from "./AuthProvider";
 
+export type WeekStartDay = 'sunday' | 'monday';
+
 export type MobileUserProfile = {
   id: string;
   nickname?: string | null;
@@ -16,6 +18,7 @@ export type MobileUserProfile = {
     totalQuestions: number;
     lastUpdatedAt: string;
   } | null;
+  weekStartDay: WeekStartDay;
 };
 
 type ProfileState = {
@@ -43,7 +46,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     const { data, error } = await supabase
       .from("user_profiles")
-      .select("id,nickname,roles,organization_id,onboarding_started_at,onboarding_completed_at,onboarding_progress")
+      .select("id,nickname,roles,organization_id,onboarding_started_at,onboarding_completed_at,onboarding_progress,week_start_day")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -58,6 +61,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         onboardingStartedAt: null,
         onboardingCompletedAt: "skip", // エラー時はオンボーディングにリダイレクトしない
         onboardingProgress: null,
+        weekStartDay: 'monday',
       });
       setIsLoading(false);
       return;
@@ -73,10 +77,15 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         onboardingStartedAt: null,
         onboardingCompletedAt: null,
         onboardingProgress: null,
+        weekStartDay: 'monday',
       });
       setIsLoading(false);
       return;
     }
+
+    const rawWeekStartDay = (data as any).week_start_day;
+    const weekStartDay: WeekStartDay =
+      rawWeekStartDay === 'sunday' || rawWeekStartDay === 'monday' ? rawWeekStartDay : 'monday';
 
     setProfile({
       id: data.id,
@@ -86,6 +95,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       onboardingStartedAt: (data as any).onboarding_started_at ?? null,
       onboardingCompletedAt: (data as any).onboarding_completed_at ?? null,
       onboardingProgress: (data as any).onboarding_progress ?? null,
+      weekStartDay,
     });
     setIsLoading(false);
   }, [user?.id]);

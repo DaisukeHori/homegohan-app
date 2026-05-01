@@ -367,14 +367,14 @@ export default function HealthDashboardTab() {
         <View>
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>健康診断</Text>
-            <Link href="/health/blood-tests" asChild>
+            <Link href="/health/checkups" asChild>
               <Pressable style={styles.seeAllRow}>
                 <Text style={styles.seeAllText}>すべて見る</Text>
                 <Ionicons name="chevron-forward" size={16} color={colors.accent} />
               </Pressable>
             </Link>
           </View>
-          <Link href="/health/blood-tests" asChild>
+          <Link href="/health/checkups" asChild>
             <Pressable style={styles.checkupCard}>
               <View style={[styles.iconBox, { backgroundColor: "#FFEBEE" }]}>
                 <Ionicons name="pulse" size={24} color={colors.error} />

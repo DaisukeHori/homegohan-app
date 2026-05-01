@@ -1,12 +1,29 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
-import { Alert, Image, ScrollView, Text, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, Input, PageHeader, SectionHeader } from "../../../../src/components/ui";
 import { getApi } from "../../../../src/lib/api";
 import { colors, radius, spacing } from "../../../../src/theme";
+import { useProfile } from "../../../../src/providers/ProfileProvider";
+import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
+
+const MEAL_TYPES = ["breakfast", "lunch", "dinner"] as const;
+
+function buildWeekTargetSlots(weekStartStr: string): { date: string; mealType: string }[] {
+  const slots: { date: string; mealType: string }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStartStr + "T00:00:00");
+    d.setDate(d.getDate() + i);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    for (const mealType of MEAL_TYPES) {
+      slots.push({ date: dateStr, mealType });
+    }
+  }
+  return slots;
+}
 
 const formatLocalDate = (date: Date): string => {
   const y = date.getFullYear();
@@ -15,17 +32,21 @@ const formatLocalDate = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
-function getWeekStart(date: Date): Date {
+function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
+  const currentDay = d.getDay();
+  const targetDay = weekStartDay === 'sunday' ? 0 : 1;
+  let diff = currentDay - targetDay;
+  if (diff < 0) diff += 7;
+  d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
 }
 
 export default function WeeklyRequestPage() {
-  const [startDate, setStartDate] = useState(() => formatLocalDate(getWeekStart(new Date())));
+  const { profile } = useProfile();
+  const weekStartDay = profile?.weekStartDay ?? 'monday';
+  const [startDate, setStartDate] = useState(() => formatLocalDate(getWeekStart(new Date(), weekStartDay)));
   const [familySize, setFamilySize] = useState("1");
   const [cheatDay, setCheatDay] = useState("");
   const [note, setNote] = useState("");
@@ -35,6 +56,11 @@ export default function WeeklyRequestPage() {
   const [fridgeSummary, setFridgeSummary] = useState<string | null>(null);
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
 
+  useEffect(() => {
+    setStartDate(formatLocalDate(getWeekStart(new Date(), weekStartDay)));
+  }, [weekStartDay]);
+
+  const [isUltimateMode, setIsUltimateMode] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -111,7 +137,7 @@ export default function WeeklyRequestPage() {
         setIsSubmitting(false);
         return;
       }
-      const ws = getWeekStart(parsedDate);
+      const ws = getWeekStart(parsedDate, weekStartDay);
       const weekStartStr = formatLocalDate(ws);
 
       const useFridgeFirst = selectedThemes.includes("冷蔵庫の食材を優先");
@@ -126,15 +152,40 @@ export default function WeeklyRequestPage() {
       const noteForApi = [note.trim(), ...extraLines].filter(Boolean).join("\n");
 
       const api = getApi();
-      await api.post("/api/ai/menu/weekly/request", {
-        startDate: weekStartStr,
-        note: noteForApi,
-        familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
-        cheatDay: cheatDay.trim() || null,
-        preferences: { useFridgeFirst, quickMeals, japaneseStyle, healthy, ingredients },
-      });
 
-      Alert.alert("生成開始", "週間献立の生成を開始しました。生成中は「生成中...」と表示されます。");
+      if (isUltimateMode) {
+        // 究極モード: /api/ai/menu/v4/generate に ultimateMode: true で送信
+        const targetSlots = buildWeekTargetSlots(weekStartStr);
+        await api.post("/api/ai/menu/v4/generate", {
+          targetSlots,
+          resolveExistingMeals: true,
+          note: noteForApi,
+          ultimateMode: true,
+          familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
+          constraints: {
+            useFridgeFirst,
+            quickMeals,
+            japaneseStyle,
+            healthy,
+            ingredients,
+          },
+        });
+        Alert.alert(
+          "究極モード生成開始",
+          "6ステップの栄養バランス分析で究極の献立を生成します。完了まで数分かかります。"
+        );
+      } else {
+        // 通常モード
+        await api.post("/api/ai/menu/weekly/request", {
+          startDate: weekStartStr,
+          note: noteForApi,
+          familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
+          cheatDay: cheatDay.trim() || null,
+          preferences: { useFridgeFirst, quickMeals, japaneseStyle, healthy, ingredients },
+        });
+        Alert.alert("生成開始", "週間献立の生成を開始しました。生成中は「生成中...」と表示されます。");
+      }
+
       router.replace("/menus/weekly");
     } catch (e: any) {
       Alert.alert("生成失敗", e?.message ?? "生成に失敗しました。");
@@ -160,7 +211,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ marginTop: spacing.sm }}>
           <Input
-            label="週の月曜日推奨"
+            label={weekStartDay === 'sunday' ? "週の日曜日推奨" : "週の月曜日推奨"}
             value={startDate}
             onChangeText={setStartDate}
             placeholder="YYYY-MM-DD"
@@ -260,11 +311,61 @@ export default function WeeklyRequestPage() {
         </View>
       </Card>
 
+      {/* 究極モードトグル */}
+      <Pressable
+        onPress={() => setIsUltimateMode((prev) => !prev)}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing.md,
+          padding: spacing.lg,
+          backgroundColor: isUltimateMode ? "#FFF8E7" : colors.card,
+          borderRadius: radius.lg,
+          borderWidth: 2,
+          borderColor: isUltimateMode ? "#F59E0B" : colors.border,
+        }}
+      >
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: radius.md,
+            backgroundColor: isUltimateMode ? "#F59E0B" : colors.bg,
+            alignItems: "center",
+            justifyContent: "center",
+            borderWidth: isUltimateMode ? 0 : 1,
+            borderColor: colors.border,
+          }}
+        >
+          <Ionicons name="flash" size={22} color={isUltimateMode ? "#fff" : colors.textMuted} />
+        </View>
+        <View style={{ flex: 1, gap: 3 }}>
+          <Text style={{ fontSize: 15, fontWeight: "700", color: isUltimateMode ? "#B45309" : colors.text }}>
+            究極モード (V4 Ultimate)
+          </Text>
+          <Text style={{ fontSize: 12, color: isUltimateMode ? "#92400E" : colors.textMuted }}>
+            6ステップ栄養バランス分析＋改善（生成に数分かかります）
+          </Text>
+        </View>
+        <View
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 13,
+            backgroundColor: isUltimateMode ? "#F59E0B" : colors.border,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {isUltimateMode && <Ionicons name="checkmark" size={16} color="#fff" />}
+        </View>
+      </Pressable>
+
       <Button onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-          <Ionicons name="sparkles" size={18} color="#FFFFFF" />
+          <Ionicons name={isUltimateMode ? "flash" : "sparkles"} size={18} color="#FFFFFF" />
           <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 16 }}>
-            {isSubmitting ? "生成中..." : "生成する"}
+            {isSubmitting ? "生成中..." : isUltimateMode ? "究極モードで生成" : "生成する"}
           </Text>
         </View>
       </Button>

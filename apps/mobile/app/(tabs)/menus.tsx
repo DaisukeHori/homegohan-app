@@ -7,6 +7,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../src/components/ui";
 import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
+import { useProfile } from "../../src/providers/ProfileProvider";
+import type { WeekStartDay } from "../../src/providers/ProfileProvider";
 
 const formatLocalDate = (date: Date): string => {
   const y = date.getFullYear();
@@ -15,11 +17,13 @@ const formatLocalDate = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
-function getWeekStart(date: Date): Date {
+function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
+  const currentDay = d.getDay();
+  const targetDay = weekStartDay === 'sunday' ? 0 : 1;
+  let diff = currentDay - targetDay;
+  if (diff < 0) diff += 7;
+  d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
 }
@@ -33,25 +37,33 @@ type DaySummary = {
 
 export default function MenusScreen() {
   const insets = useSafeAreaInsets();
+  const { profile } = useProfile();
+  const weekStartDay = profile?.weekStartDay ?? 'monday';
   const [days, setDays] = useState<DaySummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasPlan, setHasPlan] = useState(false);
 
-  const weekStartStr = useMemo(() => formatLocalDate(getWeekStart(new Date())), []);
+  const weekStart = useMemo(() => getWeekStart(new Date(), weekStartDay), [weekStartDay]);
+  const weekStartStr = useMemo(() => formatLocalDate(weekStart), [weekStart]);
+  const weekEndStr = useMemo(() => {
+    const end = new Date(weekStart);
+    end.setDate(end.getDate() + 6);
+    return formatLocalDate(end);
+  }, [weekStart]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       const api = getApi();
-      const res = await api.get<{ mealPlan: any }>(`/api/meal-plans?date=${weekStartStr}`);
-      const mealPlan = res.mealPlan;
-      if (!mealPlan) {
+      const res = await api.get<{ dailyMeals: any[] }>(`/api/meal-plans?startDate=${weekStartStr}&endDate=${weekEndStr}`);
+      const dailyMeals = res.dailyMeals ?? [];
+      if (dailyMeals.length === 0) {
         setHasPlan(false);
         setDays([]);
         return;
       }
       setHasPlan(true);
-      const mapped: DaySummary[] = (mealPlan.days ?? []).map((d: any) => {
+      const mapped: DaySummary[] = dailyMeals.map((d: any) => {
         const meals = d.meals ?? [];
         return {
           dayDate: d.dayDate,
@@ -67,7 +79,7 @@ export default function MenusScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [weekStartStr]);
+  }, [weekStartStr, weekEndStr]);
 
   useEffect(() => { loadData(); }, [loadData]);
 

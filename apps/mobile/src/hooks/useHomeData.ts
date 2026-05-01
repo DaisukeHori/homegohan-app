@@ -1,13 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getApi } from "../lib/api";
-
-const formatLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
+import { formatLocalDate } from "@homegohan/core";
 
 interface DailySummary {
   totalCalories: number;
@@ -85,6 +79,10 @@ export const useHomeData = (userId: string | undefined) => {
   const [shoppingRemaining, setShoppingRemaining] = useState(0);
   const [badgeCount, setBadgeCount] = useState(0);
   const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
+
+  // #407: meal toggle debounce — pending mealId set + 250ms debounce timer
+  const pendingToggleRef = useRef<Set<string>>(new Set());
+  const toggleDebounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   async function fetchAll() {
     if (!userId) return;
@@ -416,18 +414,27 @@ export const useHomeData = (userId: string | undefined) => {
   async function fetchPerformanceAnalysis(uid: string) {
     try {
       setPerformanceAnalysis((prev) => ({ ...prev, loading: true }));
+      const todayStr = getTodayStr();
       const api = getApi();
-      const data = await api.get<any>(`/api/performance/analyze?userId=${uid}`);
+      const [data, checkinResult] = await Promise.all([
+        api.get<any>(`/api/performance/analyze?date=${todayStr}`),
+        supabase
+          .from("user_performance_checkins")
+          .select("*")
+          .eq("user_id", uid)
+          .eq("checkin_date", todayStr)
+          .maybeSingle(),
+      ]);
       if (data) {
         setPerformanceAnalysis({
           eligible: data.eligible ?? false,
           eligibilityReason: data.eligibilityReason ?? null,
-          nextAction: data.nextAction ?? null,
-          todayCheckin: data.todayCheckin ?? null,
+          nextAction: data.analysis?.nextAction ?? null,
+          todayCheckin: checkinResult.data ?? null,
           loading: false,
         });
       } else {
-        setPerformanceAnalysis((prev) => ({ ...prev, loading: false }));
+        setPerformanceAnalysis((prev) => ({ ...prev, todayCheckin: checkinResult.data ?? null, loading: false }));
       }
     } catch {
       setPerformanceAnalysis((prev) => ({ ...prev, loading: false }));
@@ -458,6 +465,26 @@ export const useHomeData = (userId: string | undefined) => {
         .select()
         .single();
       if (error) return { success: false, error: error.message };
+
+      // sleepHours / sleepQuality が入力されている場合のみ health_records に同期する
+      // fatigue / focus / hunger は health_records に書き込まない
+      const hasSleepData =
+        checkinData.sleepHours !== undefined ||
+        checkinData.sleepQuality !== undefined;
+      if (hasSleepData) {
+        try {
+          const api = getApi();
+          await api.post("/api/health/records/quick", {
+            record_date: getTodayStr(),
+            ...(checkinData.sleepHours !== undefined && { sleep_hours: checkinData.sleepHours }),
+            ...(checkinData.sleepQuality !== undefined && { sleep_quality: checkinData.sleepQuality }),
+          });
+        } catch (syncErr) {
+          // 健康記録への同期失敗はチェックイン自体の成否には影響させない
+          console.warn("Health record sync after checkin failed:", syncErr);
+        }
+      }
+
       await fetchPerformanceAnalysis(userId);
       return { success: true, data };
     } catch (e: any) {
@@ -466,13 +493,39 @@ export const useHomeData = (userId: string | undefined) => {
   }
 
   async function toggleMealCompletion(mealId: string, currentStatus: boolean) {
+    // #407: 250ms debounce — 既存タイマーをキャンセルして再スケジュール
+    if (toggleDebounceTimerRef.current[mealId]) {
+      clearTimeout(toggleDebounceTimerRef.current[mealId]);
+      delete toggleDebounceTimerRef.current[mealId];
+    }
+
+    // 同一 mealId のリクエストが進行中の場合はスキップ
+    if (pendingToggleRef.current.has(mealId)) return;
+
+    // 250ms 後に実際の処理を実行
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        delete toggleDebounceTimerRef.current[mealId];
+        resolve();
+      }, 250);
+      toggleDebounceTimerRef.current[mealId] = timer;
+    });
+
+    // debounce 待機後、再度 pending チェック
+    if (pendingToggleRef.current.has(mealId)) return;
+    pendingToggleRef.current.add(mealId);
+
     const newStatus = !currentStatus;
+
+    // 楽観的 UI 更新
     setTodayMeals((prev) =>
       prev.map((m) => (m.id === mealId ? { ...m, is_completed: newStatus } : m))
     );
     setDailySummary((prev) => ({
       ...prev,
-      completedCount: newStatus ? prev.completedCount + 1 : prev.completedCount - 1,
+      completedCount: newStatus
+        ? Math.min(prev.completedCount + 1, prev.totalCount)
+        : Math.max(prev.completedCount - 1, 0),
     }));
 
     const { error } = await supabase
@@ -482,9 +535,31 @@ export const useHomeData = (userId: string | undefined) => {
 
     if (error) {
       console.error("Toggle completion error:", error);
+      // ロールバック: 楽観的更新を元に戻す
+      setTodayMeals((prev) =>
+        prev.map((m) => (m.id === mealId ? { ...m, is_completed: currentStatus } : m))
+      );
+      setDailySummary((prev) => ({
+        ...prev,
+        completedCount: newStatus
+          ? Math.max(prev.completedCount - 1, 0)
+          : Math.min(prev.completedCount + 1, prev.totalCount),
+      }));
+      // サーバー真値に再同期
       fetchAll();
     }
+
+    // PATCH 完了後に pending を解除
+    pendingToggleRef.current.delete(mealId);
   }
+
+  // #407: アンマウント時にデバウンスタイマーをクリア（メモリリーク防止）
+  useEffect(() => {
+    const timers = toggleDebounceTimerRef.current;
+    return () => {
+      Object.values(timers).forEach(clearTimeout);
+    };
+  }, []);
 
   useEffect(() => {
     fetchAll();

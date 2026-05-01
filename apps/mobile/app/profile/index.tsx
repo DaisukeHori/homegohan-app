@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
 import { Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
+import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, spacing, radius } from "../../src/theme";
@@ -79,6 +80,17 @@ export default function ProfilePage() {
           const badgeRes = await api.get<{ badges: any[] }>("/api/badges");
           setBadgeCount(badgeRes.badges?.filter((b: any) => b.earned).length ?? 0);
         } catch {}
+
+        // 通知・自動解析設定を API から取得
+        try {
+          const prefRes = await api.get<{ settings: { notifications_enabled: boolean; auto_analyze_enabled: boolean } }>("/api/notification-preferences");
+          if (prefRes.settings) {
+            setNotifications(prefRes.settings.notifications_enabled);
+            setAutoAnalyze(prefRes.settings.auto_analyze_enabled);
+          }
+        } catch (e) {
+          console.error("Failed to fetch notification preferences:", e);
+        }
       } catch (e: any) {
         console.error("Profile fetch error:", e);
       } finally {
@@ -105,7 +117,24 @@ export default function ProfilePage() {
     await supabase.from("user_profiles").update({ week_start_day: newValue }).eq("id", u.id);
   }
 
+  async function handleToggleNotificationPreference(
+    key: "notifications_enabled" | "auto_analyze_enabled",
+    setter: React.Dispatch<React.SetStateAction<boolean>>,
+    currentValue: boolean,
+  ) {
+    const newValue = !currentValue;
+    setter(newValue);
+    try {
+      const api = getApi();
+      await api.patch("/api/notification-preferences", { [key]: newValue });
+    } catch (e) {
+      console.error("Failed to save preference:", e);
+      setter(currentValue); // ロールバック
+    }
+  }
+
   async function handleLogout() {
+    await clearUserScopedAsyncStorage(user?.id ?? null);
     await supabase.auth.signOut();
     router.replace("/login");
   }
@@ -389,7 +418,7 @@ export default function ProfilePage() {
                   </View>
                   <Text style={s.settingLabel}>通知</Text>
                 </View>
-                <Switch value={notifications} onValueChange={setNotifications} trackColor={{ true: colors.accent }} />
+                <Switch value={notifications} onValueChange={() => handleToggleNotificationPreference("notifications_enabled", setNotifications, notifications)} trackColor={{ true: colors.accent }} />
               </View>
 
               {/* 自動解析 */}
@@ -400,7 +429,7 @@ export default function ProfilePage() {
                   </View>
                   <Text style={s.settingLabel}>自動解析</Text>
                 </View>
-                <Switch value={autoAnalyze} onValueChange={setAutoAnalyze} trackColor={{ true: colors.accent }} />
+                <Switch value={autoAnalyze} onValueChange={() => handleToggleNotificationPreference("auto_analyze_enabled", setAutoAnalyze, autoAnalyze)} trackColor={{ true: colors.accent }} />
               </View>
 
               {/* 週の開始日 */}

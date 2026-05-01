@@ -29,13 +29,18 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { imageUrl, imageBase64, mimeType } = body;
 
-    if (!imageUrl && !imageBase64) {
+    const images: { base64: string; mimeType: string }[] =
+      Array.isArray(body.images) && body.images.length > 0
+        ? body.images
+        : imageBase64
+          ? [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }]
+          : imageUrl
+            ? [await fetchImageAsBase64(imageUrl)]
+            : [];
+
+    if (images.length === 0) {
       return NextResponse.json({ error: 'Image URL or Base64 is required' }, { status: 400 });
     }
-
-    const images = imageBase64
-      ? [{ base64: imageBase64, mimeType: mimeType || 'image/jpeg' }]
-      : [await fetchImageAsBase64(imageUrl)];
 
     const { data, model } = await generateGeminiJson<FridgeAnalysisResult>({
       prompt: buildPrompt(images.length),

@@ -32,6 +32,18 @@ type FridgeIngredient = {
   daysRemaining: number;
 };
 
+function isExpiringSoon(dateStr: string | null): boolean {
+  if (!dateStr) return false;
+  const diff = (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  return diff >= 0 && diff <= 3;
+}
+
+function isExpired(dateStr: string | null): boolean {
+  if (!dateStr) return false;
+  const diff = (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  return diff < 0;
+}
+
 export default function PantryPage() {
   const [items, setItems] = useState<PantryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,6 +65,9 @@ export default function PantryPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
   const [detected, setDetected] = useState<FridgeIngredient[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [saveMode, setSaveMode] = useState<"append" | "replace">("append");
+  const [isSavingDetected, setIsSavingDetected] = useState(false);
 
   async function load() {
     setIsLoading(true);
@@ -149,16 +164,46 @@ export default function PantryPage() {
   }
 
   async function analyzeFridge() {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert("権限が必要です", "写真ライブラリへのアクセスを許可してください。");
-      return;
-    }
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      base64: true,
-      quality: 0.8,
+    // ユーザーに入力元を選択させる
+    const source = await new Promise<"camera" | "library" | null>((resolve) => {
+      Alert.alert(
+        "写真の選択",
+        "冷蔵庫の写真をどこから取得しますか？",
+        [
+          { text: "カメラで撮影", onPress: () => resolve("camera") },
+          { text: "ライブラリから選択", onPress: () => resolve("library") },
+          { text: "キャンセル", style: "cancel", onPress: () => resolve(null) },
+        ],
+      );
     });
+    if (!source) return;
+
+    let picked: ImagePicker.ImagePickerResult;
+
+    if (source === "camera") {
+      const camPerm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!camPerm.granted) {
+        Alert.alert("権限が必要です", "カメラへのアクセスを許可してください。");
+        return;
+      }
+      picked = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        base64: true,
+        quality: 0.8,
+      });
+    } else {
+      const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!libPerm.granted) {
+        Alert.alert("権限が必要です", "写真ライブラリへのアクセスを許可してください。");
+        return;
+      }
+      picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        base64: true,
+        quality: 0.8,
+      });
+    }
+
     if (picked.canceled) return;
     const asset = picked.assets?.[0];
     if (!asset?.base64) {
@@ -169,6 +214,7 @@ export default function PantryPage() {
     setIsAnalyzing(true);
     setAnalysisSummary(null);
     setDetected([]);
+    setSuggestions([]);
     try {
       const api = getApi();
       const res = await api.post<{
@@ -182,6 +228,7 @@ export default function PantryPage() {
       });
       setAnalysisSummary(res.summary || null);
       setDetected((res.detailedIngredients ?? []) as any);
+      setSuggestions(res.suggestions ?? []);
     } catch (e: any) {
       Alert.alert("解析失敗", e?.message ?? "解析に失敗しました。");
     } finally {
@@ -189,40 +236,55 @@ export default function PantryPage() {
     }
   }
 
+  function toIngredientInput(i: FridgeIngredient) {
+    const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : undefined;
+    return {
+      name: i.name,
+      amount: i.quantity || undefined,
+      category: mapCategoryToCode(i.category),
+      expirationDate: exp,
+      daysRemaining: i.daysRemaining,
+    };
+  }
+
   async function addDetectedOne(i: FridgeIngredient) {
+    setIsSavingDetected(true);
     try {
       const api = getApi();
-      const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : null;
-      await api.post("/api/pantry", {
-        name: i.name,
-        amount: i.quantity || null,
-        category: mapCategoryToCode(i.category),
-        expirationDate: exp,
+      await api.post("/api/pantry/from-photo", {
+        ingredients: [toIngredientInput(i)],
+        mode: saveMode,
       });
+      setDetected((prev) => prev.filter((d) => d !== i));
+      if (detected.length <= 1) {
+        setAnalysisSummary(null);
+        setSuggestions([]);
+      }
       await load();
     } catch (e: any) {
       Alert.alert("追加失敗", e?.message ?? "追加に失敗しました。");
+    } finally {
+      setIsSavingDetected(false);
     }
   }
 
   async function addDetectedAll() {
     if (!detected.length) return;
+    setIsSavingDetected(true);
     try {
       const api = getApi();
-      for (const i of detected) {
-        const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : null;
-        await api.post("/api/pantry", {
-          name: i.name,
-          amount: i.quantity || null,
-          category: mapCategoryToCode(i.category),
-          expirationDate: exp,
-        });
-      }
+      await api.post("/api/pantry/from-photo", {
+        ingredients: detected.map(toIngredientInput),
+        mode: saveMode,
+      });
       setDetected([]);
       setAnalysisSummary(null);
+      setSuggestions([]);
       await load();
     } catch (e: any) {
       Alert.alert("一括追加失敗", e?.message ?? "追加に失敗しました。");
+    } finally {
+      setIsSavingDetected(false);
     }
   }
 
@@ -317,12 +379,61 @@ export default function PantryPage() {
             </View>
           ) : null}
 
+          {suggestions.length > 0 ? (
+            <View style={{ backgroundColor: colors.accentLight, padding: spacing.md, borderRadius: radius.md, gap: spacing.xs }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                <Ionicons name="restaurant-outline" size={16} color={colors.accent} />
+                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.accent }}>おすすめレシピ</Text>
+              </View>
+              {suggestions.slice(0, 3).map((s, idx) => (
+                <Text key={idx} style={{ fontSize: 14, color: colors.textLight, lineHeight: 20 }}>
+                  {`・${s}`}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+
           {detected.length > 0 ? (
             <View style={{ gap: spacing.sm }}>
-              <Button onPress={addDetectedAll} variant="primary">
+              {/* append / replace 選択 */}
+              <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                <Pressable
+                  onPress={() => setSaveMode("append")}
+                  style={{
+                    flex: 1,
+                    padding: spacing.sm,
+                    borderRadius: radius.md,
+                    borderWidth: 2,
+                    borderColor: saveMode === "append" ? colors.accent : colors.textMuted,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: saveMode === "append" ? colors.accent : colors.textMuted, fontWeight: "700", fontSize: 13 }}>
+                    追加（append）
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>既存を保持して追加</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setSaveMode("replace")}
+                  style={{
+                    flex: 1,
+                    padding: spacing.sm,
+                    borderRadius: radius.md,
+                    borderWidth: 2,
+                    borderColor: saveMode === "replace" ? colors.accent : colors.textMuted,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: saveMode === "replace" ? colors.accent : colors.textMuted, fontWeight: "700", fontSize: 13 }}>
+                    置換（replace）
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>既存を全削除して置換</Text>
+                </Pressable>
+              </View>
+              <Button onPress={addDetectedAll} variant="primary" disabled={isSavingDetected} loading={isSavingDetected}>
                 <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
                 <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 15 }}>
-                  検出食材を一括追加（{detected.length}件）
+                  {isSavingDetected ? "保存中..." : `検出食材を一括${saveMode === "replace" ? "置換" : "追加"}（${detected.length}件）`}
                 </Text>
               </Button>
               {detected.map((i, idx) => (
@@ -359,6 +470,7 @@ export default function PantryPage() {
                       variant="secondary"
                       size="sm"
                       style={{ alignSelf: "flex-start" }}
+                      disabled={isSavingDetected}
                     >
                       <Ionicons name="add-outline" size={16} color={colors.text} />
                       <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>追加</Text>
@@ -408,6 +520,16 @@ export default function PantryPage() {
                       <Text style={{ fontWeight: "400", color: colors.textLight }}>{`  ${it.amount}`}</Text>
                     ) : null}
                   </Text>
+                  {isExpired(it.expirationDate) && (
+                    <View style={{ backgroundColor: "#EF9A9A", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 11, color: "#B71C1C", fontWeight: "600" }}>期限切れ</Text>
+                    </View>
+                  )}
+                  {!isExpired(it.expirationDate) && isExpiringSoon(it.expirationDate) && (
+                    <View style={{ backgroundColor: "#FFEBEE", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 11, color: colors.error, fontWeight: "600" }}>期限間近</Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* Meta info */}
@@ -417,8 +539,8 @@ export default function PantryPage() {
                     <Text style={{ fontSize: 13, color: colors.textMuted }}>{it.category ?? "-"}</Text>
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-                    <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
-                    <Text style={{ fontSize: 13, color: colors.textMuted }}>期限: {it.expirationDate ?? "-"}</Text>
+                    <Ionicons name="calendar-outline" size={14} color={(isExpired(it.expirationDate) || isExpiringSoon(it.expirationDate)) ? colors.error : colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: (isExpired(it.expirationDate) || isExpiringSoon(it.expirationDate)) ? colors.error : colors.textMuted }}>期限: {it.expirationDate ?? "-"}</Text>
                   </View>
                 </View>
 

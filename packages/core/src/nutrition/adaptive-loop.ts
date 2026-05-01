@@ -284,6 +284,9 @@ export function analyzeCheckinLoop(
   if (performanceProfile?.sport) {
     const { phase, demandVector } = performanceProfile.sport;
 
+    // demandVector が未設定 (オンボーディング進行中などの状態) ではスポーツ特有調整をスキップ
+    if (demandVector) {
+
     // 試合期は炭水化物を優先
     if (phase === 'competition' && demandVector.endurance > 0.5) {
       recommendations.push({
@@ -305,6 +308,7 @@ export function analyzeCheckinLoop(
         priority: 2,
       });
     }
+    } // end if (demandVector)
   }
 
   // 優先度でソート

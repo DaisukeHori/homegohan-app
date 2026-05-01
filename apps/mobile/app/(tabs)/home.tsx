@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useMemo, useState, useEffect, useRef } from "react";
+import { Animated, Pressable, ScrollView, Text, View } from "react-native";
+import { Svg, Circle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, Button, EmptyState, LoadingState, StatCard } from "../../src/components/ui";
@@ -9,6 +11,8 @@ import { colors, spacing, shadows, radius } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { useHomeData } from "../../src/hooks/useHomeData";
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const MEAL_ORDER = ["breakfast", "lunch", "snack", "dinner", "midnight_snack"] as const;
 const MEAL_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; label: string; color: string }> = {
@@ -42,6 +46,16 @@ const CHECKIN_FIELDS = [
   { key: "focus" as const, label: "🎯 集中力", options: ["低い", "やや低い", "普通", "良い", "最高"] },
   { key: "hunger" as const, label: "🍽️ 空腹感", options: ["ない", "少し", "普通", "ある", "すごくある"] },
 ];
+
+const NEXT_ACTION_LABEL: Record<string, string> = {
+  increase_calories: "カロリーを少し増やしましょう",
+  decrease_calories: "カロリーを少し減らしましょう",
+  increase_protein: "タンパク質を増やしましょう",
+  increase_carbs: "炭水化物を増やしましょう",
+  improve_sleep: "睡眠の質を改善しましょう",
+  reduce_fatigue: "疲労回復を優先しましょう",
+  maintain: "現状を維持しましょう",
+};
 
 const getGreeting = () => {
   const hour = new Date().getHours();
@@ -88,6 +102,21 @@ export default function HomeScreen() {
     focus: 3,
     hunger: 3,
   });
+  const [checkinFeedback, setCheckinFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!checkinFeedback) {
+      Animated.timing(toastOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+      return;
+    }
+    Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    const timer = setTimeout(() => setCheckinFeedback(null), 4000);
+    return () => clearTimeout(timer);
+  }, [checkinFeedback]);
 
   const sortedMeals = useMemo(() => {
     return [...todayMeals].sort((a, b) => {
@@ -102,6 +131,23 @@ export default function HomeScreen() {
   const completionRate = dailySummary.totalCount > 0
     ? Math.round((dailySummary.completedCount / dailySummary.totalCount) * 100)
     : 0;
+
+  // 円形プログレスアニメーション用
+  const PROGRESS_RADIUS = 42;
+  const PROGRESS_CIRCUMFERENCE = 2 * Math.PI * PROGRESS_RADIUS;
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: completionRate,
+      duration: 800,
+      useNativeDriver: false,
+    }).start();
+  }, [completionRate]);
+  const strokeDashoffset = progressAnim.interpolate({
+    inputRange: [0, 100],
+    outputRange: [PROGRESS_CIRCUMFERENCE, 0],
+    extrapolate: "clamp",
+  });
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -406,9 +452,15 @@ export default function HomeScreen() {
                   <Button
                     onPress={async () => {
                       setCheckinSubmitting(true);
+                      setCheckinFeedback(null);
                       const result = await submitPerformanceCheckin(checkinForm);
                       setCheckinSubmitting(false);
-                      if (result.success) setShowCheckin(false);
+                      if (result.success) {
+                        setShowCheckin(false);
+                        setCheckinFeedback({ type: 'success', message: '✅ チェックインを保存しました！' });
+                      } else {
+                        setCheckinFeedback({ type: 'error', message: result.error ?? '保存に失敗しました。再試行してください。' });
+                      }
                     }}
                     loading={checkinSubmitting}
                     disabled={checkinSubmitting}
@@ -424,8 +476,41 @@ export default function HomeScreen() {
             </Card>
           )}
 
+          {/* ========== 次の一手カード ========== */}
+          {performanceAnalysis.nextAction && (
+            <LinearGradient
+              colors={["#8B5CF6", "#6366F1"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ borderRadius: radius.xl, padding: spacing.lg, ...shadows.md, overflow: "hidden" }}
+            >
+              {/* 装飾円 */}
+              <View style={{
+                position: "absolute", top: -20, right: -20,
+                width: 80, height: 80, borderRadius: 40,
+                backgroundColor: "rgba(255,255,255,0.12)",
+              }} />
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+                <Ionicons name="navigate" size={18} color="#fff" style={{ marginTop: 2 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "rgba(255,255,255,0.8)", marginBottom: 4 }}>
+                    🎯 今日の次の一手
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: "#fff", lineHeight: 20 }}>
+                    {NEXT_ACTION_LABEL[performanceAnalysis.nextAction.actionType] ?? performanceAnalysis.nextAction.actionType}
+                  </Text>
+                  {performanceAnalysis.nextAction.reason ? (
+                    <Text style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", marginTop: 4, lineHeight: 18 }}>
+                      {performanceAnalysis.nextAction.reason}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            </LinearGradient>
+          )}
+
           {/* チェックイン完了済み */}
-          {performanceAnalysis.todayCheckin && !performanceAnalysis.nextAction && (
+          {performanceAnalysis.todayCheckin && (
             <View style={{
               flexDirection: "row", alignItems: "center", gap: spacing.sm,
               backgroundColor: colors.successLight, padding: spacing.lg, borderRadius: radius.xl,
@@ -461,6 +546,94 @@ export default function HomeScreen() {
               </View>
             </View>
           )}
+
+          {/* ========== 今日の進捗 ========== */}
+          <View style={{
+            backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg,
+            borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.md }}>
+              <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
+              <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text }}>今日の進捗</Text>
+            </View>
+
+            {/* 円形プログレスバー */}
+            <View style={{ alignItems: "center", marginBottom: spacing.md }}>
+              <View style={{ width: 112, height: 112 }}>
+                <Svg width="112" height="112" viewBox="0 0 112 112">
+                  {/* 背景トラック */}
+                  <Circle
+                    cx="56"
+                    cy="56"
+                    r={PROGRESS_RADIUS}
+                    stroke={colors.border}
+                    strokeWidth="10"
+                    fill="none"
+                    transform="rotate(-90 56 56)"
+                  />
+                  {/* アニメーション付きプログレス */}
+                  <AnimatedCircle
+                    cx="56"
+                    cy="56"
+                    r={PROGRESS_RADIUS}
+                    stroke={colors.accent}
+                    strokeWidth="10"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeDasharray={PROGRESS_CIRCUMFERENCE}
+                    strokeDashoffset={strokeDashoffset}
+                    transform="rotate(-90 56 56)"
+                  />
+                </Svg>
+                {/* 中央テキスト */}
+                <View style={{
+                  position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                  alignItems: "center", justifyContent: "center",
+                }}>
+                  <Text
+                    testID="home-progress-percent"
+                    style={{ fontSize: 26, fontWeight: "900", color: colors.text }}
+                  >
+                    {completionRate}%
+                  </Text>
+                </View>
+              </View>
+              <Text
+                testID="home-progress-fraction"
+                style={{ fontSize: 12, color: colors.textMuted, marginTop: spacing.sm }}
+              >
+                {dailySummary.completedCount} / {dailySummary.totalCount} 食完了
+              </Text>
+            </View>
+
+            {/* 統計行 */}
+            <View style={{ gap: spacing.sm }}>
+              <View style={{
+                flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                backgroundColor: colors.accentLight, padding: spacing.sm, borderRadius: radius.md,
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                  <Ionicons name="flame" size={14} color={colors.accent} />
+                  <Text style={{ fontSize: 12, fontWeight: "500", color: colors.textLight }}>今日の献立合計</Text>
+                </View>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: colors.accent }}>
+                  {dailySummary.totalCalories} kcal
+                </Text>
+              </View>
+              <View style={{
+                flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                backgroundColor: colors.successLight, padding: spacing.sm, borderRadius: radius.md,
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                  <Ionicons name="restaurant" size={14} color={colors.success} />
+                  <Text style={{ fontSize: 12, fontWeight: "500", color: colors.textLight }}>自炊</Text>
+                </View>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: colors.success }}>
+                  {dailySummary.cookCount}食
+                </Text>
+              </View>
+            </View>
+          </View>
 
           {/* ========== 今日の献立 ========== */}
           <Card>
@@ -689,6 +862,29 @@ export default function HomeScreen() {
       >
         <Ionicons name="chatbubble-ellipses" size={24} color="#fff" />
       </Pressable>
+
+      {/* ========== チェックインフィードバックトースト ========== */}
+      {checkinFeedback && (
+        <Animated.View
+          accessibilityLiveRegion="polite"
+          style={{
+            position: "absolute",
+            top: insets.top + 12,
+            left: spacing.lg,
+            right: spacing.lg,
+            backgroundColor: checkinFeedback.type === 'success' ? '#16a34a' : '#dc2626',
+            borderRadius: radius.lg,
+            paddingVertical: 12,
+            paddingHorizontal: spacing.md,
+            opacity: toastOpacity,
+            ...shadows.md,
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14, textAlign: "center" }}>
+            {checkinFeedback.message}
+          </Text>
+        </Animated.View>
+      )}
     </View>
   );
 }
