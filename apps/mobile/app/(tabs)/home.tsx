@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -43,16 +42,6 @@ const CHECKIN_FIELDS = [
   { key: "focus" as const, label: "🎯 集中力", options: ["低い", "やや低い", "普通", "良い", "最高"] },
   { key: "hunger" as const, label: "🍽️ 空腹感", options: ["ない", "少し", "普通", "ある", "すごくある"] },
 ];
-
-const NEXT_ACTION_LABEL: Record<string, string> = {
-  increase_calories: "カロリーを少し増やしましょう",
-  decrease_calories: "カロリーを少し減らしましょう",
-  increase_protein: "タンパク質を増やしましょう",
-  increase_carbs: "炭水化物を増やしましょう",
-  improve_sleep: "睡眠の質を改善しましょう",
-  reduce_fatigue: "疲労回復を優先しましょう",
-  maintain: "現状を維持しましょう",
-};
 
 const getGreeting = () => {
   const hour = new Date().getHours();
