@@ -52,14 +52,30 @@ export default function SignupScreen() {
     }
   }
 
+  // パスワード強度バリデーション
+  // 要件: 8文字以上 / 英字を含む / 数字を含む (Bug-33, #441)
+  function validatePassword(pwd: string): string | null {
+    if (pwd.length < 8) {
+      return "パスワードは8文字以上にしてください。";
+    }
+    if (!/[A-Za-z]/.test(pwd)) {
+      return "パスワードには英字を含めてください。";
+    }
+    if (!/[0-9]/.test(pwd)) {
+      return "パスワードには数字を含めてください。";
+    }
+    return null;
+  }
+
   async function onSubmit() {
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password) {
       Alert.alert("入力エラー", "メールアドレスとパスワードを入力してください。");
       return;
     }
-    if (password.length < 8) {
-      Alert.alert("入力エラー", "パスワードは8文字以上にしてください。");
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      Alert.alert("入力エラー", pwdError);
       return;
     }
 
@@ -152,7 +168,7 @@ export default function SignupScreen() {
             }}>
               <Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} />
               <TextInput
-                placeholder="8文字以上"
+                placeholder="8文字以上・英字と数字を含む"
                 placeholderTextColor={colors.textMuted}
                 secureTextEntry={!showPassword}
                 value={password}
@@ -167,7 +183,7 @@ export default function SignupScreen() {
               </Pressable>
             </View>
             <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
-              8文字以上で設定してください
+              8文字以上、英字と数字を含めてください
             </Text>
           </View>
 
