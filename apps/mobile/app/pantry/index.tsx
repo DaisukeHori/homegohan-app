@@ -359,12 +359,22 @@ export default function PantryPage() {
     ]);
   }
 
+  function getFreshnessLabel(freshness: string): string {
+    switch (freshness.toLowerCase()) {
+      case "fresh": return "新鮮";
+      case "good": return "良好";
+      case "expiring_soon": return "期限間近";
+      case "expired": return "期限切れ";
+      default: return freshness;
+    }
+  }
+
   function getFreshnessColor(freshness: string): string {
     switch (freshness.toLowerCase()) {
       case "fresh": return colors.success;
       case "good": return colors.success;
-      case "ok": return colors.warning;
-      case "old": return colors.error;
+      case "expiring_soon": return colors.warning;
+      case "expired": return colors.error;
       default: return colors.textMuted;
     }
   }
@@ -508,7 +518,7 @@ export default function PantryPage() {
                           borderRadius: 4,
                           backgroundColor: getFreshnessColor(i.freshness),
                         }} />
-                        <Text style={{ fontSize: 12, color: colors.textMuted }}>{i.freshness}</Text>
+                        <Text style={{ fontSize: 12, color: colors.textMuted }}>{getFreshnessLabel(i.freshness)}</Text>
                       </View>
                     </View>
                     <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
