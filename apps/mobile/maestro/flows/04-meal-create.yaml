@@ -1,0 +1,57 @@
+appId: com.homegohan.app
+---
+# 04-meal-create: 食事追加 → 一覧に反映確認
+- launchApp
+
+# ログイン
+- assertVisible:
+    id: "login-screen"
+    timeout: 10000
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+
+# ホーム画面確認
+- assertVisible:
+    id: "home-screen"
+    timeout: 15000
+
+# 食事タブへ移動
+- tapOn:
+    id: "tab-meals"
+
+# 食事一覧画面確認
+- assertVisible:
+    id: "meals-screen"
+    timeout: 10000
+
+# 食事追加ボタンタップ
+- tapOn:
+    id: "meals-add-button"
+
+# 食事作成画面確認
+- assertVisible:
+    id: "meal-create-screen"
+    timeout: 10000
+
+# 食事名を入力
+- tapOn:
+    id: "meal-name-input"
+- inputText: "E2Eテスト食事"
+
+# 保存ボタンタップ
+- tapOn:
+    id: "meal-save-button"
+
+# 食事一覧画面に戻る
+- assertVisible:
+    id: "meals-screen"
+    timeout: 15000
+
+# 追加した食事が一覧に表示されることを確認
+- assertVisible: "E2Eテスト食事"

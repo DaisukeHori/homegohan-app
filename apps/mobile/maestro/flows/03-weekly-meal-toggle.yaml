@@ -1,0 +1,51 @@
+appId: com.homegohan.app
+---
+# 03-weekly-meal-toggle: ホーム → 週間メニュー → カードタップで完了アイコン変化確認
+- launchApp
+
+# ログイン
+- assertVisible:
+    id: "login-screen"
+    timeout: 10000
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+
+# ホーム画面確認
+- assertVisible:
+    id: "home-screen"
+    timeout: 15000
+
+# 週間メニュータブへ移動
+- tapOn:
+    id: "tab-menus"
+
+# 週間メニュー画面確認
+- assertVisible:
+    id: "weekly-menu-screen"
+    timeout: 10000
+
+# 最初のメニューカードをタップして完了状態に切り替え
+- tapOn:
+    index: 0
+    id: "meal-card"
+
+# 完了アイコン (チェックマーク) が表示されることを確認
+- assertVisible:
+    id: "meal-completed-icon"
+    timeout: 5000
+
+# 再度タップして未完了に戻す
+- tapOn:
+    index: 0
+    id: "meal-card"
+
+# 完了アイコンが非表示になることを確認
+- assertNotVisible:
+    id: "meal-completed-icon"
+    timeout: 5000

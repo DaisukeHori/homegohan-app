@@ -1,0 +1,66 @@
+appId: com.homegohan.app
+---
+# 02-onboarding: 新規登録ユーザーでオンボーディング質問回答 → 完了画面確認
+- launchApp:
+    clearState: true
+
+# ログイン画面からサインアップへ遷移
+- assertVisible:
+    id: "login-screen"
+    timeout: 10000
+- tapOn:
+    id: "signup-link"
+
+# サインアップ画面: メール・パスワード入力
+- assertVisible:
+    id: "signup-screen"
+    timeout: 5000
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_NEW_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_NEW_USER_PASSWORD}
+- tapOn:
+    id: "signup-button"
+
+# オンボーディング開始画面
+- assertVisible:
+    id: "onboarding-welcome"
+    timeout: 15000
+- tapOn:
+    id: "onboarding-start-button"
+
+# 質問画面: 最初の質問に回答 (最初の選択肢をタップ)
+- assertVisible:
+    id: "onboarding-questions"
+    timeout: 10000
+- tapOn:
+    index: 0
+    id: "question-option"
+- tapOn:
+    id: "next-button"
+
+# 2問目以降を回答 (選択肢タップ → 次へ を繰り返す)
+- tapOn:
+    index: 0
+    id: "question-option"
+- tapOn:
+    id: "next-button"
+
+- tapOn:
+    index: 0
+    id: "question-option"
+- tapOn:
+    id: "next-button"
+
+- tapOn:
+    index: 0
+    id: "question-option"
+- tapOn:
+    id: "next-button"
+
+# 完了画面が表示されることを確認
+- assertVisible:
+    id: "onboarding-complete"
+    timeout: 15000

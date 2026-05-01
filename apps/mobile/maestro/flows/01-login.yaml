@@ -1,0 +1,31 @@
+appId: com.homegohan.app
+---
+# 01-login: アプリ起動 → メール + パスワード入力 → ホーム画面確認
+- launchApp:
+    clearState: true
+
+# ログイン画面が表示されるまで待機
+- assertVisible:
+    id: "login-screen"
+    timeout: 10000
+
+# メールアドレス入力
+- tapOn:
+    id: "email-input"
+- clearText
+- inputText: ${E2E_USER_EMAIL}
+
+# パスワード入力
+- tapOn:
+    id: "password-input"
+- clearText
+- inputText: ${E2E_USER_PASSWORD}
+
+# ログインボタンタップ
+- tapOn:
+    id: "login-button"
+
+# ホーム画面が表示されることを確認
+- assertVisible:
+    id: "home-screen"
+    timeout: 15000

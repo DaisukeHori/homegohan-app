@@ -1,0 +1,39 @@
+name: Mobile E2E
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile-e2e.yml'
+
+jobs:
+  maestro:
+    runs-on: macos-latest
+    # MAESTRO_CLOUD_API_KEY が設定されていない場合はスキップ
+    if: ${{ secrets.MAESTRO_CLOUD_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Maestro
+        run: curl -Ls "https://get.maestro.mobile.dev" | bash
+
+      - name: Add Maestro to PATH
+        run: echo "$HOME/.maestro/bin" >> $GITHUB_PATH
+
+      - name: Build app for Maestro Cloud
+        run: echo "TODO: Expo build .app/.apk"
+        # 実際のビルドコマンド例:
+        # run: |
+        #   npm install -g eas-cli
+        #   cd apps/mobile
+        #   eas build --platform ios --profile preview --non-interactive
+
+      - name: Run Maestro Cloud
+        env:
+          MAESTRO_CLOUD_API_KEY: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+        run: |
+          maestro cloud \
+            --apiKey "$MAESTRO_CLOUD_API_KEY" \
+            apps/mobile/maestro/flows

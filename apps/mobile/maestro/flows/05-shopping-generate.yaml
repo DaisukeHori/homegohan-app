@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+---
+# 05-shopping-generate: 週間メニューから買い物リスト生成 → リスト表示確認
+- launchApp
+
+# ログイン
+- assertVisible:
+    id: "login-screen"
+    timeout: 10000
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+
+# ホーム画面確認
+- assertVisible:
+    id: "home-screen"
+    timeout: 15000
+
+# 週間メニュータブへ移動
+- tapOn:
+    id: "tab-menus"
+
+# 週間メニュー画面確認
+- assertVisible:
+    id: "weekly-menu-screen"
+    timeout: 10000
+
+# 買い物リスト生成ボタンタップ
+- tapOn:
+    id: "generate-shopping-button"
+
+# 生成中ローディング完了を待機
+- assertVisible:
+    id: "shopping-list-screen"
+    timeout: 30000
+
+# 買い物リストにアイテムが表示されることを確認
+- assertVisible:
+    id: "shopping-list-item"
+    timeout: 10000

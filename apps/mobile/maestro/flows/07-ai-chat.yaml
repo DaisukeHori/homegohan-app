@@ -1,0 +1,48 @@
+appId: com.homegohan.app
+---
+# 07-ai-chat: AI チャット起動 → メッセージ送信 → 応答表示確認 (モック前提)
+- launchApp
+
+# ログイン
+- assertVisible:
+    id: "login-screen"
+    timeout: 10000
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+
+# ホーム画面確認
+- assertVisible:
+    id: "home-screen"
+    timeout: 15000
+
+# AI チャットボタンをタップ (ホーム画面の FAB または専用タブ)
+- tapOn:
+    id: "ai-chat-button"
+
+# AI チャット画面確認
+- assertVisible:
+    id: "ai-chat-screen"
+    timeout: 10000
+
+# メッセージ入力欄に文字を入力
+- tapOn:
+    id: "chat-input"
+- inputText: "今週のおすすめ献立を教えて"
+
+# 送信ボタンタップ
+- tapOn:
+    id: "chat-send-button"
+
+# 送信したメッセージが表示されることを確認
+- assertVisible: "今週のおすすめ献立を教えて"
+
+# AI からの応答が表示されることを確認 (モック環境では固定レスポンス)
+- assertVisible:
+    id: "ai-chat-response"
+    timeout: 30000

@@ -1,0 +1,67 @@
+appId: com.homegohan.app
+---
+# 06-pantry-add-delete: pantry アイテム追加 → 削除確認
+- launchApp
+
+# ログイン
+- assertVisible:
+    id: "login-screen"
+    timeout: 10000
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+
+# ホーム画面確認
+- assertVisible:
+    id: "home-screen"
+    timeout: 15000
+
+# プロフィール or メニューから pantry 画面へ遷移
+# (pantry はタブではなくプロフィール配下を想定)
+- tapOn:
+    id: "tab-profile"
+- tapOn:
+    id: "pantry-menu-item"
+
+# pantry 画面確認
+- assertVisible:
+    id: "pantry-screen"
+    timeout: 10000
+
+# アイテム追加ボタンタップ
+- tapOn:
+    id: "pantry-add-button"
+
+# 追加フォームに食材名を入力
+- assertVisible:
+    id: "pantry-item-name-input"
+    timeout: 5000
+- tapOn:
+    id: "pantry-item-name-input"
+- inputText: "E2Eテスト食材"
+
+# 保存
+- tapOn:
+    id: "pantry-save-button"
+
+# pantry 一覧に追加した食材が表示されることを確認
+- assertVisible: "E2Eテスト食材"
+    timeout: 10000
+
+# 追加したアイテムを長押しまたはスワイプして削除
+- longPressOn: "E2Eテスト食材"
+- tapOn:
+    id: "pantry-delete-button"
+
+# 削除確認ダイアログで確認
+- tapOn:
+    id: "confirm-delete-button"
+
+# アイテムが一覧から消えることを確認
+- assertNotVisible: "E2Eテスト食材"
+    timeout: 10000
