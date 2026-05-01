@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getApi } from "../lib/api";
 
@@ -85,6 +85,10 @@ export const useHomeData = (userId: string | undefined) => {
   const [shoppingRemaining, setShoppingRemaining] = useState(0);
   const [badgeCount, setBadgeCount] = useState(0);
   const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
+
+  // #407: meal toggle debounce — pending mealId set + 250ms debounce timer
+  const pendingToggleRef = useRef<Set<string>>(new Set());
+  const toggleDebounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   async function fetchAll() {
     if (!userId) return;
@@ -466,13 +470,39 @@ export const useHomeData = (userId: string | undefined) => {
   }
 
   async function toggleMealCompletion(mealId: string, currentStatus: boolean) {
+    // #407: 250ms debounce — 既存タイマーをキャンセルして再スケジュール
+    if (toggleDebounceTimerRef.current[mealId]) {
+      clearTimeout(toggleDebounceTimerRef.current[mealId]);
+      delete toggleDebounceTimerRef.current[mealId];
+    }
+
+    // 同一 mealId のリクエストが進行中の場合はスキップ
+    if (pendingToggleRef.current.has(mealId)) return;
+
+    // 250ms 後に実際の処理を実行
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        delete toggleDebounceTimerRef.current[mealId];
+        resolve();
+      }, 250);
+      toggleDebounceTimerRef.current[mealId] = timer;
+    });
+
+    // debounce 待機後、再度 pending チェック
+    if (pendingToggleRef.current.has(mealId)) return;
+    pendingToggleRef.current.add(mealId);
+
     const newStatus = !currentStatus;
+
+    // 楽観的 UI 更新
     setTodayMeals((prev) =>
       prev.map((m) => (m.id === mealId ? { ...m, is_completed: newStatus } : m))
     );
     setDailySummary((prev) => ({
       ...prev,
-      completedCount: newStatus ? prev.completedCount + 1 : prev.completedCount - 1,
+      completedCount: newStatus
+        ? Math.min(prev.completedCount + 1, prev.totalCount)
+        : Math.max(prev.completedCount - 1, 0),
     }));
 
     const { error } = await supabase
@@ -482,9 +512,31 @@ export const useHomeData = (userId: string | undefined) => {
 
     if (error) {
       console.error("Toggle completion error:", error);
+      // ロールバック: 楽観的更新を元に戻す
+      setTodayMeals((prev) =>
+        prev.map((m) => (m.id === mealId ? { ...m, is_completed: currentStatus } : m))
+      );
+      setDailySummary((prev) => ({
+        ...prev,
+        completedCount: newStatus
+          ? Math.max(prev.completedCount - 1, 0)
+          : Math.min(prev.completedCount + 1, prev.totalCount),
+      }));
+      // サーバー真値に再同期
       fetchAll();
     }
+
+    // PATCH 完了後に pending を解除
+    pendingToggleRef.current.delete(mealId);
   }
+
+  // #407: アンマウント時にデバウンスタイマーをクリア（メモリリーク防止）
+  useEffect(() => {
+    const timers = toggleDebounceTimerRef.current;
+    return () => {
+      Object.values(timers).forEach(clearTimeout);
+    };
+  }, []);
 
   useEffect(() => {
     fetchAll();
