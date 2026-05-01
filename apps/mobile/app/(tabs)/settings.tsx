@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
+import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
 
 type WeekStartDay = "sunday" | "monday";
 
@@ -86,6 +87,7 @@ export default function SettingsTab() {
 
   async function handleLogout() {
     try {
+      await clearUserScopedAsyncStorage(user?.id ?? null);
       await supabase.auth.signOut();
     } catch {}
     router.replace("/");
