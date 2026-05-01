@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -57,6 +58,8 @@ export default function SettingsTab() {
   useEffect(() => {
     async function fetchSettings() {
       if (!user) return;
+
+      // 週の開始日
       const { data } = await supabase
         .from("user_profiles")
         .select("week_start_day")
@@ -65,9 +68,38 @@ export default function SettingsTab() {
       if (data?.week_start_day) {
         setWeekStartDay(data.week_start_day as WeekStartDay);
       }
+
+      // 通知・自動解析設定を API から取得
+      try {
+        const api = getApi();
+        const res = await api.get<{ settings: { notifications_enabled: boolean; auto_analyze_enabled: boolean; data_share_enabled: boolean } }>("/api/notification-preferences");
+        if (res.settings) {
+          setNotifications(res.settings.notifications_enabled);
+          setAutoAnalyze(res.settings.auto_analyze_enabled);
+          setDataShare(res.settings.data_share_enabled);
+        }
+      } catch (e) {
+        console.error("Failed to fetch notification preferences:", e);
+      }
     }
     fetchSettings();
   }, [user]);
+
+  async function handleToggleNotificationPreference(
+    key: "notifications_enabled" | "auto_analyze_enabled" | "data_share_enabled",
+    setter: React.Dispatch<React.SetStateAction<boolean>>,
+    currentValue: boolean,
+  ) {
+    const newValue = !currentValue;
+    setter(newValue);
+    try {
+      const api = getApi();
+      await api.patch("/api/notification-preferences", { [key]: newValue });
+    } catch (e) {
+      console.error("Failed to save preference:", e);
+      setter(currentValue); // ロールバック
+    }
+  }
 
   async function handleWeekStartDayChange(newValue: WeekStartDay) {
     if (!user) return;
@@ -110,13 +142,13 @@ export default function SettingsTab() {
               icon="🔔"
               iconBg="#EFF6FF"
               title="通知"
-              right={<Switch value={notifications} onValueChange={setNotifications} trackColor={{ true: colors.accent }} />}
+              right={<Switch value={notifications} onValueChange={() => handleToggleNotificationPreference("notifications_enabled", setNotifications, notifications)} trackColor={{ true: colors.accent }} />}
             />
             <SettingRow
               icon="🤖"
               iconBg="#F3E8FF"
               title="自動解析"
-              right={<Switch value={autoAnalyze} onValueChange={setAutoAnalyze} trackColor={{ true: colors.accent }} />}
+              right={<Switch value={autoAnalyze} onValueChange={() => handleToggleNotificationPreference("auto_analyze_enabled", setAutoAnalyze, autoAnalyze)} trackColor={{ true: colors.accent }} />}
             />
             <SettingRow
               icon="📅"
@@ -192,7 +224,7 @@ export default function SettingsTab() {
               title="トレーナーと共有"
               subtitle="栄養士やジムと連携"
               last
-              right={<Switch value={dataShare} onValueChange={setDataShare} trackColor={{ true: colors.accent }} />}
+              right={<Switch value={dataShare} onValueChange={() => handleToggleNotificationPreference("data_share_enabled", setDataShare, dataShare)} trackColor={{ true: colors.accent }} />}
             />
           </View>
         </View>
