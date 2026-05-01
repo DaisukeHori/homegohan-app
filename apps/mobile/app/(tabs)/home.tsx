@@ -3,6 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Animated, Image, Pressable, ScrollView, Text, View } from "react-native";
+import Slider from "@react-native-community/slider";
 import { Svg, Circle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -445,22 +446,21 @@ export default function HomeScreen() {
                   <View>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.xs }}>
                       <Text style={{ fontSize: 12, fontWeight: "600", color: colors.textLight }}>😴 睡眠時間</Text>
-                      <Text style={{ fontSize: 13, fontWeight: "800", color: colors.text }}>{checkinForm.sleepHours}時間</Text>
+                      <Text style={{ fontSize: 13, fontWeight: "800", color: colors.text }}>
+                        {checkinForm.sleepHours}時間
+                      </Text>
                     </View>
-                    <View style={{ flexDirection: "row", gap: 4 }}>
-                      {[4, 5, 6, 7, 8, 9, 10].map((h) => (
-                        <Pressable
-                          key={h}
-                          onPress={() => setCheckinForm({ ...checkinForm, sleepHours: h })}
-                          style={{
-                            flex: 1, paddingVertical: 6, borderRadius: radius.md, alignItems: "center",
-                            backgroundColor: checkinForm.sleepHours === h ? colors.purple : colors.bg,
-                          }}
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: "800", color: checkinForm.sleepHours === h ? "#fff" : colors.textMuted }}>{h}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
+                    <Slider
+                      style={{ width: "100%", height: 40 }}
+                      minimumValue={3}
+                      maximumValue={12}
+                      step={0.5}
+                      value={checkinForm.sleepHours}
+                      onValueChange={(v) => setCheckinForm({ ...checkinForm, sleepHours: Math.round(v * 2) / 2 })}
+                      minimumTrackTintColor={colors.purple}
+                      maximumTrackTintColor={colors.border}
+                      thumbTintColor={colors.purple}
+                    />
                   </View>
 
                   {/* 各項目（5段階） */}
