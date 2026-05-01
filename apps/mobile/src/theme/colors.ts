@@ -1,12 +1,12 @@
 // Web版と同じカラーパレット (src/app/(main)/home/page.tsx L17-37)
 export const colors = {
-  bg: '#FAF9F7',
+  bg: '#FFFFFF',
   card: '#FFFFFF',
   text: '#1A1A1A',
   textLight: '#4A4A4A',
-  textMuted: '#9A9A9A',
-  accent: '#E07A5F',
-  accentLight: '#FDF0ED',
+  textMuted: '#666666',
+  accent: '#FF8A65',
+  accentLight: '#FFCCBC',
   accentDark: '#C4634C',
   success: '#4CAF50',
   successLight: '#E8F5E9',
