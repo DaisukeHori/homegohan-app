@@ -826,6 +826,25 @@ export default function HomeScreen() {
             </Pressable>
           </View>
 
+          {/* ========== レシピブラウズ ========== */}
+          <Pressable
+            onPress={() => router.push("/recipes")}
+            style={{
+              backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md,
+              borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+              flexDirection: "row", alignItems: "center", gap: spacing.sm,
+            }}
+          >
+            <View style={{ width: 36, height: 36, borderRadius: radius.md, backgroundColor: "#FFF3E0", alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="book-outline" size={18} color="#FF6D00" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>レシピをブラウズ</Text>
+              <Text style={{ fontSize: 11, color: colors.textMuted }}>カテゴリ・難易度で絞り込み</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
+
           {/* ========== 週間自炊率グラフ ========== */}
           {weeklyStats.days.length > 0 && (
             <Card>
