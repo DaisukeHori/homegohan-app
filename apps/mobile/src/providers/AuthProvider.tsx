@@ -20,9 +20,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     supabase.auth
       .getSession()
-      .then(({ data }) => {
+      .then(async ({ data }) => {
         if (!isMounted) return;
-        setSession(data.session ?? null);
+        const cachedSession = data.session ?? null;
+
+        if (cachedSession) {
+          // AsyncStorage のキャッシュだけを信頼せず、サーバー側で JWT を検証する
+          const { data: userData, error: userError } = await supabase.auth.getUser();
+          if (!isMounted) return;
+
+          if (userError || !userData.user) {
+            // revoked / 期限切れトークンはセッションをクリアする
+            await supabase.auth.signOut();
+            if (!isMounted) return;
+            setSession(null);
+          } else {
+            setSession(cachedSession);
+          }
+        } else {
+          setSession(null);
+        }
+
         setIsLoading(false);
       })
       .catch(() => {
