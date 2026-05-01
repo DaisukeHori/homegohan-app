@@ -86,6 +86,8 @@ export default function HomeScreen() {
     activityLevel,
     suggestion,
     performanceAnalysis,
+    announcements,
+    dismissAnnouncement,
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
@@ -199,6 +201,38 @@ export default function HomeScreen() {
             />
           </View>
         </View>
+
+        {/* ========== お知らせバナー ========== */}
+        {announcements.length > 0 && (
+          <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.sm }}>
+            {announcements.map((ann) => (
+              <View
+                key={ann.id}
+                style={{
+                  backgroundColor: "#EFF6FF",
+                  borderWidth: 1,
+                  borderColor: "#BFDBFE",
+                  borderRadius: radius.xl,
+                  padding: spacing.md,
+                  flexDirection: "row",
+                  alignItems: "flex-start",
+                  gap: spacing.sm,
+                }}
+              >
+                <Text style={{ fontSize: 16 }}>📢</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#1E3A8A" }}>{ann.title}</Text>
+                  {ann.content ? (
+                    <Text style={{ fontSize: 12, color: "#1D4ED8", marginTop: 2, lineHeight: 17 }}>{ann.content}</Text>
+                  ) : null}
+                </View>
+                <Pressable onPress={() => dismissAnnouncement(ann.id)} hitSlop={12}>
+                  <Ionicons name="close" size={16} color="#93C5FD" />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
 
         <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg, gap: spacing.lg }}>
 

@@ -80,6 +80,9 @@ export const useHomeData = (userId: string | undefined) => {
   const [badgeCount, setBadgeCount] = useState(0);
   const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
 
+  // ─── Announcements ───
+  const [announcements, setAnnouncements] = useState<{ id: string; title: string; content: string }[]>([]);
+
   // #407: meal toggle debounce — pending mealId set + 250ms debounce timer
   const pendingToggleRef = useRef<Set<string>>(new Set());
   const toggleDebounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -99,6 +102,7 @@ export const useHomeData = (userId: string | undefined) => {
         fetchShoppingRemaining(userId),
         fetchBadgeInfo(userId),
         fetchActivityLevel(userId),
+        fetchAnnouncements(),
       ]);
 
       // Heavier fetches — async
@@ -342,6 +346,24 @@ export const useHomeData = (userId: string | undefined) => {
     }
   }
 
+  async function fetchAnnouncements() {
+    try {
+      const api = getApi();
+      const data = await api.get<any>("/api/announcements?mode=public");
+      if (data?.announcements && Array.isArray(data.announcements)) {
+        setAnnouncements(
+          data.announcements.map((a: any) => ({
+            id: String(a.id ?? a.announcement_id ?? Math.random()),
+            title: a.title ?? "",
+            content: a.content ?? "",
+          }))
+        );
+      }
+    } catch (e) {
+      console.error("Announcements fetch error:", e);
+    }
+  }
+
   async function fetchNutritionAnalysis() {
     try {
       setNutritionAnalysis((prev) => ({ ...prev, loading: true }));
@@ -553,6 +575,10 @@ export const useHomeData = (userId: string | undefined) => {
     pendingToggleRef.current.delete(mealId);
   }
 
+  function dismissAnnouncement(id: string) {
+    setAnnouncements((prev) => prev.filter((a) => a.id !== id));
+  }
+
   // #407: アンマウント時にデバウンスタイマーをクリア（メモリリーク防止）
   useEffect(() => {
     const timers = toggleDebounceTimerRef.current;
@@ -581,6 +607,8 @@ export const useHomeData = (userId: string | undefined) => {
     activityLevel,
     suggestion,
     performanceAnalysis,
+    announcements,
+    dismissAnnouncement,
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
