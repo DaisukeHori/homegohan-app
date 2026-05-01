@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+---
+# Auth flow E2E — login validation + successful login
+- launchApp
+
+# Tap through to login screen (assuming public landing screen has a login button)
+- tapOn:
+    text: "ログイン"
+
+# Verify login screen is visible
+- assertVisible: "メールアドレス"
+- assertVisible: "パスワード"
+
+# Input invalid email (missing @) and try to submit
+- tapOn:
+    text: "email@example.com"
+- inputText: "invalidemail"
+- tapOn:
+    text: "パスワード"
+- inputText: "password123"
+- tapOn:
+    text: "ログイン"
+
+# After submitting with invalid (actually the app validates empty or malformed),
+# the validation catches missing fields or shows alert.
+# Check that we are still on login screen (not navigated away)
+- assertVisible: "メールアドレス"
+
+# Clear and enter valid credentials
+- clearText
+- tapOn:
+    text: "email@example.com"
+- clearText
+- inputText: "test@example.com"
+- tapOn:
+    text: "パスワード"
+- clearText
+- inputText: "password123"
+- tapOn:
+    text: "ログイン"
+
+# After successful login, home screen should be visible
+# (The home tab bar or home-specific text)
+- assertVisible: "ホーム"
