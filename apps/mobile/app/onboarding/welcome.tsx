@@ -1,12 +1,30 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Card } from "../../src/components/ui";
+import { getApi } from "../../src/lib/api";
 import { colors, radius, shadows, spacing } from "../../src/theme";
 
 // モバイル版: 初回ウェルカム画面 (OB-UI-06)
 export default function OnboardingWelcome() {
+  const [isSkipping, setIsSkipping] = useState(false);
+
+  const handleSkip = async () => {
+    if (isSkipping) return;
+    setIsSkipping(true);
+    try {
+      const api = getApi();
+      await api.post("/api/onboarding/complete");
+    } catch (error) {
+      // エラーでもホームへ遷移する
+      console.error("[onboarding] skip complete API failed:", error);
+    } finally {
+      router.replace("/(tabs)/home");
+    }
+  };
+
   return (
     <ScrollView
       contentContainerStyle={styles.container}
@@ -83,8 +101,9 @@ export default function OnboardingWelcome() {
         </Pressable>
 
         <Pressable
-          onPress={() => router.replace("/(tabs)/home")}
+          onPress={handleSkip}
           style={styles.skipButton}
+          disabled={isSkipping}
         >
           <Text style={styles.skipButtonText}>あとで設定する</Text>
         </Pressable>
