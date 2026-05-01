@@ -327,6 +327,53 @@ const QUESTIONS: Question[] = [
     ],
   },
   {
+    id: "body_concerns",
+    text: "体の悩みはありますか？（複数選択可、なければスキップ）",
+    type: "multi_choice",
+    allowSkip: true,
+    options: [
+      { label: "🥶 冷え性", value: "cold_sensitivity" },
+      { label: "🦵 むくみやすい", value: "swelling_prone" },
+      { label: "💤 疲れやすい", value: "fatigue" },
+      { label: "🤕 肩こり・腰痛", value: "stiff_shoulders" },
+      { label: "😵 頭痛持ち", value: "headache" },
+      { label: "🌡️ 汗をかきにくい", value: "low_sweating" },
+      { label: "🍂 肌荒れ", value: "skin_trouble" },
+      { label: "💇 髪のパサつき", value: "dry_hair" },
+    ],
+  },
+  {
+    id: "sleep_quality",
+    text: "睡眠の質はいかがですか？",
+    type: "choice",
+    options: [
+      { label: "😴 良好", value: "good", description: "よく眠れている" },
+      { label: "😐 普通", value: "average", description: "特に問題なし" },
+      { label: "😫 悪い", value: "poor", description: "睡眠に問題がある" },
+    ],
+  },
+  {
+    id: "stress_level",
+    text: "日々のストレスレベルは？",
+    type: "choice",
+    options: [
+      { label: "😌 低い", value: "low", description: "リラックスできている" },
+      { label: "😐 普通", value: "medium", description: "日常的なストレス" },
+      { label: "😰 高い", value: "high", description: "ストレスを感じている" },
+    ],
+  },
+  {
+    id: "pregnancy_status",
+    text: "妊娠・授乳の状況を教えてください",
+    type: "choice",
+    showIf: (answers) => answers.gender === "female",
+    options: [
+      { label: "🙅‍♀️ 該当なし", value: "none", description: "妊娠・授乳中ではない" },
+      { label: "🤰 妊娠中", value: "pregnant", description: "現在妊娠中" },
+      { label: "🤱 授乳中", value: "nursing", description: "現在授乳中" },
+    ],
+  },
+  {
     id: "medications",
     text: "服用中の薬はありますか？（なければスキップ）",
     type: "multi_choice",
