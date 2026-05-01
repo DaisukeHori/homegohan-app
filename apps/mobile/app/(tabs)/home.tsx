@@ -802,18 +802,20 @@ export default function HomeScreen() {
           </View>
 
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable
-              onPress={() => router.push("/shopping-list")}
-              style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
-            >
-              <View style={{ width: 36, height: 36, borderRadius: radius.md, backgroundColor: colors.warningLight, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="cart" size={18} color={colors.warning} />
-              </View>
-              <View>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>買い物リスト</Text>
-                {shoppingRemaining > 0 && <Text style={{ fontSize: 11, color: colors.warning }}>残り{shoppingRemaining}件</Text>}
-              </View>
-            </Pressable>
+            {shoppingRemaining > 0 && (
+              <Pressable
+                onPress={() => router.push("/menus/weekly")}
+                style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
+              >
+                <View style={{ width: 36, height: 36, borderRadius: radius.md, backgroundColor: colors.warningLight, alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="cart" size={18} color={colors.warning} />
+                </View>
+                <View>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>買い物リスト</Text>
+                  <Text style={{ fontSize: 11, color: colors.warning }}>残り{shoppingRemaining}件</Text>
+                </View>
+              </Pressable>
+            )}
             <Pressable
               onPress={() => router.push("/pantry")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
