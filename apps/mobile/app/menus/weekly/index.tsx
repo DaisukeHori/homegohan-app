@@ -454,6 +454,54 @@ const formatLocalDate = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
+// Get day-of-week labels ordered by weekStartDay
+const getDayLabels = (weekStartDay: WeekStartDay = 'monday'): string[] => {
+  return weekStartDay === 'sunday'
+    ? ['日', '月', '火', '水', '木', '金', '土']
+    : ['月', '火', '水', '木', '金', '土', '日'];
+};
+
+// Build full calendar grid for a month (6-row × 7-column)
+const getCalendarDays = (month: Date, weekStartDay: WeekStartDay = 'monday'): Date[] => {
+  const year = month.getFullYear();
+  const m = month.getMonth();
+  const firstDay = new Date(year, m, 1);
+  const lastDay = new Date(year, m + 1, 0);
+
+  const firstDayOfWeek = firstDay.getDay(); // 0 = Sunday
+  const startOffset = weekStartDay === 'sunday' ? 0 : 1;
+  let startPadding = firstDayOfWeek - startOffset;
+  if (startPadding < 0) startPadding += 7;
+
+  const days: Date[] = [];
+  for (let i = startPadding - 1; i >= 0; i--) {
+    days.push(new Date(year, m, -i));
+  }
+  for (let i = 1; i <= lastDay.getDate(); i++) {
+    days.push(new Date(year, m, i));
+  }
+  while (days.length % 7 !== 0) {
+    days.push(new Date(year, m + 1, days.length - lastDay.getDate() - startPadding + 1));
+  }
+  return days;
+};
+
+// Japanese holidays cache (year -> { "YYYY-MM-DD": holidayName })
+const holidaysCache = new Map<number, Record<string, string>>();
+
+const fetchJapaneseHolidays = async (year: number): Promise<Record<string, string>> => {
+  if (holidaysCache.has(year)) return holidaysCache.get(year)!;
+  try {
+    const response = await fetch(`https://holidays-jp.github.io/api/v1/${year}/date.json`);
+    if (!response.ok) throw new Error('Failed to fetch holidays');
+    const data = await response.json();
+    holidaysCache.set(year, data);
+    return data;
+  } catch {
+    return {};
+  }
+};
+
 function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   const d = new Date(date);
   const currentDay = d.getDay();
@@ -690,6 +738,75 @@ export default function WeeklyMenuPage() {
   useEffect(() => {
     setWeekStart(getWeekStart(new Date(), weekStartDay));
   }, [weekStartDay]);
+
+  // Sync displayMonth to weekStart
+  useEffect(() => {
+    setDisplayMonth(weekStart);
+  }, [weekStart]);
+
+  // Fetch Japanese holidays whenever displayed month changes
+  useEffect(() => {
+    const year = displayMonth.getFullYear();
+    const month = displayMonth.getMonth();
+    const fetch = async () => {
+      const data = await fetchJapaneseHolidays(year);
+      setHolidays(prev => ({ ...prev, ...data }));
+      if (month === 0) {
+        const prev = await fetchJapaneseHolidays(year - 1);
+        setHolidays(h => ({ ...h, ...prev }));
+      } else if (month === 11) {
+        const next = await fetchJapaneseHolidays(year + 1);
+        setHolidays(h => ({ ...h, ...next }));
+      }
+    };
+    fetch();
+  }, [displayMonth]);
+
+  // Fetch and cache meal existence dates for a date range
+  const fetchAndCacheMealDates = useCallback(async (startDate: Date, endDate: Date) => {
+    const rangeKey = `${formatLocalDate(startDate)}_${formatLocalDate(endDate)}`;
+    if (fetchedRangesRef.current.has(rangeKey)) return;
+    fetchedRangesRef.current.add(rangeKey);
+    try {
+      const api = getApi();
+      const res = await api.get<{ dailyMeals: any[] }>(
+        `/api/meal-plans?startDate=${formatLocalDate(startDate)}&endDate=${formatLocalDate(endDate)}`
+      );
+      const newDates = new Set<string>();
+      res.dailyMeals?.forEach((day: any) => {
+        if (day.meals && day.meals.length > 0) newDates.add(day.dayDate);
+      });
+      setCalendarMealDates(prev => {
+        const merged = new Set(prev);
+        newDates.forEach(d => merged.add(d));
+        return merged;
+      });
+    } catch {
+      fetchedRangesRef.current.delete(rangeKey);
+    }
+  }, []);
+
+  // Prefetch adjacent weeks when weekStart changes
+  useEffect(() => {
+    const start = new Date(weekStart);
+    start.setDate(start.getDate() - 14);
+    const end = new Date(weekStart);
+    end.setDate(end.getDate() + 28);
+    fetchAndCacheMealDates(start, end);
+  }, [weekStart, fetchAndCacheMealDates]);
+
+  // Prefetch full month when displayMonth changes
+  useEffect(() => {
+    const year = displayMonth.getFullYear();
+    const month = displayMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const start = new Date(firstDay);
+    start.setDate(start.getDate() - 7);
+    const end = new Date(lastDay);
+    end.setDate(end.getDate() + 7);
+    fetchAndCacheMealDates(start, end);
+  }, [displayMonth, fetchAndCacheMealDates]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -967,6 +1084,29 @@ export default function WeeklyMenuPage() {
     };
   }, [selectedDay]);
 
+  // Calendar memos
+  const calendarDays = useMemo(() => getCalendarDays(displayMonth, weekStartDay), [displayMonth, weekStartDay]);
+  const dayLabels = useMemo(() => getDayLabels(weekStartDay), [weekStartDay]);
+  const todayStr = useMemo(() => formatLocalDate(new Date()), []);
+  const mealExistenceMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    days.forEach(d => {
+      if (d.planned_meals && d.planned_meals.length > 0) map.set(d.day_date, true);
+    });
+    calendarMealDates.forEach(dateStr => map.set(dateStr, true));
+    return map;
+  }, [days, calendarMealDates]);
+
+  function handleCalendarDateClick(day: Date) {
+    const newWeekStart = getWeekStart(day, weekStartDay);
+    const newWeekStartStr = formatLocalDate(newWeekStart);
+    if (newWeekStartStr !== weekStartStr) {
+      setWeekStart(newWeekStart);
+    }
+    setSelectedDate(formatLocalDate(day));
+    setIsCalendarExpanded(false);
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="週間献立" />
@@ -1012,6 +1152,138 @@ export default function WeeklyMenuPage() {
           <Ionicons name="chevron-forward" size={20} color={colors.text} />
         </Pressable>
       </View>
+
+      {/* 月カレンダー展開バー */}
+      <Pressable
+        onPress={() => setIsCalendarExpanded(prev => !prev)}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingVertical: spacing.sm,
+          paddingHorizontal: spacing.sm,
+          borderRadius: radius.md,
+          backgroundColor: colors.bg,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Ionicons
+            name={isCalendarExpanded ? "chevron-up" : "chevron-down"}
+            size={14}
+            color={colors.textMuted}
+          />
+          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>
+            {displayMonth.getFullYear()}年{displayMonth.getMonth() + 1}月
+          </Text>
+        </View>
+        {isCalendarExpanded && (
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Pressable
+              onPress={e => {
+                e.stopPropagation?.();
+                setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+              }}
+              style={{ padding: 4 }}
+            >
+              <Ionicons name="chevron-back" size={14} color={colors.textMuted} />
+            </Pressable>
+            <Pressable
+              onPress={e => {
+                e.stopPropagation?.();
+                setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+              }}
+              style={{ padding: 4 }}
+            >
+              <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+            </Pressable>
+          </View>
+        )}
+      </Pressable>
+
+      {/* 月カレンダーグリッド */}
+      {isCalendarExpanded && (
+        <View style={{ paddingHorizontal: spacing.sm, paddingBottom: spacing.md }}>
+          {/* 曜日ヘッダー */}
+          <View style={{ flexDirection: "row", marginBottom: 4 }}>
+            {dayLabels.map((label, i) => {
+              const isWeekendCol = weekStartDay === 'sunday'
+                ? (i === 0 || i === 6)
+                : (i === 5 || i === 6);
+              return (
+                <View key={label} style={{ flex: 1, alignItems: "center", paddingVertical: 4 }}>
+                  <Text style={{ fontSize: 10, color: isWeekendCol ? colors.accent : colors.textMuted }}>
+                    {label}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+          {/* 日付グリッド */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+            {calendarDays.map((day, i) => {
+              const dateStr = formatLocalDate(day);
+              const isCurrentMonth = day.getMonth() === displayMonth.getMonth();
+              const isSelected = dateStr === selectedDate;
+              const isInSelectedWeek =
+                dateStr >= weekStartStr && dateStr <= weekEndStr;
+              const isToday = dateStr === todayStr;
+              const hasMeal = mealExistenceMap.get(dateStr);
+              const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+              const isHoliday = !!holidays[dateStr];
+
+              return (
+                <Pressable
+                  key={i}
+                  onPress={() => handleCalendarDateClick(day)}
+                  style={{
+                    width: "14.28%",
+                    alignItems: "center",
+                    paddingVertical: 6,
+                    borderRadius: radius.md,
+                    backgroundColor: isSelected
+                      ? colors.accent
+                      : isInSelectedWeek
+                        ? colors.accentLight
+                        : "transparent",
+                    opacity: isCurrentMonth ? 1 : 0.3,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: isToday ? "700" : "400",
+                      color: isSelected
+                        ? "#fff"
+                        : isHoliday
+                          ? "#F44336"
+                          : isToday
+                            ? colors.accent
+                            : isWeekend
+                              ? colors.accent
+                              : colors.text,
+                    }}
+                  >
+                    {day.getDate()}
+                  </Text>
+                  {hasMeal ? (
+                    <View
+                      style={{
+                        width: 4,
+                        height: 4,
+                        borderRadius: 2,
+                        marginTop: 2,
+                        backgroundColor: isSelected ? "#fff" : colors.success,
+                      }}
+                    />
+                  ) : (
+                    <View style={{ width: 4, height: 4, marginTop: 2 }} />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      )}
 
       {isLoading ? (
         <LoadingState />
