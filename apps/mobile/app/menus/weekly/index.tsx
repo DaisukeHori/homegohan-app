@@ -289,9 +289,10 @@ interface NutritionSheetProps {
   day: DayRow | null;
   dateLabel: string;
   radarKeys: (keyof DayNutritionTotals)[];
+  weekDays: DayRow[];
 }
 
-function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys }: NutritionSheetProps) {
+function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, weekDays }: NutritionSheetProps) {
   const meals = day?.planned_meals ?? [];
   const totals = useMemo(() => calcDayTotals(meals), [meals]);
   const [praiseComment, setPraiseComment]         = useState<string | null>(null);
@@ -313,9 +314,16 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys }: N
 
   async function fetchFeedback(dateStr: string, nutrition: DayNutritionTotals, mealCount: number, forceRefresh = false) {
     setIsLoadingFeedback(true);
+    const weekData = weekDays.map((d) => ({
+      date: d.day_date,
+      meals: d.planned_meals.map((m) => ({
+        title: m.dish_name,
+        calories: m.calories_kcal,
+      })),
+    }));
     try {
       const api = getApi();
-      const res = await api.post<any>("/api/ai/nutrition/feedback", { date: dateStr, nutrition, mealCount, forceRefresh });
+      const res = await api.post<any>("/api/ai/nutrition/feedback", { date: dateStr, nutrition, mealCount, forceRefresh, weekData });
       if (res.cached && (res.feedback || res.praiseComment)) {
         setPraiseComment(res.praiseComment ?? null);
         setAdviceText(res.advice ?? res.feedback ?? null);
@@ -1534,6 +1542,7 @@ export default function WeeklyMenuPage() {
         day={nutritionSheetDay}
         dateLabel={nutritionSheetLabel}
         radarKeys={DEFAULT_RADAR_KEYS}
+        weekDays={days}
       />
     </View>
   );
