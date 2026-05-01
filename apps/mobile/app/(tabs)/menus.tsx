@@ -37,21 +37,27 @@ export default function MenusScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasPlan, setHasPlan] = useState(false);
 
-  const weekStartStr = useMemo(() => formatLocalDate(getWeekStart(new Date())), []);
+  const weekStart = useMemo(() => getWeekStart(new Date()), []);
+  const weekStartStr = useMemo(() => formatLocalDate(weekStart), [weekStart]);
+  const weekEndStr = useMemo(() => {
+    const end = new Date(weekStart);
+    end.setDate(end.getDate() + 6);
+    return formatLocalDate(end);
+  }, [weekStart]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       const api = getApi();
-      const res = await api.get<{ mealPlan: any }>(`/api/meal-plans?date=${weekStartStr}`);
-      const mealPlan = res.mealPlan;
-      if (!mealPlan) {
+      const res = await api.get<{ dailyMeals: any[] }>(`/api/meal-plans?startDate=${weekStartStr}&endDate=${weekEndStr}`);
+      const dailyMeals = res.dailyMeals ?? [];
+      if (dailyMeals.length === 0) {
         setHasPlan(false);
         setDays([]);
         return;
       }
       setHasPlan(true);
-      const mapped: DaySummary[] = (mealPlan.days ?? []).map((d: any) => {
+      const mapped: DaySummary[] = dailyMeals.map((d: any) => {
         const meals = d.meals ?? [];
         return {
           dayDate: d.dayDate,
@@ -67,7 +73,7 @@ export default function MenusScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [weekStartStr]);
+  }, [weekStartStr, weekEndStr]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
