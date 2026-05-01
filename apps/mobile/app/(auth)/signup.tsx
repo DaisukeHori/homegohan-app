@@ -82,12 +82,22 @@ export default function SignupScreen() {
     setIsSubmitting(true);
     try {
       const emailRedirectTo = Linking.createURL("/auth/verify");
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: trimmedEmail,
         password,
         options: { emailRedirectTo },
       });
       if (error) throw error;
+      // Supabase の email confirmation 有効時、重複メールアドレスは
+      // silent-success を返し identities が空配列になる (#533)
+      if (data.user?.identities?.length === 0) {
+        Alert.alert(
+          "登録できませんでした",
+          "このメールアドレスは既に登録されています。ログインへ進んでください。",
+          [{ text: "ログインへ", onPress: () => router.replace("/(auth)/login") }]
+        );
+        return;
+      }
       Alert.alert("確認してください", "確認メールを送信しました。メール内のリンクから認証してください。", [
         { text: "OK", onPress: () => router.replace("/(auth)/login") },
       ]);
