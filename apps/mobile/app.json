@@ -51,7 +51,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "PLEASE_SET_VIA_EAS_INIT"
+        "projectId": ""
       }
     }
   }
