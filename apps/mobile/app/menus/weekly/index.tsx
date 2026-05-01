@@ -735,13 +735,6 @@ export default function WeeklyMenuPage() {
   const [nutritionSheetDay, setNutritionSheetDay] = useState<DayRow | null>(null);
   const [nutritionSheetLabel, setNutritionSheetLabel] = useState("");
 
-  // Month calendar state
-  const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
-  const [displayMonth, setDisplayMonth] = useState<Date>(() => getWeekStart(new Date(), 'monday'));
-  const [holidays, setHolidays] = useState<Record<string, string>>({});
-  const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
-  const fetchedRangesRef = useRef<Set<string>>(new Set());
-
   useEffect(() => {
     setWeekStart(getWeekStart(new Date(), weekStartDay));
   }, [weekStartDay]);
