@@ -27,7 +27,10 @@ export default function VerifyPage() {
           return;
         }
 
-        // code or token が付いている場合はセッション確立を試みる
+        // 3 種類の Supabase auth リンク形式に対応:
+        //   1. PKCE/OAuth: code パラメータ
+        //   2. OTP: token_hash + type パラメータ (#438)
+        //   3. Legacy: access_token + refresh_token フラグメント
         if (params?.code) {
           const { error } = await supabase.auth.exchangeCodeForSession(params.code);
           if (error) throw error;

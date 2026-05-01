@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button } from "../../src/components/ui/Button";
 import { Card } from "../../src/components/ui/Card";
@@ -23,6 +23,54 @@ type PantryItem = {
   expirationDate: string | null;
   addedAt: string | null;
 };
+
+const CATEGORY_OPTIONS: { code: string; label: string }[] = [
+  { code: "vegetable", label: "野菜" },
+  { code: "meat", label: "肉類" },
+  { code: "fish", label: "魚介" },
+  { code: "dairy", label: "乳製品・卵" },
+  { code: "other", label: "その他" },
+];
+
+function CategoryPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (code: string) => void;
+}) {
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+      {CATEGORY_OPTIONS.map((opt) => {
+        const selected = value === opt.code;
+        return (
+          <Pressable
+            key={opt.code}
+            onPress={() => onChange(opt.code)}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 20,
+              borderWidth: 1.5,
+              borderColor: selected ? colors.accent : colors.border,
+              backgroundColor: selected ? colors.accentLight : colors.card,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: selected ? "700" : "400",
+                color: selected ? colors.accent : colors.textLight,
+              }}
+            >
+              {opt.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
 
 type FridgeIngredient = {
   name: string;
@@ -68,6 +116,7 @@ export default function PantryPage() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [saveMode, setSaveMode] = useState<"append" | "replace">("append");
   const [isSavingDetected, setIsSavingDetected] = useState(false);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
 
   async function load() {
     setIsLoading(true);
@@ -211,6 +260,7 @@ export default function PantryPage() {
       return;
     }
 
+    setPreviewUri(asset.uri ?? null);
     setIsAnalyzing(true);
     setAnalysisSummary(null);
     setDetected([]);
@@ -259,6 +309,7 @@ export default function PantryPage() {
       if (detected.length <= 1) {
         setAnalysisSummary(null);
         setSuggestions([]);
+        setPreviewUri(null);
       }
       await load();
     } catch (e: any) {
@@ -280,6 +331,7 @@ export default function PantryPage() {
       setDetected([]);
       setAnalysisSummary(null);
       setSuggestions([]);
+      setPreviewUri(null);
       await load();
     } catch (e: any) {
       Alert.alert("一括追加失敗", e?.message ?? "追加に失敗しました。");
@@ -343,7 +395,7 @@ export default function PantryPage() {
           <SectionHeader title="追加" />
           <Input value={name} onChangeText={setName} placeholder="例: キャベツ" />
           <Input value={amount} onChangeText={setAmount} placeholder="量（任意）" />
-          <Input value={category} onChangeText={setCategory} placeholder="category（例: vegetable）" />
+          <CategoryPicker value={category} onChange={setCategory} />
           <Input value={expirationDate} onChangeText={setExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" />
           <Button onPress={add} disabled={isSubmitting} loading={isSubmitting}>
             {isSubmitting ? "追加中..." : "追加"}
@@ -369,6 +421,14 @@ export default function PantryPage() {
               {isAnalyzing ? "解析中..." : "写真を選ぶ"}
             </Text>
           </Button>
+
+          {previewUri ? (
+            <Image
+              source={{ uri: previewUri }}
+              style={{ width: "100%", height: 200, borderRadius: radius.md, resizeMode: "cover" }}
+              accessibilityLabel="選択した冷蔵庫の写真"
+            />
+          ) : null}
 
           {analysisSummary ? (
             <View style={{ backgroundColor: colors.bg, padding: spacing.md, borderRadius: radius.md }}>
@@ -536,7 +596,9 @@ export default function PantryPage() {
                 <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                     <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
-                    <Text style={{ fontSize: 13, color: colors.textMuted }}>{it.category ?? "-"}</Text>
+                    <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                      {CATEGORY_OPTIONS.find((o) => o.code === it.category)?.label ?? it.category ?? "-"}
+                    </Text>
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                     <Ionicons name="calendar-outline" size={14} color={(isExpired(it.expirationDate) || isExpiringSoon(it.expirationDate)) ? colors.error : colors.textMuted} />
@@ -549,7 +611,7 @@ export default function PantryPage() {
                   <View style={{ gap: spacing.sm, marginTop: spacing.xs }}>
                     <Input value={editName} onChangeText={setEditName} placeholder="食材名" />
                     <Input value={editAmount} onChangeText={setEditAmount} placeholder="量（任意）" />
-                    <Input value={editCategory} onChangeText={setEditCategory} placeholder="category（例: vegetable）" />
+                    <CategoryPicker value={editCategory} onChange={setEditCategory} />
                     <Input value={editExpirationDate} onChangeText={setEditExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" />
                     <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
                       <Button onPress={saveEdit} disabled={isSavingEdit} loading={isSavingEdit} size="sm">

@@ -365,6 +365,20 @@ const QUESTIONS: Question[] = [
     allowSkip: true,
   },
   {
+    id: "diet_style",
+    text: "食事スタイルを教えてください",
+    type: "choice",
+    allowSkip: true,
+    options: [
+      { label: "通常", value: "normal", description: "特に制限なし" },
+      { label: "ベジタリアン", value: "vegetarian", description: "肉を食べない" },
+      { label: "ヴィーガン", value: "vegan", description: "動物性食品を食べない" },
+      { label: "ペスカタリアン", value: "pescatarian", description: "魚は食べる" },
+      { label: "グルテンフリー", value: "gluten_free", description: "小麦を避ける" },
+      { label: "ケトジェニック", value: "keto", description: "低糖質・高脂質" },
+    ],
+  },
+  {
     id: "cooking_experience",
     text: "料理の経験は？",
     type: "choice",
@@ -459,6 +473,14 @@ const QUESTIONS: Question[] = [
       { label: "IHコンロ", value: "stove:ih" },
     ],
   },
+  {
+    id: "hobbies",
+    text: "趣味を教えてください\n（献立提案の参考にします）",
+    type: "tags",
+    placeholder: "例: 読書、ヨガ、ランニング",
+    suggestions: ["読書", "料理", "ヨガ", "ランニング", "筋トレ", "サイクリング", "登山", "映画", "ゲーム", "旅行", "音楽", "カフェ巡り", "釣り", "キャンプ"],
+    allowSkip: true,
+  },
 ];
 
 function getNextQuestion(fromStep: number, ans: Record<string, any>) {
@@ -499,6 +521,9 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.health_conditions?.length && !ans.health_conditions.includes("none")) profile.healthConditions = ans.health_conditions;
   if (ans.medications?.length && !ans.medications.includes("none")) profile.medications = ans.medications;
   if (ans.allergies?.length || ans.dislikes?.length) profile.dietFlags = { allergies: ans.allergies || [], dislikes: ans.dislikes || [] };
+  if (ans.favorite_ingredients?.length) profile.favoriteIngredients = ans.favorite_ingredients;
+  if (ans.diet_style) profile.dietStyle = ans.diet_style;
+  if (ans.hobbies?.length) profile.hobbies = ans.hobbies;
   if (ans.cooking_experience) profile.cookingExperience = ans.cooking_experience;
   if (ans.cooking_time) profile.weekdayCookingMinutes = parseInt(ans.cooking_time);
   if (ans.cuisine_preference?.length) {
@@ -573,6 +598,9 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.healthConditions) updates.health_conditions = body.healthConditions;
   if (body.medications) updates.medications = body.medications;
   if (body.dietFlags) updates.diet_flags = body.dietFlags;
+  if (body.favoriteIngredients) updates.favorite_ingredients = body.favoriteIngredients;
+  if (body.dietStyle) updates.diet_style = body.dietStyle;
+  if (body.hobbies) updates.hobbies = body.hobbies;
   if (body.cookingExperience) updates.cooking_experience = body.cookingExperience;
   if (body.weekdayCookingMinutes !== undefined) updates.weekday_cooking_minutes = body.weekdayCookingMinutes;
   if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;

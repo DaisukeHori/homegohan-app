@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 import { LoadingState, PageHeader } from "../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -16,6 +17,7 @@ type Message = {
   isImportant?: boolean;
   importanceReason?: string | null;
   createdAt: string;
+  imageUri?: string; // ローカル表示用（楽観的UI）
 };
 
 export default function AiSessionPage() {
@@ -26,6 +28,7 @@ export default function AiSessionPage() {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const [attachedImage, setAttachedImage] = useState<{ uri: string; base64: string } | null>(null);
   // 自動実行済みのメッセージID集合。GET レスポンスは proposed_actions を返し続けるため、
   // クライアント側でアクションボタンを非表示にするためのトラッキングに使用する。
   const executedMessageIds = useRef<Set<string>>(new Set());
@@ -60,21 +63,45 @@ export default function AiSessionPage() {
     return () => clearTimeout(t);
   }, [messages.length]);
 
+  async function pickImage() {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("権限が必要です", "画像を添付するにはカメラロールへのアクセスを許可してください。");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: "images",
+      allowsEditing: true,
+      quality: 0.7,
+      base64: true,
+    });
+    if (!result.canceled && result.assets.length > 0) {
+      const asset = result.assets[0];
+      if (asset.base64) {
+        setAttachedImage({ uri: asset.uri, base64: asset.base64 });
+      }
+    }
+  }
+
   async function send() {
     const trimmed = text.trim();
-    if (!trimmed || isSending) return;
+    if ((!trimmed && !attachedImage) || isSending) return;
     setIsSending(true);
     setError(null);
     setStreamingContent(null);
+
+    const imageSnapshot = attachedImage;
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
       role: "user",
       content: trimmed,
       createdAt: new Date().toISOString(),
+      imageUri: imageSnapshot?.uri,
     };
     setMessages((prev) => [...prev, optimistic]);
     setText("");
+    setAttachedImage(null);
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -85,6 +112,11 @@ export default function AiSessionPage() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 26000);
 
+      const body: Record<string, any> = { message: trimmed };
+      if (imageSnapshot) {
+        body.imageBase64 = imageSnapshot.base64;
+      }
+
       let res: Response;
       try {
         res = await fetch(url, {
@@ -93,7 +125,7 @@ export default function AiSessionPage() {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ message: trimmed }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         });
       } finally {
@@ -395,15 +427,25 @@ export default function AiSessionPage() {
                         borderBottomLeftRadius: isUser ? radius.lg : 4,
                       }}
                     >
-                      <Text
-                        style={{
-                          color: isUser ? "#fff" : colors.text,
-                          fontSize: 14,
-                          lineHeight: 21,
-                        }}
-                      >
-                        {m.content}
-                      </Text>
+                      {/* 添付画像（楽観的UI: ローカル URI を使用） */}
+                      {isUser && m.imageUri && (
+                        <Image
+                          source={{ uri: m.imageUri }}
+                          style={{ width: 180, height: 180, borderRadius: radius.md, marginBottom: spacing.xs }}
+                          resizeMode="cover"
+                        />
+                      )}
+                      {m.content ? (
+                        <Text
+                          style={{
+                            color: isUser ? "#fff" : colors.text,
+                            fontSize: 14,
+                            lineHeight: 21,
+                          }}
+                        >
+                          {m.content}
+                        </Text>
+                      ) : null}
 
                       {/* アクションボタン */}
                       {m.role === "assistant" && renderActionButtons(m.id, m.proposedActions)}
@@ -462,49 +504,97 @@ export default function AiSessionPage() {
             <View
               style={{
                 paddingHorizontal: spacing.md,
-                paddingVertical: spacing.sm,
+                paddingTop: spacing.sm,
+                paddingBottom: spacing.sm,
                 borderTopWidth: 1,
                 borderColor: colors.border,
                 backgroundColor: colors.card,
-                flexDirection: "row",
-                gap: spacing.sm,
-                alignItems: "flex-end",
               }}
             >
-              <TextInput
-                value={text}
-                onChangeText={setText}
-                placeholder="相談内容を入力..."
-                placeholderTextColor={colors.textMuted}
-                multiline
-                style={{
-                  flex: 1,
-                  maxHeight: 100,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  backgroundColor: colors.bg,
-                  padding: spacing.md,
-                  borderRadius: radius.lg,
-                  fontSize: 14,
-                  color: colors.text,
-                }}
-              />
-              <Pressable
-                onPress={send}
-                disabled={isSending || !text.trim()}
-                style={({ pressed }) => ({
-                  width: 44,
-                  height: 44,
-                  borderRadius: 22,
-                  backgroundColor: text.trim() ? colors.accent : colors.border,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  ...shadows.sm,
-                  ...(pressed ? { opacity: 0.9 } : {}),
-                })}
-              >
-                <Ionicons name="send" size={20} color="#fff" />
-              </Pressable>
+              {/* 添付画像プレビュー */}
+              {attachedImage && (
+                <View style={{ marginBottom: spacing.sm }}>
+                  <View style={{ position: "relative", alignSelf: "flex-start" }}>
+                    <Image
+                      source={{ uri: attachedImage.uri }}
+                      style={{ width: 80, height: 80, borderRadius: radius.md }}
+                      resizeMode="cover"
+                    />
+                    <Pressable
+                      onPress={() => setAttachedImage(null)}
+                      style={{
+                        position: "absolute",
+                        top: -6,
+                        right: -6,
+                        width: 20,
+                        height: 20,
+                        borderRadius: 10,
+                        backgroundColor: colors.error,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Ionicons name="close" size={12} color="#fff" />
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+
+              <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-end" }}>
+                {/* 画像添付ボタン */}
+                <Pressable
+                  onPress={pickImage}
+                  disabled={isSending}
+                  style={({ pressed }) => ({
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    backgroundColor: attachedImage ? colors.accent : colors.bg,
+                    borderWidth: attachedImage ? 0 : 1,
+                    borderColor: colors.border,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    ...(pressed ? { opacity: 0.7 } : {}),
+                  })}
+                >
+                  <Ionicons name="image-outline" size={20} color={attachedImage ? "#fff" : colors.textMuted} />
+                </Pressable>
+
+                <TextInput
+                  value={text}
+                  onChangeText={setText}
+                  placeholder="相談内容を入力..."
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  style={{
+                    flex: 1,
+                    maxHeight: 100,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    backgroundColor: colors.bg,
+                    padding: spacing.md,
+                    borderRadius: radius.lg,
+                    fontSize: 14,
+                    color: colors.text,
+                  }}
+                />
+                <Pressable
+                  onPress={send}
+                  disabled={isSending || (!text.trim() && !attachedImage)}
+                  style={({ pressed }) => ({
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    backgroundColor: (text.trim() || attachedImage) ? colors.accent : colors.border,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    ...shadows.sm,
+                    ...(pressed ? { opacity: 0.9 } : {}),
+                  })}
+                >
+                  <Ionicons name="send" size={20} color="#fff" />
+                </Pressable>
+              </View>
             </View>
           </>
         )}

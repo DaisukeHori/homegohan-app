@@ -1,10 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system";
 import { router } from "expo-router";
+import * as Sharing from "expo-sharing";
 import React, { useEffect, useState } from "react";
 import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { getApi } from "../../src/lib/api";
+import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -117,6 +119,98 @@ export default function SettingsTab() {
     }
   }
 
+  const [exportingJson, setExportingJson] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
+
+  async function getAuthToken(): Promise<string | null> {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  }
+
+  async function handleExportJson() {
+    if (exportingJson) return;
+    setExportingJson(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("エラー", "ログインが必要です。");
+        return;
+      }
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(`${baseUrl}/api/account/export`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const text = await res.text();
+      const today = new Date().toISOString().slice(0, 10);
+      const filename = `homegohan-export-${today}.json`;
+      const fileUri = (FileSystem.documentDirectory ?? "") + filename;
+      await FileSystem.writeAsStringAsync(fileUri, text, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "application/json",
+          dialogTitle: "JSONデータをエクスポート",
+          UTI: "public.json",
+        });
+      } else {
+        Alert.alert("完了", `ファイルを保存しました:\n${fileUri}`);
+      }
+    } catch (err) {
+      console.error("JSON export error:", err);
+      Alert.alert("エラー", "JSONエクスポートに失敗しました。時間をおいて再度お試しください。");
+    } finally {
+      setExportingJson(false);
+    }
+  }
+
+  async function handleExportCsv() {
+    if (exportingCsv) return;
+    setExportingCsv(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("エラー", "ログインが必要です。");
+        return;
+      }
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(`${baseUrl}/api/export/meals`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const text = await res.text();
+      const today = new Date().toISOString().slice(0, 10);
+      const filename = `homegohan-meals-${today}.csv`;
+      const fileUri = (FileSystem.documentDirectory ?? "") + filename;
+      await FileSystem.writeAsStringAsync(fileUri, text, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "text/csv",
+          dialogTitle: "食事記録をCSVでエクスポート",
+          UTI: "public.comma-separated-values-text",
+        });
+      } else {
+        Alert.alert("完了", `ファイルを保存しました:\n${fileUri}`);
+      }
+    } catch (err) {
+      console.error("CSV export error:", err);
+      Alert.alert("エラー", "CSVエクスポートに失敗しました。時間をおいて再度お試しください。");
+    } finally {
+      setExportingCsv(false);
+    }
+  }
+
   async function handleLogout() {
     try {
       await clearUserScopedAsyncStorage(user?.id ?? null);
@@ -212,11 +306,20 @@ export default function SettingsTab() {
           <Text style={styles.sectionLabel}>データとプライバシー</Text>
           <View style={styles.sectionCard}>
             <SettingRow
+              icon="📋"
+              iconBg="#F0FDF4"
+              title="JSONでエクスポート"
+              subtitle="全データを JSON 形式でダウンロード"
+              onPress={handleExportJson}
+              right={exportingJson ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
+            />
+            <SettingRow
               icon="☁️"
               iconBg="#F0FDF4"
-              title="データをエクスポート"
-              subtitle="CSV, JSON, PDF形式で出力"
-              onPress={() => Alert.alert("準備中", "この機能は準備中です。")}
+              title="CSVでエクスポート"
+              subtitle="食事記録を CSV 形式でダウンロード"
+              onPress={handleExportCsv}
+              right={exportingCsv ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
             />
             <SettingRow
               icon="📊"
