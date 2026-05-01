@@ -103,38 +103,36 @@ export default function WeeklyMenuPage() {
 
     try {
       const api = getApi();
-      const res = await api.get<{ mealPlan: any }>(`/api/meal-plans?date=${weekStartStr}`);
-      const mealPlan = res.mealPlan;
+      const res = await api.get<{ dailyMeals: any[]; startDate: string; endDate: string }>(`/api/meal-plans?startDate=${weekStartStr}&endDate=${weekEndStr}`);
+      const dailyMeals = res.dailyMeals ?? [];
 
-      if (!mealPlan) {
+      if (dailyMeals.length === 0) {
         setPlan(null);
         setDays([]);
         return;
       }
 
       setPlan({
-        id: mealPlan.id,
-        start_date: mealPlan.startDate,
-        end_date: mealPlan.endDate,
-        title: mealPlan.title ?? "週間献立",
+        id: dailyMeals[0].id,
+        start_date: res.startDate ?? weekStartStr,
+        end_date: res.endDate ?? weekEndStr,
+        title: "週間献立",
       });
 
-      const mappedDays: DayRow[] =
-        (mealPlan.days ?? []).map((d: any) => ({
-          id: d.id,
-          day_date: d.dayDate,
-          planned_meals:
-            (d.meals ?? []).map((m: any) => ({
-              id: m.id,
-              meal_type: m.mealType,
-              dish_name: m.dishName,
-              mode: m.mode,
-              calories_kcal: m.caloriesKcal,
-              is_completed: m.isCompleted,
-              is_generating: m.isGenerating,
-              display_order: m.displayOrder,
-            })) ?? [],
-        })) ?? [];
+      const mappedDays: DayRow[] = dailyMeals.map((d: any) => ({
+        id: d.id,
+        day_date: d.dayDate,
+        planned_meals: (d.meals ?? []).map((m: any) => ({
+          id: m.id,
+          meal_type: m.mealType,
+          dish_name: m.dishName,
+          mode: m.mode,
+          calories_kcal: m.caloriesKcal,
+          is_completed: m.isCompleted,
+          is_generating: m.isGenerating,
+          display_order: m.displayOrder,
+        })),
+      }));
 
       setDays(mappedDays);
     } catch (e: any) {
@@ -144,7 +142,7 @@ export default function WeeklyMenuPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [weekStartStr]);
+  }, [weekStartStr, weekEndStr]);
 
   useEffect(() => {
     loadData();
