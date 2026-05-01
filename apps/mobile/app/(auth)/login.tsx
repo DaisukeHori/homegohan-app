@@ -1,13 +1,18 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { Link, router, useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
+
+// #532: client-side rate limit 定数
+const RATE_LIMIT_KEY = "auth_last_fail_ts";
+const RATE_LIMIT_WINDOW_MS = 30_000; // 30秒
 
 function GoogleIcon() {
   return (
@@ -26,6 +31,36 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // #532: rate limit 残り秒数 (0 = 制限なし)
+  const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
+
+  // #532: アプリ起動時に AsyncStorage から残り制限時間を復元
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem(RATE_LIMIT_KEY);
+        if (stored) {
+          const lastFailTs = parseInt(stored, 10);
+          const elapsed = Date.now() - lastFailTs;
+          if (elapsed < RATE_LIMIT_WINDOW_MS) {
+            const remaining = Math.ceil((RATE_LIMIT_WINDOW_MS - elapsed) / 1000);
+            setRateLimitRemaining(remaining);
+          }
+        }
+      } catch {
+        // AsyncStorage 読み取り失敗は無視
+      }
+    })();
+  }, []);
+
+  // #532: カウントダウンタイマー
+  useEffect(() => {
+    if (rateLimitRemaining <= 0) return;
+    const timer = setTimeout(() => {
+      setRateLimitRemaining((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [rateLimitRemaining]);
 
   async function onGoogleLogin() {
     setIsSubmitting(true);
@@ -54,6 +89,12 @@ export default function LoginScreen() {
   }
 
   async function onSubmit() {
+    // #532: rate limit チェック
+    if (rateLimitRemaining > 0) {
+      Alert.alert("しばらくお待ちください", `再試行まであと ${rateLimitRemaining} 秒お待ちください。`);
+      return;
+    }
+
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail || !password) {
       Alert.alert("入力エラー", "メールアドレスとパスワードを入力してください。");
@@ -66,9 +107,44 @@ export default function LoginScreen() {
         email: trimmedEmail,
         password,
       });
-      if (error) throw error;
 
-      // ログイン成功: user_profiles から roles / onboarding 状態を取得して振り分け
+      if (error) {
+        // #532: ログイン失敗時に AsyncStorage へタイムスタンプを保存
+        try {
+          await AsyncStorage.setItem(RATE_LIMIT_KEY, String(Date.now()));
+        } catch {
+          // 保存失敗は無視
+        }
+        setRateLimitRemaining(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000));
+
+        // エラーメッセージをステータス別に分岐
+        if (
+          error.status === 429 ||
+          error.message.includes("over_email_send_rate_limit") ||
+          error.message.includes("For security purposes") ||
+          error.message.includes("too many requests")
+        ) {
+          Alert.alert("ログイン失敗", "しばらくしてから再度お試しください。");
+        } else if (
+          error.message.includes("Invalid login credentials") ||
+          error.message.includes("Invalid email or password")
+        ) {
+          Alert.alert("ログイン失敗", "メールアドレスまたはパスワードが正しくありません。");
+        } else {
+          Alert.alert("ログイン失敗", "ログインに失敗しました。入力内容をご確認ください。");
+        }
+        return;
+      }
+
+      // ログイン成功: AsyncStorage の rate limit タイムスタンプを削除
+      try {
+        await AsyncStorage.removeItem(RATE_LIMIT_KEY);
+      } catch {
+        // 削除失敗は無視
+      }
+      setRateLimitRemaining(0);
+
+      // user_profiles から roles / onboarding 状態を取得して振り分け
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: profile } = await supabase
@@ -202,16 +278,20 @@ export default function LoginScreen() {
           {/* ログインボタン */}
           <Pressable
             onPress={onSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || rateLimitRemaining > 0}
             style={({ pressed }) => ({
-              backgroundColor: isSubmitting ? colors.textMuted : colors.accent,
+              backgroundColor: isSubmitting || rateLimitRemaining > 0 ? colors.textMuted : colors.accent,
               borderRadius: radius.lg, paddingVertical: 16,
               alignItems: "center", ...shadows.md,
               opacity: pressed ? 0.9 : 1,
             })}
           >
             <Text style={{ color: "#fff", fontSize: 16, fontWeight: "800" }}>
-              {isSubmitting ? "ログイン中..." : "ログイン"}
+              {isSubmitting
+                ? "ログイン中..."
+                : rateLimitRemaining > 0
+                  ? `再試行まで ${rateLimitRemaining} 秒`
+                  : "ログイン"}
             </Text>
           </Pressable>
 
