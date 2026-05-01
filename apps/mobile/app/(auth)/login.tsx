@@ -53,7 +53,7 @@ export default function LoginScreen() {
   }
 
   async function onSubmit() {
-    const trimmedEmail = email.trim();
+    const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail || !password) {
       Alert.alert("入力エラー", "メールアドレスとパスワードを入力してください。");
       return;
