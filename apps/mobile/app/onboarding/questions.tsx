@@ -64,6 +64,13 @@ type Question =
       text: string;
       type: "servings_grid";
       showIf?: (answers: Record<string, any>) => boolean;
+    }
+  | {
+      id: string;
+      text: string;
+      type: "date";
+      allowSkip?: boolean;
+      showIf?: (answers: Record<string, any>) => boolean;
     };
 
 // 曜日別人数設定のデフォルト値
@@ -142,6 +149,66 @@ const QUESTIONS: Question[] = [
       { label: "現状維持・健康管理", value: "maintain", description: "今の体型を維持したい" },
       { label: "競技パフォーマンス", value: "athlete_performance", description: "大会・試合に向けて" },
     ],
+  },
+  // Performance OS v3: アスリート向け追加質問
+  {
+    id: "sport_type",
+    text: "主に取り組んでいる競技は？",
+    type: "choice",
+    showIf: (answers) => answers.nutrition_goal === "athlete_performance",
+    options: [
+      { label: "サッカー", value: "soccer" },
+      { label: "バスケットボール", value: "basketball" },
+      { label: "バレーボール", value: "volleyball" },
+      { label: "野球", value: "baseball" },
+      { label: "テニス", value: "tennis" },
+      { label: "水泳", value: "swimming" },
+      { label: "陸上競技", value: "track_and_field" },
+      { label: "自転車", value: "road_cycling" },
+      { label: "格闘技", value: "martial_arts_general" },
+      { label: "ウェイトリフティング", value: "weightlifting" },
+      { label: "その他", value: "custom" },
+    ],
+  },
+  {
+    id: "sport_custom_name",
+    text: "競技名を入力してください",
+    type: "text",
+    placeholder: "例: トライアスロン",
+    showIf: (answers) =>
+      answers.nutrition_goal === "athlete_performance" && answers.sport_type === "custom",
+  },
+  {
+    id: "sport_experience",
+    text: "競技経験はどのくらいですか？",
+    type: "choice",
+    showIf: (answers) => answers.nutrition_goal === "athlete_performance",
+    options: [
+      { label: "初心者（1年未満）", value: "beginner", description: "始めたばかり" },
+      { label: "中級者（1〜3年）", value: "intermediate", description: "基礎は身についている" },
+      { label: "上級者（3年以上）", value: "advanced", description: "競技会・大会出場レベル" },
+    ],
+  },
+  {
+    id: "training_phase",
+    text: "現在のトレーニング期は？",
+    type: "choice",
+    showIf: (answers) => answers.nutrition_goal === "athlete_performance",
+    options: [
+      { label: "トレーニング期", value: "training", description: "体力・技術向上中" },
+      { label: "試合期", value: "competition", description: "大会・試合シーズン" },
+      { label: "減量期", value: "cut", description: "体重調整中（階級制など）" },
+      { label: "回復期", value: "recovery", description: "オフシーズン・ケガからの復帰" },
+    ],
+  },
+  {
+    id: "competition_date",
+    text: "次の大会・試合はいつですか？",
+    type: "date",
+    allowSkip: true,
+    showIf: (answers) =>
+      answers.nutrition_goal === "athlete_performance" &&
+      (answers.training_phase === "competition" || answers.training_phase === "cut"),
   },
   {
     id: "weight_change_rate",
@@ -408,6 +475,39 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.stove_type) appliances.push(ans.stove_type);
   if (appliances.length > 0) profile.kitchenAppliances = appliances;
 
+  // Performance OS v3: performance_profile 構築
+  if (ans.nutrition_goal === "athlete_performance") {
+    const sportId = ans.sport_type === "custom" ? "custom" : ans.sport_type;
+    const sportName = ans.sport_type === "custom" ? ans.sport_custom_name : null;
+    profile.performanceProfile = {
+      sport: {
+        id: sportId || null,
+        name: sportName || null,
+        role: null,
+        experience: ans.sport_experience || "intermediate",
+        phase: ans.training_phase || "training",
+        demandVector: null,
+      },
+      growth: {
+        isUnder18: ans.age ? parseInt(ans.age) < 18 : false,
+        heightChangeRecent: null,
+        growthProtectionEnabled: ans.age ? parseInt(ans.age) < 18 : false,
+      },
+      cut: {
+        enabled: ans.training_phase === "cut",
+        targetWeight: ans.target_weight ? parseFloat(ans.target_weight) : null,
+        targetDate: ans.competition_date || ans.target_date || null,
+        strategy: "gradual",
+      },
+      priorities: {
+        protein: "high",
+        carbs: ans.training_phase === "competition" ? "high" : "moderate",
+        fat: "moderate",
+        hydration: "high",
+      },
+    };
+  }
+
   return profile;
 }
 
@@ -439,6 +539,7 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.shoppingFrequency) updates.shopping_frequency = body.shoppingFrequency;
   if (body.weeklyFoodBudget !== undefined) updates.weekly_food_budget = body.weeklyFoodBudget;
   if (body.kitchenAppliances) updates.kitchen_appliances = body.kitchenAppliances;
+  if (body.performanceProfile) updates.performance_profile = body.performanceProfile;
 
   if (!updates.nickname) updates.nickname = "Guest";
   if (!updates.age_group && !updates.age) updates.age_group = "unspecified";
@@ -919,6 +1020,43 @@ export default function OnboardingQuestions() {
             </Pressable>
           </View>
         )}
+
+      {/* Date input */}
+      {currentQuestion.type === "date" && (
+        <View style={{ gap: spacing.md }}>
+          <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: "center" }}>
+            YYYY-MM-DD 形式で入力してください（例: 2025-08-15）
+          </Text>
+          <View style={styles.inputRow}>
+            <TextInput
+              autoFocus
+              keyboardType="numbers-and-punctuation"
+              placeholder="例: 2025-08-15"
+              placeholderTextColor={colors.textMuted}
+              value={inputValue}
+              onChangeText={setInputValue}
+              onSubmitEditing={() => {
+                if (inputValue.trim()) handleAnswer(inputValue.trim());
+              }}
+              style={[styles.textInput, { flex: 1 }]}
+            />
+            <Pressable
+              onPress={() => {
+                if (inputValue.trim()) handleAnswer(inputValue.trim());
+              }}
+              disabled={!inputValue.trim()}
+              style={[styles.arrowButton, !inputValue.trim() && styles.arrowButtonDisabled]}
+            >
+              <Ionicons name="arrow-forward" size={20} color="#fff" />
+            </Pressable>
+          </View>
+          {canSkip && (
+            <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+              <Text style={styles.skipButtonText}>スキップ</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
 
       {/* Servings grid */}
       {currentQuestion.type === "servings_grid" ? (
