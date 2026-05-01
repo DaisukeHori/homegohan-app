@@ -1,0 +1,58 @@
+appId: com.homegohan.app
+---
+# AI チャット E2E フロー
+# 前提: ユーザーがログイン済みの状態でアプリを起動していること
+
+- launchApp:
+    clearState: false
+
+# AI 相談タブへ移動
+- tapOn:
+    text: "AI相談"
+    optional: true
+
+# セッション一覧が表示されることを確認
+- assertVisible: "AI相談"
+
+# 新規セッション作成
+- tapOn:
+    text: "新規"
+
+# チャット画面が開くのを待つ
+- waitForAnimationToEnd
+
+# チャット画面のタイトルを確認
+- assertVisible: "AIチャット"
+
+# 入力欄が表示されることを確認
+- assertVisible:
+    text: "相談内容を入力..."
+    optional: true
+
+# メッセージを入力
+- tapOn:
+    text: "相談内容を入力..."
+    optional: true
+- inputText: "今日の夕食のおすすめを教えてください"
+
+# 送信ボタンをタップ
+- tapOn:
+    id: "send-button"
+    optional: true
+
+# 応答を待つ (タイムアウト: 30秒)
+- waitForAnimationToEnd:
+    timeout: 30000
+
+# 送信したメッセージが表示されていることを確認
+- assertVisible: "今日の夕食のおすすめを教えてください"
+
+# セッション一覧に戻る
+- tapOn:
+    text: "戻る"
+    optional: true
+- back:
+    optional: true
+
+# セッション一覧に戻っていることを確認
+- assertVisible: "AI相談"
