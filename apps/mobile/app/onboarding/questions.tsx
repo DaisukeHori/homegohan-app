@@ -342,10 +342,18 @@ const QUESTIONS: Question[] = [
   },
   {
     id: "allergies",
-    text: "食物アレルギーや苦手な食材は？（なければスキップ）",
+    text: "食物アレルギーはありますか？\n（なければスキップ）",
     type: "tags",
-    placeholder: "例: 卵、エビ、ピーマン",
+    placeholder: "例: 卵、エビ、小麦",
     suggestions: ["卵", "エビ", "カニ", "小麦", "乳製品", "そば", "落花生", "ナッツ類", "貝類", "魚卵", "大豆"],
+    allowSkip: true,
+  },
+  {
+    id: "dislikes",
+    text: "苦手な食材はありますか？\n（アレルギー以外で避けたいもの）",
+    type: "tags",
+    placeholder: "例: ピーマン、セロリ、レバー",
+    suggestions: ["ピーマン", "セロリ", "パクチー", "レバー", "ホルモン", "なす", "ゴーヤ", "しいたけ", "納豆", "グリンピース", "にんじん", "トマト"],
     allowSkip: true,
   },
   {
@@ -512,7 +520,7 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.work_style) profile.workStyle = ans.work_style;
   if (ans.health_conditions?.length && !ans.health_conditions.includes("none")) profile.healthConditions = ans.health_conditions;
   if (ans.medications?.length && !ans.medications.includes("none")) profile.medications = ans.medications;
-  if (ans.allergies?.length) profile.dietFlags = { allergies: ans.allergies, dislikes: [] };
+  if (ans.allergies?.length || ans.dislikes?.length) profile.dietFlags = { allergies: ans.allergies || [], dislikes: ans.dislikes || [] };
   if (ans.favorite_ingredients?.length) profile.favoriteIngredients = ans.favorite_ingredients;
   if (ans.diet_style) profile.dietStyle = ans.diet_style;
   if (ans.hobbies?.length) profile.hobbies = ans.hobbies;
