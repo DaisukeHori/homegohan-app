@@ -1,0 +1,23 @@
+name: Mobile Tests
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/core/**'
+      - '.github/workflows/mobile-test.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Mobile unit tests
+        working-directory: apps/mobile
+        run: npm test -- --ci --coverage
+      - name: Core tests
+        run: npm run test -- --run packages/core
