@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
@@ -72,6 +73,7 @@ export default function NewCheckupPage() {
   const [step, setStep] = useState<Step>("form");
   const [saving, setSaving] = useState(false);
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
 
   const [form, setForm] = useState<FormData>({
     checkup_date: todayStr(),
@@ -107,6 +109,92 @@ export default function NewCheckupPage() {
 
   function update(field: keyof FormData, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  // ─── OCR ─────────────────────────────────────────────
+  async function handleOcr(mode: "camera" | "library") {
+    try {
+      let picked: ImagePicker.ImagePickerResult;
+
+      if (mode === "camera") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert("権限が必要です", "カメラへのアクセスを許可してください。");
+          return;
+        }
+        picked = await ImagePicker.launchCameraAsync({
+          base64: true,
+          quality: 0.85,
+          mediaTypes: ["images"] as any,
+        });
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert("権限が必要です", "写真へのアクセスを許可してください。");
+          return;
+        }
+        picked = await ImagePicker.launchImageLibraryAsync({
+          base64: true,
+          quality: 0.85,
+          mediaTypes: ["images"] as any,
+        });
+      }
+
+      if (picked.canceled || !picked.assets?.[0]?.base64) return;
+
+      const asset = picked.assets[0];
+      setIsOcrProcessing(true);
+
+      const api = getApi();
+      const ocrRes = await api.post<{ extractedData?: any }>("/api/ai/analyze-health-checkup", {
+        imageBase64: asset.base64,
+        mimeType: asset.mimeType ?? "image/jpeg",
+      });
+
+      const ext = ocrRes.extractedData ?? {};
+
+      setForm((prev) => ({
+        ...prev,
+        ...(ext.checkupDate ? { checkup_date: ext.checkupDate } : {}),
+        ...(ext.facilityName ? { facility_name: ext.facilityName } : {}),
+        ...(ext.bloodPressureSystolic != null ? { blood_pressure_systolic: String(ext.bloodPressureSystolic) } : {}),
+        ...(ext.bloodPressureDiastolic != null ? { blood_pressure_diastolic: String(ext.bloodPressureDiastolic) } : {}),
+        ...(ext.hba1c != null ? { hba1c: String(ext.hba1c) } : {}),
+        ...(ext.fastingGlucose != null ? { fasting_glucose: String(ext.fastingGlucose) } : {}),
+        ...(ext.height != null ? { height: String(ext.height) } : {}),
+        ...(ext.weight != null ? { weight: String(ext.weight) } : {}),
+        ...(ext.bmi != null ? { bmi: String(ext.bmi) } : {}),
+        ...(ext.waistCircumference != null ? { waist_circumference: String(ext.waistCircumference) } : {}),
+        ...(ext.totalCholesterol != null ? { total_cholesterol: String(ext.totalCholesterol) } : {}),
+        ...(ext.ldlCholesterol != null ? { ldl_cholesterol: String(ext.ldlCholesterol) } : {}),
+        ...(ext.hdlCholesterol != null ? { hdl_cholesterol: String(ext.hdlCholesterol) } : {}),
+        ...(ext.triglycerides != null ? { triglycerides: String(ext.triglycerides) } : {}),
+        ...(ext.ast != null ? { ast: String(ext.ast) } : {}),
+        ...(ext.alt != null ? { alt: String(ext.alt) } : {}),
+        ...(ext.gammaGtp != null ? { gamma_gtp: String(ext.gammaGtp) } : {}),
+        ...(ext.creatinine != null ? { creatinine: String(ext.creatinine) } : {}),
+        ...(ext.egfr != null ? { egfr: String(ext.egfr) } : {}),
+        ...(ext.uricAcid != null ? { uric_acid: String(ext.uricAcid) } : {}),
+      }));
+
+      Alert.alert("OCR完了", "検査値を自動入力しました。内容を確認して登録してください。");
+    } catch (e: any) {
+      Alert.alert("OCRエラー", e?.message ?? "画像の読み取りに失敗しました。手動で入力してください。");
+    } finally {
+      setIsOcrProcessing(false);
+    }
+  }
+
+  function showOcrOptions() {
+    Alert.alert(
+      "画像から取込",
+      "検査結果票の画像を選択してください",
+      [
+        { text: "カメラで撮影", onPress: () => handleOcr("camera") },
+        { text: "写真を選択", onPress: () => handleOcr("library") },
+        { text: "キャンセル", style: "cancel" },
+      ],
+    );
   }
 
   function toggleSection(key: string) {
@@ -295,6 +383,22 @@ export default function NewCheckupPage() {
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
+        {/* OCR ボタン */}
+        <Pressable
+          style={styles.ocrButton}
+          onPress={showOcrOptions}
+          disabled={isOcrProcessing}
+        >
+          <Ionicons
+            name={isOcrProcessing ? "hourglass-outline" : "camera-outline"}
+            size={20}
+            color={colors.accent}
+          />
+          <Text style={styles.ocrButtonText}>
+            {isOcrProcessing ? "読み取り中..." : "検査結果票を撮影して自動入力"}
+          </Text>
+        </Pressable>
+
         {/* 基本情報 */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -399,10 +503,6 @@ export default function NewCheckupPage() {
         <Button onPress={handleSave} loading={saving} disabled={saving}>
           {saving ? "保存中..." : "保存してAI分析を実行"}
         </Button>
-
-        <Text style={styles.ocrHint}>
-          ※ OCR取込機能は別途対応予定です。手動で数値を入力してください。
-        </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -526,12 +626,23 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  // ─── OCR hint ───
-  ocrHint: {
-    fontSize: 12,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 18,
+  // ─── OCR ───
+  ocrButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.xl,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: colors.accent,
+    backgroundColor: colors.accentLight,
+  },
+  ocrButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.accent,
   },
 
   // ─── Review step ───
