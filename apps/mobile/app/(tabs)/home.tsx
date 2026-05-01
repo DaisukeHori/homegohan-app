@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useMemo, useState, useEffect, useRef } from "react";
-import { Animated, Pressable, ScrollView, Text, View } from "react-native";
+import { Animated, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { Svg, Circle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -63,6 +63,15 @@ const getGreeting = () => {
   if (hour < 11) return "おはようございます";
   if (hour < 17) return "こんにちは";
   return "こんばんは";
+};
+
+const getCurrentMealType = (): string => {
+  const hour = new Date().getHours();
+  if (hour < 10) return "breakfast";
+  if (hour < 14) return "lunch";
+  if (hour < 17) return "snack";
+  if (hour < 21) return "dinner";
+  return "midnight_snack";
 };
 
 export default function HomeScreen() {
@@ -698,6 +707,7 @@ export default function HomeScreen() {
                 {sortedMeals.map((m) => {
                   const mealCfg = MEAL_CONFIG[m.meal_type] ?? { icon: "ellipse", label: m.meal_type, color: colors.textMuted };
                   const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
+                  const isCurrentMeal = m.meal_type === getCurrentMealType();
                   return (
                     <Pressable
                       key={m.id}
@@ -719,12 +729,22 @@ export default function HomeScreen() {
                         {m.is_completed && <Ionicons name="checkmark" size={16} color="#fff" />}
                       </View>
 
-                      {/* アイコン */}
-                      <View style={{
-                        width: 44, height: 44, borderRadius: radius.lg, backgroundColor: colors.bg,
-                        alignItems: "center", justifyContent: "center",
-                      }}>
-                        <Ionicons name={mealCfg.icon} size={20} color={mealCfg.color} />
+                      {/* 画像サムネイル */}
+                      <View style={{ width: 56, height: 56, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}>
+                        {m.image_url ? (
+                          <Image source={{ uri: m.image_url }} style={{ width: 56, height: 56 }} resizeMode="cover" />
+                        ) : (
+                          <Ionicons name={mealCfg.icon} size={20} color={mealCfg.color} />
+                        )}
+                        {/* NOW バッジ */}
+                        {isCurrentMeal && !m.is_completed && (
+                          <View style={{
+                            position: "absolute", top: 2, right: 2,
+                            backgroundColor: "#FF6B35", paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4,
+                          }}>
+                            <Text style={{ fontSize: 8, fontWeight: "800", color: "#fff" }}>NOW</Text>
+                          </View>
+                        )}
                       </View>
 
                       {/* 情報 */}
