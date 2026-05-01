@@ -53,6 +53,8 @@ export default function PantryPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
   const [detected, setDetected] = useState<FridgeIngredient[]>([]);
+  const [saveMode, setSaveMode] = useState<"append" | "replace">("append");
+  const [isSavingDetected, setIsSavingDetected] = useState(false);
 
   async function load() {
     setIsLoading(true);
@@ -219,40 +221,51 @@ export default function PantryPage() {
     }
   }
 
+  function toIngredientInput(i: FridgeIngredient) {
+    const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : undefined;
+    return {
+      name: i.name,
+      amount: i.quantity || undefined,
+      category: mapCategoryToCode(i.category),
+      expirationDate: exp,
+      daysRemaining: i.daysRemaining,
+    };
+  }
+
   async function addDetectedOne(i: FridgeIngredient) {
+    setIsSavingDetected(true);
     try {
       const api = getApi();
-      const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : null;
-      await api.post("/api/pantry", {
-        name: i.name,
-        amount: i.quantity || null,
-        category: mapCategoryToCode(i.category),
-        expirationDate: exp,
+      await api.post("/api/pantry/from-photo", {
+        ingredients: [toIngredientInput(i)],
+        mode: saveMode,
       });
+      setDetected((prev) => prev.filter((d) => d !== i));
+      if (detected.length <= 1) setAnalysisSummary(null);
       await load();
     } catch (e: any) {
       Alert.alert("追加失敗", e?.message ?? "追加に失敗しました。");
+    } finally {
+      setIsSavingDetected(false);
     }
   }
 
   async function addDetectedAll() {
     if (!detected.length) return;
+    setIsSavingDetected(true);
     try {
       const api = getApi();
-      for (const i of detected) {
-        const exp = typeof i.daysRemaining === "number" && i.daysRemaining > 0 ? addDaysToDate(todayStr, i.daysRemaining) : null;
-        await api.post("/api/pantry", {
-          name: i.name,
-          amount: i.quantity || null,
-          category: mapCategoryToCode(i.category),
-          expirationDate: exp,
-        });
-      }
+      await api.post("/api/pantry/from-photo", {
+        ingredients: detected.map(toIngredientInput),
+        mode: saveMode,
+      });
       setDetected([]);
       setAnalysisSummary(null);
       await load();
     } catch (e: any) {
       Alert.alert("一括追加失敗", e?.message ?? "追加に失敗しました。");
+    } finally {
+      setIsSavingDetected(false);
     }
   }
 
@@ -349,10 +362,45 @@ export default function PantryPage() {
 
           {detected.length > 0 ? (
             <View style={{ gap: spacing.sm }}>
-              <Button onPress={addDetectedAll} variant="primary">
+              {/* append / replace 選択 */}
+              <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                <Pressable
+                  onPress={() => setSaveMode("append")}
+                  style={{
+                    flex: 1,
+                    padding: spacing.sm,
+                    borderRadius: radius.md,
+                    borderWidth: 2,
+                    borderColor: saveMode === "append" ? colors.accent : colors.textMuted,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: saveMode === "append" ? colors.accent : colors.textMuted, fontWeight: "700", fontSize: 13 }}>
+                    追加（append）
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>既存を保持して追加</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setSaveMode("replace")}
+                  style={{
+                    flex: 1,
+                    padding: spacing.sm,
+                    borderRadius: radius.md,
+                    borderWidth: 2,
+                    borderColor: saveMode === "replace" ? colors.accent : colors.textMuted,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: saveMode === "replace" ? colors.accent : colors.textMuted, fontWeight: "700", fontSize: 13 }}>
+                    置換（replace）
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>既存を全削除して置換</Text>
+                </Pressable>
+              </View>
+              <Button onPress={addDetectedAll} variant="primary" disabled={isSavingDetected} loading={isSavingDetected}>
                 <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
                 <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 15 }}>
-                  検出食材を一括追加（{detected.length}件）
+                  {isSavingDetected ? "保存中..." : `検出食材を一括${saveMode === "replace" ? "置換" : "追加"}（${detected.length}件）`}
                 </Text>
               </Button>
               {detected.map((i, idx) => (
@@ -389,6 +437,7 @@ export default function PantryPage() {
                       variant="secondary"
                       size="sm"
                       style={{ alignSelf: "flex-start" }}
+                      disabled={isSavingDetected}
                     >
                       <Ionicons name="add-outline" size={16} color={colors.text} />
                       <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>追加</Text>
