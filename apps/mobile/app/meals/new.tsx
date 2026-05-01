@@ -2,8 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button, Card } from "../../src/components/ui";
@@ -29,9 +29,32 @@ async function cancelPendingMealImageJobs({ supabase: sb, plannedMealId, reason 
   await sb.from("meal_image_jobs").update({ status: "cancelled", cancelled_reason: reason }).eq("planned_meal_id", plannedMealId).in("status", ["pending", "processing"]);
 }
 
+// ─── Catalog types ───────────────────────────────────
+interface CatalogProductSummary {
+  id: string;
+  sourceId: string;
+  sourceCode: string;
+  brandName: string;
+  name: string;
+  categoryCode: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  canonicalUrl: string;
+  priceYen: number | null;
+  caloriesKcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  sodiumG: number | null;
+  fiberG: number | null;
+  sugarG: number | null;
+  availabilityStatus: string;
+}
+
 // ─── Types ───────────────────────────────────────────
 type Step = "mode-select" | "capture" | "analyzing" | "result" | "select-date"
-          | "fridge-result" | "health-result" | "weight-result" | "classify-failed";
+          | "fridge-result" | "health-result" | "weight-result" | "classify-failed"
+          | "manual";
 type PhotoMode = "auto" | "meal" | "fridge" | "health_checkup" | "weight_scale";
 type MealType = "breakfast" | "lunch" | "dinner" | "snack" | "midnight_snack";
 type DishDetail = { name: string; role: string; cal?: number; calories_kcal?: number; protein?: number; carbs?: number; fat?: number; ingredient?: string };
@@ -212,6 +235,19 @@ export default function MealNewPage() {
   const [detectedConfidence, setDetectedConfidence] = useState(0);
   const [classificationCandidates, setClassificationCandidates] = useState<ClassificationCandidate[]>([]);
 
+  // Manual entry + catalog search
+  const [manualDishName, setManualDishName] = useState("");
+  const [manualCalories, setManualCalories] = useState("");
+  const [manualProtein, setManualProtein] = useState("");
+  const [manualFat, setManualFat] = useState("");
+  const [manualCarbs, setManualCarbs] = useState("");
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogResults, setCatalogResults] = useState<CatalogProductSummary[]>([]);
+  const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<CatalogProductSummary | null>(null);
+  const [isCatalogSearching, setIsCatalogSearching] = useState(false);
+  const [catalogSearchError, setCatalogSearchError] = useState("");
+  const [isSavingManual, setIsSavingManual] = useState(false);
+
   // Date selection
   const [selectedDate, setSelectedDate] = useState(formatLocalDate(new Date()));
   const [selectedMealType, setSelectedMealType] = useState<MealType>(getAutoMealType());
@@ -266,7 +302,41 @@ export default function MealNewPage() {
     setHealthData({}); setHealthConfidence(0); setHealthNotes(""); setHealthModelUsed("");
     setWeightData(null); setPreviousWeight(null);
     setDetectedType(null); setDetectedConfidence(0); setClassificationCandidates([]);
+    setManualDishName(""); setManualCalories(""); setManualProtein(""); setManualFat(""); setManualCarbs("");
+    setCatalogQuery(""); setCatalogResults([]); setSelectedCatalogProduct(null); setCatalogSearchError("");
   }
+
+  // ─── Catalog search (250ms debounce) ───────────────
+  useEffect(() => {
+    if (step !== "manual") return;
+    const query = catalogQuery.trim();
+    if (query.length < 2) {
+      setCatalogResults([]);
+      setCatalogSearchError("");
+      setIsCatalogSearching(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setIsCatalogSearching(true);
+      setCatalogSearchError("");
+      try {
+        const api = getApi();
+        const data = await api.get<{ products: CatalogProductSummary[] }>(
+          `/api/catalog/products?q=${encodeURIComponent(query)}&limit=8`
+        );
+        if (!cancelled) setCatalogResults(Array.isArray(data.products) ? data.products : []);
+      } catch (e: any) {
+        if (!cancelled) {
+          setCatalogResults([]);
+          setCatalogSearchError(e?.message ?? "商品検索に失敗しました");
+        }
+      } finally {
+        if (!cancelled) setIsCatalogSearching(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [step, catalogQuery]);
 
   // ─── API calls ─────────────────────────────────────
   const images = () => photos.map((p) => ({ base64: p.base64, mimeType: p.mimeType }));
@@ -424,6 +494,77 @@ export default function MealNewPage() {
     } finally { setIsSavingWeight(false); }
   }
 
+  function applyCatalogProduct(product: CatalogProductSummary) {
+    setSelectedCatalogProduct(product);
+    setCatalogQuery(product.name);
+    setManualDishName(product.name);
+    setManualCalories(product.caloriesKcal != null ? String(product.caloriesKcal) : "");
+    setManualProtein(product.proteinG != null ? String(product.proteinG) : "");
+    setManualFat(product.fatG != null ? String(product.fatG) : "");
+    setManualCarbs(product.carbsG != null ? String(product.carbsG) : "");
+    setCatalogResults([]);
+  }
+
+  async function saveManualMeal() {
+    const name = manualDishName.trim();
+    if (!name) { Alert.alert("エラー", "食事名を入力してください。"); return; }
+    setIsSavingManual(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) throw new Error("Unauthorized");
+
+      let dailyMealId: string;
+      const { data: existingDay, error: dayFindError } = await supabase
+        .from("user_daily_meals").select("id")
+        .eq("user_id", auth.user.id).eq("day_date", selectedDate).maybeSingle();
+      if (dayFindError) throw dayFindError;
+
+      if (existingDay?.id) {
+        dailyMealId = existingDay.id;
+      } else {
+        const { data: newDay, error: dayError } = await supabase
+          .from("user_daily_meals")
+          .insert({ user_id: auth.user.id, day_date: selectedDate, is_cheat_day: false })
+          .select("id").single();
+        if (dayError || !newDay) throw dayError ?? new Error("Failed to create daily meal");
+        dailyMealId = newDay.id;
+      }
+
+      const cal = parseFloat(manualCalories) || null;
+      const protein = parseFloat(manualProtein) || null;
+      const fat = parseFloat(manualFat) || null;
+      const carbs = parseFloat(manualCarbs) || null;
+
+      const dish = {
+        name, role: "main",
+        calories_kcal: cal, protein_g: protein, fat_g: fat, carbs_g: carbs,
+        sodium_g: selectedCatalogProduct?.sodiumG ?? null,
+        fiber_g: selectedCatalogProduct?.fiberG ?? null,
+        sugar_g: selectedCatalogProduct?.sugarG ?? null,
+      };
+
+      const { data: newMeal, error: mealError } = await supabase
+        .from("planned_meals").insert({
+          daily_meal_id: dailyMealId,
+          meal_type: selectedMealType,
+          mode: selectedCatalogProduct ? "buy" : "cook",
+          dish_name: name,
+          calories_kcal: cal, protein_g: protein, fat_g: fat, carbs_g: carbs,
+          sodium_g: selectedCatalogProduct?.sodiumG ?? null,
+          fiber_g: selectedCatalogProduct?.fiberG ?? null,
+          sugar_g: selectedCatalogProduct?.sugarG ?? null,
+          catalog_product_id: selectedCatalogProduct?.id ?? null,
+          source_type: selectedCatalogProduct ? "catalog_product" : "manual",
+          is_completed: false, dishes: [dish], is_simple: true,
+        }).select("id").single();
+
+      if (mealError || !newMeal) throw mealError ?? new Error("Failed to create planned meal");
+      router.replace(`/meals/${newMeal.id}`);
+    } catch (e: any) {
+      Alert.alert("保存失敗", e?.message ?? "保存に失敗しました。");
+    } finally { setIsSavingManual(false); }
+  }
+
   async function saveToMealPlan() {
     setIsSaving(true);
     try {
@@ -494,6 +635,7 @@ export default function MealNewPage() {
       case "health-result": return "健康診断結果";
       case "weight-result": return "体重計読み取り結果";
       case "classify-failed": return "判別できませんでした";
+      case "manual": return "手動入力";
     }
   }, [step, photoMode, modeCopy]);
 
@@ -502,6 +644,7 @@ export default function MealNewPage() {
     else if (step === "capture") { setStep("mode-select"); }
     else if (step === "result") { setStep("capture"); resetAll(); }
     else if (step === "select-date") { setStep("result"); }
+    else if (step === "manual") { setStep("mode-select"); resetAll(); }
     else { setStep("mode-select"); resetAll(); }
   };
 
@@ -551,6 +694,239 @@ export default function MealNewPage() {
           <Button onPress={() => setStep("capture")} style={{ backgroundColor: PHOTO_MODES[photoMode].color }}>
             撮影へ進む
           </Button>
+
+          {/* 手動入力への導線 */}
+          <Pressable onPress={() => setStep("manual")} style={{
+            flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
+            padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg,
+            borderWidth: 1, borderColor: colors.border,
+          }}>
+            <Ionicons name="create-outline" size={18} color={colors.textLight} />
+            <Text style={{ fontSize: 14, color: colors.textLight }}>手動で食事名・栄養を入力</Text>
+          </Pressable>
+        </ScrollView>
+      )}
+
+      {/* ─── Step: manual ─── */}
+      {step === "manual" && (
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }} keyboardShouldPersistTaps="handled">
+          {/* Date/meal type selector */}
+          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>記録日と食事タイプ</Text>
+
+          {/* Week nav */}
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Pressable onPress={() => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); }} style={{ padding: spacing.sm, borderRadius: 8, backgroundColor: colors.bg }}>
+              <Ionicons name="chevron-back" size={20} color={colors.textLight} />
+            </Pressable>
+            <Text style={{ fontSize: 13, fontWeight: "500", color: colors.text }}>
+              {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} - {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()}
+            </Text>
+            <Pressable onPress={() => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); }} style={{ padding: spacing.sm, borderRadius: 8, backgroundColor: colors.bg }}>
+              <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
+            </Pressable>
+          </View>
+
+          {/* Day pills */}
+          <View style={{ flexDirection: "row", gap: 4 }}>
+            {weekDates.map((day) => {
+              const isSel = day.dateStr === selectedDate;
+              const isToday = day.dateStr === todayStr;
+              const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+              return (
+                <Pressable key={day.dateStr} onPress={() => setSelectedDate(day.dateStr)} style={{
+                  flex: 1, alignItems: "center", gap: 2, paddingVertical: spacing.sm, borderRadius: radius.md,
+                  backgroundColor: isSel ? colors.accent : colors.card,
+                  borderWidth: isToday && !isSel ? 2 : 1, borderColor: isToday && !isSel ? colors.accent : colors.border,
+                }}>
+                  <Text style={{ fontSize: 10, color: isSel ? "rgba(255,255,255,0.7)" : colors.textMuted }}>{day.date.getDate()}</Text>
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: isSel ? "#fff" : isWeekend ? colors.accent : colors.text }}>{day.dayOfWeek}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* Meal type */}
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            {(["breakfast", "lunch", "dinner"] as MealType[]).map((type) => {
+              const config = MEAL_CONFIG[type];
+              const isSel = type === selectedMealType;
+              return (
+                <Pressable key={type} onPress={() => setSelectedMealType(type)} style={{
+                  flex: 1, padding: spacing.sm, borderRadius: radius.md, alignItems: "center", gap: 4,
+                  backgroundColor: isSel ? config.bg : colors.card, borderWidth: isSel ? 2 : 1, borderColor: isSel ? config.color : colors.border,
+                }}>
+                  <Ionicons name={config.icon} size={20} color={isSel ? config.color : colors.textMuted} />
+                  <Text style={{ fontSize: 12, fontWeight: "500", color: isSel ? config.color : colors.textLight }}>{config.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            {(["snack", "midnight_snack"] as MealType[]).map((type) => {
+              const config = MEAL_CONFIG[type];
+              const isSel = type === selectedMealType;
+              return (
+                <Pressable key={type} onPress={() => setSelectedMealType(type)} style={{
+                  flex: 1, padding: spacing.sm, borderRadius: radius.md, alignItems: "center", gap: 4,
+                  backgroundColor: isSel ? config.bg : colors.card, borderWidth: isSel ? 2 : 1, borderColor: isSel ? config.color : colors.border,
+                }}>
+                  <Ionicons name={config.icon} size={20} color={isSel ? config.color : colors.textMuted} />
+                  <Text style={{ fontSize: 12, fontWeight: "500", color: isSel ? config.color : colors.textLight }}>{config.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* Catalog search */}
+          <View style={{ gap: spacing.sm }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>カタログ商品から検索</Text>
+              {selectedCatalogProduct && (
+                <Pressable onPress={() => { setSelectedCatalogProduct(null); setCatalogQuery(""); setCatalogResults([]); }}>
+                  <Text style={{ fontSize: 12, color: colors.textLight }}>解除</Text>
+                </Pressable>
+              )}
+            </View>
+
+            <TextInput
+              value={catalogQuery}
+              onChangeText={(text) => {
+                setCatalogQuery(text);
+                if (!text.trim()) { setSelectedCatalogProduct(null); setCatalogResults([]); }
+              }}
+              placeholder="商品名で検索（例: おにぎり、サラダチキン）"
+              placeholderTextColor={colors.textMuted}
+              style={{
+                padding: spacing.md, borderRadius: radius.md, fontSize: 14, color: colors.text,
+                backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+              }}
+            />
+            <Text style={{ fontSize: 11, color: colors.textMuted }}>
+              コンビニ商品などを選ぶと栄養情報が自動入力されます
+            </Text>
+
+            {/* Selected product badge */}
+            {selectedCatalogProduct && (
+              <View style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.purpleLight, borderWidth: 1, borderColor: colors.purple }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: "600", color: colors.purple, marginBottom: 2 }}>選択中</Text>
+                    <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text }}>{selectedCatalogProduct.name}</Text>
+                    <Text style={{ fontSize: 11, color: colors.textLight, marginTop: 2 }}>
+                      {selectedCatalogProduct.brandName}{selectedCatalogProduct.priceYen ? ` / ${selectedCatalogProduct.priceYen}円` : ""}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={{ fontSize: 11, color: colors.textLight }}>{selectedCatalogProduct.caloriesKcal ?? "-"} kcal</Text>
+                    <Text style={{ fontSize: 11, color: colors.textLight }}>P {selectedCatalogProduct.proteinG ?? "-"}g</Text>
+                    <Text style={{ fontSize: 11, color: colors.textLight }}>F {selectedCatalogProduct.fatG ?? "-"}g</Text>
+                    <Text style={{ fontSize: 11, color: colors.textLight }}>C {selectedCatalogProduct.carbsG ?? "-"}g</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Search results */}
+            {(isCatalogSearching || catalogSearchError || catalogResults.length > 0) && (
+              <View style={{ gap: spacing.sm }}>
+                {isCatalogSearching && <Text style={{ fontSize: 12, color: colors.textMuted }}>検索中...</Text>}
+                {catalogSearchError && <Text style={{ fontSize: 12, color: colors.accent }}>{catalogSearchError}</Text>}
+                {catalogResults.map((product) => {
+                  const isSel = selectedCatalogProduct?.id === product.id;
+                  return (
+                    <Pressable
+                      key={product.id}
+                      onPress={() => applyCatalogProduct(product)}
+                      style={{
+                        padding: spacing.md, borderRadius: radius.md,
+                        backgroundColor: isSel ? colors.purpleLight : colors.bg,
+                        borderWidth: 1, borderColor: isSel ? colors.purple : colors.border,
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, color: colors.textMuted }}>{product.brandName}</Text>
+                          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>{product.name}</Text>
+                          <Text style={{ fontSize: 11, color: colors.textLight, marginTop: 2 }}>
+                            {product.categoryCode || "分類なし"}{product.priceYen ? ` / ${product.priceYen}円` : ""}
+                          </Text>
+                        </View>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={{ fontSize: 11, color: colors.textLight }}>{product.caloriesKcal ?? "-"} kcal</Text>
+                          <Text style={{ fontSize: 11, color: colors.textLight }}>P {product.proteinG ?? "-"}g</Text>
+                          <Text style={{ fontSize: 11, color: colors.textLight }}>F {product.fatG ?? "-"}g</Text>
+                          <Text style={{ fontSize: 11, color: colors.textLight }}>C {product.carbsG ?? "-"}g</Text>
+                        </View>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+
+          {/* Manual form */}
+          <View style={{ gap: spacing.sm }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>食事情報</Text>
+
+            <TextInput
+              value={manualDishName}
+              onChangeText={setManualDishName}
+              placeholder="食事名（必須）"
+              placeholderTextColor={colors.textMuted}
+              style={{
+                padding: spacing.md, borderRadius: radius.md, fontSize: 14, color: colors.text,
+                backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+              }}
+            />
+
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              {[
+                { label: "カロリー (kcal)", value: manualCalories, set: setManualCalories },
+                { label: "タンパク質 (g)", value: manualProtein, set: setManualProtein },
+              ].map((field) => (
+                <TextInput
+                  key={field.label}
+                  value={field.value}
+                  onChangeText={field.set}
+                  placeholder={field.label}
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="decimal-pad"
+                  style={{
+                    flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
+                    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+                  }}
+                />
+              ))}
+            </View>
+
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              {[
+                { label: "脂質 (g)", value: manualFat, set: setManualFat },
+                { label: "炭水化物 (g)", value: manualCarbs, set: setManualCarbs },
+              ].map((field) => (
+                <TextInput
+                  key={field.label}
+                  value={field.value}
+                  onChangeText={field.set}
+                  placeholder={field.label}
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="decimal-pad"
+                  style={{
+                    flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
+                    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+                  }}
+                />
+              ))}
+            </View>
+          </View>
+
+          <Button onPress={saveManualMeal} loading={isSavingManual} disabled={isSavingManual || !manualDishName.trim()} style={{ backgroundColor: colors.accent }}>
+            {isSavingManual ? "保存中..." : "献立表に保存"}
+          </Button>
+          <Pressable onPress={() => { setStep("mode-select"); resetAll(); }} style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg, alignItems: "center" }}>
+            <Text style={{ fontSize: 14, color: colors.textLight }}>キャンセル</Text>
+          </Pressable>
         </ScrollView>
       )}
 
