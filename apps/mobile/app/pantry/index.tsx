@@ -32,6 +32,18 @@ type FridgeIngredient = {
   daysRemaining: number;
 };
 
+function isExpiringSoon(dateStr: string | null): boolean {
+  if (!dateStr) return false;
+  const diff = (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  return diff >= 0 && diff <= 3;
+}
+
+function isExpired(dateStr: string | null): boolean {
+  if (!dateStr) return false;
+  const diff = (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  return diff < 0;
+}
+
 export default function PantryPage() {
   const [items, setItems] = useState<PantryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -487,6 +499,16 @@ export default function PantryPage() {
                       <Text style={{ fontWeight: "400", color: colors.textLight }}>{`  ${it.amount}`}</Text>
                     ) : null}
                   </Text>
+                  {isExpired(it.expirationDate) && (
+                    <View style={{ backgroundColor: "#EF9A9A", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 11, color: "#B71C1C", fontWeight: "600" }}>期限切れ</Text>
+                    </View>
+                  )}
+                  {!isExpired(it.expirationDate) && isExpiringSoon(it.expirationDate) && (
+                    <View style={{ backgroundColor: "#FFEBEE", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 11, color: colors.error, fontWeight: "600" }}>期限間近</Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* Meta info */}
@@ -496,8 +518,8 @@ export default function PantryPage() {
                     <Text style={{ fontSize: 13, color: colors.textMuted }}>{it.category ?? "-"}</Text>
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-                    <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
-                    <Text style={{ fontSize: 13, color: colors.textMuted }}>期限: {it.expirationDate ?? "-"}</Text>
+                    <Ionicons name="calendar-outline" size={14} color={(isExpired(it.expirationDate) || isExpiringSoon(it.expirationDate)) ? colors.error : colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: (isExpired(it.expirationDate) || isExpiringSoon(it.expirationDate)) ? colors.error : colors.textMuted }}>期限: {it.expirationDate ?? "-"}</Text>
                   </View>
                 </View>
 
