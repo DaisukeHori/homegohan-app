@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system";
+import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
 import React, { useEffect, useState } from "react";
@@ -93,6 +94,28 @@ export default function SettingsTab() {
     currentValue: boolean,
   ) {
     const newValue = !currentValue;
+
+    // 通知を ON にするときは OS の通知権限をリクエスト
+    if (key === "notifications_enabled" && newValue) {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== "granted") {
+        Alert.alert(
+          "通知が許可されていません",
+          "通知を受け取るには、端末の設定からアプリの通知を許可してください。",
+          [
+            { text: "キャンセル", style: "cancel" },
+            { text: "設定を開く", onPress: () => Linking.openSettings() },
+          ],
+        );
+        return; // DB への保存も行わない
+      }
+    }
+
     setter(newValue);
     try {
       const api = getApi();
