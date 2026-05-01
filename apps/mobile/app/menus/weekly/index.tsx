@@ -1573,7 +1573,7 @@ export default function WeeklyMenuPage() {
         onClose={() => setNutritionSheetDay(null)}
         day={nutritionSheetDay}
         dateLabel={nutritionSheetLabel}
-        radarKeys={DEFAULT_RADAR_KEYS}
+        radarKeys={radarChartNutrients}
         weekDays={days}
       />
     </View>
