@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -42,6 +43,16 @@ const CHECKIN_FIELDS = [
   { key: "focus" as const, label: "🎯 集中力", options: ["低い", "やや低い", "普通", "良い", "最高"] },
   { key: "hunger" as const, label: "🍽️ 空腹感", options: ["ない", "少し", "普通", "ある", "すごくある"] },
 ];
+
+const NEXT_ACTION_LABEL: Record<string, string> = {
+  increase_calories: "カロリーを少し増やしましょう",
+  decrease_calories: "カロリーを少し減らしましょう",
+  increase_protein: "タンパク質を増やしましょう",
+  increase_carbs: "炭水化物を増やしましょう",
+  improve_sleep: "睡眠の質を改善しましょう",
+  reduce_fatigue: "疲労回復を優先しましょう",
+  maintain: "現状を維持しましょう",
+};
 
 const getGreeting = () => {
   const hour = new Date().getHours();
@@ -422,6 +433,39 @@ export default function HomeScreen() {
                 </Text>
               )}
             </Card>
+          )}
+
+          {/* ========== 次の一手カード ========== */}
+          {performanceAnalysis.nextAction && (
+            <LinearGradient
+              colors={["#8B5CF6", "#6366F1"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ borderRadius: radius.xl, padding: spacing.lg, ...shadows.md, overflow: "hidden" }}
+            >
+              {/* 装飾円 */}
+              <View style={{
+                position: "absolute", top: -20, right: -20,
+                width: 80, height: 80, borderRadius: 40,
+                backgroundColor: "rgba(255,255,255,0.12)",
+              }} />
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+                <Ionicons name="navigate" size={18} color="#fff" style={{ marginTop: 2 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "rgba(255,255,255,0.8)", marginBottom: 4 }}>
+                    🎯 今日の次の一手
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: "#fff", lineHeight: 20 }}>
+                    {NEXT_ACTION_LABEL[performanceAnalysis.nextAction.actionType] ?? performanceAnalysis.nextAction.actionType}
+                  </Text>
+                  {performanceAnalysis.nextAction.reason ? (
+                    <Text style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", marginTop: 4, lineHeight: 18 }}>
+                      {performanceAnalysis.nextAction.reason}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            </LinearGradient>
           )}
 
           {/* チェックイン完了済み */}
