@@ -11,7 +11,7 @@ import { LoadingState } from "../../src/components/ui/LoadingState";
 import { PageHeader } from "../../src/components/ui/PageHeader";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 import { StatusBadge } from "../../src/components/ui/StatusBadge";
-import { getApi } from "../../src/lib/api";
+import { getApi, getApiBaseUrl } from "../../src/lib/api";
 import { getActiveShoppingListId } from "../../src/lib/mealPlan";
 import { supabase } from "../../src/lib/supabase";
 import { colors, radius, spacing } from "../../src/theme";
@@ -56,6 +56,7 @@ export default function ShoppingListPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isClearingAll, setIsClearingAll] = useState(false);
 
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("その他");
@@ -221,6 +222,45 @@ export default function ShoppingListPage() {
         },
       },
     ]);
+  }
+
+  async function deleteAllItems() {
+    if (items.length === 0) return;
+
+    Alert.alert(
+      "全削除",
+      `${items.length}件のアイテムをすべて削除しますか？`,
+      [
+        { text: "キャンセル", style: "cancel" },
+        {
+          text: "全削除",
+          style: "destructive",
+          onPress: async () => {
+            setIsClearingAll(true);
+            const itemIds = items.map((i) => i.id);
+            try {
+              const { data } = await supabase.auth.getSession();
+              const token = data.session?.access_token ?? null;
+              const baseUrl = getApiBaseUrl();
+              const res = await fetch(`${baseUrl}/api/shopping-list`, {
+                method: "DELETE",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ itemIds }),
+              });
+              if (!res.ok) throw new Error("全削除に失敗しました");
+              setItems([]);
+            } catch (e: any) {
+              Alert.alert("削除失敗", e?.message ?? "全削除に失敗しました。");
+            } finally {
+              setIsClearingAll(false);
+            }
+          },
+        },
+      ]
+    );
   }
 
   function calculateDateRange() {
@@ -390,6 +430,23 @@ export default function ShoppingListPage() {
               <View style={{ backgroundColor: colors.accentLight, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm }}>
                 <Text style={{ fontSize: 12, fontWeight: "700", color: colors.accent }}>{totalServings}食分</Text>
               </View>
+            )}
+            {items.length > 0 && (
+              <Pressable
+                onPress={deleteAllItems}
+                disabled={isClearingAll}
+                hitSlop={8}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: colors.bg,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="trash-outline" size={14} color="#ef4444" />
+              </Pressable>
             )}
             <Button
               onPress={openRangeModal}
