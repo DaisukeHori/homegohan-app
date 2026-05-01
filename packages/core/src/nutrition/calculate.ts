@@ -1122,6 +1122,11 @@ function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
   if (performanceProfile?.sport) {
     const demandVector = performanceProfile.sport.demandVector;
 
+    // demandVector が未設定 (オンボーディング進行中などの状態) ではスポーツ特有調整をスキップ
+    if (!demandVector) {
+      // noop
+    } else {
+
     // 持久系スポーツ: 炭水化物を増加
     if (demandVector.endurance > 0.7) {
       const minCarbsRatio = 0.55;
@@ -1181,6 +1186,7 @@ function applyPerformanceGuardrails(input: GuardrailInput): GuardrailOutput {
         severity: 'info',
       });
     }
+    } // end else (demandVector exists)
   }
 
   // ================================================
