@@ -469,7 +469,7 @@ export default function HomeScreen() {
           )}
 
           {/* チェックイン完了済み */}
-          {performanceAnalysis.todayCheckin && !performanceAnalysis.nextAction && (
+          {performanceAnalysis.todayCheckin && (
             <View style={{
               flexDirection: "row", alignItems: "center", gap: spacing.sm,
               backgroundColor: colors.successLight, padding: spacing.lg, borderRadius: radius.xl,
