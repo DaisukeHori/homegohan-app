@@ -26,6 +26,9 @@ export default function AiSessionPage() {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  // 自動実行済みのメッセージID集合。GET レスポンスは proposed_actions を返し続けるため、
+  // クライアント側でアクションボタンを非表示にするためのトラッキングに使用する。
+  const executedMessageIds = useRef<Set<string>>(new Set());
 
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -153,6 +156,12 @@ export default function AiSessionPage() {
               proposedActions: parsed.aiMessage.proposedActions ?? null,
               createdAt: parsed.aiMessage.createdAt ?? new Date().toISOString(),
             };
+            // サーバー側でアクションが自動実行された場合はそのメッセージ ID を記録し、
+            // GET 再取得後もアクションボタンを非表示にする
+            if (parsed.actionExecuted) {
+              executedMessageIds.current.add(aiMsg.id);
+              Alert.alert("アクション実行", "AIの提案が自動的に実行されました。");
+            }
             // optimistic ユーザーメッセージを確定 ID に差し替え
             setMessages((prev) => {
               const withoutOptimistic = prev.filter((m) => !m.id.startsWith("local-"));
@@ -207,6 +216,7 @@ export default function AiSessionPage() {
     try {
       const api = getApi();
       await api.post(`/api/ai/consultation/actions/${messageId}/execute`, {});
+      executedMessageIds.current.add(messageId);
       await load();
       Alert.alert("実行しました", "アクションを実行しました。");
     } catch (e: any) {
@@ -218,6 +228,7 @@ export default function AiSessionPage() {
     try {
       const api = getApi();
       await api.del(`/api/ai/consultation/actions/${messageId}/execute`);
+      executedMessageIds.current.add(messageId);
       await load();
       Alert.alert("却下しました", "提案アクションを却下しました。");
     } catch (e: any) {
@@ -280,7 +291,8 @@ export default function AiSessionPage() {
   }
 
   function renderActionButtons(messageId: string, proposed: any) {
-    if (!proposed) return null;
+    // proposed_actions が null/undefined、またはサーバー側で自動実行済みの場合はボタン非表示
+    if (!proposed || executedMessageIds.current.has(messageId)) return null;
     return (
       <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.sm }}>
         <Pressable
