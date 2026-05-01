@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useMemo, useState, useEffect, useRef } from "react";
+import { Animated, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, Button, EmptyState, LoadingState, StatCard } from "../../src/components/ui";
@@ -99,6 +99,21 @@ export default function HomeScreen() {
     focus: 3,
     hunger: 3,
   });
+  const [checkinFeedback, setCheckinFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!checkinFeedback) {
+      Animated.timing(toastOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+      return;
+    }
+    Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    const timer = setTimeout(() => setCheckinFeedback(null), 4000);
+    return () => clearTimeout(timer);
+  }, [checkinFeedback]);
 
   const sortedMeals = useMemo(() => {
     return [...todayMeals].sort((a, b) => {
@@ -417,9 +432,15 @@ export default function HomeScreen() {
                   <Button
                     onPress={async () => {
                       setCheckinSubmitting(true);
+                      setCheckinFeedback(null);
                       const result = await submitPerformanceCheckin(checkinForm);
                       setCheckinSubmitting(false);
-                      if (result.success) setShowCheckin(false);
+                      if (result.success) {
+                        setShowCheckin(false);
+                        setCheckinFeedback({ type: 'success', message: '✅ チェックインを保存しました！' });
+                      } else {
+                        setCheckinFeedback({ type: 'error', message: result.error ?? '保存に失敗しました。再試行してください。' });
+                      }
                     }}
                     loading={checkinSubmitting}
                     disabled={checkinSubmitting}
@@ -733,6 +754,29 @@ export default function HomeScreen() {
       >
         <Ionicons name="chatbubble-ellipses" size={24} color="#fff" />
       </Pressable>
+
+      {/* ========== チェックインフィードバックトースト ========== */}
+      {checkinFeedback && (
+        <Animated.View
+          accessibilityLiveRegion="polite"
+          style={{
+            position: "absolute",
+            top: insets.top + 12,
+            left: spacing.lg,
+            right: spacing.lg,
+            backgroundColor: checkinFeedback.type === 'success' ? '#16a34a' : '#dc2626',
+            borderRadius: radius.lg,
+            paddingVertical: 12,
+            paddingHorizontal: spacing.md,
+            opacity: toastOpacity,
+            ...shadows.md,
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14, textAlign: "center" }}>
+            {checkinFeedback.message}
+          </Text>
+        </Animated.View>
+      )}
     </View>
   );
 }
