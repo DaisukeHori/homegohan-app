@@ -102,6 +102,7 @@ export default function HomeScreen() {
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
+    executeNutritionSuggestion,
     submitPerformanceCheckin,
     refetch,
   } = useHomeData(user?.id);
@@ -584,6 +585,16 @@ export default function HomeScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 11, fontWeight: "800", color: "rgba(255,255,255,0.8)", marginBottom: 2 }}>💡 今日のアドバイス</Text>
                   <Text style={{ fontSize: 13, fontWeight: "600", color: "#fff", lineHeight: 20 }}>{suggestion}</Text>
+                  {nutritionAnalysis.suggestion && (
+                    <Pressable
+                      onPress={() => executeNutritionSuggestion()}
+                      style={{ marginTop: spacing.sm }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: "rgba(255,255,255,0.9)", textDecorationLine: "underline" }}>
+                        献立表でAI変更する
+                      </Text>
+                    </Pressable>
+                  )}
                 </View>
                 <Pressable onPress={() => setSuggestion(null)} hitSlop={12}>
                   <Ionicons name="close" size={16} color="rgba(255,255,255,0.6)" />
@@ -802,18 +813,20 @@ export default function HomeScreen() {
           </View>
 
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable
-              onPress={() => router.push("/shopping-list")}
-              style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
-            >
-              <View style={{ width: 36, height: 36, borderRadius: radius.md, backgroundColor: colors.warningLight, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="cart" size={18} color={colors.warning} />
-              </View>
-              <View>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>買い物リスト</Text>
-                {shoppingRemaining > 0 && <Text style={{ fontSize: 11, color: colors.warning }}>残り{shoppingRemaining}件</Text>}
-              </View>
-            </Pressable>
+            {shoppingRemaining > 0 && (
+              <Pressable
+                onPress={() => router.push("/menus/weekly")}
+                style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
+              >
+                <View style={{ width: 36, height: 36, borderRadius: radius.md, backgroundColor: colors.warningLight, alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="cart" size={18} color={colors.warning} />
+                </View>
+                <View>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>買い物リスト</Text>
+                  <Text style={{ fontSize: 11, color: colors.warning }}>残り{shoppingRemaining}件</Text>
+                </View>
+              </Pressable>
+            )}
             <Pressable
               onPress={() => router.push("/pantry")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
@@ -866,7 +879,7 @@ export default function HomeScreen() {
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: 60 }}>
                   {weeklyStats.days.map((day) => {
                     const barH = Math.max(4, (day.cookRate / 100) * 48);
-                    const isToday = day.dayOfWeek === DOW[new Date().getDay()];
+                    const isToday = day.date === new Date().toISOString().slice(0, 10);
                     return (
                       <View key={day.date} style={{ alignItems: "center", gap: 4, flex: 1 }}>
                         <View style={{
@@ -1034,7 +1047,7 @@ export default function HomeScreen() {
           <ScrollView showsVerticalScrollIndicator={false}>
             <View style={{ gap: spacing.xs }}>
               {weeklyStats.days.map((day) => {
-                const isToday = day.dayOfWeek === DOW[new Date().getDay()];
+                const isToday = day.date === new Date().toISOString().slice(0, 10);
                 return (
                   <View
                     key={day.date}

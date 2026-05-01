@@ -38,6 +38,7 @@ interface NutritionAnalysis {
   score: number;
   issues: string[];
   advice: string | null;
+  suggestion: any | null;
   comparison: Record<string, { actual: number; target: number; percentage: number; status: string }>;
   loading: boolean;
 }
@@ -80,7 +81,7 @@ export const useHomeData = (userId: string | undefined) => {
     todayRecord: null, healthStreak: 0, weightChange: null, latestWeight: null, targetWeight: null, hasAlert: false,
   });
   const [nutritionAnalysis, setNutritionAnalysis] = useState<NutritionAnalysis>({
-    score: 0, issues: [], advice: null, comparison: {}, loading: false,
+    score: 0, issues: [], advice: null, suggestion: null, comparison: {}, loading: false,
   });
   const [expiringItems, setExpiringItems] = useState<any[]>([]);
   const [shoppingRemaining, setShoppingRemaining] = useState(0);
@@ -417,13 +418,14 @@ export const useHomeData = (userId: string | undefined) => {
     try {
       setNutritionAnalysis((prev) => ({ ...prev, loading: true }));
       const api = getApi();
-      const data = await api.get<any>("/api/ai/nutrition-analysis?period=today&includeAdvice=true");
+      const data = await api.get<any>("/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true");
 
       if (data?.success && data?.analysis) {
         setNutritionAnalysis({
           score: data.analysis.score || 0,
           issues: data.analysis.issues || [],
           advice: data.advice || null,
+          suggestion: data.suggestion || null,
           comparison: data.analysis.comparison || {},
           loading: false,
         });
@@ -433,6 +435,54 @@ export const useHomeData = (userId: string | undefined) => {
     } catch (e) {
       // API server not running is expected in dev - silently skip
       setNutritionAnalysis((prev) => ({ ...prev, loading: false }));
+    }
+  }
+
+  async function executeNutritionSuggestion() {
+    const suggestionData = nutritionAnalysis.suggestion;
+    const issues = nutritionAnalysis.issues || [];
+
+    if (!suggestionData && issues.length === 0) {
+      setSuggestion("現在提案できる献立変更はありません。");
+      return;
+    }
+
+    try {
+      const todayStr = getTodayStr();
+      let targetDate = todayStr;
+      let targetMealType = "dinner";
+      let prompt = "";
+
+      if (suggestionData) {
+        targetDate = suggestionData.targetDate || todayStr;
+        targetMealType = suggestionData.targetMeal || "dinner";
+        const dishes = suggestionData.suggestedDishes || [];
+        const dishNames = dishes.map((d: any) => d.name).join("、");
+        prompt = suggestionData.currentIssue
+          ? `${suggestionData.currentIssue}を解決するために${dishNames ? `、${dishNames}を含めた` : ""}バランスの良い献立に変更してください。`
+          : "栄養バランスを改善する献立に変更してください。";
+      } else {
+        prompt = `${issues[0]}。この問題を解決するバランスの良い献立に変更してください。`;
+      }
+
+      setSuggestion("献立を変更中...");
+
+      const api = getApi();
+      const result = await api.post<any>("/api/ai/nutrition-analysis", {
+        targetDate,
+        targetMealType,
+        prompt,
+      });
+
+      if (result) {
+        await fetchAll();
+        setSuggestion("献立を変更しました！");
+      } else {
+        setSuggestion("変更に失敗しました。もう一度お試しください。");
+      }
+    } catch (e) {
+      console.error("Execute nutrition suggestion error:", e);
+      setSuggestion("変更に失敗しました。もう一度お試しください。");
     }
   }
 
@@ -662,6 +712,7 @@ export const useHomeData = (userId: string | undefined) => {
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
+    executeNutritionSuggestion,
     submitPerformanceCheckin,
     refetch: fetchAll,
   };

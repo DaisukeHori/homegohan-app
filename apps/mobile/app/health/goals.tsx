@@ -28,7 +28,8 @@ type Goal = {
 const GOAL_TYPES = [
   { value: "weight", label: "体重", unit: "kg" },
   { value: "body_fat", label: "体脂肪率", unit: "%" },
-  { value: "steps", label: "歩数", unit: "歩" },
+  { value: "sleep_hours", label: "睡眠時間", unit: "時間" },
+  { value: "step_count", label: "歩数", unit: "歩" },
 ] as const;
 
 type GoalTypeValue = (typeof GOAL_TYPES)[number]["value"];
