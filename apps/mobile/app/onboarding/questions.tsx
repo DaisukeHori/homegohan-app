@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, Text
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState } from "../../src/components/ui";
-import { calculateNutritionTargets } from "../../src/lib/nutritionTargets";
+import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, radius, shadows, spacing } from "../../src/theme";
@@ -605,7 +605,7 @@ export default function OnboardingQuestions() {
       return;
     }
 
-    // 完了: 計算中画面を表示してからDBに保存
+    // 完了: プロファイルをDBに保存してからサーバーサイドで栄養目標を計算
     setIsCalculating(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
@@ -613,30 +613,16 @@ export default function OnboardingQuestions() {
 
       const profileBody = transformAnswersToProfile(newAnswers);
       const updates = toDbProfileUpdates(profileBody, auth.user.id);
-      updates.onboarding_completed_at = new Date().toISOString();
 
-      const { data: savedProfile, error: profileError } = await supabase
+      const { error: profileError } = await supabase
         .from("user_profiles")
-        .upsert(updates)
-        .select("*")
-        .single();
+        .upsert(updates);
       if (profileError) throw profileError;
 
-      const { targetData } = calculateNutritionTargets(savedProfile);
-
-      const { data: existing } = await supabase
-        .from("nutrition_targets")
-        .select("id")
-        .eq("user_id", auth.user.id)
-        .maybeSingle();
-
-      if (existing) {
-        const { error } = await supabase.from("nutrition_targets").update(targetData).eq("user_id", auth.user.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("nutrition_targets").insert(targetData);
-        if (error) throw error;
-      }
+      // サーバーサイドで performance_profile 構築・fitness_goals/goal_text/
+      // weekly_exercise_minutes 計算・nutrition_targets 保存を一括実行
+      const api = getApi();
+      await api.post("/api/onboarding/complete");
 
       await refreshProfile();
       router.replace("/onboarding/complete");
