@@ -1,7 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
+import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
@@ -19,6 +28,32 @@ type PlannedMealRow = {
   is_completed: boolean | null;
   is_generating: boolean | null;
   display_order?: number | null;
+  // nutrition fields
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  sodium_g: number | null;
+  sugar_g: number | null;
+  fiber_g: number | null;
+  potassium_mg: number | null;
+  calcium_mg: number | null;
+  magnesium_mg: number | null;
+  phosphorus_mg: number | null;
+  iron_mg: number | null;
+  zinc_mg: number | null;
+  iodine_ug: number | null;
+  cholesterol_mg: number | null;
+  vitamin_a_ug: number | null;
+  vitamin_b1_mg: number | null;
+  vitamin_b2_mg: number | null;
+  vitamin_b6_mg: number | null;
+  vitamin_b12_ug: number | null;
+  vitamin_c_mg: number | null;
+  vitamin_d_ug: number | null;
+  vitamin_e_mg: number | null;
+  vitamin_k_ug: number | null;
+  folic_acid_ug: number | null;
+  saturated_fat_g: number | null;
 };
 
 type DayRow = {
@@ -43,6 +78,374 @@ type PendingProgress = {
   completedSlots?: number;
   totalSlots?: number;
 };
+
+// ============================================================
+// Nutrition Constants (DRI — mirrors lib/nutrition-constants.ts)
+// ============================================================
+
+interface DayNutritionTotals {
+  caloriesKcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  sodiumG: number;
+  sugarG: number;
+  fiberG: number;
+  potassiumMg: number;
+  calciumMg: number;
+  phosphorusMg: number;
+  magnesiumMg: number;
+  ironMg: number;
+  zincMg: number;
+  iodineUg: number;
+  cholesterolMg: number;
+  vitaminAUg: number;
+  vitaminB1Mg: number;
+  vitaminB2Mg: number;
+  vitaminB6Mg: number;
+  vitaminB12Ug: number;
+  vitaminCMg: number;
+  vitaminDUg: number;
+  vitaminEMg: number;
+  vitaminKUg: number;
+  folicAcidUg: number;
+  saturatedFatG: number;
+}
+
+interface NutrientDef {
+  key: keyof DayNutritionTotals;
+  label: string;
+  unit: string;
+  dri: number;
+  decimals: number;
+}
+
+const NUTRIENT_DEFS: NutrientDef[] = [
+  { key: "caloriesKcal", label: "エネルギー",   unit: "kcal", dri: 2000, decimals: 0 },
+  { key: "proteinG",     label: "タンパク質",   unit: "g",    dri: 60,    decimals: 1 },
+  { key: "fatG",         label: "脂質",         unit: "g",    dri: 55,    decimals: 1 },
+  { key: "carbsG",       label: "炭水化物",     unit: "g",    dri: 300,   decimals: 1 },
+  { key: "fiberG",       label: "食物繊維",     unit: "g",    dri: 21,    decimals: 1 },
+  { key: "sugarG",       label: "糖質",         unit: "g",    dri: 250,   decimals: 1 },
+  { key: "sodiumG",      label: "塩分",         unit: "g",    dri: 7.5,   decimals: 1 },
+  { key: "potassiumMg",  label: "カリウム",     unit: "mg",   dri: 2500,  decimals: 0 },
+  { key: "calciumMg",    label: "カルシウム",   unit: "mg",   dri: 700,   decimals: 0 },
+  { key: "magnesiumMg",  label: "マグネシウム", unit: "mg",   dri: 340,   decimals: 0 },
+  { key: "ironMg",       label: "鉄分",         unit: "mg",   dri: 7.5,   decimals: 1 },
+  { key: "zincMg",       label: "亜鉛",         unit: "mg",   dri: 10,    decimals: 1 },
+  { key: "vitaminAUg",   label: "ビタミンA",   unit: "µg",   dri: 850,   decimals: 0 },
+  { key: "vitaminB1Mg",  label: "ビタミンB1",  unit: "mg",   dri: 1.3,   decimals: 2 },
+  { key: "vitaminB2Mg",  label: "ビタミンB2",  unit: "mg",   dri: 1.5,   decimals: 2 },
+  { key: "vitaminCMg",   label: "ビタミンC",   unit: "mg",   dri: 100,   decimals: 0 },
+  { key: "vitaminDUg",   label: "ビタミンD",   unit: "µg",   dri: 8.5,   decimals: 1 },
+  { key: "vitaminEMg",   label: "ビタミンE",   unit: "mg",   dri: 6.5,   decimals: 1 },
+];
+
+const DEFAULT_RADAR_KEYS: (keyof DayNutritionTotals)[] = [
+  "caloriesKcal", "proteinG", "fatG", "carbsG", "fiberG", "calciumMg", "vitaminCMg",
+];
+
+const EMPTY_TOTALS: DayNutritionTotals = {
+  caloriesKcal: 0, proteinG: 0, fatG: 0, carbsG: 0, sodiumG: 0,
+  sugarG: 0, fiberG: 0, potassiumMg: 0, calciumMg: 0, phosphorusMg: 0,
+  magnesiumMg: 0, ironMg: 0, zincMg: 0, iodineUg: 0, cholesterolMg: 0,
+  vitaminAUg: 0, vitaminB1Mg: 0, vitaminB2Mg: 0, vitaminB6Mg: 0,
+  vitaminB12Ug: 0, vitaminCMg: 0, vitaminDUg: 0, vitaminEMg: 0,
+  vitaminKUg: 0, folicAcidUg: 0, saturatedFatG: 0,
+};
+
+function calcDayTotals(meals: PlannedMealRow[]): DayNutritionTotals {
+  const t = { ...EMPTY_TOTALS };
+  for (const m of meals) {
+    t.caloriesKcal  += m.calories_kcal  ?? 0;
+    t.proteinG      += m.protein_g      ?? 0;
+    t.fatG          += m.fat_g          ?? 0;
+    t.carbsG        += m.carbs_g        ?? 0;
+    t.sodiumG       += m.sodium_g       ?? 0;
+    t.sugarG        += m.sugar_g        ?? 0;
+    t.fiberG        += m.fiber_g        ?? 0;
+    t.potassiumMg   += m.potassium_mg   ?? 0;
+    t.calciumMg     += m.calcium_mg     ?? 0;
+    t.phosphorusMg  += m.phosphorus_mg  ?? 0;
+    t.magnesiumMg   += m.magnesium_mg   ?? 0;
+    t.ironMg        += m.iron_mg        ?? 0;
+    t.zincMg        += m.zinc_mg        ?? 0;
+    t.iodineUg      += m.iodine_ug      ?? 0;
+    t.cholesterolMg += m.cholesterol_mg ?? 0;
+    t.vitaminAUg    += m.vitamin_a_ug   ?? 0;
+    t.vitaminB1Mg   += m.vitamin_b1_mg  ?? 0;
+    t.vitaminB2Mg   += m.vitamin_b2_mg  ?? 0;
+    t.vitaminB6Mg   += m.vitamin_b6_mg  ?? 0;
+    t.vitaminB12Ug  += m.vitamin_b12_ug ?? 0;
+    t.vitaminCMg    += m.vitamin_c_mg   ?? 0;
+    t.vitaminDUg    += m.vitamin_d_ug   ?? 0;
+    t.vitaminEMg    += m.vitamin_e_mg   ?? 0;
+    t.vitaminKUg    += m.vitamin_k_ug   ?? 0;
+    t.folicAcidUg   += m.folic_acid_ug  ?? 0;
+    t.saturatedFatG += m.saturated_fat_g ?? 0;
+  }
+  return t;
+}
+
+function driPercent(key: keyof DayNutritionTotals, value: number): number {
+  const def = NUTRIENT_DEFS.find((d) => d.key === key);
+  if (!def || def.dri === 0) return 0;
+  return Math.round((value / def.dri) * 100);
+}
+
+function driColor(pct: number): string {
+  if (pct > 150) return colors.error;
+  if (pct >= 80 && pct <= 120) return colors.success;
+  if (pct < 50) return colors.warning;
+  return colors.accent;
+}
+
+// ============================================================
+// Radar Chart (react-native-svg)
+// ============================================================
+
+interface RadarChartProps {
+  totals: DayNutritionTotals;
+  nutrientKeys: (keyof DayNutritionTotals)[];
+  size?: number;
+}
+
+function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChartProps) {
+  const n = nutrientKeys.length;
+  if (n < 3) return null;
+  const cx = size / 2;
+  const cy = size / 2;
+  const maxRadius = size * 0.37;
+  const labelRadius = size * 0.47;
+  const LEVELS = 3;
+  const MAX_PCT = 150;
+  const angleOf = (i: number) => ((2 * Math.PI) / n) * i - Math.PI / 2;
+  const ptOnCircle = (r: number, i: number) => ({
+    x: cx + r * Math.cos(angleOf(i)),
+    y: cy + r * Math.sin(angleOf(i)),
+  });
+  const gridPolygons = Array.from({ length: LEVELS }, (_, l) => {
+    const r = (maxRadius * (l + 1)) / LEVELS;
+    return Array.from({ length: n }, (__, i) => ptOnCircle(r, i))
+      .map((p) => `${p.x},${p.y}`).join(" ");
+  });
+  const spokes = Array.from({ length: n }, (_, i) => ptOnCircle(maxRadius, i));
+  const dataPoints = nutrientKeys.map((key, i) => {
+    const val = totals[key] as number;
+    const pct = Math.min(driPercent(key, val), MAX_PCT);
+    return ptOnCircle((pct / MAX_PCT) * maxRadius, i);
+  });
+  const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(" ");
+  const refPolygon = Array.from({ length: n }, (_, i) =>
+    ptOnCircle((100 / MAX_PCT) * maxRadius, i)
+  ).map((p) => `${p.x},${p.y}`).join(" ");
+  const pcts = nutrientKeys.map((key) =>
+    Math.min(driPercent(key, totals[key] as number), MAX_PCT)
+  );
+  const avgPct = Math.round(pcts.reduce((s, v) => s + v, 0) / pcts.length);
+  const labelFontSize = Math.max(7, Math.min(9, size / 26));
+  return (
+    <View style={{ alignItems: "center", width: size, height: size }}>
+      <Svg width={size} height={size}>
+        {gridPolygons.map((pts, l) => (
+          <Polygon key={`g${l}`} points={pts} fill="none" stroke="#E8E8E8" strokeWidth={1} />
+        ))}
+        <Polygon points={refPolygon} fill="none" stroke="#B0B0B0" strokeWidth={1} strokeDasharray="3 3" />
+        {spokes.map((p, i) => (
+          <Line key={`s${i}`} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#E8E8E8" strokeWidth={1} />
+        ))}
+        <Polygon points={dataPolygon} fill="rgba(224,122,95,0.25)" stroke={colors.accent} strokeWidth={2} />
+        {dataPoints.map((p, i) => (
+          <Circle key={`d${i}`} cx={p.x} cy={p.y} r={3} fill={colors.accent} />
+        ))}
+        {nutrientKeys.map((key, i) => {
+          const lp = ptOnCircle(labelRadius, i);
+          const def = NUTRIENT_DEFS.find((d) => d.key === key);
+          const label = def?.label ?? String(key);
+          const anchor = Math.abs(lp.x - cx) < 4 ? "middle" : lp.x < cx ? "end" : "start";
+          return (
+            <SvgText key={`l${i}`} x={lp.x} y={lp.y} fontSize={labelFontSize}
+              fill="#9A9A9A" textAnchor={anchor} alignmentBaseline="middle">
+              {label}
+            </SvgText>
+          );
+        })}
+      </Svg>
+      <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" }}>
+        <Text style={{ fontSize: 20, fontWeight: "800", color: driColor(avgPct) }}>{avgPct}%</Text>
+        <Text style={{ fontSize: 9, color: colors.textMuted }}>平均達成率</Text>
+      </View>
+    </View>
+  );
+}
+
+// ============================================================
+// Nutrition Bottom Sheet
+// ============================================================
+
+interface NutritionSheetProps {
+  visible: boolean;
+  onClose: () => void;
+  day: DayRow | null;
+  dateLabel: string;
+  radarKeys: (keyof DayNutritionTotals)[];
+}
+
+function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys }: NutritionSheetProps) {
+  const meals = day?.planned_meals ?? [];
+  const totals = useMemo(() => calcDayTotals(meals), [meals]);
+  const [praiseComment, setPraiseComment]         = useState<string | null>(null);
+  const [adviceText, setAdviceText]               = useState<string | null>(null);
+  const [nutritionTip, setNutritionTip]           = useState<string | null>(null);
+  const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!visible || !day) return;
+    setPraiseComment(null); setAdviceText(null); setNutritionTip(null);
+    setIsLoadingFeedback(true);
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    const mealCount = meals.filter((m) => m.dish_name).length;
+    if (mealCount === 0) { setIsLoadingFeedback(false); return; }
+    fetchFeedback(day.day_date, totals, mealCount);
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, [visible, day?.day_date]);
+
+  async function fetchFeedback(dateStr: string, nutrition: DayNutritionTotals, mealCount: number, forceRefresh = false) {
+    setIsLoadingFeedback(true);
+    try {
+      const api = getApi();
+      const res = await api.post<any>("/api/ai/nutrition/feedback", { date: dateStr, nutrition, mealCount, forceRefresh });
+      if (res.cached && (res.feedback || res.praiseComment)) {
+        setPraiseComment(res.praiseComment ?? null);
+        setAdviceText(res.advice ?? res.feedback ?? null);
+        setNutritionTip(res.nutritionTip ?? null);
+        setIsLoadingFeedback(false);
+        return;
+      }
+      if (res.status === "generating" && res.cacheId) { startPolling(res.cacheId); }
+      else { setIsLoadingFeedback(false); }
+    } catch { setIsLoadingFeedback(false); }
+  }
+
+  function startPolling(cacheId: string) {
+    let resolved = false; let count = 0;
+    pollRef.current = setInterval(async () => {
+      if (resolved || count >= 20) { if (pollRef.current) clearInterval(pollRef.current); setIsLoadingFeedback(false); return; }
+      count++;
+      try {
+        const api = getApi();
+        const res = await api.get<any>(`/api/ai/nutrition/feedback?cacheId=${cacheId}`);
+        if (res.status === "completed" && (res.feedback || res.praiseComment)) {
+          resolved = true;
+          setPraiseComment(res.praiseComment ?? null);
+          setAdviceText(res.advice ?? res.feedback ?? null);
+          setNutritionTip(res.nutritionTip ?? null);
+          setIsLoadingFeedback(false);
+          if (pollRef.current) clearInterval(pollRef.current);
+        }
+      } catch { /* ignore */ }
+    }, 2000);
+  }
+
+  const DRI_BAR_NUTRIENTS = NUTRIENT_DEFS.slice(0, 14);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }} onPress={onClose} />
+      <View style={{ backgroundColor: colors.bg, borderTopLeftRadius: radius["2xl"], borderTopRightRadius: radius["2xl"], maxHeight: "85%", ...shadows.lg }}>
+        {/* Header */}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="bar-chart" size={18} color={colors.accent} />
+            <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{dateLabel} の栄養分析</Text>
+          </View>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <Ionicons name="close" size={22} color={colors.textMuted} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+          {/* Radar Chart */}
+          <View style={{ alignItems: "center" }}>
+            <NutritionRadarChartSvg totals={totals} nutrientKeys={radarKeys} size={220} />
+          </View>
+          {/* AI Feedback */}
+          <View style={{ gap: spacing.md }}>
+            <View style={{ backgroundColor: colors.successLight, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Ionicons name="heart" size={14} color={colors.success} />
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.success }}>褒めポイント</Text>
+                {(praiseComment || adviceText) && !isLoadingFeedback && (
+                  <Pressable onPress={() => { const mc = meals.filter((m) => m.dish_name).length; if (day) fetchFeedback(day.day_date, totals, mc, true); }}
+                    style={{ marginLeft: "auto", backgroundColor: colors.bg, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 10, color: colors.textMuted }}>再分析</Text>
+                  </Pressable>
+                )}
+              </View>
+              {isLoadingFeedback ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <ActivityIndicator size="small" color={colors.success} />
+                  <Text style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</Text>
+                </View>
+              ) : praiseComment ? (
+                <Text style={{ fontSize: 13, color: colors.text, lineHeight: 20 }}>{praiseComment}</Text>
+              ) : (
+                <Text style={{ fontSize: 11, color: colors.textMuted }}>分析データがありません</Text>
+              )}
+            </View>
+            {(adviceText || isLoadingFeedback) && (
+              <View style={{ backgroundColor: colors.accentLight, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="sparkles" size={14} color={colors.accent} />
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>改善アドバイス</Text>
+                </View>
+                {isLoadingFeedback ? (
+                  <Text style={{ fontSize: 11, color: colors.textMuted }}>...</Text>
+                ) : (
+                  <Text style={{ fontSize: 12, color: colors.text, lineHeight: 18 }}>{adviceText}</Text>
+                )}
+              </View>
+            )}
+            {nutritionTip && (
+              <View style={{ backgroundColor: colors.blueLight, borderRadius: radius.md, padding: spacing.md, flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+                <Text style={{ fontSize: 12 }}>💡</Text>
+                <Text style={{ flex: 1, fontSize: 11, color: colors.blue, lineHeight: 17 }}>{nutritionTip}</Text>
+              </View>
+            )}
+          </View>
+          {/* DRI Bars */}
+          <View>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text, marginBottom: spacing.md }}>
+              📊 栄養素の達成率（{meals.length}食分）
+            </Text>
+            <View style={{ gap: spacing.sm }}>
+              {DRI_BAR_NUTRIENTS.map((def) => {
+                const value = totals[def.key] as number;
+                const pct = driPercent(def.key, value);
+                const barColor = driColor(pct);
+                return (
+                  <View key={String(def.key)} style={{ backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, gap: 4 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Text style={{ fontSize: 12, color: colors.textLight }}>{def.label}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Text style={{ fontSize: 11, color: colors.textMuted }}>{value.toFixed(def.decimals)}{def.unit}</Text>
+                        <Text style={{ fontSize: 11, fontWeight: "700", color: barColor, minWidth: 36, textAlign: "right" }}>{pct}%</Text>
+                      </View>
+                    </View>
+                    <View style={{ height: 6, backgroundColor: colors.border, borderRadius: 3, overflow: "hidden" }}>
+                      <View style={{ width: `${Math.min(pct, 100)}%`, height: "100%", backgroundColor: barColor, borderRadius: 3 }} />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+          <View style={{ height: spacing.xl }} />
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
 
 const formatLocalDate = (date: Date): string => {
   const y = date.getFullYear();
@@ -280,6 +683,10 @@ export default function WeeklyMenuPage() {
   const [pendingProgress, setPendingProgress] = useState<PendingProgress | null>(null);
   const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
 
+  // Nutrition sheet state
+  const [nutritionSheetDay, setNutritionSheetDay] = useState<DayRow | null>(null);
+  const [nutritionSheetLabel, setNutritionSheetLabel] = useState("");
+
   useEffect(() => {
     setWeekStart(getWeekStart(new Date(), weekStartDay));
   }, [weekStartDay]);
@@ -318,6 +725,32 @@ export default function WeeklyMenuPage() {
           is_completed: m.isCompleted,
           is_generating: m.isGenerating,
           display_order: m.displayOrder,
+          // nutrition
+          protein_g:       m.proteinG       ?? null,
+          fat_g:           m.fatG           ?? null,
+          carbs_g:         m.carbsG         ?? null,
+          sodium_g:        m.sodiumG        ?? null,
+          sugar_g:         m.sugarG         ?? null,
+          fiber_g:         m.fiberG         ?? null,
+          potassium_mg:    m.potassiumMg    ?? null,
+          calcium_mg:      m.calciumMg      ?? null,
+          magnesium_mg:    m.magnesiumMg    ?? null,
+          phosphorus_mg:   m.phosphorusMg   ?? null,
+          iron_mg:         m.ironMg         ?? null,
+          zinc_mg:         m.zincMg         ?? null,
+          iodine_ug:       m.iodineUg       ?? null,
+          cholesterol_mg:  m.cholesterolMg  ?? null,
+          vitamin_a_ug:    m.vitaminAUg     ?? null,
+          vitamin_b1_mg:   m.vitaminB1Mg    ?? null,
+          vitamin_b2_mg:   m.vitaminB2Mg    ?? null,
+          vitamin_b6_mg:   m.vitaminB6Mg    ?? null,
+          vitamin_b12_ug:  m.vitaminB12Ug   ?? null,
+          vitamin_c_mg:    m.vitaminCMg     ?? null,
+          vitamin_d_ug:    m.vitaminDUg     ?? null,
+          vitamin_e_mg:    m.vitaminEMg     ?? null,
+          vitamin_k_ug:    m.vitaminKUg     ?? null,
+          folic_acid_ug:   m.folicAcidUg    ?? null,
+          saturated_fat_g: m.saturatedFatG  ?? null,
         })),
       }));
 
@@ -364,6 +797,12 @@ export default function WeeklyMenuPage() {
       setPendingStatus(null);
       setPendingIsUltimate(false);
     }
+  }
+
+  function openNutritionSheet(day: DayRow) {
+    const d = new Date(day.day_date + "T00:00:00");
+    setNutritionSheetLabel(`${d.getMonth() + 1}/${d.getDate()}`);
+    setNutritionSheetDay(day);
   }
 
   useEffect(() => {
@@ -498,69 +937,6 @@ export default function WeeklyMenuPage() {
       setRegeneratingMealId(null);
     }
   }
-
-  // #450: 食事完了トグル — 250ms debounce + 二重送信ガード
-  const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const pendingToggleRef = useRef<Set<string>>(new Set());
-
-  const toggleMealCompletion = useCallback(async (meal: PlannedMealRow) => {
-    const mealId = meal.id;
-    // 既存タイマーをキャンセル
-    const existing = toggleDebounceTimerRef.current.get(mealId);
-    if (existing) {
-      clearTimeout(existing);
-      toggleDebounceTimerRef.current.delete(mealId);
-    }
-    // PATCH が進行中なら無視
-    if (pendingToggleRef.current.has(mealId)) return;
-
-    // 楽観的更新
-    const newCompleted = !meal.is_completed;
-    setDays((prev) =>
-      prev.map((d) => ({
-        ...d,
-        planned_meals: d.planned_meals.map((m) =>
-          m.id === mealId ? { ...m, is_completed: newCompleted } : m
-        ),
-      }))
-    );
-
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        toggleDebounceTimerRef.current.delete(mealId);
-        resolve();
-      }, 250);
-      toggleDebounceTimerRef.current.set(mealId, timer);
-    });
-
-    if (pendingToggleRef.current.has(mealId)) return;
-    pendingToggleRef.current.add(mealId);
-    try {
-      const api = getApi();
-      await api.patch(`/api/meal-plans/meals/${mealId}`, { isCompleted: newCompleted });
-    } catch {
-      // 失敗時はロールバック
-      setDays((prev) =>
-        prev.map((d) => ({
-          ...d,
-          planned_meals: d.planned_meals.map((m) =>
-            m.id === mealId ? { ...m, is_completed: meal.is_completed } : m
-          ),
-        }))
-      );
-    } finally {
-      pendingToggleRef.current.delete(mealId);
-    }
-  }, []);
-
-  // タイマーのクリーンアップ
-  useEffect(() => {
-    const ref = toggleDebounceTimerRef.current;
-    return () => {
-      ref.forEach((t) => clearTimeout(t));
-      ref.clear();
-    };
-  }, []);
 
   // Day selector helpers
   const getDayOfWeek = (dateStr: string): string => {
@@ -717,16 +1093,27 @@ export default function WeeklyMenuPage() {
               <Text style={{ fontSize: 13, color: colors.textMuted }}>
                 {daySummary.totalCalories.toLocaleString()} kcal・{daySummary.completed}/{daySummary.total} 完了
               </Text>
-              <Button
-                size="sm"
-                variant="ghost"
-                onPress={() => router.push("/menus/weekly/request")}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                  <Ionicons name="sparkles" size={14} color={colors.accent} />
-                  <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>AIで再生成</Text>
-                </View>
-              </Button>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                {/* 栄養分析ボタン */}
+                <Pressable
+                  onPress={() => openNutritionSheet(selectedDay)}
+                  style={{
+                    flexDirection: "row", alignItems: "center", gap: 4,
+                    paddingVertical: 5, paddingHorizontal: spacing.md,
+                    borderRadius: radius.sm, backgroundColor: colors.accentLight,
+                    borderWidth: 1, borderColor: colors.accent,
+                  }}
+                >
+                  <Ionicons name="bar-chart" size={13} color={colors.accent} />
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>栄養</Text>
+                </Pressable>
+                <Button size="sm" variant="ghost" onPress={() => router.push("/menus/weekly/request")}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                    <Ionicons name="sparkles" size={14} color={colors.accent} />
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>AIで再生成</Text>
+                  </View>
+                </Button>
+              </View>
             </View>
           )}
 
@@ -799,29 +1186,12 @@ export default function WeeklyMenuPage() {
 
                     {/* ステータス & アクション */}
                     <View style={{ alignItems: "center", gap: 4 }}>
-                      {isGenerating ? (
+                      {m.is_completed ? (
+                        <StatusBadge variant="completed" label="完了" />
+                      ) : isGenerating ? (
                         <StatusBadge variant="generating" label="生成中" />
                       ) : (
-                        /* 完了チェックボタン (#450) */
-                        <Pressable
-                          onPress={(e) => { e.stopPropagation(); toggleMealCompletion(m); }}
-                          hitSlop={8}
-                          style={({ pressed }) => ({
-                            width: 32,
-                            height: 32,
-                            borderRadius: 16,
-                            borderWidth: 2,
-                            borderColor: m.is_completed ? colors.success : colors.border,
-                            backgroundColor: m.is_completed ? colors.success : "transparent",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            opacity: pressed ? 0.7 : 1,
-                          })}
-                        >
-                          {m.is_completed && (
-                            <Ionicons name="checkmark" size={18} color="#fff" />
-                          )}
-                        </Pressable>
+                        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
                       )}
                     </View>
                   </Pressable>
@@ -883,7 +1253,16 @@ export default function WeeklyMenuPage() {
           )}
         </>
       )}
-    </ScrollView>
+      </ScrollView>
+
+      {/* 栄養分析ボトムシート */}
+      <NutritionBottomSheet
+        visible={nutritionSheetDay !== null}
+        onClose={() => setNutritionSheetDay(null)}
+        day={nutritionSheetDay}
+        dateLabel={nutritionSheetLabel}
+        radarKeys={DEFAULT_RADAR_KEYS}
+      />
     </View>
   );
 }
