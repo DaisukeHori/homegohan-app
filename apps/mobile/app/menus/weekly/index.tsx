@@ -718,12 +718,13 @@ const MEAL_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; label:
   midnight_snack: { icon: "cloudy-night", label: "夜食", color: "#3F51B5" },
 };
 
-const MODE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+const MODE_CONFIG: Record<string, { icon?: string; label: string; color: string; bg: string }> = {
   cook: { label: "自炊", color: colors.success, bg: colors.successLight },
   quick: { label: "時短", color: colors.blue, bg: colors.blueLight },
   buy: { label: "買う", color: colors.purple, bg: colors.purpleLight },
   out: { label: "外食", color: colors.warning, bg: colors.warningLight },
   skip: { label: "なし", color: colors.textMuted, bg: colors.bg },
+  ai_creative: { icon: "sparkles", label: "AI献立", color: colors.accent, bg: colors.accentLight },
 };
 
 export default function WeeklyMenuPage() {
