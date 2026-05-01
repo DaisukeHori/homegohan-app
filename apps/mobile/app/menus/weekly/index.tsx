@@ -755,6 +755,13 @@ export default function WeeklyMenuPage() {
   // Radar chart nutrient keys — fetched from profile (falls back to DEFAULT_RADAR_KEYS)
   const [radarChartNutrients, setRadarChartNutrients] = useState<(keyof DayNutritionTotals)[]>(DEFAULT_RADAR_KEYS);
 
+  // Calendar state
+  const [displayMonth, setDisplayMonth] = useState<Date>(() => new Date());
+  const [holidays, setHolidays] = useState<Record<string, string>>({});
+  const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
+  const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
+  const fetchedRangesRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     const fetchRadarProfile = async () => {
       try {
@@ -1364,6 +1371,12 @@ export default function WeeklyMenuPage() {
               const dayNum = d.day_date.slice(8);
               const completedAll = d.planned_meals.length > 0 && d.planned_meals.every((m) => m.is_completed);
               const hasGenerating = d.planned_meals.some((m) => m.is_generating);
+              const dayOfWeek = new Date(d.day_date + "T00:00:00").getDay(); // 0=日,6=土
+              const isHolidayDay = !!holidays[d.day_date];
+              const isSunday = dayOfWeek === 0;
+              const isSaturday = dayOfWeek === 6;
+              // 祝日・日曜日=danger(赤系)、土曜日=blue(青系)
+              const accentColor = (isHolidayDay || isSunday) ? colors.danger : isSaturday ? colors.blue : null;
 
               return (
                 <Pressable
@@ -1375,20 +1388,20 @@ export default function WeeklyMenuPage() {
                     paddingVertical: spacing.sm,
                     paddingHorizontal: spacing.md,
                     borderRadius: radius.lg,
-                    backgroundColor: selected ? colors.accent : colors.card,
+                    backgroundColor: selected ? (accentColor ?? colors.accent) : colors.card,
                     borderWidth: 1,
-                    borderColor: selected ? colors.accent : colors.border,
+                    borderColor: selected ? (accentColor ?? colors.accent) : (accentColor ? `${accentColor}33` : colors.border),
                     minWidth: 48,
                     ...shadows.sm,
                     ...(pressed ? { opacity: 0.9 } : {}),
                   })}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: "600", color: selected ? "#fff" : colors.textMuted }}>{dow}</Text>
-                  <Text style={{ fontSize: 16, fontWeight: "800", color: selected ? "#fff" : colors.text }}>{dayNum}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: "600", color: selected ? "#fff" : (accentColor ?? colors.textMuted) }}>{dow}</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "800", color: selected ? "#fff" : (accentColor ?? colors.text) }}>{dayNum}</Text>
                   {completedAll ? (
                     <Ionicons name="checkmark-circle" size={14} color={selected ? "#fff" : colors.success} />
                   ) : hasGenerating ? (
-                    <ActivityIndicator size={12} color={selected ? "#fff" : colors.accent} />
+                    <ActivityIndicator size={12} color={selected ? "#fff" : (accentColor ?? colors.accent)} />
                   ) : (
                     <Text style={{ fontSize: 10, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>
                       {d.planned_meals.length}食
