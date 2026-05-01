@@ -416,18 +416,27 @@ export const useHomeData = (userId: string | undefined) => {
   async function fetchPerformanceAnalysis(uid: string) {
     try {
       setPerformanceAnalysis((prev) => ({ ...prev, loading: true }));
+      const todayStr = getTodayStr();
       const api = getApi();
-      const data = await api.get<any>(`/api/performance/analyze?userId=${uid}`);
+      const [data, checkinResult] = await Promise.all([
+        api.get<any>(`/api/performance/analyze?date=${todayStr}`),
+        supabase
+          .from("user_performance_checkins")
+          .select("*")
+          .eq("user_id", uid)
+          .eq("checkin_date", todayStr)
+          .maybeSingle(),
+      ]);
       if (data) {
         setPerformanceAnalysis({
           eligible: data.eligible ?? false,
           eligibilityReason: data.eligibilityReason ?? null,
-          nextAction: data.nextAction ?? null,
-          todayCheckin: data.todayCheckin ?? null,
+          nextAction: data.analysis?.nextAction ?? null,
+          todayCheckin: checkinResult.data ?? null,
           loading: false,
         });
       } else {
-        setPerformanceAnalysis((prev) => ({ ...prev, loading: false }));
+        setPerformanceAnalysis((prev) => ({ ...prev, todayCheckin: checkinResult.data ?? null, loading: false }));
       }
     } catch {
       setPerformanceAnalysis((prev) => ({ ...prev, loading: false }));
