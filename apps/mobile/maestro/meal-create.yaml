@@ -1,0 +1,72 @@
+appId: com.homegohan.app
+---
+# 食事新規作成 E2E フロー
+# 手動入力で食事を記録するシナリオ
+
+- launchApp
+- waitForAnimationToEnd
+
+# ホーム画面が表示されるまで待機
+- assertVisible:
+    text: ".*"
+    optional: true
+
+# ボトムナビゲーションまたはFABから新規作成へ
+- tapOn:
+    text: "食事を記録"
+    optional: true
+- tapOn:
+    id: "add-meal-button"
+    optional: true
+
+# モード選択画面が表示される
+- waitForAnimationToEnd
+- assertVisible:
+    text: "手動で入力"
+
+# 手動入力を選択
+- tapOn:
+    text: "手動で入力"
+
+- waitForAnimationToEnd
+
+# 手動入力フォームが表示される
+- assertVisible:
+    text: "料理名"
+
+# 料理名を入力
+- tapOn:
+    text: "例: 鶏の唐揚げ定食"
+    optional: true
+- tapOn:
+    id: "manual-dish-name-input"
+    optional: true
+- inputText: "テスト唐揚げ定食"
+
+# カロリーを入力
+- tapOn:
+    text: "500"
+    optional: true
+- inputText: "650"
+
+# タンパク質を入力
+- tapOn:
+    text: "20"
+    optional: true
+- inputText: "35"
+
+# 食事タイプ選択 (昼食)
+- assertVisible:
+    text: "昼食"
+    optional: true
+
+# 保存ボタンを押す
+- tapOn:
+    text: "この食事を記録する"
+
+- waitForAnimationToEnd
+
+# 保存後に前の画面に戻る
+- assertNotVisible:
+    text: "この食事を記録する"
+    optional: true
