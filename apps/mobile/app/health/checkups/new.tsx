@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -15,7 +17,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "../../../src/components/ui";
-import { getApi } from "../../../src/lib/api";
+import { getApi, getApiBaseUrl } from "../../../src/lib/api";
+import { supabase } from "../../../src/lib/supabase";
 import { colors, radius, shadows, spacing } from "../../../src/theme";
 
 // ─── Types ────────────────────────────────────────────
@@ -73,6 +76,10 @@ export default function NewCheckupPage() {
   const [saving, setSaving] = useState(false);
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
 
+  // OCR state
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+
   const [form, setForm] = useState<FormData>({
     checkup_date: todayStr(),
     facility_name: "",
@@ -111,6 +118,137 @@ export default function NewCheckupPage() {
 
   function toggleSection(key: string) {
     setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  // ─── OCR ──────────────────────────────────────────
+  async function handleOcrUpload(source: "camera" | "library") {
+    setOcrError(null);
+
+    // パーミッション確認
+    if (source === "camera") {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("カメラへのアクセスを許可してください。");
+        return;
+      }
+    } else {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("写真ライブラリへのアクセスを許可してください。");
+        return;
+      }
+    }
+
+    const result =
+      source === "camera"
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.8,
+            base64: true,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.8,
+            base64: true,
+          });
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+    const imageBase64 = asset.base64;
+    if (!imageBase64) {
+      setOcrError("画像の読み込みに失敗しました。");
+      return;
+    }
+
+    const mimeType = asset.mimeType ?? "image/jpeg";
+
+    setOcrLoading(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        setOcrError("認証情報が取得できませんでした。再ログインしてください。");
+        return;
+      }
+
+      const baseUrl = getApiBaseUrl();
+      const response = await fetch(`${baseUrl}/api/ai/analyze-health-checkup`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ imageBase64, mimeType }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setOcrError(body.error ?? `OCRに失敗しました (${response.status})`);
+        return;
+      }
+
+      const ocrData = await response.json();
+      const extracted = ocrData.extractedData ?? {};
+
+      // camelCase → snake_case マッピングでフォームに反映
+      setForm((prev) => ({
+        ...prev,
+        ...(extracted.checkupDate ? { checkup_date: extracted.checkupDate } : {}),
+        ...(extracted.facilityName ? { facility_name: extracted.facilityName } : {}),
+        ...(extracted.checkupType ? { checkup_type: extracted.checkupType } : {}),
+        ...(extracted.bloodPressureSystolic != null ? { blood_pressure_systolic: String(extracted.bloodPressureSystolic) } : {}),
+        ...(extracted.bloodPressureDiastolic != null ? { blood_pressure_diastolic: String(extracted.bloodPressureDiastolic) } : {}),
+        ...(extracted.hba1c != null ? { hba1c: String(extracted.hba1c) } : {}),
+        ...(extracted.fastingGlucose != null ? { fasting_glucose: String(extracted.fastingGlucose) } : {}),
+        ...(extracted.height != null ? { height: String(extracted.height) } : {}),
+        ...(extracted.weight != null ? { weight: String(extracted.weight) } : {}),
+        ...(extracted.bmi != null ? { bmi: String(extracted.bmi) } : {}),
+        ...(extracted.waistCircumference != null ? { waist_circumference: String(extracted.waistCircumference) } : {}),
+        ...(extracted.totalCholesterol != null ? { total_cholesterol: String(extracted.totalCholesterol) } : {}),
+        ...(extracted.ldlCholesterol != null ? { ldl_cholesterol: String(extracted.ldlCholesterol) } : {}),
+        ...(extracted.hdlCholesterol != null ? { hdl_cholesterol: String(extracted.hdlCholesterol) } : {}),
+        ...(extracted.triglycerides != null ? { triglycerides: String(extracted.triglycerides) } : {}),
+        ...(extracted.ast != null ? { ast: String(extracted.ast) } : {}),
+        ...(extracted.alt != null ? { alt: String(extracted.alt) } : {}),
+        ...(extracted.gammaGtp != null ? { gamma_gtp: String(extracted.gammaGtp) } : {}),
+        ...(extracted.creatinine != null ? { creatinine: String(extracted.creatinine) } : {}),
+        ...(extracted.egfr != null ? { egfr: String(extracted.egfr) } : {}),
+        ...(extracted.uricAcid != null ? { uric_acid: String(extracted.uricAcid) } : {}),
+      }));
+
+      // 展開して確認しやすくする
+      setExpandedSections({
+        basic: true,
+        body: true,
+        lipid: true,
+        liver: true,
+        kidney: true,
+      });
+
+      Alert.alert(
+        "OCR完了",
+        `${ocrData.fieldCount ?? 0}項目を自動入力しました。内容を確認・修正してから保存してください。`,
+      );
+    } catch (e: any) {
+      setOcrError(e?.message ?? "OCR中にエラーが発生しました。");
+    } finally {
+      setOcrLoading(false);
+    }
+  }
+
+  function showOcrSourcePicker() {
+    Alert.alert("画像を選択", "健診結果票の画像を選択してください", [
+      {
+        text: "カメラで撮影",
+        onPress: () => handleOcrUpload("camera"),
+      },
+      {
+        text: "ライブラリから選択",
+        onPress: () => handleOcrUpload("library"),
+      },
+      { text: "キャンセル", style: "cancel" },
+    ]);
   }
 
   async function handleSave() {
@@ -295,6 +433,40 @@ export default function NewCheckupPage() {
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
+        {/* OCR取込ボタン */}
+        <View style={styles.ocrCard}>
+          <View style={styles.ocrCardHeader}>
+            <Ionicons name="scan-outline" size={20} color={colors.accent} />
+            <Text style={styles.ocrCardTitle}>AIで自動入力</Text>
+          </View>
+          <Text style={styles.ocrCardDesc}>
+            健診結果票を撮影またはライブラリから選択すると、AIが検査値を自動で読み取ります。
+          </Text>
+          {ocrError && (
+            <View style={styles.ocrError}>
+              <Ionicons name="alert-circle-outline" size={16} color={colors.warning} />
+              <Text style={styles.ocrErrorText}>{ocrError}</Text>
+            </View>
+          )}
+          <Pressable
+            style={[styles.ocrButton, ocrLoading && styles.ocrButtonDisabled]}
+            onPress={showOcrSourcePicker}
+            disabled={ocrLoading}
+          >
+            {ocrLoading ? (
+              <>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.ocrButtonText}>AI解析中...</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="camera-outline" size={18} color="#fff" />
+                <Text style={styles.ocrButtonText}>画像から読み取る</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+
         {/* 基本情報 */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -399,10 +571,6 @@ export default function NewCheckupPage() {
         <Button onPress={handleSave} loading={saving} disabled={saving}>
           {saving ? "保存中..." : "保存してAI分析を実行"}
         </Button>
-
-        <Text style={styles.ocrHint}>
-          ※ OCR取込機能は別途対応予定です。手動で数値を入力してください。
-        </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -431,6 +599,62 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.md,
     paddingBottom: 120,
+  },
+
+  // ─── OCR Card ───
+  ocrCard: {
+    backgroundColor: colors.accentLight,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    gap: spacing.sm,
+    ...shadows.sm,
+  },
+  ocrCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  ocrCardTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  ocrCardDesc: {
+    fontSize: 12,
+    color: colors.textLight,
+    lineHeight: 18,
+  },
+  ocrError: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    backgroundColor: colors.warningLight,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  ocrErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.warning,
+    lineHeight: 18,
+  },
+  ocrButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.accent,
+    borderRadius: radius.full,
+    paddingVertical: spacing.md,
+    marginTop: spacing.xs,
+  },
+  ocrButtonDisabled: {
+    opacity: 0.7,
+  },
+  ocrButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#fff",
   },
 
   // ─── Section ───
@@ -524,14 +748,6 @@ const styles = StyleSheet.create({
   typeBtnTextActive: {
     color: colors.accent,
     fontWeight: "700",
-  },
-
-  // ─── OCR hint ───
-  ocrHint: {
-    fontSize: 12,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 18,
   },
 
   // ─── Review step ───
