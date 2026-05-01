@@ -7,6 +7,13 @@ import { Button, Card, EmptyState, LoadingState, PageHeader, ProgressBar, Sectio
 import { colors, spacing } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
 
+const STREAK_TYPE_LABELS: Record<string, string> = {
+  daily_record: "毎日の記録",
+  meal_record: "食事記録",
+  health_record: "健康記録",
+  exercise_record: "運動記録",
+};
+
 type Streak = {
   id?: string;
   streak_type: string;
@@ -134,7 +141,7 @@ export default function HealthStreaksPage() {
 
           <Card>
             <SectionHeader
-              title="daily_record"
+              title={STREAK_TYPE_LABELS[data.streak.streak_type] ?? data.streak.streak_type}
               right={<Ionicons name="stats-chart-outline" size={18} color={colors.accent} />}
             />
             <View style={styles.detailGrid}>
