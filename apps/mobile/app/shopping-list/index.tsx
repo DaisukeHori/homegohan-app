@@ -80,6 +80,32 @@ export default function ShoppingListPage() {
     load();
   }, []);
 
+  // スーパーの動線に合わせたカテゴリ順序
+  const CATEGORY_ORDER = [
+    '青果（野菜・果物）',
+    '精肉',
+    '鮮魚',
+    '乳製品・卵',
+    '豆腐・練り物',
+    '米・パン・麺',
+    '調味料',
+    '油・香辛料',
+    '乾物・缶詰',
+    '冷凍食品',
+    '飲料',
+    // 旧カテゴリとの互換性
+    '野菜',
+    '肉',
+    '魚',
+    '乳製品',
+    '卵',
+    '豆腐・大豆',
+    '麺・米',
+    '乾物',
+    '食材',
+    'その他',
+  ];
+
   const grouped = useMemo(() => {
     const map = new Map<string, Item[]>();
     for (const it of items) {
@@ -88,7 +114,14 @@ export default function ShoppingListPage() {
       arr.push(it);
       map.set(key, arr);
     }
-    return Array.from(map.entries());
+    // カテゴリ順序でソート
+    return Array.from(map.entries()).sort((a, b) => {
+      const indexA = CATEGORY_ORDER.indexOf(a[0]);
+      const indexB = CATEGORY_ORDER.indexOf(b[0]);
+      const orderA = indexA === -1 ? 999 : indexA;
+      const orderB = indexB === -1 ? 999 : indexB;
+      return orderA - orderB;
+    });
   }, [items]);
 
   async function addItem() {
