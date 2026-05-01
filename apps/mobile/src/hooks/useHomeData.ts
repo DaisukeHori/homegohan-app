@@ -467,6 +467,26 @@ export const useHomeData = (userId: string | undefined) => {
         .select()
         .single();
       if (error) return { success: false, error: error.message };
+
+      // sleepHours / sleepQuality が入力されている場合のみ health_records に同期する
+      // fatigue / focus / hunger は health_records に書き込まない
+      const hasSleepData =
+        checkinData.sleepHours !== undefined ||
+        checkinData.sleepQuality !== undefined;
+      if (hasSleepData) {
+        try {
+          const api = getApi();
+          await api.post("/api/health/records/quick", {
+            record_date: getTodayStr(),
+            ...(checkinData.sleepHours !== undefined && { sleep_hours: checkinData.sleepHours }),
+            ...(checkinData.sleepQuality !== undefined && { sleep_quality: checkinData.sleepQuality }),
+          });
+        } catch (syncErr) {
+          // 健康記録への同期失敗はチェックイン自体の成否には影響させない
+          console.warn("Health record sync after checkin failed:", syncErr);
+        }
+      }
+
       await fetchPerformanceAnalysis(userId);
       return { success: true, data };
     } catch (e: any) {
