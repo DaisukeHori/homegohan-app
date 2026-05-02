@@ -17,7 +17,9 @@ appId: com.homegohan.app
         text: "Admin Console"
     file: "./back-from-admin.yaml"
 
-# ホーム画面にいる場合はログアウト
+# ホーム画面にいる場合はログアウト (画面ロード完了を少し待つ)
+- waitForAnimationToEnd:
+    timeout: 3000
 - runFlow:
     when:
       visible:
