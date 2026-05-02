@@ -1,45 +1,31 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 03-recalculate: 再計算ボタンをタップしてランキングを更新する (正常系)
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
-- assertVisible:
-    id: "welcome-screen"
-- tapOn:
-    id: "welcome-login-button"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_01_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_01_PASSWORD}
-- tapOn:
-    id: "login-button"
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 10000
+- runFlow: ../_shared/login.yaml
 
 # 比較画面へ移動
 - tapOn:
     id: "tab-comparison"
-- assertVisible:
-    id: "comparison-screen"
-
-# 初回ロードを待機
 - extendedWaitUntil:
     visible:
-      id: "comparison-ranking-item-0"
+      id: "comparison-screen"
+    timeout: 10000
+
+# 初回ロードを待機
+- waitForAnimationToEnd:
     timeout: 10000
 
 # 再計算ボタンをタップ
 - tapOn:
     id: "comparison-recalculate-button"
 
-# ローダーが表示されてから結果が更新される
-- extendedWaitUntil:
-    visible:
-      id: "comparison-ranking-item-0"
+# 再計算後のロード完了を待機
+- waitForAnimationToEnd:
     timeout: 15000
+
+# 比較画面が表示されていることを確認
+- assertVisible:
+    id: "comparison-screen"

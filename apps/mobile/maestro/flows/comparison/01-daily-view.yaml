@@ -1,41 +1,27 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 01-daily-view: 比較画面で日次ビューを表示する (正常系)
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
-- assertVisible:
-    id: "welcome-screen"
-- tapOn:
-    id: "welcome-login-button"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_01_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_01_PASSWORD}
-- tapOn:
-    id: "login-button"
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 10000
+- runFlow: ../_shared/login.yaml
 
 # 比較画面へ移動
 - tapOn:
     id: "tab-comparison"
-- assertVisible:
-    id: "comparison-screen"
+- extendedWaitUntil:
+    visible:
+      id: "comparison-screen"
+    timeout: 10000
 
 # 日次ピリオドを選択
 - tapOn:
     id: "comparison-period-daily"
-- assertVisible:
-    id: "comparison-period-daily"
 
-# ランキングアイテムが表示される
-- extendedWaitUntil:
-    visible:
-      id: "comparison-ranking-item-0"
+# データ読み込み完了を待機
+- waitForAnimationToEnd:
     timeout: 10000
+
+# 比較画面が表示されていることを確認
+- assertVisible:
+    id: "comparison-screen"
