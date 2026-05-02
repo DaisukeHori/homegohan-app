@@ -1,0 +1,39 @@
+appId: com.homegohan.app
+---
+# 正常 04: health_checkup OCR
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- assertVisible:
+    id: "meals-screen"
+
+- tapOn:
+    id: "meals-add-button"
+- assertVisible:
+    id: "meal-mode-select-screen"
+
+- tapOn:
+    id: "meal-mode-health-checkup"
+
+- tapOn:
+    id: "camera-capture-button"
+- extendedWaitUntil:
+    visible:
+      id: "ocr-analyzing-indicator"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: "health-checkup-form-screen"
+    timeout: 30000
+
+- assertVisible:
+    id: "checkup-result-fields"
+
+- tapOn:
+    id: "checkup-save-button"
+- extendedWaitUntil:
+    visible:
+      id: "meals-screen"
+    timeout: 10000

@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+---
+# Adversarial 22: 4K 画像アップロード
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-meal"
+
+- tapOn:
+    id: "camera-gallery-button"
+- extendedWaitUntil:
+    visible:
+      id: "gallery-picker-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "gallery-4k-photo"
+
+- extendedWaitUntil:
+    visible:
+      id: "image-upload-indicator"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: "meal-form-screen"
+    timeout: 60000
+
+- tapOn:
+    id: "meal-save-button"
+- extendedWaitUntil:
+    visible:
+      id: "meals-screen"
+    timeout: 10000

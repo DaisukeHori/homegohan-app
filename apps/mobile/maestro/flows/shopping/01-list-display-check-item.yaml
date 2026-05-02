@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+---
+# 正常 01: 買い物リスト表示 → アイテムチェック
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-menus"
+- assertVisible:
+    id: "menus-weekly-screen"
+
+- tapOn:
+    id: "shopping-list-tab"
+- assertVisible:
+    id: "shopping-list-screen"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-item"
+    timeout: 10000
+
+- tapOn:
+    id: "shopping-first-item-checkbox"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-first-item-checked"
+    timeout: 5000
+
+- assertVisible:
+    id: "shopping-checked-count"

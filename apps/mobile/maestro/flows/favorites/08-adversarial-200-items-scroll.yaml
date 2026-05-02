@@ -1,0 +1,33 @@
+appId: com.homegohan.app
+---
+# Adversarial 08: 200 件無限スクロール
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 10000
+
+- scroll:
+    direction: DOWN
+    duration: 3000
+
+- scroll:
+    direction: DOWN
+    duration: 3000
+
+- scroll:
+    direction: DOWN
+    duration: 3000
+
+- assertNotVisible:
+    id: "app-crash-screen"
+- assertVisible:
+    id: "favorites-screen"

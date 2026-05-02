@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+---
+# 正常 08: favorites 検索 → ハート解除
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- assertVisible:
+    id: "meals-screen"
+
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-search-input"
+- inputText: "ご飯"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000
+
+- tapOn:
+    id: "favorites-first-heart-button"
+- assertVisible:
+    id: "unfavorite-confirm-dialog"
+
+- tapOn:
+    id: "unfavorite-confirm-button"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000

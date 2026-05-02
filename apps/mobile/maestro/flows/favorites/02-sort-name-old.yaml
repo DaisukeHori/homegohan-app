@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+---
+# 正常 02: ソート切替 (名前順/古い順)
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-sort-button"
+- assertVisible:
+    id: "favorites-sort-menu"
+
+- tapOn:
+    id: "favorites-sort-name-asc"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000
+
+- tapOn:
+    id: "favorites-sort-button"
+- tapOn:
+    id: "favorites-sort-date-asc"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000
+
+- assertVisible:
+    id: "favorites-list-item"

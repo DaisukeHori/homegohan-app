@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+---
+# Adversarial 04: 200 件リスト表示・スクロール
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-menus"
+- assertVisible:
+    id: "menus-weekly-screen"
+
+- tapOn:
+    id: "shopping-list-tab"
+- assertVisible:
+    id: "shopping-list-screen"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-item"
+    timeout: 10000
+
+- scroll:
+    direction: DOWN
+    duration: 3000
+
+- scroll:
+    direction: DOWN
+    duration: 3000
+
+- scroll:
+    direction: DOWN
+    duration: 3000
+
+- scroll:
+    direction: UP
+    duration: 2000
+
+- assertNotVisible:
+    id: "app-crash-screen"
+- assertVisible:
+    id: "shopping-list-screen"

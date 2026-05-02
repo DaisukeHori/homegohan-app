@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+---
+# API 03: チェック PATCH fail → rollback
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-menus"
+- assertVisible:
+    id: "menus-weekly-screen"
+
+- tapOn:
+    id: "shopping-list-tab"
+- assertVisible:
+    id: "shopping-list-screen"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-item"
+    timeout: 10000
+
+- tapOn:
+    id: "shopping-first-item-checkbox"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-check-error-message"
+    timeout: 10000
+
+- assertNotVisible:
+    id: "shopping-first-item-checked"
+- assertVisible:
+    id: "shopping-first-item-checkbox"

@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+---
+# 正常 03: ハート解除 → 確認 cancel でキャンセル
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-first-heart-button"
+- assertVisible:
+    id: "unfavorite-confirm-dialog"
+
+- tapOn:
+    id: "unfavorite-cancel-button"
+
+- assertNotVisible:
+    id: "unfavorite-confirm-dialog"
+- assertVisible:
+    id: "favorites-first-heart-button"
+- assertVisible:
+    id: "favorites-list-item"

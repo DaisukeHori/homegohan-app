@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+---
+# 正常 02: 全件チェック → 0 件表示
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-menus"
+- assertVisible:
+    id: "menus-weekly-screen"
+
+- tapOn:
+    id: "shopping-list-tab"
+- assertVisible:
+    id: "shopping-list-screen"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-item"
+    timeout: 10000
+
+- tapOn:
+    id: "shopping-check-all-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-empty-state"
+    timeout: 10000
+
+- assertVisible:
+    id: "shopping-all-done-message"
+- assertNotVisible:
+    id: "shopping-list-item"

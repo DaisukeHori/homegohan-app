@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+---
+# API エラー 14: AI 解析 500 エラー
+- runFlow: ../_shared/login.yaml
+
+- setLocation:
+    latitude: 0
+    longitude: 0
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-meal"
+
+- tapOn:
+    id: "camera-capture-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-analyzing-indicator"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-analyze-error-message"
+    timeout: 30000
+
+- assertVisible:
+    id: "ai-analyze-retry-button"
+- assertNotVisible:
+    id: "meal-form-screen"

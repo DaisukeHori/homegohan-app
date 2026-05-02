@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+---
+# Adversarial 05: 高速連打 race condition
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-menus"
+- assertVisible:
+    id: "menus-weekly-screen"
+
+- tapOn:
+    id: "shopping-list-tab"
+- assertVisible:
+    id: "shopping-list-screen"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-item"
+    timeout: 10000
+
+- tapOn:
+    id: "shopping-first-item-checkbox"
+- tapOn:
+    id: "shopping-first-item-checkbox"
+- tapOn:
+    id: "shopping-first-item-checkbox"
+- tapOn:
+    id: "shopping-second-item-checkbox"
+- tapOn:
+    id: "shopping-second-item-checkbox"
+- tapOn:
+    id: "shopping-third-item-checkbox"
+
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-screen"
+    timeout: 10000
+
+- assertNotVisible:
+    id: "app-crash-screen"

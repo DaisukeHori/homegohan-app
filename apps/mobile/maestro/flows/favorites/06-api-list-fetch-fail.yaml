@@ -1,0 +1,19 @@
+appId: com.homegohan.app
+---
+# API 06: 一覧取得 fail → エラー表示
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-fetch-error-message"
+    timeout: 10000
+
+- assertVisible:
+    id: "favorites-retry-button"
+- assertNotVisible:
+    id: "favorites-list"
