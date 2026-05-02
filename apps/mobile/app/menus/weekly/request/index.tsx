@@ -197,7 +197,7 @@ export default function WeeklyRequestPage() {
   const themeOptions = themes.map((t) => ({ value: t, label: t }));
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="weekly-request-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="AIで週間献立を作成"
         subtitle="食材や好みに合わせた1週間の献立を自動生成"
@@ -211,6 +211,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ marginTop: spacing.sm }}>
           <Input
+            testID="weekly-request-start-date-input"
             label={weekStartDay === 'sunday' ? "週の日曜日推奨" : "週の月曜日推奨"}
             value={startDate}
             onChangeText={setStartDate}
@@ -226,6 +227,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
           <Button
+            testID="weekly-request-fridge-photo-button"
             onPress={uploadFridgePhotoAndAnalyze}
             disabled={isUploading || isSubmitting}
             loading={isUploading}
@@ -239,7 +241,7 @@ export default function WeeklyRequestPage() {
             </View>
           </Button>
           {fridgeImageUri ? (
-            <Image source={{ uri: fridgeImageUri }} style={{ width: "100%", height: 160, borderRadius: radius.md }} />
+            <Image testID="weekly-request-fridge-image-preview" source={{ uri: fridgeImageUri }} style={{ width: "100%", height: 160, borderRadius: radius.md }} />
           ) : null}
           {fridgeSummary ? (
             <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
@@ -271,12 +273,14 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
           <Input
+            testID="weekly-request-family-size-input"
             label="家族人数"
             value={familySize}
             onChangeText={setFamilySize}
             keyboardType="number-pad"
           />
           <Input
+            testID="weekly-request-cheat-day-toggle"
             label="チートデイ（任意）"
             value={cheatDay}
             onChangeText={setCheatDay}
@@ -290,6 +294,7 @@ export default function WeeklyRequestPage() {
               selected={selectedThemes}
               onSelect={toggleTheme}
               multiple
+              testIDPrefix="weekly-request-theme"
             />
           </View>
         </View>
@@ -302,6 +307,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ marginTop: spacing.sm }}>
           <Input
+            testID="weekly-request-note-input"
             value={note}
             onChangeText={setNote}
             placeholder="例: 野菜多め、魚を増やしたい"
@@ -313,6 +319,7 @@ export default function WeeklyRequestPage() {
 
       {/* 究極モードトグル */}
       <Pressable
+        testID="weekly-request-ultimate-toggle"
         onPress={() => setIsUltimateMode((prev) => !prev)}
         style={{
           flexDirection: "row",
@@ -361,7 +368,7 @@ export default function WeeklyRequestPage() {
         </View>
       </Pressable>
 
-      <Button onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
+      <Button testID="weekly-request-submit-button" onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           <Ionicons name={isUltimateMode ? "flash" : "sparkles"} size={18} color="#FFFFFF" />
           <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 16 }}>
