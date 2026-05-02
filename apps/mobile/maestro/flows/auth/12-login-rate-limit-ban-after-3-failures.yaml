@@ -29,15 +29,11 @@ env:
 - tapOn:
     text: "OK"
 
-# rate limit カウントダウンが表示されること
+# rate limit カウントダウンバナーが表示されること
 - extendedWaitUntil:
     visible:
-      text: "再試行まで"
+      id: "login-rate-limit-banner"
     timeout: 5000
-
-# login-button が disabled 状態 (ボタンテキストに秒数が表示される)
-- assertVisible:
-    text: "再試行まで"
 
 # ログイン画面に留まっていること
 - assertVisible:
