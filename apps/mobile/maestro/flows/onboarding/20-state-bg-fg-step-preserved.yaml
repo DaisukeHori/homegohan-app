@@ -5,6 +5,9 @@ env:
 ---
 # 20: 状態遷移 - BG→FG でオンボーディングのステップが保持されること
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

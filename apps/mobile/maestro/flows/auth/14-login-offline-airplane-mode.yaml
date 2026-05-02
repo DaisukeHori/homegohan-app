@@ -5,6 +5,9 @@ env:
 ---
 # 14: オフライン中 login submit (Airplane mode)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - tapOn:
     text: "ログイン"
 - assertVisible:

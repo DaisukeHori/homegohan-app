@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 02-week-start-switch: 週開始日を日曜→月曜に切り替える (正常系)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

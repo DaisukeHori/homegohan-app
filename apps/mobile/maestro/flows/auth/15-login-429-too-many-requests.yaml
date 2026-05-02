@@ -7,6 +7,9 @@ env:
 # Note: テスト環境では rate limit を意図的に超過させるか、
 #       mock server で 429 を返すシナリオを想定
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - tapOn:
     text: "ログイン"
 - assertVisible:

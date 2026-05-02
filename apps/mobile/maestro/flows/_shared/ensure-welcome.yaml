@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+---
+# _shared/ensure-welcome.yaml: どの画面からでもウェルカム画面を確保する共通フロー
+# Admin Console にいる場合: < ボタンでホームへ戻ってからタブ経由でログアウト
+# ホーム画面にいる場合: タブ経由でログアウト
+# ウェルカム画面にいる場合: 何もしない
+
+# Admin Console にいる場合は back ボタンでホームに戻る
+- runFlow:
+    when:
+      visible:
+        text: "Admin Console"
+    file: "./back-from-admin.yaml"
+
+# ホーム画面にいる場合はログアウト
+- runFlow:
+    when:
+      visible:
+        id: "home-screen"
+    file: "./logout.yaml"

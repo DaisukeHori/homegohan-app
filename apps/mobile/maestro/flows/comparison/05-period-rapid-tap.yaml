@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 05-period-rapid-tap: 期間切替ボタンを連打しても重複リクエストが発生しない (Adversarial)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

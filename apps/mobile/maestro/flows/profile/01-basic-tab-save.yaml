@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 01-basic-tab-save: プロフィール基本タブの情報を保存する (正常系)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

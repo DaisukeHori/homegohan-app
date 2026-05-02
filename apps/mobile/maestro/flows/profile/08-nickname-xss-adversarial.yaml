@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 08-nickname-xss-adversarial: ニックネームに XSS ペイロードを入力してもサニタイズされる (Adversarial)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

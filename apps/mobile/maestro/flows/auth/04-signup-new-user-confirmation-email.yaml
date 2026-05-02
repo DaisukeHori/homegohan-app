@@ -5,6 +5,9 @@ env:
 ---
 # 04: /signup で新規登録 → 確認メール送信 Alert
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

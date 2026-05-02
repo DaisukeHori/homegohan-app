@@ -5,6 +5,9 @@ env:
 # 25: rate limit countdown 中に BG → FG → 残り秒復元 (#532)
 # AsyncStorage から残り制限時間を復元する機能のテスト
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - tapOn:
     text: "ログイン"
 - assertVisible:
