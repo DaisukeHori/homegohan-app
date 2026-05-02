@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+---
+# 03-sports-tab-save: プロフィール競技タブの情報を保存する (正常系)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# プロフィール画面へ移動
+- tapOn:
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+
+# 競技タブを選択
+- tapOn:
+    id: "profile-tab-sports"
+- assertVisible:
+    id: "profile-tab-sports"
+
+# 競技種目を選択 (サッカー)
+- tapOn:
+    id: "profile-sports-category-soccer"
+
+# 保存ボタンをタップ
+- tapOn:
+    id: "profile-save-button"
+- extendedWaitUntil:
+    visible:
+      id: "profile-save-success-toast"
+    timeout: 10000

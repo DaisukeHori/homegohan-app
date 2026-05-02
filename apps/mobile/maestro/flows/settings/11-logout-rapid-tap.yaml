@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+---
+# 11-logout-rapid-tap: ログアウトボタンを連打しても二重実行されない (Adversarial)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-settings"
+- assertVisible:
+    id: "settings-screen"
+
+# ログアウトボタンを連打
+- tapOn:
+    id: "settings-logout-button"
+- tapOn:
+    id: "settings-logout-button"
+- tapOn:
+    id: "settings-logout-button"
+
+# 確認モーダルが 1 つだけ表示される
+- assertVisible:
+    id: "settings-logout-confirm-modal"
+
+# 確認してログアウト
+- tapOn:
+    id: "settings-logout-confirm-button"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 10000

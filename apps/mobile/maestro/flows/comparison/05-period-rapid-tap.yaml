@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+---
+# 05-period-rapid-tap: 期間切替ボタンを連打しても重複リクエストが発生しない (Adversarial)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 比較画面へ移動
+- tapOn:
+    id: "tab-comparison"
+- assertVisible:
+    id: "comparison-screen"
+
+# 期間ボタンを素早く連打
+- tapOn:
+    id: "comparison-period-daily"
+- tapOn:
+    id: "comparison-period-weekly"
+- tapOn:
+    id: "comparison-period-monthly"
+- tapOn:
+    id: "comparison-period-daily"
+- tapOn:
+    id: "comparison-period-weekly"
+
+# 最終的に weekly が選択された状態でデータが正常に表示される
+- extendedWaitUntil:
+    visible:
+      id: "comparison-ranking-item-0"
+    timeout: 20000
+- assertVisible:
+    id: "comparison-period-weekly"

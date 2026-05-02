@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+---
+# 09-notification-os-denied: OS レベルで通知権限が拒否されている場合 (Adversarial)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-settings"
+- assertVisible:
+    id: "settings-screen"
+
+# 通知 toggle をタップ (OS 側で拒否されているため警告が出る想定)
+- tapOn:
+    id: "settings-notifications-toggle"
+
+# OS 設定へ誘導するダイアログまたはエラートーストが表示される
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "notification-permission-denied-dialog"
+      - visible:
+          id: "notification-os-settings-toast"
+    timeout: 10000

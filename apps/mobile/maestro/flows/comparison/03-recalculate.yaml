@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+---
+# 03-recalculate: 再計算ボタンをタップしてランキングを更新する (正常系)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 比較画面へ移動
+- tapOn:
+    id: "tab-comparison"
+- assertVisible:
+    id: "comparison-screen"
+
+# 初回ロードを待機
+- extendedWaitUntil:
+    visible:
+      id: "comparison-ranking-item-0"
+    timeout: 10000
+
+# 再計算ボタンをタップ
+- tapOn:
+    id: "comparison-recalculate-button"
+
+# ローダーが表示されてから結果が更新される
+- extendedWaitUntil:
+    visible:
+      id: "comparison-ranking-item-0"
+    timeout: 15000

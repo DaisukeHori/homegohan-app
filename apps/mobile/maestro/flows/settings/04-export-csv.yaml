@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+---
+# 04-export-csv: CSV エクスポートを実行する (正常系)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-settings"
+- assertVisible:
+    id: "settings-screen"
+
+# CSV エクスポートをタップ
+- tapOn:
+    id: "settings-export-csv-row"
+- extendedWaitUntil:
+    visible:
+      id: "export-success-toast"
+    timeout: 15000
