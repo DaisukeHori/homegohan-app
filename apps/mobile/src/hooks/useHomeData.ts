@@ -370,7 +370,8 @@ export const useHomeData = (userId: string | undefined) => {
         );
       }
     } catch (e) {
-      console.error("Announcements fetch error:", e);
+      // E2E 環境でもネットワーク到達不可の場合があるため warn に変更 (LogBox 自動オープンを防ぐ)
+      console.warn("Announcements fetch error:", e);
     }
   }
 
