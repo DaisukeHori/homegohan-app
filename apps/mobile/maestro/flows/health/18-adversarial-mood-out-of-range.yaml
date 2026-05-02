@@ -1,0 +1,37 @@
+appId: com.homegohan.app
+---
+# Adversarial 18: 気分スコア 6（上限超過）と 0（下限未満）を試みる
+# UI はスコア 1-5 のみ選択可能なはずなのでボタン 6/0 は存在しないことを確認
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "health-quick-record-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-quick-modal"
+    timeout: 5000
+
+# スコア 6 のボタンが存在しないことを確認
+- assertNotVisible:
+    id: "health-quick-mood-6"
+
+# スコア 0 のボタンが存在しないことを確認
+- assertNotVisible:
+    id: "health-quick-mood-0"
+
+# 有効範囲内のスコアは選択可能であること（1-5 の確認）
+- assertVisible:
+    id: "health-quick-mood-1"
+- assertVisible:
+    id: "health-quick-mood-5"
+
+# モーダルを閉じる
+- tapOn:
+    id: "health-quick-modal-close-button"

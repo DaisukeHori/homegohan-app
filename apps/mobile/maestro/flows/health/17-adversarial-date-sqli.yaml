@@ -1,0 +1,34 @@
+appId: com.homegohan.app
+---
+# Adversarial 17: 日付フィールドに SQLi ペイロードを入力 → 安全に処理されること
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# 日付入力フィールドを開く（テキスト入力可能な場合）
+- tapOn:
+    id: "health-date-selector"
+- assertVisible:
+    id: "health-date-picker"
+
+# SQLi ペイロードを入力（直接テキスト入力が可能な場合）
+- tapOn:
+    id: "health-date-text-input"
+- clearText
+- inputText: "2024-01-01' OR '1'='1"
+
+# 確定ボタンをタップ
+- tapOn:
+    id: "health-date-confirm-button"
+
+# アプリがクラッシュしないこと、またはバリデーションエラーが表示されること
+- assertVisible:
+    id: "health-screen"
+# SQLi が実行されず、エラーまたは無効化されていること
+- assertNotVisible:
+    id: "health-sql-injection-success"

@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+---
+# バリデーション 12: 未来日付で記録を試みる → バリデーションエラー
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# 日付セレクターを開く
+- tapOn:
+    id: "health-date-selector"
+- assertVisible:
+    id: "health-date-picker"
+
+# 未来の日付に進もうとする（次の日ボタン）
+- tapOn:
+    id: "health-date-next-button"
+
+# 未来日付が選択不可（無効化）またはエラーが表示されること
+- assertVisible:
+    id: "health-date-future-error"

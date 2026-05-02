@@ -1,0 +1,33 @@
+appId: com.homegohan.app
+---
+# 正常 03: クイック記録モーダルを開いて閉じる
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# クイック記録ボタンをタップしてモーダルを開く
+- tapOn:
+    id: "health-quick-record-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-quick-modal"
+    timeout: 5000
+- assertVisible:
+    id: "health-quick-modal"
+
+# モーダルを閉じる（キャンセルまたはバックドロップタップ）
+- tapOn:
+    id: "health-quick-modal-close-button"
+- extendedWaitUntil:
+    notVisible:
+      id: "health-quick-modal"
+    timeout: 5000
+
+# ダッシュボードに戻っていることを確認
+- assertVisible:
+    id: "health-screen"

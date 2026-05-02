@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+---
+# Adversarial 21: insights に 200 件のデータが返る場合にアプリがクラッシュしないこと
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# インサイト画面へ遷移
+- tapOn:
+    id: "health-insights-nav-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-insights-screen"
+    timeout: 15000
+
+# 画面がクラッシュせずに表示されること
+- assertVisible:
+    id: "health-insights-screen"
+
+# 最初のインサイトアイテムが表示されること（大量データでもレンダリング可能）
+- assertVisible:
+    id: "health-insights-item-0"
+
+# スクロールしても動作すること
+- scroll
+- assertVisible:
+    id: "health-insights-screen"

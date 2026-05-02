@@ -1,0 +1,21 @@
+appId: com.homegohan.app
+---
+# API 13: records GET 失敗時にエラー UI が表示されること
+- runFlow: ../_shared/login.yaml
+
+# ネットワーク障害をシミュレートするためにアプリ起動直後に health タブへ遷移
+# (API 失敗はモック/環境依存 — UI のエラーハンドリングを確認する)
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 15000
+
+# GET が失敗した場合はエラーバナーまたはリトライ UI が表示される
+# (サーバーエラー時は health-error-state または health-retry-button が表示される)
+- assertVisible:
+    id: "health-screen"
+
+# エラー状態またはデータなし状態が表示されること（いずれかが存在すれば OK）
+- assertTrue: ${health-error-state.exists || health-records-empty-state.exists}

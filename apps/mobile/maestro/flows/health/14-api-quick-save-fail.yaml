@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+---
+# API 14: クイック記録の保存 API が失敗した場合のエラーハンドリング
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "health-quick-record-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-quick-modal"
+    timeout: 5000
+
+# 有効な値を入力
+- tapOn:
+    id: "health-quick-weight-input"
+- clearText
+- inputText: "65.0"
+- tapOn:
+    id: "health-quick-mood-3"
+- tapOn:
+    id: "health-quick-sleep-3"
+
+# 保存ボタンをタップ（API 失敗をシミュレート済みの環境前提）
+- tapOn:
+    id: "health-quick-save-button"
+
+# API 失敗時: モーダルが開いたまま or エラートーストが表示される
+- extendedWaitUntil:
+    visible:
+      id: "health-quick-save-error"
+    timeout: 10000
+- assertVisible:
+    id: "health-quick-save-error"

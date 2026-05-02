@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+---
+# 状態遷移 24: ストリーク達成日に達成バッジ・メッセージが表示されること
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# ストリーク画面へ遷移
+- tapOn:
+    id: "health-streaks-nav-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-streaks-screen"
+    timeout: 10000
+- assertVisible:
+    id: "health-streaks-screen"
+
+# ストリーク現在値が表示されていること
+- assertVisible:
+    id: "health-streaks-current-value"
+
+# ストリーク達成バッジまたは達成メッセージが表示されていること
+# (達成済みの環境では streak-achieved-badge が表示される)
+- assertVisible:
+    id: "health-streaks-achieved-badge"

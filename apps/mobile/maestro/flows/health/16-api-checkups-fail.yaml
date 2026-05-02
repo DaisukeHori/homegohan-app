@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+---
+# API 16: checkups API が失敗した場合のエラーハンドリング
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# 健診画面へ遷移
+- tapOn:
+    id: "health-checkups-nav-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-checkups-screen"
+    timeout: 15000
+
+# API 失敗時: エラーバナーまたはリトライ UI が表示される
+- assertVisible:
+    id: "health-checkups-screen"
+- assertVisible:
+    id: "health-checkups-error-state"
