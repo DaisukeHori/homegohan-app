@@ -22,10 +22,12 @@ env:
     id: "weekly-request-screen"
 - assertVisible:
     id: "weekly-request-note-input"
+- scroll
 - assertVisible:
     id: "weekly-request-submit-button"
 - tapOn:
     id: "weekly-request-note-input"
 - inputText: "和食メインでお願いします"
+- scroll
 - assertVisible:
     id: "weekly-request-submit-button"

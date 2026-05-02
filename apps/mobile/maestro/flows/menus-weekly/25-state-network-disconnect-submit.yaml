@@ -24,5 +24,6 @@ env:
 - tapOn:
     id: "weekly-request-note-input"
 - inputText: "オフライン送信テスト"
+- scroll
 - assertVisible:
     id: "weekly-request-submit-button"

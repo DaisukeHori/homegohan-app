@@ -19,11 +19,13 @@ env:
     timeout: 10000
 - assertVisible:
     id: "weekly-request-screen"
+- scroll
 - assertVisible:
     id: "weekly-request-ultimate-toggle"
 # Ultimate モードトグルをオン
 - tapOn:
     id: "weekly-request-ultimate-toggle"
 # submit ボタンが表示されること
+- scroll
 - assertVisible:
     id: "weekly-request-submit-button"
