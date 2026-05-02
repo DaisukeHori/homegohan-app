@@ -1,0 +1,24 @@
+appId: com.homegohan.app
+---
+# 07: login: email 空で submit → バリデーションエラー
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+# email を空のまま password だけ入力
+- tapOn:
+    id: "password-input"
+- inputText: "Password1"
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      text: "入力エラー"
+    timeout: 5000
+- assertVisible:
+    text: "メールアドレスとパスワードを入力してください"
+# ログイン画面に留まっていること
+- assertVisible:
+    id: "login-screen"

@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 02: admin ロールで login → /admin に redirect
+- launchApp:
+    clearState: true
+- assertVisible:
+    text: "ほめゴハン"
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_ADMIN_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_ADMIN_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      text: "Users"
+    timeout: 10000
+- assertNotVisible:
+    id: "home-screen"

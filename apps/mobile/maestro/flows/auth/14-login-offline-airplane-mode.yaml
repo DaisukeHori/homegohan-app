@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 14: オフライン中 login submit (Airplane mode)
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+
+# Airplane モードを有効化
+- runScript:
+    file: "../scripts/enable-airplane-mode.js"
+
+# submit
+- tapOn:
+    id: "login-button"
+
+# ネットワークエラーが表示されること
+- extendedWaitUntil:
+    visible:
+      text: "ログイン失敗"
+    timeout: 15000
+
+# ログイン画面に留まっていること
+- assertVisible:
+    id: "login-screen"
+
+# Airplane モードを解除
+- runScript:
+    file: "../scripts/disable-airplane-mode.js"

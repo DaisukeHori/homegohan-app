@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+---
+# 19: login email に XSS payload → クラッシュしないこと、スクリプト実行されないこと
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: "<script>alert('xss')</script>@evil.com"
+- tapOn:
+    id: "password-input"
+- inputText: "Password1"
+- tapOn:
+    id: "login-button"
+# 認証エラーになること (スクリプトが実行されないこと)
+- extendedWaitUntil:
+    visible:
+      text: "ログイン失敗"
+    timeout: 10000
+- assertNotVisible:
+    text: "xss"
+- assertNotVisible:
+    id: "home-screen"
+- assertVisible:
+    id: "login-screen"

@@ -1,0 +1,31 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+---
+# 22: login 中に BG → FG → 入力保持
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+
+# email を入力
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+
+# バックグラウンドへ
+- pressKey: HOME
+
+# フォアグラウンドへ復帰
+- launchApp:
+    clearState: false
+
+# login-screen が表示されていること
+- assertVisible:
+    id: "login-screen"
+
+# email 入力が保持されていること
+- assertVisible:
+    text: ${E2E_USER_EMAIL}

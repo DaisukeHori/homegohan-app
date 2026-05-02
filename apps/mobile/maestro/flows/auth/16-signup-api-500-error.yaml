@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+---
+# 16: signup: API 500 エラー
+# Note: Supabase が内部エラーを返した場合のエラーハンドリング確認
+# テスト環境では不正な URL 設定や、mock により 500 を再現
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "新規登録"
+- assertVisible:
+    text: "はじめまして！"
+- tapOn:
+    text: "email@example.com"
+- inputText: "api500test@example.com"
+- tapOn:
+    text: "8文字以上・英字と数字を含む"
+- inputText: "Valid1234"
+- tapOn:
+    text: "アカウント作成"
+- extendedWaitUntil:
+    visible:
+      text: "登録失敗"
+    timeout: 15000
+- assertVisible:
+    text: "はじめまして！"

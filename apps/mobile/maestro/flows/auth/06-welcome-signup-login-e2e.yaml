@@ -1,0 +1,58 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
+  E2E_NEW_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_NEW_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 06: welcome から signup 経由でログインまで一気通貫
+# Step 1: welcome 画面確認
+- launchApp:
+    clearState: true
+- assertVisible:
+    text: "ほめゴハン"
+- assertVisible:
+    text: "ログイン"
+- assertVisible:
+    text: "新規登録"
+
+# Step 2: signup へ進む
+- tapOn:
+    text: "新規登録"
+- assertVisible:
+    text: "はじめまして！"
+
+# Step 3: 新規登録フォーム送信
+- tapOn:
+    text: "email@example.com"
+- inputText: ${E2E_NEW_EMAIL}
+- tapOn:
+    text: "8文字以上・英字と数字を含む"
+- inputText: ${E2E_NEW_PASSWORD}
+- tapOn:
+    text: "アカウント作成"
+- extendedWaitUntil:
+    visible:
+      text: "確認してください"
+    timeout: 10000
+
+# Step 4: ダイアログを閉じてログイン画面へ
+- tapOn:
+    text: "OK"
+- assertVisible:
+    id: "login-screen"
+
+# Step 5: 既存ユーザーでログインして home 到達
+- clearText
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
