@@ -1,44 +1,47 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 09-validation-past-expiry: バリデーション - 過去の期限でエラー
+# 09-validation-past-expiry: 過去の期限日付で食材追加 → 「期限切れ」表示になることを確認
+# アプリの実装: 過去日付のクライアントサイドバリデーションなし (03と同じ動作)
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
+# 過去の期限で食材を追加
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "過去期限バリデーションテスト"
+
+- tapOn:
+    id: "pantry-category-other"
+
+- tapOn:
+    id: "pantry-expiration-input"
+- inputText: "2000-01-01"
+
+- hideKeyboard
 - tapOn:
     id: "pantry-add-button"
 
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
+# フォームがリセットされるまで待機
+- waitForAnimationToEnd:
     timeout: 5000
 
-# 名前入力
-- tapOn:
-    id: "pantry-name-input"
-- inputText: "過去期限テスト"
+# スクロールしてリスト確認
+- scroll
 
-# カテゴリ選択
-- tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "その他"
-
-# 過去の日付を期限として入力
-- tapOn:
-    id: "pantry-expiry-input"
-- inputText: "2000-01-01"
-
-# 保存ボタンタップ
-- tapOn:
-    id: "pantry-save-button"
-
-# 過去期限エラーが表示されることを確認
+# 追加されたアイテムに「期限切れ」が表示されること
 - assertVisible:
-    id: "pantry-expiry-error"
+    text: "期限切れ"

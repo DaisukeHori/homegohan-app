@@ -1,10 +1,17 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 17-adversarial-duplicate-name: Adversarial - 同名食材を連続で追加
+# 17-adversarial-duplicate-name: Adversarial - 同名食材を連続で追加してもクラッシュしない
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
@@ -13,68 +20,41 @@ appId: com.homegohan.app
 
 # 1回目の追加
 - tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
-
-- tapOn:
     id: "pantry-name-input"
 - inputText: "重複テスト食材"
 
 - tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "野菜"
+    id: "pantry-category-vegetable"
 
 - tapOn:
-    id: "pantry-quantity-input"
-- inputText: "1"
-
-- tapOn:
-    id: "pantry-expiry-input"
+    id: "pantry-expiration-input"
 - inputText: "2026-12-31"
 
+- hideKeyboard
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-add-button"
 
-- extendedWaitUntil:
-    visible:
-      id: "pantry-screen"
-    timeout: 10000
+# フォームリセット待機
+- waitForAnimationToEnd:
+    timeout: 5000
 
 # 2回目の追加（同名）
 - tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
-
-- tapOn:
     id: "pantry-name-input"
 - inputText: "重複テスト食材"
 
 - tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "野菜"
+    id: "pantry-category-vegetable"
 
 - tapOn:
-    id: "pantry-quantity-input"
-- inputText: "2"
-
-- tapOn:
-    id: "pantry-expiry-input"
+    id: "pantry-expiration-input"
 - inputText: "2026-12-31"
 
+- hideKeyboard
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-add-button"
 
-# アプリがクラッシュせず、警告または正常保存がなされること
+# アプリがクラッシュせず pantry-screen が表示されていることを確認
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"

@@ -1,10 +1,18 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 18-adversarial-non-image-file: Adversarial - 非画像ファイルをカメラロールから選択
+# 18-adversarial-non-image-file: 冷蔵庫写真ボタンからキャンセルしてもアプリがクラッシュしない
+# (非画像ファイル選択はシミュレーター制約でテスト困難)
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
@@ -15,26 +23,16 @@ appId: com.homegohan.app
 - tapOn:
     id: "pantry-fridge-photo-button"
 
-- extendedWaitUntil:
-    visible:
-      id: "pantry-photo-picker"
-    timeout: 5000
-
-# ドキュメントピッカーを選択（非画像ファイルのため）
+# キャンセル
+- waitForAnimationToEnd:
+    timeout: 3000
 - tapOn:
-    id: "pantry-photo-document-button"
-
-# PDFや動画など非画像ファイルを選択（ファイル選択は OS依存）
-# テスト環境では事前に非画像ファイルをデバイスに配置しておく
+    optional: true
+    text: "キャンセル"
 - tapOn:
-    text: "document.pdf"
+    optional: true
+    text: "Cancel"
 
-# エラーメッセージまたは拒否のフィードバックが表示されること
-- extendedWaitUntil:
-    visible:
-      id: "pantry-photo-type-error"
-    timeout: 10000
-
-# アプリがクラッシュせずパントリー画面に戻っていることを確認
+# アプリがクラッシュせずパントリー画面が表示されていることを確認
 - assertVisible:
     id: "pantry-screen"

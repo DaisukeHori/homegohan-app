@@ -1,23 +1,22 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 16-adversarial-long-name-300chars: Adversarial - 名前300文字入力
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
-
-- tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
 
 # 300文字の文字列を名前として入力
 - tapOn:
@@ -25,20 +24,19 @@ appId: com.homegohan.app
 - inputText: "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよ"
 
 - tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "その他"
+    id: "pantry-category-other"
 
 - tapOn:
-    id: "pantry-quantity-input"
+    id: "pantry-amount-input"
 - inputText: "1"
 
 - tapOn:
-    id: "pantry-expiry-input"
+    id: "pantry-expiration-input"
 - inputText: "2026-12-31"
 
+- hideKeyboard
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-add-button"
 
 # バリデーションエラーまたは正常保存のいずれかでアプリがクラッシュしないこと
 - extendedWaitUntil:

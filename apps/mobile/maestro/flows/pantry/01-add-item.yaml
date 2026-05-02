@@ -1,50 +1,46 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 01-add-item: 食材追加 正常系
 - runFlow: ../_shared/login.yaml
 
-# パントリー画面へ移動
+# パントリー画面へ移動 (ホーム画面からスクロールしてボタンをタップ)
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
-# 追加ボタンをタップ
-- tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
-
 # 名前入力
 - tapOn:
     id: "pantry-name-input"
 - inputText: "トマト"
 
-# カテゴリ選択
+# カテゴリ選択 (野菜)
 - tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "野菜"
+    id: "pantry-category-vegetable"
 
-# 数量入力
+# 量入力
 - tapOn:
-    id: "pantry-quantity-input"
+    id: "pantry-amount-input"
 - inputText: "3"
 
 # 期限入力
 - tapOn:
-    id: "pantry-expiry-input"
+    id: "pantry-expiration-input"
 - inputText: "2026-12-31"
 
-# 保存
+# キーボードを閉じてから追加
+- hideKeyboard
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-add-button"
 
 # 追加された食材がリストに表示されることを確認
 - extendedWaitUntil:

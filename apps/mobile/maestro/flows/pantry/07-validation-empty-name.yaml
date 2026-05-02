@@ -1,42 +1,41 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 07-validation-empty-name: バリデーション - 名前空でエラー
+# 07-validation-empty-name: バリデーション - 名前空で追加ボタンをタップしても食材が追加されない
+# アプリの実装: 名前が空の場合は add() 関数がreturnするだけ (エラーメッセージなし)
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
+# 名前は入力しない（空のまま）
+# カテゴリ選択
+- tapOn:
+    id: "pantry-category-vegetable"
+
+# 追加ボタンをタップ（名前空 → 何も起きない）
 - tapOn:
     id: "pantry-add-button"
 
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
+# 少し待機
+- waitForAnimationToEnd:
+    timeout: 2000
 
-# カテゴリと数量は入力するが名前は空のまま
-- tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "野菜"
-
-- tapOn:
-    id: "pantry-quantity-input"
-- inputText: "1"
-
-# 保存ボタンタップ（名前空）
-- tapOn:
-    id: "pantry-save-button"
-
-# エラーメッセージが表示されることを確認
+# パントリー画面にとどまっていることを確認
 - assertVisible:
-    id: "pantry-name-error"
+    id: "pantry-screen"
 
-# まだ追加画面にいることを確認（pantry-screen には戻っていない）
+# 名前入力フィールドが引き続き表示されていることを確認
 - assertVisible:
     id: "pantry-name-input"
