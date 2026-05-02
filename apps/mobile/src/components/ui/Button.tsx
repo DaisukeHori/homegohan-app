@@ -12,6 +12,7 @@ type ButtonProps = {
   loading?: boolean;
   size?: 'sm' | 'md' | 'lg';
   style?: ViewStyle;
+  testID?: string;
 };
 
 const VARIANT_STYLES: Record<ButtonVariant, { bg: string; bgPressed: string; text: string; border?: string }> = {
@@ -28,13 +29,14 @@ const SIZE_STYLES: Record<string, { paddingV: number; paddingH: number; fontSize
   lg: { paddingV: 16, paddingH: 20, fontSize: 16 },
 };
 
-export function Button({ children, onPress, variant = 'primary', disabled, loading, size = 'md', style }: ButtonProps) {
+export function Button({ children, onPress, variant = 'primary', disabled, loading, size = 'md', style, testID }: ButtonProps) {
   const v = VARIANT_STYLES[variant];
   const s = SIZE_STYLES[size];
   const isDisabled = disabled || loading;
 
   return (
     <Pressable
+      testID={testID}
       onPress={onPress}
       disabled={isDisabled}
       style={({ pressed }) => {
