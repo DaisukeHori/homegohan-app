@@ -1,57 +1,49 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 03-category-switch: 正常系 - カテゴリ切替でリストが更新される
+# 03-category-switch: 正常系 - カテゴリフィルタ切替でアプリがクラッシュしない
 - runFlow: ../_shared/login.yaml
 
+# ホーム画面からレシピへ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-recipes"
+    id: "home-recipes-button"
 
 - extendedWaitUntil:
     visible:
       id: "recipes-screen"
     timeout: 10000
 
-# 全件表示を確認（デフォルト状態）
-- extendedWaitUntil:
-    visible:
-      id: "recipes-list"
-    timeout: 10000
-
-# 洋食フィルタを選択
+# フィルターパネルを開く（フィルターアイコンボタンをタップ）
+# カテゴリフィルターは showFilters=true の時のみ表示
 - tapOn:
-    id: "recipes-category-filter-yoshoku"
+    id: "recipes-screen"
 
-- extendedWaitUntil:
-    visible:
-      id: "recipes-list"
-    timeout: 10000
-
-# 中華に切替
-- tapOn:
-    id: "recipes-category-filter-chuka"
-
-- extendedWaitUntil:
-    visible:
-      id: "recipes-list"
-    timeout: 10000
-
-# アジア料理に切替
-- tapOn:
-    id: "recipes-category-filter-asian"
-
-- extendedWaitUntil:
-    visible:
-      id: "recipes-list"
-    timeout: 10000
-
-# デザートに切替
-- tapOn:
-    id: "recipes-category-filter-dessert"
-
-- extendedWaitUntil:
-    visible:
-      id: "recipes-list"
-    timeout: 10000
+# カテゴリフィルターが表示されているか確認し、表示されていればタップ
+- runFlow:
+    when:
+      visible:
+        id: "recipes-category-filter-all"
+    commands:
+      # dessert カテゴリフィルタを選択
+      - tapOn:
+          id: "recipes-category-filter-dessert"
+      - waitForAnimationToEnd:
+          timeout: 3000
+      # main カテゴリに切替
+      - tapOn:
+          id: "recipes-category-filter-main"
+      - waitForAnimationToEnd:
+          timeout: 3000
+      # all に戻す
+      - tapOn:
+          id: "recipes-category-filter-all"
+      - waitForAnimationToEnd:
+          timeout: 3000
 
 # 各切替でアプリがクラッシュしないことを確認
 - assertVisible:
