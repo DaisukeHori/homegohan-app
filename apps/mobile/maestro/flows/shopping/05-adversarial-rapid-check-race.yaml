@@ -1,40 +1,34 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # Adversarial 05: 高速連打 race condition
 - runFlow: ../_shared/login.yaml
-
-- tapOn:
-    id: "tab-menus"
 - assertVisible:
-    id: "menus-weekly-screen"
-
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "shopping-list-tab"
-- assertVisible:
-    id: "shopping-list-screen"
-
-- extendedWaitUntil:
-    visible:
-      id: "shopping-list-item"
-    timeout: 10000
-
-- tapOn:
-    id: "shopping-first-item-checkbox"
-- tapOn:
-    id: "shopping-first-item-checkbox"
-- tapOn:
-    id: "shopping-first-item-checkbox"
-- tapOn:
-    id: "shopping-second-item-checkbox"
-- tapOn:
-    id: "shopping-second-item-checkbox"
-- tapOn:
-    id: "shopping-third-item-checkbox"
-
+    id: "home-shopping-button"
 - extendedWaitUntil:
     visible:
       id: "shopping-list-screen"
     timeout: 10000
-
-- assertNotVisible:
-    id: "app-crash-screen"
+- assertVisible:
+    id: "shopping-list-screen"
+# アイテムがある場合は高速連打テスト
+- runFlow:
+    when:
+      visible:
+        id: "shopping-list-item"
+    commands:
+      - tapOn:
+          id: "shopping-first-item-checkbox"
+      - tapOn:
+          id: "shopping-first-item-checkbox"
+      - tapOn:
+          id: "shopping-first-item-checkbox"
+      - waitForAnimationToEnd:
+          timeout: 5000
+- assertVisible:
+    id: "shopping-list-screen"

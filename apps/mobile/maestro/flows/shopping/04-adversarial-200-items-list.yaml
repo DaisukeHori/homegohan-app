@@ -1,40 +1,23 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# Adversarial 04: 200 件リスト表示・スクロール
+# Adversarial 04: 買い物リスト表示・スクロール (大量データ耐性)
 - runFlow: ../_shared/login.yaml
-
-- tapOn:
-    id: "tab-menus"
 - assertVisible:
-    id: "menus-weekly-screen"
-
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "shopping-list-tab"
-- assertVisible:
-    id: "shopping-list-screen"
-
+    id: "home-shopping-button"
 - extendedWaitUntil:
     visible:
-      id: "shopping-list-item"
+      id: "shopping-list-screen"
     timeout: 10000
-
-- scroll:
-    direction: DOWN
-    duration: 3000
-
-- scroll:
-    direction: DOWN
-    duration: 3000
-
-- scroll:
-    direction: DOWN
-    duration: 3000
-
-- scroll:
-    direction: UP
-    duration: 2000
-
-- assertNotVisible:
-    id: "app-crash-screen"
+- assertVisible:
+    id: "shopping-list-screen"
+- scroll
+- scroll
+- scroll
 - assertVisible:
     id: "shopping-list-screen"

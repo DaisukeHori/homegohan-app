@@ -476,7 +476,7 @@ export default function ShoppingListPage() {
     meal === 'breakfast' ? '朝食' : meal === 'lunch' ? '昼食' : '夕食';
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="shopping-list-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="買い物リスト"
         right={
@@ -942,6 +942,7 @@ export default function ShoppingListPage() {
         </Card>
       ) : items.length === 0 ? (
         <EmptyState
+          testID="shopping-empty-state"
           icon={<Ionicons name="cart-outline" size={48} color={colors.textMuted} />}
           message="買い物リストは空です。"
           actionLabel="献立から生成"
@@ -952,9 +953,10 @@ export default function ShoppingListPage() {
           {grouped.map(([category, arr]) => (
             <View key={category} style={{ gap: spacing.sm }}>
               <SectionHeader title={category} />
-              {arr.map((it) => (
+              {arr.map((it, idx) => (
                 <Card
                   key={it.id}
+                  testID={idx === 0 ? "shopping-list-item" : undefined}
                   style={{
                     backgroundColor: it.is_checked ? colors.successLight : colors.card,
                   }}
@@ -963,6 +965,7 @@ export default function ShoppingListPage() {
                     {/* Item header row */}
                     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                       <Pressable
+                        testID={idx === 0 ? (it.is_checked ? "shopping-first-item-checked" : "shopping-first-item-checkbox") : idx === 1 ? "shopping-second-item-checkbox" : idx === 2 ? "shopping-third-item-checkbox" : undefined}
                         onPress={() => toggleChecked(it.id, !it.is_checked)}
                         hitSlop={8}
                       >

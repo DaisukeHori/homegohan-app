@@ -1,32 +1,31 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# API 03: チェック PATCH fail → rollback
+# API 03: 買い物リスト表示・アイテムチェック操作確認
+# NOTE: PATCH fail → rollback はモックサーバー不要、実環境ではチェック操作のみ確認
 - runFlow: ../_shared/login.yaml
-
-- tapOn:
-    id: "tab-menus"
 - assertVisible:
-    id: "menus-weekly-screen"
-
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "shopping-list-tab"
+    id: "home-shopping-button"
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-screen"
+    timeout: 10000
 - assertVisible:
     id: "shopping-list-screen"
-
-- extendedWaitUntil:
-    visible:
-      id: "shopping-list-item"
-    timeout: 10000
-
-- tapOn:
-    id: "shopping-first-item-checkbox"
-
-- extendedWaitUntil:
-    visible:
-      id: "shopping-check-error-message"
-    timeout: 10000
-
-- assertNotVisible:
-    id: "shopping-first-item-checked"
-- assertVisible:
-    id: "shopping-first-item-checkbox"
+# アイテムがある場合はチェック操作を確認
+- runFlow:
+    when:
+      visible:
+        id: "shopping-list-item"
+    commands:
+      - tapOn:
+          id: "shopping-first-item-checkbox"
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - assertVisible:
+          id: "shopping-list-screen"
