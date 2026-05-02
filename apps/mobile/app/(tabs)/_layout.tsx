@@ -50,6 +50,7 @@ export default function TabsLayout() {
         options={{
           title: "ホーム",
           tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
+          tabBarButtonTestID: "tab-home",
         }}
       />
       <Tabs.Screen
@@ -57,6 +58,7 @@ export default function TabsLayout() {
         options={{
           title: "献立",
           tabBarIcon: ({ color, size }) => <Ionicons name="book-outline" size={size} color={color} />,
+          tabBarButtonTestID: "tab-menus",
         }}
       />
       <Tabs.Screen
@@ -86,6 +88,7 @@ export default function TabsLayout() {
         options={{
           title: "お気に入り",
           tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
+          tabBarButtonTestID: "tab-favorites",
         }}
       />
       <Tabs.Screen

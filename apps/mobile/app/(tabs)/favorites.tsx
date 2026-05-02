@@ -251,7 +251,7 @@ export default function FavoritesScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="favorites-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       {/* ヘッダー */}
       <View
         style={{

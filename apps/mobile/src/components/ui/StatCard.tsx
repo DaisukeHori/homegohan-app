@@ -11,11 +11,13 @@ type StatCardProps = {
   borderColor?: string;
   accentColor?: string;
   style?: ViewStyle;
+  testID?: string;
 };
 
-export function StatCard({ icon, label, value, unit, trend, borderColor, accentColor, style }: StatCardProps) {
+export function StatCard({ icon, label, value, unit, trend, borderColor, accentColor, style, testID }: StatCardProps) {
   return (
     <View
+      testID={testID}
       style={{
         flex: 1,
         backgroundColor: colors.card,

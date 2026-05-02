@@ -93,7 +93,7 @@ export default function MenusScreen() {
   const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: insets.top + spacing.md, padding: spacing.lg, gap: spacing.lg }}>
+    <ScrollView testID="menus-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: insets.top + spacing.md, padding: spacing.lg, gap: spacing.lg }}>
       <Text style={{ fontSize: 24, fontWeight: "800", color: colors.text, marginBottom: spacing.xs }}>献立</Text>
       {isLoading ? (
         <LoadingState />
@@ -103,10 +103,10 @@ export default function MenusScreen() {
             icon={<Ionicons name="restaurant-outline" size={48} color={colors.textMuted} />}
             message="今週の献立がまだありません"
           />
-          <Button onPress={() => router.push("/menus/weekly/request")}>
+          <Button testID="menus-request-button" onPress={() => router.push("/menus/weekly/request")}>
             AIで週間献立を作成
           </Button>
-          <Button variant="secondary" onPress={() => router.push("/menus/weekly")}>
+          <Button testID="menus-weekly-button" variant="secondary" onPress={() => router.push("/menus/weekly")}>
             週間献立を見る
           </Button>
         </View>
@@ -128,7 +128,7 @@ export default function MenusScreen() {
                 {days.map((d, i) => {
                   const rate = d.mealCount > 0 ? d.completedCount / d.mealCount : 0;
                   return (
-                    <View key={d.dayDate} style={{ alignItems: "center", gap: 4 }}>
+                    <View key={d.dayDate} testID={`menus-day-card-${d.dayDate}`} style={{ alignItems: "center", gap: 4 }}>
                       <Text style={{ fontSize: 11, fontWeight: "600", color: colors.textMuted }}>{DOW[i] ?? ""}</Text>
                       <View
                         style={{
@@ -156,10 +156,10 @@ export default function MenusScreen() {
           </Card>
 
           <View style={{ flexDirection: "row", gap: spacing.md }}>
-            <Button onPress={() => router.push("/menus/weekly")} style={{ flex: 1 }}>
+            <Button testID="menus-weekly-button" onPress={() => router.push("/menus/weekly")} style={{ flex: 1 }}>
               詳細を見る
             </Button>
-            <Button variant="secondary" onPress={() => router.push("/menus/weekly/request")} style={{ flex: 1 }}>
+            <Button testID="menus-request-button" variant="secondary" onPress={() => router.push("/menus/weekly/request")} style={{ flex: 1 }}>
               AIで再生成
             </Button>
           </View>
