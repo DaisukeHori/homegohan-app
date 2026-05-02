@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 01: welcome → start → オンボーディング全設問回答 → complete
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- assertVisible:
+    id: "onboarding-nickname-input"
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "テストユーザー"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-body-stats-screen"
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "170"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "65"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "30"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-nutrition-goal-screen"
+- tapOn:
+    id: "nutrition-goal-option-health_maintenance"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-servings-screen"
+- tapOn:
+    id: "servings-grid-2"
+- tapOn:
+    id: "onboarding-complete-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000

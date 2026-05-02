@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
+---
+# 05: AI サジェストを dismiss する
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-ai-suggestion-section"
+- assertVisible:
+    id: "home-ai-suggestion-section"
+- assertVisible:
+    id: "ai-suggestion-card"
+- tapOn:
+    id: "ai-suggestion-dismiss-button"
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-suggestion-card"
+    timeout: 5000
+- assertNotVisible:
+    id: "ai-suggestion-card"

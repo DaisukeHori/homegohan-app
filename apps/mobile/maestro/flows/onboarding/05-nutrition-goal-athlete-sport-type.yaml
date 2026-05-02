@@ -1,0 +1,49 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
+---
+# 05: nutrition_goal=athlete_performance 選択時に sport_type 動的設問が出ることを確認
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "アスリート太郎"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "175"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "70"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "25"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-nutrition-goal-screen"
+- tapOn:
+    id: "nutrition-goal-option-athlete_performance"
+- tapOn:
+    id: "onboarding-next-button"
+# athlete_performance 選択時は sport_type 設問が動的に追加される
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-sport-type-screen"
+    timeout: 8000
+- assertVisible:
+    id: "sport-type-options"
+- tapOn:
+    id: "sport-type-option-endurance"
+- tapOn:
+    id: "onboarding-next-button"

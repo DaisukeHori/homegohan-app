@@ -1,0 +1,29 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 21: 状態遷移 - ネット切断後 → オフラインバナー表示・既存データ保持
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+# データが表示されていることを確認
+- assertVisible:
+    id: "home-meals-section"
+# ネットワーク切断
+- toggleAirplaneMode: true
+- wait: 2000
+# オフラインバナーまたは通知が表示されること
+- assertVisible:
+    id: "offline-banner"
+# 既存データは引き続き表示されること
+- assertVisible:
+    id: "home-meals-section"
+# ネットワーク復元
+- toggleAirplaneMode: false
+- wait: 3000
+# オフラインバナーが消えること
+- extendedWaitUntil:
+    notVisible:
+      id: "offline-banner"
+    timeout: 10000

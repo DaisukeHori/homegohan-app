@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
+---
+# 16: API エラー - 画像アップロード失敗時にエラーメッセージ表示
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+- tapOn:
+    id: "ai-generate-fridge-image-button"
+- extendedWaitUntil:
+    visible:
+      id: "image-picker-modal"
+    timeout: 8000
+- tapOn:
+    id: "image-picker-camera-roll"
+- tapOn:
+    id: "image-picker-first-image"
+# ネットワーク切断でアップロード失敗
+- toggleAirplaneMode: true
+- extendedWaitUntil:
+    visible:
+      id: "image-upload-error-message"
+    timeout: 30000
+- assertVisible:
+    id: "image-upload-error-message"
+- toggleAirplaneMode: false

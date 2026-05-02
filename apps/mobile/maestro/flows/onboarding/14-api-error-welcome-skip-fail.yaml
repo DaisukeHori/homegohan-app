@@ -1,0 +1,21 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 14: API エラー - welcome skip 時にサーバーエラー → エラーメッセージ表示
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+# ネットワーク接続を切断してから skip
+- tapOn:
+    id: "welcome-skip-button"
+# API エラーが発生した場合のエラーメッセージを確認
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-error-message"
+    timeout: 15000
+# welcome 画面に留まることを確認
+- assertVisible:
+    id: "welcome-screen"

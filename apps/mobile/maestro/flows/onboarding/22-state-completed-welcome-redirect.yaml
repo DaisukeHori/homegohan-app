@@ -1,0 +1,18 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 22: 状態遷移 - オンボーディング完了後に welcome 画面に直接アクセス → home へリダイレクト
+- launchApp:
+    clearState: false
+# オンボーディング完了済みユーザーは welcome 画面ではなく home 画面に遷移する
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+# welcome 画面が表示されないことを確認
+- assertNotVisible:
+    id: "welcome-screen"
+- assertNotVisible:
+    id: "onboarding-screen"

@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
+---
+# 18: Adversarial - dish_name が null の食事データ → クラッシュせず表示
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-meals-section"
+- assertVisible:
+    id: "home-meals-section"
+# dish_name が null でも crash せずフォールバック表示されること
+- assertNotVisible:
+    text: "null"
+# アプリがクラッシュしないことを確認
+- wait: 2000
+- assertVisible:
+    id: "home-screen"

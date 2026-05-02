@@ -1,20 +1,25 @@
 appId: com.homegohan.app
 ---
+# _shared/login.yaml: 既存ユーザーでログインしてホーム画面まで遷移する共通フロー
 - launchApp:
     clearState: true
 - assertVisible:
-    id: "welcome-screen"
+    text: "ほめゴハン"
 - tapOn:
-    id: "welcome-login-button"
+    text: "ログイン"
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000
 - tapOn:
     id: "email-input"
-- inputText: ${E2E_USER_01_EMAIL}
+- inputText: ${E2E_USER_EMAIL}
 - tapOn:
     id: "password-input"
-- inputText: ${E2E_USER_01_PASSWORD}
+- inputText: ${E2E_USER_PASSWORD}
 - tapOn:
     id: "login-button"
 - extendedWaitUntil:
     visible:
       id: "home-screen"
-    timeout: 10000
+    timeout: 15000

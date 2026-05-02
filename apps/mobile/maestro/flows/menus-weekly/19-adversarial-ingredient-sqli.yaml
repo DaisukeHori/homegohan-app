@@ -1,0 +1,31 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 19: Adversarial - 食材フィールドに SQL インジェクション → サニタイズ
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+- tapOn:
+    id: "ai-generate-ingredients-input"
+- inputText: "'; DROP TABLE meal_plans; --"
+- tapOn:
+    id: "ai-generate-submit-button"
+# SQL インジェクションが実行されず処理されること
+- wait: 5000
+# アプリがクラッシュしないことを確認
+- assertVisible:
+    id: "menus-weekly-screen"
+- assertNotVisible:
+    text: "DROP TABLE"

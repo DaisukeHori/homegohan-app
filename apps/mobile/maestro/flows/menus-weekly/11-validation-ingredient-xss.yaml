@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 11: バリデーション - 食材フィールドに XSS ペイロード入力 → サニタイズ
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+# 食材フィールドに XSS を入力
+- tapOn:
+    id: "ai-generate-ingredients-input"
+- inputText: "<script>alert('xss')</script>トマト"
+- tapOn:
+    id: "ai-generate-submit-button"
+# XSS が実行されず処理されること
+- assertNotVisible:
+    text: "<script>"
+# エラーまたはサニタイズされて処理されること
+- wait: 3000
+- assertVisible:
+    id: "menus-weekly-screen"

@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
+---
+# 08: バリデーション - body_stats に文字列入力 → エラーメッセージ表示
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "テスト"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-body-stats-screen"
+# 身長に文字列入力
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "abc"
+# 体重に文字列入力
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "xyz"
+- tapOn:
+    id: "onboarding-next-button"
+# エラーメッセージが表示されることを確認
+- assertVisible:
+    id: "onboarding-height-error"
+- assertVisible:
+    id: "onboarding-weight-error"
+- assertNotVisible:
+    id: "onboarding-nutrition-goal-screen"

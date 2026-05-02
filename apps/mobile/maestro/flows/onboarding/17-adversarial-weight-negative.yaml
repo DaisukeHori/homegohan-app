@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 17: Adversarial - 体重に -5 入力 → バリデーションエラー
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "負数テスト"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-body-stats-screen"
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "170"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "-5"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "30"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-weight-error"
+- assertNotVisible:
+    id: "onboarding-nutrition-goal-screen"

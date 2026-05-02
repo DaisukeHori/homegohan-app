@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 17: Adversarial - expiringItems 50件のレスポンス → クラッシュなく表示できること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+# 期限切れ食材セクションをスクロールして確認
+- scrollTo:
+    id: "home-expiring-items-section"
+- assertVisible:
+    id: "home-expiring-items-section"
+# 50件あってもスクロール可能でクラッシュしないことを確認
+- scroll:
+    direction: DOWN
+    speed: SLOW
+- wait: 2000
+- scroll:
+    direction: UP
+    speed: SLOW
+# 画面が依然として表示されていることを確認
+- assertVisible:
+    id: "home-screen"

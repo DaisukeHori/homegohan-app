@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 24: 状態遷移 - weekStartDay を月曜→日曜に切替えてカレンダーが再描画されること
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-date-picker"
+# 設定画面に移動して週の開始日を変更
+- tapOn:
+    id: "tab-settings"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 8000
+- tapOn:
+    id: "settings-week-start-day"
+- assertVisible:
+    id: "week-start-day-options"
+- tapOn:
+    id: "week-start-day-sunday"
+# メニュータブに戻る
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+# カレンダーが日曜始まりで再描画されることを確認
+- assertVisible:
+    id: "weekly-date-picker-sunday-start"

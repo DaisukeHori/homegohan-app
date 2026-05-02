@@ -1,0 +1,21 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
+---
+# 16: Adversarial - announcements 20件のレスポンス → クラッシュなく表示できること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-announcements-section"
+- assertVisible:
+    id: "home-announcements-section"
+# 20件のお知らせがあってもスクロール可能でクラッシュしないことを確認
+- scroll:
+    direction: DOWN
+    speed: SLOW
+- wait: 2000
+# 画面が依然として表示されていることを確認
+- assertVisible:
+    id: "home-announcements-section"

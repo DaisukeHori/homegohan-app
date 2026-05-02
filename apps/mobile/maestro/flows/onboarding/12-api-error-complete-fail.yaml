@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 12: API エラー - complete 送信時にサーバーエラー → エラーメッセージ表示・画面保持
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "APIエラーテスト"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "170"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "65"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "30"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "nutrition-goal-option-health_maintenance"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "servings-grid-2"
+# complete ボタンを押すと API が 500 を返す (ネットワーク遮断 or モック)
+- setLocation:
+    lat: 0
+    long: 0
+- tapOn:
+    id: "onboarding-complete-button"
+# エラー表示が出ることを確認
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-error-message"
+    timeout: 15000
+# ホーム画面に遷移しないことを確認
+- assertNotVisible:
+    id: "home-screen"

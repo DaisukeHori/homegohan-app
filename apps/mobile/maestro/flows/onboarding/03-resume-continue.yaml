@@ -1,0 +1,22 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 03: 途中中断したオンボーディングを resume=true で再開 → continue
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-resume-screen"
+    timeout: 10000
+- assertVisible:
+    id: "onboarding-resume-continue-button"
+- tapOn:
+    id: "onboarding-resume-continue-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- assertVisible:
+    id: "onboarding-next-button"

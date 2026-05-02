@@ -1,0 +1,29 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
+---
+# 06: 週間グラフをタップしてモーダルが表示されること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-weekly-graph-section"
+- assertVisible:
+    id: "home-weekly-graph-section"
+- tapOn:
+    id: "weekly-graph-chart"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-graph-modal"
+    timeout: 8000
+- assertVisible:
+    id: "weekly-graph-modal"
+- assertVisible:
+    id: "weekly-graph-modal-details"
+- tapOn:
+    id: "weekly-graph-modal-close-button"
+- extendedWaitUntil:
+    notVisible:
+      id: "weekly-graph-modal"
+    timeout: 5000

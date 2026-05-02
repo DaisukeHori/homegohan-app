@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
+---
+# 08: お知らせカードを dismiss する
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-announcements-section"
+- assertVisible:
+    id: "home-announcements-section"
+- assertVisible:
+    id: "announcement-card-0"
+- tapOn:
+    id: "announcement-card-0-dismiss-button"
+- extendedWaitUntil:
+    notVisible:
+      id: "announcement-card-0"
+    timeout: 5000
+- assertNotVisible:
+    id: "announcement-card-0"

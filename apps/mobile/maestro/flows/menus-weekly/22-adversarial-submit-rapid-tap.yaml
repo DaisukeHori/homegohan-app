@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 22: Adversarial - submit ボタン連打 → 重複リクエスト防止
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+- tapOn:
+    id: "ai-generate-theme-input"
+- inputText: "連打テスト"
+# submit ボタンを連打
+- tapOn:
+    id: "ai-generate-submit-button"
+- tapOn:
+    id: "ai-generate-submit-button"
+- tapOn:
+    id: "ai-generate-submit-button"
+- tapOn:
+    id: "ai-generate-submit-button"
+- tapOn:
+    id: "ai-generate-submit-button"
+# ローディング中は submit ボタンが disabled になること
+- assertNotVisible:
+    id: "ai-generate-submit-button"
+# 1回のみリクエストが送信されてクラッシュしないこと
+- wait: 5000
+- assertVisible:
+    id: "menus-weekly-screen"

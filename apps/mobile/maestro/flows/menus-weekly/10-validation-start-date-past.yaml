@@ -1,0 +1,36 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 10: バリデーション - 開始日に過去の日付を入力 → エラー
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+# 開始日に過去の日付を入力
+- tapOn:
+    id: "ai-generate-start-date-picker"
+- extendedWaitUntil:
+    visible:
+      id: "date-picker-modal"
+    timeout: 5000
+# 1年前の日付を選択 (過去日付)
+- tapOn:
+    id: "date-picker-prev-year"
+- tapOn:
+    id: "date-picker-confirm"
+- tapOn:
+    id: "ai-generate-submit-button"
+# エラーメッセージが表示されること
+- assertVisible:
+    id: "ai-generate-start-date-error"

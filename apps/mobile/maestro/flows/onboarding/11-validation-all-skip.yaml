@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 11: バリデーション - 全問 skip ボタンで飛ばした場合の動作確認
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+# nickname 設問をスキップ
+- tapOn:
+    id: "onboarding-skip-button"
+# body stats 設問をスキップ
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-skip-button"
+# nutrition goal 設問をスキップ
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-nutrition-goal-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-skip-button"
+# servings 設問をスキップ
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-servings-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-skip-button"
+# 全問スキップ後もホーム画面に到達することを確認
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
