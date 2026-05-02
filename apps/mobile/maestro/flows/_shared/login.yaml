@@ -22,3 +22,10 @@ appId: com.homegohan.app
     visible:
       id: "home-screen"
     timeout: 15000
+# Expo dev build の Console Error/Warning オーバーレイを閉じる
+- tapOn:
+    text: "Dismiss"
+    optional: true
+- tapOn:
+    text: "Minimize"
+    optional: true
