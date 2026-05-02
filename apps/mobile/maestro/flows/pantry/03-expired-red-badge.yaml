@@ -1,47 +1,47 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 03-expired-red-badge: 期限切れ食材に赤バッジが表示されることを確認
+# 03-expired-red-badge: 期限切れ食材に「期限切れ」表示が出ることを確認
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
-# 期限切れ食材を追加（過去の日付 - テスト用に直接設定）
+# 期限切れ食材を追加（過去の日付）
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "期限切れ食材E2E"
+
+- tapOn:
+    id: "pantry-category-other"
+
+- tapOn:
+    id: "pantry-expiration-input"
+- inputText: "2020-01-01"
+
+# キーボードを閉じてからボタンをタップ
+- hideKeyboard
 - tapOn:
     id: "pantry-add-button"
 
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
+# フォームがリセットされるまで待機
+- waitForAnimationToEnd:
     timeout: 5000
 
-- tapOn:
-    id: "pantry-name-input"
-- inputText: "期限切れ食材テスト"
+# スクロールしてリストを表示
+- scroll
 
-- tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "その他"
-
-- tapOn:
-    id: "pantry-quantity-input"
-- inputText: "1"
-
-- tapOn:
-    id: "pantry-expiry-input"
-- inputText: "2020-01-01"
-
-- tapOn:
-    id: "pantry-save-button"
-
-# 期限切れアイテムに赤いバッジ・マーカーが表示されることを確認
-- extendedWaitUntil:
-    visible:
-      id: "pantry-badge-expired"
-    timeout: 10000
+# 期限切れアイテムに「期限切れ」テキストが表示されることを確認
+- assertVisible:
+    text: "期限切れ"

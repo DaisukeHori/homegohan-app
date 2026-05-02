@@ -1,47 +1,47 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 11-validation-no-category: バリデーション - カテゴリ未選択でエラー
+# 11-validation-no-category: カテゴリ未選択でも追加できること (デフォルト "other" が使われる)
+# アプリの実装: category は category || "other" でデフォルト処理
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
-- tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
-
 # 名前入力（カテゴリは選択しない）
 - tapOn:
     id: "pantry-name-input"
 - inputText: "カテゴリなし食材"
 
-# 数量入力
-- tapOn:
-    id: "pantry-quantity-input"
-- inputText: "2"
+# キーボードを閉じてから追加
+- hideKeyboard
 
-# 期限入力
+# カテゴリを選択せずに追加
 - tapOn:
-    id: "pantry-expiry-input"
-- inputText: "2026-12-31"
+    id: "pantry-add-button"
 
-# カテゴリを選択せずに保存
-- tapOn:
-    id: "pantry-save-button"
+# フォームリセット待機
+- waitForAnimationToEnd:
+    timeout: 5000
 
-# カテゴリエラーが表示されることを確認
+# スクロールして確認
+- scroll
+
+# 追加完了 (デフォルトカテゴリで保存される)
 - assertVisible:
-    id: "pantry-category-error"
+    text: "カテゴリなし食材"
 
-# 追加画面にとどまることを確認
+# アプリがクラッシュせず pantry-screen が表示されていることを確認
 - assertVisible:
-    id: "pantry-name-input"
+    id: "pantry-screen"

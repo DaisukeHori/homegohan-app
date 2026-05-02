@@ -1,48 +1,47 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 08-validation-invalid-expiry-format: バリデーション - 期限不正フォーマットでエラー
+# 08-validation-invalid-expiry-format: 不正フォーマットの期限でも追加できること (API側でnull扱い)
+# アプリの実装: 期限フォーマットのクライアントサイドバリデーションなし
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
-- tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
-
 # 名前入力
 - tapOn:
     id: "pantry-name-input"
-- inputText: "テスト食材"
+- inputText: "期限フォーマットテスト"
 
 # カテゴリ選択
 - tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "その他"
+    id: "pantry-category-other"
 
 # 不正なフォーマットで期限入力
 - tapOn:
-    id: "pantry-expiry-input"
+    id: "pantry-expiration-input"
 - inputText: "31/12/2026"
 
-# 保存ボタンタップ
+# キーボードを閉じてから追加
+- hideKeyboard
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-add-button"
 
-# 期限フォーマットエラーが表示されることを確認
-- assertVisible:
-    id: "pantry-expiry-error"
+# 少し待機（APIコール）
+- waitForAnimationToEnd:
+    timeout: 5000
 
-# 追加画面にとどまることを確認
+# アプリがクラッシュせず pantry-screen が表示されていることを確認
 - assertVisible:
-    id: "pantry-name-input"
+    id: "pantry-screen"

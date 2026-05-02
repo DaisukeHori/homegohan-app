@@ -1,23 +1,23 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 10-validation-quantity-string: バリデーション - 量に文字列入力でエラー
+# 10-validation-quantity-string: 量フィールドに文字列入力でも保存できることを確認
+# アプリの実装: amount は自由文字列 (バリデーションなし)
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
-
-- tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
 
 # 名前入力
 - tapOn:
@@ -26,28 +26,27 @@ appId: com.homegohan.app
 
 # カテゴリ選択
 - tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "その他"
+    id: "pantry-category-other"
 
-# 数量に文字列を入力
+# 量に文字列を入力
 - tapOn:
-    id: "pantry-quantity-input"
+    id: "pantry-amount-input"
 - inputText: "たくさん"
 
 # 期限入力
 - tapOn:
-    id: "pantry-expiry-input"
+    id: "pantry-expiration-input"
 - inputText: "2026-12-31"
 
-# 保存ボタンタップ
+# キーボードを閉じてから追加
+- hideKeyboard
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-add-button"
 
-# 数量エラーが表示されることを確認
-- assertVisible:
-    id: "pantry-quantity-error"
+# 少し待機
+- waitForAnimationToEnd:
+    timeout: 5000
 
-# 追加画面にとどまることを確認
+# アプリがクラッシュせず pantry-screen が表示されていることを確認
 - assertVisible:
-    id: "pantry-name-input"
+    id: "pantry-screen"

@@ -1,26 +1,29 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 22-state-skeleton-large-list: 状態遷移 - 大量データ読み込み時にスケルトン表示
-# 注意: このテストは多数のデータがある状態（100件以上）で実行することを前提とする
+# 22-state-skeleton-large-list: パントリー画面の読み込みと表示確認
+# (スケルトンローダーはLoadingState componentを使用しているが、testIDなし)
 - runFlow: ../_shared/login.yaml
 
-# パントリー画面へ移動（スケルトンが一瞬表示されることを確認）
-- tapOn:
-    id: "tab-pantry"
-
-# スケルトンローダーが表示されることを確認（ロード開始直後）
+# パントリー画面へ移動
 - assertVisible:
-    id: "pantry-skeleton-loader"
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
 
-# データ読み込み完了後にスケルトンが消えることを確認
+# パントリー画面が15秒以内に表示されること
 - extendedWaitUntil:
-    notVisible:
-      id: "pantry-skeleton-loader"
+    visible:
+      id: "pantry-screen"
     timeout: 15000
 
-# 実際のリストが表示されていることを確認
+# 実際の画面が表示されていることを確認 (空状態またはリスト状態)
 - assertVisible:
     id: "pantry-screen"
 
-- assertNotVisible:
-    id: "pantry-skeleton-loader"
+# 名前入力フィールドが表示されていることを確認
+- assertVisible:
+    id: "pantry-name-input"

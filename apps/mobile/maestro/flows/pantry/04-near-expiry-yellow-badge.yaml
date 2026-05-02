@@ -1,48 +1,52 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 04-near-expiry-yellow-badge: 期限間近食材に黄バッジが表示されることを確認
+# 04-near-expiry-yellow-badge: 期限間近食材に「期限間近」バッジが表示されることを確認
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
-# 期限間近食材を追加（明日の日付）
-- tapOn:
-    id: "pantry-add-button"
-
-- extendedWaitUntil:
-    visible:
-      id: "pantry-name-input"
-    timeout: 5000
-
+# 期限間近食材を追加（3日後の日付: 2026-05-05）
 - tapOn:
     id: "pantry-name-input"
 - inputText: "期限間近テスト食材"
 
 - tapOn:
-    id: "pantry-category-select"
-- tapOn:
-    text: "その他"
+    id: "pantry-category-other"
 
 - tapOn:
-    id: "pantry-quantity-input"
+    id: "pantry-amount-input"
 - inputText: "1"
 
-# 3日後の日付（期限間近とみなされる範囲）
 - tapOn:
-    id: "pantry-expiry-input"
-- inputText: "2026-05-04"
+    id: "pantry-expiration-input"
+- inputText: "2026-05-05"
 
+- hideKeyboard
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-add-button"
 
-# 期限間近アイテムに黄色バッジ・マーカーが表示されることを確認
+# フォームがリセットされるまで待機（入力値が消える）
 - extendedWaitUntil:
-    visible:
-      id: "pantry-badge-near-expiry"
+    notVisible:
+      text: "期限間近テスト食材"
     timeout: 10000
+
+# スクロールしてリストを表示
+- scroll
+
+# 期限間近アイテムに「期限間近」テキストが表示されることを確認
+- assertVisible:
+    text: "期限間近"

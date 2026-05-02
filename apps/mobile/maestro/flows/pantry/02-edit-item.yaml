@@ -1,43 +1,69 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 02-edit-item: 食材編集 正常系
+# 前提: 先に01-add-itemで食材が追加済みであること
 - runFlow: ../_shared/login.yaml
 
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-pantry"
+    id: "home-pantry-button"
 
 - extendedWaitUntil:
     visible:
       id: "pantry-screen"
     timeout: 10000
 
-# 最初のアイテムをタップして編集画面へ
-- tapOn:
-    id: "pantry-item-0"
+# アイテムがない場合は先に追加
+- runFlow:
+    when:
+      visible:
+        id: "pantry-empty"
+    commands:
+      - tapOn:
+          id: "pantry-name-input"
+      - inputText: "トマト"
+      - tapOn:
+          id: "pantry-category-vegetable"
+      - tapOn:
+          id: "pantry-add-button"
+      - extendedWaitUntil:
+          visible:
+            text: "トマト"
+          timeout: 10000
 
+# 編集ボタンをタップ（pantry-item-edit-{uuid}形式のIDをregexでマッチ）
+- scroll
+- tapOn:
+    id: "pantry-item-edit-.*"
+
+# 編集フォームが表示されるのを待つ
 - extendedWaitUntil:
     visible:
-      id: "pantry-name-input"
+      id: "pantry-edit-name-input"
     timeout: 5000
 
 # 名前を変更
 - tapOn:
-    id: "pantry-name-input"
-- clearText
+    id: "pantry-edit-name-input"
+- eraseText: 50
 - inputText: "にんじん"
 
-# 数量を変更
-- tapOn:
-    id: "pantry-quantity-input"
-- clearText
-- inputText: "5"
+# キーボードを閉じる
+- hideKeyboard
 
-# 保存
+# 保存ボタンをタップ (キーボード消去後に表示される)
 - tapOn:
-    id: "pantry-save-button"
+    id: "pantry-edit-save-button"
 
-# 変更後の食材名が表示されることを確認
-- extendedWaitUntil:
-    visible:
-      text: "にんじん"
-    timeout: 10000
+# 変更後の食材名が表示されることを確認 (スクロールして確認)
+- waitForAnimationToEnd:
+    timeout: 3000
+- scroll
+- assertVisible:
+    text: "にんじん"
