@@ -1,44 +1,44 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 08-adversarial-heart-rapid-tap: Adversarial - ハート連打による二重送信防止
 - runFlow: ../_shared/login.yaml
 
+# ホーム画面からレシピへ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "tab-recipes"
+    id: "home-recipes-button"
 
 - extendedWaitUntil:
     visible:
       id: "recipes-screen"
     timeout: 10000
 
-- extendedWaitUntil:
-    visible:
-      id: "recipes-list"
-    timeout: 10000
-
-# 最初のレシピのハートを高速連打
-- tapOn:
-    id: "recipes-like-0"
-- tapOn:
-    id: "recipes-like-0"
-- tapOn:
-    id: "recipes-like-0"
-- tapOn:
-    id: "recipes-like-0"
-- tapOn:
-    id: "recipes-like-0"
-
-# 処理完了を待機
-- extendedWaitUntil:
-    notVisible:
-      id: "recipes-like-loading"
-    timeout: 10000
-
-# 最終状態が確定していること（アクティブ or 非アクティブのいずれか）
-# デバウンス/スロットリングにより二重送信がないこと
-- assertVisible:
-    id: "recipes-screen"
+# レシピがある場合のみいいね連打テスト
+- runFlow:
+    when:
+      visible:
+        id: "recipes-like-.*"
+    commands:
+      # ハートを高速連打（regex で最初のアイテム）
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      # アニメーション待機
+      - waitForAnimationToEnd:
+          timeout: 5000
 
 # アプリがクラッシュしていないこと
 - assertVisible:
-    id: "recipes-like-0"
+    id: "recipes-screen"

@@ -61,4 +61,8 @@ Simulator: iPhone-E2E-01
 |--------|------|----------|------|
 | shopping/01-05 (全5フロー) | PASS | PR #651 | フロー全面書き直し・home-shopping-button常時表示化・shopping-list testID追加 |
 
+### pantry (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| pantry/01-22 (全22フロー) | PASS | PR #653 | tab-pantry→home-pantry-button・testID修正・hideKeyboard追加・env ブロック追加 |
 
