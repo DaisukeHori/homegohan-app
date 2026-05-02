@@ -19,6 +19,13 @@ env:
     timeout: 10000
 - assertVisible:
     id: "weekly-screen"
+# 週間献立画面はStack Navigatorで開かれるためタブバーが非表示 → ナビゲーション戻るボタン
+- tapOn:
+    point: "5%,8%"
+- extendedWaitUntil:
+    visible:
+      id: "menus-screen"
+    timeout: 10000
 # 設定画面に移動して週の開始日を変更
 - tapOn:
     id: "tab-profile"
@@ -50,7 +57,13 @@ env:
     timeout: 10000
 - assertVisible:
     id: "weekly-screen"
-# 月曜に戻す (テスト後のクリーンアップ)
+# 月曜に戻す (テスト後のクリーンアップ) → ナビゲーション戻るボタン
+- tapOn:
+    point: "5%,8%"
+- extendedWaitUntil:
+    visible:
+      id: "menus-screen"
+    timeout: 10000
 - tapOn:
     id: "tab-profile"
 - extendedWaitUntil:

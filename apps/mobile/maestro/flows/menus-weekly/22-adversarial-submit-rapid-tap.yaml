@@ -22,6 +22,7 @@ env:
 - tapOn:
     id: "weekly-request-note-input"
 - inputText: "連打テスト"
+- scroll
 # submit ボタンを連打
 - tapOn:
     id: "weekly-request-submit-button"

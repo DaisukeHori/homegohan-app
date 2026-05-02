@@ -22,5 +22,6 @@ env:
     timeout: 10000
 - assertVisible:
     id: "weekly-request-screen"
+- scroll
 - assertVisible:
     id: "weekly-request-submit-button"

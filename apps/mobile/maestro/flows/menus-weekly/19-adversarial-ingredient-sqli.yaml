@@ -22,6 +22,7 @@ env:
 - tapOn:
     id: "weekly-request-note-input"
 - inputText: "'; DROP TABLE meal_plans; --"
+- scroll
 - tapOn:
     id: "weekly-request-submit-button"
 # SQL インジェクションが実行されず、アプリがクラッシュしないこと
