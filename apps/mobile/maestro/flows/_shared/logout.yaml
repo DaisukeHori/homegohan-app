@@ -7,11 +7,14 @@ appId: com.homegohan.app
     point: "97%,91%"
     optional: true
 - tapOn:
+    point: "97%,91%"
+    optional: true
+- tapOn:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
       id: "profile-screen"
-    timeout: 10000
+    timeout: 15000
 - scroll
 - tapOn:
     id: "profile-settings-button"
