@@ -1,0 +1,31 @@
+appId: com.homegohan.app
+env:
+  E2E_EXISTING_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_NEW_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 11: signup: 既存 email 重複 → silent-success 検出 (#533)
+# Supabase は重複メールで identities: [] を返し、アプリがそれを検出してエラー表示
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "新規登録"
+- assertVisible:
+    text: "はじめまして！"
+- tapOn:
+    text: "email@example.com"
+- inputText: ${E2E_EXISTING_EMAIL}
+- tapOn:
+    text: "8文字以上・英字と数字を含む"
+- inputText: ${E2E_NEW_PASSWORD}
+- tapOn:
+    text: "アカウント作成"
+- extendedWaitUntil:
+    visible:
+      text: "登録できませんでした"
+    timeout: 10000
+- assertVisible:
+    text: "このメールアドレスは既に登録されています"
+- tapOn:
+    text: "ログインへ"
+- assertVisible:
+    id: "login-screen"

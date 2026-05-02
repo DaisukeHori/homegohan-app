@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 03: onboarding 未完了 user で login → /onboarding/resume へ
+- launchApp:
+    clearState: true
+- assertVisible:
+    text: "ほめゴハン"
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      text: "続きから再開"
+    timeout: 10000
+- assertNotVisible:
+    id: "home-screen"

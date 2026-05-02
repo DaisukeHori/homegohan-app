@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+---
+# 24: Google OAuth キャンセル → login 画面戻り
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+
+# Google ログインボタンをタップ
+- tapOn:
+    text: "Googleでログイン"
+
+# WebBrowser が開かれるので、すぐにキャンセル (Back ボタンまたは dismiss)
+# iOS: ブラウザが閉じられると type=cancel が返る
+# Android: Back キーでキャンセル
+- pressKey: BACK
+
+# login 画面に戻ること
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 8000
+
+# home-screen には遷移しないこと
+- assertNotVisible:
+    id: "home-screen"

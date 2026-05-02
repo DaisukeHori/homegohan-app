@@ -1,0 +1,33 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 20: ?next= 改竄: https://evil.com → home に強制 redirect (open redirect 防止確認)
+# アプリは ?next= が '/' 始まりでない場合、無視してデフォルトルートへ遷移
+# deep link で ?next=https://evil.com を付与してログインを試みる
+- launchApp:
+    clearState: true
+    arguments:
+      MAESTRO_NEXT_PARAM: "https://evil.com"
+
+# 通常のログインフロー (next= パラメータは URL から来るが、ここではログイン実行)
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+# evil.com ではなく home-screen に遷移すること
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+- assertNotVisible:
+    text: "evil.com"

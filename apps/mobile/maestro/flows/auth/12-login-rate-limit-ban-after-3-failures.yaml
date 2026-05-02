@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+---
+# 12: login: 30 秒 rate limit ban (3 回失敗 → 待機 banner)
+# 1 回目失敗でクライアント side rate limit が発動する実装 (#532)
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+
+# 1 回目: 失敗
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: "WrongPass1"
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      text: "ログイン失敗"
+    timeout: 10000
+- tapOn:
+    text: "OK"
+
+# rate limit カウントダウンが表示されること
+- extendedWaitUntil:
+    visible:
+      text: "再試行まで"
+    timeout: 5000
+
+# login-button が disabled 状態 (ボタンテキストに秒数が表示される)
+- assertVisible:
+    text: "再試行まで"
+
+# ログイン画面に留まっていること
+- assertVisible:
+    id: "login-screen"

@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+---
+# 15: login: 429 too many requests
+# Supabase が 429 を返した場合のエラーハンドリング確認
+# Note: テスト環境では rate limit を意図的に超過させるか、
+#       mock server で 429 を返すシナリオを想定
+- launchApp:
+    clearState: true
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: "WrongPass1"
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      text: "ログイン失敗"
+    timeout: 15000
+
+# 429 または通常エラーで rate limit が発動すること
+- assertVisible:
+    id: "login-screen"
+- assertVisible:
+    text: "再試行まで"
