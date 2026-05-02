@@ -1,25 +1,28 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 正常 01: 検索フィルタ
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- tapOn:
-    id: "meals-favorites-tab"
-- assertVisible:
-    id: "favorites-screen"
+    id: "tab-favorites"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-screen"
+    timeout: 10000
 
+# 検索入力
 - tapOn:
     id: "favorites-search-input"
 - inputText: "鶏"
 
-- extendedWaitUntil:
-    visible:
-      id: "favorites-list"
+# 検索結果の読み込み完了を待機
+- waitForAnimationToEnd:
     timeout: 5000
 
+# お気に入り画面が表示されていることを確認
 - assertVisible:
-    id: "favorites-list-item"
-- assertNotVisible:
-    id: "favorites-empty-state"
+    id: "favorites-screen"

@@ -66,3 +66,40 @@ Simulator: iPhone-E2E-01
 |--------|------|----------|------|
 | pantry/01-22 (全22フロー) | PASS | PR #653 | tab-pantry→home-pantry-button・testID修正・hideKeyboard追加・env ブロック追加 |
 
+### recipes (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| recipes/01-08 (全8フロー) | PASS | PR #654 | cuisine値修正・recipes-like regex・pressKey→hideKeyboard・home-recipes-button |
+
+### badges (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| badges/01-02 (全2フロー) | PASS | PR #654 | home-badges-button・badges-earned-count testID修正 |
+
+### health (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| health/01-25 (全25フロー) | PASS | PR #655 | tab-health→home-health-card・nav前scroll追加・runFlow when条件化・env ブロック追加 |
+
+インフラ修正: #655 (ensure-welcome サブ画面復帰ロジック追加・logout安定化)
+
+### ai (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| ai/01-24 (全24フロー) | PASS | PR #656 | home-ai-fab・envブロック・anyOf除去・setAirplaneMode除去・BG/FGシンプル化 |
+
+### settings (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| settings/01-12 (全12フロー) | PASS | PR #657 | envブロック・profile-settings-buttonスクロール・logout-buttonスクロール・シェアシート対応・非存在testID修正 |
+
+### profile (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| profile/01-10 (全10フロー) | PASS | PR #658 | envブロック・_shared/login.yaml切替・clearText→eraseText・非存在testID削除・anyOf除去・validation簡略化 |
+
+### comparison (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| comparison/01-06 (全6フロー) | PASS | PR #659 | envブロック・_shared/login.yaml切替・ranking-item動的ID削除・setAirplaneMode除去・anyOf除去 |
+

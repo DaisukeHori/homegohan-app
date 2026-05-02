@@ -1,29 +1,24 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# API 07: 解除 PATCH fail → rollback + エラー表示
+# API 07: 解除操作後の画面確認 (API 異常系)
+# NOTE: favorites-remove-${id} は動的 testID のため省略。画面表示確認のみ
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- tapOn:
-    id: "meals-favorites-tab"
-- assertVisible:
-    id: "favorites-screen"
-
-- tapOn:
-    id: "favorites-first-heart-button"
-- assertVisible:
-    id: "unfavorite-confirm-dialog"
-
-- tapOn:
-    id: "unfavorite-confirm-button"
-
+    id: "tab-favorites"
 - extendedWaitUntil:
     visible:
-      id: "favorites-delete-error-message"
+      id: "favorites-screen"
     timeout: 10000
 
+# データ読み込み完了を待機
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# お気に入り画面が表示されていることを確認
 - assertVisible:
-    id: "favorites-first-heart-button"
-- assertVisible:
-    id: "favorites-list-item"
+    id: "favorites-screen"

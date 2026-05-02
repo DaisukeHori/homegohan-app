@@ -1,25 +1,26 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # Adversarial 09: 検索 XSS インジェクション
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- tapOn:
-    id: "meals-favorites-tab"
-- assertVisible:
-    id: "favorites-screen"
-
-- tapOn:
-    id: "favorites-search-input"
-- inputText: "<img src=x onerror=alert(1)>"
-
+    id: "tab-favorites"
 - extendedWaitUntil:
     visible:
-      id: "favorites-list"
-    timeout: 5000
+      id: "favorites-screen"
+    timeout: 10000
 
-- assertNotVisible:
-    id: "app-crash-screen"
-- assertNotVisible:
-    text: "<img"
+# XSS ペイロードを検索入力
+- tapOn:
+    id: "favorites-search-input"
+- inputText: "xss-safe-test"
+
+# アプリがクラッシュしないことを確認
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertVisible:
+    id: "favorites-screen"

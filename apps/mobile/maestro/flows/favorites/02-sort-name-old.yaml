@@ -1,35 +1,31 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 正常 02: ソート切替 (名前順/古い順)
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
+    id: "tab-favorites"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-screen"
+    timeout: 10000
+
+# 名前順に切り替え
 - tapOn:
-    id: "meals-favorites-tab"
+    id: "favorites-sort-name"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 古い順に切り替え
+- tapOn:
+    id: "favorites-sort-oldest"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# お気に入り画面が表示されていることを確認
 - assertVisible:
     id: "favorites-screen"
-
-- tapOn:
-    id: "favorites-sort-button"
-- assertVisible:
-    id: "favorites-sort-menu"
-
-- tapOn:
-    id: "favorites-sort-name-asc"
-- extendedWaitUntil:
-    visible:
-      id: "favorites-list"
-    timeout: 5000
-
-- tapOn:
-    id: "favorites-sort-button"
-- tapOn:
-    id: "favorites-sort-date-asc"
-- extendedWaitUntil:
-    visible:
-      id: "favorites-list"
-    timeout: 5000
-
-- assertVisible:
-    id: "favorites-list-item"

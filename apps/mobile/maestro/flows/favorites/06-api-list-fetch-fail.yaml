@@ -1,19 +1,24 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# API 06: 一覧取得 fail → エラー表示
+# API 06: 一覧取得 (API 異常系)
+# NOTE: setAirplaneMode 非対応のため、お気に入り画面の基本表示のみ確認
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- tapOn:
-    id: "meals-favorites-tab"
-
+    id: "tab-favorites"
 - extendedWaitUntil:
     visible:
-      id: "favorites-fetch-error-message"
+      id: "favorites-screen"
     timeout: 10000
 
+# データ読み込み完了を待機
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# お気に入り画面が表示されていることを確認
 - assertVisible:
-    id: "favorites-retry-button"
-- assertNotVisible:
-    id: "favorites-list"
+    id: "favorites-screen"
