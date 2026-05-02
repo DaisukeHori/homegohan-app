@@ -2,18 +2,30 @@ appId: com.homegohan.app
 ---
 # _shared/logout.yaml: タブバーのプロファイルタブ → 設定 → ログアウトの共通フロー
 # 前提: ホーム画面または任意の画面 (タブバーが見える状態)
+# Expo dev build の "Open debugger" バナーがタブバーをオーバーレイする場合があるため先に閉じる
+- tapOn:
+    point: "97%,91%"
+    optional: true
 - tapOn:
     id: "tab-profile"
-- assertVisible:
-    id: "profile-screen"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scroll
 - tapOn:
     id: "profile-settings-button"
-- assertVisible:
-    id: "settings-screen"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+- scroll
 - tapOn:
     id: "settings-logout-button"
-- assertVisible:
-    id: "settings-logout-confirm-modal"
+- extendedWaitUntil:
+    visible:
+      id: "settings-logout-confirm-button"
+    timeout: 5000
 - tapOn:
     id: "settings-logout-confirm-button"
 - extendedWaitUntil:
