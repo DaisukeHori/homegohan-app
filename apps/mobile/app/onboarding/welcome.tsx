@@ -27,6 +27,7 @@ export default function OnboardingWelcome() {
 
   return (
     <ScrollView
+      testID="onboarding-welcome-screen"
       contentContainerStyle={styles.container}
       style={styles.scroll}
     >
@@ -90,6 +91,7 @@ export default function OnboardingWelcome() {
       {/* Buttons */}
       <View style={styles.buttonGroup}>
         <Pressable
+          testID="onboarding-start-button"
           onPress={() => router.push("/onboarding/questions")}
           style={({ pressed }) => [
             styles.primaryButton,
@@ -101,6 +103,7 @@ export default function OnboardingWelcome() {
         </Pressable>
 
         <Pressable
+          testID="onboarding-skip-button"
           onPress={handleSkip}
           style={styles.skipButton}
           disabled={isSkipping}

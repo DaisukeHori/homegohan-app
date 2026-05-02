@@ -10,6 +10,7 @@ type ProgressBarProps = {
   label?: string;
   showPercentage?: boolean;
   style?: ViewStyle;
+  testID?: string;
 };
 
 export function ProgressBar({
@@ -21,11 +22,12 @@ export function ProgressBar({
   label,
   showPercentage,
   style,
+  testID,
 }: ProgressBarProps) {
   const pct = max > 0 ? Math.min(Math.round((value / max) * 100), 100) : 0;
 
   return (
-    <View style={[{ gap: 4 }, style]}>
+    <View testID={testID} style={[{ gap: 4 }, style]}>
       {(label || showPercentage) && (
         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
           {label ? <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textLight }}>{label}</Text> : null}
