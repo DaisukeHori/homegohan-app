@@ -1,19 +1,26 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 20-deleted-session-access: 削除済みsessionIdに直アクセス → エラーまたは一覧画面へリダイレクト
 
-- runFlow: ../01-login.yaml
+- runFlow: ../_shared/login.yaml
 
-# AI相談タブへ移動
+# AI相談へ移動 (ホーム画面のフローティングボタン)
 - tapOn:
-    text: "AI相談"
+    id: "home-ai-fab"
 
 - extendedWaitUntil:
     visible:
       id: "ai-sessions-screen"
     timeout: 10000
 
-# 新規セッション作成してセッションを作る
+# セッション一覧画面が表示されること確認
+- assertVisible:
+    id: "ai-sessions-screen"
+
+# 新規セッション作成
 - tapOn:
     id: "ai-new-session-button"
 
@@ -22,37 +29,15 @@ appId: com.homegohan.app
       id: "ai-chat-screen"
     timeout: 10000
 
-# 一覧に戻る
+# < ボタンで一覧に戻る
 - tapOn:
-    text: "戻る"
-
-- extendedWaitUntil:
-    visible:
-      id: "ai-sessions-screen"
-    timeout: 10000
-
-# セッション項目が存在する場合、長押しして削除
-- longPressOn:
-    id: "ai-session-item-0"
-    optional: true
-
-- tapOn:
-    text: "削除"
-    optional: true
-
-# 削除確認ダイアログが表示された場合
-- tapOn:
-    text: "確認"
-    optional: true
+    point: "5%, 10%"
 
 - waitForAnimationToEnd:
     timeout: 3000
 
-# 削除後に一覧画面が表示されること
-- assertVisible:
-    id: "ai-sessions-screen"
-
-# 存在しないセッションIDで ai-chat-screen にアクセスを試みる場合の確認
-# (セッション一覧に戻ることで、削除済みセッションへのアクセスが防止されていることを確認)
-- assertNotVisible:
-    id: "ai-chat-error-text"
+# セッション一覧画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 15000

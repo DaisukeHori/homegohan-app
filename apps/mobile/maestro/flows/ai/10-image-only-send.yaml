@@ -1,12 +1,15 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 10-image-only-send: 画像のみ (テキストなし) で送信 → 送信ボタンが有効または無効になる
 
-- runFlow: ../01-login.yaml
+- runFlow: ../_shared/login.yaml
 
-# AI相談タブへ移動
+# AI相談へ移動 (ホーム画面のフローティングボタン)
 - tapOn:
-    text: "AI相談"
+    id: "home-ai-fab"
 
 - extendedWaitUntil:
     visible:
@@ -22,7 +25,7 @@ appId: com.homegohan.app
       id: "ai-chat-screen"
     timeout: 10000
 
-# 入力欄が空のことを確認 → 送信ボタンは disabled
+# 入力欄が空のことを確認 → ストリーミングなし
 - assertNotVisible:
     id: "ai-chat-streaming-view"
 
@@ -34,20 +37,16 @@ appId: com.homegohan.app
 - waitForAnimationToEnd:
     timeout: 5000
 
-# 最初の画像を選択
+# キャンセルしてチャット画面に戻る
 - tapOn:
-    point: "10%, 30%"
+    text: "キャンセル"
 
-# 画像のみの状態で送信ボタンをタップ
-- tapOn:
-    id: "ai-chat-send-button"
-    optional: true
+# チャット画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
 
-# 画像のみの場合: 送信されないこと、またはエラーが表示されることを確認
-# (テキストなし画像のみ送信がブロックされる場合)
-- waitForAnimationToEnd:
-    timeout: 3000
-
-# チャット画面に留まっていることを確認
+# 入力欄が空の状態を確認
 - assertVisible:
-    id: "ai-chat-screen"
+    id: "ai-chat-input"

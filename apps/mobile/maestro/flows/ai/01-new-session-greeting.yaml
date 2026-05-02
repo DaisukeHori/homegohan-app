@@ -1,15 +1,15 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 01-new-session-greeting: 新規セッション → 挨拶メッセージが表示される
 
-- runFlow: ../01-login.yaml
+- runFlow: ../_shared/login.yaml
 
-# AI相談タブへ移動
+# AI相談へ移動 (ホーム画面のフローティングボタン)
 - tapOn:
-    id: "ai-sessions-screen"
-    optional: true
-- tapOn:
-    text: "AI相談"
+    id: "home-ai-fab"
 
 # セッション一覧画面が表示されるまで待機
 - extendedWaitUntil:

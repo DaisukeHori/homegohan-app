@@ -1,12 +1,15 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 07-status-active-only: status=active のセッションのみ一覧に表示される
 
-- runFlow: ../01-login.yaml
+- runFlow: ../_shared/login.yaml
 
-# AI相談タブへ移動
+# AI相談へ移動 (ホーム画面のフローティングボタン)
 - tapOn:
-    text: "AI相談"
+    id: "home-ai-fab"
 
 - extendedWaitUntil:
     visible:
@@ -22,17 +25,10 @@ appId: com.homegohan.app
     id: "ai-new-session-button"
 
 # 一覧をスクロールして確認
-- scroll:
-    direction: DOWN
-    speed: 40
+- scroll
 
 - waitForAnimationToEnd:
     timeout: 2000
-
-# 画面上部に戻る
-- scroll:
-    direction: UP
-    speed: 40
 
 # セッション一覧画面が引き続き表示されていることを確認
 - assertVisible:
