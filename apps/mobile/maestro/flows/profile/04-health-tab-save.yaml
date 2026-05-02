@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+---
+# 04-health-tab-save: プロフィール健康タブの情報を保存する (正常系)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# プロフィール画面へ移動
+- tapOn:
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+
+# 健康タブを選択
+- tapOn:
+    id: "profile-tab-health"
+- assertVisible:
+    id: "profile-tab-health"
+
+# アレルギー情報を入力
+- tapOn:
+    id: "profile-allergy-input"
+- clearText
+- inputText: "乳製品"
+
+# 保存ボタンをタップ
+- tapOn:
+    id: "profile-save-button"
+- extendedWaitUntil:
+    visible:
+      id: "profile-save-success-toast"
+    timeout: 10000

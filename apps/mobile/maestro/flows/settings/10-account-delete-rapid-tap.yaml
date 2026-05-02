@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+---
+# 10-account-delete-rapid-tap: アカウント削除ボタンを連打しても二重実行されない (Adversarial)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-settings"
+- assertVisible:
+    id: "settings-screen"
+
+# アカウント削除ボタンを連打
+- tapOn:
+    id: "settings-delete-account-button"
+- tapOn:
+    id: "settings-delete-account-button"
+- tapOn:
+    id: "settings-delete-account-button"
+
+# 確認モーダルが 1 つだけ表示される (重複しない)
+- assertVisible:
+    id: "settings-delete-account-confirm-modal"
+
+# キャンセルして画面を復元
+- tapOn:
+    id: "settings-delete-account-cancel-button"
+- assertNotVisible:
+    id: "settings-delete-account-confirm-modal"

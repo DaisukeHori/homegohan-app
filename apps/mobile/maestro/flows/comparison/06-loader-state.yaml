@@ -1,0 +1,51 @@
+appId: com.homegohan.app
+---
+# 06-loader-state: 比較画面でローダーが正しく表示・非表示される (状態遷移)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 比較画面へ移動 (ローダーが表示されることを確認)
+- tapOn:
+    id: "tab-comparison"
+- assertVisible:
+    id: "comparison-screen"
+
+# ローダーが表示される
+- assertVisible:
+    id: "comparison-loader"
+
+# データ取得後にローダーが消えてコンテンツが表示される
+- extendedWaitUntil:
+    visible:
+      id: "comparison-ranking-item-0"
+    timeout: 15000
+- assertNotVisible:
+    id: "comparison-loader"
+
+# 再計算で再度ローダーが表示される
+- tapOn:
+    id: "comparison-recalculate-button"
+- assertVisible:
+    id: "comparison-loader"
+- extendedWaitUntil:
+    visible:
+      id: "comparison-ranking-item-0"
+    timeout: 15000
+- assertNotVisible:
+    id: "comparison-loader"

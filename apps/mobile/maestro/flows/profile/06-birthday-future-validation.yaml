@@ -1,0 +1,49 @@
+appId: com.homegohan.app
+---
+# 06-birthday-future-validation: 生年月日に未来の日付を入力した場合のバリデーションエラー (バリデーション)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# プロフィール画面へ移動
+- tapOn:
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+
+# 基本タブを選択
+- tapOn:
+    id: "profile-tab-basic"
+
+# 生年月日に未来の日付を入力 (2099-12-31)
+- tapOn:
+    id: "profile-birthday-input"
+- clearText
+- inputText: "2099-12-31"
+
+# 保存ボタンをタップ
+- tapOn:
+    id: "profile-save-button"
+
+# バリデーションエラーが表示される
+- assertVisible:
+    id: "profile-birthday-error-message"
+
+# 保存成功トーストは表示されない
+- assertNotVisible:
+    id: "profile-save-success-toast"

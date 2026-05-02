@@ -1,0 +1,51 @@
+appId: com.homegohan.app
+---
+# 12-notification-toggle-bg-fg: 通知 toggle 中にバックグラウンド→フォアグラウンドしても状態が保持される (状態遷移)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-settings"
+- assertVisible:
+    id: "settings-screen"
+
+# 通知 toggle をタップ
+- tapOn:
+    id: "settings-notifications-toggle"
+
+# アプリをバックグラウンドに移動
+- runFlow:
+    commands:
+      - pressKey: HOME
+
+# 少し待機してフォアグラウンドに戻す
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 5000
+- openLink: "homegohan://"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+
+# toggle の状態が維持されていることを確認
+- assertVisible:
+    id: "settings-notifications-toggle"

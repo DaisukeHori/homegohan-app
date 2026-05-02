@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+---
+# 06-logout-cancel: ログアウト確認モーダルで cancel する (バリデーション)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-settings"
+- assertVisible:
+    id: "settings-screen"
+
+# ログアウトボタンをタップ
+- tapOn:
+    id: "settings-logout-button"
+
+# 確認モーダルが表示される
+- assertVisible:
+    id: "settings-logout-confirm-modal"
+
+# キャンセルをタップ
+- tapOn:
+    id: "settings-logout-cancel-button"
+
+# モーダルが閉じてホーム画面は設定のまま
+- assertNotVisible:
+    id: "settings-logout-confirm-modal"
+- assertVisible:
+    id: "settings-screen"

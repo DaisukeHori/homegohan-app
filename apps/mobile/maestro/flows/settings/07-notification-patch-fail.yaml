@@ -1,0 +1,41 @@
+appId: com.homegohan.app
+---
+# 07-notification-patch-fail: 通知 PATCH API が失敗した場合のエラー表示 (API 異常系)
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-login-button"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_01_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_01_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-settings"
+- assertVisible:
+    id: "settings-screen"
+
+# ネットワークをオフライン状態にしてから toggle をタップ
+- setAirplaneMode: true
+- tapOn:
+    id: "settings-notifications-toggle"
+
+# エラートーストが表示される
+- extendedWaitUntil:
+    visible:
+      id: "notification-update-error-toast"
+    timeout: 10000
+
+# ネットワークを復旧
+- setAirplaneMode: false
