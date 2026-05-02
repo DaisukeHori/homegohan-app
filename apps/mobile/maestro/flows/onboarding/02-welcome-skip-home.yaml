@@ -1,0 +1,16 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 02: welcome → skip → home 画面に到達する
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-skip-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000

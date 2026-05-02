@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
+---
+# 15: Adversarial - meals 100件のレスポンス → クラッシュなく表示できること
+# このテストは大量データ用アカウントを使用する
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-meals-section"
+- assertVisible:
+    id: "home-meals-section"
+# スクロールしてもクラッシュしないことを確認
+- scroll:
+    direction: DOWN
+    speed: SLOW
+- wait: 2000
+- scroll:
+    direction: UP
+    speed: SLOW
+# 画面が依然として表示されていることを確認
+- assertVisible:
+    id: "home-meals-section"

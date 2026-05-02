@@ -1,0 +1,21 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 01: 正常 - タブをタップして今週のメニューがある場合の表示確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "menus-weekly-screen"
+- assertVisible:
+    id: "weekly-menu-list"
+- assertVisible:
+    id: "weekly-menu-item-0"

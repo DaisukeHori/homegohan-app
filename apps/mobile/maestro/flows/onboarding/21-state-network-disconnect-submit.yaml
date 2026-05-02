@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 21: 状態遷移 - ネット切断中に submit → オフラインエラー表示・データ保持
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "オフラインテスト"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "170"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "65"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "30"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "nutrition-goal-option-health_maintenance"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "servings-grid-2"
+# ネットワーク接続を切断
+- toggleAirplaneMode: true
+- tapOn:
+    id: "onboarding-complete-button"
+# オフラインエラーが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-offline-error"
+    timeout: 15000
+# ネットワーク接続を復元
+- toggleAirplaneMode: false
+# 入力値が保持されていることを確認
+- assertVisible:
+    id: "onboarding-servings-screen"

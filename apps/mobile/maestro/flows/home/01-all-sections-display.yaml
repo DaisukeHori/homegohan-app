@@ -1,0 +1,21 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 01: ホーム画面の全セクションが表示されることを確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- assertVisible:
+    id: "home-condition-section"
+- assertVisible:
+    id: "home-meals-section"
+- assertVisible:
+    id: "home-checkin-section"
+- assertVisible:
+    id: "home-ai-suggestion-section"
+- assertVisible:
+    id: "home-weekly-graph-section"
+- assertVisible:
+    id: "home-announcements-section"

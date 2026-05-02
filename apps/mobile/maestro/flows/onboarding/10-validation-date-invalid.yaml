@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 10: バリデーション - date 不正入力 (例: birthdate=9999-99-99) → エラー
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "日付テスト"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-body-stats-screen"
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "170"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "65"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "30"
+- tapOn:
+    id: "onboarding-next-button"
+# 誕生日ピッカーがある場合は不正な日付を入力
+- assertVisible:
+    id: "onboarding-birthdate-input"
+- tapOn:
+    id: "onboarding-birthdate-input"
+- inputText: "9999-99-99"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-birthdate-error"

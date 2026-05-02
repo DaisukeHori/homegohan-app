@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 23: 状態遷移 - midnight_snack (深夜食) が当日の食事として表示されること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-meals-section"
+- assertVisible:
+    id: "home-meals-section"
+# midnight_snack タイプの食事が表示されていることを確認
+- assertVisible:
+    id: "meal-type-midnight-snack"
+# toggle して完了にできることを確認
+- tapOn:
+    id: "meal-type-midnight-snack-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "meal-type-midnight-snack-completed"
+    timeout: 8000

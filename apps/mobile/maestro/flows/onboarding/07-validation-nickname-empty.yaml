@@ -1,0 +1,27 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 07: バリデーション - nickname 空のまま次へ → エラーメッセージ表示
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- assertVisible:
+    id: "onboarding-nickname-input"
+# nickname 未入力のまま次へ
+- tapOn:
+    id: "onboarding-next-button"
+# エラーメッセージが表示されることを確認
+- assertVisible:
+    id: "onboarding-nickname-error"
+# 画面遷移しないことを確認
+- assertNotVisible:
+    id: "onboarding-body-stats-screen"

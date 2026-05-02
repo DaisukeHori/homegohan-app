@@ -1,0 +1,24 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 07: AI FAB をタップして AI チャット画面に遷移すること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- assertVisible:
+    id: "ai-fab-button"
+- tapOn:
+    id: "ai-fab-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+- assertVisible:
+    id: "ai-chat-screen"
+- pressKey: Back
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 8000

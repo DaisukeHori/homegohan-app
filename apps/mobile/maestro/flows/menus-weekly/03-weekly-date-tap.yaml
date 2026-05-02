@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 03: 正常 - weekly カレンダーの日付タップで当日のメニューが展開される
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-date-picker"
+# 今日の日付をタップ
+- tapOn:
+    id: "weekly-date-today"
+- extendedWaitUntil:
+    visible:
+      id: "daily-menu-detail"
+    timeout: 8000
+- assertVisible:
+    id: "daily-menu-detail"
+- assertVisible:
+    id: "daily-menu-meal-list"

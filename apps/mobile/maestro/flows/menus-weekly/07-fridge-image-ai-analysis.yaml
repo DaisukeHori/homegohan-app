@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 07: 正常 - 冷蔵庫画像をアップロードして AI が食材を解析する
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+# 冷蔵庫画像アップロードボタンをタップ
+- tapOn:
+    id: "ai-generate-fridge-image-button"
+- extendedWaitUntil:
+    visible:
+      id: "image-picker-modal"
+    timeout: 8000
+# テスト用画像を選択 (カメラロールから)
+- tapOn:
+    id: "image-picker-camera-roll"
+- tapOn:
+    id: "image-picker-first-image"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-loading"
+    timeout: 5000
+# AI 解析結果が表示されること
+- extendedWaitUntil:
+    visible:
+      id: "fridge-analysis-result"
+    timeout: 30000
+- assertVisible:
+    id: "fridge-analysis-ingredients"

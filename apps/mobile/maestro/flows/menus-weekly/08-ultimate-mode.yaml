@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
+---
+# 08: 正常 - Ultimate モードでメニュー生成する
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+# Ultimate モードトグルをオン
+- tapOn:
+    id: "ai-generate-ultimate-mode-toggle"
+- assertVisible:
+    id: "ai-generate-ultimate-mode-active"
+- tapOn:
+    id: "ai-generate-submit-button"
+# Ultimate モードの生成ローディング
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-loading"
+    timeout: 5000
+# 生成完了
+- extendedWaitUntil:
+    visible:
+      id: "weekly-menu-list"
+    timeout: 120000
+- assertVisible:
+    id: "weekly-menu-list"

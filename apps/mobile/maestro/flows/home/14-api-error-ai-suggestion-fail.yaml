@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 14: API エラー - AI サジェスト取得失敗時にエラー/空状態が表示されること
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    text: "ログイン"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+- scrollTo:
+    id: "home-ai-suggestion-section"
+# AI サジェスト取得失敗時はエラー状態または空状態が表示される
+- assertVisible:
+    id: "home-ai-suggestion-section"
+- assertTrue: ${maestro.assertVisible("ai-suggestion-error-state") || maestro.assertVisible("ai-suggestion-empty-state")}

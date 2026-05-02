@@ -1,0 +1,19 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 19: Adversarial - ?resume=true パラメータ改竄でオンボーディング再開を試みる
+# 既にオンボーディング完了済みユーザーが resume=true でアクセス → home へリダイレクト
+- launchApp:
+    clearState: false
+    arguments:
+      resume: "true"
+# オンボーディング完了済みの場合、resume 画面ではなく home 画面に遷移する
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+# resume 画面が表示されないことを確認
+- assertNotVisible:
+    id: "onboarding-resume-screen"
