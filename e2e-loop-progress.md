@@ -38,3 +38,14 @@ Simulator: iPhone-E2E-01
 | auth/24-google-oauth-cancel-returns-to-login | PASS | - | |
 | auth/25-rate-limit-countdown-bg-fg-restored | SKIP | issue #642 | BG→FG 問題 + clearState 不正 YAML |
 
+### onboarding
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| onboarding/01-22 (全22フロー) | SKIP | issue #644 | testID 不整合・ログインステップ欠如・テストデータ問題 |
+
+### home
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| home/01-all-sections-display | PASS | PR - | testID 修正 + scroll 追加、login.yaml に ensure-welcome 追加 |
+| home/02-23 (全22フロー) | SKIP | issue #645 | testID 不整合・toggleAirplaneMode 不正コマンド・動的 ID 問題 |
+
