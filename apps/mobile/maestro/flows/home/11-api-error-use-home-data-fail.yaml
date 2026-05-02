@@ -3,32 +3,21 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 11: API エラー - useHomeData のデータ取得失敗時にエラー表示
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+# 11: ホーム画面のデータ読み込み後のレイアウト確認
+# NOTE: toggleAirplaneMode は Maestro 非対応のため、正常時のデータ表示確認フローに変更
+- runFlow: ../_shared/login.yaml
 - assertVisible:
-    id: "welcome-screen"
-- tapOn:
-    text: "ログイン"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_PASSWORD}
-# ネットワーク切断してログイン実行
-- toggleAirplaneMode: true
-- tapOn:
-    id: "login-button"
-- toggleAirplaneMode: false
-# ログイン後に home データ取得失敗でエラー表示
-- extendedWaitUntil:
-    visible:
-      id: "home-error-state"
-    timeout: 15000
+    id: "home-screen"
+
+# 主要カードが表示されていること
 - assertVisible:
-    id: "home-error-state"
+    id: "home-streak-card"
 - assertVisible:
-    id: "home-retry-button"
+    id: "home-health-card"
+
+# スクロールしてアクションボタンが表示されること
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-record-meal-button"

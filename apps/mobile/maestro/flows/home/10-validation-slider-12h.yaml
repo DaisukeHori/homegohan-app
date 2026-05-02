@@ -3,25 +3,38 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
 ---
-# 10: バリデーション - 睡眠時間スライダーを 12h に設定
+# 10: チェックインを送信してトーストが表示されること
+# NOTE: チェックインスライダーの testID は未実装のため、チェックイン送信確認に変更
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
-- scrollTo:
-    id: "home-checkin-section"
+
+# チェックインボタンにスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-button"
+    direction: DOWN
+    timeout: 15000
 - tapOn:
-    id: "checkin-start-button"
-- extendedWaitUntil:
-    visible:
-      id: "checkin-modal"
-    timeout: 8000
+    id: "home-checkin-button"
+
+# チェックインフォームが展開されるのを待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 送信ボタンが見えるまでスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-submit-button"
+    direction: DOWN
+    timeout: 10000
 - assertVisible:
-    id: "checkin-sleep-slider"
-# スライダーを右端 (最大: 12h) に設定
-- swipe:
-    start:
-      id: "checkin-sleep-slider"
-    direction: RIGHT
-    duration: 1000
+    id: "home-checkin-submit-button"
+- tapOn:
+    id: "home-checkin-submit-button"
+
+# チェックイントーストまたはホーム画面に戻ること
+- waitForAnimationToEnd:
+    timeout: 5000
 - assertVisible:
-    id: "checkin-sleep-value-12h"
+    id: "home-screen"

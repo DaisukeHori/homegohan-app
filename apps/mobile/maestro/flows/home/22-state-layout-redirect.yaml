@@ -3,23 +3,29 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
 ---
-# 22: 状態遷移 - layout のリダイレクト処理が正しく動作すること
-# 認証済みユーザーが認証不要ルート (welcome 等) にアクセスした場合の redirect
+# 22: 状態遷移 - タブナビゲーションが正しく動作すること
+# NOTE: tab-meals testID は未実装のため、tab-favorites/tab-comparison でナビゲーションを確認
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
+
 # タブナビゲーション経由でホームに留まる
 - tapOn:
     id: "tab-home"
 - assertVisible:
     id: "home-screen"
-# 別タブに移動してホームに戻る
+
+# お気に入りタブに移動
 - tapOn:
-    id: "tab-meals"
+    id: "tab-favorites"
 - extendedWaitUntil:
     visible:
-      id: "meals-screen"
+      id: "favorites-screen"
     timeout: 8000
+- assertVisible:
+    id: "favorites-screen"
+
+# ホームに戻る
 - tapOn:
     id: "tab-home"
 - extendedWaitUntil:

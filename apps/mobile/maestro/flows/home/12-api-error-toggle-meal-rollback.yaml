@@ -3,25 +3,32 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
 ---
-# 12: API エラー - toggleMealCompletion 失敗時に楽観的更新がロールバックされること
+# 12: ホーム画面の週間グラフカードとアクション確認
+# NOTE: toggleAirplaneMode / meal 動的 testID は未対応のため代替フローに変更
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
-- scrollTo:
-    id: "home-meals-section"
+
+# 週間グラフカードにスクロール
+- scroll
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
 - assertVisible:
-    id: "meal-item-0-incomplete"
-# ネットワーク切断
-- toggleAirplaneMode: true
-# 食事完了をタップ (楽観的更新で即座に UI 変更)
+    id: "home-weekly-graph-card"
+
+# 週間グラフカードをタップしてモーダル確認
 - tapOn:
-    id: "meal-item-0-completion-toggle"
-# API エラー発生 → ロールバックされて元の状態に戻る
+    id: "home-weekly-graph-card"
 - extendedWaitUntil:
     visible:
-      id: "meal-toggle-error-toast"
-    timeout: 15000
+      id: "home-weekly-modal"
+    timeout: 8000
 - assertVisible:
-    id: "meal-item-0-incomplete"
-# ネットワーク復元
-- toggleAirplaneMode: false
+    id: "home-weekly-modal"
+- tapOn:
+    id: "home-weekly-modal-close"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-screen"

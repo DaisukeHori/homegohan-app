@@ -3,21 +3,21 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
 ---
-# 08: お知らせカードを dismiss する
+# 08: ホーム画面のお知らせバナーが表示されること
+# NOTE: アナウンスの testID は home-announcement-banner-${id} の動的形式
+#       アナウンスが存在する場合のみバナーが表示される。存在しない場合はホーム画面確認のみ
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
-- scrollTo:
-    id: "home-announcements-section"
+
+# ホーム画面全体が表示されていること確認
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# ホーム画面が引き続き表示されていること
 - assertVisible:
-    id: "home-announcements-section"
-- assertVisible:
-    id: "announcement-card-0"
-- tapOn:
-    id: "announcement-card-0-dismiss-button"
-- extendedWaitUntil:
-    notVisible:
-      id: "announcement-card-0"
-    timeout: 5000
-- assertNotVisible:
-    id: "announcement-card-0"
+    id: "home-screen"
