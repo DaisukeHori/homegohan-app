@@ -181,7 +181,7 @@ export default function HomeScreen() {
                 さん
               </Text>
             </View>
-            <Pressable onPress={() => router.push("/profile")}>
+            <Pressable testID="home-profile-avatar" onPress={() => router.push("/profile")}>
               <View style={{
                 width: 44, height: 44, borderRadius: 22,
                 backgroundColor: colors.card, alignItems: "center", justifyContent: "center",
@@ -197,6 +197,7 @@ export default function HomeScreen() {
           {/* ストリーク & 今月の自炊 */}
           <View style={{ flexDirection: "row", gap: spacing.md }}>
             <StatCard
+              testID="home-streak-card"
               icon={<Ionicons name="flame" size={22} color="#fff" />}
               label="連続自炊"
               value={cookingStreak}
@@ -205,6 +206,7 @@ export default function HomeScreen() {
               accentColor={colors.streak}
             />
             <StatCard
+              testID="home-monthly-cook-card"
               icon={<Ionicons name="restaurant" size={22} color="#fff" />}
               label="今月の自炊"
               value={monthlyStats.cookCount}
@@ -221,6 +223,7 @@ export default function HomeScreen() {
             {announcements.map((ann) => (
               <View
                 key={ann.id}
+                testID={`home-announcement-banner-${ann.id}`}
                 style={{
                   backgroundColor: "#EFF6FF",
                   borderWidth: 1,
@@ -239,7 +242,7 @@ export default function HomeScreen() {
                     <Text style={{ fontSize: 12, color: "#1D4ED8", marginTop: 2, lineHeight: 17 }}>{ann.content}</Text>
                   ) : null}
                 </View>
-                <Pressable onPress={() => dismissAnnouncement(ann.id)} hitSlop={12}>
+                <Pressable testID={`home-announcement-dismiss-${ann.id}`} onPress={() => dismissAnnouncement(ann.id)} hitSlop={12}>
                   <Ionicons name="close" size={16} color="#93C5FD" />
                 </Pressable>
               </View>
@@ -250,7 +253,7 @@ export default function HomeScreen() {
         <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg, gap: spacing.lg }}>
 
           {/* ========== 健康記録カード ========== */}
-          <Pressable onPress={() => router.push("/health")} style={({ pressed }) => ({
+          <Pressable testID="home-health-card" onPress={() => router.push("/health")} style={({ pressed }) => ({
             backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg,
             borderWidth: 1, borderColor: colors.purpleLight, ...shadows.sm,
             ...(pressed ? { opacity: 0.9 } : {}),
@@ -431,6 +434,7 @@ export default function HomeScreen() {
                   <Text style={{ fontSize: 14, fontWeight: "800", color: colors.text }}>30秒チェックイン</Text>
                 </View>
                 <Pressable
+                  testID="home-checkin-button"
                   onPress={() => setShowCheckin(!showCheckin)}
                   style={{
                     paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.xl,
@@ -496,6 +500,7 @@ export default function HomeScreen() {
                   ))}
 
                   <Button
+                    testID="home-checkin-submit-button"
                     onPress={async () => {
                       setCheckinSubmitting(true);
                       setCheckinFeedback(null);
@@ -525,6 +530,7 @@ export default function HomeScreen() {
           {/* ========== 次の一手カード ========== */}
           {performanceAnalysis.nextAction && (
             <LinearGradient
+              testID="home-next-action-card"
               colors={["#8B5CF6", "#6366F1"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -576,10 +582,13 @@ export default function HomeScreen() {
 
           {/* ========== AIサジェスト ========== */}
           {suggestion && (
-            <View style={{
-              padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.accent,
-              ...shadows.md,
-            }}>
+            <View
+              testID="home-ai-suggestion-card"
+              style={{
+                padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.accent,
+                ...shadows.md,
+              }}
+            >
               <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
                 <Ionicons name="sparkles" size={18} color="#fff" style={{ marginTop: 2 }} />
                 <View style={{ flex: 1 }}>
@@ -587,6 +596,7 @@ export default function HomeScreen() {
                   <Text style={{ fontSize: 13, fontWeight: "600", color: "#fff", lineHeight: 20 }}>{suggestion}</Text>
                   {nutritionAnalysis.suggestion && (
                     <Pressable
+                      testID="home-ai-suggestion-execute-button"
                       onPress={() => executeNutritionSuggestion()}
                       style={{ marginTop: spacing.sm }}
                     >
@@ -596,7 +606,7 @@ export default function HomeScreen() {
                     </Pressable>
                   )}
                 </View>
-                <Pressable onPress={() => setSuggestion(null)} hitSlop={12}>
+                <Pressable testID="home-ai-suggestion-dismiss-button" onPress={() => setSuggestion(null)} hitSlop={12}>
                   <Ionicons name="close" size={16} color="rgba(255,255,255,0.6)" />
                 </Pressable>
               </View>
@@ -724,6 +734,7 @@ export default function HomeScreen() {
                   return (
                     <Pressable
                       key={m.id}
+                      testID={`home-meal-card-${m.id}`}
                       onPress={() => toggleMealCompletion(m.id, !!m.is_completed)}
                       style={({ pressed }) => ({
                         flexDirection: "row", alignItems: "center", gap: spacing.md,
@@ -791,6 +802,7 @@ export default function HomeScreen() {
           {/* ========== クイックアクション ========== */}
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             <Pressable
+              testID="home-record-meal-button"
               onPress={() => router.push("/meals/new")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, ...shadows.sm }}
             >
@@ -801,6 +813,7 @@ export default function HomeScreen() {
               <Text style={{ fontSize: 11, color: colors.textMuted }}>写真から入力</Text>
             </Pressable>
             <Pressable
+              testID="home-ai-menu-button"
               onPress={() => router.push("/menus/weekly/request")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, ...shadows.sm }}
             >
@@ -815,6 +828,7 @@ export default function HomeScreen() {
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             {shoppingRemaining > 0 && (
               <Pressable
+                testID="home-shopping-button"
                 onPress={() => router.push("/menus/weekly")}
                 style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
               >
@@ -828,6 +842,7 @@ export default function HomeScreen() {
               </Pressable>
             )}
             <Pressable
+              testID="home-pantry-button"
               onPress={() => router.push("/pantry")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
             >
@@ -843,6 +858,7 @@ export default function HomeScreen() {
 
           {/* ========== レシピブラウズ ========== */}
           <Pressable
+            testID="home-recipes-button"
             onPress={() => router.push("/recipes")}
             style={{
               backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md,
@@ -862,7 +878,7 @@ export default function HomeScreen() {
 
           {/* ========== 週間自炊率グラフ ========== */}
           {weeklyStats.days.length > 0 && (
-            <Card onPress={() => setShowWeeklyDetail(true)}>
+            <Card testID="home-weekly-graph-card" onPress={() => setShowWeeklyDetail(true)}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
@@ -902,7 +918,7 @@ export default function HomeScreen() {
 
           {/* ========== 冷蔵庫アラート ========== */}
           {expiringItems.length > 0 && (
-            <Card onPress={() => router.push("/pantry")} variant="accent">
+            <Card testID="home-expiring-alert-card" onPress={() => router.push("/pantry")} variant="accent">
               <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md }}>
                 <View style={{ width: 40, height: 40, borderRadius: radius.md, backgroundColor: colors.warning, alignItems: "center", justifyContent: "center" }}>
                   <Ionicons name="alert" size={22} color="#fff" />
@@ -939,7 +955,7 @@ export default function HomeScreen() {
           )}
 
           {/* バッジ */}
-          <Pressable onPress={() => router.push("/badges")} style={{
+          <Pressable testID="home-badges-button" onPress={() => router.push("/badges")} style={{
             flexDirection: "row", alignItems: "center", gap: spacing.md,
             backgroundColor: colors.purpleLight, borderRadius: radius.xl, padding: spacing.lg,
             borderWidth: 1, borderColor: "#D1C4E9",
@@ -1005,15 +1021,18 @@ export default function HomeScreen() {
           style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}
           onPress={() => setShowWeeklyDetail(false)}
         />
-        <View style={{
-          backgroundColor: colors.card,
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24,
-          padding: spacing.lg,
-          paddingBottom: insets.bottom + spacing.lg,
-          maxHeight: "80%",
-          ...shadows.lg,
-        }}>
+        <View
+          testID="home-weekly-modal"
+          style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            padding: spacing.lg,
+            paddingBottom: insets.bottom + spacing.lg,
+            maxHeight: "80%",
+            ...shadows.lg,
+          }}
+        >
           {/* ドラッグハンドル */}
           <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: spacing.lg }} />
 
@@ -1021,6 +1040,7 @@ export default function HomeScreen() {
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>今週の統計</Text>
             <Pressable
+              testID="home-weekly-modal-close"
               onPress={() => setShowWeeklyDetail(false)}
               style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}
             >
@@ -1098,6 +1118,7 @@ export default function HomeScreen() {
 
       {/* ========== AIフローティングボタン ========== */}
       <Pressable
+        testID="home-ai-fab"
         onPress={() => router.push("/ai")}
         style={{
           position: "absolute", bottom: 100, right: spacing.lg,
@@ -1112,6 +1133,7 @@ export default function HomeScreen() {
       {/* ========== チェックインフィードバックトースト ========== */}
       {checkinFeedback && (
         <Animated.View
+          testID="home-checkin-toast"
           accessibilityLiveRegion="polite"
           style={{
             position: "absolute",
