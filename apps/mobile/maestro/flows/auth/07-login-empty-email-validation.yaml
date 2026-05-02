@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 07: login: email 空で submit → バリデーションエラー
-- launchApp:
+- launchApp
 - tapOn:
     text: "ログイン"
 - assertVisible:

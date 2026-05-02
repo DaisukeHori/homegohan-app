@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 08-nickname-xss-adversarial: ニックネームに XSS ペイロードを入力してもサニタイズされる (Adversarial)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

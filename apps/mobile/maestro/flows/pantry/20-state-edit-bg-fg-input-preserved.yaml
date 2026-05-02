@@ -37,7 +37,7 @@ appId: com.homegohan.app
     timeout: 2000
 
 # アプリをフォアグラウンドに戻す
-- launchApp:
+- launchApp
     clearState: false
 
 # 入力内容が保持されていることを確認

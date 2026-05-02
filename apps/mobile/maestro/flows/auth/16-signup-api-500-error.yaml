@@ -3,7 +3,7 @@ appId: com.homegohan.app
 # 16: signup: API 500 エラー
 # Note: Supabase が内部エラーを返した場合のエラーハンドリング確認
 # テスト環境では不正な URL 設定や、mock により 500 を再現
-- launchApp:
+- launchApp
 - tapOn:
     text: "新規登録"
 - assertVisible:

@@ -96,6 +96,7 @@ export default function TabsLayout() {
         options={{
           title: "比較",
           tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
+          tabBarButtonTestID: "tab-comparison",
         }}
       />
       <Tabs.Screen
@@ -103,6 +104,7 @@ export default function TabsLayout() {
         options={{
           title: "マイページ",
           tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
+          tabBarButtonTestID: "tab-profile",
         }}
       />
       {/* タブバーに表示しないが(tabs)グループ内に必要なファイル */}

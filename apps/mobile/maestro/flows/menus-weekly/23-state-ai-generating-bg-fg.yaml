@@ -30,7 +30,7 @@ env:
 - pressKey: Home
 - wait: 3000
 # フォアグラウンドに戻す
-- launchApp:
+- launchApp
     clearState: false
 # ローディングまたは完了状態が表示されること
 - extendedWaitUntil:

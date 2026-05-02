@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 02-goals-tab-save: プロフィール目標タブの情報を保存する (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

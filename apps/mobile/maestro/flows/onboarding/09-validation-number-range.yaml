@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
 ---
 # 09: バリデーション - number range 超え (身長 999, 体重 999) → エラー
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

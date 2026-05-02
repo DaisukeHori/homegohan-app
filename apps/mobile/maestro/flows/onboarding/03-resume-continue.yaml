@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
 ---
 # 03: 途中中断したオンボーディングを resume=true で再開 → continue
-- launchApp:
+- launchApp
     clearState: false
 - extendedWaitUntil:
     visible:

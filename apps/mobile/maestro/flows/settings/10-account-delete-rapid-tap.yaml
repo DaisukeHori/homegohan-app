@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 10-account-delete-rapid-tap: アカウント削除ボタンを連打しても二重実行されない (Adversarial)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
@@ -21,7 +21,11 @@ appId: com.homegohan.app
 
 # 設定画面へ移動
 - tapOn:
-    id: "tab-settings"
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+- tapOn:
+    id: "profile-settings-button"
 - assertVisible:
     id: "settings-screen"
 

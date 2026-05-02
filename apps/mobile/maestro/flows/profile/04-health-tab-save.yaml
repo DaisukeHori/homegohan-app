@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 04-health-tab-save: プロフィール健康タブの情報を保存する (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
 ---
 # 16: Adversarial - nickname 1000文字入力 → バリデーションエラーまたは切り捨て
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

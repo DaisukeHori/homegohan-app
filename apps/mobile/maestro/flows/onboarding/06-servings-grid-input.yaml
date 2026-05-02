@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
 ---
 # 06: servings_grid で各人数を選択できることを確認
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

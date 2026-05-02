@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 03-sports-tab-save: プロフィール競技タブの情報を保存する (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

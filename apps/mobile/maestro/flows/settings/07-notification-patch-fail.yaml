@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 07-notification-patch-fail: 通知 PATCH API が失敗した場合のエラー表示 (API 異常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
@@ -21,7 +21,11 @@ appId: com.homegohan.app
 
 # 設定画面へ移動
 - tapOn:
-    id: "tab-settings"
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+- tapOn:
+    id: "profile-settings-button"
 - assertVisible:
     id: "settings-screen"
 

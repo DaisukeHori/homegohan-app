@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
 ---
 # 14: API エラー - welcome skip 時にサーバーエラー → エラーメッセージ表示
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 # ネットワーク接続を切断してから skip

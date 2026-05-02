@@ -15,7 +15,11 @@ env:
     id: "weekly-date-picker"
 # 設定画面に移動して週の開始日を変更
 - tapOn:
-    id: "tab-settings"
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+- tapOn:
+    id: "profile-settings-button"
 - extendedWaitUntil:
     visible:
       id: "settings-screen"

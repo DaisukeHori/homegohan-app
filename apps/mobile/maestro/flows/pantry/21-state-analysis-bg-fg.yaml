@@ -39,7 +39,7 @@ appId: com.homegohan.app
     timeout: 2000
 
 # フォアグラウンドに戻す
-- launchApp:
+- launchApp
     clearState: false
 
 # 解析結果または継続中のローディングが表示されること

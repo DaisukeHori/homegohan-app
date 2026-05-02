@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
 ---
 # 07: バリデーション - nickname 空のまま次へ → エラーメッセージ表示
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

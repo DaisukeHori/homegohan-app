@@ -6,7 +6,7 @@ env:
 # 20: ?next= 改竄: https://evil.com → home に強制 redirect (open redirect 防止確認)
 # アプリは ?next= が '/' 始まりでない場合、無視してデフォルトルートへ遷移
 # deep link で ?next=https://evil.com を付与してログインを試みる
-- launchApp:
+- launchApp
     arguments:
       MAESTRO_NEXT_PARAM: "https://evil.com"
 

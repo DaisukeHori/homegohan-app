@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 09-nickname-1000-chars-adversarial: ニックネームに 1000 文字を入力した場合の処理 (Adversarial)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 12-notification-toggle-bg-fg: 通知 toggle 中にバックグラウンド→フォアグラウンドしても状態が保持される (状態遷移)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
@@ -21,7 +21,11 @@ appId: com.homegohan.app
 
 # 設定画面へ移動
 - tapOn:
-    id: "tab-settings"
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+- tapOn:
+    id: "profile-settings-button"
 - assertVisible:
     id: "settings-screen"
 

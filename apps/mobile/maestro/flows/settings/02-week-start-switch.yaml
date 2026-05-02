@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 02-week-start-switch: 週開始日を日曜→月曜に切り替える (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
@@ -21,7 +21,11 @@ appId: com.homegohan.app
 
 # 設定画面へ移動
 - tapOn:
-    id: "tab-settings"
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+- tapOn:
+    id: "profile-settings-button"
 - assertVisible:
     id: "settings-screen"
 
