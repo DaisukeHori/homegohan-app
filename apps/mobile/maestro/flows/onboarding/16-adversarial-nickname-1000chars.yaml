@@ -5,7 +5,6 @@ env:
 ---
 # 16: Adversarial - nickname 1000文字入力 → バリデーションエラーまたは切り捨て
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

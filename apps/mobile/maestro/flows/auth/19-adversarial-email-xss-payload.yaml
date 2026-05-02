@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 19: login email に XSS payload → クラッシュしないこと、スクリプト実行されないこと
 - launchApp:
-    clearState: true
 - tapOn:
     text: "ログイン"
 - assertVisible:

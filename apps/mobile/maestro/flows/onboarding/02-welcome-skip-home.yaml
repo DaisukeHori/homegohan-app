@@ -5,7 +5,6 @@ env:
 ---
 # 02: welcome → skip → home 画面に到達する
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

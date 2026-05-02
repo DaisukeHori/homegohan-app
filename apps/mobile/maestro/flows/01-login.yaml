@@ -2,8 +2,6 @@ appId: com.homegohan.app
 ---
 # 01-login: アプリ起動 → ウェルカム画面 → ログイン画面 → メール+パスワード入力 → ホーム画面確認
 - launchApp:
-    clearState: true
-
 # ウェルカム画面で「ログイン」をタップして login.tsx に移動
 - tapOn:
     text: "ログイン"

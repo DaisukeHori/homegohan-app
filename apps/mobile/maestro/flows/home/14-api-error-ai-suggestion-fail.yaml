@@ -5,7 +5,6 @@ env:
 ---
 # 14: API エラー - AI サジェスト取得失敗時にエラー/空状態が表示されること
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

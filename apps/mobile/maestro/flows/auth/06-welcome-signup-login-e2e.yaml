@@ -8,7 +8,6 @@ env:
 # 06: welcome から signup 経由でログインまで一気通貫
 # Step 1: welcome 画面確認
 - launchApp:
-    clearState: true
 - assertVisible:
     text: "ほめゴハン"
 - assertVisible:

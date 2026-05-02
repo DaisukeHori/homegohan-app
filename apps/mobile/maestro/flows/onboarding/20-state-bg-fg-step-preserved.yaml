@@ -5,7 +5,6 @@ env:
 ---
 # 20: 状態遷移 - BG→FG でオンボーディングのステップが保持されること
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

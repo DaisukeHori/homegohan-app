@@ -5,7 +5,6 @@ env:
 ---
 # 03: onboarding 未完了 user で login → /onboarding/resume へ
 - launchApp:
-    clearState: true
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

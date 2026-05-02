@@ -5,7 +5,6 @@ env:
 ---
 # 09: バリデーション - number range 超え (身長 999, 体重 999) → エラー
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -5,7 +5,6 @@ env:
 ---
 # 14: オフライン中 login submit (Airplane mode)
 - launchApp:
-    clearState: true
 - tapOn:
     text: "ログイン"
 - assertVisible:

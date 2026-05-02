@@ -5,7 +5,6 @@ env:
 ---
 # 01: welcome → start → オンボーディング全設問回答 → complete
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

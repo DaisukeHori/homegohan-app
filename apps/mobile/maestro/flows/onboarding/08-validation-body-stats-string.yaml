@@ -5,7 +5,6 @@ env:
 ---
 # 08: バリデーション - body_stats に文字列入力 → エラーメッセージ表示
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

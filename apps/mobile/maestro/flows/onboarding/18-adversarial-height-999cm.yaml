@@ -5,7 +5,6 @@ env:
 ---
 # 18: Adversarial - 身長に 999cm 入力 → バリデーションエラー
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 17: email に 5000 字 → クラッシュしないこと確認
 - launchApp:
-    clearState: true
 - tapOn:
     text: "ログイン"
 - assertVisible:

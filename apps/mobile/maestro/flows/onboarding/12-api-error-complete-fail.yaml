@@ -5,7 +5,6 @@ env:
 ---
 # 12: API エラー - complete 送信時にサーバーエラー → エラーメッセージ表示・画面保持
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

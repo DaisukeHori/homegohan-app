@@ -5,7 +5,6 @@ env:
 ---
 # 17: Adversarial - 体重に -5 入力 → バリデーションエラー
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
