@@ -49,3 +49,16 @@ Simulator: iPhone-E2E-01
 | home/01-all-sections-display | PASS | PR - | testID 修正 + scroll 追加、login.yaml に ensure-welcome 追加 |
 | home/02-23 (全22フロー) | SKIP | issue #645 | testID 不整合・toggleAirplaneMode 不正コマンド・動的 ID 問題 |
 
+### menus-weekly (agent2 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| menus-weekly/01-25 (全25フロー) | PASS | PR #647, #648, #649, #650 | scroll追加・戻るボタン座標修正・ensure-welcome waitForAnimationToEnd・LogBox無効化 |
+
+インフラ修正: #648 (ensure-welcome+app.json), #649 (LogBox無効化+logout座標), #650 (menus-weekly scroll+back)
+
+### shopping (agent2 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| shopping/01-05 (全5フロー) | PASS | PR #651 | フロー全面書き直し・home-shopping-button常時表示化・shopping-list testID追加 |
+
+
