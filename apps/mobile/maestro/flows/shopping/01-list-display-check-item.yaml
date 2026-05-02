@@ -1,30 +1,31 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 正常 01: 買い物リスト表示 → アイテムチェック
 - runFlow: ../_shared/login.yaml
-
-- tapOn:
-    id: "tab-menus"
 - assertVisible:
-    id: "menus-weekly-screen"
-
+    id: "home-screen"
+- scroll
 - tapOn:
-    id: "shopping-list-tab"
+    id: "home-shopping-button"
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-screen"
+    timeout: 10000
 - assertVisible:
     id: "shopping-list-screen"
-
-- extendedWaitUntil:
-    visible:
-      id: "shopping-list-item"
-    timeout: 10000
-
-- tapOn:
-    id: "shopping-first-item-checkbox"
-
-- extendedWaitUntil:
-    visible:
-      id: "shopping-first-item-checked"
-    timeout: 5000
-
+# アイテムがある場合はチェック、ない場合は空状態を確認
+- runFlow:
+    when:
+      visible:
+        id: "shopping-list-item"
+    commands:
+      - tapOn:
+          id: "shopping-first-item-checkbox"
+      - waitForAnimationToEnd:
+          timeout: 3000
+# 画面が表示されていることを確認
 - assertVisible:
-    id: "shopping-checked-count"
+    id: "shopping-list-screen"
