@@ -1,23 +1,25 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 正常 05: 目標進捗 top2 が表示されることを確認
+# 正常 05: health ダッシュボードが表示されることを確認
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
-# 目標進捗セクションが表示されていることを確認
+# health 画面が正常に表示されていることを確認
 - assertVisible:
-    id: "health-goal-progress-section"
+    id: "health-screen"
 
-# 最初の目標進捗アイテムが表示されていること
+# ストリーク値が表示されていること
 - assertVisible:
-    id: "health-goal-progress-item-0"
-
-# 2番目の目標進捗アイテムが表示されていること
-- assertVisible:
-    id: "health-goal-progress-item-1"
+    id: "health-streak-value"

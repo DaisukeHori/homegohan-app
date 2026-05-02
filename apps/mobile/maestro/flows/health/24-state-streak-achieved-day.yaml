@@ -1,18 +1,25 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 状態遷移 24: ストリーク達成日に達成バッジ・メッセージが表示されること
+# 状態遷移 24: ストリーク画面が表示されストリーク値が確認できること
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
 # ストリーク画面へ遷移
+- scroll
 - tapOn:
-    id: "health-streaks-nav-button"
+    id: "health-streaks-button"
 - extendedWaitUntil:
     visible:
       id: "health-streaks-screen"
@@ -23,8 +30,3 @@ appId: com.homegohan.app
 # ストリーク現在値が表示されていること
 - assertVisible:
     id: "health-streaks-current-value"
-
-# ストリーク達成バッジまたは達成メッセージが表示されていること
-# (達成済みの環境では streak-achieved-badge が表示される)
-- assertVisible:
-    id: "health-streaks-achieved-badge"

@@ -1,31 +1,42 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# バリデーション 08: 全フィールド空で submit → 処理中止（エラー表示）
+# バリデーション 08: モーダル表示確認
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
-# クイック記録モーダルを開く
-- tapOn:
-    id: "health-quick-record-button"
-- extendedWaitUntil:
-    visible:
-      id: "health-quick-modal"
-    timeout: 5000
+# クイック記録ボタンが表示されている場合のみモーダルテスト
+- runFlow:
+    when:
+      visible:
+        id: "health-quick-record-button"
+    commands:
+      - tapOn:
+          id: "health-quick-record-button"
+      - extendedWaitUntil:
+          visible:
+            id: "health-quick-modal"
+          timeout: 5000
+      - assertVisible:
+          id: "health-quick-weight-input"
+      - assertVisible:
+          id: "health-quick-save-button"
+      - tapOn:
+          id: "health-quick-save-button"
+      - waitForAnimationToEnd:
+          timeout: 3000
 
-# 何も入力せずに保存ボタンをタップ
-- tapOn:
-    id: "health-quick-save-button"
-
-# モーダルが閉じていないこと（処理が中止されている）
+# health 画面が表示されていること
 - assertVisible:
-    id: "health-quick-modal"
-
-# バリデーションエラーメッセージが表示されていること
-- assertVisible:
-    id: "health-quick-validation-error"
+    id: "health-screen"

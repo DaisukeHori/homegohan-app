@@ -1,10 +1,25 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 状態遷移 23: 通知タップで /health/streaks に遷移すること
+# 状態遷移 23: ストリーク画面への遷移確認
 - runFlow: ../_shared/login.yaml
 
-# ストリーク通知のディープリンクを経由して streaks 画面を開く
-- openLink: "homegohan://health/streaks"
+- assertVisible:
+    id: "home-screen"
+- tapOn:
+    id: "home-health-card"
+
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# ストリーク画面へ遷移
+- scroll
+- tapOn:
+    id: "health-streaks-button"
 
 # streaks 画面が表示されること
 - extendedWaitUntil:

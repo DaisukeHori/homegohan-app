@@ -3,6 +3,8 @@ appId: com.homegohan.app
 # _shared/logout.yaml: タブバーのプロファイルタブ → 設定 → ログアウトの共通フロー
 # 前提: ホーム画面または任意の画面 (タブバーが見える状態)
 # LogBox.ignoreAllLogs() 適用後はバナー閉じ処理は不要
+- waitForAnimationToEnd:
+    timeout: 2000
 - tapOn:
     id: "tab-profile"
 - extendedWaitUntil:
@@ -10,13 +12,19 @@ appId: com.homegohan.app
       id: "profile-screen"
     timeout: 15000
 - scroll
+- waitForAnimationToEnd:
+    timeout: 2000
 - tapOn:
     id: "profile-settings-button"
 - extendedWaitUntil:
     visible:
       id: "settings-screen"
     timeout: 10000
-- scroll
+- scrollUntilVisible:
+    element:
+      id: "settings-logout-button"
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: "settings-logout-button"
 - extendedWaitUntil:

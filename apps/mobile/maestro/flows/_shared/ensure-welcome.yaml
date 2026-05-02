@@ -3,6 +3,7 @@ appId: com.homegohan.app
 # _shared/ensure-welcome.yaml: どの画面からでもウェルカム画面を確保する共通フロー
 # Admin Console にいる場合: < ボタンでホームへ戻ってからタブ経由でログアウト
 # ホーム画面にいる場合: タブ経由でログアウト
+# ホーム以外のサブ画面にいる場合: tab-home でホームに戻ってからログアウト
 # ウェルカム画面にいる場合: 何もしない
 
 # iOS system dialog (openLink 等で表示される「開く」ダイアログ) を先に閉じる
@@ -20,6 +21,26 @@ appId: com.homegohan.app
 # ホーム画面にいる場合はログアウト (画面ロード完了を少し待つ)
 - waitForAnimationToEnd:
     timeout: 3000
+- runFlow:
+    when:
+      visible:
+        id: "home-screen"
+    file: "./logout.yaml"
+
+# ホーム以外のサブ画面にいてタブバーが見える場合: tab-homeをタップしてホームへ戻る
+- runFlow:
+    when:
+      visible:
+        id: "tab-home"
+    commands:
+      - tapOn:
+          id: "tab-home"
+      - waitForAnimationToEnd:
+          timeout: 3000
+
+# tab-home タップ後にホーム画面が表示されていたらログアウト
+- waitForAnimationToEnd:
+    timeout: 1000
 - runFlow:
     when:
       visible:

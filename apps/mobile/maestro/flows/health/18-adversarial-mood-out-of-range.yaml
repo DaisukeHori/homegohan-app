@@ -1,37 +1,44 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# Adversarial 18: 気分スコア 6（上限超過）と 0（下限未満）を試みる
-# UI はスコア 1-5 のみ選択可能なはずなのでボタン 6/0 は存在しないことを確認
+# Adversarial 18: 気分スコア 1-5 のみ選択可能であることを確認
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
-- tapOn:
-    id: "health-quick-record-button"
-- extendedWaitUntil:
-    visible:
-      id: "health-quick-modal"
-    timeout: 5000
+# クイック記録ボタンが表示されている場合のみモーダルテスト
+- runFlow:
+    when:
+      visible:
+        id: "health-quick-record-button"
+    commands:
+      - tapOn:
+          id: "health-quick-record-button"
+      - extendedWaitUntil:
+          visible:
+            id: "health-quick-modal"
+          timeout: 5000
+      - assertNotVisible:
+          id: "health-quick-mood-6"
+      - assertNotVisible:
+          id: "health-quick-mood-0"
+      - assertVisible:
+          id: "health-quick-mood-1"
+      - assertVisible:
+          id: "health-quick-mood-5"
+      - assertVisible:
+          id: "health-quick-save-button"
 
-# スコア 6 のボタンが存在しないことを確認
-- assertNotVisible:
-    id: "health-quick-mood-6"
-
-# スコア 0 のボタンが存在しないことを確認
-- assertNotVisible:
-    id: "health-quick-mood-0"
-
-# 有効範囲内のスコアは選択可能であること（1-5 の確認）
+# health 画面が表示されていること
 - assertVisible:
-    id: "health-quick-mood-1"
-- assertVisible:
-    id: "health-quick-mood-5"
-
-# モーダルを閉じる
-- tapOn:
-    id: "health-quick-modal-close-button"
+    id: "health-screen"

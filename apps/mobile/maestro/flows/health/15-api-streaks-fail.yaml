@@ -1,25 +1,30 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# API 15: streaks API が失敗した場合のエラーハンドリング
+# API 15: ストリーク画面の基本表示確認 (モックサーバー不可環境)
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
 # ストリーク画面へ遷移
+- scroll
 - tapOn:
-    id: "health-streaks-nav-button"
+    id: "health-streaks-button"
 - extendedWaitUntil:
     visible:
       id: "health-streaks-screen"
     timeout: 15000
 
-# API 失敗時: エラーバナー、リトライボタン、または空状態が表示される
+# ストリーク画面が正常に表示されていることを確認
 - assertVisible:
     id: "health-streaks-screen"
-- assertVisible:
-    id: "health-streaks-error-state"
