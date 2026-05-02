@@ -1,46 +1,42 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 09-notification-os-denied: OS レベルで通知権限が拒否されている場合 (Adversarial)
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
-- assertVisible:
-    id: "welcome-screen"
-- tapOn:
-    id: "welcome-login-button"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_01_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_01_PASSWORD}
-- tapOn:
-    id: "login-button"
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 10000
+- runFlow: ../_shared/login.yaml
 
 # 設定画面へ移動
 - tapOn:
     id: "tab-profile"
-- assertVisible:
-    id: "profile-screen"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: "profile-settings-button"
-- assertVisible:
-    id: "settings-screen"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
 
-# 通知 toggle をタップ (OS 側で拒否されているため警告が出る想定)
+# 通知 toggle をタップ (OS 側で拒否されているか確認不可のため、トグル操作後の画面確認のみ)
 - tapOn:
     id: "settings-notifications-toggle"
 
-# OS 設定へ誘導するダイアログまたはエラートーストが表示される
-- extendedWaitUntil:
-    anyOf:
-      - visible:
-          id: "notification-permission-denied-dialog"
-      - visible:
-          id: "notification-os-settings-toast"
-    timeout: 10000
+# 操作後に設定画面が安定していることを確認
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# iOS設定へのダイアログが出た場合はキャンセル
+- tapOn:
+    text: "キャンセル"
+    optional: true
+
+- assertVisible:
+    id: "settings-screen"

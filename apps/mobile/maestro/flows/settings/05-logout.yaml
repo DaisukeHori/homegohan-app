@@ -1,44 +1,44 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 05-logout: ログアウトを実行する (正常系)
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
-- assertVisible:
-    id: "welcome-screen"
-- tapOn:
-    id: "welcome-login-button"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_01_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_01_PASSWORD}
-- tapOn:
-    id: "login-button"
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 10000
+- runFlow: ../_shared/login.yaml
 
 # 設定画面へ移動
 - tapOn:
     id: "tab-profile"
-- assertVisible:
-    id: "profile-screen"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: "profile-settings-button"
-- assertVisible:
-    id: "settings-screen"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
 
-# ログアウトボタンをタップ
+# ログアウトボタンをタップ (スクロールして表示)
+- scrollUntilVisible:
+    element:
+      id: "settings-logout-button"
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: "settings-logout-button"
 
-# 確認モーダルが表示される
-- assertVisible:
-    id: "settings-logout-confirm-modal"
+# 確認モーダルが表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "settings-logout-confirm-button"
+    timeout: 10000
 
 # 確認ボタンをタップしてログアウト
 - tapOn:
