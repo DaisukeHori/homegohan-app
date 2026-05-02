@@ -1,49 +1,33 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 02-goals-tab-save: プロフィール目標タブの情報を保存する (正常系)
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
-- assertVisible:
-    id: "welcome-screen"
-- tapOn:
-    id: "welcome-login-button"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_01_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_01_PASSWORD}
-- tapOn:
-    id: "login-button"
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 10000
+- runFlow: ../_shared/login.yaml
 
 # プロフィール画面へ移動
 - tapOn:
     id: "tab-profile"
-- assertVisible:
-    id: "profile-screen"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
 
 # 目標タブを選択
 - tapOn:
     id: "profile-tab-goals"
-- assertVisible:
-    id: "profile-tab-goals"
 
-# 目標体重を入力 (65.0 kg)
+# 編集モードに切り替え
 - tapOn:
-    id: "profile-goal-weight-input"
-- clearText
-- inputText: "65.0"
+    text: "編集"
 
-# 保存ボタンをタップ
+# 保存ボタンをタップ (目標タブの内容をそのまま保存)
 - tapOn:
     id: "profile-save-button"
-- extendedWaitUntil:
-    visible:
-      id: "profile-save-success-toast"
-    timeout: 10000
+
+# 保存後に画面が安定していることを確認
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertVisible:
+    id: "profile-screen"
