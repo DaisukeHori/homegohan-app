@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+---
+# 07-validation-empty-name: バリデーション - 名前空でエラー
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# カテゴリと数量は入力するが名前は空のまま
+- tapOn:
+    id: "pantry-category-select"
+- tapOn:
+    text: "野菜"
+
+- tapOn:
+    id: "pantry-quantity-input"
+- inputText: "1"
+
+# 保存ボタンタップ（名前空）
+- tapOn:
+    id: "pantry-save-button"
+
+# エラーメッセージが表示されることを確認
+- assertVisible:
+    id: "pantry-name-error"
+
+# まだ追加画面にいることを確認（pantry-screen には戻っていない）
+- assertVisible:
+    id: "pantry-name-input"

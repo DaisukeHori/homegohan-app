@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+---
+# 06-fridge-photo-ai-replace: 冷蔵庫写真 → AI解析 → replaceモードで食材置換
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 冷蔵庫写真ボタンをタップ
+- tapOn:
+    id: "pantry-fridge-photo-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-photo-picker"
+    timeout: 5000
+
+# カメラロールから画像を選択
+- tapOn:
+    id: "pantry-photo-gallery-button"
+
+- tapOn:
+    index: 0
+
+# AI解析の完了を待機
+- extendedWaitUntil:
+    visible:
+      id: "pantry-ai-result-modal"
+    timeout: 30000
+
+# replaceモードに切り替え
+- tapOn:
+    id: "pantry-ai-mode-replace"
+
+# replaceモードが選択されたことを確認
+- assertVisible:
+    id: "pantry-ai-mode-replace"
+
+# 結果を確認して置換実行
+- tapOn:
+    id: "pantry-ai-confirm-button"
+
+# 食材リストが置換されたことを確認
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000

@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+---
+# 19-adversarial-500-items-performance: Adversarial - 500件登録時のパフォーマンス
+# 注意: このテストは事前にシードデータで500件をDBに投入しておく必要があります
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+# 500件のデータがある状態でパントリー画面が10秒以内に表示されること
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# スケルトンが消えてリストが表示されることを確認
+- assertNotVisible:
+    id: "pantry-skeleton-loader"
+
+# リストをスクロールしてフリーズしないことを確認
+- scroll
+
+- scroll
+
+- scroll
+
+# スクロール後もUIが正常に動作していること
+- assertVisible:
+    id: "pantry-screen"
+
+# 一番下にスクロールしてパフォーマンスを確認
+- scrollUntilVisible:
+    element:
+      id: "pantry-list-footer"
+    timeout: 30000

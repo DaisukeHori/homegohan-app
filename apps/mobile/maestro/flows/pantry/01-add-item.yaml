@@ -1,0 +1,53 @@
+appId: com.homegohan.app
+---
+# 01-add-item: 食材追加 正常系
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 追加ボタンをタップ
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 名前入力
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "トマト"
+
+# カテゴリ選択
+- tapOn:
+    id: "pantry-category-select"
+- tapOn:
+    text: "野菜"
+
+# 数量入力
+- tapOn:
+    id: "pantry-quantity-input"
+- inputText: "3"
+
+# 期限入力
+- tapOn:
+    id: "pantry-expiry-input"
+- inputText: "2026-12-31"
+
+# 保存
+- tapOn:
+    id: "pantry-save-button"
+
+# 追加された食材がリストに表示されることを確認
+- extendedWaitUntil:
+    visible:
+      text: "トマト"
+    timeout: 10000

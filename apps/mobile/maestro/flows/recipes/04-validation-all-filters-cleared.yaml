@@ -1,0 +1,50 @@
+appId: com.homegohan.app
+---
+# 04-validation-all-filters-cleared: バリデーション - 全フィルタ解除で全件表示
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-recipes"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# まず和食フィルタを選択
+- tapOn:
+    id: "recipes-category-filter-washoku"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# フィルタを解除（同じボタンを再タップまたはAllボタン）
+- tapOn:
+    id: "recipes-category-filter-all"
+
+# 全件が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# 全件表示モードであることを確認
+- assertVisible:
+    id: "recipes-category-filter-all"
+
+# 検索フィールドもクリア
+- tapOn:
+    id: "recipes-search-input"
+- inputText: "テスト検索"
+
+# 検索クリアボタンをタップ
+- tapOn:
+    id: "recipes-search-clear"
+
+# 全件が再表示されること
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000

@@ -1,0 +1,50 @@
+appId: com.homegohan.app
+---
+# 02-adversarial-100-badges-performance: Adversarial - 100件バッジ表示のパフォーマンス
+# 注意: このテストは100件以上のバッジデータが存在する状態で実行することを前提とする
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-profile"
+
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "profile-badges-button"
+
+# 100件バッジがある状態でバッジ画面が10秒以内に表示されること
+- extendedWaitUntil:
+    visible:
+      id: "badges-screen"
+    timeout: 10000
+
+# スケルトンが消えてリストが表示されること
+- assertNotVisible:
+    id: "badges-skeleton-loader"
+
+# リストをスクロールしてフリーズしないことを確認
+- scroll
+
+- scroll
+
+- scroll
+
+# スクロール後もUIが正常に動作していること
+- assertVisible:
+    id: "badges-screen"
+
+# 一番下までスクロールしてパフォーマンスを確認
+- scrollUntilVisible:
+    element:
+      id: "badges-list-footer"
+    timeout: 30000
+
+# 全バッジ表示後もUIがレスポンシブであること
+- tapOn:
+    id: "badges-section-unearned"
+
+- assertVisible:
+    id: "badges-screen"

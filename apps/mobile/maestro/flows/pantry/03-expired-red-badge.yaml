@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+---
+# 03-expired-red-badge: 期限切れ食材に赤バッジが表示されることを確認
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 期限切れ食材を追加（過去の日付 - テスト用に直接設定）
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "期限切れ食材テスト"
+
+- tapOn:
+    id: "pantry-category-select"
+- tapOn:
+    text: "その他"
+
+- tapOn:
+    id: "pantry-quantity-input"
+- inputText: "1"
+
+- tapOn:
+    id: "pantry-expiry-input"
+- inputText: "2020-01-01"
+
+- tapOn:
+    id: "pantry-save-button"
+
+# 期限切れアイテムに赤いバッジ・マーカーが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "pantry-badge-expired"
+    timeout: 10000

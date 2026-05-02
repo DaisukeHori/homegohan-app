@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+---
+# 08-adversarial-heart-rapid-tap: Adversarial - ハート連打による二重送信防止
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-recipes"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# 最初のレシピのハートを高速連打
+- tapOn:
+    id: "recipes-like-0"
+- tapOn:
+    id: "recipes-like-0"
+- tapOn:
+    id: "recipes-like-0"
+- tapOn:
+    id: "recipes-like-0"
+- tapOn:
+    id: "recipes-like-0"
+
+# 処理完了を待機
+- extendedWaitUntil:
+    notVisible:
+      id: "recipes-like-loading"
+    timeout: 10000
+
+# 最終状態が確定していること（アクティブ or 非アクティブのいずれか）
+# デバウンス/スロットリングにより二重送信がないこと
+- assertVisible:
+    id: "recipes-screen"
+
+# アプリがクラッシュしていないこと
+- assertVisible:
+    id: "recipes-like-0"

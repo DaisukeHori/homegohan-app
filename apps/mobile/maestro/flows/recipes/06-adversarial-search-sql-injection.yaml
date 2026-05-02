@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+---
+# 06-adversarial-search-sql-injection: Adversarial - 検索にSQLインジェクション
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-recipes"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# SQLインジェクションペイロードを検索フィールドに入力
+- tapOn:
+    id: "recipes-search-input"
+- inputText: "' OR '1'='1'; DROP TABLE recipes; --"
+
+# 検索実行（エンターキーまたは自動検索）
+- pressKey: Enter
+
+# アプリがクラッシュしないこと
+# 空の結果または通常の結果が返ること（SQLが実行されないこと）
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# アプリが正常動作していることを確認
+- assertVisible:
+    id: "recipes-search-input"
+
+# エラートーストが出ていないこと（サーバーサイドエラーが露出しないこと）
+- assertNotVisible:
+    id: "recipes-server-error-500"

@@ -1,0 +1,54 @@
+appId: com.homegohan.app
+---
+# 01-badges-list-display: 正常系 - バッジ一覧表示と獲得済み/未獲得の分類確認
+- runFlow: ../_shared/login.yaml
+
+# バッジ画面へ移動
+- tapOn:
+    id: "tab-profile"
+
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "profile-badges-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "badges-screen"
+    timeout: 10000
+
+# バッジ一覧が表示されることを確認
+- assertVisible:
+    id: "badges-screen"
+
+# 獲得済みセクションが存在すること
+- assertVisible:
+    id: "badges-section-earned"
+
+# 未獲得セクションが存在すること
+- assertVisible:
+    id: "badges-section-unearned"
+
+# 特定のバッジが正しいセクションに配置されていることを確認
+# 例: 初回ログインバッジは獲得済みに表示
+- assertVisible:
+    id: "badges-badge-first-login"
+
+# バッジをタップして詳細が表示されること
+- tapOn:
+    id: "badges-badge-first-login"
+
+- extendedWaitUntil:
+    visible:
+      id: "badges-detail-modal"
+    timeout: 5000
+
+# 詳細モーダルを閉じる
+- tapOn:
+    id: "badges-detail-close"
+
+- assertVisible:
+    id: "badges-screen"

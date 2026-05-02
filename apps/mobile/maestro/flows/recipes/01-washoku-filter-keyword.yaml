@@ -1,0 +1,39 @@
+appId: com.homegohan.app
+---
+# 01-washoku-filter-keyword: 正常系 - 和食フィルタ + キーワード検索
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-recipes"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# 和食カテゴリフィルタをタップ
+- tapOn:
+    id: "recipes-category-filter-washoku"
+
+# フィルタが選択されたことを確認
+- assertVisible:
+    id: "recipes-category-filter-washoku"
+
+# キーワード検索
+- tapOn:
+    id: "recipes-search-input"
+- inputText: "味噌汁"
+
+# 検索結果が表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# 検索結果が和食 + 味噌汁に絞られていることを確認
+- assertVisible:
+    id: "recipes-list"
+
+# 結果が0件でないことを確認（少なくとも1件表示）
+- assertNotVisible:
+    id: "recipes-empty-state"

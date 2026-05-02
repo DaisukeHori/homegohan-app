@@ -1,0 +1,41 @@
+appId: com.homegohan.app
+---
+# 13-api-patch-fail: API失敗 - PATCH失敗時のエラーハンドリング
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 既存アイテムをタップして編集画面を開く
+- tapOn:
+    id: "pantry-item-0"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 名前を変更
+- tapOn:
+    id: "pantry-name-input"
+- clearText
+- inputText: "PATCHエラーテスト"
+
+# 保存試行（API失敗を想定）
+- tapOn:
+    id: "pantry-save-button"
+
+# APIエラートーストが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "pantry-error-toast"
+    timeout: 15000
+
+# 編集画面にとどまること（変更が保持されている）
+- assertVisible:
+    id: "pantry-save-button"
