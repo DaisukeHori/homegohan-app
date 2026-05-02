@@ -1,0 +1,19 @@
+appId: com.homegohan.app
+---
+# 状態遷移 23: 通知タップで /health/streaks に遷移すること
+- runFlow: ../_shared/login.yaml
+
+# ストリーク通知のディープリンクを経由して streaks 画面を開く
+- openLink: "homegohan://health/streaks"
+
+# streaks 画面が表示されること
+- extendedWaitUntil:
+    visible:
+      id: "health-streaks-screen"
+    timeout: 10000
+- assertVisible:
+    id: "health-streaks-screen"
+
+# ストリーク値が表示されていること
+- assertVisible:
+    id: "health-streaks-current-value"

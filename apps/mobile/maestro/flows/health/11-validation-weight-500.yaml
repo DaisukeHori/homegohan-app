@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+---
+# バリデーション 11: 体重に 500 を入力（上限超過） → バリデーションエラー
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "health-quick-record-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-quick-modal"
+    timeout: 5000
+
+# 体重フィールドに上限超過の値を入力
+- tapOn:
+    id: "health-quick-weight-input"
+- clearText
+- inputText: "500"
+
+# 気分・睡眠は有効な値を選択
+- tapOn:
+    id: "health-quick-mood-3"
+- tapOn:
+    id: "health-quick-sleep-3"
+
+# 保存ボタンをタップ
+- tapOn:
+    id: "health-quick-save-button"
+
+# モーダルが閉じていないこと（バリデーションエラー）
+- assertVisible:
+    id: "health-quick-modal"
+
+# バリデーションエラーが表示されていること
+- assertVisible:
+    id: "health-quick-weight-error"

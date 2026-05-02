@@ -1,0 +1,48 @@
+appId: com.homegohan.app
+---
+# Adversarial 19: 睡眠スコア 0 を入力 → バリデーションエラーまたは選択不可
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "health-quick-record-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-quick-modal"
+    timeout: 5000
+
+# 睡眠スコア 0 のボタンが存在しないことを確認（1-5 のみ有効）
+- assertNotVisible:
+    id: "health-quick-sleep-0"
+
+# 有効な睡眠スコアは表示されていること
+- assertVisible:
+    id: "health-quick-sleep-1"
+- assertVisible:
+    id: "health-quick-sleep-5"
+
+# 体重と気分を有効な値で入力して sleep 未選択で保存試行
+- tapOn:
+    id: "health-quick-weight-input"
+- clearText
+- inputText: "65.0"
+- tapOn:
+    id: "health-quick-mood-3"
+
+# sleep 未選択のまま保存
+- tapOn:
+    id: "health-quick-save-button"
+
+# バリデーションエラーが表示されること
+- assertVisible:
+    id: "health-quick-modal"
+
+# モーダルを閉じる
+- tapOn:
+    id: "health-quick-modal-close-button"

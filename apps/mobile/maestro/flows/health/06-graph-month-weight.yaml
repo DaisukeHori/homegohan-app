@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+---
+# 正常 06: グラフ画面で期間=月・指標=体重を表示する
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# グラフ画面へ遷移
+- tapOn:
+    id: "health-graphs-nav-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-graphs-screen"
+    timeout: 10000
+
+# 期間を「月」に切り替え
+- tapOn:
+    id: "health-graphs-period-month"
+
+# 指標を「体重」に切り替え
+- tapOn:
+    id: "health-graphs-metric-weight"
+
+# グラフが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "health-graphs-screen"
+    timeout: 5000
+- assertVisible:
+    id: "health-graphs-screen"

@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+---
+# 正常 05: 目標進捗 top2 が表示されることを確認
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-health"
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# 目標進捗セクションが表示されていることを確認
+- assertVisible:
+    id: "health-goal-progress-section"
+
+# 最初の目標進捗アイテムが表示されていること
+- assertVisible:
+    id: "health-goal-progress-item-0"
+
+# 2番目の目標進捗アイテムが表示されていること
+- assertVisible:
+    id: "health-goal-progress-item-1"
