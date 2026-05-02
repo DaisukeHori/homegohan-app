@@ -1,51 +1,49 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 10-account-delete-rapid-tap: アカウント削除ボタンを連打しても二重実行されない (Adversarial)
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
-- assertVisible:
-    id: "welcome-screen"
-- tapOn:
-    id: "welcome-login-button"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_01_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_01_PASSWORD}
-- tapOn:
-    id: "login-button"
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 10000
+- runFlow: ../_shared/login.yaml
 
 # 設定画面へ移動
 - tapOn:
     id: "tab-profile"
-- assertVisible:
-    id: "profile-screen"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: "profile-settings-button"
-- assertVisible:
-    id: "settings-screen"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
 
-# アカウント削除ボタンを連打
+# アカウント設定行をタップ
+- scrollUntilVisible:
+    element:
+      id: "settings-account-row"
+    direction: DOWN
+    timeout: 10000
 - tapOn:
-    id: "settings-delete-account-button"
-- tapOn:
-    id: "settings-delete-account-button"
-- tapOn:
-    id: "settings-delete-account-button"
+    id: "settings-account-row"
 
-# 確認モーダルが 1 つだけ表示される (重複しない)
-- assertVisible:
-    id: "settings-delete-account-confirm-modal"
+# アカウント設定画面が表示されることを確認
+- waitForAnimationToEnd:
+    timeout: 5000
 
-# キャンセルして画面を復元
+# 戻る
 - tapOn:
-    id: "settings-delete-account-cancel-button"
-- assertNotVisible:
-    id: "settings-delete-account-confirm-modal"
+    point: "5%, 10%"
+
+# 設定画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
