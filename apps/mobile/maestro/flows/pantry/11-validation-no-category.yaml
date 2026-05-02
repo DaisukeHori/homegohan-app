@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+---
+# 11-validation-no-category: バリデーション - カテゴリ未選択でエラー
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 名前入力（カテゴリは選択しない）
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "カテゴリなし食材"
+
+# 数量入力
+- tapOn:
+    id: "pantry-quantity-input"
+- inputText: "2"
+
+# 期限入力
+- tapOn:
+    id: "pantry-expiry-input"
+- inputText: "2026-12-31"
+
+# カテゴリを選択せずに保存
+- tapOn:
+    id: "pantry-save-button"
+
+# カテゴリエラーが表示されることを確認
+- assertVisible:
+    id: "pantry-category-error"
+
+# 追加画面にとどまることを確認
+- assertVisible:
+    id: "pantry-name-input"

@@ -1,0 +1,48 @@
+appId: com.homegohan.app
+---
+# 08-validation-invalid-expiry-format: バリデーション - 期限不正フォーマットでエラー
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 名前入力
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "テスト食材"
+
+# カテゴリ選択
+- tapOn:
+    id: "pantry-category-select"
+- tapOn:
+    text: "その他"
+
+# 不正なフォーマットで期限入力
+- tapOn:
+    id: "pantry-expiry-input"
+- inputText: "31/12/2026"
+
+# 保存ボタンタップ
+- tapOn:
+    id: "pantry-save-button"
+
+# 期限フォーマットエラーが表示されることを確認
+- assertVisible:
+    id: "pantry-expiry-error"
+
+# 追加画面にとどまることを確認
+- assertVisible:
+    id: "pantry-name-input"

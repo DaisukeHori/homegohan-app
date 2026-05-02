@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+---
+# 22-state-skeleton-large-list: 状態遷移 - 大量データ読み込み時にスケルトン表示
+# 注意: このテストは多数のデータがある状態（100件以上）で実行することを前提とする
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動（スケルトンが一瞬表示されることを確認）
+- tapOn:
+    id: "tab-pantry"
+
+# スケルトンローダーが表示されることを確認（ロード開始直後）
+- assertVisible:
+    id: "pantry-skeleton-loader"
+
+# データ読み込み完了後にスケルトンが消えることを確認
+- extendedWaitUntil:
+    notVisible:
+      id: "pantry-skeleton-loader"
+    timeout: 15000
+
+# 実際のリストが表示されていることを確認
+- assertVisible:
+    id: "pantry-screen"
+
+- assertNotVisible:
+    id: "pantry-skeleton-loader"

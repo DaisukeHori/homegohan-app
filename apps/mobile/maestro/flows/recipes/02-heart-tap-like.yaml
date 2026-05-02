@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+---
+# 02-heart-tap-like: 正常系 - ハートタップでお気に入り登録
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-recipes"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# レシピリストが表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# 最初のレシピのハートボタンをタップ（お気に入り登録）
+- tapOn:
+    id: "recipes-like-0"
+
+# ハートがアクティブ状態になることを確認
+- extendedWaitUntil:
+    visible:
+      id: "recipes-like-0-active"
+    timeout: 5000
+
+# 再度タップでお気に入り解除
+- tapOn:
+    id: "recipes-like-0"
+
+# ハートが非アクティブ状態に戻ることを確認
+- extendedWaitUntil:
+    visible:
+      id: "recipes-like-0-inactive"
+    timeout: 5000

@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+---
+# 09-validation-past-expiry: バリデーション - 過去の期限でエラー
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 名前入力
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "過去期限テスト"
+
+# カテゴリ選択
+- tapOn:
+    id: "pantry-category-select"
+- tapOn:
+    text: "その他"
+
+# 過去の日付を期限として入力
+- tapOn:
+    id: "pantry-expiry-input"
+- inputText: "2000-01-01"
+
+# 保存ボタンタップ
+- tapOn:
+    id: "pantry-save-button"
+
+# 過去期限エラーが表示されることを確認
+- assertVisible:
+    id: "pantry-expiry-error"

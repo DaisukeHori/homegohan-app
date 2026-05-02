@@ -1,0 +1,50 @@
+appId: com.homegohan.app
+---
+# 20-state-edit-bg-fg-input-preserved: 状態遷移 - 編集中にBG→FGで入力内容が保持される
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 名前を途中まで入力
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "バックグラウンドテスト"
+
+- tapOn:
+    id: "pantry-category-select"
+- tapOn:
+    text: "野菜"
+
+# アプリをバックグラウンドに移動
+- pressKey: Home
+
+# 少し待機
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# アプリをフォアグラウンドに戻す
+- launchApp:
+    clearState: false
+
+# 入力内容が保持されていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+- assertVisible:
+    text: "バックグラウンドテスト"

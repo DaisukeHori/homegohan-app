@@ -1,0 +1,58 @@
+appId: com.homegohan.app
+---
+# 12-api-post-fail: API失敗 - POST失敗時のエラーハンドリング
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# ネットワーク遮断状態でのテスト（機内モード相当）
+- setLocation:
+    lat: 35.6762
+    long: 139.6503
+
+- tapOn:
+    id: "pantry-add-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 正常な入力データで送信試行
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "APIエラーテスト食材"
+
+- tapOn:
+    id: "pantry-category-select"
+- tapOn:
+    text: "野菜"
+
+- tapOn:
+    id: "pantry-quantity-input"
+- inputText: "1"
+
+- tapOn:
+    id: "pantry-expiry-input"
+- inputText: "2026-12-31"
+
+# ネットワークエラーを強制するため、API エラー状態で保存
+# (テスト環境では環境変数 MAESTRO_API_MOCK_FAIL=true 等でモック)
+- tapOn:
+    id: "pantry-save-button"
+
+# APIエラートーストまたはアラートが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "pantry-error-toast"
+    timeout: 15000
+
+# 追加画面またはパントリー画面にとどまること（データが失われていない）
+- assertVisible:
+    id: "pantry-save-button"

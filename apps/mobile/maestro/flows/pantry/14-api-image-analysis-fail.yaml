@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+---
+# 14-api-image-analysis-fail: API失敗 - 画像解析失敗時のエラーハンドリング
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 冷蔵庫写真ボタンをタップ
+- tapOn:
+    id: "pantry-fridge-photo-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-photo-picker"
+    timeout: 5000
+
+# カメラロールから画像を選択
+- tapOn:
+    id: "pantry-photo-gallery-button"
+
+- tapOn:
+    index: 0
+
+# AI解析失敗を待機（タイムアウト or APIエラー）
+- extendedWaitUntil:
+    visible:
+      id: "pantry-ai-error-message"
+    timeout: 30000
+
+# エラーメッセージが表示されること
+- assertVisible:
+    id: "pantry-ai-error-message"
+
+# 再試行ボタンが表示されることを確認
+- assertVisible:
+    id: "pantry-ai-retry-button"

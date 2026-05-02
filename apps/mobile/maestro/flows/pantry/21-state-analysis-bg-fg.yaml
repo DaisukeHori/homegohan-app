@@ -1,0 +1,53 @@
+appId: com.homegohan.app
+---
+# 21-state-analysis-bg-fg: 状態遷移 - AI解析中にBG→FGで処理が継続される
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 冷蔵庫写真ボタンをタップ
+- tapOn:
+    id: "pantry-fridge-photo-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-photo-picker"
+    timeout: 5000
+
+- tapOn:
+    id: "pantry-photo-gallery-button"
+
+- tapOn:
+    index: 0
+
+# 解析開始を確認（ローディング表示）
+- extendedWaitUntil:
+    visible:
+      id: "pantry-ai-loading"
+    timeout: 10000
+
+# 解析中にバックグラウンドへ
+- pressKey: Home
+
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# フォアグラウンドに戻す
+- launchApp:
+    clearState: false
+
+# 解析結果または継続中のローディングが表示されること
+- extendedWaitUntil:
+    visible:
+      id: "pantry-ai-result-modal"
+    timeout: 30000
+
+# アプリがクラッシュせず結果が表示されること
+- assertVisible:
+    id: "pantry-ai-confirm-button"

@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+---
+# 05-api-list-fail: API失敗 - レシピ一覧取得失敗時のエラーハンドリング
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-recipes"
+
+# APIエラー状態でのレシピ画面（ネットワーク遮断またはモックAPIエラー）
+# エラーメッセージまたはリトライUIが表示されること
+- extendedWaitUntil:
+    visible:
+      id: "recipes-error-state"
+    timeout: 20000
+
+# エラーメッセージが表示されていること
+- assertVisible:
+    id: "recipes-error-state"
+
+# リトライボタンが表示されること
+- assertVisible:
+    id: "recipes-retry-button"
+
+# リトライボタンをタップ
+- tapOn:
+    id: "recipes-retry-button"
+
+# リトライ後に再度リクエストが実行されること（ローディング表示）
+- extendedWaitUntil:
+    visible:
+      id: "recipes-loading"
+    timeout: 5000

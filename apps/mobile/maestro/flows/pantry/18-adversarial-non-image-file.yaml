@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+---
+# 18-adversarial-non-image-file: Adversarial - 非画像ファイルをカメラロールから選択
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 冷蔵庫写真ボタンをタップ
+- tapOn:
+    id: "pantry-fridge-photo-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-photo-picker"
+    timeout: 5000
+
+# ドキュメントピッカーを選択（非画像ファイルのため）
+- tapOn:
+    id: "pantry-photo-document-button"
+
+# PDFや動画など非画像ファイルを選択（ファイル選択は OS依存）
+# テスト環境では事前に非画像ファイルをデバイスに配置しておく
+- tapOn:
+    text: "document.pdf"
+
+# エラーメッセージまたは拒否のフィードバックが表示されること
+- extendedWaitUntil:
+    visible:
+      id: "pantry-photo-type-error"
+    timeout: 10000
+
+# アプリがクラッシュせずパントリー画面に戻っていることを確認
+- assertVisible:
+    id: "pantry-screen"

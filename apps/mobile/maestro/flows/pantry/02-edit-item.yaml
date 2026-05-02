@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+---
+# 02-edit-item: 食材編集 正常系
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-pantry"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 最初のアイテムをタップして編集画面へ
+- tapOn:
+    id: "pantry-item-0"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-name-input"
+    timeout: 5000
+
+# 名前を変更
+- tapOn:
+    id: "pantry-name-input"
+- clearText
+- inputText: "にんじん"
+
+# 数量を変更
+- tapOn:
+    id: "pantry-quantity-input"
+- clearText
+- inputText: "5"
+
+# 保存
+- tapOn:
+    id: "pantry-save-button"
+
+# 変更後の食材名が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      text: "にんじん"
+    timeout: 10000

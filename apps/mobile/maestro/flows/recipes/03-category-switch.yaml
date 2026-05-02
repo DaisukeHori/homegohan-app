@@ -1,0 +1,58 @@
+appId: com.homegohan.app
+---
+# 03-category-switch: 正常系 - カテゴリ切替でリストが更新される
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-recipes"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# 全件表示を確認（デフォルト状態）
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# 洋食フィルタを選択
+- tapOn:
+    id: "recipes-category-filter-yoshoku"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# 中華に切替
+- tapOn:
+    id: "recipes-category-filter-chuka"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# アジア料理に切替
+- tapOn:
+    id: "recipes-category-filter-asian"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# デザートに切替
+- tapOn:
+    id: "recipes-category-filter-dessert"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-list"
+    timeout: 10000
+
+# 各切替でアプリがクラッシュしないことを確認
+- assertVisible:
+    id: "recipes-screen"
