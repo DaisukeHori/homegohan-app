@@ -8,14 +8,11 @@ env:
 - assertVisible:
     id: "home-screen"
 - assertVisible:
-    id: "home-condition-section"
+    id: "home-health-card"
 - assertVisible:
-    id: "home-meals-section"
+    id: "home-streak-card"
 - assertVisible:
-    id: "home-checkin-section"
+    id: "home-checkin-button"
+- scroll
 - assertVisible:
-    id: "home-ai-suggestion-section"
-- assertVisible:
-    id: "home-weekly-graph-section"
-- assertVisible:
-    id: "home-announcements-section"
+    id: "home-weekly-graph-card"
