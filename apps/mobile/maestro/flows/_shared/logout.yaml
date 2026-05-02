@@ -1,0 +1,22 @@
+appId: com.homegohan.app
+---
+# _shared/logout.yaml: タブバーのプロファイルタブ → 設定 → ログアウトの共通フロー
+# 前提: ホーム画面または任意の画面 (タブバーが見える状態)
+- tapOn:
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+- tapOn:
+    id: "profile-settings-button"
+- assertVisible:
+    id: "settings-screen"
+- tapOn:
+    id: "settings-logout-button"
+- assertVisible:
+    id: "settings-logout-confirm-modal"
+- tapOn:
+    id: "settings-logout-confirm-button"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 10000

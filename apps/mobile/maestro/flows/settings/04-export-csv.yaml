@@ -21,7 +21,11 @@ appId: com.homegohan.app
 
 # 設定画面へ移動
 - tapOn:
-    id: "tab-settings"
+    id: "tab-profile"
+- assertVisible:
+    id: "profile-screen"
+- tapOn:
+    id: "profile-settings-button"
 - assertVisible:
     id: "settings-screen"
 
