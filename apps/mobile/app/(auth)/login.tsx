@@ -31,6 +31,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // #532: rate limit 残り秒数 (0 = 制限なし)
   const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
 
@@ -89,6 +90,7 @@ export default function LoginScreen() {
   }
 
   async function onSubmit() {
+    setErrorMessage(null);
     // #532: rate limit チェック
     if (rateLimitRemaining > 0) {
       Alert.alert("しばらくお待ちください", `再試行まであと ${rateLimitRemaining} 秒お待ちください。`);
@@ -124,14 +126,20 @@ export default function LoginScreen() {
           error.message.includes("For security purposes") ||
           error.message.includes("too many requests")
         ) {
-          Alert.alert("ログイン失敗", "しばらくしてから再度お試しください。");
+          const msg = "しばらくしてから再度お試しください。";
+          setErrorMessage(msg);
+          Alert.alert("ログイン失敗", msg);
         } else if (
           error.message.includes("Invalid login credentials") ||
           error.message.includes("Invalid email or password")
         ) {
-          Alert.alert("ログイン失敗", "メールアドレスまたはパスワードが正しくありません。");
+          const msg = "メールアドレスまたはパスワードが正しくありません。";
+          setErrorMessage(msg);
+          Alert.alert("ログイン失敗", msg);
         } else {
-          Alert.alert("ログイン失敗", "ログインに失敗しました。入力内容をご確認ください。");
+          const msg = "ログインに失敗しました。入力内容をご確認ください。";
+          setErrorMessage(msg);
+          Alert.alert("ログイン失敗", msg);
         }
         return;
       }
@@ -174,7 +182,9 @@ export default function LoginScreen() {
         }
       }
     } catch (e: any) {
-      Alert.alert("ログイン失敗", e?.message ?? "ログインに失敗しました。");
+      const msg = e?.message ?? "ログインに失敗しました。";
+      setErrorMessage(msg);
+      Alert.alert("ログイン失敗", msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -211,6 +221,38 @@ export default function LoginScreen() {
           <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>ログイン</Text>
           <Text style={{ fontSize: 14, color: colors.textMuted, marginTop: 4 }}>おかえりなさい！</Text>
         </View>
+
+        {/* レート制限バナー */}
+        {rateLimitRemaining > 0 && (
+          <View
+            testID="login-rate-limit-banner"
+            style={{
+              backgroundColor: colors.errorLight, borderRadius: radius.lg,
+              padding: spacing.md, marginBottom: spacing.md,
+              flexDirection: "row", alignItems: "center", gap: spacing.sm,
+            }}
+          >
+            <Ionicons name="time-outline" size={18} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>
+              再試行まであと {rateLimitRemaining} 秒お待ちください。
+            </Text>
+          </View>
+        )}
+
+        {/* エラーバナー */}
+        {errorMessage !== null && (
+          <View
+            testID="login-error-banner"
+            style={{
+              backgroundColor: colors.errorLight, borderRadius: radius.lg,
+              padding: spacing.md, marginBottom: spacing.md,
+              flexDirection: "row", alignItems: "center", gap: spacing.sm,
+            }}
+          >
+            <Ionicons name="alert-circle-outline" size={18} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{errorMessage}</Text>
+          </View>
+        )}
 
         {/* フォーム */}
         <View style={{ gap: spacing.md }}>
@@ -263,7 +305,7 @@ export default function LoginScreen() {
                   fontSize: 15, color: colors.text,
                 }}
               />
-              <Pressable onPress={() => setShowPassword(!showPassword)} hitSlop={8}>
+              <Pressable testID="login-show-password-button" onPress={() => setShowPassword(!showPassword)} hitSlop={8}>
                 <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.textMuted} />
               </Pressable>
             </View>
@@ -272,7 +314,7 @@ export default function LoginScreen() {
           {/* パスワード忘れた */}
           <View style={{ alignItems: "flex-end" }}>
             <Link href="/auth/forgot-password" asChild>
-              <Pressable>
+              <Pressable testID="login-forgot-password-link">
                 <Text style={{ fontSize: 13, color: colors.accent, fontWeight: "600" }}>パスワードを忘れた？</Text>
               </Pressable>
             </Link>
@@ -308,6 +350,7 @@ export default function LoginScreen() {
 
           {/* Google ログインボタン */}
           <Pressable
+            testID="login-google-button"
             onPress={onGoogleLogin}
             disabled={isSubmitting}
             style={({ pressed }) => ({
@@ -331,7 +374,7 @@ export default function LoginScreen() {
         <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 24, gap: 4 }}>
           <Text style={{ fontSize: 14, color: colors.textMuted }}>アカウントをお持ちでない方は</Text>
           <Link href="/signup" asChild>
-            <Pressable>
+            <Pressable testID="login-signup-link">
               <Text style={{ fontSize: 14, color: colors.accent, fontWeight: "700" }}>新規登録</Text>
             </Pressable>
           </Link>

@@ -25,6 +25,7 @@ export default function SignupScreen() {
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   async function onGoogleSignup() {
     setIsSubmitting(true);
@@ -68,6 +69,7 @@ export default function SignupScreen() {
   }
 
   async function onSubmit() {
+    setErrorMessage(null);
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail || !password) {
       Alert.alert("入力エラー", "メールアドレスとパスワードを入力してください。");
@@ -102,7 +104,9 @@ export default function SignupScreen() {
         { text: "OK", onPress: () => router.replace("/(auth)/login") },
       ]);
     } catch (e: any) {
-      Alert.alert("登録失敗", e?.message ?? "登録に失敗しました。");
+      const msg = e?.message ?? "登録に失敗しました。";
+      setErrorMessage(msg);
+      Alert.alert("登録失敗", msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -110,6 +114,7 @@ export default function SignupScreen() {
 
   return (
     <KeyboardAvoidingView
+      testID="signup-screen"
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
@@ -139,6 +144,21 @@ export default function SignupScreen() {
           <Text style={{ fontSize: 14, color: colors.textMuted, marginTop: 4 }}>はじめまして！</Text>
         </View>
 
+        {/* エラーバナー */}
+        {errorMessage !== null && (
+          <View
+            testID="signup-error-banner"
+            style={{
+              backgroundColor: colors.errorLight, borderRadius: radius.lg,
+              padding: spacing.md, marginBottom: spacing.md,
+              flexDirection: "row", alignItems: "center", gap: spacing.sm,
+            }}
+          >
+            <Ionicons name="alert-circle-outline" size={18} color={colors.error} />
+            <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>{errorMessage}</Text>
+          </View>
+        )}
+
         {/* フォーム */}
         <View style={{ gap: spacing.md }}>
           <View>
@@ -152,6 +172,7 @@ export default function SignupScreen() {
             }}>
               <Ionicons name="mail-outline" size={18} color={colors.textMuted} />
               <TextInput
+                testID="signup-email-input"
                 placeholder="email@example.com"
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="none"
@@ -178,6 +199,7 @@ export default function SignupScreen() {
             }}>
               <Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} />
               <TextInput
+                testID="signup-password-input"
                 placeholder="8文字以上・英字と数字を含む"
                 placeholderTextColor={colors.textMuted}
                 secureTextEntry={!showPassword}
@@ -188,7 +210,7 @@ export default function SignupScreen() {
                   fontSize: 15, color: colors.text,
                 }}
               />
-              <Pressable onPress={() => setShowPassword(!showPassword)} hitSlop={8}>
+              <Pressable testID="signup-show-password-button" onPress={() => setShowPassword(!showPassword)} hitSlop={8}>
                 <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.textMuted} />
               </Pressable>
             </View>
@@ -199,6 +221,7 @@ export default function SignupScreen() {
 
           {/* 登録ボタン */}
           <Pressable
+            testID="signup-button"
             onPress={onSubmit}
             disabled={isSubmitting}
             style={({ pressed }) => ({
@@ -222,6 +245,7 @@ export default function SignupScreen() {
 
           {/* Google 登録ボタン */}
           <Pressable
+            testID="signup-google-button"
             onPress={onGoogleSignup}
             disabled={isSubmitting}
             style={({ pressed }) => ({
@@ -245,7 +269,7 @@ export default function SignupScreen() {
         <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 24, gap: 4 }}>
           <Text style={{ fontSize: 14, color: colors.textMuted }}>アカウントをお持ちの方は</Text>
           <Link href="/(auth)/login" asChild>
-            <Pressable>
+            <Pressable testID="signup-login-link">
               <Text style={{ fontSize: 14, color: colors.accent, fontWeight: "700" }}>ログイン</Text>
             </Pressable>
           </Link>
