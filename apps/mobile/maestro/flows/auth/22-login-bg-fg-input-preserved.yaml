@@ -4,6 +4,9 @@ env:
 ---
 # 22: login 中に BG → FG → 入力保持
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - tapOn:
     text: "ログイン"
 - assertVisible:

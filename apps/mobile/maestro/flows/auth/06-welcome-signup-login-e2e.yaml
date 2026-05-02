@@ -8,6 +8,9 @@ env:
 # 06: welcome から signup 経由でログインまで一気通貫
 # Step 1: welcome 画面確認
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     text: "ほめゴハン"
 - assertVisible:

@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 06-birthday-future-validation: 生年月日に未来の日付を入力した場合のバリデーションエラー (バリデーション)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

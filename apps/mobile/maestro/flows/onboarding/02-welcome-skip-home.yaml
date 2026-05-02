@@ -5,6 +5,9 @@ env:
 ---
 # 02: welcome → skip → home 画面に到達する
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -4,6 +4,9 @@ appId: com.homegohan.app
 # Note: Supabase が内部エラーを返した場合のエラーハンドリング確認
 # テスト環境では不正な URL 設定や、mock により 500 を再現
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - tapOn:
     text: "新規登録"
 - assertVisible:

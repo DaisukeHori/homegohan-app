@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 17: email に 5000 字 → クラッシュしないこと確認
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - tapOn:
     text: "ログイン"
 - assertVisible:

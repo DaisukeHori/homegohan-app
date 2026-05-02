@@ -5,6 +5,9 @@ env:
 ---
 # 16: Adversarial - nickname 1000文字入力 → バリデーションエラーまたは切り捨て
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

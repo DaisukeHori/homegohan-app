@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 09-notification-os-denied: OS レベルで通知権限が拒否されている場合 (Adversarial)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

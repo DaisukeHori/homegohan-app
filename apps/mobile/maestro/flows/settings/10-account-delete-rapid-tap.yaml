@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 10-account-delete-rapid-tap: アカウント削除ボタンを連打しても二重実行されない (Adversarial)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

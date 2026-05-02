@@ -1,0 +1,19 @@
+appId: com.homegohan.app
+---
+# _shared/logout-from-admin.yaml: Admin Console からログアウトしてウェルカム画面に戻る
+- tapOn:
+    text: "< Admin Console"
+    optional: true
+- tapOn:
+    point: "5%,10%"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 3000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: "home-screen"
+    file: "./logout.yaml"

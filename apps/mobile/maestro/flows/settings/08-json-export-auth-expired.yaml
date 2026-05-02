@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 08-json-export-auth-expired: JSON export 時に認証切れが発生した場合 (API 異常系)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

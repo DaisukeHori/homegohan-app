@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 05-height-zero-validation: 身長に 0 を入力した場合のバリデーションエラー (バリデーション)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
