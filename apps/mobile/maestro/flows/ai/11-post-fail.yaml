@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+---
+# 11-post-fail: POST APIが失敗したとき → エラーメッセージが表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力して送信 (ネットワーク障害・サーバーエラーシミュレーション環境前提)
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "テストメッセージ"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# エラーメッセージが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-error-text"
+    timeout: 30000
+
+# エラーが表示されていることを確認
+- assertVisible:
+    id: "ai-chat-error-text"
+
+# チャット画面に留まっていることを確認 (クラッシュしていない)
+- assertVisible:
+    id: "ai-chat-screen"

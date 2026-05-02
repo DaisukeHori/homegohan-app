@@ -1,0 +1,53 @@
+appId: com.homegohan.app
+---
+# 10-image-only-send: 画像のみ (テキストなし) で送信 → 送信ボタンが有効または無効になる
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 入力欄が空のことを確認 → 送信ボタンは disabled
+- assertNotVisible:
+    id: "ai-chat-streaming-view"
+
+# 画像添付ボタンをタップ
+- tapOn:
+    id: "ai-chat-image-attach-button"
+
+# フォトライブラリが表示されるまで待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 最初の画像を選択
+- tapOn:
+    point: "10%, 30%"
+
+# 画像のみの状態で送信ボタンをタップ
+- tapOn:
+    id: "ai-chat-send-button"
+    optional: true
+
+# 画像のみの場合: 送信されないこと、またはエラーが表示されることを確認
+# (テキストなし画像のみ送信がブロックされる場合)
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# チャット画面に留まっていることを確認
+- assertVisible:
+    id: "ai-chat-screen"

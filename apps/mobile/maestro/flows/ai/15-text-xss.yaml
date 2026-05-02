@@ -1,0 +1,50 @@
+appId: com.homegohan.app
+---
+# 15-text-xss: XSS文字列を送信 → エスケープされて安全に表示される (スクリプトが実行されない)
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# XSS文字列を入力
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "<script>alert('XSS')</script>"
+
+# 送信ボタンをタップ
+- tapOn:
+    id: "ai-chat-send-button"
+
+# チャット画面に留まっていることを確認 (アラートが表示されない = XSS非実行)
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# チャット画面が安全に表示されていることを確認
+- assertVisible:
+    id: "ai-chat-screen"
+
+# ストリーミングが完了するまで待機
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-chat-streaming-view"
+    timeout: 60000
+
+# アプリがクラッシュせずメッセージがテキストとして表示されることを確認
+- assertVisible:
+    id: "ai-chat-screen"

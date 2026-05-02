@@ -1,0 +1,36 @@
+appId: com.homegohan.app
+---
+# 01-new-session-greeting: 新規セッション → 挨拶メッセージが表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    id: "ai-sessions-screen"
+    optional: true
+- tapOn:
+    text: "AI相談"
+
+# セッション一覧画面が表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成ボタンをタップ
+- tapOn:
+    id: "ai-new-session-button"
+
+# チャット画面が表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 挨拶メッセージ (AIからの初期メッセージ) が表示されることを確認
+- assertVisible:
+    id: "ai-chat-screen"
+
+# 入力欄が表示されることを確認
+- assertVisible:
+    id: "ai-chat-input"

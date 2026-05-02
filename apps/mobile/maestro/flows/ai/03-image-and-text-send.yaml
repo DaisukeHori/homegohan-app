@@ -1,0 +1,59 @@
+appId: com.homegohan.app
+---
+# 03-image-and-text-send: 画像 + テキスト送信 → メッセージが表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 画像添付ボタンをタップ
+- tapOn:
+    id: "ai-chat-image-attach-button"
+
+# フォトライブラリが表示されるまで待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 最初の画像を選択
+- tapOn:
+    point: "10%, 30%"
+
+# テキストを入力
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "この料理の栄養バランスを教えてください"
+
+# 送信ボタンをタップ
+- tapOn:
+    id: "ai-chat-send-button"
+
+# ストリーミング表示が開始されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-streaming-view"
+    timeout: 10000
+
+# ストリーミングが完了するまで待機
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-chat-streaming-view"
+    timeout: 60000
+
+# 送信したメッセージが表示されていることを確認
+- assertVisible: "この料理の栄養バランスを教えてください"

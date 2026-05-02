@@ -1,0 +1,59 @@
+appId: com.homegohan.app
+---
+# 17-image-4mb: 4MB画像を送信 → 正常処理またはサイズ上限エラーが表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 画像添付ボタンをタップ
+- tapOn:
+    id: "ai-chat-image-attach-button"
+
+# フォトライブラリが表示されるまで待機 (4MB以上の画像がある前提)
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 大きいサイズの画像を選択 (テストデバイスの最後の画像を選択)
+- tapOn:
+    point: "90%, 30%"
+
+# テキストを入力
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "この画像について教えてください"
+
+# 送信ボタンをタップ
+- tapOn:
+    id: "ai-chat-send-button"
+
+# 正常送信またはサイズエラーが表示されることを確認
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "ai-chat-streaming-view"
+      - visible:
+          id: "ai-chat-error-text"
+      - visible:
+          text: "サイズ"
+    timeout: 30000
+
+# アプリがクラッシュしていないことを確認
+- assertVisible:
+    id: "ai-chat-screen"

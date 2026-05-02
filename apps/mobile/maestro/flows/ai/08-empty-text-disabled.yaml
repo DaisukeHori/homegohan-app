@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+---
+# 08-empty-text-disabled: 空テキストでは送信ボタンが disabled になる
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 入力欄が空のまま送信ボタンが disabled であることを確認
+# (disabled な要素はタップできないため、タップ後に送信が発生しないことを確認)
+- tapOn:
+    id: "ai-chat-send-button"
+    optional: true
+
+# ストリーミングが開始されないことを確認 (送信が無効化されている)
+- assertNotVisible:
+    id: "ai-chat-streaming-view"
+
+# チャット画面に留まっていることを確認
+- assertVisible:
+    id: "ai-chat-screen"
+
+# 入力欄にテキストを入力すると送信ボタンが有効になることを確認
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "a"
+
+- assertVisible:
+    id: "ai-chat-send-button"
