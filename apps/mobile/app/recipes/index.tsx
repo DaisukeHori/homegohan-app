@@ -69,11 +69,13 @@ type FilterChipProps = {
   label: string;
   selected: boolean;
   onPress: () => void;
+  testID?: string;
 };
 
-function FilterChip({ label, selected, onPress }: FilterChipProps) {
+function FilterChip({ label, selected, onPress, testID }: FilterChipProps) {
   return (
     <TouchableOpacity
+      testID={testID}
       onPress={onPress}
       style={{
         paddingHorizontal: spacing.md,
@@ -139,7 +141,7 @@ export default function RecipesPage() {
   const hasActiveFilters = !!(category || cuisineType || difficulty || maxTime);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="recipes-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="レシピ"
         right={
@@ -164,6 +166,7 @@ export default function RecipesPage() {
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
               <View style={{ flex: 1 }}>
                 <Input
+                  testID="recipes-search-input"
                   value={q}
                   onChangeText={setQ}
                   placeholder="検索（例: からあげ）"
@@ -196,6 +199,7 @@ export default function RecipesPage() {
                     {CATEGORY_OPTIONS.map((opt) => (
                       <FilterChip
                         key={opt.value}
+                        testID={`recipes-category-filter-${opt.value === "" ? "all" : opt.value}`}
                         label={opt.label}
                         selected={category === opt.value}
                         onPress={() => setCategory(opt.value)}
@@ -229,6 +233,7 @@ export default function RecipesPage() {
                   {DIFFICULTY_OPTIONS.map((opt) => (
                     <FilterChip
                       key={opt.value}
+                      testID={`recipes-difficulty-filter-${opt.value === "" ? "all" : opt.value}`}
                       label={opt.label}
                       selected={difficulty === opt.value}
                       onPress={() => setDifficulty(opt.value)}
@@ -238,7 +243,7 @@ export default function RecipesPage() {
               </View>
 
               {/* 調理時間 */}
-              <View style={{ gap: spacing.xs }}>
+              <View testID="recipes-time-filter" style={{ gap: spacing.xs }}>
                 <Text style={{ fontSize: 12, fontWeight: "700", color: colors.textLight }}>調理時間</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View style={{ flexDirection: "row", gap: spacing.xs }}>
@@ -286,6 +291,7 @@ export default function RecipesPage() {
           </Card>
         ) : items.length === 0 ? (
           <EmptyState
+            testID="recipes-empty"
             icon={<Ionicons name="restaurant-outline" size={48} color={colors.textMuted} />}
             message="レシピがありません。"
           />
@@ -293,7 +299,7 @@ export default function RecipesPage() {
           <View style={{ gap: spacing.sm }}>
             <Text style={{ fontSize: 12, color: colors.textMuted }}>{items.length}件</Text>
             {items.map((r) => (
-              <Card key={r.id} onPress={() => router.push(`/recipes/${r.id}`)}>
+              <Card testID={`recipes-item-${r.id}`} key={r.id} onPress={() => router.push(`/recipes/${r.id}`)}>
                 <View style={{ gap: spacing.sm }}>
                   <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{r.name}</Text>
 
@@ -351,6 +357,7 @@ export default function RecipesPage() {
 
                   <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs }}>
                     <Button
+                      testID={`recipes-like-${r.id}`}
                       onPress={() => {
                         toggleLike(r.id, !r.isLiked).catch(() => {});
                       }}

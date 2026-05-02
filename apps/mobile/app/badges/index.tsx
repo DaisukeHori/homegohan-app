@@ -41,15 +41,17 @@ export default function BadgesPage() {
     };
   }, []);
 
+  const earnedCount = badges.filter((b) => b.earned).length;
+
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="badges-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="バッジ"
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
             <Ionicons name="trophy" size={20} color={colors.accent} />
-            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.textMuted }}>
-              {badges.filter((b) => b.earned).length}/{badges.length}
+            <Text testID="badges-earned-count" style={{ fontSize: 13, fontWeight: "700", color: colors.textMuted }}>
+              {earnedCount}/{badges.length}
             </Text>
           </View>
         }
@@ -67,6 +69,7 @@ export default function BadgesPage() {
         </Card>
       ) : badges.length === 0 ? (
         <EmptyState
+          testID="badges-empty"
           icon={<Ionicons name="trophy-outline" size={48} color={colors.textMuted} />}
           message="バッジがありません。"
         />
@@ -74,6 +77,7 @@ export default function BadgesPage() {
         <View style={{ gap: spacing.sm }}>
           {badges.map((b) => (
             <Card
+              testID={`badges-badge-${b.code}`}
               key={b.id}
               variant={b.earned ? "success" : "default"}
             >
