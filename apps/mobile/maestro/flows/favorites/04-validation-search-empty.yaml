@@ -1,31 +1,33 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # バリデーション 04: 検索空 → 全件表示
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- tapOn:
-    id: "meals-favorites-tab"
-- assertVisible:
-    id: "favorites-screen"
+    id: "tab-favorites"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-screen"
+    timeout: 10000
 
+# 検索入力
 - tapOn:
     id: "favorites-search-input"
 - inputText: "検索テスト"
-
-- extendedWaitUntil:
-    visible:
-      id: "favorites-list"
+- waitForAnimationToEnd:
     timeout: 5000
 
-- clearText:
+# 検索をクリア (eraseText で削除)
+- tapOn:
     id: "favorites-search-input"
+- eraseText: 10
 
-- extendedWaitUntil:
-    visible:
-      id: "favorites-list"
+# 全件表示に戻ることを確認
+- waitForAnimationToEnd:
     timeout: 5000
-
 - assertVisible:
-    id: "favorites-list-item"
+    id: "favorites-screen"

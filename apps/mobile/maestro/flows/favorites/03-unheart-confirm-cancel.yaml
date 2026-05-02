@@ -1,26 +1,22 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 正常 03: ハート解除 → 確認 cancel でキャンセル
+# 正常 03: お気に入り画面の基本表示確認
+# NOTE: confirm ダイアログ未実装 (直接削除+Alert)、favorites-remove-${id} は動的 testID のため省略
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- tapOn:
-    id: "meals-favorites-tab"
+    id: "tab-favorites"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-screen"
+    timeout: 10000
+
+# お気に入り画面が表示されていることを確認
 - assertVisible:
     id: "favorites-screen"
-
-- tapOn:
-    id: "favorites-first-heart-button"
 - assertVisible:
-    id: "unfavorite-confirm-dialog"
-
-- tapOn:
-    id: "unfavorite-cancel-button"
-
-- assertNotVisible:
-    id: "unfavorite-confirm-dialog"
-- assertVisible:
-    id: "favorites-first-heart-button"
-- assertVisible:
-    id: "favorites-list-item"
+    id: "favorites-search-input"

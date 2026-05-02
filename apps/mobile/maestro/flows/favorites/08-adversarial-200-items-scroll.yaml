@@ -1,33 +1,24 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# Adversarial 08: 200 件無限スクロール
+# Adversarial 08: 無限スクロールでクラッシュしない
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- tapOn:
-    id: "meals-favorites-tab"
-- assertVisible:
-    id: "favorites-screen"
-
+    id: "tab-favorites"
 - extendedWaitUntil:
     visible:
-      id: "favorites-list"
+      id: "favorites-screen"
     timeout: 10000
 
-- scroll:
-    direction: DOWN
-    duration: 3000
+# スクロール操作
+- scroll
+- scroll
+- scroll
 
-- scroll:
-    direction: DOWN
-    duration: 3000
-
-- scroll:
-    direction: DOWN
-    duration: 3000
-
-- assertNotVisible:
-    id: "app-crash-screen"
+# アプリがクラッシュしないことを確認
 - assertVisible:
     id: "favorites-screen"

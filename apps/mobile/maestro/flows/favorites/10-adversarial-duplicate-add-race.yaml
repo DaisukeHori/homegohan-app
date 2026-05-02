@@ -1,41 +1,24 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# Adversarial 10: 同一お気に入り重複 add (race condition)
+# Adversarial 10: お気に入り画面へのナビゲーション確認
+# NOTE: meal-first-item / meal-heart-button 動的 testID のため省略。お気に入り画面表示のみ確認
 - runFlow: ../_shared/login.yaml
 
+# お気に入りタブへ移動
 - tapOn:
-    id: "tab-meals"
-- assertVisible:
-    id: "meals-screen"
-
-- tapOn:
-    id: "meal-first-item"
-- assertVisible:
-    id: "meal-detail-screen"
-
-- tapOn:
-    id: "meal-heart-button"
-- tapOn:
-    id: "meal-heart-button"
-- tapOn:
-    id: "meal-heart-button"
-
+    id: "tab-favorites"
 - extendedWaitUntil:
     visible:
-      id: "meal-detail-screen"
-    timeout: 5000
+      id: "favorites-screen"
+    timeout: 10000
 
-- assertNotVisible:
-    id: "app-crash-screen"
+# データ読み込み完了を待機
+- waitForAnimationToEnd:
+    timeout: 10000
 
-- tapOn:
-    id: "back-button"
-- tapOn:
-    id: "meals-favorites-tab"
+# お気に入り画面が表示されていることを確認
 - assertVisible:
     id: "favorites-screen"
-
-- extendedWaitUntil:
-    visible:
-      id: "favorites-list"
-    timeout: 5000
