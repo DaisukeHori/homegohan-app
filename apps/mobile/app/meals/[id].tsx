@@ -377,7 +377,7 @@ export default function MealDetailPage() {
   const recipeStepsMd = primaryDish?.recipeStepsMd ?? null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="meal-detail-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="食事詳細" />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 32 }}>
       {/* 画像ヒーロー */}
@@ -455,6 +455,7 @@ export default function MealDetailPage() {
 
             {/* 詳細栄養素トグル */}
             <Pressable
+              testID="meal-detail-nutrition-toggle"
               onPress={() => setShowAllNutrition((v) => !v)}
               style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: spacing.xs }}
             >
@@ -578,6 +579,7 @@ export default function MealDetailPage() {
         {/* ハートボタン + 買い物リスト追加 */}
         <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
           <Pressable
+            testID="meal-detail-favorite-button"
             onPress={handleToggleFavorite}
             disabled={isFavoriteLoading}
             accessibilityLabel={isFavorite ? "お気に入りから削除" : "お気に入りに追加"}
@@ -616,7 +618,7 @@ export default function MealDetailPage() {
         </View>
 
         {/* アクション */}
-        <Button variant="secondary" onPress={() => router.push(`/meals/${meal.id}/edit`)}>
+        <Button testID="meal-detail-edit-button" variant="secondary" onPress={() => router.push(`/meals/${meal.id}/edit`)}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="create-outline" size={18} color={colors.accent} />
             <Text style={{ fontWeight: "700", color: colors.accent }}>編集</Text>
@@ -631,7 +633,7 @@ export default function MealDetailPage() {
           >
             {meal.is_completed ? "未完了に戻す" : "完了にする"}
           </Button>
-          <Button variant="destructive" onPress={deleteMeal}>
+          <Button testID="meal-detail-delete-button" variant="destructive" onPress={deleteMeal}>
             <Ionicons name="trash-outline" size={18} color="#fff" />
           </Button>
         </View>

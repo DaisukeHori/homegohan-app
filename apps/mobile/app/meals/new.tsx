@@ -650,7 +650,7 @@ export default function MealNewPage() {
 
   // ─── Render ────────────────────────────────────────
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="meal-new-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       {/* Header */}
       <View style={{
         flexDirection: "row", alignItems: "center", gap: spacing.md,
@@ -675,8 +675,9 @@ export default function MealNewPage() {
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
             {(Object.entries(PHOTO_MODES) as [PhotoMode, typeof PHOTO_MODES.auto][]).map(([mode, config]) => {
               const isSelected = photoMode === mode;
+              const modeTestId = mode === "auto" ? "meal-mode-auto-button" : mode === "meal" ? "meal-mode-meal-button" : mode === "fridge" ? "meal-mode-fridge-button" : mode === "health_checkup" ? "meal-mode-health-button" : "meal-mode-weight-button";
               return (
-                <Pressable key={mode} onPress={() => setPhotoMode(mode)} style={{
+                <Pressable key={mode} testID={modeTestId} onPress={() => setPhotoMode(mode)} style={{
                   width: "47%", padding: spacing.md, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                   backgroundColor: isSelected ? config.bg : colors.card,
                   borderWidth: isSelected ? 2 : 1, borderColor: isSelected ? config.color : colors.border,
@@ -696,7 +697,7 @@ export default function MealNewPage() {
           </Button>
 
           {/* 手動入力への導線 */}
-          <Pressable onPress={() => setStep("manual")} style={{
+          <Pressable testID="meal-mode-manual-button" onPress={() => setStep("manual")} style={{
             flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
             padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg,
             borderWidth: 1, borderColor: colors.border,
@@ -727,7 +728,7 @@ export default function MealNewPage() {
           </View>
 
           {/* Day pills */}
-          <View style={{ flexDirection: "row", gap: 4 }}>
+          <View testID="meal-date-input" style={{ flexDirection: "row", gap: 4 }}>
             {weekDates.map((day) => {
               const isSel = day.dateStr === selectedDate;
               const isToday = day.dateStr === todayStr;
@@ -751,7 +752,7 @@ export default function MealNewPage() {
               const config = MEAL_CONFIG[type];
               const isSel = type === selectedMealType;
               return (
-                <Pressable key={type} onPress={() => setSelectedMealType(type)} style={{
+                <Pressable key={type} testID={`meal-type-select-${type}`} onPress={() => setSelectedMealType(type)} style={{
                   flex: 1, padding: spacing.sm, borderRadius: radius.md, alignItems: "center", gap: 4,
                   backgroundColor: isSel ? config.bg : colors.card, borderWidth: isSel ? 2 : 1, borderColor: isSel ? config.color : colors.border,
                 }}>
@@ -766,7 +767,7 @@ export default function MealNewPage() {
               const config = MEAL_CONFIG[type];
               const isSel = type === selectedMealType;
               return (
-                <Pressable key={type} onPress={() => setSelectedMealType(type)} style={{
+                <Pressable key={type} testID={`meal-type-select-${type}`} onPress={() => setSelectedMealType(type)} style={{
                   flex: 1, padding: spacing.sm, borderRadius: radius.md, alignItems: "center", gap: 4,
                   backgroundColor: isSel ? config.bg : colors.card, borderWidth: isSel ? 2 : 1, borderColor: isSel ? config.color : colors.border,
                 }}>
@@ -870,6 +871,7 @@ export default function MealNewPage() {
             <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>食事情報</Text>
 
             <TextInput
+              testID="meal-manual-name-input"
               value={manualDishName}
               onChangeText={setManualDishName}
               placeholder="食事名（必須）"
@@ -881,50 +883,62 @@ export default function MealNewPage() {
             />
 
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
-              {[
-                { label: "カロリー (kcal)", value: manualCalories, set: setManualCalories },
-                { label: "タンパク質 (g)", value: manualProtein, set: setManualProtein },
-              ].map((field) => (
-                <TextInput
-                  key={field.label}
-                  value={field.value}
-                  onChangeText={field.set}
-                  placeholder={field.label}
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="decimal-pad"
-                  style={{
-                    flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
-                    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
-                  }}
-                />
-              ))}
+              <TextInput
+                testID="meal-manual-calorie-input"
+                value={manualCalories}
+                onChangeText={setManualCalories}
+                placeholder="カロリー (kcal)"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="decimal-pad"
+                style={{
+                  flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
+                  backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+                }}
+              />
+              <TextInput
+                testID="meal-manual-protein-input"
+                value={manualProtein}
+                onChangeText={setManualProtein}
+                placeholder="タンパク質 (g)"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="decimal-pad"
+                style={{
+                  flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
+                  backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+                }}
+              />
             </View>
 
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
-              {[
-                { label: "脂質 (g)", value: manualFat, set: setManualFat },
-                { label: "炭水化物 (g)", value: manualCarbs, set: setManualCarbs },
-              ].map((field) => (
-                <TextInput
-                  key={field.label}
-                  value={field.value}
-                  onChangeText={field.set}
-                  placeholder={field.label}
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="decimal-pad"
-                  style={{
-                    flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
-                    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
-                  }}
-                />
-              ))}
+              <TextInput
+                value={manualFat}
+                onChangeText={setManualFat}
+                placeholder="脂質 (g)"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="decimal-pad"
+                style={{
+                  flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
+                  backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+                }}
+              />
+              <TextInput
+                value={manualCarbs}
+                onChangeText={setManualCarbs}
+                placeholder="炭水化物 (g)"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="decimal-pad"
+                style={{
+                  flex: 1, padding: spacing.md, borderRadius: radius.md, fontSize: 13, color: colors.text,
+                  backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+                }}
+              />
             </View>
           </View>
 
-          <Button onPress={saveManualMeal} loading={isSavingManual} disabled={isSavingManual || !manualDishName.trim()} style={{ backgroundColor: colors.accent }}>
+          <Button testID="meal-save-button" onPress={saveManualMeal} loading={isSavingManual} disabled={isSavingManual || !manualDishName.trim()} style={{ backgroundColor: colors.accent }}>
             {isSavingManual ? "保存中..." : "献立表に保存"}
           </Button>
-          <Pressable onPress={() => { setStep("mode-select"); resetAll(); }} style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg, alignItems: "center" }}>
+          <Pressable testID="meal-cancel-button" onPress={() => { setStep("mode-select"); resetAll(); }} style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg, alignItems: "center" }}>
             <Text style={{ fontSize: 14, color: colors.textLight }}>キャンセル</Text>
           </Pressable>
         </ScrollView>
@@ -954,7 +968,7 @@ export default function MealNewPage() {
             </View>
           ) : (
             <View style={{ flexDirection: "row", gap: spacing.md }}>
-              <Pressable onPress={takePhoto} style={({ pressed }) => ({
+              <Pressable testID="meal-camera-button" onPress={takePhoto} style={({ pressed }) => ({
                 flex: 1, padding: spacing.xl, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                 backgroundColor: colors.card, borderWidth: 2, borderStyle: "dashed", borderColor: colors.border, opacity: pressed ? 0.9 : 1,
               })}>
@@ -963,7 +977,7 @@ export default function MealNewPage() {
                 </View>
                 <Text style={{ fontSize: 14, fontWeight: "500", color: colors.text }}>{modeCopy.cameraLabel}</Text>
               </Pressable>
-              <Pressable onPress={pickFromLibrary} style={({ pressed }) => ({
+              <Pressable testID="meal-gallery-button" onPress={pickFromLibrary} style={({ pressed }) => ({
                 flex: 1, padding: spacing.xl, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                 backgroundColor: colors.card, borderWidth: 2, borderStyle: "dashed", borderColor: colors.border, opacity: pressed ? 0.9 : 1,
               })}>
@@ -989,7 +1003,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: analyzing ─── */}
       {step === "analyzing" && (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg, gap: spacing.lg }}>
+        <View testID="meal-analyzing-view" style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg, gap: spacing.lg }}>
           {photos.length > 0 && (
             <View style={{ position: "relative" }}>
               <Image source={{ uri: photos[0].uri }} style={{ width: 220, height: 220, borderRadius: radius.lg, opacity: 0.8 }} />
@@ -1008,7 +1022,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: result (meal) ─── */}
       {step === "result" && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+        <ScrollView testID="meal-result-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           {/* Score */}
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.successLight }}>
             <View style={{ width: 56, height: 56, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", backgroundColor: overallScore >= 85 ? colors.success : overallScore >= 70 ? colors.warning : colors.accent }}>
@@ -1063,7 +1077,7 @@ export default function MealNewPage() {
           <View style={{ gap: spacing.sm }}>
             <Text style={{ fontSize: 13, fontWeight: "600", color: colors.textLight }}>検出された料理</Text>
             {analyzedDishes.map((dish, idx) => (
-              <View key={idx} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.card }}>
+              <View key={idx} testID={`meal-dish-card-${idx}`} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.card }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                   <View style={{ width: 36, height: 36, borderRadius: 8, backgroundColor: colors.successLight, alignItems: "center", justifyContent: "center" }}>
                     <Ionicons name="restaurant" size={16} color={colors.success} />
@@ -1078,10 +1092,10 @@ export default function MealNewPage() {
             ))}
           </View>
 
-          <Button onPress={() => setStep("select-date")} style={{ backgroundColor: colors.accent }}>
+          <Button testID="meal-save-button" onPress={() => setStep("select-date")} style={{ backgroundColor: colors.accent }}>
             日時を選んで保存
           </Button>
-          <Pressable onPress={() => { setStep("capture"); resetAll(); }} style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg, alignItems: "center" }}>
+          <Pressable testID="meal-cancel-button" onPress={() => { setStep("capture"); resetAll(); }} style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg, alignItems: "center" }}>
             <Text style={{ fontSize: 14, color: colors.textLight }}>撮り直す</Text>
           </Pressable>
         </ScrollView>
@@ -1176,7 +1190,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: fridge-result ─── */}
       {step === "fridge-result" && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+        <ScrollView testID="meal-fridge-result-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           {photos.length > 0 && <Image source={{ uri: photos[0].uri }} style={{ width: "100%", height: 120, borderRadius: radius.lg }} />}
 
           {fridgeSummary ? (
@@ -1237,7 +1251,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: health-result ─── */}
       {step === "health-result" && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+        <ScrollView testID="meal-health-result-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           {photos.length > 0 && (
             <View style={{ position: "relative" }}>
               <Image source={{ uri: photos[0].uri }} style={{ width: "100%", height: 120, borderRadius: radius.lg }} />
@@ -1335,7 +1349,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: weight-result ─── */}
       {step === "weight-result" && weightData && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+        <ScrollView testID="meal-weight-result-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           {/* Confidence badge */}
           <View style={{ alignItems: "center" }}>
             <View style={{ paddingHorizontal: 12, paddingVertical: 4, borderRadius: radius.full, backgroundColor: weightData.confidence >= 0.8 ? colors.successLight : colors.warningLight }}>
@@ -1385,7 +1399,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: classify-failed ─── */}
       {step === "classify-failed" && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, alignItems: "center" }}>
+        <ScrollView testID="meal-classify-failed-view" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, alignItems: "center" }}>
           <Text style={{ fontSize: 48 }}>🤔</Text>
           <Text style={{ fontSize: 20, fontWeight: "700", color: colors.text, textAlign: "center" }}>写真の種類を判別できませんでした</Text>
           <Text style={{ fontSize: 14, color: colors.textLight, textAlign: "center" }}>食事・冷蔵庫・健診結果・体重計の写真を撮影してください</Text>
