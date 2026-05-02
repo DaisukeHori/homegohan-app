@@ -1,0 +1,10 @@
+appId: com.homegohan.app
+---
+# _shared/back-from-admin.yaml: Admin Console の < ボタンでホーム画面に戻る
+# 前提: Admin Console 画面にいる
+- tapOn:
+    point: "7%,9%"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000

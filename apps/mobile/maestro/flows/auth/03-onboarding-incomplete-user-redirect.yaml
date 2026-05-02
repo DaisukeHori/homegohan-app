@@ -5,6 +5,9 @@ env:
 ---
 # 03: onboarding 未完了 user で login → /onboarding/resume へ
 - launchApp
+# 前の状態をリセット (ホーム画面 or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

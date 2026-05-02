@@ -5,6 +5,9 @@ env:
 ---
 # 12: API エラー - complete 送信時にサーバーエラー → エラーメッセージ表示・画面保持
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

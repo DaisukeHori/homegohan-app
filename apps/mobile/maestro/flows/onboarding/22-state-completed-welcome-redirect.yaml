@@ -5,6 +5,9 @@ env:
 ---
 # 22: 状態遷移 - オンボーディング完了後に welcome 画面に直接アクセス → home へリダイレクト
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
     clearState: false
 # オンボーディング完了済みユーザーは welcome 画面ではなく home 画面に遷移する
 - extendedWaitUntil:

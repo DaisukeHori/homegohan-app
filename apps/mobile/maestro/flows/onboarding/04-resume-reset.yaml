@@ -5,6 +5,9 @@ env:
 ---
 # 04: 途中中断したオンボーディングを resume=true で再開 → reset (最初から)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
     clearState: false
 - extendedWaitUntil:
     visible:

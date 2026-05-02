@@ -2,6 +2,9 @@ appId: com.homegohan.app
 ---
 # 06-loader-state: 比較画面でローダーが正しく表示・非表示される (状態遷移)
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

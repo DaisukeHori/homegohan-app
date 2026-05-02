@@ -5,6 +5,9 @@ env:
 ---
 # 14: API エラー - AI サジェスト取得失敗時にエラー/空状態が表示されること
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

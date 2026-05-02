@@ -6,6 +6,9 @@ env:
 # 11: signup: 既存 email 重複 → silent-success 検出 (#533)
 # Supabase は重複メールで identities: [] を返し、アプリがそれを検出してエラー表示
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - tapOn:
     text: "新規登録"
 - assertVisible:

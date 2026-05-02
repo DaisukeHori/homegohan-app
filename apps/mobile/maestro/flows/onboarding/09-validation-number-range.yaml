@@ -5,6 +5,9 @@ env:
 ---
 # 09: バリデーション - number range 超え (身長 999, 体重 999) → エラー
 - launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
