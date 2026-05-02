@@ -1,0 +1,41 @@
+appId: com.homegohan.app
+---
+# Adversarial 10: 同一お気に入り重複 add (race condition)
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- assertVisible:
+    id: "meals-screen"
+
+- tapOn:
+    id: "meal-first-item"
+- assertVisible:
+    id: "meal-detail-screen"
+
+- tapOn:
+    id: "meal-heart-button"
+- tapOn:
+    id: "meal-heart-button"
+- tapOn:
+    id: "meal-heart-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "meal-detail-screen"
+    timeout: 5000
+
+- assertNotVisible:
+    id: "app-crash-screen"
+
+- tapOn:
+    id: "back-button"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000

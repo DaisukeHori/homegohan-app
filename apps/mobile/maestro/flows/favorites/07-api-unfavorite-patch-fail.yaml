@@ -1,0 +1,29 @@
+appId: com.homegohan.app
+---
+# API 07: 解除 PATCH fail → rollback + エラー表示
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-first-heart-button"
+- assertVisible:
+    id: "unfavorite-confirm-dialog"
+
+- tapOn:
+    id: "unfavorite-confirm-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-delete-error-message"
+    timeout: 10000
+
+- assertVisible:
+    id: "favorites-first-heart-button"
+- assertVisible:
+    id: "favorites-list-item"

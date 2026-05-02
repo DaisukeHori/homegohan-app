@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+---
+# 正常 01: 検索フィルタ
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-search-input"
+- inputText: "鶏"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000
+
+- assertVisible:
+    id: "favorites-list-item"
+- assertNotVisible:
+    id: "favorites-empty-state"

@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+---
+# バリデーション 05: ソート連打
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-sort-button"
+- tapOn:
+    id: "favorites-sort-name-asc"
+- tapOn:
+    id: "favorites-sort-button"
+- tapOn:
+    id: "favorites-sort-date-desc"
+- tapOn:
+    id: "favorites-sort-button"
+- tapOn:
+    id: "favorites-sort-name-asc"
+- tapOn:
+    id: "favorites-sort-button"
+- tapOn:
+    id: "favorites-sort-date-asc"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 10000
+
+- assertNotVisible:
+    id: "app-crash-screen"
+- assertVisible:
+    id: "favorites-screen"

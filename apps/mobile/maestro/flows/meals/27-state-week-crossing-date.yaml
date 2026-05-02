@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+---
+# 状態遷移 27: 週またぎ日付選択
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-name-input"
+- inputText: "週またぎテスト"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "500"
+
+- tapOn:
+    id: "meal-date-input"
+- assertVisible:
+    id: "date-picker"
+
+- tapOn:
+    id: "date-picker-prev-week-button"
+
+- assertVisible:
+    id: "date-picker-previous-week-dates"
+
+- tapOn:
+    id: "date-picker-last-sunday"
+
+- tapOn:
+    id: "meal-save-button"
+- extendedWaitUntil:
+    visible:
+      id: "meals-screen"
+    timeout: 10000

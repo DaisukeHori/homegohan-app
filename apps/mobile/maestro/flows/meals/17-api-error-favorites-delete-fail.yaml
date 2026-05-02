@@ -1,0 +1,27 @@
+appId: com.homegohan.app
+---
+# API エラー 17: favorites DELETE fail
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-first-heart-button"
+- assertVisible:
+    id: "unfavorite-confirm-dialog"
+
+- tapOn:
+    id: "unfavorite-confirm-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-delete-error-message"
+    timeout: 10000
+
+- assertVisible:
+    id: "favorites-list"

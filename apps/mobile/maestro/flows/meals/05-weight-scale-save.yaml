@@ -1,0 +1,39 @@
+appId: com.homegohan.app
+---
+# 正常 05: weight_scale 体重保存
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- assertVisible:
+    id: "meals-screen"
+
+- tapOn:
+    id: "meals-add-button"
+- assertVisible:
+    id: "meal-mode-select-screen"
+
+- tapOn:
+    id: "meal-mode-weight-scale"
+
+- tapOn:
+    id: "camera-capture-button"
+- extendedWaitUntil:
+    visible:
+      id: "ocr-analyzing-indicator"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: "weight-form-screen"
+    timeout: 30000
+
+- assertVisible:
+    id: "weight-value-input"
+
+- tapOn:
+    id: "weight-save-button"
+- extendedWaitUntil:
+    visible:
+      id: "meals-screen"
+    timeout: 10000

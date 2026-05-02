@@ -1,0 +1,36 @@
+appId: com.homegohan.app
+---
+# Adversarial 21: 同一写真 5 連発
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+
+- repeat:
+    times: 5
+    commands:
+      - tapOn:
+          id: "meals-add-button"
+      - tapOn:
+          id: "meal-mode-meal"
+      - tapOn:
+          id: "camera-gallery-button"
+      - extendedWaitUntil:
+          visible:
+            id: "gallery-picker-screen"
+          timeout: 10000
+      - tapOn:
+          id: "gallery-first-photo"
+      - extendedWaitUntil:
+          visible:
+            id: "meal-form-screen"
+          timeout: 30000
+      - tapOn:
+          id: "meal-save-button"
+      - extendedWaitUntil:
+          visible:
+            id: "meals-screen"
+          timeout: 10000
+
+- assertVisible:
+    id: "meal-list"

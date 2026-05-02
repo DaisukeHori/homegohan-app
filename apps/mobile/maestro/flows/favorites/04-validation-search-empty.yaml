@@ -1,0 +1,31 @@
+appId: com.homegohan.app
+---
+# バリデーション 04: 検索空 → 全件表示
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-search-input"
+- inputText: "検索テスト"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000
+
+- clearText:
+    id: "favorites-search-input"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000
+
+- assertVisible:
+    id: "favorites-list-item"

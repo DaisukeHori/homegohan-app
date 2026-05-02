@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+---
+# Adversarial 23: favorites 検索 SQL injection
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-favorites-tab"
+- assertVisible:
+    id: "favorites-screen"
+
+- tapOn:
+    id: "favorites-search-input"
+- inputText: "' OR '1'='1"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorites-list"
+    timeout: 5000
+
+- assertNotVisible:
+    id: "favorites-sql-error"
+- assertNotVisible:
+    id: "app-crash-screen"

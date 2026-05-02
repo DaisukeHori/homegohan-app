@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+---
+# バリデーション 09: manual 料理名空で保存試行
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- assertVisible:
+    id: "meals-screen"
+
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "500"
+
+- tapOn:
+    id: "meal-save-button"
+
+- assertVisible:
+    id: "meal-name-error"
+- assertNotVisible:
+    id: "meals-screen"

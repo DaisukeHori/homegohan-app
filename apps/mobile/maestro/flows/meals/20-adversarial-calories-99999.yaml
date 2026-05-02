@@ -1,0 +1,27 @@
+appId: com.homegohan.app
+---
+# Adversarial 20: カロリー 99999 極端な値
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-name-input"
+- inputText: "極端カロリー料理"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "99999"
+
+- tapOn:
+    id: "meal-save-button"
+
+- assertVisible:
+    id: "meal-calories-error"
