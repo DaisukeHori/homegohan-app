@@ -40,7 +40,7 @@ export default function AiImportantMessagesPage() {
   }, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="ai-important-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="重要メッセージ"
         right={
@@ -65,13 +65,14 @@ export default function AiImportantMessagesPage() {
         </Card>
       ) : items.length === 0 ? (
         <EmptyState
+          testID="ai-important-empty"
           icon={<Ionicons name="star-outline" size={48} color={colors.textMuted} />}
           message="重要メッセージがありません。"
         />
       ) : (
         <View style={{ gap: spacing.sm }}>
           {items.map((m) => (
-            <Card key={m.id} onPress={() => router.push(`/ai/${m.session.id}`)}>
+            <Card key={m.id} testID={`ai-important-item-${m.id}`} onPress={() => router.push(`/ai/${m.session.id}`)}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                   <View

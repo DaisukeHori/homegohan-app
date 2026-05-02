@@ -59,11 +59,11 @@ export default function AiSessionsPage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="ai-sessions-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="AI相談"
         right={
-          <Button onPress={createSession} loading={isCreating} size="sm">
+          <Button testID="ai-new-session-button" onPress={createSession} loading={isCreating} size="sm">
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
               <Ionicons name="add" size={16} color="#FFFFFF" />
               <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>
@@ -76,7 +76,7 @@ export default function AiSessionsPage() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
       <View style={{ flexDirection: "row", gap: spacing.md }}>
-        <Link href="/ai/important" style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
+        <Link testID="ai-important-button" href="/ai/important" style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
             <Ionicons name="star-outline" size={16} color={colors.accent} />
             <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>重要メッセージ一覧</Text>
@@ -96,11 +96,12 @@ export default function AiSessionsPage() {
         <Card variant="error">
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="alert-circle" size={20} color={colors.error} />
-            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+            <Text testID="ai-sessions-error-text" style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
           </View>
         </Card>
       ) : sessions.length === 0 ? (
         <EmptyState
+          testID="ai-sessions-empty"
           icon={<Ionicons name="chatbubbles-outline" size={48} color={colors.textMuted} />}
           message="アクティブなセッションがありません。"
           actionLabel="新しい相談を始める"
@@ -111,6 +112,7 @@ export default function AiSessionsPage() {
           {sessions.map((s) => (
             <ListItem
               key={s.id}
+              testID={`ai-session-item-${s.id}`}
               title={s.title}
               subtitle={`${s.messageCount} messages / ${new Date(s.updatedAt).toLocaleString("ja-JP")}`}
               onPress={() => router.push(`/ai/${s.id}`)}
@@ -134,7 +136,7 @@ export default function AiSessionsPage() {
         </View>
       )}
 
-      <Button onPress={load} variant="ghost" size="sm">
+      <Button testID="ai-reload-button" onPress={load} variant="ghost" size="sm">
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
           <Ionicons name="reload-outline" size={16} color={colors.textLight} />
           <Text style={{ color: colors.textLight, fontWeight: "600", fontSize: 14 }}>更新</Text>
