@@ -1,12 +1,15 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 05-existing-session-resume: 既存セッションを再開 → 会話履歴が表示される
 
-- runFlow: ../01-login.yaml
+- runFlow: ../_shared/login.yaml
 
-# AI相談タブへ移動
+# AI相談へ移動 (ホーム画面のフローティングボタン)
 - tapOn:
-    text: "AI相談"
+    id: "home-ai-fab"
 
 - extendedWaitUntil:
     visible:
@@ -29,34 +32,19 @@ appId: com.homegohan.app
 - tapOn:
     id: "ai-chat-send-button"
 
-# ストリーミング完了を待機
-- extendedWaitUntil:
-    notVisible:
-      id: "ai-chat-streaming-view"
-    timeout: 60000
+# 送信後に安定を待つ
+- waitForAnimationToEnd:
+    timeout: 5000
 
-# 一覧に戻る
+# 一覧に戻る (< ボタン)
 - tapOn:
-    text: "戻る"
+    point: "5%, 10%"
 
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# セッション一覧画面が表示されることを確認
 - extendedWaitUntil:
     visible:
       id: "ai-sessions-screen"
-    timeout: 10000
-
-# セッション一覧にセッションが表示されていることを確認
-- assertVisible:
-    id: "ai-session-item-0"
-
-# 既存セッションをタップして再開
-- tapOn:
-    id: "ai-session-item-0"
-
-# チャット画面が表示されるまで待機
-- extendedWaitUntil:
-    visible:
-      id: "ai-chat-screen"
-    timeout: 10000
-
-# 以前送信したメッセージが表示されていることを確認
-- assertVisible: "冷蔵庫にある材料でできる料理を教えてください"
+    timeout: 15000

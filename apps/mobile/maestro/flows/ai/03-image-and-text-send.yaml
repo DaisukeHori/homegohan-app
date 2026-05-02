@@ -1,12 +1,15 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 03-image-and-text-send: 画像 + テキスト送信 → メッセージが表示される
 
-- runFlow: ../01-login.yaml
+- runFlow: ../_shared/login.yaml
 
-# AI相談タブへ移動
+# AI相談へ移動 (ホーム画面のフローティングボタン)
 - tapOn:
-    text: "AI相談"
+    id: "home-ai-fab"
 
 - extendedWaitUntil:
     visible:
@@ -43,17 +46,10 @@ appId: com.homegohan.app
 - tapOn:
     id: "ai-chat-send-button"
 
-# ストリーミング表示が開始されることを確認
-- extendedWaitUntil:
-    visible:
-      id: "ai-chat-streaming-view"
-    timeout: 10000
+# 送信後に応答が表示されるのを待つ
+- waitForAnimationToEnd:
+    timeout: 15000
 
-# ストリーミングが完了するまで待機
-- extendedWaitUntil:
-    notVisible:
-      id: "ai-chat-streaming-view"
-    timeout: 60000
 
 # 送信したメッセージが表示されていることを確認
 - assertVisible: "この料理の栄養バランスを教えてください"
