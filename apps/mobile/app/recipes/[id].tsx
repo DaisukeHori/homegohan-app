@@ -149,7 +149,7 @@ export default function RecipeDetailPage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="recipe-detail-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="レシピ詳細" />
       <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
 
@@ -185,7 +185,7 @@ export default function RecipeDetailPage() {
             {recipe.description ? <Text style={typography.body}>{recipe.description}</Text> : null}
 
             <View style={styles.actionRow}>
-              <Button onPress={toggleLike} variant={recipe.isLiked ? "destructive" : "secondary"} size="sm">
+              <Button testID="recipe-detail-like-button" onPress={toggleLike} variant={recipe.isLiked ? "destructive" : "secondary"} size="sm">
                 <Ionicons name={recipe.isLiked ? "heart" : "heart-outline"} size={16} color={recipe.isLiked ? "#FFF" : colors.text} />
                 <Text style={{ color: recipe.isLiked ? "#FFF" : colors.text, fontWeight: "700", fontSize: 13 }}>
                   {recipe.isLiked ? "解除" : "いいね"}

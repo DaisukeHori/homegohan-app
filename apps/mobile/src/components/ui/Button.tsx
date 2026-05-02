@@ -39,7 +39,6 @@ export function Button({ children, onPress, variant = 'primary', disabled, loadi
       testID={testID}
       onPress={onPress}
       disabled={isDisabled}
-      testID={testID}
       style={({ pressed }) => {
         const base: ViewStyle = {
           backgroundColor: isDisabled ? colors.textMuted : pressed ? v.bgPressed : v.bg,
