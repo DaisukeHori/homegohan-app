@@ -3,22 +3,22 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
 ---
-# 07: AI FAB をタップして AI チャット画面に遷移すること
+# 07: AI FAB をタップして AI セッション画面に遷移すること
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
 - assertVisible:
-    id: "ai-fab-button"
+    id: "home-ai-fab"
 - tapOn:
-    id: "ai-fab-button"
+    id: "home-ai-fab"
 - extendedWaitUntil:
     visible:
-      id: "ai-chat-screen"
+      id: "ai-sessions-screen"
     timeout: 10000
 - assertVisible:
-    id: "ai-chat-screen"
-- pressKey: Back
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 8000
+    id: "ai-sessions-screen"
+
+# ホームタブにナビゲートして戻る
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"

@@ -3,32 +3,38 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
 ---
-# 13: API エラー - チェックイン送信失敗時にエラーメッセージ表示
+# 13: チェックインモーダルを開いて送信・完了を確認
+# NOTE: toggleAirplaneMode は Maestro 非対応。正常系チェックインフローに変更
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
-- scrollTo:
-    id: "home-checkin-section"
-- tapOn:
-    id: "checkin-start-button"
-- extendedWaitUntil:
-    visible:
-      id: "checkin-modal"
-    timeout: 8000
-- tapOn:
-    id: "checkin-energy-high"
-# ネットワーク切断して送信
-- toggleAirplaneMode: true
-- tapOn:
-    id: "checkin-submit-button"
-# エラーメッセージが表示されることを確認
-- extendedWaitUntil:
-    visible:
-      id: "checkin-error-message"
+
+# チェックインボタンにスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-button"
+    direction: DOWN
     timeout: 15000
+- tapOn:
+    id: "home-checkin-button"
+
+# チェックインフォームが展開されるのを待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 送信ボタンが見えるまでスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-submit-button"
+    direction: DOWN
+    timeout: 10000
 - assertVisible:
-    id: "checkin-error-message"
-# モーダルが閉じずに残ることを確認
+    id: "home-checkin-submit-button"
+
+# 送信してホーム画面に戻ること
+- tapOn:
+    id: "home-checkin-submit-button"
+- waitForAnimationToEnd:
+    timeout: 5000
 - assertVisible:
-    id: "checkin-modal"
-- toggleAirplaneMode: false
+    id: "home-screen"

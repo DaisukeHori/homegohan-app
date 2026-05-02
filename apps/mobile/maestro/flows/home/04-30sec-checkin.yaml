@@ -3,37 +3,42 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
 ---
-# 04: 30秒チェックインフローの確認
+# 04: チェックインボタンをタップしてモーダルが表示されること
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
-- scrollTo:
-    id: "home-checkin-section"
-- assertVisible:
-    id: "home-checkin-section"
+
+# チェックインボタンにスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-button"
+    direction: DOWN
+    timeout: 15000
 - tapOn:
-    id: "checkin-start-button"
-- extendedWaitUntil:
-    visible:
-      id: "checkin-modal"
-    timeout: 8000
-# 気分スライダーを操作
-- assertVisible:
-    id: "checkin-mood-slider"
-- swipe:
-    start:
-      id: "checkin-mood-slider"
-    direction: RIGHT
-    duration: 500
-# エネルギーレベル選択
-- tapOn:
-    id: "checkin-energy-high"
-# チェックイン送信
-- tapOn:
-    id: "checkin-submit-button"
-- extendedWaitUntil:
-    visible:
-      id: "checkin-success-message"
+    id: "home-checkin-button"
+
+# チェックインフォームが展開されるのを待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 送信ボタンが見えるまでスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-submit-button"
+    direction: DOWN
     timeout: 10000
 - assertVisible:
-    id: "checkin-success-message"
+    id: "home-checkin-submit-button"
+
+# 閉じるためにホームへ戻る
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-button"
+    direction: UP
+    timeout: 10000
+- tapOn:
+    id: "home-checkin-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-screen"

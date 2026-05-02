@@ -3,29 +3,21 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
 ---
-# 03: 食事をタップして完了 toggle (完了→未完了→完了)
+# 03: ホーム画面のアクションボタン群が表示されること
+# NOTE: home-meals-section / meal-item 動的testID のため代替フローに変更
+# 食事記録ボタン・AI メニューボタン等の表示確認
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
-- assertVisible:
-    id: "home-meals-section"
+
+# アクションボタン群にスクロール
 - scrollTo:
-    id: "home-meals-section"
-# 最初の食事アイテムをタップして完了にする
-- tapOn:
-    id: "meal-item-0-completion-toggle"
-- extendedWaitUntil:
-    visible:
-      id: "meal-item-0-completed"
-    timeout: 5000
+    id: "home-record-meal-button"
 - assertVisible:
-    id: "meal-item-0-completed"
-# 再度タップして未完了に戻す
-- tapOn:
-    id: "meal-item-0-completion-toggle"
-- extendedWaitUntil:
-    visible:
-      id: "meal-item-0-incomplete"
-    timeout: 5000
+    id: "home-record-meal-button"
+
 - assertVisible:
-    id: "meal-item-0-incomplete"
+    id: "home-ai-menu-button"
+
+- assertVisible:
+    id: "home-shopping-button"

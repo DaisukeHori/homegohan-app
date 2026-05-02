@@ -103,3 +103,8 @@ Simulator: iPhone-E2E-01
 |--------|------|----------|------|
 | comparison/01-06 (全6フロー) | PASS | PR #659 | envブロック・_shared/login.yaml切替・ranking-item動的ID削除・setAirplaneMode除去・anyOf除去 |
 
+### favorites (agent5 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| favorites/01-10 (全10フロー) | PASS | PR #660 | 回収ブランチからcherry-pick・envブロック・tab-favorites testID・waitForAnimationToEnd |
+

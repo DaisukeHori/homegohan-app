@@ -3,27 +3,33 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
 ---
-# 06: 週間グラフをタップしてモーダルが表示されること
+# 06: 週間グラフカードをタップしてモーダルが表示されること
 - runFlow: ../_shared/login.yaml
 - assertVisible:
     id: "home-screen"
+
+# 週間グラフカードにスクロール
 - scrollTo:
-    id: "home-weekly-graph-section"
+    id: "home-weekly-graph-card"
 - assertVisible:
-    id: "home-weekly-graph-section"
+    id: "home-weekly-graph-card"
 - tapOn:
-    id: "weekly-graph-chart"
+    id: "home-weekly-graph-card"
+
+# 週間モーダルが表示されること
 - extendedWaitUntil:
     visible:
-      id: "weekly-graph-modal"
+      id: "home-weekly-modal"
     timeout: 8000
 - assertVisible:
-    id: "weekly-graph-modal"
-- assertVisible:
-    id: "weekly-graph-modal-details"
+    id: "home-weekly-modal"
+
+# モーダルを閉じる
 - tapOn:
-    id: "weekly-graph-modal-close-button"
+    id: "home-weekly-modal-close"
 - extendedWaitUntil:
     notVisible:
-      id: "weekly-graph-modal"
+      id: "home-weekly-modal"
     timeout: 5000
+- assertVisible:
+    id: "home-screen"
