@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 24: Google OAuth キャンセル → login 画面戻り
 - launchApp:
-    clearState: true
 - tapOn:
     text: "ログイン"
 - assertVisible:

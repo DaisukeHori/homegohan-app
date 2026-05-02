@@ -1,11 +1,10 @@
 appId: com.homegohan.app
 ---
 # 23: expired JWT で home 直アクセス → / redirect
-# clearState: true によりセッションがクリアされた状態で、
+# 未ログイン状態で、
 # ディープリンクで /(tabs)/home に直接アクセスを試みる
 # → 認証されていないため welcome 画面 (/) にリダイレクトされること
 - launchApp:
-    clearState: true
     arguments:
       MAESTRO_DEEP_LINK: "homegohan://home"
 - extendedWaitUntil:

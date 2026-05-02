@@ -5,7 +5,6 @@ env:
 ---
 # 01: 既存ユーザーで login → home 到達
 - launchApp:
-    clearState: true
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

@@ -5,7 +5,6 @@ env:
 # 25: rate limit countdown 中に BG → FG → 残り秒復元 (#532)
 # AsyncStorage から残り制限時間を復元する機能のテスト
 - launchApp:
-    clearState: true
 - tapOn:
     text: "ログイン"
 - assertVisible:

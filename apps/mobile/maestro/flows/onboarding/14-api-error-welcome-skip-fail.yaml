@@ -5,7 +5,6 @@ env:
 ---
 # 14: API エラー - welcome skip 時にサーバーエラー → エラーメッセージ表示
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 # ネットワーク接続を切断してから skip

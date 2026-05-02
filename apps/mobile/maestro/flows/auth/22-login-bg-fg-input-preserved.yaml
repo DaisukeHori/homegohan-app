@@ -4,7 +4,6 @@ env:
 ---
 # 22: login 中に BG → FG → 入力保持
 - launchApp:
-    clearState: true
 - tapOn:
     text: "ログイン"
 - assertVisible:

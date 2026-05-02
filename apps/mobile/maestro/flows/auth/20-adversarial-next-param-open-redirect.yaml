@@ -7,7 +7,6 @@ env:
 # アプリは ?next= が '/' 始まりでない場合、無視してデフォルトルートへ遷移
 # deep link で ?next=https://evil.com を付与してログインを試みる
 - launchApp:
-    clearState: true
     arguments:
       MAESTRO_NEXT_PARAM: "https://evil.com"
 

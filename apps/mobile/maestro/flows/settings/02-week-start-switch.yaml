@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 02-week-start-switch: 週開始日を日曜→月曜に切り替える (正常系)
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -5,7 +5,6 @@ env:
 ---
 # 06: servings_grid で各人数を選択できることを確認
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

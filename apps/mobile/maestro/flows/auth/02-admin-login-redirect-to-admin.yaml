@@ -5,7 +5,6 @@ env:
 ---
 # 02: admin ロールで login → /admin に redirect
 - launchApp:
-    clearState: true
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

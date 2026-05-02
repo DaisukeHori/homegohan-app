@@ -5,7 +5,6 @@ env:
 ---
 # 15: Adversarial - nickname に XSS ペイロード入力 → サニタイズされて表示
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

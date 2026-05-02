@@ -5,7 +5,6 @@ env:
 ---
 # 10: バリデーション - date 不正入力 (例: birthdate=9999-99-99) → エラー
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 04-rankings-get-fail: rankings GET API が失敗した場合のエラー表示 (API 異常系)
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

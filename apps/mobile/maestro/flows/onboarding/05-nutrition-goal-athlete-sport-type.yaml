@@ -5,7 +5,6 @@ env:
 ---
 # 05: nutrition_goal=athlete_performance 選択時に sport_type 動的設問が出ることを確認
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 11-logout-rapid-tap: ログアウトボタンを連打しても二重実行されない (Adversarial)
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

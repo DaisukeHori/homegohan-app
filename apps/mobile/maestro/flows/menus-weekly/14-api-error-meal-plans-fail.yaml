@@ -5,7 +5,6 @@ env:
 ---
 # 14: API エラー - meal-plans 取得失敗時にエラー表示
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

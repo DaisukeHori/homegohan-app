@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 05-logout: ログアウトを実行する (正常系)
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

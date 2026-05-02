@@ -5,7 +5,6 @@ env:
 ---
 # 11: API エラー - useHomeData のデータ取得失敗時にエラー表示
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

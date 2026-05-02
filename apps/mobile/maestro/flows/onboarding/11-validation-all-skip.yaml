@@ -5,7 +5,6 @@ env:
 ---
 # 11: バリデーション - 全問 skip ボタンで飛ばした場合の動作確認
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

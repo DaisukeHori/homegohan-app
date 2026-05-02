@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 08-json-export-auth-expired: JSON export 時に認証切れが発生した場合 (API 異常系)
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -5,7 +5,6 @@ env:
 ---
 # 07: バリデーション - nickname 空のまま次へ → エラーメッセージ表示
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

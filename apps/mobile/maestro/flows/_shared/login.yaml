@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # _shared/login.yaml: 既存ユーザーでログインしてホーム画面まで遷移する共通フロー
 - launchApp:
-    clearState: true
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

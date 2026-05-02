@@ -2,7 +2,6 @@ appId: com.homegohan.app
 ---
 # 06-birthday-future-validation: 生年月日に未来の日付を入力した場合のバリデーションエラー (バリデーション)
 - launchApp:
-    clearState: true
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
