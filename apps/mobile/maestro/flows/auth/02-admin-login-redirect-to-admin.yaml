@@ -28,7 +28,7 @@ env:
     id: "login-button"
 - extendedWaitUntil:
     visible:
-      text: "Users"
-    timeout: 10000
+      text: "Admin Console"
+    timeout: 30000
 - assertNotVisible:
     id: "home-screen"
