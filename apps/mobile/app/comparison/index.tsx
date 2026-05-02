@@ -68,11 +68,11 @@ export default function ComparisonPage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="comparison-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="比較"
         right={
-          <Button onPress={trigger} variant="primary" size="sm">
+          <Button testID="comparison-recalculate-button" onPress={trigger} variant="primary" size="sm">
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
               <Ionicons name="refresh" size={16} color="#FFFFFF" />
               <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>再計算</Text>
@@ -86,6 +86,7 @@ export default function ComparisonPage() {
         options={PERIOD_OPTIONS}
         selected={periodType}
         onSelect={setPeriodType}
+        testIDPrefix="comparison-period"
       />
 
       {isLoading ? (
@@ -94,11 +95,12 @@ export default function ComparisonPage() {
         <Card variant="error">
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="alert-circle" size={20} color={colors.error} />
-            <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
+            <Text testID="comparison-error-text" style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>{error}</Text>
           </View>
         </Card>
       ) : !data ? (
         <EmptyState
+          testID="comparison-empty"
           icon={<Ionicons name="bar-chart-outline" size={48} color={colors.textMuted} />}
           message="データがありません。"
         />
@@ -126,7 +128,7 @@ export default function ComparisonPage() {
 
           <View style={{ gap: spacing.md }}>
             {data.rankings?.map((m) => (
-              <Card key={m.metric.code}>
+              <Card key={m.metric.code} testID={`comparison-ranking-item-${m.metric.code}`}>
                 <SectionHeader title={m.metric.name} />
                 <View style={{ gap: spacing.md }}>
                   {m.segments.map((s) => (
