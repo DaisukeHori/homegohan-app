@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+---
+# 13-session-create-fail: セッション作成APIが失敗したとき → エラーメッセージが表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 機内モードを有効にしてネットワーク障害を発生させる
+- setAirplaneMode: true
+
+- waitForAnimationToEnd:
+    timeout: 1000
+
+# 新規セッション作成ボタンをタップ (この時点でAPIは失敗する)
+- tapOn:
+    id: "ai-new-session-button"
+
+# エラーメッセージが表示されることを確認
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "ai-chat-error-text"
+      - visible:
+          text: "エラー"
+    timeout: 15000
+
+# 機内モードを無効にして戻す
+- setAirplaneMode: false
+
+# セッション一覧画面に留まっていること、またはエラーから回復できることを確認
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "ai-sessions-screen"

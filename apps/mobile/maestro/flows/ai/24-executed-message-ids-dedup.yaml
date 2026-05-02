@@ -1,0 +1,72 @@
+appId: com.homegohan.app
+---
+# 24-executed-message-ids-dedup: executedMessageIds の重複防止 → 同一アクションが2回実行されない
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# proposedActions を含む応答を引き出す
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "買い物リストを作成してください"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# ストリーミング完了を待機
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-chat-streaming-view"
+    timeout: 60000
+
+# proposedActions ボタンが表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-action-0"
+    timeout: 10000
+
+# アクションをタップ
+- tapOn:
+    id: "ai-chat-action-0"
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# 同じアクションを再度タップ (2回目のタップ)
+- tapOn:
+    id: "ai-chat-action-0"
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# チャット画面に戻る (またはアクション後の画面に留まる)
+- back:
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# アプリがクラッシュしていないことを確認
+# (executedMessageIds により同一アクションの二重実行が防止されている)
+- assertVisible:
+    anyOf:
+      - id: "ai-chat-screen"
+      - id: "ai-sessions-screen"

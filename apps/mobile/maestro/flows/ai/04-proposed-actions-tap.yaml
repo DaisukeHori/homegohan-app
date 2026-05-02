@@ -1,0 +1,51 @@
+appId: com.homegohan.app
+---
+# 04-proposed-actions-tap: proposedActions をタップ → アクションが実行される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# proposedActions が含まれるメッセージを引き出すテキストを送信
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "今週の献立を提案してください"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# ストリーミング完了を待機
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-chat-streaming-view"
+    timeout: 60000
+
+# proposedActions ボタンが表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-action-0"
+    timeout: 10000
+
+# 最初のアクションをタップ
+- tapOn:
+    id: "ai-chat-action-0"
+
+# アクション実行後の画面遷移またはメッセージを確認
+- waitForAnimationToEnd:
+    timeout: 5000

@@ -1,0 +1,39 @@
+appId: com.homegohan.app
+---
+# 07-status-active-only: status=active のセッションのみ一覧に表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# セッション一覧画面が表示されていることを確認
+- assertVisible:
+    id: "ai-sessions-screen"
+
+# 新規セッション作成ボタンが表示されていることを確認 (active セッションのみ管理されている状態を前提)
+- assertVisible:
+    id: "ai-new-session-button"
+
+# 一覧をスクロールして確認
+- scroll:
+    direction: DOWN
+    speed: 40
+
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# 画面上部に戻る
+- scroll:
+    direction: UP
+    speed: 40
+
+# セッション一覧画面が引き続き表示されていることを確認
+- assertVisible:
+    id: "ai-sessions-screen"

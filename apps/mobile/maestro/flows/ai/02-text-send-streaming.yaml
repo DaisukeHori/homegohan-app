@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+---
+# 02-text-send-streaming: テキスト送信 → ストリーミング応答が表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "今日の夕食のおすすめを教えてください"
+
+# 送信ボタンをタップ
+- tapOn:
+    id: "ai-chat-send-button"
+
+# ストリーミング表示が開始されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-streaming-view"
+    timeout: 10000
+
+# ストリーミングが完了するまで待機 (最大60秒)
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-chat-streaming-view"
+    timeout: 60000
+
+# 送信したメッセージが表示されていることを確認
+- assertVisible: "今日の夕食のおすすめを教えてください"

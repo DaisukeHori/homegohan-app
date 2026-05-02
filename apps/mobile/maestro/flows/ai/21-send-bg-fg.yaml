@@ -1,0 +1,63 @@
+appId: com.homegohan.app
+---
+# 21-send-bg-fg: 送信中にBG→FG復帰 → ストリーミングが継続または正常に回復する
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力して送信
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "バックグラウンド復帰テスト"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# ストリーミング開始を確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-streaming-view"
+    timeout: 10000
+
+# アプリをバックグラウンドへ
+- pressKey: Home
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# アプリをフォアグラウンドへ復帰
+- launchApp:
+    clearState: false
+
+# チャット画面が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# ストリーミングが完了するか、完了済みのメッセージが表示されることを確認
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-chat-streaming-view"
+    timeout: 60000
+
+# チャット画面に留まっていることを確認
+- assertVisible:
+    id: "ai-chat-screen"

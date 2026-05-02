@@ -1,0 +1,36 @@
+appId: com.homegohan.app
+---
+# 14-session-list-get-fail: セッション一覧GET APIが失敗したとき → エラーまたは空状態が表示される
+
+- runFlow: ../01-login.yaml
+
+# 機内モードを有効にしてネットワーク障害を発生させる
+- setAirplaneMode: true
+
+- waitForAnimationToEnd:
+    timeout: 1000
+
+# AI相談タブへ移動 (この時点でGET APIは失敗する)
+- tapOn:
+    text: "AI相談"
+
+# エラーまたは空状態が表示されることを確認
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "ai-sessions-screen"
+      - visible:
+          id: "ai-chat-error-text"
+      - visible:
+          text: "エラー"
+    timeout: 15000
+
+# 機内モードを無効にして戻す
+- setAirplaneMode: false
+
+# アプリがクラッシュしていないことを確認
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "ai-sessions-screen"

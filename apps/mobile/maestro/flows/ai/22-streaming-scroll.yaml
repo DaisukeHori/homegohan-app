@@ -1,0 +1,70 @@
+appId: com.homegohan.app
+---
+# 22-streaming-scroll: ストリーミング中にスクロール → UIがフリーズしない
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力して送信
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "長い回答を生成してください。できるだけ詳しく説明してください。"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# ストリーミング開始を確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-streaming-view"
+    timeout: 10000
+
+# ストリーミング中にスクロール操作を実行
+- scroll:
+    direction: UP
+    speed: 40
+
+- waitForAnimationToEnd:
+    timeout: 1000
+
+- scroll:
+    direction: DOWN
+    speed: 40
+
+- waitForAnimationToEnd:
+    timeout: 1000
+
+- scroll:
+    direction: UP
+    speed: 40
+
+# UIがフリーズしていないことを確認 (チャット画面が引き続き表示されている)
+- assertVisible:
+    id: "ai-chat-screen"
+
+# ストリーミングが完了するまで待機
+- extendedWaitUntil:
+    notVisible:
+      id: "ai-chat-streaming-view"
+    timeout: 60000
+
+# 最終的にチャット画面が正常に表示されていることを確認
+- assertVisible:
+    id: "ai-chat-screen"

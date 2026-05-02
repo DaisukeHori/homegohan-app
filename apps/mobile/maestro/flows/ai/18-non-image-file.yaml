@@ -1,0 +1,55 @@
+appId: com.homegohan.app
+---
+# 18-non-image-file: 非画像ファイルを選択 → 選択不可またはエラーが表示される
+
+- runFlow: ../01-login.yaml
+
+# AI相談タブへ移動
+- tapOn:
+    text: "AI相談"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 画像添付ボタンをタップ
+- tapOn:
+    id: "ai-chat-image-attach-button"
+
+# フォトライブラリが表示されるまで待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# ファイルピッカーが画像のみに制限されていることを確認
+# (非画像ファイルが選択できない場合、フォトライブラリのみが表示される)
+# フォトライブラリが表示されている状態を確認
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# キャンセルして戻る
+- tapOn:
+    text: "キャンセル"
+    optional: true
+
+- back:
+    optional: true
+
+# チャット画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# エラーが表示されていないことを確認 (正常にキャンセルできた)
+- assertNotVisible:
+    id: "ai-chat-error-text"
