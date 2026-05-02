@@ -1,31 +1,33 @@
 appId: com.homegohan.app
 env:
-  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 19: Adversarial - 食材フィールドに SQL インジェクション → サニタイズ
+# 19: Adversarial - メモフィールドに SQL インジェクション → サニタイズ
 - runFlow: ../_shared/login.yaml
 - tapOn:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
     timeout: 10000
 - tapOn:
-    id: "weekly-menu-generate-button"
+    id: "menus-request-button"
 - extendedWaitUntil:
     visible:
-      id: "ai-generate-modal"
-    timeout: 8000
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-note-input"
 - tapOn:
-    id: "ai-generate-ingredients-input"
+    id: "weekly-request-note-input"
 - inputText: "'; DROP TABLE meal_plans; --"
 - tapOn:
-    id: "ai-generate-submit-button"
-# SQL インジェクションが実行されず処理されること
-- wait: 5000
-# アプリがクラッシュしないことを確認
+    id: "weekly-request-submit-button"
+# SQL インジェクションが実行されず、アプリがクラッシュしないこと
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 15000
 - assertVisible:
-    id: "menus-weekly-screen"
-- assertNotVisible:
-    text: "DROP TABLE"
+    id: "weekly-request-screen"

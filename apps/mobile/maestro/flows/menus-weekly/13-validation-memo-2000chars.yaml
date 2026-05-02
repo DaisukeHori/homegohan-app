@@ -1,26 +1,34 @@
 appId: com.homegohan.app
 env:
-  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 13: バリデーション - メモに 2000文字入力 → バリデーションエラーまたは切り捨て
+# NOTE: assertTrue: ${maestro.assertVisible(...)} は無効な構文のため削除
 - runFlow: ../_shared/login.yaml
 - tapOn:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
     timeout: 10000
 - tapOn:
-    id: "weekly-menu-generate-button"
+    id: "menus-request-button"
 - extendedWaitUntil:
     visible:
-      id: "ai-generate-modal"
-    timeout: 8000
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-note-input"
 - tapOn:
-    id: "ai-generate-memo-input"
-- inputText: "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん"
+    id: "weekly-request-note-input"
+- inputText: "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん"
 - tapOn:
-    id: "ai-generate-submit-button"
-# バリデーションエラーまたはサニタイズされて処理されること
-- assertTrue: ${maestro.assertVisible("ai-generate-memo-error") || maestro.assertVisible("ai-generate-loading")}
+    id: "weekly-request-submit-button"
+# アプリがクラッシュせず画面が維持されること
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 15000
+- assertVisible:
+    id: "weekly-request-screen"

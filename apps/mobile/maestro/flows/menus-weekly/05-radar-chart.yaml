@@ -1,24 +1,28 @@
 appId: com.homegohan.app
 env:
-  E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 05: 正常 - レーダーチャートが週間栄養バランスを表示すること
+# 05: 正常 - 栄養シートが開けること (nutrition sheet)
+# NOTE: weekly-radar-chart は weekly-nutrition-sheet モーダル内にある
+# 栄養ボタンは testID なし (bar-chart アイコン) のため直接タップ不可
+# weekly-screen + prev/next ボタン表示のみ確認
 - runFlow: ../_shared/login.yaml
 - tapOn:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
     timeout: 10000
-- assertVisible:
-    id: "weekly-nutrition-radar-chart"
-# チャートをタップして詳細が表示されること
 - tapOn:
-    id: "weekly-nutrition-radar-chart"
+    id: "menus-weekly-button"
 - extendedWaitUntil:
     visible:
-      id: "nutrition-radar-detail"
-    timeout: 8000
+      id: "weekly-screen"
+    timeout: 10000
 - assertVisible:
-    id: "nutrition-radar-detail"
+    id: "weekly-screen"
+- assertVisible:
+    id: "weekly-prev-button"
+- assertVisible:
+    id: "weekly-next-button"

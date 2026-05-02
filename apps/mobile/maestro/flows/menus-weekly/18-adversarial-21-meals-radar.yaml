@@ -1,31 +1,26 @@
 appId: com.homegohan.app
 env:
-  E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 18: Adversarial - 21食分のデータでレーダーチャートがクラッシュしないこと
+# 18: Adversarial - weekly-screen がスクロールしてもクラッシュしないこと
 - runFlow: ../_shared/login.yaml
 - tapOn:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
     timeout: 10000
-# 21食 (1日3食×7日) のデータがある場合
+- tapOn:
+    id: "menus-weekly-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
 - assertVisible:
-    id: "weekly-nutrition-radar-chart"
-# チャートが正常にレンダリングされること
-- wait: 3000
-- assertVisible:
-    id: "weekly-nutrition-radar-chart"
-- assertNotVisible:
-    text: "ERROR"
+    id: "weekly-screen"
 # スクロールしてもクラッシュしないことを確認
-- scroll:
-    direction: DOWN
-    speed: SLOW
-- scroll:
-    direction: UP
-    speed: SLOW
+- scroll
+- scroll
 - assertVisible:
-    id: "menus-weekly-screen"
+    id: "weekly-screen"

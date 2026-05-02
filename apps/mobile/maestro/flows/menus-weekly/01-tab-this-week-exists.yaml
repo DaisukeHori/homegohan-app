@@ -11,11 +11,17 @@ env:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
+    timeout: 10000
+- tapOn:
+    id: "menus-weekly-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
     timeout: 10000
 - assertVisible:
-    id: "menus-weekly-screen"
+    id: "weekly-screen"
 - assertVisible:
-    id: "weekly-menu-list"
+    id: "weekly-prev-button"
 - assertVisible:
-    id: "weekly-menu-item-0"
+    id: "weekly-next-button"
