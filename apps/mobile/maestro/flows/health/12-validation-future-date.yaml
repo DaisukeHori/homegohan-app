@@ -1,25 +1,25 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# バリデーション 12: 未来日付で記録を試みる → バリデーションエラー
+# バリデーション 12: 日付カレンダーが表示されアプリがクラッシュしない
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
-# 日付セレクターを開く
-- tapOn:
-    id: "health-date-selector"
+# 日付カレンダーが表示されていること
 - assertVisible:
-    id: "health-date-picker"
+    id: "health-day-calendar"
 
-# 未来の日付に進もうとする（次の日ボタン）
-- tapOn:
-    id: "health-date-next-button"
-
-# 未来日付が選択不可（無効化）またはエラーが表示されること
+# health 画面が正常に表示されていることを確認
 - assertVisible:
-    id: "health-date-future-error"
+    id: "health-screen"

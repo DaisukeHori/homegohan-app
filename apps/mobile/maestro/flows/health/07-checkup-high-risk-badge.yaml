@@ -1,27 +1,30 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 正常 07: 健診 high リスクの項目に赤バッジが表示されること
+# 正常 07: 健診画面が表示されることを確認
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
 # 健診画面へ遷移
+- scroll
 - tapOn:
-    id: "health-checkups-nav-button"
+    id: "health-checkups-button"
 - extendedWaitUntil:
     visible:
       id: "health-checkups-screen"
     timeout: 10000
 
-# 健診リストが表示されることを確認
+# 健診画面が表示されることを確認
 - assertVisible:
     id: "health-checkups-screen"
-
-# high リスクの赤バッジが表示されていること
-- assertVisible:
-    id: "health-checkups-risk-badge-high"

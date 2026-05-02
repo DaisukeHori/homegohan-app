@@ -1,18 +1,25 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 正常 06: グラフ画面で期間=月・指標=体重を表示する
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
 # グラフ画面へ遷移
+- scroll
 - tapOn:
-    id: "health-graphs-nav-button"
+    id: "health-graphs-button"
 - extendedWaitUntil:
     visible:
       id: "health-graphs-screen"

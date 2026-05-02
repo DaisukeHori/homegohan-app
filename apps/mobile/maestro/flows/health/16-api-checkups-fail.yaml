@@ -1,25 +1,30 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# API 16: checkups API が失敗した場合のエラーハンドリング
+# API 16: 健診画面の基本表示確認 (モックサーバー不可環境)
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
 # 健診画面へ遷移
+- scroll
 - tapOn:
-    id: "health-checkups-nav-button"
+    id: "health-checkups-button"
 - extendedWaitUntil:
     visible:
       id: "health-checkups-screen"
     timeout: 15000
 
-# API 失敗時: エラーバナーまたはリトライ UI が表示される
+# 健診画面が正常に表示されていることを確認
 - assertVisible:
     id: "health-checkups-screen"
-- assertVisible:
-    id: "health-checkups-error-state"

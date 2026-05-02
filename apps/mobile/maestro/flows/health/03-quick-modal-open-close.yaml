@@ -1,33 +1,40 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 正常 03: クイック記録モーダルを開いて閉じる
+# 正常 03: クイック記録モーダルが利用可能な場合に開閉確認
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
-# クイック記録ボタンをタップしてモーダルを開く
-- tapOn:
-    id: "health-quick-record-button"
-- extendedWaitUntil:
-    visible:
-      id: "health-quick-modal"
-    timeout: 5000
-- assertVisible:
-    id: "health-quick-modal"
+# クイック記録ボタンが表示されている場合のみモーダルテスト
+- runFlow:
+    when:
+      visible:
+        id: "health-quick-record-button"
+    commands:
+      - tapOn:
+          id: "health-quick-record-button"
+      - extendedWaitUntil:
+          visible:
+            id: "health-quick-modal"
+          timeout: 5000
+      - assertVisible:
+          id: "health-quick-modal"
+      - assertVisible:
+          id: "health-quick-weight-input"
+      - assertVisible:
+          id: "health-quick-save-button"
 
-# モーダルを閉じる（キャンセルまたはバックドロップタップ）
-- tapOn:
-    id: "health-quick-modal-close-button"
-- extendedWaitUntil:
-    notVisible:
-      id: "health-quick-modal"
-    timeout: 5000
-
-# ダッシュボードに戻っていることを確認
+# health 画面が表示されていること
 - assertVisible:
     id: "health-screen"

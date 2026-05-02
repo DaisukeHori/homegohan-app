@@ -1,10 +1,16 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 正常 01: health ダッシュボードのロード確認
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
@@ -13,4 +19,4 @@ appId: com.homegohan.app
 - assertVisible:
     id: "health-screen"
 - assertVisible:
-    id: "health-quick-record-button"
+    id: "health-streak-value"

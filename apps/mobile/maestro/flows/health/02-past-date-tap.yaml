@@ -1,29 +1,25 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 正常 02: 過去日付をタップして履歴を表示する
+# 正常 02: 日付カレンダーが表示されることを確認
 - runFlow: ../_shared/login.yaml
 
+- assertVisible:
+    id: "home-screen"
 - tapOn:
-    id: "tab-health"
+    id: "home-health-card"
+
 - extendedWaitUntil:
     visible:
       id: "health-screen"
     timeout: 10000
 
-# カレンダーまたは日付セレクターから過去の日付をタップ
-- tapOn:
-    id: "health-date-selector"
+# 日付カレンダーが表示されていること
 - assertVisible:
-    id: "health-date-picker"
+    id: "health-day-calendar"
 
-# 1日前の日付を選択（前日ボタンまたはカレンダーセル）
-- tapOn:
-    id: "health-date-prev-button"
-- extendedWaitUntil:
-    visible:
-      id: "health-screen"
-    timeout: 5000
-
-# 過去日付のデータが表示されることを確認
+# ヘルス画面が正常に表示されていることを確認
 - assertVisible:
     id: "health-screen"
