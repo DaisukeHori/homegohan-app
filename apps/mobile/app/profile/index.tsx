@@ -242,7 +242,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="profile-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="マイページ"
         right={
@@ -251,7 +251,7 @@ export default function ProfilePage() {
               <Pressable onPress={() => { setEditForm(profileData); setIsEditing(false); }}>
                 <Text style={{ fontSize: 15, color: colors.textMuted, fontWeight: "600" }}>キャンセル</Text>
               </Pressable>
-              <Pressable onPress={handleSave} disabled={isSaving}>
+              <Pressable testID="profile-save-button" onPress={handleSave} disabled={isSaving}>
                 <Text style={{ fontSize: 15, color: colors.accent, fontWeight: "700" }}>
                   {isSaving ? "保存中..." : "保存"}
                 </Text>
@@ -287,6 +287,7 @@ export default function ProfilePage() {
           {TABS.map((tab) => (
             <Pressable
               key={tab.id}
+              testID={`profile-tab-${tab.id}`}
               onPress={() => setActiveTab(tab.id)}
               style={[s.tab, activeTab === tab.id && s.tabActive]}
             >
@@ -300,7 +301,7 @@ export default function ProfilePage() {
         {activeTab === "basic" && (
           <Card>
             <Text style={s.cardTitle}>基本情報</Text>
-            <Field label="ニックネーム" value={editForm.nickname} editing={isEditing} onChange={(v) => updateField("nickname", v)} />
+            <Field label="ニックネーム" value={editForm.nickname} editing={isEditing} onChange={(v) => updateField("nickname", v)} testID="profile-nickname-input" />
             <Field label="年齢" value={editForm.age?.toString()} editing={isEditing} onChange={(v) => updateField("age", v ? parseInt(v) : null)} keyboardType="number-pad" />
             {isEditing ? (
               <View style={s.field}>
@@ -315,6 +316,7 @@ export default function ProfilePage() {
                     return (
                       <Pressable
                         key={opt.value}
+                        testID={`profile-gender-${opt.value}`}
                         onPress={() => updateField("gender", opt.value)}
                         style={[s.chip, selected && s.chipSelected]}
                       >
@@ -327,8 +329,8 @@ export default function ProfilePage() {
             ) : (
               <Field label="性別" value={editForm.gender === "male" ? "男性" : editForm.gender === "female" ? "女性" : "未設定"} editing={false} />
             )}
-            <Field label="身長 (cm)" value={editForm.height?.toString()} editing={isEditing} onChange={(v) => updateField("height", v ? parseFloat(v) : null)} keyboardType="decimal-pad" />
-            <Field label="体重 (kg)" value={editForm.weight?.toString()} editing={isEditing} onChange={(v) => updateField("weight", v ? parseFloat(v) : null)} keyboardType="decimal-pad" />
+            <Field label="身長 (cm)" value={editForm.height?.toString()} editing={isEditing} onChange={(v) => updateField("height", v ? parseFloat(v) : null)} keyboardType="decimal-pad" testID="profile-height-input" />
+            <Field label="体重 (kg)" value={editForm.weight?.toString()} editing={isEditing} onChange={(v) => updateField("weight", v ? parseFloat(v) : null)} keyboardType="decimal-pad" testID="profile-weight-input" />
             <Field label="職業" value={editForm.occupation} editing={isEditing} onChange={(v) => updateField("occupation", v)} />
           </Card>
         )}
@@ -801,6 +803,7 @@ export default function ProfilePage() {
 
         {/* ── ログアウト ── */}
         <Pressable
+          testID="profile-logout-button"
           onPress={() => {
             Alert.alert(
               "ログアウトしますか？",
@@ -825,18 +828,20 @@ export default function ProfilePage() {
   );
 }
 
-function Field({ label, value, editing, onChange, keyboardType }: {
+function Field({ label, value, editing, onChange, keyboardType, testID }: {
   label: string;
   value?: string | null;
   editing: boolean;
   onChange?: (v: string) => void;
   keyboardType?: "default" | "number-pad" | "decimal-pad";
+  testID?: string;
 }) {
   return (
     <View style={s.field}>
       <Text style={s.fieldLabel}>{label}</Text>
       {editing && onChange ? (
         <TextInput
+          testID={testID}
           style={s.fieldInput}
           value={value ?? ""}
           onChangeText={onChange}
