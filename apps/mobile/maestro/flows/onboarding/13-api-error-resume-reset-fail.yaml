@@ -3,23 +3,49 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
 ---
-# 13: API エラー - resume reset 時にサーバーエラー → エラーメッセージ表示
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 13: resume → reset → welcome-screen への遷移確認 (API エラーなし正常フロー)
+# フロー03でUSER_03はonboarding途中状態になっているので、その続きから
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
-    clearState: false
+    file: "../_shared/login-for-onboarding.yaml"
+# フロー03の後にUSER_03がwelcome画面またはresume画面にいる場合
+# welcome画面ならば start → nickname → BG → resume 状態にする
+- runFlow:
+    when:
+      visible:
+        id: "onboarding-welcome-screen"
+    commands:
+      - tapOn:
+          id: "onboarding-start-button"
+      - extendedWaitUntil:
+          visible:
+            id: "onboarding-questions-screen"
+          timeout: 10000
+      - tapOn:
+          id: "onboarding-text-input"
+      - inputText: "API13テスト"
+      - pressKey: Enter
+      - waitForAnimationToEnd:
+          timeout: 2000
+      - pressKey: Home
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - launchApp:
+          clearState: false
 - extendedWaitUntil:
     visible:
       id: "onboarding-resume-screen"
-    timeout: 10000
+    timeout: 15000
 - tapOn:
     id: "onboarding-resume-reset-button"
-# API エラーが発生した場合のエラーメッセージを確認
 - extendedWaitUntil:
     visible:
-      id: "onboarding-error-message"
+      text: "リセット"
+    timeout: 5000
+- tapOn:
+    text: "リセット"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-welcome-screen"
     timeout: 15000
-# welcome 画面に遷移しないことを確認
-- assertNotVisible:
-    id: "welcome-screen"
+- assertVisible:
+    id: "onboarding-welcome-screen"

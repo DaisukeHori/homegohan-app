@@ -1,66 +1,10 @@
 appId: com.homegohan.app
-env:
-  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 01: welcome → start → オンボーディング全設問回答 → complete
-- runFlow:
-    file: "../_shared/login-for-onboarding.yaml"
-- assertVisible:
-    id: "onboarding-welcome-screen"
-- tapOn:
-    id: "onboarding-start-button"
-- extendedWaitUntil:
-    visible:
-      id: "onboarding-questions-screen"
-    timeout: 10000
+# _shared/complete-onboarding-maintain.yaml
+# nutrition_goal=maintain 選択後の全設問を回答してオンボーディングを完了する共通フロー
+# 呼び出し元でoboarding-nutrition_goal-screen を待機し、maintain を選択した後に呼び出す
 
-# nickname 設問
-- assertVisible:
-    id: "onboarding-text-input"
-- tapOn:
-    id: "onboarding-text-input"
-- inputText: "テストユーザー"
-- pressKey: Enter
-
-# gender 設問
-- extendedWaitUntil:
-    visible:
-      id: "onboarding-gender-screen"
-    timeout: 8000
-- tapOn:
-    id: "onboarding-choice-option-unspecified"
-
-# body_stats 設問 (age/occupation/height/weight)
-- extendedWaitUntil:
-    visible:
-      id: "onboarding-body-stats-screen"
-    timeout: 8000
-- tapOn:
-    id: "onboarding-age-input"
-- inputText: "30"
-- tapOn:
-    text: "Next"
-# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
-- pressKey: Enter
-# height フィールドにフォーカス
-- inputText: "170"
-- tapOn:
-    text: "Next"
-# weight フィールドにフォーカス
-- inputText: "65"
-- tapOn:
-    id: "onboarding-next-button"
-
-# nutrition_goal 設問
-- extendedWaitUntil:
-    visible:
-      id: "onboarding-nutrition_goal-screen"
-    timeout: 15000
-- tapOn:
-    id: "onboarding-choice-option-maintain"
-
-# exercise_types 設問 (multi_choice, 必須: 少なくとも1つ選択)
+# exercise_types 設問 (multi_choice, 必須)
 - extendedWaitUntil:
     visible:
       id: "onboarding-multi-choice-option-none"
@@ -69,8 +13,6 @@ env:
     id: "onboarding-multi-choice-option-none"
 - tapOn:
     id: "onboarding-next-button"
-
-# exercise_frequency/intensity/duration は "none" 選択でスキップ
 
 # work_style 設問 (choice, 必須)
 - extendedWaitUntil:
@@ -112,8 +54,6 @@ env:
 - tapOn:
     id: "onboarding-choice-option-medium"
 
-# pregnancy_status は gender=unspecified なのでスキップ
-
 # medications 設問 (multi_choice, allowSkip)
 - extendedWaitUntil:
     visible:
@@ -146,7 +86,7 @@ env:
 - tapOn:
     id: "onboarding-skip-question-button"
 
-# diet_style 設問 (choice, allowSkip だが skip ボタンなし → normal を選択)
+# diet_style 設問 (choice, allowSkip だが skip ボタンなし)
 - extendedWaitUntil:
     visible:
       id: "onboarding-diet_style-screen"
@@ -170,7 +110,7 @@ env:
 - tapOn:
     id: "onboarding-choice-option-30"
 
-# cuisine_preference 設問 (multi_choice, 必須: 少なくとも1つ)
+# cuisine_preference 設問 (multi_choice, 必須)
 - extendedWaitUntil:
     visible:
       id: "onboarding-multi-choice-option-japanese"
@@ -180,7 +120,7 @@ env:
 - tapOn:
     id: "onboarding-next-button"
 
-# family_size 設問 (number, 必須: 1-10)
+# family_size 設問 (number, 必須)
 - extendedWaitUntil:
     visible:
       id: "onboarding-number-input"
@@ -196,8 +136,6 @@ env:
     visible:
       id: "onboarding-servings-screen"
     timeout: 15000
-- assertVisible:
-    id: "onboarding-servings-screen"
 - tapOn:
     id: "onboarding-next-button"
 
@@ -209,7 +147,7 @@ env:
 - tapOn:
     id: "onboarding-choice-option-2-3_weekly"
 
-# weekly_food_budget 設問 (choice, allowSkip, "none" オプションを選択)
+# weekly_food_budget 設問 (choice, "none" を選択)
 - extendedWaitUntil:
     visible:
       id: "onboarding-weekly_food_budget-screen"
@@ -241,20 +179,19 @@ env:
 - tapOn:
     id: "onboarding-skip-question-button"
 
-# onboarding-complete-screen に到達
+# onboarding-complete-screen が表示される
 - extendedWaitUntil:
     visible:
       id: "onboarding-complete-screen"
     timeout: 30000
-# CTA ボタン「この設定で始める」をタップして home へ
+# CTA ボタンをスクロールで見つけてタップ
 - scrollUntilVisible:
     element:
       id: "onboarding-complete-cta-button"
     direction: DOWN
 - tapOn:
     id: "onboarding-complete-cta-button"
-
-# オンボーディング完了 → home へ
+# home-screen に到達
 - extendedWaitUntil:
     visible:
       id: "home-screen"

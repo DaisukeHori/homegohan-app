@@ -3,24 +3,33 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
 ---
-# 16: Adversarial - nickname 1000文字入力 → バリデーションエラーまたは切り捨て
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 16: Adversarial - nickname 1000文字入力 → sanitizeText で100文字に切り捨て → 次へ進む
+# sanitizeText は slice(0, 100) で100文字に切り捨てるため、エラーにならず次の設問に進む
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
-- inputText: "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ"
+    id: "onboarding-text-input"
+- inputText: "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこ"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-# バリデーションエラーが表示されるか、最大文字数で切り捨てられることを確認
+    id: "onboarding-choice-option-unspecified"
+# sanitizeText により100文字に切り捨てられ次の設問へ進む
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
 - assertVisible:
-    id: "onboarding-nickname-error"
+    id: "onboarding-body-stats-screen"

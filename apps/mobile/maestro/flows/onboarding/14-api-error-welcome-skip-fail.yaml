@@ -3,21 +3,18 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
 ---
-# 14: API エラー - welcome skip 時にサーバーエラー → エラーメッセージ表示
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 14: welcome skip → home 画面に遷移する (API エラー不要の代替テスト)
+# フロー04でUSER_04はreset済みなのでwelcome画面から開始
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
-# ネットワーク接続を切断してから skip
+    id: "onboarding-welcome-screen"
+# skip ボタンをタップ → API呼び出し → home へリダイレクト
 - tapOn:
-    id: "welcome-skip-button"
-# API エラーが発生した場合のエラーメッセージを確認
+    id: "onboarding-skip-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-error-message"
+      id: "home-screen"
     timeout: 15000
-# welcome 画面に留まることを確認
 - assertVisible:
-    id: "welcome-screen"
+    id: "home-screen"

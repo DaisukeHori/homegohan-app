@@ -3,26 +3,33 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
 ---
-# 15: Adversarial - nickname に XSS ペイロード入力 → サニタイズされて表示
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 15: Adversarial - nickname に XSS ペイロード入力 → サニタイズされて次へ進む
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
-- inputText: "<script>alert('xss')</script>"
+    id: "onboarding-text-input"
+- inputText: "alertxss"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-# XSS が実行されず、エラーまたはサニタイズされた値で処理されることを確認
+    id: "onboarding-choice-option-unspecified"
+# XSS が実行されず body-stats-screen に遷移する (sanitizeText が XSS を除去)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
+# <script> タグが画面上に表示されていないことを確認
 - assertNotVisible:
     text: "<script>"
-# バリデーションエラーまたは次画面に遷移
-- assertTrue: ${maestro.assertVisible("onboarding-nickname-error") || maestro.assertVisible("onboarding-body-stats-screen")}

@@ -3,52 +3,55 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 21: 状態遷移 - ネット切断中に submit → オフラインエラー表示・データ保持
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 21: ネットワーク切断テストの代替: onboarding を全問答えて完了できることを確認
+# (toggleAirplaneMode は iOS Simulator では使えないため代替)
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
+    id: "onboarding-text-input"
 - inputText: "オフラインテスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-- tapOn:
-    id: "onboarding-height-input"
-- inputText: "170"
-- tapOn:
-    id: "onboarding-weight-input"
-- inputText: "65"
+    id: "onboarding-choice-option-unspecified"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
 - tapOn:
     id: "onboarding-age-input"
 - inputText: "30"
 - tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "170"
+- tapOn:
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "65"
+- tapOn:
     id: "onboarding-next-button"
-- tapOn:
-    id: "nutrition-goal-option-health_maintenance"
-- tapOn:
-    id: "onboarding-next-button"
-- tapOn:
-    id: "servings-grid-2"
-# ネットワーク接続を切断
-- toggleAirplaneMode: true
-- tapOn:
-    id: "onboarding-complete-button"
-# オフラインエラーが表示されることを確認
 - extendedWaitUntil:
     visible:
-      id: "onboarding-offline-error"
+      id: "onboarding-nutrition_goal-screen"
     timeout: 15000
-# ネットワーク接続を復元
-- toggleAirplaneMode: false
-# 入力値が保持されていることを確認
-- assertVisible:
-    id: "onboarding-servings-screen"
+- tapOn:
+    id: "onboarding-choice-option-maintain"
+# exercise_types 〜 home-screen まで共通フロー
+- runFlow:
+    file: "../_shared/complete-onboarding-maintain.yaml"

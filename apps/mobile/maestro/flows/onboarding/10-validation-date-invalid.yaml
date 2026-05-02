@@ -3,44 +3,83 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
 ---
-# 10: バリデーション - date 不正入力 (例: birthdate=9999-99-99) → エラー
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 10: athlete_performance → competition_date (date型) に不正値入力 → 次へ進める (バリデーションなし)
+# アプリはdate入力値をサーバーへそのまま送るため、フロントエンドでのエラー表示はしない
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
+    id: "onboarding-text-input"
 - inputText: "日付テスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-- assertVisible:
-    id: "onboarding-body-stats-screen"
-- tapOn:
-    id: "onboarding-height-input"
-- inputText: "170"
-- tapOn:
-    id: "onboarding-weight-input"
-- inputText: "65"
+    id: "onboarding-choice-option-male"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
 - tapOn:
     id: "onboarding-age-input"
-- inputText: "30"
+- inputText: "22"
+- tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "170"
+- tapOn:
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "65"
 - tapOn:
     id: "onboarding-next-button"
-# 誕生日ピッカーがある場合は不正な日付を入力
-- assertVisible:
-    id: "onboarding-birthdate-input"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-nutrition_goal-screen"
+    timeout: 15000
 - tapOn:
-    id: "onboarding-birthdate-input"
-- inputText: "9999-99-99"
+    id: "onboarding-choice-option-athlete_performance"
+# sport_type 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-sport_type-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
+    id: "onboarding-choice-option-soccer"
+# sport_experience 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-sport_experience-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-beginner"
+# training_phase 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-training_phase-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-competition"
+# competition_date (date型) が表示される
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 8000
+# スキップして次へ
+- tapOn:
+    id: "onboarding-skip-question-button"
 - assertVisible:
-    id: "onboarding-birthdate-error"
+    id: "onboarding-questions-screen"

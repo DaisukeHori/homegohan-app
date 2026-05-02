@@ -3,45 +3,56 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 11: バリデーション - 全問 skip ボタンで飛ばした場合の動作確認
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 11: 必須設問を答えてスキップ可能な設問はスキップして onboarding 完了
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
-# nickname 設問をスキップ
+# nickname 入力 (必須)
 - tapOn:
-    id: "onboarding-skip-button"
-# body stats 設問をスキップ
+    id: "onboarding-text-input"
+- inputText: "スキップテスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-unspecified"
+# body stats 入力 (必須)
 - extendedWaitUntil:
     visible:
       id: "onboarding-body-stats-screen"
     timeout: 8000
 - tapOn:
-    id: "onboarding-skip-button"
-# nutrition goal 設問をスキップ
-- extendedWaitUntil:
-    visible:
-      id: "onboarding-nutrition-goal-screen"
-    timeout: 8000
+    id: "onboarding-age-input"
+- inputText: "30"
 - tapOn:
-    id: "onboarding-skip-button"
-# servings 設問をスキップ
-- extendedWaitUntil:
-    visible:
-      id: "onboarding-servings-screen"
-    timeout: 8000
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "165"
 - tapOn:
-    id: "onboarding-skip-button"
-# 全問スキップ後もホーム画面に到達することを確認
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "55"
+- tapOn:
+    id: "onboarding-next-button"
+# nutrition_goal を選択
 - extendedWaitUntil:
     visible:
-      id: "home-screen"
+      id: "onboarding-nutrition_goal-screen"
     timeout: 15000
+- tapOn:
+    id: "onboarding-choice-option-maintain"
+# exercise_types 〜 home-screen まで共通フロー
+- runFlow:
+    file: "../_shared/complete-onboarding-maintain.yaml"

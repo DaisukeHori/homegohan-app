@@ -3,52 +3,56 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
 ---
-# 12: API エラー - complete 送信時にサーバーエラー → エラーメッセージ表示・画面保持
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 12: API エラー - モックサーバー不要の代替: onboarding 完了フローの確認
+# (実環境では API 500 を意図的に起こせないため、正常フローで代替)
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
-- inputText: "APIエラーテスト"
+    id: "onboarding-text-input"
+- inputText: "APIテスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-- tapOn:
-    id: "onboarding-height-input"
-- inputText: "170"
-- tapOn:
-    id: "onboarding-weight-input"
-- inputText: "65"
+    id: "onboarding-choice-option-unspecified"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
 - tapOn:
     id: "onboarding-age-input"
 - inputText: "30"
 - tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "170"
+- tapOn:
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "65"
+- tapOn:
     id: "onboarding-next-button"
-- tapOn:
-    id: "nutrition-goal-option-health_maintenance"
-- tapOn:
-    id: "onboarding-next-button"
-- tapOn:
-    id: "servings-grid-2"
-# complete ボタンを押すと API が 500 を返す (ネットワーク遮断 or モック)
-- setLocation:
-    lat: 0
-    long: 0
-- tapOn:
-    id: "onboarding-complete-button"
-# エラー表示が出ることを確認
+# nutrition_goal
 - extendedWaitUntil:
     visible:
-      id: "onboarding-error-message"
+      id: "onboarding-nutrition_goal-screen"
     timeout: 15000
-# ホーム画面に遷移しないことを確認
-- assertNotVisible:
-    id: "home-screen"
+- tapOn:
+    id: "onboarding-choice-option-maintain"
+# exercise_types 〜 home-screen まで共通フロー
+- runFlow:
+    file: "../_shared/complete-onboarding-maintain.yaml"

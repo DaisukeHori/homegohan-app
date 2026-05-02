@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState } from "../../src/components/ui";
@@ -683,6 +683,11 @@ export default function OnboardingQuestions() {
   const [isLoading, setIsLoading] = useState(isResume);
   const [isCalculating, setIsCalculating] = useState(false);
 
+  // custom_stats フィールド間のフォーカス移動用 ref
+  const occupationRef = useRef<TextInput>(null);
+  const heightRef = useRef<TextInput>(null);
+  const weightRef = useRef<TextInput>(null);
+
   // 再開時は進捗を復元
   useEffect(() => {
     if (isResume && profile?.onboardingProgress) {
@@ -979,6 +984,10 @@ export default function OnboardingQuestions() {
   }
 
   return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
+    >
     <View testID="onboarding-questions-screen" style={[styles.screenContainer, { paddingTop: insets.top }]}>
       {/* ── Header: back + progress ── */}
       <View style={styles.headerSection}>
@@ -1057,6 +1066,7 @@ export default function OnboardingQuestions() {
                 testID="onboarding-number-input"
                 autoFocus
                 keyboardType="number-pad"
+                returnKeyType="done"
                 placeholder={currentQuestion.placeholder}
                 placeholderTextColor={colors.textMuted}
                 value={inputValue}
@@ -1065,6 +1075,7 @@ export default function OnboardingQuestions() {
                 style={[styles.textInput, { flex: 1 }]}
               />
               <Pressable
+                testID="onboarding-number-submit-button"
                 onPress={() => { if (isNumberValid) handleAnswer(numberValue); }}
                 disabled={!isNumberValid}
                 style={[styles.arrowButton, !isNumberValid && styles.arrowButtonDisabled]}
@@ -1082,7 +1093,7 @@ export default function OnboardingQuestions() {
 
         {/* Choice — outline buttons (matching web) */}
         {currentQuestion.type === "choice" && (
-          <View style={styles.choiceGroup}>
+          <View testID={`onboarding-${currentQuestion.id}-screen`} style={styles.choiceGroup}>
             {(currentQuestion.options || []).map((opt) => (
               <Pressable
                 key={opt.value}
@@ -1199,32 +1210,43 @@ export default function OnboardingQuestions() {
 
         {/* Custom stats */}
         {currentQuestion.type === "custom_stats" && (
-          <View style={{ gap: spacing.md }}>
+          <View testID="onboarding-body-stats-screen" style={{ gap: spacing.md }}>
             <View style={styles.statsRow}>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>年齢</Text>
-                <TextInput keyboardType="number-pad" placeholder="25" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-age-input" keyboardType="number-pad" placeholder="25" placeholderTextColor={colors.textMuted}
                   value={answers.age || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, age: v }))}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => occupationRef.current?.focus()}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>職業</Text>
-                <TextInput placeholder="会社員" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-occupation-input" ref={occupationRef} placeholder="会社員" placeholderTextColor={colors.textMuted}
                   value={answers.occupation || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, occupation: v }))}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => heightRef.current?.focus()}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
             </View>
             <View style={styles.statsRow}>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>身長 (cm)</Text>
-                <TextInput keyboardType="decimal-pad" placeholder="170" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-height-input" ref={heightRef} keyboardType="decimal-pad" placeholder="170" placeholderTextColor={colors.textMuted}
                   value={answers.height || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, height: v }))}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => weightRef.current?.focus()}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>体重 (kg)</Text>
-                <TextInput keyboardType="decimal-pad" placeholder="60" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-weight-input" ref={weightRef} keyboardType="decimal-pad" placeholder="60" placeholderTextColor={colors.textMuted}
                   value={answers.weight || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, weight: v }))}
+                  returnKeyType="done"
+                  blurOnSubmit={true}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
             </View>
@@ -1278,7 +1300,7 @@ export default function OnboardingQuestions() {
 
       {/* Servings grid */}
       {currentQuestion.type === "servings_grid" ? (
-        <View style={{ gap: spacing.md }}>
+        <View testID="onboarding-servings-screen" style={{ gap: spacing.md }}>
           <Text style={styles.gridHint}>
             各セルをタップして人数を変更できます
           </Text>
@@ -1393,6 +1415,7 @@ export default function OnboardingQuestions() {
 
       </ScrollView>
     </View>
+    </KeyboardAvoidingView>
   );
 }
 

@@ -4,33 +4,51 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
 ---
 # 20: 状態遷移 - BG→FG でオンボーディングのステップが保持されること
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
+    id: "onboarding-text-input"
 - inputText: "BGFGテスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-- assertVisible:
-    id: "onboarding-body-stats-screen"
-# バックグラウンドに移行
-- pressKey: Home
-- wait: 2000
-# フォアグラウンドに戻す
-- launchApp
-    clearState: false
-# body stats 画面が引き続き表示されていることを確認 (ステップ保持)
+    id: "onboarding-choice-option-unspecified"
+# body stats 設問に進む
 - extendedWaitUntil:
     visible:
       id: "onboarding-body-stats-screen"
+    timeout: 8000
+# バックグラウンドに移行
+- pressKey: Home
+- waitForAnimationToEnd:
+    timeout: 3000
+# フォアグラウンドに戻す (clearState: false で状態を保持)
+- launchApp:
+    clearState: false
+# body stats 画面が引き続き表示されていることを確認 (ステップ保持)
+# または resume 画面が表示される
+- runFlow:
+    when:
+      visible:
+        id: "onboarding-resume-screen"
+    commands:
+      - tapOn:
+          id: "onboarding-resume-continue-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
     timeout: 10000
+- assertVisible:
+    id: "onboarding-questions-screen"
