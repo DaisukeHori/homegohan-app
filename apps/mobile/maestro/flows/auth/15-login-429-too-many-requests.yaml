@@ -26,9 +26,13 @@ env:
     visible:
       text: "ログイン失敗"
     timeout: 15000
+- tapOn:
+    text: "OK"
 
 # 429 または通常エラーで rate limit が発動すること
 - assertVisible:
     id: "login-screen"
-- assertVisible:
-    text: "再試行まで"
+- extendedWaitUntil:
+    visible:
+      id: "login-rate-limit-banner"
+    timeout: 5000

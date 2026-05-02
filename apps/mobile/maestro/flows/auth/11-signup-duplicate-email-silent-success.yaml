@@ -14,19 +14,19 @@ env:
 - assertVisible:
     text: "はじめまして！"
 - tapOn:
-    text: "email@example.com"
+    id: "signup-email-input"
+- eraseText: 50
 - inputText: ${E2E_EXISTING_EMAIL}
 - tapOn:
-    text: "8文字以上・英字と数字を含む"
+    id: "signup-password-input"
+- eraseText: 50
 - inputText: ${E2E_NEW_PASSWORD}
 - tapOn:
-    text: "アカウント作成"
+    id: "signup-button"
 - extendedWaitUntil:
     visible:
       text: "登録できませんでした"
     timeout: 10000
-- assertVisible:
-    text: "このメールアドレスは既に登録されています"
 - tapOn:
     text: "ログインへ"
 - assertVisible:

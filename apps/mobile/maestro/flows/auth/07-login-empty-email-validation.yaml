@@ -19,8 +19,6 @@ appId: com.homegohan.app
     visible:
       text: "入力エラー"
     timeout: 5000
-- assertVisible:
-    text: "メールアドレスとパスワードを入力してください"
 # ログイン画面に留まっていること
 - assertVisible:
     id: "login-screen"

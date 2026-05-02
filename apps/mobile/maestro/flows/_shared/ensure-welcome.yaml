@@ -5,6 +5,11 @@ appId: com.homegohan.app
 # ホーム画面にいる場合: タブ経由でログアウト
 # ウェルカム画面にいる場合: 何もしない
 
+# iOS system dialog (openLink 等で表示される「開く」ダイアログ) を先に閉じる
+- tapOn:
+    text: "キャンセル"
+    optional: true
+
 # Admin Console にいる場合は back ボタンでホームに戻る
 - runFlow:
     when:

@@ -13,15 +13,17 @@ env:
 - tapOn:
     text: "新規登録"
 - assertVisible:
-    text: "新規登録"
+    id: "signup-screen"
 - tapOn:
-    text: "email@example.com"
+    id: "signup-email-input"
+- eraseText: 50
 - inputText: ${E2E_NEW_USER_EMAIL}
 - tapOn:
-    text: "8文字以上・英字と数字を含む"
+    id: "signup-password-input"
+- eraseText: 50
 - inputText: ${E2E_NEW_USER_PASSWORD}
 - tapOn:
-    text: "アカウント作成"
+    id: "signup-button"
 - extendedWaitUntil:
     visible:
       text: "確認してください"

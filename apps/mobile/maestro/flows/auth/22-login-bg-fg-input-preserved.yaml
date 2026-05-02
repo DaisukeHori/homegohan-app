@@ -20,9 +20,8 @@ env:
 # バックグラウンドへ
 - pressKey: HOME
 
-# フォアグラウンドへ復帰
-- launchApp
-    clearState: false
+# フォアグラウンドへ復帰 (app schemeで再開、sessionは維持される)
+- openLink: "homegohan://"
 
 # login-screen が表示されていること
 - assertVisible:
