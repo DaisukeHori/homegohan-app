@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 09: バリデーション - family_size に文字列入力 → エラー
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+# family_size に文字列を入力
+- tapOn:
+    id: "ai-generate-family-size-input"
+- inputText: "abc"
+- tapOn:
+    id: "ai-generate-submit-button"
+# エラーメッセージが表示されること
+- assertVisible:
+    id: "ai-generate-family-size-error"
+- assertNotVisible:
+    id: "ai-generate-loading"

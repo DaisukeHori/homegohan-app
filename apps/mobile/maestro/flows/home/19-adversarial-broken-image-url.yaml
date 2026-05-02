@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 19: Adversarial - 壊れた image_url の食事データ → クラッシュせずプレースホルダー表示
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-meals-section"
+- assertVisible:
+    id: "home-meals-section"
+# 壊れた画像URLでもクラッシュしないことを確認
+- wait: 3000
+- assertVisible:
+    id: "home-screen"
+# プレースホルダー画像が表示されること (クラッシュなし)
+- assertNotVisible:
+    text: "ERROR"

@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 23: 状態遷移 - AI 生成中に BG→FG でもローディングが継続すること
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+- tapOn:
+    id: "ai-generate-theme-input"
+- inputText: "BG FG テスト"
+- tapOn:
+    id: "ai-generate-submit-button"
+# AI 生成ローディング中にバックグラウンドに移行
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-loading"
+    timeout: 5000
+- pressKey: Home
+- wait: 3000
+# フォアグラウンドに戻す
+- launchApp:
+    clearState: false
+# ローディングまたは完了状態が表示されること
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- assertTrue: ${maestro.assertVisible("ai-generate-loading") || maestro.assertVisible("weekly-menu-list")}

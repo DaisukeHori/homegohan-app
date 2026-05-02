@@ -1,0 +1,37 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 20: Adversarial - 10MB 超の画像アップロード → エラーメッセージ表示
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+- tapOn:
+    id: "ai-generate-fridge-image-button"
+- extendedWaitUntil:
+    visible:
+      id: "image-picker-modal"
+    timeout: 8000
+# 大容量ファイルを選択 (テスト環境では特定のテスト用画像を使用)
+- tapOn:
+    id: "image-picker-camera-roll"
+- tapOn:
+    id: "image-picker-large-image"
+# ファイルサイズエラーが表示されること
+- extendedWaitUntil:
+    visible:
+      id: "image-size-error-message"
+    timeout: 10000
+- assertVisible:
+    id: "image-size-error-message"

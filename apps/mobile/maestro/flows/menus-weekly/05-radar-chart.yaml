@@ -1,0 +1,24 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
+---
+# 05: 正常 - レーダーチャートが週間栄養バランスを表示すること
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-nutrition-radar-chart"
+# チャートをタップして詳細が表示されること
+- tapOn:
+    id: "weekly-nutrition-radar-chart"
+- extendedWaitUntil:
+    visible:
+      id: "nutrition-radar-detail"
+    timeout: 8000
+- assertVisible:
+    id: "nutrition-radar-detail"

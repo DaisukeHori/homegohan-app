@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
+---
+# 15: Adversarial - nickname に XSS ペイロード入力 → サニタイズされて表示
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "<script>alert('xss')</script>"
+- tapOn:
+    id: "onboarding-next-button"
+# XSS が実行されず、エラーまたはサニタイズされた値で処理されることを確認
+- assertNotVisible:
+    text: "<script>"
+# バリデーションエラーまたは次画面に遷移
+- assertTrue: ${maestro.assertVisible("onboarding-nickname-error") || maestro.assertVisible("onboarding-body-stats-screen")}

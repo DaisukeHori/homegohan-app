@@ -1,0 +1,61 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
+---
+# 06: servings_grid で各人数を選択できることを確認
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "グリッドテスト"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "165"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "60"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "28"
+- tapOn:
+    id: "onboarding-next-button"
+- tapOn:
+    id: "nutrition-goal-option-health_maintenance"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-servings-screen"
+- assertVisible:
+    id: "servings-grid"
+# 1人分を選択
+- tapOn:
+    id: "servings-grid-1"
+- assertVisible:
+    id: "servings-grid-1-selected"
+# 3人分に変更
+- tapOn:
+    id: "servings-grid-3"
+- assertVisible:
+    id: "servings-grid-3-selected"
+# 4人分に変更
+- tapOn:
+    id: "servings-grid-4"
+- assertVisible:
+    id: "servings-grid-4-selected"
+- tapOn:
+    id: "onboarding-complete-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000

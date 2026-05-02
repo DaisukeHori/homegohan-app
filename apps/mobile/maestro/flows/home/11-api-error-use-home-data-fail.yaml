@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 11: API エラー - useHomeData のデータ取得失敗時にエラー表示
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    text: "ログイン"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+# ネットワーク切断してログイン実行
+- toggleAirplaneMode: true
+- tapOn:
+    id: "login-button"
+- toggleAirplaneMode: false
+# ログイン後に home データ取得失敗でエラー表示
+- extendedWaitUntil:
+    visible:
+      id: "home-error-state"
+    timeout: 15000
+- assertVisible:
+    id: "home-error-state"
+- assertVisible:
+    id: "home-retry-button"

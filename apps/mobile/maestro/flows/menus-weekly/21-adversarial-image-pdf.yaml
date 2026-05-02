@@ -1,0 +1,37 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 21: Adversarial - PDF ファイルを画像として選択 → MIME タイプエラー
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-menu-generate-button"
+- extendedWaitUntil:
+    visible:
+      id: "ai-generate-modal"
+    timeout: 8000
+- tapOn:
+    id: "ai-generate-fridge-image-button"
+- extendedWaitUntil:
+    visible:
+      id: "image-picker-modal"
+    timeout: 8000
+# ファイルピッカーから PDF を選択 (テスト環境)
+- tapOn:
+    id: "image-picker-files"
+- tapOn:
+    id: "image-picker-pdf-file"
+# MIME タイプエラーが表示されること
+- extendedWaitUntil:
+    visible:
+      id: "image-type-error-message"
+    timeout: 10000
+- assertVisible:
+    id: "image-type-error-message"

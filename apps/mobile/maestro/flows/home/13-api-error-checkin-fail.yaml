@@ -1,0 +1,34 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 13: API エラー - チェックイン送信失敗時にエラーメッセージ表示
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scrollTo:
+    id: "home-checkin-section"
+- tapOn:
+    id: "checkin-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "checkin-modal"
+    timeout: 8000
+- tapOn:
+    id: "checkin-energy-high"
+# ネットワーク切断して送信
+- toggleAirplaneMode: true
+- tapOn:
+    id: "checkin-submit-button"
+# エラーメッセージが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "checkin-error-message"
+    timeout: 15000
+- assertVisible:
+    id: "checkin-error-message"
+# モーダルが閉じずに残ることを確認
+- assertVisible:
+    id: "checkin-modal"
+- toggleAirplaneMode: false

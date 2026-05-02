@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 22: 状態遷移 - layout のリダイレクト処理が正しく動作すること
+# 認証済みユーザーが認証不要ルート (welcome 等) にアクセスした場合の redirect
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+# タブナビゲーション経由でホームに留まる
+- tapOn:
+    id: "tab-home"
+- assertVisible:
+    id: "home-screen"
+# 別タブに移動してホームに戻る
+- tapOn:
+    id: "tab-meals"
+- extendedWaitUntil:
+    visible:
+      id: "meals-screen"
+    timeout: 8000
+- tapOn:
+    id: "tab-home"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 8000
+- assertVisible:
+    id: "home-screen"

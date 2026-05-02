@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 04: 正常 - meal toggle (週間メニュー内の食事を完了/未完了)
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-date-today"
+- extendedWaitUntil:
+    visible:
+      id: "daily-menu-detail"
+    timeout: 8000
+- assertVisible:
+    id: "weekly-meal-item-0-toggle"
+# 完了にする
+- tapOn:
+    id: "weekly-meal-item-0-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-meal-item-0-completed"
+    timeout: 8000
+# 未完了に戻す
+- tapOn:
+    id: "weekly-meal-item-0-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-meal-item-0-incomplete"
+    timeout: 8000

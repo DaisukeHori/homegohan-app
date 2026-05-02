@@ -1,0 +1,39 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 09: バリデーション - number range 超え (身長 999, 体重 999) → エラー
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    id: "welcome-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-nickname-input"
+- inputText: "レンジテスト"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-body-stats-screen"
+# 範囲外の値を入力
+- tapOn:
+    id: "onboarding-height-input"
+- inputText: "999"
+- tapOn:
+    id: "onboarding-weight-input"
+- inputText: "999"
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "200"
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-height-error"
+- assertNotVisible:
+    id: "onboarding-nutrition-goal-screen"

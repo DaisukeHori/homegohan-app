@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 14: API エラー - meal-plans 取得失敗時にエラー表示
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "welcome-screen"
+- tapOn:
+    text: "ログイン"
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+# ネットワーク切断してメニュータブを開く
+- toggleAirplaneMode: true
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-screen"
+    timeout: 10000
+# エラー状態が表示されること
+- extendedWaitUntil:
+    visible:
+      id: "menus-weekly-error-state"
+    timeout: 15000
+- assertVisible:
+    id: "menus-weekly-error-state"
+- assertVisible:
+    id: "menus-weekly-retry-button"
+- toggleAirplaneMode: false

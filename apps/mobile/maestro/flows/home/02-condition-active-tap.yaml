@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 02: コンディション「活動的」をタップして詳細/モーダルが表示されること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- assertVisible:
+    id: "home-condition-section"
+- tapOn:
+    id: "condition-active-button"
+- extendedWaitUntil:
+    visible:
+      id: "condition-detail-modal"
+    timeout: 8000
+- assertVisible:
+    id: "condition-detail-modal"
+- tapOn:
+    id: "condition-detail-close-button"
+- assertNotVisible:
+    id: "condition-detail-modal"

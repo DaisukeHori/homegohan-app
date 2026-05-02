@@ -1,0 +1,22 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 13: API エラー - resume reset 時にサーバーエラー → エラーメッセージ表示
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-resume-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-resume-reset-button"
+# API エラーが発生した場合のエラーメッセージを確認
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-error-message"
+    timeout: 15000
+# welcome 画面に遷移しないことを確認
+- assertNotVisible:
+    id: "welcome-screen"
