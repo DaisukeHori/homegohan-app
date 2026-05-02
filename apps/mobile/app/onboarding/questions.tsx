@@ -953,6 +953,7 @@ export default function OnboardingQuestions() {
   }
 
   const canSkip = (currentQuestion as any)?.allowSkip;
+  const isLastStep = getNextQuestion(currentStep, answers) === -1;
 
   if (isLoading) {
     return <LoadingState message="前回の進捗を読み込み中..." style={{ backgroundColor: "#FFF7ED" }} />;
@@ -978,13 +979,13 @@ export default function OnboardingQuestions() {
   }
 
   return (
-    <View style={[styles.screenContainer, { paddingTop: insets.top }]}>
+    <View testID="onboarding-questions-screen" style={[styles.screenContainer, { paddingTop: insets.top }]}>
       {/* ── Header: back + progress ── */}
       <View style={styles.headerSection}>
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             {stepHistory.length > 0 && (
-              <Pressable onPress={handleBack} style={styles.backButton} hitSlop={12}>
+              <Pressable testID="onboarding-back-button" onPress={handleBack} style={styles.backButton} hitSlop={12}>
                 <Ionicons name="chevron-back" size={18} color="#666" />
               </Pressable>
             )}
@@ -995,7 +996,7 @@ export default function OnboardingQuestions() {
           <Text style={styles.headerCounter}>{progress.current} / {progress.total}</Text>
         </View>
         {/* Progress bar */}
-        <View style={styles.progressTrack}>
+        <View testID="onboarding-progress-bar" style={styles.progressTrack}>
           <View style={[styles.progressFill, { width: `${(progress.current / progress.total) * 100}%` }]} />
         </View>
       </View>
@@ -1011,7 +1012,7 @@ export default function OnboardingQuestions() {
         </View>
 
         {/* Question text */}
-        <View style={styles.questionSection}>
+        <View testID="onboarding-question-text" style={styles.questionSection}>
           {getQuestionText()
             .split("\n")
             .map((line, i) => (
@@ -1029,6 +1030,7 @@ export default function OnboardingQuestions() {
         {currentQuestion.type === "text" && (
           <View style={styles.inputRow}>
             <TextInput
+              testID="onboarding-text-input"
               autoFocus
               placeholder={currentQuestion.placeholder}
               placeholderTextColor={colors.textMuted}
@@ -1049,24 +1051,32 @@ export default function OnboardingQuestions() {
 
         {/* Number input */}
         {currentQuestion.type === "number" && (
-          <View style={styles.inputRow}>
-            <TextInput
-              autoFocus
-              keyboardType="number-pad"
-              placeholder={currentQuestion.placeholder}
-              placeholderTextColor={colors.textMuted}
-              value={inputValue}
-              onChangeText={(v) => setInputValue(v.replace(/[^0-9]/g, ""))}
-              onSubmitEditing={() => { if (isNumberValid) handleAnswer(numberValue); }}
-              style={[styles.textInput, { flex: 1 }]}
-            />
-            <Pressable
-              onPress={() => { if (isNumberValid) handleAnswer(numberValue); }}
-              disabled={!isNumberValid}
-              style={[styles.arrowButton, !isNumberValid && styles.arrowButtonDisabled]}
-            >
-              <Ionicons name="arrow-forward" size={20} color="#fff" />
-            </Pressable>
+          <View style={{ gap: spacing.xs }}>
+            <View style={styles.inputRow}>
+              <TextInput
+                testID="onboarding-number-input"
+                autoFocus
+                keyboardType="number-pad"
+                placeholder={currentQuestion.placeholder}
+                placeholderTextColor={colors.textMuted}
+                value={inputValue}
+                onChangeText={(v) => setInputValue(v.replace(/[^0-9]/g, ""))}
+                onSubmitEditing={() => { if (isNumberValid) handleAnswer(numberValue); }}
+                style={[styles.textInput, { flex: 1 }]}
+              />
+              <Pressable
+                onPress={() => { if (isNumberValid) handleAnswer(numberValue); }}
+                disabled={!isNumberValid}
+                style={[styles.arrowButton, !isNumberValid && styles.arrowButtonDisabled]}
+              >
+                <Ionicons name="arrow-forward" size={20} color="#fff" />
+              </Pressable>
+            </View>
+            {inputValue.length > 0 && !isNumberValid && (
+              <Text testID="onboarding-error-text" style={styles.errorText}>
+                {numberMin}〜{numberMax} の範囲で入力してください
+              </Text>
+            )}
           </View>
         )}
 
@@ -1076,6 +1086,7 @@ export default function OnboardingQuestions() {
             {(currentQuestion.options || []).map((opt) => (
               <Pressable
                 key={opt.value}
+                testID={`onboarding-choice-option-${opt.value}`}
                 onPress={() => handleAnswer(opt.value)}
                 style={({ pressed }) => [styles.choiceButton, pressed && { backgroundColor: colors.accent, borderColor: colors.accent }]}
               >
@@ -1101,6 +1112,7 @@ export default function OnboardingQuestions() {
                 return (
                   <Pressable
                     key={opt.value}
+                    testID={`onboarding-multi-choice-option-${opt.value}`}
                     onPress={() => handleMultiSelect(opt.value)}
                     style={[styles.multiButton, selected && styles.multiButtonSelected]}
                   >
@@ -1113,11 +1125,12 @@ export default function OnboardingQuestions() {
             </View>
             <View style={styles.actionRow}>
               {canSkip && (
-                <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+                <Pressable testID="onboarding-skip-question-button" onPress={() => handleAnswer(null)} style={styles.skipButton}>
                   <Text style={styles.skipButtonText}>スキップ</Text>
                 </Pressable>
               )}
               <Pressable
+                testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
                 onPress={() => { if (isMultiReady) handleAnswer(selectedMulti); }}
                 disabled={!isMultiReady}
                 style={[styles.nextButton, !isMultiReady && styles.nextButtonDisabled]}
@@ -1168,11 +1181,12 @@ export default function OnboardingQuestions() {
 
             <View style={styles.actionRow}>
               {canSkip && (
-                <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+                <Pressable testID="onboarding-skip-question-button" onPress={() => handleAnswer(null)} style={styles.skipButton}>
                   <Text style={styles.skipButtonText}>スキップ</Text>
                 </Pressable>
               )}
               <Pressable
+                testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
                 onPress={() => { if (hasTags) handleAnswer(tags); }}
                 disabled={!hasTags}
                 style={[styles.nextButton, !hasTags && styles.nextButtonDisabled]}
@@ -1215,6 +1229,7 @@ export default function OnboardingQuestions() {
               </View>
             </View>
             <Pressable
+              testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
               onPress={() => handleAnswer("completed")}
               disabled={!answers.age || !answers.height || !answers.weight}
               style={[styles.nextButton, (!answers.age || !answers.height || !answers.weight) && styles.nextButtonDisabled]}
@@ -1254,7 +1269,7 @@ export default function OnboardingQuestions() {
             </Pressable>
           </View>
           {canSkip && (
-            <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+            <Pressable testID="onboarding-skip-question-button" onPress={() => handleAnswer(null)} style={styles.skipButton}>
               <Text style={styles.skipButtonText}>スキップ</Text>
             </Pressable>
           )}
@@ -1362,6 +1377,7 @@ export default function OnboardingQuestions() {
           </View>
 
           <Pressable
+            testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
             onPress={() => {
               const familySize = parseInt(answers.family_size) || 2;
               const config = answers.servings_config || createDefaultServingsConfig(familySize);
@@ -1632,6 +1648,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#4B5563",
     fontSize: 12,
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: 12,
+    textAlign: "center",
   },
   /* ── Stats ── */
   statsRow: {

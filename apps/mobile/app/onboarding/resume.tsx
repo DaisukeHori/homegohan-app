@@ -58,6 +58,7 @@ export default function OnboardingResume() {
 
   return (
     <ScrollView
+      testID="onboarding-resume-screen"
       contentContainerStyle={styles.container}
       style={styles.scroll}
     >
@@ -84,6 +85,7 @@ export default function OnboardingResume() {
           <Text style={styles.progressPercent}>{progressPercent}%</Text>
         </View>
         <ProgressBar
+          testID="onboarding-resume-progress-bar"
           value={progress?.currentStep || 0}
           max={progress?.totalQuestions || 1}
           height={8}
@@ -96,6 +98,7 @@ export default function OnboardingResume() {
       {/* Buttons */}
       <View style={styles.buttonGroup}>
         <Pressable
+          testID="onboarding-resume-continue-button"
           onPress={() => router.push("/onboarding/questions?resume=true")}
           style={({ pressed }) => [
             styles.primaryButton,
@@ -107,6 +110,7 @@ export default function OnboardingResume() {
         </Pressable>
 
         <Pressable
+          testID="onboarding-resume-reset-button"
           onPress={handleReset}
           disabled={isResetting}
           style={({ pressed }) => [
@@ -122,6 +126,7 @@ export default function OnboardingResume() {
         </Pressable>
 
         <Pressable
+          testID="onboarding-resume-skip-button"
           onPress={() => router.replace("/(tabs)/home")}
           style={styles.skipButton}
         >
