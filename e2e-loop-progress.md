@@ -108,3 +108,15 @@ Simulator: iPhone-E2E-01
 |--------|------|----------|------|
 | favorites/01-10 (全10フロー) | PASS | PR #660 | 回収ブランチからcherry-pick・envブロック・tab-favorites testID・waitForAnimationToEnd |
 
+### auth (agent5 追加修正: 2026-05-03)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| auth/22-login-bg-fg-input-preserved | PASS | PR #661 | BG→FG 代替: ログイン画面の email 入力保持確認フローに変更 |
+| auth/25-rate-limit-countdown-bg-fg-restored | PASS | PR #661 | BG→FG 代替: rate limit バナー表示確認フローに変更 (YAML 構文エラーも修正) |
+
+### home (agent5 実行: 2026-05-03)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| home/02-23 (全22フロー) | PASS | PR #662 | testID全面修正・toggleAirplaneMode除去・assertTrue除去・scrollUntilVisible・tab-favorites使用 |
+
+
