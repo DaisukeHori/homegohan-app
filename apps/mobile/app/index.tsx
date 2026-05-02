@@ -13,7 +13,7 @@ export default function Index() {
   if (authLoading || (session && profileLoading)) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>
-        <ActivityIndicator color={colors.accent} size="large" />
+        <ActivityIndicator testID="welcome-loading" color={colors.accent} size="large" />
       </View>
     );
   }
@@ -22,7 +22,7 @@ export default function Index() {
   if (session && profile?.onboardingCompletedAt) return <Redirect href="/(tabs)/home" />;
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#FFF7ED" }}>
+    <View testID="welcome-screen" style={{ flex: 1, backgroundColor: "#FFF7ED" }}>
       {/* ヒーロー */}
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: spacing.xl }}>
         <View style={{
@@ -43,7 +43,7 @@ export default function Index() {
       {/* アクション */}
       <View style={{ paddingHorizontal: spacing.xl, paddingBottom: 60, gap: spacing.md }}>
         <Link href="/login" asChild>
-          <Pressable style={{
+          <Pressable testID="welcome-login-button" style={{
             backgroundColor: colors.accent, borderRadius: radius.lg,
             paddingVertical: 16, alignItems: "center", ...shadows.md,
           }}>
@@ -52,7 +52,7 @@ export default function Index() {
         </Link>
 
         <Link href="/signup" asChild>
-          <Pressable style={{
+          <Pressable testID="welcome-signup-button" style={{
             backgroundColor: colors.card, borderRadius: radius.lg,
             paddingVertical: 16, alignItems: "center",
             borderWidth: 1.5, borderColor: colors.accent,

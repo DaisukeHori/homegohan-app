@@ -100,6 +100,7 @@ export default function ResetPasswordPage() {
 
   return (
     <KeyboardAvoidingView
+      testID="reset-screen"
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
@@ -142,11 +143,14 @@ export default function ResetPasswordPage() {
             <Text style={{ fontSize: 14, color: colors.blue, flex: 1 }}>セッション確認中...</Text>
           </View>
         ) : !sessionReady ? (
-          <View style={{
-            backgroundColor: colors.errorLight, borderRadius: radius.lg,
-            padding: spacing.md, marginBottom: spacing.md,
-            flexDirection: "row", alignItems: "center", gap: spacing.sm,
-          }}>
+          <View
+            testID="reset-error-text"
+            style={{
+              backgroundColor: colors.errorLight, borderRadius: radius.lg,
+              padding: spacing.md, marginBottom: spacing.md,
+              flexDirection: "row", alignItems: "center", gap: spacing.sm,
+            }}
+          >
             <Ionicons name="warning-outline" size={18} color={colors.error} />
             <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>
               セッションが確認できません。メールの再設定リンクから開き直してください。
@@ -167,6 +171,7 @@ export default function ResetPasswordPage() {
             }}>
               <Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} />
               <TextInput
+                testID="reset-password-input"
                 placeholder="8文字以上"
                 placeholderTextColor={colors.textMuted}
                 secureTextEntry={!showPassword}
@@ -194,6 +199,7 @@ export default function ResetPasswordPage() {
             }}>
               <Ionicons name="lock-closed-outline" size={18} color={colors.textMuted} />
               <TextInput
+                testID="reset-confirm-input"
                 placeholder="もう一度入力"
                 placeholderTextColor={colors.textMuted}
                 secureTextEntry={!showConfirm}
@@ -212,6 +218,7 @@ export default function ResetPasswordPage() {
 
           {/* 更新ボタン */}
           <Pressable
+            testID="reset-submit-button"
             onPress={onSubmit}
             disabled={isSubmitting || isSettingSession}
             style={({ pressed }) => ({
