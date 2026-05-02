@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
 ---
 # 14: オフライン中 login submit (Airplane mode)
-- launchApp:
+- launchApp
 - tapOn:
     text: "ログイン"
 - assertVisible:

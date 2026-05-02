@@ -11,7 +11,7 @@ env:
 - pressKey: Home
 - wait: 3000
 # フォアグラウンドに戻す
-- launchApp:
+- launchApp
     clearState: false
 # ホーム画面が表示されデータが再取得されること
 - extendedWaitUntil:

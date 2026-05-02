@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 04-export-csv: CSV エクスポートを実行する (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

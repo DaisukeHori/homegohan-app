@@ -4,7 +4,7 @@ env:
 ---
 # 25: rate limit countdown 中に BG → FG → 残り秒復元 (#532)
 # AsyncStorage から残り制限時間を復元する機能のテスト
-- launchApp:
+- launchApp
 - tapOn:
     text: "ログイン"
 - assertVisible:
@@ -42,7 +42,7 @@ env:
     timeout: 1000
 
 # フォアグラウンドへ復帰
-- launchApp:
+- launchApp
     clearState: false
 
 # login-screen が表示されていること

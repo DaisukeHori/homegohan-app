@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
 ---
 # 14: API エラー - meal-plans 取得失敗時にエラー表示
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

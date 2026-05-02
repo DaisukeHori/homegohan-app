@@ -4,7 +4,7 @@ env:
   E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
 ---
 # 02: admin ロールで login → /admin に redirect
-- launchApp:
+- launchApp
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
 ---
 # 02: welcome → skip → home 画面に到達する
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

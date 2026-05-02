@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 01-daily-view: 比較画面で日次ビューを表示する (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

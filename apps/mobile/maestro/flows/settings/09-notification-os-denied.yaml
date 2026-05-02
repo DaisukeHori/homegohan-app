@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 09-notification-os-denied: OS レベルで通知権限が拒否されている場合 (Adversarial)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

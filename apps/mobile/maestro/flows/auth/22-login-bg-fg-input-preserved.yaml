@@ -3,7 +3,7 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
 ---
 # 22: login 中に BG → FG → 入力保持
-- launchApp:
+- launchApp
 - tapOn:
     text: "ログイン"
 - assertVisible:
@@ -18,7 +18,7 @@ env:
 - pressKey: HOME
 
 # フォアグラウンドへ復帰
-- launchApp:
+- launchApp
     clearState: false
 
 # login-screen が表示されていること

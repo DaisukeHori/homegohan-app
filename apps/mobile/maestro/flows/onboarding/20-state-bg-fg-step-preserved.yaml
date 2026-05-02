@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
 ---
 # 20: 状態遷移 - BG→FG でオンボーディングのステップが保持されること
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
@@ -24,7 +24,7 @@ env:
 - pressKey: Home
 - wait: 2000
 # フォアグラウンドに戻す
-- launchApp:
+- launchApp
     clearState: false
 # body stats 画面が引き続き表示されていることを確認 (ステップ保持)
 - extendedWaitUntil:

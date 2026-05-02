@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 11: バリデーション - 全問 skip ボタンで飛ばした場合の動作確認
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 01: welcome → start → オンボーディング全設問回答 → complete
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

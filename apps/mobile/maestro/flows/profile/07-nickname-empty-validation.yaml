@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 07-nickname-empty-validation: ニックネームを空にした場合のバリデーションエラー (バリデーション)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 02-weekly-switch: 比較画面で週次ビューに切り替える (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

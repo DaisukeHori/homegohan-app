@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 01-notification-toggle-on: 通知 toggle を ON にする (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

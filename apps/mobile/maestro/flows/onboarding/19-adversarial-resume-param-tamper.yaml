@@ -5,7 +5,7 @@ env:
 ---
 # 19: Adversarial - ?resume=true パラメータ改竄でオンボーディング再開を試みる
 # 既にオンボーディング完了済みユーザーが resume=true でアクセス → home へリダイレクト
-- launchApp:
+- launchApp
     clearState: false
     arguments:
       resume: "true"

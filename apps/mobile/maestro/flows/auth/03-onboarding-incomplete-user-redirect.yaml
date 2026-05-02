@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
 ---
 # 03: onboarding 未完了 user で login → /onboarding/resume へ
-- launchApp:
+- launchApp
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

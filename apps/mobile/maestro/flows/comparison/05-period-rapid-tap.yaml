@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 05-period-rapid-tap: 期間切替ボタンを連打しても重複リクエストが発生しない (Adversarial)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

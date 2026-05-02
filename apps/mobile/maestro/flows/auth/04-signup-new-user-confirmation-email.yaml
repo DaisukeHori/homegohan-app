@@ -4,7 +4,7 @@ env:
   E2E_NEW_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
 ---
 # 04: /signup で新規登録 → 確認メール送信 Alert
-- launchApp:
+- launchApp
 - assertVisible:
     text: "ほめゴハン"
 - tapOn:

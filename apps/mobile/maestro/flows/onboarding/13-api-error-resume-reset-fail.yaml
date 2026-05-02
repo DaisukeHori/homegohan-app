@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
 ---
 # 13: API エラー - resume reset 時にサーバーエラー → エラーメッセージ表示
-- launchApp:
+- launchApp
     clearState: false
 - extendedWaitUntil:
     visible:

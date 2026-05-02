@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
 ---
 # 10: バリデーション - date 不正入力 (例: birthdate=9999-99-99) → エラー
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

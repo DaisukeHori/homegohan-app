@@ -4,7 +4,7 @@ env:
 ---
 # 12: login: 30 秒 rate limit ban (3 回失敗 → 待機 banner)
 # 1 回目失敗でクライアント side rate limit が発動する実装 (#532)
-- launchApp:
+- launchApp
 - tapOn:
     text: "ログイン"
 - assertVisible:

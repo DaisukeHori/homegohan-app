@@ -45,7 +45,7 @@ appId: com.homegohan.app
     timeout: 3000
 
 # アプリをフォアグラウンドへ復帰
-- launchApp:
+- launchApp
     clearState: false
 
 # チャット画面に戻っていることを確認

@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 10-weight-negative-adversarial: 体重に -5 を入力した場合のバリデーションエラー (Adversarial)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

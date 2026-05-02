@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 06-logout-cancel: ログアウト確認モーダルで cancel する (バリデーション)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

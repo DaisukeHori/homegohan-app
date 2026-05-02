@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
 ---
 # 12: API エラー - complete 送信時にサーバーエラー → エラーメッセージ表示・画面保持
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

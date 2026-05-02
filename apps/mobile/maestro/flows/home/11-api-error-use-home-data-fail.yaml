@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 11: API エラー - useHomeData のデータ取得失敗時にエラー表示
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

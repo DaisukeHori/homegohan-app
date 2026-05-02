@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 ---
 # 03-recalculate: 再計算ボタンをタップしてランキングを更新する (正常系)
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:

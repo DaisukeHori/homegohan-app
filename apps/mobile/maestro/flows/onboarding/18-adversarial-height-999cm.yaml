@@ -4,7 +4,7 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
 ---
 # 18: Adversarial - 身長に 999cm 入力 → バリデーションエラー
-- launchApp:
+- launchApp
 - assertVisible:
     id: "welcome-screen"
 - tapOn:
