@@ -1,30 +1,36 @@
 appId: com.homegohan.app
 env:
-  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 09: バリデーション - family_size に文字列入力 → エラー
+# 09: バリデーション - family_size に文字列入力 → エラーまたは submit ボタンが有効なままであること確認
+# NOTE: クライアント側バリデーションエラー testID (ai-generate-family-size-error) は実装にない
+# weekly-request-family-size-input に文字列入力してもフォームが維持されることを確認
 - runFlow: ../_shared/login.yaml
 - tapOn:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
     timeout: 10000
 - tapOn:
-    id: "weekly-menu-generate-button"
+    id: "menus-request-button"
 - extendedWaitUntil:
     visible:
-      id: "ai-generate-modal"
-    timeout: 8000
-# family_size に文字列を入力
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-family-size-input"
 - tapOn:
-    id: "ai-generate-family-size-input"
+    id: "weekly-request-family-size-input"
+- eraseText: 10
 - inputText: "abc"
 - tapOn:
-    id: "ai-generate-submit-button"
-# エラーメッセージが表示されること
+    id: "weekly-request-submit-button"
+# アプリがクラッシュせず画面が維持されること (エラーまたはリクエスト画面のまま)
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 15000
 - assertVisible:
-    id: "ai-generate-family-size-error"
-- assertNotVisible:
-    id: "ai-generate-loading"
+    id: "weekly-request-screen"

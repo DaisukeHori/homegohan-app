@@ -11,12 +11,16 @@ env:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
+    timeout: 10000
+- tapOn:
+    id: "menus-weekly-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
     timeout: 10000
 - assertVisible:
-    id: "menus-weekly-screen"
-# メニューがない場合の空状態が表示されること
+    id: "weekly-screen"
+# メニューがない場合の空状態: weekly-request-button が表示されること
 - assertVisible:
-    id: "weekly-menu-empty-state"
-- assertVisible:
-    id: "weekly-menu-generate-button"
+    id: "weekly-request-button"

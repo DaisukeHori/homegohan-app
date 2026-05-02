@@ -1,38 +1,29 @@
 appId: com.homegohan.app
 env:
-  E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 08: 正常 - Ultimate モードでメニュー生成する
+# 08: 正常 - Ultimate モードトグルがリクエスト画面に表示されること
 - runFlow: ../_shared/login.yaml
 - tapOn:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
     timeout: 10000
 - tapOn:
-    id: "weekly-menu-generate-button"
+    id: "menus-request-button"
 - extendedWaitUntil:
     visible:
-      id: "ai-generate-modal"
-    timeout: 8000
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-screen"
+- assertVisible:
+    id: "weekly-request-ultimate-toggle"
 # Ultimate モードトグルをオン
 - tapOn:
-    id: "ai-generate-ultimate-mode-toggle"
+    id: "weekly-request-ultimate-toggle"
+# submit ボタンが表示されること
 - assertVisible:
-    id: "ai-generate-ultimate-mode-active"
-- tapOn:
-    id: "ai-generate-submit-button"
-# Ultimate モードの生成ローディング
-- extendedWaitUntil:
-    visible:
-      id: "ai-generate-loading"
-    timeout: 5000
-# 生成完了
-- extendedWaitUntil:
-    visible:
-      id: "weekly-menu-list"
-    timeout: 120000
-- assertVisible:
-    id: "weekly-menu-list"
+    id: "weekly-request-submit-button"

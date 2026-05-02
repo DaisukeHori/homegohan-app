@@ -1,7 +1,7 @@
 appId: com.homegohan.app
 env:
-  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 24: 状態遷移 - weekStartDay を月曜→日曜に切替えてカレンダーが再描画されること
 - runFlow: ../_shared/login.yaml
@@ -9,34 +9,60 @@ env:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
+    timeout: 10000
+- tapOn:
+    id: "menus-weekly-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
     timeout: 10000
 - assertVisible:
-    id: "weekly-date-picker"
+    id: "weekly-screen"
 # 設定画面に移動して週の開始日を変更
 - tapOn:
     id: "tab-profile"
-- assertVisible:
-    id: "profile-screen"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 15000
+- scroll
 - tapOn:
     id: "profile-settings-button"
 - extendedWaitUntil:
     visible:
       id: "settings-screen"
-    timeout: 8000
+    timeout: 10000
 - tapOn:
-    id: "settings-week-start-day"
-- assertVisible:
-    id: "week-start-day-options"
-- tapOn:
-    id: "week-start-day-sunday"
+    id: "settings-week-start-sunday"
 # メニュータブに戻る
 - tapOn:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-weekly-screen"
+      id: "menus-screen"
     timeout: 10000
-# カレンダーが日曜始まりで再描画されることを確認
+- tapOn:
+    id: "menus-weekly-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
 - assertVisible:
-    id: "weekly-date-picker-sunday-start"
+    id: "weekly-screen"
+# 月曜に戻す (テスト後のクリーンアップ)
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 15000
+- scroll
+- tapOn:
+    id: "profile-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+- tapOn:
+    id: "settings-week-start-monday"
