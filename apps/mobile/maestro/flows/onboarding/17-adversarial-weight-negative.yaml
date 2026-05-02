@@ -3,38 +3,48 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
 ---
-# 17: Adversarial - 体重に -5 入力 → バリデーションエラー
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 17: Adversarial - 体重フィールドは decimal-pad なので負値 (-5) は入力できない
+# 空のまま next を押しても body-stats-screen のままであることを確認
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
+    id: "onboarding-text-input"
 - inputText: "負数テスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-- assertVisible:
-    id: "onboarding-body-stats-screen"
-- tapOn:
-    id: "onboarding-height-input"
-- inputText: "170"
-- tapOn:
-    id: "onboarding-weight-input"
-- inputText: "-5"
+    id: "onboarding-choice-option-unspecified"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
 - tapOn:
     id: "onboarding-age-input"
 - inputText: "30"
 - tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "170"
+# 体重フィールドは空のまま (decimal-pad では - が入力できない)
+- tapOn:
     id: "onboarding-next-button"
+# 体重が空のため next が disabled → body-stats-screen のまま
 - assertVisible:
-    id: "onboarding-weight-error"
+    id: "onboarding-body-stats-screen"
 - assertNotVisible:
-    id: "onboarding-nutrition-goal-screen"
+    id: "onboarding-nutrition_goal-screen"

@@ -1,0 +1,132 @@
+appId: com.homegohan.app
+---
+# _shared/login-for-onboarding.yaml: onboarding 未完了ユーザーでログインして
+# onboarding-welcome-screen まで遷移する共通フロー
+
+- launchApp
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Expo dev build の Console Error/Warning オーバーレイを閉じる
+- tapOn:
+    text: "Dismiss"
+    optional: true
+- tapOn:
+    text: "Minimize"
+    optional: true
+
+# tab-home から home に戻ってログアウト
+- runFlow:
+    when:
+      visible:
+        id: "tab-home"
+    commands:
+      - tapOn:
+          id: "tab-home"
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - runFlow:
+          when:
+            visible:
+              id: "home-screen"
+          file: "./logout.yaml"
+
+# home-screen にいる場合はログアウト
+- runFlow:
+    when:
+      visible:
+        id: "home-screen"
+    file: "./logout.yaml"
+
+# onboarding-questions-screen にいる場合: Homeボタン → resume → reset
+- runFlow:
+    when:
+      visible:
+        id: "onboarding-questions-screen"
+    commands:
+      - pressKey: Home
+      - waitForAnimationToEnd:
+          timeout: 3000
+      - launchApp:
+          clearState: false
+      - waitForAnimationToEnd:
+          timeout: 3000
+
+# onboarding-resume-screen にいる場合: 最初からやり直す → welcome
+- runFlow:
+    when:
+      visible:
+        id: "onboarding-resume-screen"
+    commands:
+      - tapOn:
+          id: "onboarding-resume-reset-button"
+      - extendedWaitUntil:
+          visible:
+            text: "リセット"
+          timeout: 5000
+      - tapOn:
+          text: "リセット"
+      - extendedWaitUntil:
+          visible:
+            id: "onboarding-welcome-screen"
+          timeout: 10000
+
+# welcome-screen (ログアウト済み) からログイン
+- runFlow:
+    when:
+      visible:
+        id: "welcome-screen"
+    commands:
+      - tapOn:
+          id: "welcome-login-button"
+      - extendedWaitUntil:
+          visible:
+            id: "login-screen"
+          timeout: 10000
+      - tapOn:
+          id: "email-input"
+      - inputText: ${E2E_USER_EMAIL}
+      - tapOn:
+          id: "password-input"
+      - inputText: ${E2E_USER_PASSWORD}
+      - tapOn:
+          id: "login-button"
+      - waitForAnimationToEnd:
+          timeout: 15000
+
+# ログイン後に home-screen になった場合: onboarding 完了済みなのでリセットしてリロード
+- runFlow:
+    when:
+      visible:
+        id: "home-screen"
+    commands:
+      - runScript:
+          file: "../scripts/reset-onboarding.js"
+          env:
+            E2E_USER_EMAIL: ${E2E_USER_EMAIL}
+            E2E_USER_PASSWORD: ${E2E_USER_PASSWORD}
+      - launchApp:
+          clearState: false
+      - waitForAnimationToEnd:
+          timeout: 8000
+      - runFlow:
+          when:
+            visible:
+              id: "onboarding-resume-screen"
+          commands:
+            - tapOn:
+                id: "onboarding-resume-reset-button"
+            - extendedWaitUntil:
+                visible:
+                  text: "リセット"
+                timeout: 5000
+            - tapOn:
+                text: "リセット"
+            - extendedWaitUntil:
+                visible:
+                  id: "onboarding-welcome-screen"
+                timeout: 10000
+
+# onboarding-welcome-screen が表示されていることを確認
+- assertVisible:
+    id: "onboarding-welcome-screen"

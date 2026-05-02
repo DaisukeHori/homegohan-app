@@ -206,6 +206,7 @@ export default function OnboardingComplete() {
 
   return (
     <ScrollView
+      testID="onboarding-complete-screen"
       style={styles.scrollView}
       contentContainerStyle={styles.container}
       showsVerticalScrollIndicator={false}
@@ -381,6 +382,7 @@ export default function OnboardingComplete() {
 
       {/* ホームへ CTA */}
       <Pressable
+        testID="onboarding-complete-cta-button"
         onPress={() => router.replace("/(tabs)/home")}
         style={({ pressed }) => [
           styles.ctaButton,

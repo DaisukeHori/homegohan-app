@@ -1,0 +1,9 @@
+appId: com.homegohan.app
+---
+# _shared/dismiss-logbox.yaml: Expo dev build の Console Error/Warning LogBox を閉じる
+- tapOn:
+    text: "Dismiss"
+    optional: true
+- tapOn:
+    text: "Minimize"
+    optional: true

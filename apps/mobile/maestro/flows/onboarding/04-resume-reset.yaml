@@ -4,20 +4,50 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
 ---
 # 04: 途中中断したオンボーディングを resume=true で再開 → reset (最初から)
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# Step1: ログインしてnickname入力後にHomeボタンでアプリを中断
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-text-input"
+- inputText: "リセットテスト"
+- pressKey: Enter
+# 進捗が保存されたのでHomeボタンでバックグラウンドへ
+- waitForAnimationToEnd:
+    timeout: 2000
+- pressKey: Home
+- waitForAnimationToEnd:
+    timeout: 3000
+# アプリを再起動
+- launchApp:
     clearState: false
+# resume 画面が表示されることを確認
 - extendedWaitUntil:
     visible:
       id: "onboarding-resume-screen"
-    timeout: 10000
+    timeout: 15000
+- assertVisible:
+    id: "onboarding-resume-reset-button"
 - tapOn:
     id: "onboarding-resume-reset-button"
+# 確認ダイアログが表示される
 - extendedWaitUntil:
     visible:
-      id: "welcome-screen"
-    timeout: 10000
+      text: "リセット"
+    timeout: 5000
+- tapOn:
+    text: "リセット"
+# welcome 画面に戻ることを確認
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-welcome-screen"
+    timeout: 15000
 - assertVisible:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"

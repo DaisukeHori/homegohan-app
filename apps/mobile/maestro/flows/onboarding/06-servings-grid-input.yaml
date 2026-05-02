@@ -3,61 +3,54 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
 ---
-# 06: servings_grid で各人数を選択できることを確認
-- launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
+# 06: servings_grid が表示されることを確認し、次へを押してonboarding完了
 - runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+    file: "../_shared/login-for-onboarding.yaml"
 - assertVisible:
-    id: "welcome-screen"
+    id: "onboarding-welcome-screen"
 - tapOn:
-    id: "welcome-start-button"
+    id: "onboarding-start-button"
 - extendedWaitUntil:
     visible:
-      id: "onboarding-screen"
+      id: "onboarding-questions-screen"
     timeout: 10000
 - tapOn:
-    id: "onboarding-nickname-input"
+    id: "onboarding-text-input"
 - inputText: "グリッドテスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
 - tapOn:
-    id: "onboarding-next-button"
-- tapOn:
-    id: "onboarding-height-input"
-- inputText: "165"
-- tapOn:
-    id: "onboarding-weight-input"
-- inputText: "60"
+    id: "onboarding-choice-option-unspecified"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
 - tapOn:
     id: "onboarding-age-input"
 - inputText: "28"
 - tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "165"
+- tapOn:
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "60"
+- tapOn:
     id: "onboarding-next-button"
-- tapOn:
-    id: "nutrition-goal-option-health_maintenance"
-- tapOn:
-    id: "onboarding-next-button"
-- assertVisible:
-    id: "onboarding-servings-screen"
-- assertVisible:
-    id: "servings-grid"
-# 1人分を選択
-- tapOn:
-    id: "servings-grid-1"
-- assertVisible:
-    id: "servings-grid-1-selected"
-# 3人分に変更
-- tapOn:
-    id: "servings-grid-3"
-- assertVisible:
-    id: "servings-grid-3-selected"
-# 4人分に変更
-- tapOn:
-    id: "servings-grid-4"
-- assertVisible:
-    id: "servings-grid-4-selected"
-- tapOn:
-    id: "onboarding-complete-button"
 - extendedWaitUntil:
     visible:
-      id: "home-screen"
+      id: "onboarding-nutrition_goal-screen"
     timeout: 15000
+- tapOn:
+    id: "onboarding-choice-option-maintain"
+# exercise_types 〜 home-screen まで共通フロー
+- runFlow:
+    file: "../_shared/complete-onboarding-maintain.yaml"
