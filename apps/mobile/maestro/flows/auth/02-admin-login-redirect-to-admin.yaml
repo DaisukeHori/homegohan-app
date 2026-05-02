@@ -4,11 +4,18 @@ env:
   E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
 ---
 # 02: admin ロールで login → /admin に redirect
+# 前提: 前のフロー後にホーム画面にいる可能性があるため、まずログアウト
 - launchApp
+# ホーム画面にいる場合はログアウトして welcome に戻る
+- runFlow:
+    when:
+      visible:
+        id: "home-screen"
+    file: "../_shared/logout.yaml"
 - assertVisible:
-    text: "ほめゴハン"
+    id: "welcome-screen"
 - tapOn:
-    text: "ログイン"
+    id: "welcome-login-button"
 - assertVisible:
     id: "login-screen"
 - tapOn:

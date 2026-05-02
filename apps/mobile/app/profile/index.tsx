@@ -713,6 +713,7 @@ export default function ProfilePage() {
             right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
           />
           <ListItem
+            testID="profile-settings-button"
             title="設定"
             subtitle="通知・週の開始日・アカウント"
             onPress={() => router.push("/(tabs)/settings")}
