@@ -362,20 +362,20 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }} onPress={onClose} />
-      <View style={{ backgroundColor: colors.bg, borderTopLeftRadius: radius["2xl"], borderTopRightRadius: radius["2xl"], maxHeight: "85%", ...shadows.lg }}>
+      <View testID="weekly-nutrition-sheet" style={{ backgroundColor: colors.bg, borderTopLeftRadius: radius["2xl"], borderTopRightRadius: radius["2xl"], maxHeight: "85%", ...shadows.lg }}>
         {/* Header */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="bar-chart" size={18} color={colors.accent} />
             <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{dateLabel} の栄養分析</Text>
           </View>
-          <Pressable onPress={onClose} hitSlop={8}>
+          <Pressable testID="weekly-nutrition-sheet-close" onPress={onClose} hitSlop={8}>
             <Ionicons name="close" size={22} color={colors.textMuted} />
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
           {/* Radar Chart */}
-          <View style={{ alignItems: "center" }}>
+          <View testID="weekly-radar-chart" style={{ alignItems: "center" }}>
             <NutritionRadarChartSvg totals={totals} nutrientKeys={radarKeys} size={220} />
           </View>
           {/* AI Feedback */}
@@ -1188,12 +1188,13 @@ export default function WeeklyMenuPage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="weekly-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="週間献立" />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {/* ヘッダー: 週ナビゲーション */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Pressable
+          testID="weekly-prev-button"
           onPress={() => shiftWeek(-1)}
           style={{
             width: 40,
@@ -1216,6 +1217,7 @@ export default function WeeklyMenuPage() {
           {plan && <Text style={{ fontSize: 12, color: colors.textMuted }}>{plan.title}</Text>}
         </View>
         <Pressable
+          testID="weekly-next-button"
           onPress={() => shiftWeek(1)}
           style={{
             width: 40,
@@ -1235,6 +1237,7 @@ export default function WeeklyMenuPage() {
 
       {/* 月カレンダー展開バー */}
       <Pressable
+        testID="weekly-calendar-toggle"
         onPress={() => setIsCalendarExpanded(prev => !prev)}
         style={{
           flexDirection: "row",
@@ -1314,6 +1317,7 @@ export default function WeeklyMenuPage() {
               return (
                 <Pressable
                   key={i}
+                  testID={`weekly-day-cell-${dateStr}`}
                   onPress={() => handleCalendarDateClick(day)}
                   style={{
                     width: "14.28%",
@@ -1368,7 +1372,7 @@ export default function WeeklyMenuPage() {
       {isLoading ? (
         <LoadingState />
       ) : error ? (
-        <Card variant="error">
+        <Card testID="weekly-error-banner" variant="error">
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="alert-circle" size={20} color={colors.error} />
             <Text style={{ flex: 1, color: colors.error, fontSize: 13 }}>{error}</Text>
@@ -1381,7 +1385,7 @@ export default function WeeklyMenuPage() {
             icon={<Ionicons name="restaurant-outline" size={48} color={colors.textMuted} />}
             message="この週の献立がまだありません"
           />
-          <Button onPress={() => router.push("/menus/weekly/request")}>
+          <Button testID="weekly-request-button" onPress={() => router.push("/menus/weekly/request")}>
             AIで週間献立を作成
           </Button>
         </View>
@@ -1389,11 +1393,13 @@ export default function WeeklyMenuPage() {
         <>
           {/* AI生成中プログレス */}
           {pendingRequestId && (
-            <ProgressTodoCard
-              progress={pendingProgress}
-              phases={pendingIsUltimate ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
-              defaultMessage={pendingIsUltimate ? "究極モードで献立を生成中..." : "AIが献立を生成中..."}
-            />
+            <View testID="weekly-generating-indicator">
+              <ProgressTodoCard
+                progress={pendingProgress}
+                phases={pendingIsUltimate ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
+                defaultMessage={pendingIsUltimate ? "究極モードで献立を生成中..." : "AIが献立を生成中..."}
+              />
+            </View>
           )}
 
           {/* 日付セレクタ — 横並び丸型ピル */}
@@ -1414,6 +1420,7 @@ export default function WeeklyMenuPage() {
               return (
                 <Pressable
                   key={d.id}
+                  testID={`weekly-day-tab-${d.day_date}`}
                   onPress={() => setSelectedDate(d.day_date)}
                   style={({ pressed }) => ({
                     alignItems: "center",
@@ -1465,7 +1472,7 @@ export default function WeeklyMenuPage() {
                   <Ionicons name="bar-chart" size={13} color={colors.accent} />
                   <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>栄養</Text>
                 </Pressable>
-                <Button size="sm" variant="ghost" onPress={() => router.push("/menus/weekly/request")}>
+                <Button testID="weekly-request-button" size="sm" variant="ghost" onPress={() => router.push("/menus/weekly/request")}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                     <Ionicons name="sparkles" size={14} color={colors.accent} />
                     <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>AIで再生成</Text>
@@ -1485,6 +1492,7 @@ export default function WeeklyMenuPage() {
                 return (
                   <Pressable
                     key={m.id}
+                    testID={`weekly-meal-card-${m.id}`}
                     onPress={() => toggleMealCompletion(m.id, m.is_completed)}
                     style={({ pressed }) => ({
                       flexDirection: "row",
@@ -1543,7 +1551,7 @@ export default function WeeklyMenuPage() {
                     </View>
 
                     {/* ステータス & アクション */}
-                    <View style={{ alignItems: "center", gap: 4 }}>
+                    <View testID={`weekly-meal-toggle-${m.id}`} style={{ alignItems: "center", gap: 4 }}>
                       {m.is_completed ? (
                         <StatusBadge variant="completed" label="完了" />
                       ) : isGenerating ? (

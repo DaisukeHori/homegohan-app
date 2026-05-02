@@ -13,6 +13,7 @@ type ChipSelectorProps<T extends string = string> = {
   multiple?: boolean;
   scrollable?: boolean;
   style?: ViewStyle;
+  testIDPrefix?: string;
 };
 
 export function ChipSelector<T extends string = string>({
@@ -21,6 +22,7 @@ export function ChipSelector<T extends string = string>({
   onSelect,
   scrollable,
   style,
+  testIDPrefix,
 }: ChipSelectorProps<T>) {
   const isSelected = (value: T) => (Array.isArray(selected) ? selected.includes(value) : selected === value);
 
@@ -30,6 +32,7 @@ export function ChipSelector<T extends string = string>({
       <Pressable
         key={opt.value}
         onPress={() => onSelect(opt.value)}
+        testID={testIDPrefix ? `${testIDPrefix}-${opt.value}` : undefined}
         style={{
           paddingVertical: 8,
           paddingHorizontal: 14,
