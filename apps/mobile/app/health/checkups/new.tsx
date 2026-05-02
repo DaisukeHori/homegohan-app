@@ -381,10 +381,11 @@ export default function NewCheckupPage() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView testID="health-checkup-new-screen" contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
         {/* OCR ボタン */}
         <Pressable
+          testID="health-checkup-ocr-button"
           style={styles.ocrButton}
           onPress={showOcrOptions}
           disabled={isOcrProcessing}
@@ -412,6 +413,7 @@ export default function NewCheckupPage() {
             <View style={styles.fieldRow}>
               <Text style={styles.fieldLabel}>検査日</Text>
               <TextInput
+                testID="health-checkup-field-checkup-date"
                 style={[styles.fieldInput, { flex: 1 }]}
                 value={form.checkup_date}
                 onChangeText={(v) => update("checkup_date", v)}
@@ -423,6 +425,7 @@ export default function NewCheckupPage() {
             <View style={styles.fieldRow}>
               <Text style={styles.fieldLabel}>医療機関</Text>
               <TextInput
+                testID="health-checkup-field-facility-name"
                 style={[styles.fieldInput, { flex: 1 }]}
                 value={form.facility_name}
                 onChangeText={(v) => update("facility_name", v)}
@@ -500,7 +503,7 @@ export default function NewCheckupPage() {
           </>
         ))}
 
-        <Button onPress={handleSave} loading={saving} disabled={saving}>
+        <Button testID="health-checkup-save-button" onPress={handleSave} loading={saving} disabled={saving}>
           {saving ? "保存中..." : "保存してAI分析を実行"}
         </Button>
       </ScrollView>

@@ -374,7 +374,7 @@ export default function HealthGraphsPage() {
   const hasData = graphData.some((d) => d.value !== null);
 
   return (
-    <View style={styles.screen}>
+    <View testID="health-graphs-screen" style={styles.screen}>
       <PageHeader
         title="推移グラフ"
         right={
@@ -389,6 +389,7 @@ export default function HealthGraphsPage() {
           {(Object.keys(metricConfig) as Metric[]).map((m) => (
             <TouchableOpacity
               key={m}
+              testID={`health-graphs-metric-${m}`}
               onPress={() => setMetric(m)}
               style={[
                 styles.chip,
@@ -412,6 +413,7 @@ export default function HealthGraphsPage() {
           {(["week", "month", "3months", "year"] as Period[]).map((p) => (
             <TouchableOpacity
               key={p}
+              testID={`health-graphs-period-${p}`}
               onPress={() => setPeriod(p)}
               style={[
                 styles.periodBtn,
@@ -442,6 +444,7 @@ export default function HealthGraphsPage() {
           </Card>
         ) : !hasData ? (
           <EmptyState
+            testID="health-graphs-empty"
             icon={<Ionicons name="analytics-outline" size={48} color={colors.textMuted} />}
             message="データがありません。健康記録を開始しましょう。"
             actionLabel="記録する"
@@ -450,7 +453,7 @@ export default function HealthGraphsPage() {
         ) : (
           <>
             {/* メトリクスカード */}
-            <View style={styles.chartCard}>
+            <View testID="health-graphs-chart" style={styles.chartCard}>
               {/* サマリーヘッダー */}
               <View style={styles.chartHeader}>
                 <View>

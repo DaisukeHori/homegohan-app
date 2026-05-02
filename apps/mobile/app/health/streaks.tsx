@@ -100,7 +100,7 @@ export default function HealthStreaksPage() {
   }
 
   return (
-    <View style={styles.screen}>
+    <View testID="health-streaks-screen" style={styles.screen}>
       <PageHeader
         title="連続記録"
         right={
@@ -129,6 +129,7 @@ export default function HealthStreaksPage() {
         <>
           <View style={styles.statsRow}>
             <StatCard
+              testID="health-streaks-current-value"
               icon={<Ionicons name="flame" size={22} color={colors.streak} />}
               label="現在の連続"
               value={data.streak.current_streak}
@@ -136,6 +137,7 @@ export default function HealthStreaksPage() {
               accentColor={colors.warningLight}
             />
             <StatCard
+              testID="health-streaks-longest-value"
               icon={<Ionicons name="trophy" size={22} color={colors.warning} />}
               label="最長記録"
               value={data.streak.longest_streak}
@@ -186,7 +188,7 @@ export default function HealthStreaksPage() {
               color={colors.streak}
               style={styles.weeklyProgress}
             />
-            <View style={styles.weekGrid}>
+            <View testID="health-streaks-week-calendar" style={styles.weekGrid}>
               {weekly.map((d) => (
                 <View key={d.date} style={styles.dayItem}>
                   <View

@@ -54,11 +54,12 @@ export default function HealthQuickRecordPage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="health-quick-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="クイック記録" />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {/* 日付 */}
       <Input
+        testID="health-quick-date-input"
         label="日付"
         value={recordDate}
         onChangeText={setRecordDate}
@@ -75,6 +76,7 @@ export default function HealthQuickRecordPage() {
             <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>体重</Text>
           </View>
           <Input
+            testID="health-quick-weight-field"
             value={weight}
             onChangeText={setWeight}
             keyboardType="decimal-pad"
@@ -99,6 +101,7 @@ export default function HealthQuickRecordPage() {
               return (
                 <Pressable
                   key={opt.value}
+                  testID={`health-quick-mood-btn-${opt.value}`}
                   onPress={() => setMoodScore(opt.value)}
                   style={{
                     alignItems: "center",
@@ -135,6 +138,7 @@ export default function HealthQuickRecordPage() {
               return (
                 <Pressable
                   key={opt.value}
+                  testID={`health-quick-sleep-btn-${opt.value}`}
                   onPress={() => setSleepQuality(opt.value)}
                   style={{
                     alignItems: "center",
@@ -156,7 +160,7 @@ export default function HealthQuickRecordPage() {
         </View>
       </Card>
 
-      <Button onPress={submit} loading={isSubmitting}>
+      <Button testID="health-quick-submit-button" onPress={submit} loading={isSubmitting}>
         {isSubmitting ? "保存中..." : "記録を保存"}
       </Button>
     </ScrollView>

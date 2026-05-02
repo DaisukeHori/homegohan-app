@@ -215,7 +215,7 @@ export default function HealthDashboardTab() {
   }
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View testID="health-screen" style={[styles.screen, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
         {/* ─── Header ─── */}
@@ -233,7 +233,7 @@ export default function HealthDashboardTab() {
 
         {/* ─── Success Message ─── */}
         {message && (
-          <View style={styles.successBanner}>
+          <View testID="health-message-toast" style={styles.successBanner}>
             <Ionicons name="checkmark-circle" size={22} color={colors.success} />
             <Text style={styles.successText}>{message}</Text>
           </View>
@@ -248,7 +248,7 @@ export default function HealthDashboardTab() {
                 <Text style={styles.streakLabel}>連続記録</Text>
               </View>
               <View style={styles.streakValueRow}>
-                <Text style={styles.streakValue}>{streak?.current_streak ?? 0}</Text>
+                <Text testID="health-streak-value" style={styles.streakValue}>{streak?.current_streak ?? 0}</Text>
                 <Text style={styles.streakUnit}>日</Text>
               </View>
               <Text style={styles.streakLongest}>最長: {streak?.longest_streak ?? 0}日</Text>
@@ -257,13 +257,14 @@ export default function HealthDashboardTab() {
           </View>
 
           {/* Weekly calendar */}
-          <View style={styles.weekRow}>
+          <View testID="health-day-calendar" style={styles.weekRow}>
             {weekDays.map((d) => {
               const has = weeklyRecords.includes(d.date);
               const isSelected = selectedDate === d.date;
               return (
                 <Pressable
                   key={d.date}
+                  testID={`health-day-tab-${d.date}`}
                   onPress={() => void handleDaySelect(d.date)}
                   style={[
                     styles.weekDay,
@@ -335,7 +336,7 @@ export default function HealthDashboardTab() {
 
         {/* ─── Today's Record or Quick Record Button ─── */}
         {!todayRecord ? (
-          <Pressable style={styles.quickRecordBtn} onPress={() => setShowQuickRecord(true)}>
+          <Pressable testID="health-quick-record-button" style={styles.quickRecordBtn} onPress={() => setShowQuickRecord(true)}>
             <View style={[styles.iconBox, { backgroundColor: colors.accentLight }]}>
               <Ionicons name="add" size={24} color={colors.accent} />
             </View>
@@ -350,7 +351,7 @@ export default function HealthDashboardTab() {
             <View style={styles.todayHeader}>
               <Text style={styles.todaySectionTitle}>今日の記録</Text>
               <Link href="/health/record" asChild>
-                <Pressable style={styles.todayEditRow}>
+                <Pressable testID="health-record-detail-button" style={styles.todayEditRow}>
                   <Text style={styles.todayEditText}>詳細を編集</Text>
                   <Ionicons name="chevron-forward" size={16} color={colors.accent} />
                 </Pressable>
@@ -360,7 +361,7 @@ export default function HealthDashboardTab() {
               {/* Weight */}
               <View style={styles.todayCell}>
                 <Ionicons name="scale-outline" size={20} color={colors.accent} />
-                <Text style={styles.todayCellValue}>{todayRecord.weight ?? "-"}</Text>
+                <Text testID="health-today-weight" style={styles.todayCellValue}>{todayRecord.weight ?? "-"}</Text>
                 <Text style={styles.todayCellUnit}>kg</Text>
                 {weightChange !== null && (
                   <View style={styles.trendRow}>
@@ -429,17 +430,27 @@ export default function HealthDashboardTab() {
         <View>
           <Text style={styles.sectionTitle}>クイックアクション</Text>
           <View style={styles.actionsGrid}>
-            {QUICK_ACTIONS.map((a) => (
-              <Link key={a.href} href={a.href} asChild>
-                <Pressable style={styles.actionCard}>
-                  <View style={[styles.actionIcon, { backgroundColor: a.bg }]}>
-                    <Ionicons name={a.icon} size={20} color={a.fg} />
-                  </View>
-                  <Text style={styles.actionLabel}>{a.label}</Text>
-                  <Text style={styles.actionSub}>{a.sub}</Text>
-                </Pressable>
-              </Link>
-            ))}
+            {QUICK_ACTIONS.map((a) => {
+              const testID =
+                a.href === "/health/record"
+                  ? "health-record-detail-button"
+                  : a.href === "/health/graphs"
+                  ? "health-graphs-button"
+                  : a.href === "/health/goals"
+                  ? "health-goals-button"
+                  : undefined;
+              return (
+                <Link key={a.href} href={a.href} asChild>
+                  <Pressable testID={testID} style={styles.actionCard}>
+                    <View style={[styles.actionIcon, { backgroundColor: a.bg }]}>
+                      <Ionicons name={a.icon} size={20} color={a.fg} />
+                    </View>
+                    <Text style={styles.actionLabel}>{a.label}</Text>
+                    <Text style={styles.actionSub}>{a.sub}</Text>
+                  </Pressable>
+                </Link>
+              );
+            })}
           </View>
         </View>
 
@@ -455,7 +466,7 @@ export default function HealthDashboardTab() {
             </Link>
           </View>
           <Link href="/health/checkups" asChild>
-            <Pressable style={styles.checkupCard}>
+            <Pressable testID="health-checkups-button" style={styles.checkupCard}>
               <View style={[styles.iconBox, { backgroundColor: "#FFEBEE" }]}>
                 <Ionicons name="pulse" size={24} color={colors.error} />
               </View>
@@ -471,7 +482,7 @@ export default function HealthDashboardTab() {
         {/* ─── More Links ─── */}
         <View style={{ gap: spacing.sm }}>
           <Link href="/health/streaks" asChild>
-            <Pressable style={styles.moreLink}>
+            <Pressable testID="health-streaks-button" style={styles.moreLink}>
               <Ionicons name="flame-outline" size={20} color={colors.accent} />
               <Text style={styles.moreLinkText}>連続記録・バッジ</Text>
               <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
@@ -485,7 +496,7 @@ export default function HealthDashboardTab() {
             </Pressable>
           </Link>
           <Link href="/health/insights" asChild>
-            <Pressable style={styles.moreLink}>
+            <Pressable testID="health-insights-button" style={styles.moreLink}>
               <Ionicons name="sparkles-outline" size={20} color={colors.accent} />
               <Text style={styles.moreLinkText}>AIインサイト</Text>
               <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
@@ -505,7 +516,7 @@ export default function HealthDashboardTab() {
       <Modal visible={showQuickRecord} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowQuickRecord(false)} />
-          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + spacing.lg }]}>
+          <View testID="health-quick-modal" style={[styles.modalSheet, { paddingBottom: insets.bottom + spacing.lg }]}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>今日の記録</Text>
 
@@ -513,6 +524,7 @@ export default function HealthDashboardTab() {
             <View style={styles.modalField}>
               <Text style={styles.modalLabel}>体重 (kg)</Text>
               <TextInput
+                testID="health-quick-weight-input"
                 style={styles.modalInput}
                 value={quickWeight}
                 onChangeText={setQuickWeight}
@@ -538,6 +550,7 @@ export default function HealthDashboardTab() {
                 ].map((m) => (
                   <Pressable
                     key={m.score}
+                    testID={`health-quick-mood-${m.score}`}
                     style={[styles.moodBtn, quickMood === m.score && styles.moodBtnActive]}
                     onPress={() => setQuickMood(quickMood === m.score ? null : m.score)}
                   >
@@ -561,6 +574,7 @@ export default function HealthDashboardTab() {
                 {[1, 2, 3, 4, 5].map((s) => (
                   <Pressable
                     key={s}
+                    testID={`health-quick-sleep-${s}`}
                     style={[styles.sleepBtn, quickSleep === s && styles.sleepBtnActive]}
                     onPress={() => setQuickSleep(quickSleep === s ? null : s)}
                   >
@@ -575,7 +589,7 @@ export default function HealthDashboardTab() {
               </View>
             </View>
 
-            <Button onPress={handleQuickSave} loading={saving} disabled={saving}>
+            <Button testID="health-quick-save-button" onPress={handleQuickSave} loading={saving} disabled={saving}>
               {saving ? "保存中..." : "記録する"}
             </Button>
           </View>

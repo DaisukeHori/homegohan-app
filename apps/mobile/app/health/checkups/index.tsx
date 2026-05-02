@@ -137,7 +137,7 @@ export default function CheckupsPage() {
   }
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View testID="health-checkups-screen" style={[styles.screen, { paddingTop: insets.top }]}>
       {/* ─── Header ─── */}
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={12}>
@@ -145,6 +145,7 @@ export default function CheckupsPage() {
         </Pressable>
         <Text style={styles.headerTitle}>健康診断記録</Text>
         <Pressable
+          testID="health-checkups-add-button"
           onPress={() => router.push("/health/checkups/new")}
           style={styles.addBtn}
           hitSlop={12}
@@ -157,7 +158,7 @@ export default function CheckupsPage() {
 
         {/* ─── 経年分析カード ─── */}
         {longitudinalReview?.trend_analysis && (
-          <View style={styles.longitudinalCard}>
+          <View testID="health-checkups-trend-card" style={styles.longitudinalCard}>
             <View style={styles.longitudinalHeader}>
               <Ionicons name="analytics-outline" size={20} color="#fff" />
               <Text style={styles.longitudinalTitle}>経年分析</Text>
@@ -205,6 +206,7 @@ export default function CheckupsPage() {
         {/* ─── 健康診断一覧 ─── */}
         {checkups.length === 0 ? (
           <EmptyState
+            testID="health-checkups-empty"
             icon={<Ionicons name="document-text-outline" size={48} color={colors.textMuted} />}
             message="健康診断の記録がありません。最初の記録を追加しましょう"
             actionLabel="記録を追加"
@@ -219,6 +221,7 @@ export default function CheckupsPage() {
               return (
                 <Pressable
                   key={checkup.id}
+                  testID={`health-checkups-item-${checkup.id}`}
                   style={styles.checkupCard}
                   onPress={() => router.push(`/health/checkups/${checkup.id}` as any)}
                 >

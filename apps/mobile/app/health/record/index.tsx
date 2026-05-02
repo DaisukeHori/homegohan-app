@@ -44,10 +44,10 @@ export default function HealthRecordListPage() {
   }, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="health-record-list-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="健康記録" />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
-      <Button onPress={() => router.push("/health/record/quick")}>
+      <Button testID="health-record-quick-button" onPress={() => router.push("/health/record/quick")}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           <Ionicons name="add-circle" size={20} color="#fff" />
           <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>クイック入力</Text>
@@ -62,6 +62,7 @@ export default function HealthRecordListPage() {
         </Card>
       ) : records.length === 0 ? (
         <EmptyState
+          testID="health-record-empty"
           icon={<Ionicons name="heart-outline" size={48} color={colors.textMuted} />}
           message="まだ記録がありません"
           actionLabel="記録する"
@@ -72,6 +73,7 @@ export default function HealthRecordListPage() {
           {records.map((r) => (
             <Pressable
               key={r.id}
+              testID={`health-record-item-${r.id}`}
               onPress={() => router.push(`/health/record/${encodeURIComponent(r.record_date)}`)}
               style={({ pressed }) => ({
                 flexDirection: "row",
