@@ -1,4 +1,7 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # Adversarial 22: 4K 画像アップロード
 - runFlow: ../_shared/login.yaml
@@ -6,12 +9,12 @@ appId: com.homegohan.app
 - tapOn:
     id: "tab-meals"
 - tapOn:
-    id: "meals-add-button"
-- tapOn:
     id: "meal-mode-meal"
+- tapOn:
+    id: "meal-capture-start-button"
 
 - tapOn:
-    id: "camera-gallery-button"
+    id: "meal-gallery-button"
 - extendedWaitUntil:
     visible:
       id: "gallery-picker-screen"
@@ -34,5 +37,5 @@ appId: com.homegohan.app
     id: "meal-save-button"
 - extendedWaitUntil:
     visible:
-      id: "meals-screen"
+      id: "home-screen"
     timeout: 10000

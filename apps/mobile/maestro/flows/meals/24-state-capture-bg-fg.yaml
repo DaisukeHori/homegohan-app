@@ -1,12 +1,13 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 状態遷移 24: 撮影中 BG→FG 復帰
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
-- tapOn:
-    id: "meals-add-button"
 - tapOn:
     id: "meal-mode-meal"
 
@@ -24,7 +25,7 @@ appId: com.homegohan.app
     timeout: 10000
 
 - tapOn:
-    id: "camera-capture-button"
+    id: "meal-camera-button"
 - extendedWaitUntil:
     visible:
       id: "meal-form-screen"

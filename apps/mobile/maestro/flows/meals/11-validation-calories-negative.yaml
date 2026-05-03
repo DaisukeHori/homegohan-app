@@ -1,12 +1,13 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # バリデーション 11: カロリー負値を入力
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
-- tapOn:
-    id: "meals-add-button"
 - tapOn:
     id: "meal-mode-manual"
 - assertVisible:
@@ -25,5 +26,3 @@ appId: com.homegohan.app
 
 - assertVisible:
     id: "meal-calories-error"
-- assertNotVisible:
-    id: "meals-screen"

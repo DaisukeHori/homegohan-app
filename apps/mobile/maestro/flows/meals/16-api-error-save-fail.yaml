@@ -1,12 +1,13 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # API エラー 16: 保存 fail
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
-- tapOn:
-    id: "meals-add-button"
 - tapOn:
     id: "meal-mode-manual"
 - assertVisible:
@@ -30,5 +31,3 @@ appId: com.homegohan.app
 
 - assertVisible:
     id: "meal-save-retry-button"
-- assertNotVisible:
-    id: "meals-screen"

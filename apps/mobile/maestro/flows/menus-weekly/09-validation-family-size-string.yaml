@@ -26,6 +26,14 @@ env:
 - eraseText: 10
 - inputText: "abc"
 - tapOn:
+    text: "AIで週間献立を作成"
+    optional: true
+- scrollUntilVisible:
+    element:
+      id: "weekly-request-submit-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
     id: "weekly-request-submit-button"
 # アプリがクラッシュせず画面が維持されること (エラーまたはリクエスト画面のまま)
 - extendedWaitUntil:
