@@ -1,7 +1,4 @@
 appId: com.homegohan.app
-env:
-  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # バリデーション 13: ギャラリー権限拒否
 - runFlow: ../_shared/login.yaml
@@ -9,12 +6,12 @@ env:
 - tapOn:
     id: "tab-meals"
 - tapOn:
-    id: "meal-mode-meal"
+    id: "meals-add-button"
 - tapOn:
-    id: "meal-capture-start-button"
+    id: "meal-mode-meal"
 
 - tapOn:
-    id: "meal-gallery-button"
+    id: "camera-gallery-button"
 
 - assertVisible:
     id: "permission-request-dialog"

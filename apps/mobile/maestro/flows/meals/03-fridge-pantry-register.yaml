@@ -1,7 +1,4 @@
 appId: com.homegohan.app
-env:
-  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 正常 03: fridge → pantry 登録
 - runFlow: ../_shared/login.yaml
@@ -9,15 +6,18 @@ env:
 - tapOn:
     id: "tab-meals"
 - assertVisible:
+    id: "meals-screen"
+
+- tapOn:
+    id: "meals-add-button"
+- assertVisible:
     id: "meal-mode-select-screen"
 
 - tapOn:
     id: "meal-mode-fridge"
-- tapOn:
-    id: "meal-capture-start-button"
 
 - tapOn:
-    id: "meal-camera-button"
+    id: "camera-capture-button"
 - extendedWaitUntil:
     visible:
       id: "ai-analyzing-indicator"
@@ -35,5 +35,5 @@ env:
     id: "pantry-save-button"
 - extendedWaitUntil:
     visible:
-      id: "home-screen"
+      id: "meals-screen"
     timeout: 10000
