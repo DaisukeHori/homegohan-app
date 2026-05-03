@@ -1,13 +1,12 @@
 appId: com.homegohan.app
-env:
-  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # Adversarial 19: 料理名 500 字境界値
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
 - tapOn:
     id: "meal-mode-manual"
 - assertVisible:

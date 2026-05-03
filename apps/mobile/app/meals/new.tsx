@@ -669,14 +669,14 @@ export default function MealNewPage() {
 
       {/* ─── Step: mode-select ─── */}
       {step === "mode-select" && (
-        <ScrollView testID="meal-mode-select-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
           <Text style={{ fontSize: 13, color: colors.textMuted, textAlign: "center" }}>撮影するものを選んでください</Text>
 
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
             {(Object.entries(PHOTO_MODES) as [PhotoMode, typeof PHOTO_MODES.auto][]).map(([mode, config]) => {
               const isSelected = photoMode === mode;
               return (
-                <Pressable key={mode} testID={`meal-mode-${mode}`} onPress={() => setPhotoMode(mode)} style={{
+                <Pressable key={mode} testID={`meal-mode-select-${mode}`} onPress={() => setPhotoMode(mode)} style={{
                   width: "47%", padding: spacing.md, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                   backgroundColor: isSelected ? config.bg : colors.card,
                   borderWidth: isSelected ? 2 : 1, borderColor: isSelected ? config.color : colors.border,
@@ -691,12 +691,12 @@ export default function MealNewPage() {
             })}
           </View>
 
-          <Button testID="meal-capture-start-button" onPress={() => setStep("capture")} style={{ backgroundColor: PHOTO_MODES[photoMode].color }}>
+          <Button onPress={() => setStep("capture")} style={{ backgroundColor: PHOTO_MODES[photoMode].color }}>
             撮影へ進む
           </Button>
 
           {/* 手動入力への導線 */}
-          <Pressable testID="meal-mode-manual" onPress={() => setStep("manual")} style={{
+          <Pressable testID="meal-mode-manual-button" onPress={() => setStep("manual")} style={{
             flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
             padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg,
             borderWidth: 1, borderColor: colors.border,
@@ -709,7 +709,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: manual ─── */}
       {step === "manual" && (
-        <ScrollView testID="meal-form-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }} keyboardShouldPersistTaps="handled">
           {/* Date/meal type selector */}
           <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>記録日と食事タイプ</Text>
 
@@ -870,7 +870,7 @@ export default function MealNewPage() {
             <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>食事情報</Text>
 
             <TextInput
-              testID="meal-name-input"
+              testID="meal-manual-name-input"
               value={manualDishName}
               onChangeText={setManualDishName}
               placeholder="食事名（必須）"
@@ -883,7 +883,7 @@ export default function MealNewPage() {
 
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
               <TextInput
-                testID="meal-calories-input"
+                testID="meal-manual-calorie-input"
                 value={manualCalories}
                 onChangeText={setManualCalories}
                 placeholder="カロリー (kcal)"

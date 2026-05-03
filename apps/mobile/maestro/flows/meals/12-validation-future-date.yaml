@@ -1,13 +1,12 @@
 appId: com.homegohan.app
-env:
-  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # バリデーション 12: 未来日付で保存試行
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
 - tapOn:
     id: "meal-mode-manual"
 - assertVisible:
@@ -34,3 +33,5 @@ env:
 
 - assertVisible:
     id: "meal-date-error"
+- assertNotVisible:
+    id: "meals-screen"

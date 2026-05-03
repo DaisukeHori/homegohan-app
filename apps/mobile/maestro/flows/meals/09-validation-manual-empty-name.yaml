@@ -1,13 +1,15 @@
 appId: com.homegohan.app
-env:
-  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
-  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # バリデーション 09: manual 料理名空で保存試行
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
+- assertVisible:
+    id: "meals-screen"
+
+- tapOn:
+    id: "meals-add-button"
 - tapOn:
     id: "meal-mode-manual"
 - assertVisible:
@@ -22,3 +24,5 @@ env:
 
 - assertVisible:
     id: "meal-name-error"
+- assertNotVisible:
+    id: "meals-screen"

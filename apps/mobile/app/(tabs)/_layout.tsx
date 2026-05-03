@@ -65,7 +65,6 @@ export default function TabsLayout() {
         name="meals"
         options={{
           title: "スキャン",
-          tabBarButtonTestID: "tab-meals",
           tabBarIcon: () => (
             <View style={{
               width: 48, height: 48, borderRadius: 24,
