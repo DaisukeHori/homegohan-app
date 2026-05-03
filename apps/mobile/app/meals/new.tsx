@@ -675,9 +675,8 @@ export default function MealNewPage() {
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
             {(Object.entries(PHOTO_MODES) as [PhotoMode, typeof PHOTO_MODES.auto][]).map(([mode, config]) => {
               const isSelected = photoMode === mode;
-              const modeTestId = mode === "auto" ? "meal-mode-auto-button" : mode === "meal" ? "meal-mode-meal-button" : mode === "fridge" ? "meal-mode-fridge-button" : mode === "health_checkup" ? "meal-mode-health-button" : "meal-mode-weight-button";
               return (
-                <Pressable key={mode} testID={modeTestId} onPress={() => setPhotoMode(mode)} style={{
+                <Pressable key={mode} testID={`meal-mode-select-${mode}`} onPress={() => setPhotoMode(mode)} style={{
                   width: "47%", padding: spacing.md, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                   backgroundColor: isSelected ? config.bg : colors.card,
                   borderWidth: isSelected ? 2 : 1, borderColor: isSelected ? config.color : colors.border,
@@ -1032,7 +1031,7 @@ export default function MealNewPage() {
               <Text style={{ fontSize: 16, fontWeight: "700", color: overallScore >= 85 ? colors.success : overallScore >= 70 ? "#B8860B" : colors.accent }}>
                 {overallScore >= 90 ? "素晴らしい！🎉" : overallScore >= 80 ? "いいね！👍" : overallScore >= 70 ? "グッド！😊" : "記録しました！"}
               </Text>
-              <Text style={{ fontSize: 13, color: colors.textLight }}>
+              <Text testID="meal-result-dish-name" style={{ fontSize: 13, color: colors.textLight }}>
                 {analyzedDishes.length > 0 ? analyzedDishes[0].name : "食事"}{analyzedDishes.length > 1 ? ` 他${analyzedDishes.length - 1}品` : ""}
               </Text>
             </View>
@@ -1049,13 +1048,13 @@ export default function MealNewPage() {
           {/* Nutrition grid */}
           <View style={{ flexDirection: "row", gap: spacing.xs }}>
             {[
-              { label: "カロリー", value: totalCalories, unit: "kcal", color: colors.accent },
-              { label: "タンパク質", value: totalProtein, unit: "g", color: colors.blue },
-              { label: "炭水化物", value: totalCarbs, unit: "g", color: colors.warning },
-              { label: "脂質", value: totalFat, unit: "g", color: colors.purple },
-              { label: "野菜", value: vegScore, unit: "点", color: colors.success },
+              { label: "カロリー", value: totalCalories, unit: "kcal", color: colors.accent, testID: "meal-result-calories" },
+              { label: "タンパク質", value: totalProtein, unit: "g", color: colors.blue, testID: undefined },
+              { label: "炭水化物", value: totalCarbs, unit: "g", color: colors.warning, testID: undefined },
+              { label: "脂質", value: totalFat, unit: "g", color: colors.purple, testID: undefined },
+              { label: "野菜", value: vegScore, unit: "点", color: colors.success, testID: undefined },
             ].map((n, i) => (
-              <View key={i} style={{ flex: 1, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.bg, alignItems: "center" }}>
+              <View key={i} testID={n.testID} style={{ flex: 1, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.bg, alignItems: "center" }}>
                 <Text style={{ fontSize: 9, color: colors.textMuted }}>{n.label}</Text>
                 <Text style={{ fontSize: 14, fontWeight: "700", color: n.color }}>{n.value}</Text>
                 <Text style={{ fontSize: 9, color: colors.textMuted }}>{n.unit}</Text>

@@ -29,6 +29,7 @@ export default function AiSessionPage() {
   const [text, setText] = useState("");
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [attachedImage, setAttachedImage] = useState<{ uri: string; base64: string } | null>(null);
+  const [imagePreviewReady, setImagePreviewReady] = useState(false);
   // 自動実行済みのメッセージID集合。GET レスポンスは proposed_actions を返し続けるため、
   // クライアント側でアクションボタンを非表示にするためのトラッキングに使用する。
   const executedMessageIds = useRef<Set<string>>(new Set());
@@ -78,6 +79,7 @@ export default function AiSessionPage() {
     if (!result.canceled && result.assets.length > 0) {
       const asset = result.assets[0];
       if (asset.base64) {
+        setImagePreviewReady(false);
         setAttachedImage({ uri: asset.uri, base64: asset.base64 });
       }
     }
@@ -524,7 +526,11 @@ export default function AiSessionPage() {
                       source={{ uri: attachedImage.uri }}
                       style={{ width: 80, height: 80, borderRadius: radius.md }}
                       resizeMode="cover"
+                      onLoad={() => setImagePreviewReady(true)}
                     />
+                    {imagePreviewReady && (
+                      <View testID="ai-chat-image-preview-ready" style={{ position: "absolute", width: 0, height: 0 }} />
+                    )}
                     <Pressable
                       testID="ai-chat-image-remove-button"
                       onPress={() => setAttachedImage(null)}

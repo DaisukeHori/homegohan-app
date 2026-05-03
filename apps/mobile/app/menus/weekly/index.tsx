@@ -1529,7 +1529,7 @@ export default function WeeklyMenuPage() {
 
                     {/* 情報 */}
                     <View style={{ flex: 1, gap: 3 }}>
-                      <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
+                      <Text testID={`weekly-meal-dish-name-${m.id}`} style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
                         {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
                       </Text>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -1545,7 +1545,7 @@ export default function WeeklyMenuPage() {
                           <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
                         </View>
                         {m.calories_kcal ? (
-                          <Text style={{ fontSize: 12, color: colors.textMuted }}>{m.calories_kcal} kcal</Text>
+                          <Text testID={`weekly-meal-calories-${m.id}`} style={{ fontSize: 12, color: colors.textMuted }}>{m.calories_kcal} kcal</Text>
                         ) : null}
                       </View>
                     </View>

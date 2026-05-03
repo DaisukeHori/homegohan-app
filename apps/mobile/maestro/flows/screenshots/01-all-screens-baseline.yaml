@@ -1,0 +1,72 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 01: レイアウト baseline - 主要8画面のスクリーンショット取得
+# このフローはビジュアルリグレッション検知の基準画像を作成するために使用します
+# 初回実行時は baseline として保存し、以降の変更との差分を比較してください
+- runFlow: ../_shared/login.yaml
+# ホーム画面
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+- takeScreenshot: home-baseline
+# メニュー画面
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "menus-screen"
+    timeout: 10000
+- takeScreenshot: menus-baseline
+# お気に入り画面
+- tapOn:
+    id: "tab-favorites"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-screen"
+    timeout: 10000
+- takeScreenshot: favorites-baseline
+# 比較画面
+- tapOn:
+    id: "tab-comparison"
+- extendedWaitUntil:
+    visible:
+      id: "comparison-screen"
+    timeout: 10000
+- takeScreenshot: comparison-baseline
+# プロフィール画面
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- takeScreenshot: profile-baseline
+# 週間献立画面
+- tapOn:
+    id: "tab-menus"
+- tapOn:
+    id: "menus-weekly-button"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- takeScreenshot: weekly-screen-baseline
+# 食事追加画面
+- tapOn:
+    id: "home-ai-fab"
+    optional: true
+- tapOn:
+    id: "tab-menus"
+- tapOn:
+    id: "menus-weekly-button"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 5000
+- takeScreenshot: weekly-detail-baseline
