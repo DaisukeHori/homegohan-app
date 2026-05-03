@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 26: 正常 - 健診票 OCR で数値が自動入力されることを検証
+# 事前条件: シミュレーターの Photos.app に checkup-sheet.jpg を配置済みであること
+# xcrun simctl addmedia <UDID> apps/mobile/maestro/testdata/checkup-sheet.jpg
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-profile"
+- tapOn:
+    id: "profile-health-button"
+- tapOn:
+    id: "health-checkups-tab"
+    optional: true
+- tapOn:
+    id: "health-checkup-new-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-checkup-new-screen"
+    timeout: 10000
+- tapOn:
+    id: "health-checkup-ocr-button"
+- tapOn:
+    text: "写真を選択"
+# Photos.app からフィクスチャ画像を選択
+- tapOn:
+    point: "10%, 30%"
+# OCR 処理完了を待つ (最大60秒)
+- extendedWaitUntil:
+    visible:
+      id: "health-checkup-ocr-result-message"
+    timeout: 60000
+# 主要フィールドが自動入力されていることを確認
+- assertVisible:
+    id: "health-checkup-blood-pressure-systolic"
+- takeScreenshot: health-ocr-result

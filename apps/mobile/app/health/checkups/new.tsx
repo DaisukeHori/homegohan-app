@@ -74,6 +74,7 @@ export default function NewCheckupPage() {
   const [saving, setSaving] = useState(false);
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [isOcrDone, setIsOcrDone] = useState(false);
 
   const [form, setForm] = useState<FormData>({
     checkup_date: todayStr(),
@@ -177,6 +178,7 @@ export default function NewCheckupPage() {
         ...(ext.uricAcid != null ? { uric_acid: String(ext.uricAcid) } : {}),
       }));
 
+      setIsOcrDone(true);
       Alert.alert("OCR完了", "検査値を自動入力しました。内容を確認して登録してください。");
     } catch (e: any) {
       Alert.alert("OCRエラー", e?.message ?? "画像の読み取りに失敗しました。手動で入力してください。");
@@ -246,11 +248,20 @@ export default function NewCheckupPage() {
     unit?: string,
     placeholder?: string,
   ) {
+    const fieldTestIdMap: Partial<Record<keyof FormData, string>> = {
+      blood_pressure_systolic: "health-checkup-blood-pressure-systolic",
+      blood_pressure_diastolic: "health-checkup-blood-pressure-diastolic",
+      hba1c: "health-checkup-hba1c",
+      weight: "health-checkup-weight",
+      bmi: "health-checkup-bmi",
+    };
+    const inputTestID = fieldTestIdMap[field];
     return (
       <View key={field} style={styles.fieldRow}>
         <Text style={styles.fieldLabel}>{label}</Text>
         <View style={styles.fieldInputWrap}>
           <TextInput
+            testID={inputTestID}
             style={styles.fieldInput}
             value={form[field]}
             onChangeText={(v) => update(field, v)}
@@ -399,6 +410,13 @@ export default function NewCheckupPage() {
             {isOcrProcessing ? "読み取り中..." : "検査結果票を撮影して自動入力"}
           </Text>
         </Pressable>
+
+        {/* OCR 完了メッセージ (testID でE2Eから検出) */}
+        {isOcrDone && (
+          <View testID="health-checkup-ocr-result-message">
+            <Text>検査値を自動入力しました。内容を確認して登録してください。</Text>
+          </View>
+        )}
 
         {/* 基本情報 */}
         <View style={styles.section}>

@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 27: 正常 - 究極モードで週間献立生成が完了することを確認
+# NOTE: 究極モード生成は最大10分かかる場合があります
+# このフローは CI の通常パイプラインではなく、専用ジョブで実行してください
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- tapOn:
+    id: "menus-weekly-button"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+# 究極モードを有効化
+- tapOn:
+    id: "weekly-request-ultimate-toggle"
+- tapOn:
+    id: "weekly-request-submit-button"
+# 生成インジケーターが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "weekly-generating-indicator"
+    timeout: 10000
+# 生成完了まで待つ (最大10分)
+- extendedWaitUntil:
+    notVisible:
+      id: "weekly-generating-indicator"
+    timeout: 600000
+# 生成された献立カードが表示されることを確認
+- assertVisible:
+    id: "weekly-meal-card.*"
+- takeScreenshot: weekly-ultimate-result
