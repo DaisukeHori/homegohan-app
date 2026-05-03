@@ -1,4 +1,7 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 状態遷移 25: analyzing 中 BG→FG 復帰
 - runFlow: ../_shared/login.yaml
@@ -6,12 +9,12 @@ appId: com.homegohan.app
 - tapOn:
     id: "tab-meals"
 - tapOn:
-    id: "meals-add-button"
-- tapOn:
     id: "meal-mode-meal"
+- tapOn:
+    id: "meal-capture-start-button"
 
 - tapOn:
-    id: "camera-capture-button"
+    id: "meal-camera-button"
 - extendedWaitUntil:
     visible:
       id: "ai-analyzing-indicator"

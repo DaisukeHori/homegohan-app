@@ -46,9 +46,9 @@ env:
 - tapOn:
     id: "ai-chat-send-button"
 
-# 送信後に応答が表示されるのを待つ
+# 送信後に応答が表示されるのを待つ (AI 応答は時間がかかるため 60 秒)
 - waitForAnimationToEnd:
-    timeout: 15000
+    timeout: 60000
 
 
 # 送信したメッセージが表示されていることを確認

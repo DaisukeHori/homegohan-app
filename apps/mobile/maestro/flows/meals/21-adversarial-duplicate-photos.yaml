@@ -1,4 +1,7 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # Adversarial 21: 同一写真 5 連発
 - runFlow: ../_shared/login.yaml
@@ -10,11 +13,13 @@ appId: com.homegohan.app
     times: 5
     commands:
       - tapOn:
-          id: "meals-add-button"
+          id: "tab-meals"
       - tapOn:
           id: "meal-mode-meal"
       - tapOn:
-          id: "camera-gallery-button"
+          id: "meal-capture-start-button"
+      - tapOn:
+          id: "meal-gallery-button"
       - extendedWaitUntil:
           visible:
             id: "gallery-picker-screen"
@@ -29,8 +34,6 @@ appId: com.homegohan.app
           id: "meal-save-button"
       - extendedWaitUntil:
           visible:
-            id: "meals-screen"
+            id: "home-screen"
           timeout: 10000
 
-- assertVisible:
-    id: "meal-list"

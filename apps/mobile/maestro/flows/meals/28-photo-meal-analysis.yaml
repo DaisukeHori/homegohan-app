@@ -15,11 +15,13 @@ env:
     optional: true
 - extendedWaitUntil:
     visible:
-      id: "meal-new-screen"
+      id: "meal-mode-select-screen"
     timeout: 10000
 # 食事モードを選択
 - tapOn:
-    id: "meal-mode-select-meal"
+    id: "meal-mode-meal"
+- tapOn:
+    id: "meal-capture-start-button"
 - tapOn:
     id: "meal-gallery-button"
     optional: true

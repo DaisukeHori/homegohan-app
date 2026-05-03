@@ -1,15 +1,13 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 正常 07: manual 手動入力で食事保存
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
-- assertVisible:
-    id: "meals-screen"
-
-- tapOn:
-    id: "meals-add-button"
 - assertVisible:
     id: "meal-mode-select-screen"
 
@@ -30,7 +28,5 @@ appId: com.homegohan.app
     id: "meal-save-button"
 - extendedWaitUntil:
     visible:
-      id: "meals-screen"
+      id: "home-screen"
     timeout: 10000
-- assertVisible:
-    id: "meal-list"

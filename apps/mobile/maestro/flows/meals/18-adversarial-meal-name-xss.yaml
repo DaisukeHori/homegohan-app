@@ -1,12 +1,13 @@
 appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # Adversarial 18: 料理名 XSS インジェクション
 - runFlow: ../_shared/login.yaml
 
 - tapOn:
     id: "tab-meals"
-- tapOn:
-    id: "meals-add-button"
 - tapOn:
     id: "meal-mode-manual"
 - assertVisible:
@@ -25,7 +26,7 @@ appId: com.homegohan.app
 
 - extendedWaitUntil:
     visible:
-      id: "meals-screen"
+      id: "home-screen"
     timeout: 10000
 
 - assertNotVisible:
