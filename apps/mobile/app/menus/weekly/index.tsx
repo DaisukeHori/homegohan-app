@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
+import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
+import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../src/providers/ProfileProvider";
+import type { V4GenerateParams } from "../../../src/components/menu/V4GenerateModal";
 
 type PlannedMealRow = {
   id: string;
@@ -279,6 +282,41 @@ export default function WeeklyMenuPage() {
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [pendingProgress, setPendingProgress] = useState<PendingProgress | null>(null);
   const [pendingIsUltimate, setPendingIsUltimate] = useState(false);
+  const [showV4Modal, setShowV4Modal] = useState(false);
+
+  const { isGenerating: isV4Generating, generate: v4Generate } = useV4MenuGeneration({
+    onGenerationStart: (reqId) => {
+      setPendingRequestId(reqId);
+      setPendingStatus("processing");
+      setPendingIsUltimate(false);
+    },
+    onGenerationComplete: async () => {
+      await loadData();
+      setPendingRequestId(null);
+      setPendingStatus(null);
+      setPendingProgress(null);
+      setPendingIsUltimate(false);
+      Alert.alert("完了", "週間献立の生成が完了しました。");
+    },
+    onError: (msg) => {
+      setPendingRequestId(null);
+      setPendingStatus(null);
+      setPendingProgress(null);
+      setPendingIsUltimate(false);
+      setError(msg);
+    },
+  });
+
+  const handleV4Generate = useCallback(async (params: V4GenerateParams) => {
+    setShowV4Modal(false);
+    await v4Generate({
+      targetSlots: params.targetSlots,
+      constraints: params.constraints,
+      note: params.note,
+      ultimateMode: false,
+      resolveExistingMeals: params.resolveExistingMeals,
+    });
+  }, [v4Generate]);
 
   useEffect(() => {
     setWeekStart(getWeekStart(new Date(), weekStartDay));
@@ -594,6 +632,18 @@ export default function WeeklyMenuPage() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="週間献立" />
+
+      {/* V4 AI アシスタント モーダル */}
+      <V4GenerateModal
+        visible={showV4Modal}
+        onClose={() => setShowV4Modal(false)}
+        onGenerate={handleV4Generate}
+        mealPlanDays={days}
+        weekStartDate={weekStartStr}
+        weekEndDate={weekEndStr}
+        isGenerating={isV4Generating}
+      />
+
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {/* ヘッダー: 週ナビゲーション */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -884,6 +934,27 @@ export default function WeeklyMenuPage() {
         </>
       )}
     </ScrollView>
+
+    {/* フローティング AI アシスタントボタン */}
+    <Pressable
+      testID="weekly-ai-assistant-btn"
+      onPress={() => setShowV4Modal(true)}
+      style={({ pressed }) => ({
+        position: "absolute",
+        bottom: spacing["2xl"],
+        right: spacing.lg,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: colors.accent,
+        alignItems: "center",
+        justifyContent: "center",
+        ...shadows.md,
+        opacity: pressed ? 0.85 : 1,
+      })}
+    >
+      <Ionicons name="sparkles" size={24} color="#fff" />
+    </Pressable>
     </View>
   );
 }
