@@ -16,6 +16,7 @@ import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
+import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
@@ -715,6 +716,7 @@ export default function WeeklyMenuPage() {
 
   // Modal state (将来用 — Phase 5/6 で各モーダルを open する)
   const [activeModal, setActiveModal] = useState<'stats' | 'fridge' | 'shopping' | null>(null);
+  const [showServingsModal, setShowServingsModal] = useState(false);
 
   useEffect(() => {
     const fetchRadarProfile = async () => {
@@ -1621,6 +1623,32 @@ export default function WeeklyMenuPage() {
         dateLabel={nutritionSheetLabel}
         radarKeys={radarChartNutrients}
         weekDays={days}
+      />
+
+      {/* 人数設定フローティングボタン */}
+      <Pressable
+        testID="weekly-servings-btn"
+        onPress={() => setShowServingsModal(true)}
+        style={{
+          position: "absolute",
+          bottom: 24,
+          right: 20,
+          backgroundColor: colors.accent,
+          borderRadius: 28,
+          width: 56,
+          height: 56,
+          alignItems: "center",
+          justifyContent: "center",
+          ...shadows.lg,
+        }}
+      >
+        <Ionicons name="people-outline" size={24} color="#FFF" />
+      </Pressable>
+
+      {/* 人数設定モーダル */}
+      <ServingsModal
+        visible={showServingsModal}
+        onClose={() => setShowServingsModal(false)}
       />
     </View>
   );

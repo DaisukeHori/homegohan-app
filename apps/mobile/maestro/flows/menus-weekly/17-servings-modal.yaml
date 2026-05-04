@@ -1,0 +1,14 @@
+appId: com.homegohan.app
+---
+- launchApp
+- tapOn: { text: "ほめゴハン" }
+- tapOn: { id: "tab-menus" }
+- waitForAnimationToEnd
+- tapOn: { id: "weekly-servings-btn" }
+- assertVisible: { id: "servings-modal" }
+- tapOn: { id: "servings-default-increment" }
+- assertVisible: { text: "2" }
+- tapOn: { id: "servings-cell-Sat-dinner" }
+- inputText: "5"
+- tapOn: { id: "servings-save-btn" }
+- assertNotVisible: { id: "servings-modal" }
