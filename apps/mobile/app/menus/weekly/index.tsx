@@ -1212,50 +1212,6 @@ export default function WeeklyMenuPage() {
         isGenerating={isV4Generating}
       />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
-      {/* ヘッダー: 週ナビゲーション */}
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Pressable
-          testID="weekly-prev-button"
-          onPress={() => shiftWeek(-1)}
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: radius.md,
-            backgroundColor: colors.card,
-            alignItems: "center",
-            justifyContent: "center",
-            borderWidth: 1,
-            borderColor: colors.border,
-            ...shadows.sm,
-          }}
-        >
-          <Ionicons name="chevron-back" size={20} color={colors.text} />
-        </Pressable>
-        <View style={{ alignItems: "center" }}>
-          <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>
-            {weekStartStr.slice(5)} 〜 {weekEndStr.slice(5)}
-          </Text>
-          {plan && <Text style={{ fontSize: 12, color: colors.textMuted }}>{plan.title}</Text>}
-        </View>
-        <Pressable
-          testID="weekly-next-button"
-          onPress={() => shiftWeek(1)}
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: radius.md,
-            backgroundColor: colors.card,
-            alignItems: "center",
-            justifyContent: "center",
-            borderWidth: 1,
-            borderColor: colors.border,
-            ...shadows.sm,
-          }}
-        >
-          <Ionicons name="chevron-forward" size={20} color={colors.text} />
-        </Pressable>
-      </View>
-
       {/* 月カレンダー展開バー */}
       <Pressable
         testID="weekly-calendar-toggle"
@@ -1427,10 +1383,29 @@ export default function WeeklyMenuPage() {
             </View>
           )}
 
-          {/* 日付セレクタ — 7日固定横並び (flex均等配置) */}
-          <View style={{ flexDirection: "row" }}>
+          {/* 日付セレクタ — 週ナビ左右端 + 7日タブ中央 */}
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            {/* 前の週ボタン */}
+            <Pressable
+              testID="weekly-prev-button"
+              onPress={() => shiftWeek(-1)}
+              style={({ pressed }) => ({
+                alignItems: "center",
+                justifyContent: "center",
+                paddingVertical: spacing.sm,
+                paddingHorizontal: 4,
+                borderRadius: radius.md,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Ionicons name="chevron-back" size={16} color={colors.textMuted} />
+              <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>前の週</Text>
+            </Pressable>
+
+            {/* 7日タブ */}
             {days.map((d) => {
               const selected = d.day_date === selectedDate;
+              const isToday = d.day_date === todayStr;
               const dow = getDayOfWeek(d.day_date);
               const dayNum = d.day_date.slice(8);
               const completedAll = d.planned_meals.length > 0 && d.planned_meals.every((m) => m.is_completed);
@@ -1450,7 +1425,7 @@ export default function WeeklyMenuPage() {
                   style={({ pressed }) => ({
                     flex: 1,
                     alignItems: "center",
-                    gap: 4,
+                    gap: 2,
                     paddingVertical: spacing.sm,
                     paddingHorizontal: 2,
                     borderRadius: radius.lg,
@@ -1460,7 +1435,16 @@ export default function WeeklyMenuPage() {
                 >
                   <Text style={{ fontSize: 9, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>{dayNum}</Text>
                   <Text style={{ fontSize: 13, fontWeight: "600", color: selected ? "#fff" : (accentColor ?? colors.text) }}>{dow}</Text>
-                  {completedAll ? (
+                  {isToday && !selected ? (
+                    <View style={{
+                      backgroundColor: colors.accent,
+                      borderRadius: radius.sm,
+                      paddingHorizontal: 4,
+                      paddingVertical: 1,
+                    }}>
+                      <Text style={{ fontSize: 8, fontWeight: "700", color: "#fff" }}>今日</Text>
+                    </View>
+                  ) : completedAll ? (
                     <Ionicons name="checkmark-circle" size={12} color={selected ? "#fff" : colors.success} />
                   ) : hasGenerating ? (
                     <ActivityIndicator size={10} color={selected ? "#fff" : (accentColor ?? colors.accent)} />
@@ -1472,6 +1456,23 @@ export default function WeeklyMenuPage() {
                 </Pressable>
               );
             })}
+
+            {/* 翌週ボタン */}
+            <Pressable
+              testID="weekly-next-button"
+              onPress={() => shiftWeek(1)}
+              style={({ pressed }) => ({
+                alignItems: "center",
+                justifyContent: "center",
+                paddingVertical: spacing.sm,
+                paddingHorizontal: 4,
+                borderRadius: radius.md,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>翌週</Text>
+            </Pressable>
           </View>
 
           {/* 選択日のサマリ */}
