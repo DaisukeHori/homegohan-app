@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { getNutrientDefinition, calculateDriPercentage } from '@/lib/nutrition-constants';
+import { getNutrientDefinition, calculateDriPercentage } from '@homegohan/shared';
 import crypto from 'crypto';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
