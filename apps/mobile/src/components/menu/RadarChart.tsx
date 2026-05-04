@@ -81,6 +81,7 @@ export const RadarChart: React.FC<RadarChartProps> = ({
   });
 
   const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(' ');
+
   const refPolygon = Array.from({ length: n }, (_, i) =>
     ptOnCircle((100 / MAX_PCT) * maxRadius, i)
   )

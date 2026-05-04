@@ -18,10 +18,12 @@ import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../sr
 import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
+import { ImproveMealModal } from "../../../src/components/menu/ImproveMealModal";
 import { ProgressTodoCard } from "../../../src/components/menu/ProgressTodoCard";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
 import { RecipeModal, type RecipeModalMeal } from "../../../src/components/menu/RecipeModal";
 import { ServingsModal } from "../../../src/components/menu/ServingsModal";
+import { StatsModal, type NutrientValues, type WeekNutrientData } from "../../../src/components/menu/StatsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
 import { NutritionDetailModal } from "../../../src/components/menu/NutritionDetailModal";
@@ -623,6 +625,7 @@ export default function WeeklyMenuPage() {
   const [activeModal, setActiveModal] = useState<'stats' | 'fridge' | 'shopping' | null>(null);
   const [showServingsModal, setShowServingsModal] = useState(false);
   const [deleteTargetMeal, setDeleteTargetMeal] = useState<{ id: string; name: string } | null>(null);
+  const [showImproveMealModal, setShowImproveMealModal] = useState(false);
 
   // AddMealSlotModal state
   const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
@@ -1093,6 +1096,71 @@ export default function WeeklyMenuPage() {
   }, [days]);
 
   const weekRangeLabel = `${weekStartStr.slice(5)} - ${weekEndStr.slice(5)}`;
+
+  // StatsModal 用: 選択日の今日栄養素
+  const todayNutrientsForStats = useMemo((): NutrientValues => {
+    const day = days.find((d) => d.day_date === selectedDate);
+    const meals = day?.planned_meals ?? [];
+    return {
+      caloriesKcal: meals.reduce((s, m) => s + (m.calories_kcal ?? 0), 0),
+      proteinG: meals.reduce((s, m) => s + (m.protein_g ?? 0), 0),
+      fatG: meals.reduce((s, m) => s + (m.fat_g ?? 0), 0),
+      carbsG: meals.reduce((s, m) => s + (m.carbs_g ?? 0), 0),
+      fiberG: meals.reduce((s, m) => s + (m.fiber_g ?? 0), 0),
+      sodiumG: meals.reduce((s, m) => s + (m.sodium_g ?? 0), 0),
+      sugarG: meals.reduce((s, m) => s + (m.sugar_g ?? 0), 0),
+      potassiumMg: meals.reduce((s, m) => s + (m.potassium_mg ?? 0), 0),
+      calciumMg: meals.reduce((s, m) => s + (m.calcium_mg ?? 0), 0),
+      magnesiumMg: meals.reduce((s, m) => s + (m.magnesium_mg ?? 0), 0),
+      phosphorusMg: meals.reduce((s, m) => s + (m.phosphorus_mg ?? 0), 0),
+      ironMg: meals.reduce((s, m) => s + (m.iron_mg ?? 0), 0),
+      zincMg: meals.reduce((s, m) => s + (m.zinc_mg ?? 0), 0),
+      iodineUg: meals.reduce((s, m) => s + (m.iodine_ug ?? 0), 0),
+      cholesterolMg: meals.reduce((s, m) => s + (m.cholesterol_mg ?? 0), 0),
+      vitaminAUg: meals.reduce((s, m) => s + (m.vitamin_a_ug ?? 0), 0),
+      vitaminB1Mg: meals.reduce((s, m) => s + (m.vitamin_b1_mg ?? 0), 0),
+      vitaminB2Mg: meals.reduce((s, m) => s + (m.vitamin_b2_mg ?? 0), 0),
+      vitaminB6Mg: meals.reduce((s, m) => s + (m.vitamin_b6_mg ?? 0), 0),
+      vitaminB12Ug: meals.reduce((s, m) => s + (m.vitamin_b12_ug ?? 0), 0),
+      vitaminCMg: meals.reduce((s, m) => s + (m.vitamin_c_mg ?? 0), 0),
+      vitaminDUg: meals.reduce((s, m) => s + (m.vitamin_d_ug ?? 0), 0),
+      vitaminEMg: meals.reduce((s, m) => s + (m.vitamin_e_mg ?? 0), 0),
+      vitaminKUg: meals.reduce((s, m) => s + (m.vitamin_k_ug ?? 0), 0),
+      folicAcidUg: meals.reduce((s, m) => s + (m.folic_acid_ug ?? 0), 0),
+      saturatedFatG: meals.reduce((s, m) => s + (m.saturated_fat_g ?? 0), 0),
+    };
+  }, [days, selectedDate]);
+
+  // StatsModal 用: 週間栄養集計
+  const weekNutrientsForStats = useMemo((): WeekNutrientData => {
+    const activeDays = days.filter((d) => d.planned_meals.length > 0);
+    const count = activeDays.length || 1;
+    const dailyKcal = days.map((d) =>
+      d.planned_meals.reduce((s, m) => s + (m.calories_kcal ?? 0), 0)
+    );
+    const totalProtein = days.flatMap((d) => d.planned_meals).reduce((s, m) => s + (m.protein_g ?? 0), 0);
+    const totalFat = days.flatMap((d) => d.planned_meals).reduce((s, m) => s + (m.fat_g ?? 0), 0);
+    const totalCarbs = days.flatMap((d) => d.planned_meals).reduce((s, m) => s + (m.carbs_g ?? 0), 0);
+    const totalFiber = days.flatMap((d) => d.planned_meals).reduce((s, m) => s + (m.fiber_g ?? 0), 0);
+    const totalKcal = dailyKcal.reduce((s, v) => s + v, 0);
+    return {
+      avgCalories: totalKcal / count,
+      dailyKcal,
+      avgProtein: totalProtein / count,
+      avgFat: totalFat / count,
+      avgCarbs: totalCarbs / count,
+      avgFiber: totalFiber / count,
+    };
+  }, [days]);
+
+  // StatsModal 用: 選択日の meals (AI feedback 取得用)
+  const todayMealsForStats = useMemo(() => {
+    const day = days.find((d) => d.day_date === selectedDate);
+    return (day?.planned_meals ?? []).map((m) => ({
+      dish_name: m.dish_name,
+      calories_kcal: m.calories_kcal,
+    }));
+  }, [days, selectedDate]);
 
   function handleCalendarDateClick(day: Date) {
     const newWeekStart = getWeekStart(day, weekStartDay);
@@ -1715,6 +1783,30 @@ export default function WeeklyMenuPage() {
           setDeleteTargetMeal(null);
           await deleteMeal(id);
         }}
+      />
+
+      {/* 栄養分析モーダル (StatsModal) */}
+      <StatsModal
+        visible={activeModal === 'stats'}
+        onClose={() => setActiveModal(null)}
+        onOpenImprove={() => {
+          setActiveModal(null);
+          setShowImproveMealModal(true);
+        }}
+        selectedDate={selectedDate}
+        weekRange={{ start: weekStartStr, end: weekEndStr }}
+        todayNutrients={todayNutrientsForStats}
+        weekNutrients={weekNutrientsForStats}
+        userId={profile?.id ?? ''}
+        weekDayLabels={getDayLabels(weekStartDay)}
+        todayMeals={todayMealsForStats}
+      />
+
+      {/* 献立を改善モーダル */}
+      <ImproveMealModal
+        visible={showImproveMealModal}
+        onClose={() => setShowImproveMealModal(false)}
+        selectedDate={selectedDate}
       />
 
       {/* 栄養分析ボトムシート (旧) */}

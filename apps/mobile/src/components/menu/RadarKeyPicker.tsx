@@ -101,6 +101,7 @@ export const RadarKeyPicker: React.FC<RadarKeyPickerProps> = ({
               return (
                 <Pressable
                   key={def.key}
+                  testID={`stats-radar-key-${def.key}`}
                   onPress={() => toggleKey(def.key)}
                   disabled={disabled}
                   style={[
