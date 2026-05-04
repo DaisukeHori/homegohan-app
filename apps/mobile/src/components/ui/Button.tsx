@@ -45,7 +45,7 @@ export function Button({ children, onPress, variant = 'primary', disabled, loadi
           backgroundColor: isDisabled ? colors.textMuted : pressed ? v.bgPressed : v.bg,
           paddingVertical: s.paddingV,
           paddingHorizontal: s.paddingH,
-          borderRadius: radius.md,
+          borderRadius: radius.full,
           alignItems: 'center',
           justifyContent: 'center',
           flexDirection: 'row',
