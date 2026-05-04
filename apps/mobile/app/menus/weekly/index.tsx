@@ -16,7 +16,7 @@ import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
-import { getApi } from "../../../src/lib/api";
+import { getApi, getApiBaseUrl } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../src/providers/ProfileProvider";
@@ -1062,11 +1062,17 @@ export default function WeeklyMenuPage() {
       }))
     );
     try {
-      const { error: supaErr } = await supabase
-        .from("planned_meals")
-        .update({ is_completed: newCompleted })
-        .eq("id", mealId);
-      if (supaErr) throw supaErr;
+      const base = getApiBaseUrl();
+      const { data: { session } } = await supabase.auth.getSession();
+      const r = await fetch(`${base}/api/meal-plans/meals/${mealId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ isCompleted: newCompleted }),
+      });
+      if (!r.ok) throw new Error(`PATCH failed: ${r.status}`);
       await loadData();
     } catch (e: any) {
       // ロールバック
