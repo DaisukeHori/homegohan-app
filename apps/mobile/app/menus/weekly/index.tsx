@@ -15,6 +15,7 @@ import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
 import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
+import { RoleBadge } from "../../../src/components/menu/RoleBadge";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
@@ -26,6 +27,7 @@ type PlannedMealRow = {
   meal_type: string;
   dish_name: string;
   mode: string | null;
+  role: string | null;
   calories_kcal: number | null;
   is_completed: boolean | null;
   is_generating: boolean | null;
@@ -1485,6 +1487,7 @@ export default function WeeklyMenuPage() {
                       <Text testID={`weekly-meal-dish-name-${m.id}`} style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
                         {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
                       </Text>
+                      {m.role ? <RoleBadge role={m.role} /> : null}
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                         <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealCfg.label}</Text>
                         <View
