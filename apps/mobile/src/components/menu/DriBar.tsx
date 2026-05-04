@@ -1,49 +1,64 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { NUTRIENT_DEFINITIONS, calculateDriPercentage } from '@homegohan/shared';
+import {
+  NUTRIENT_DEFINITIONS,
+  type NutrientDefinition,
+} from '@homegohan/shared';
 
 import { colors } from '../../theme/colors';
 import { radius, spacing } from '../../theme/spacing';
-import { typography } from '../../theme/typography';
 
-interface Props {
-  nutrientKey: string;
-  value: number | null | undefined;
+// ============================================================
+// helpers
+// ============================================================
+
+function getDriPercent(key: string, value: number): number {
+  const def = NUTRIENT_DEFINITIONS.find((d) => d.key === key);
+  if (!def || def.dri === 0) return 0;
+  return Math.round((value / def.dri) * 100);
 }
 
-function barColor(pct: number): string {
+function getBarColor(pct: number): string {
   if (pct > 150) return colors.error;
   if (pct >= 80 && pct <= 120) return colors.success;
   if (pct < 50) return colors.warning;
   return colors.accent;
 }
 
-export const DriBar: React.FC<Props> = ({ nutrientKey, value }) => {
-  const def = NUTRIENT_DEFINITIONS.find((d) => d.key === nutrientKey);
-  if (!def) return null;
+// ============================================================
+// DriBar
+// ============================================================
 
-  const v = value ?? 0;
-  const pct = calculateDriPercentage(nutrientKey, v);
-  const fillColor = barColor(pct);
-  const displayVal = v.toFixed(def.decimals);
+interface DriBarProps {
+  def: NutrientDefinition;
+  value: number;
+}
+
+export const DriBar: React.FC<DriBarProps> = ({ def, value }) => {
+  const pct = getDriPercent(def.key, value);
+  const barColor = getBarColor(pct);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.row}>
+    <View
+      testID={`nutrition-detail-bar-${def.key}`}
+      style={styles.container}
+    >
+      <View style={styles.labelRow}>
         <Text style={styles.label}>{def.label}</Text>
         <View style={styles.valueRow}>
           <Text style={styles.value}>
-            {displayVal}{def.unit}
+            {value.toFixed(def.decimals)}
+            {def.unit}
           </Text>
-          <Text style={[styles.pct, { color: fillColor }]}>{pct}%</Text>
+          <Text style={[styles.pct, { color: barColor }]}>{pct}%</Text>
         </View>
       </View>
       <View style={styles.track}>
         <View
           style={[
             styles.fill,
-            { width: `${Math.min(pct, 100)}%`, backgroundColor: fillColor },
+            { width: `${Math.min(pct, 100)}%`, backgroundColor: barColor },
           ]}
         />
       </View>
@@ -58,19 +73,19 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: 4,
   },
-  row: {
+  labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   label: {
-    ...typography.caption,
+    fontSize: 12,
     color: colors.textLight,
   },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 6,
   },
   value: {
     fontSize: 11,

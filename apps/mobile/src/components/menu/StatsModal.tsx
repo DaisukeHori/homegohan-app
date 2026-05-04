@@ -13,7 +13,6 @@ import {
 import {
   DEFAULT_RADAR_NUTRIENTS,
   NUTRIENT_DEFINITIONS,
-  calculateDriPercentage,
 } from '@homegohan/shared';
 
 import { getApi } from '../../lib/api';
@@ -86,6 +85,15 @@ export interface StatsModalProps {
 }
 
 type Tab = 'today' | 'week';
+
+// NutrientValues を Record<string, number> に変換するヘルパー
+function toTotals(n: NutrientValues): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const key of Object.keys(n)) {
+    result[key] = n[key] ?? 0;
+  }
+  return result;
+}
 
 // ============================================================
 // カロリーバー (big)
@@ -169,8 +177,9 @@ function PfcRow({ nutrients }: { nutrients: NutrientValues }) {
   return (
     <View style={pfcStyles.row}>
       {items.map(({ key, label, short, value }) => {
-        const pct = calculateDriPercentage(key, value);
         const def = NUTRIENT_DEFINITIONS.find((d) => d.key === key);
+        const dri = def?.dri ?? 1;
+        const pct = Math.round((value / dri) * 100);
         const decimals = def?.decimals ?? 1;
         return (
           <View key={key} style={pfcStyles.card}>
@@ -252,6 +261,7 @@ function TodayTab({
   mealCount,
 }: TodayTabProps) {
   const dateLabel = selectedDate.replace(/-/g, '/');
+  const totals = toTotals(nutrients);
 
   return (
     <ScrollView
@@ -281,10 +291,16 @@ function TodayTab({
           </Pressable>
         </View>
         {editingRadar ? (
-          <RadarKeyPicker selected={radarKeys} onChange={setRadarKeys} />
+          <RadarKeyPicker
+            selectedKeys={radarKeys}
+            onSaved={(keys) => {
+              setRadarKeys(keys);
+              setEditingRadar(false);
+            }}
+          />
         ) : (
           <View style={{ alignItems: 'center' }}>
-            <RadarChart keys={radarKeys} values={nutrients as Record<string, number>} size={220} />
+            <RadarChart totals={totals} nutrientKeys={radarKeys} size={220} />
           </View>
         )}
       </View>
@@ -325,15 +341,15 @@ function TodayTab({
         )}
       </View>
 
-      {/* DRI バー (主要栄養素) */}
+      {/* DRI バー (主要栄養素 14 種) */}
       <View style={todayStyles.driSection}>
         <Text style={todayStyles.sectionTitle}>栄養素の達成率</Text>
         <View style={{ gap: spacing.sm }}>
           {NUTRIENT_DEFINITIONS.slice(0, 14).map((def) => (
             <DriBar
               key={def.key}
-              nutrientKey={def.key}
-              value={(nutrients as Record<string, number | undefined>)[def.key] ?? 0}
+              def={def}
+              value={totals[def.key] ?? 0}
             />
           ))}
         </View>
@@ -479,6 +495,13 @@ interface WeekTabProps {
 function WeekTab({ data, weekDayLabels, weekRange }: WeekTabProps) {
   const rangeLabel = `${weekRange.start.slice(5).replace('-', '/')} 〜 ${weekRange.end.slice(5).replace('-', '/')}`;
 
+  const avgNutrients = [
+    { key: 'proteinG', value: data.avgProtein },
+    { key: 'fatG', value: data.avgFat },
+    { key: 'carbsG', value: data.avgCarbs },
+    { key: 'fiberG', value: data.avgFiber },
+  ] as const;
+
   return (
     <ScrollView
       style={{ flex: 1 }}
@@ -510,10 +533,17 @@ function WeekTab({ data, weekDayLabels, weekRange }: WeekTabProps) {
       <View style={weekStyles.nutrientSection}>
         <Text style={weekStyles.sectionTitle}>週間栄養 (1 日平均比)</Text>
         <View style={{ gap: spacing.sm }}>
-          <DriBar nutrientKey="proteinG" value={data.avgProtein} />
-          <DriBar nutrientKey="fatG" value={data.avgFat} />
-          <DriBar nutrientKey="carbsG" value={data.avgCarbs} />
-          <DriBar nutrientKey="fiberG" value={data.avgFiber} />
+          {avgNutrients.map(({ key, value }) => {
+            const def = NUTRIENT_DEFINITIONS.find((d) => d.key === key);
+            if (!def) return null;
+            return (
+              <DriBar
+                key={key}
+                def={def}
+                value={value}
+              />
+            );
+          })}
         </View>
       </View>
 
@@ -626,10 +656,9 @@ export const StatsModal: React.FC<StatsModalProps> = ({
     });
 
     // ポーリング fallback (2 秒間隔、最大 40 秒)
-    let elapsed = 0;
     let resolved = false;
 
-    const fetchFeedback = async (forceRefresh = false) => {
+    const fetchFeedback = async () => {
       try {
         const api = getApi();
         const nutrition = {
@@ -643,7 +672,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
           date: selectedDate,
           nutrition,
           mealCount,
-          forceRefresh,
+          forceRefresh: false,
           weekData: [],
         });
 
@@ -658,10 +687,8 @@ export const StatsModal: React.FC<StatsModalProps> = ({
         }
 
         if (res.status === 'generating' && res.cacheId) {
-          // ポーリングで完了待ち
           let count = 0;
           pollRef.current = setInterval(async () => {
-            elapsed += 2000;
             count++;
             if (resolved || count >= 20) {
               if (pollRef.current) clearInterval(pollRef.current);

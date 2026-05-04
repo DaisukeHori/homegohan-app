@@ -13,6 +13,9 @@ import {
   View,
 } from "react-native";
 
+import { ConditionPills } from "./ConditionPills";
+import { UltimateModeToggle } from "./UltimateModeToggle";
+
 import type { MenuGenerationConstraints, TargetSlot } from "../../../../../types/domain";
 import {
   buildAiOnlySlots,
@@ -314,10 +317,6 @@ export function V4GenerateModal({
     }
   };
 
-  const toggleConstraint = (key: keyof MenuGenerationConstraints) => {
-    setConstraints((prev: MenuGenerationConstraints) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const handleClose = () => {
     setSelectedMode(null);
     setIsSubmitting(false);
@@ -378,18 +377,6 @@ export function V4GenerateModal({
       disabled: false,
       testID: "v4-mode-range",
     },
-  ];
-
-  // Constraint options
-  const constraintOptions: {
-    key: keyof MenuGenerationConstraints;
-    iconName: keyof typeof Ionicons.glyphMap;
-    label: string;
-  }[] = [
-    { key: "useFridgeFirst", iconName: "cube-outline", label: "冷蔵庫優先" },
-    { key: "quickMeals", iconName: "flash-outline", label: "時短中心" },
-    { key: "japaneseStyle", iconName: "restaurant-outline", label: "和食多め" },
-    { key: "healthy", iconName: "heart-outline", label: "ヘルシー" },
   ];
 
   return (
@@ -630,104 +617,16 @@ export function V4GenerateModal({
               </View>
             )}
 
-            {/* 条件を指定 (PR 4-2 で詳細実装、仮 UI) */}
+            {/* 条件を指定 */}
             <View style={{ gap: spacing.sm }}>
               <Text style={{ fontSize: 13, fontWeight: "700", color: C.textLight }}>
                 条件を指定
               </Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-                {constraintOptions.map((opt) => {
-                  const active = !!constraints[opt.key];
-                  return (
-                    <Pressable
-                      key={String(opt.key)}
-                      onPress={() => toggleConstraint(opt.key)}
-                      style={({ pressed }) => ({
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 4,
-                        paddingHorizontal: spacing.md,
-                        paddingVertical: spacing.sm,
-                        borderRadius: radius.full,
-                        backgroundColor: active ? C.accent : C.bg,
-                        opacity: pressed ? 0.8 : 1,
-                      })}
-                    >
-                      <Ionicons
-                        name={opt.iconName}
-                        size={14}
-                        color={active ? "#fff" : C.textLight}
-                      />
-                      <Text
-                        style={{
-                          fontSize: 13,
-                          fontWeight: "700",
-                          color: active ? "#fff" : C.textLight,
-                        }}
-                      >
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <ConditionPills values={constraints} onChange={setConstraints} />
             </View>
 
-            {/* 究極モード (PR 4-3 で実装、仮 UI: disabled) */}
-            <View
-              style={{
-                padding: spacing.md,
-                borderRadius: radius.xl,
-                backgroundColor: C.bg,
-                opacity: 0.65,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: spacing.md,
-              }}
-            >
-              <View
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: C.border,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Ionicons name="star-outline" size={18} color={C.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }}>
-                    究極モード
-                  </Text>
-                  <View
-                    style={{
-                      backgroundColor: "#FEF3C7",
-                      paddingHorizontal: 6,
-                      paddingVertical: 2,
-                      borderRadius: radius.sm,
-                    }}
-                  >
-                    <Text style={{ fontSize: 10, fontWeight: "700", color: "#D97706" }}>
-                      Premium
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 11, color: C.textMuted }}>準備中</Text>
-                </View>
-                <Text style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>
-                  AIが献立を自動で見直し、栄養バランスを改善
-                </Text>
-              </View>
-              <Switch
-                testID="ultimate-mode-toggle"
-                value={false}
-                disabled
-                trackColor={{ false: C.border, true: C.border }}
-                thumbColor={C.card}
-              />
-            </View>
+            {/* 究極モード (PR 4-3) */}
+            <UltimateModeToggle enabled={false} />
 
             {/* メモ */}
             <TextInput

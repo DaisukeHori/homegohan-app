@@ -13,17 +13,20 @@ import {
 } from "react-native";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition, type MealType } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
+import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
 import { ImproveMealModal } from "../../../src/components/menu/ImproveMealModal";
+import { ProgressTodoCard } from "../../../src/components/menu/ProgressTodoCard";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
 import { RecipeModal, type RecipeModalMeal } from "../../../src/components/menu/RecipeModal";
 import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { StatsModal, type NutrientValues, type WeekNutrientData } from "../../../src/components/menu/StatsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
+import { NutritionDetailModal } from "../../../src/components/menu/NutritionDetailModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
@@ -520,156 +523,6 @@ function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   return d;
 }
 
-// PROGRESS_PHASES / ULTIMATE_PROGRESS_PHASES / PhaseDefinition は @homegohan/shared からインポート
-
-type ProgressTodoCardProps = {
-  progress: PendingProgress | null;
-  phases?: PhaseDefinition[];
-  defaultMessage?: string;
-};
-
-function ProgressTodoCard({ progress, phases = PROGRESS_PHASES, defaultMessage = "AIが献立を生成中..." }: ProgressTodoCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const currentPercentage = progress?.percentage ?? 0;
-  const currentPhase = progress?.phase ?? "";
-  const totalSlots = progress?.totalSlots ?? 0;
-  const totalDays = totalSlots > 0 ? Math.ceil(totalSlots / 3) : 0;
-
-  const dynamicPhases = useMemo(() => {
-    return phases.map((p) => {
-      if (p.phase === "generating" && totalDays > 0) {
-        const dayLabel = totalDays === 1 ? "1日分" : `${totalDays}日分`;
-        return { ...p, label: `${dayLabel}の献立をAIが作成` };
-      }
-      return p;
-    });
-  }, [phases, totalDays]);
-
-  const getPhaseStatus = (phase: PhaseDefinition): "completed" | "in_progress" | "pending" => {
-    if (currentPercentage >= phase.threshold) return "completed";
-    if (
-      currentPhase === phase.phase ||
-      (currentPhase.startsWith(phase.phase.split("_")[0]) && currentPercentage < phase.threshold)
-    )
-      return "in_progress";
-    return "pending";
-  };
-
-  const isError = currentPhase === "failed";
-
-  const headerMessage =
-    totalDays > 0
-      ? `献立を生成中...（${progress?.completedSlots ?? 0}/${totalSlots}食、${totalDays}日分）`
-      : (progress?.message ?? defaultMessage);
-
-  return (
-    <LinearGradient
-      colors={
-        isError
-          ? ["#ef4444", "#dc2626"]
-          : [colors.accent, colors.purple]
-      }
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={{
-        borderRadius: radius.lg,
-        overflow: "hidden",
-      }}
-    >
-      {/* ヘッダー */}
-      <Pressable
-        onPress={() => setIsExpanded((prev) => !prev)}
-        style={{ padding: spacing.md, gap: spacing.sm }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-          <ActivityIndicator size="small" color="#fff" />
-          <Text style={{ flex: 1, color: "#fff", fontWeight: "700", fontSize: 13 }}>
-            {headerMessage}
-          </Text>
-          {currentPercentage > 0 && (
-            <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>{currentPercentage}%</Text>
-          )}
-          <Ionicons
-            name={isExpanded ? "chevron-up" : "chevron-down"}
-            size={14}
-            color="rgba(255,255,255,0.7)"
-          />
-        </View>
-        {currentPercentage > 0 && (
-          <View style={{ height: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 3, overflow: "hidden" }}>
-            <View
-              style={{
-                width: `${currentPercentage}%`,
-                height: "100%",
-                backgroundColor: "#fff",
-                borderRadius: 3,
-              }}
-            />
-          </View>
-        )}
-      </Pressable>
-
-      {/* 展開時のフェーズToDoリスト */}
-      {isExpanded && (
-        <View
-          style={{
-            paddingHorizontal: spacing.md,
-            paddingBottom: spacing.md,
-            paddingTop: spacing.sm,
-            borderTopWidth: 1,
-            borderTopColor: "rgba(255,255,255,0.2)",
-            gap: spacing.sm,
-          }}
-        >
-          {dynamicPhases.filter((p) => p.phase !== "failed").map((phase) => {
-            const status = getPhaseStatus(phase);
-            return (
-              <View key={phase.phase} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                {status === "completed" ? (
-                  <View
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: 8,
-                      backgroundColor: "#fff",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Ionicons name="checkmark" size={10} color={colors.accent} />
-                  </View>
-                ) : status === "in_progress" ? (
-                  <ActivityIndicator size="small" color="#fff" style={{ width: 16, height: 16 }} />
-                ) : (
-                  <View
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: 8,
-                      borderWidth: 2,
-                      borderColor: "rgba(255,255,255,0.4)",
-                    }}
-                  />
-                )}
-                <Text
-                  style={{
-                    fontSize: 11,
-                    color: status === "pending" ? "rgba(255,255,255,0.5)" : "#fff",
-                    fontWeight: status === "in_progress" ? "600" : "400",
-                  }}
-                >
-                  {phase.label}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </LinearGradient>
-  );
-}
-
 const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 
 // MEAL_ORDER は @homegohan/shared からインポート (MEAL_ORDER_SHARED)
@@ -777,6 +630,12 @@ export default function WeeklyMenuPage() {
   // AddMealSlotModal state
   const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
   const [addMealSlotDayId, setAddMealSlotDayId] = useState<string>("");
+
+  // AddMealModal state
+  const [addMealModalVisible, setAddMealModalVisible] = useState(false);
+  const [addMealModalDayId, setAddMealModalDayId] = useState<string>("");
+  const [addMealModalDayDate, setAddMealModalDayDate] = useState<string>("");
+  const [addMealModalMealType, setAddMealModalMealType] = useState<MealType>("dinner");
 
   // RecipeModal state
   const [recipeModalMeal, setRecipeModalMeal] = useState<RecipeModalMeal | null>(null);
@@ -1549,8 +1408,12 @@ export default function WeeklyMenuPage() {
           {pendingRequestId && (
             <View testID="weekly-generating-indicator">
               <ProgressTodoCard
-                progress={pendingProgress}
-                phases={pendingIsUltimate ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
+                mode={pendingIsUltimate ? "ultimate" : "normal"}
+                currentPhase={pendingProgress?.phase ?? ""}
+                progress={pendingProgress?.percentage ?? 0}
+                completedSlots={pendingProgress?.completedSlots}
+                totalSlots={pendingProgress?.totalSlots}
+                message={pendingProgress?.message}
                 defaultMessage={pendingIsUltimate ? "究極モードで献立を生成中..." : "AIが献立を生成中..."}
               />
             </View>
@@ -1836,10 +1699,50 @@ export default function WeeklyMenuPage() {
               )}
             </View>
           ) : (
-            <EmptyState
-              icon={<Ionicons name="restaurant-outline" size={40} color={colors.textMuted} />}
-              message="この日の食事がありません"
-            />
+            <View style={{ gap: spacing.sm }}>
+              {MEAL_ORDER.slice(0, 3).map((mealType) => (
+                <Pressable
+                  key={mealType}
+                  testID={`weekly-empty-slot-${selectedDay?.id ?? ""}-${mealType}`}
+                  onPress={() => {
+                    if (!selectedDay) return;
+                    setAddMealModalDayId(selectedDay.id);
+                    setAddMealModalDayDate(selectedDay.day_date);
+                    setAddMealModalMealType(mealType);
+                    setAddMealModalVisible(true);
+                  }}
+                  style={({ pressed }) => ({
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: spacing.md,
+                    padding: spacing.lg,
+                    backgroundColor: pressed ? colors.card : colors.bg,
+                    borderRadius: radius.lg,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderStyle: "dashed",
+                  })}
+                >
+                  <View
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: radius.md,
+                      backgroundColor: MEAL_CONFIG[mealType]?.color ?? colors.textMuted,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      opacity: 0.3,
+                    }}
+                  >
+                    <Ionicons name={MEAL_CONFIG[mealType]?.icon ?? "ellipse"} size={22} color="#fff" />
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 14, color: colors.textMuted }}>
+                    {MEAL_CONFIG[mealType]?.label ?? mealType} を追加
+                  </Text>
+                  <Ionicons name="add-circle-outline" size={20} color={colors.textMuted} />
+                </Pressable>
+              ))}
+            </View>
           )}
         </>
       )}
@@ -1850,9 +1753,23 @@ export default function WeeklyMenuPage() {
         visible={addMealSlotVisible}
         onClose={() => setAddMealSlotVisible(false)}
         dayId={addMealSlotDayId}
-        onSelect={(_mealType: MealType) => {
+        onSelect={(mealType: MealType) => {
           setAddMealSlotVisible(false);
+          setAddMealModalDayId(addMealSlotDayId);
+          setAddMealModalDayDate(selectedDate);
+          setAddMealModalMealType(mealType);
+          setAddMealModalVisible(true);
         }}
+      />
+
+      {/* 食事追加モーダル */}
+      <AddMealModal
+        visible={addMealModalVisible}
+        onClose={() => setAddMealModalVisible(false)}
+        dayId={addMealModalDayId}
+        dayDate={addMealModalDayDate}
+        mealType={addMealModalMealType}
+        onSuccess={() => loadData()}
       />
 
       {/* 削除確認モーダル */}
@@ -1892,7 +1809,7 @@ export default function WeeklyMenuPage() {
         selectedDate={selectedDate}
       />
 
-      {/* 旧: 栄養分析ボトムシート (非表示) */}
+      {/* 栄養分析ボトムシート (旧) */}
       <NutritionBottomSheet
         visible={nutritionSheetDay !== null}
         onClose={() => setNutritionSheetDay(null)}
@@ -1901,6 +1818,27 @@ export default function WeeklyMenuPage() {
         radarKeys={radarChartNutrients}
         weekDays={days}
       />
+
+      {/* 栄養分析詳細モーダル (PR 6-2: 26 栄養素 + AI フィードバック) */}
+      {nutritionSheetDay && (
+        <NutritionDetailModal
+          visible={nutritionSheetDay !== null}
+          onClose={() => setNutritionSheetDay(null)}
+          date={nutritionSheetDay.day_date}
+          dateLabel={nutritionSheetLabel}
+          totals={calcDayTotals(nutritionSheetDay.planned_meals)}
+          mealCount={nutritionSheetDay.planned_meals.filter((m) => m.dish_name).length}
+          radarKeys={radarChartNutrients as string[]}
+          onRadarKeysSaved={(keys) => setRadarChartNutrients(keys as (keyof DayNutritionTotals)[])}
+          weekDays={days.map((d) => ({
+            date: d.day_date,
+            meals: d.planned_meals.map((m) => ({
+              title: m.dish_name,
+              calories: m.calories_kcal,
+            })),
+          }))}
+        />
+      )}
 
       {/* フローティング AI アシスタントボタン */}
       <Pressable
