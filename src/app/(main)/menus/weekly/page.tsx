@@ -14,7 +14,7 @@ import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 // ProfileReminderBanner は dynamic import で lazy load (#322)
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED } from "@homegohan/shared";
 import remarkGfm from "remark-gfm";
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
@@ -129,58 +129,45 @@ const colors = {
   dangerLight: '#FDECEC',
 };
 
-const MODE_CONFIG: Record<string, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
-  cook: { icon: ChefHat, label: '自炊', color: colors.success, bg: colors.successLight },
-  quick: { icon: Zap, label: '時短', color: colors.blue, bg: colors.blueLight },
-  buy: { icon: Store, label: '買う', color: colors.purple, bg: colors.purpleLight },
-  out: { icon: UtensilsCrossed, label: '外食', color: colors.warning, bg: colors.warningLight },
-  skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
-  ai_creative: { icon: Sparkles, label: 'AI献立', color: colors.accent, bg: colors.accentLight },
+// アイコンマッピング (Lucide) — MODE_CONFIG の iconKey を解決するため WEB 専用で保持
+const MODE_ICON_MAP: Record<string, typeof ChefHat> = {
+  'chef-hat': ChefHat,
+  'zap': Zap,
+  'store': Store,
+  'utensils-crossed': UtensilsCrossed,
+  'fast-forward': FastForward,
+  'sparkles': Sparkles,
 };
+
+// @homegohan/shared の MODE_CONFIG_SHARED を WEB 用に変換（アイコン・実色値付き）
+const MODE_CONFIG = Object.fromEntries(
+  Object.entries(MODE_CONFIG_SHARED).map(([key, cfg]) => [
+    key,
+    {
+      icon: MODE_ICON_MAP[cfg.iconKey] ?? ChefHat,
+      label: cfg.label,
+      color: colors[cfg.colorKey],
+      bg: colors[cfg.bgColorKey],
+    },
+  ])
+) as Record<string, { icon: typeof ChefHat; label: string; color: string; bg: string }>;
 
 // モード設定を安全に取得するヘルパー（未知のモードでもエラーにならない）
 const getModeConfig = (mode?: string) => MODE_CONFIG[mode || 'cook'] || MODE_CONFIG.cook;
 
-// 役割に応じた色設定（英語・日本語両方対応）
+// getDishConfig — @homegohan/shared の定義を WEB colors で解決するラッパー
 const getDishConfig = (role?: string): { label: string; color: string; bg: string } => {
-  switch (role) {
-    case 'main':
-    case '主菜':
-    case '主食':
-      return { label: '主菜', color: colors.accent, bg: colors.accentLight };
-    case 'side':
-    case 'side1':
-    case 'side2':
-    case '副菜':
-    case '副食':
-      return { label: '副菜', color: colors.success, bg: colors.successLight };
-    case 'soup':
-    case '汁物':
-    case '味噌汁':
-      return { label: '汁物', color: colors.blue, bg: colors.blueLight };
-    case 'rice':
-    case 'ご飯':
-    case '白飯':
-      return { label: 'ご飯', color: colors.warning, bg: colors.warningLight };
-    case 'salad':
-    case 'サラダ':
-      return { label: 'サラダ', color: colors.success, bg: colors.successLight };
-    case 'dessert':
-    case 'デザート':
-    case 'フルーツ':
-      return { label: 'デザート', color: colors.purple, bg: colors.purpleLight };
-    default:
-      return { label: role || 'おかず', color: colors.textLight, bg: colors.bg };
-  }
+  const cfg = getDishConfigShared(role);
+  const colorKey = cfg.colorKey as keyof typeof colors;
+  const bgKey = (cfg.colorKey + 'Light') as keyof typeof colors;
+  return {
+    label: cfg.label,
+    color: colors[colorKey] ?? colors.textMuted,
+    bg: colorKey === 'textMuted' ? colors.bg : (colors[bgKey] ?? colors.bg),
+  };
 };
 
-const MEAL_LABELS: Record<MealType, string> = { 
-  breakfast: '朝食', 
-  lunch: '昼食', 
-  dinner: '夕食',
-  snack: 'おやつ',
-  midnight_snack: '夜食'
-};
+// MEAL_LABELS は @homegohan/shared からインポート (MealType の型付き Record)
 
 // AIが自動生成する基本の3食
 const BASE_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
@@ -248,57 +235,9 @@ const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: {
   );
 };
 
+// PROGRESS_PHASES / ULTIMATE_PROGRESS_PHASES / SHOPPING_LIST_PHASES / PhaseDefinition は @homegohan/shared からインポート
+
 // 進捗ToDoカード（タップで展開）
-// 通常モード用（3ステップ）
-const PROGRESS_PHASES = [
-  { phase: 'user_context', label: 'ユーザー情報を取得', threshold: 5 },
-  { phase: 'search_references', label: '参考レシピを検索', threshold: 10 },
-  { phase: 'generating', label: '献立をAIが作成', threshold: 15 },
-  { phase: 'step1_complete', label: '献立生成完了', threshold: 40 },
-  { phase: 'reviewing', label: '献立のバランスをチェック', threshold: 45 },
-  { phase: 'review_done', label: '改善点を発見', threshold: 55 },
-  { phase: 'fixing', label: '改善点を修正', threshold: 60 },
-  { phase: 'no_issues', label: '問題なし', threshold: 70 },
-  { phase: 'step2_complete', label: 'レビュー完了', threshold: 75 },
-  { phase: 'calculating', label: '栄養価を計算', threshold: 80 },
-  { phase: 'saving', label: '献立を保存', threshold: 88 },
-  { phase: 'completed', label: '完了！', threshold: 100 },
-];
-
-// 究極モード用（6ステップ）
-const ULTIMATE_PROGRESS_PHASES = [
-  { phase: 'user_context', label: 'ユーザー情報を取得', threshold: 3 },
-  { phase: 'search_references', label: '参考レシピを検索', threshold: 6 },
-  { phase: 'generating', label: '献立をAIが作成', threshold: 10 },
-  { phase: 'step1_complete', label: '献立生成完了', threshold: 25 },
-  { phase: 'reviewing', label: '献立のバランスをチェック', threshold: 28 },
-  { phase: 'fixing', label: '改善点を修正', threshold: 32 },
-  { phase: 'step2_complete', label: 'レビュー完了', threshold: 38 },
-  { phase: 'calculating', label: '栄養価を計算', threshold: 42 },
-  { phase: 'step3_complete', label: '栄養計算完了', threshold: 48 },
-  // 究極モード専用フェーズ
-  { phase: 'nutrition_analyzing', label: '栄養バランスを詳細分析', threshold: 55 },
-  { phase: 'nutrition_feedback', label: '改善アドバイスを生成', threshold: 62 },
-  { phase: 'improving', label: '献立を改善中', threshold: 70 },
-  { phase: 'step5_complete', label: '改善完了', threshold: 82 },
-  { phase: 'final_saving', label: '最終保存中', threshold: 90 },
-  { phase: 'completed', label: '究極の献立が完成！', threshold: 100 },
-];
-
-// 買い物リスト再生成の進捗フェーズ
-const SHOPPING_LIST_PHASES = [
-  { phase: 'starting', label: '開始中...', threshold: 0 },
-  { phase: 'extracting', label: '献立から材料を抽出', threshold: 10 },
-  { phase: 'normalizing', label: 'AIが材料を整理中', threshold: 30 },
-  { phase: 'validating', label: '整合性チェック', threshold: 60 },
-  { phase: 'categorizing', label: 'カテゴリ分類', threshold: 70 },
-  { phase: 'saving', label: '保存中', threshold: 85 },
-  { phase: 'completed', label: '完了！', threshold: 100 },
-  { phase: 'failed', label: 'エラーが発生しました', threshold: 0 },
-];
-
-type PhaseDefinition = { phase: string; label: string; threshold: number };
-
 const ProgressTodoCard = ({ 
   progress, 
   colors: cardColors,
@@ -521,7 +460,7 @@ const formatRecipeStepsToMarkdown = (recipeStepsText: string | null | undefined,
   }
   return '';
 };
-const AI_CONDITIONS = ['冷蔵庫の食材を優先', '時短メニュー中心', '和食多め', 'ヘルシーに'];
+// AI_CONDITIONS は @homegohan/shared からインポート
 
 // Helper functions
 const formatLocalDate = (date: Date): string => {
