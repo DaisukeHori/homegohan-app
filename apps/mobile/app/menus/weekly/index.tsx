@@ -25,6 +25,7 @@ import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
 import { NutritionDetailModal } from "../../../src/components/menu/NutritionDetailModal";
+import { RegenerateMealModal } from "../../../src/components/menu/RegenerateMealModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
@@ -636,6 +637,10 @@ export default function WeeklyMenuPage() {
 
   // RecipeModal state
   const [recipeModalMeal, setRecipeModalMeal] = useState<RecipeModalMeal | null>(null);
+
+  // RegenerateMealModal state
+  const [showRegenerateModal, setShowRegenerateModal] = useState(false);
+  const [selectedMealForRegen, setSelectedMealForRegen] = useState<PlannedMealRow | null>(null);
 
   useEffect(() => {
     const fetchRadarProfile = async () => {
@@ -1568,7 +1573,10 @@ export default function WeeklyMenuPage() {
                           <Text style={{ fontSize: 11, color: colors.textLight }}>レシピ</Text>
                         </Pressable>
                         <Pressable
-                          onPress={() => regenerateMeal(m.id, m.meal_type)}
+                          onPress={() => {
+                            setSelectedMealForRegen(m);
+                            setShowRegenerateModal(true);
+                          }}
                           disabled={!!regeneratingMealId}
                           style={{
                             flexDirection: "row",
@@ -1583,6 +1591,7 @@ export default function WeeklyMenuPage() {
                           }}
                         >
                           <Ionicons name="refresh" size={14} color={regeneratingMealId === m.id ? colors.accent : colors.textLight} />
+                          <Text style={{ fontSize: 11, color: regeneratingMealId === m.id ? colors.accent : colors.textLight }}>AIで変更</Text>
                         </Pressable>
                         <Pressable
                           testID={`weekly-meal-delete-btn-${m.id}`}
@@ -1800,6 +1809,14 @@ export default function WeeklyMenuPage() {
         visible={recipeModalMeal !== null}
         meal={recipeModalMeal}
         onClose={() => setRecipeModalMeal(null)}
+      />
+      <RegenerateMealModal
+        visible={showRegenerateModal}
+        meal={selectedMealForRegen}
+        onClose={() => {
+          setShowRegenerateModal(false);
+          setSelectedMealForRegen(null);
+        }}
       />
     </View>
   );
