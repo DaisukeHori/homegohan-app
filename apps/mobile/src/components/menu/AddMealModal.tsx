@@ -12,6 +12,7 @@ import {
 } from "react-native";
 
 import type { MealType } from "@homegohan/shared";
+import { MEAL_LABELS } from "@homegohan/shared";
 import { getApi } from "../../lib/api";
 import { colors, radius, shadows, spacing } from "../../theme";
 
@@ -29,7 +30,16 @@ interface CatalogProduct {
   priceYen: number | null;
 }
 
-type Mode = "cook" | "buy" | "out" | "quick";
+type ActionMode = "cook" | "quick" | "buy" | "out" | "ai_creative";
+
+interface ActionConfig {
+  mode: ActionMode;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  bgColor: string;
+  textColor: string;
+  outline?: boolean;
+}
 
 interface Props {
   visible: boolean;
@@ -40,31 +50,79 @@ interface Props {
   dayDate: string;
   mealType: MealType;
   onSuccess?: () => void;
+  /** 「AIに提案してもらう」タップ時のコールバック (未指定時は何もしない) */
+  onRequestAiSuggest?: () => void;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const MODE_CONFIG: Record<Mode, { label: string; icon: keyof typeof Ionicons.glyphMap; bg: string; color: string }> = {
-  cook:  { label: "自炊",   icon: "restaurant-outline",  bg: colors.successLight, color: colors.success },
-  quick: { label: "時短",   icon: "flash-outline",       bg: colors.blueLight,    color: colors.blue },
-  buy:   { label: "買う",   icon: "bag-handle-outline",  bg: colors.purpleLight,  color: colors.purple },
-  out:   { label: "外食",   icon: "fork-outline" as any, bg: colors.warningLight, color: colors.warning },
-};
+const ACTIONS: ActionConfig[] = [
+  {
+    mode: "cook",
+    label: "自炊で追加",
+    icon: "restaurant-outline",
+    bgColor: colors.successLight,
+    textColor: colors.success,
+  },
+  {
+    mode: "quick",
+    label: "時短で追加",
+    icon: "flash-outline",
+    bgColor: colors.blueLight,
+    textColor: colors.blue,
+  },
+  {
+    mode: "buy",
+    label: "買うで追加",
+    icon: "bag-handle-outline",
+    bgColor: colors.purpleLight,
+    textColor: colors.purple,
+  },
+  {
+    mode: "out",
+    label: "外食で追加",
+    icon: "fork-knife-outline" as keyof typeof Ionicons.glyphMap,
+    bgColor: colors.warningLight,
+    textColor: colors.warning,
+  },
+  {
+    mode: "ai_creative",
+    label: "AI献立で追加",
+    icon: "sparkles" as keyof typeof Ionicons.glyphMap,
+    bgColor: colors.accentLight,
+    textColor: colors.accent,
+  },
+];
 
-const MODES: Mode[] = ["cook", "quick", "buy", "out"];
+const DEFAULT_DISH_NAMES: Record<ActionMode, string> = {
+  cook: "自炊メニュー",
+  quick: "時短メニュー",
+  buy: "コンビニ・惣菜",
+  out: "外食",
+  ai_creative: "AI献立",
+};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealType, onSuccess }: Props) {
+export function AddMealModal({
+  visible,
+  onClose,
+  dayId: _dayId,
+  dayDate,
+  mealType,
+  onSuccess,
+  onRequestAiSuggest,
+}: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogProduct[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<CatalogProduct | null>(null);
-  const [selectedMode, setSelectedMode] = useState<Mode>("cook");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const cancelledRef = useRef(false);
+
+  const mealLabel = MEAL_LABELS[mealType] ?? "食事";
 
   // Reset state when modal opens
   useEffect(() => {
@@ -74,7 +132,6 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
       setIsSearching(false);
       setSearchError("");
       setSelectedProduct(null);
-      setSelectedMode("cook");
       setIsSubmitting(false);
     }
   }, [visible]);
@@ -115,19 +172,21 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
     };
   }, [query]);
 
-  async function handleSubmit() {
+  const submitAction = async (mode: ActionMode) => {
     if (isSubmitting) return;
     setIsSubmitting(true);
     try {
       const api = getApi();
+      const catalogProduct =
+        (mode === "buy" || mode === "out") ? selectedProduct : null;
       await api.post("/api/meal-plans/meals", {
         dayDate,
         mealType,
-        mode: selectedMode,
-        dishName: (selectedProduct?.name ?? query.trim()) || "未設定",
+        mode,
+        dishName: catalogProduct?.name ?? DEFAULT_DISH_NAMES[mode],
         isSimple: true,
-        catalogProductId: selectedProduct?.id ?? undefined,
-        caloriesKcal: selectedProduct?.caloriesKcal ?? undefined,
+        catalogProductId: catalogProduct?.id ?? null,
+        sourceType: catalogProduct ? "catalog_product" : "manual",
       });
       onSuccess?.();
       onClose();
@@ -136,7 +195,12 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
     } finally {
       setIsSubmitting(false);
     }
-  }
+  };
+
+  const handleAiSuggest = () => {
+    onClose();
+    onRequestAiSuggest?.();
+  };
 
   return (
     <Modal
@@ -175,7 +239,7 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
             }}
           >
             <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
-              食事を追加
+              {mealLabel}を追加
             </Text>
             <Pressable onPress={onClose} hitSlop={8} style={{ padding: 4 }}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
@@ -187,10 +251,12 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
             contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}
             keyboardShouldPersistTaps="handled"
           >
-            {/* 検索 */}
+            {/* 検索セクションヘッダー */}
             <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 4 }}>
               市販品・外食メニューから選ぶ
             </Text>
+
+            {/* 検索 input */}
             <View
               style={{
                 flexDirection: "row",
@@ -225,6 +291,11 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
               {isSearching && <ActivityIndicator size="small" color={colors.accent} />}
             </View>
 
+            {/* ヒント文 */}
+            <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+              選んだ商品は「買う」か「外食」で追加すると公開栄養値ごと保存されます。
+            </Text>
+
             {/* 検索状態メッセージ */}
             {isSearching && (
               <Text style={{ fontSize: 12, color: colors.textMuted }}>検索中...</Text>
@@ -246,9 +317,9 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
                       style={{
                         padding: spacing.md,
                         borderRadius: radius.lg,
-                        backgroundColor: isSelected ? colors.accentLight : colors.card,
+                        backgroundColor: isSelected ? colors.purpleLight : colors.card,
                         borderWidth: 1,
-                        borderColor: isSelected ? colors.accent : colors.border,
+                        borderColor: isSelected ? colors.purple : colors.border,
                         flexDirection: "row",
                         alignItems: "flex-start",
                         justifyContent: "space-between",
@@ -300,95 +371,86 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
                   gap: spacing.sm,
                   paddingVertical: spacing.sm,
                   paddingHorizontal: spacing.md,
-                  backgroundColor: colors.accentLight,
+                  backgroundColor: colors.purpleLight,
                   borderRadius: radius.md,
                   borderWidth: 1,
-                  borderColor: colors.accent,
+                  borderColor: colors.purple,
                 }}
               >
-                <Ionicons name="checkmark-circle" size={16} color={colors.accent} />
+                <Ionicons name="checkmark-circle" size={16} color={colors.purple} />
                 <Text style={{ flex: 1, fontSize: 13, color: colors.text, fontWeight: "600" }}>
                   {selectedProduct.name}
                 </Text>
-                <Pressable onPress={() => setSelectedProduct(null)} hitSlop={8}>
+                <Pressable
+                  onPress={() => {
+                    setSelectedProduct(null);
+                    setQuery("");
+                    setResults([]);
+                  }}
+                  hitSlop={8}
+                >
                   <Ionicons name="close-circle" size={16} color={colors.textMuted} />
                 </Pressable>
               </View>
             )}
 
-            {/* モード選択 */}
-            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text, marginTop: spacing.sm }}>
-              追加方法
-            </Text>
-            <View style={{ gap: spacing.sm }}>
-              {MODES.map((mode) => {
-                const cfg = MODE_CONFIG[mode];
-                const isActive = selectedMode === mode;
-                return (
-                  <Pressable
-                    key={mode}
-                    testID={`add-meal-mode-${mode}`}
-                    onPress={() => setSelectedMode(mode)}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: spacing.md,
-                      padding: spacing.md,
-                      borderRadius: radius.lg,
-                      backgroundColor: isActive ? cfg.bg : colors.card,
-                      borderWidth: 1,
-                      borderColor: isActive ? cfg.color : colors.border,
-                    }}
-                  >
-                    <Ionicons name={cfg.icon} size={20} color={cfg.color} />
-                    <Text style={{ fontSize: 14, fontWeight: isActive ? "700" : "500", color: colors.text }}>
-                      {cfg.label}で追加
-                    </Text>
-                    {isActive && (
-                      <View style={{ marginLeft: "auto" }}>
-                        <Ionicons name="checkmark-circle" size={18} color={cfg.color} />
-                      </View>
-                    )}
-                  </Pressable>
-                );
-              })}
+            {/* 6 アクションボタン */}
+            <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+              {ACTIONS.map((action) => (
+                <Pressable
+                  key={action.mode}
+                  testID={`add-meal-action-${action.mode}`}
+                  onPress={() => submitAction(action.mode)}
+                  disabled={isSubmitting}
+                  style={({ pressed }) => ({
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: spacing.sm,
+                    padding: spacing.md,
+                    borderRadius: radius.lg,
+                    backgroundColor: action.bgColor,
+                    opacity: pressed || isSubmitting ? 0.7 : 1,
+                  })}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color={action.textColor} />
+                  ) : (
+                    <Ionicons name={action.icon} size={20} color={action.textColor} />
+                  )}
+                  <Text style={{ fontSize: 14, fontWeight: "500", color: action.textColor }}>
+                    {action.label}
+                  </Text>
+                </Pressable>
+              ))}
+
+              {/* AIに提案してもらう (outline ボタン) */}
+              <Pressable
+                testID="add-meal-action-ai_suggest"
+                onPress={handleAiSuggest}
+                disabled={isSubmitting}
+                style={({ pressed }) => ({
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                  padding: spacing.md,
+                  borderRadius: radius.lg,
+                  backgroundColor: colors.accentLight,
+                  borderWidth: 1.5,
+                  borderColor: colors.accent,
+                  opacity: pressed || isSubmitting ? 0.7 : 1,
+                })}
+              >
+                <Ionicons
+                  name={"sparkles" as keyof typeof Ionicons.glyphMap}
+                  size={20}
+                  color={colors.accent}
+                />
+                <Text style={{ fontSize: 14, fontWeight: "500", color: colors.accent }}>
+                  AIに提案してもらう
+                </Text>
+              </Pressable>
             </View>
           </ScrollView>
-
-          {/* 追加ボタン */}
-          <View
-            style={{
-              paddingHorizontal: spacing.lg,
-              paddingTop: spacing.md,
-              borderTopWidth: 1,
-              borderTopColor: colors.border,
-            }}
-          >
-            <Pressable
-              testID="add-meal-submit-btn"
-              onPress={handleSubmit}
-              disabled={isSubmitting}
-              style={({ pressed }) => ({
-                alignItems: "center",
-                justifyContent: "center",
-                paddingVertical: spacing.md,
-                borderRadius: radius.lg,
-                backgroundColor: isSubmitting ? colors.textMuted : colors.accent,
-                opacity: pressed || isSubmitting ? 0.8 : 1,
-                flexDirection: "row",
-                gap: spacing.sm,
-              })}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Ionicons name="add-circle-outline" size={18} color="#fff" />
-              )}
-              <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>
-                {isSubmitting ? "追加中..." : "追加"}
-              </Text>
-            </Pressable>
-          </View>
         </View>
       </View>
     </Modal>
