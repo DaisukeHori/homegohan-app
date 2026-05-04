@@ -13,8 +13,10 @@ import {
 } from "react-native";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition, type MealType } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
+import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
+import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
 import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
@@ -717,6 +719,11 @@ export default function WeeklyMenuPage() {
   // Modal state (将来用 — Phase 5/6 で各モーダルを open する)
   const [activeModal, setActiveModal] = useState<'stats' | 'fridge' | 'shopping' | null>(null);
   const [showServingsModal, setShowServingsModal] = useState(false);
+  const [deleteTargetMeal, setDeleteTargetMeal] = useState<{ id: string; name: string } | null>(null);
+
+  // AddMealSlotModal state
+  const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
+  const [addMealSlotDayId, setAddMealSlotDayId] = useState<string>("");
 
   useEffect(() => {
     const fetchRadarProfile = async () => {
@@ -1055,6 +1062,23 @@ export default function WeeklyMenuPage() {
       setError(e?.message ?? "再生成に失敗しました。");
     } finally {
       setRegeneratingMealId(null);
+    }
+  }
+
+  async function deleteMeal(mealId: string) {
+    try {
+      const base = getApiBaseUrl();
+      const { data: { session } } = await supabase.auth.getSession();
+      const r = await fetch(`${base}/api/meal-plans/meals/${mealId}`, {
+        method: "DELETE",
+        headers: {
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+      });
+      if (!r.ok) throw new Error(`DELETE failed: ${r.status}`);
+      await loadData();
+    } catch (e: any) {
+      setError(e?.message ?? "削除に失敗しました。");
     }
   }
 
@@ -1599,9 +1623,49 @@ export default function WeeklyMenuPage() {
                         >
                           <Ionicons name="refresh" size={14} color={regeneratingMealId === m.id ? colors.accent : colors.textLight} />
                         </Pressable>
+                        <Pressable
+                          testID={`weekly-meal-delete-btn-${m.id}`}
+                          onPress={() => setDeleteTargetMeal({ id: m.id, name: m.dish_name || "この食事" })}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 4,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: radius.sm,
+                            backgroundColor: colors.errorLight,
+                            borderWidth: 1,
+                            borderColor: colors.error,
+                          }}
+                        >
+                          <Ionicons name="trash-outline" size={14} color={colors.error} />
+                        </Pressable>
                       </View>
                     );
                   })}
+
+                  {/* +食事タイプ追加ボタン */}
+                  <Pressable
+                    testID="weekly-add-meal-type-btn"
+                    onPress={() => {
+                      setAddMealSlotDayId(selectedDay.id);
+                      setAddMealSlotVisible(true);
+                    }}
+                    style={({ pressed }) => ({
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 4,
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                      borderRadius: radius.sm,
+                      backgroundColor: pressed ? colors.accentLight : colors.card,
+                      borderWidth: 1,
+                      borderColor: colors.accent,
+                    })}
+                  >
+                    <Ionicons name="add" size={14} color={colors.accent} />
+                    <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "600" }}>食事タイプ追加</Text>
+                  </Pressable>
                 </View>
               )}
             </View>
@@ -1614,6 +1678,29 @@ export default function WeeklyMenuPage() {
         </>
       )}
       </ScrollView>
+
+      {/* 食事タイプ選択モーダル */}
+      <AddMealSlotModal
+        visible={addMealSlotVisible}
+        onClose={() => setAddMealSlotVisible(false)}
+        dayId={addMealSlotDayId}
+        onSelect={(_mealType: MealType) => {
+          setAddMealSlotVisible(false);
+        }}
+      />
+
+      {/* 削除確認モーダル */}
+      <ConfirmDeleteModal
+        visible={deleteTargetMeal !== null}
+        mealName={deleteTargetMeal?.name ?? ""}
+        onCancel={() => setDeleteTargetMeal(null)}
+        onConfirm={async () => {
+          if (!deleteTargetMeal) return;
+          const id = deleteTargetMeal.id;
+          setDeleteTargetMeal(null);
+          await deleteMeal(id);
+        }}
+      />
 
       {/* 栄養分析ボトムシート */}
       <NutritionBottomSheet
