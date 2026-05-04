@@ -671,6 +671,14 @@ export default function ProfilePage() {
         {/* ── リンクメニュー ── */}
         <View style={{ gap: spacing.sm }}>
           <ListItem
+            testID="profile-favorites-link"
+            title="お気に入りレシピ"
+            subtitle="保存したお気に入りを確認"
+            onPress={() => router.push("/favorites")}
+            left={<View style={[s.menuIcon, { backgroundColor: colors.accentLight }]}><Ionicons name="heart-outline" size={18} color={colors.accent} /></View>}
+            right={<Ionicons name="chevron-forward" size={20} color={colors.textMuted} />}
+          />
+          <ListItem
             title="栄養目標"
             subtitle="目標値の確認・再計算"
             onPress={() => router.push("/profile/nutrition-targets")}

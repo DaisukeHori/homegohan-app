@@ -85,11 +85,7 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="favorites"
-        options={{
-          title: "お気に入り",
-          tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
-          tabBarButtonTestID: "tab-favorites",
-        }}
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="comparison"
