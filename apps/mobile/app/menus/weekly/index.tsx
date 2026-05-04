@@ -18,6 +18,8 @@ import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONF
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
+import { EmptySlot } from "../../../src/components/menu/EmptySlot";
+import { EmptySlotAIBanner } from "../../../src/components/menu/EmptySlotAIBanner";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
 import { ImproveMealModal } from "../../../src/components/menu/ImproveMealModal";
 import { ProgressTodoCard } from "../../../src/components/menu/ProgressTodoCard";
@@ -828,6 +830,21 @@ export default function WeeklyMenuPage() {
 
   const selectedDay = useMemo(() => days.find((d) => d.day_date === selectedDate) ?? null, [days, selectedDate]);
 
+  const emptySlotCount = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let count = 0;
+    for (const day of days) {
+      const dayDate = new Date(day.day_date + "T00:00:00");
+      if (dayDate < today) continue;
+      const filledTypes = new Set(day.planned_meals.map((m) => m.meal_type));
+      for (const type of ["breakfast", "lunch", "dinner"]) {
+        if (!filledTypes.has(type)) count++;
+      }
+    }
+    return count;
+  }, [days]);
+
   function shiftWeek(delta: number) {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + delta * 7);
@@ -1356,16 +1373,6 @@ export default function WeeklyMenuPage() {
           </View>
           <Button size="sm" variant="ghost" onPress={() => { setError(null); loadData(); }}>再読み込み</Button>
         </Card>
-      ) : !plan ? (
-        <View style={{ gap: spacing.lg, paddingTop: spacing["3xl"] }}>
-          <EmptyState
-            icon={<Ionicons name="restaurant-outline" size={48} color={colors.textMuted} />}
-            message="この週の献立がまだありません"
-          />
-          <Button testID="weekly-request-button" onPress={() => router.push("/menus/weekly/request")}>
-            AIで週間献立を作成
-          </Button>
-        </View>
       ) : (
         <>
           {/* AI生成中プログレス */}
@@ -1475,6 +1482,12 @@ export default function WeeklyMenuPage() {
             </Pressable>
           </View>
 
+          {/* AI バナー — 空欄件数表示 */}
+          <EmptySlotAIBanner
+            emptySlotCount={emptySlotCount}
+            onPress={() => setShowV4Modal(true)}
+          />
+
           {/* 選択日のサマリ */}
           {selectedDay && daySummary.total > 0 && (
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -1505,9 +1518,30 @@ export default function WeeklyMenuPage() {
             </View>
           )}
 
-          {/* 食事一覧 */}
-          {sortedMeals.length > 0 ? (
+          {/* 食事一覧 — 朝食/昼食/夕食スロットを常時表示 */}
+          {selectedDay && (
             <View style={{ gap: spacing.md }}>
+              {(["breakfast", "lunch", "dinner"] as const).map((mealType) => {
+                const m = sortedMeals.find((meal) => meal.meal_type === mealType);
+                if (!m) {
+                  return (
+                    <EmptySlot
+                      key={mealType}
+                      mealType={mealType}
+                      dayId={selectedDay.id}
+                      dayDate={selectedDay.day_date}
+                      mealLabel={MEAL_CONFIG[mealType]?.label ?? mealType}
+                      onPress={() => {
+                        setAddMealModalDayId(selectedDay.id);
+                        setAddMealModalDayDate(selectedDay.day_date);
+                        setAddMealModalMealType(mealType);
+                        setAddMealModalVisible(true);
+                      }}
+                    />
+                  );
+                }
+                return null;
+              })}
               {sortedMeals.map((m) => {
                 const mealCfg = MEAL_CONFIG[m.meal_type] ?? { icon: "ellipse", label: m.meal_type, color: colors.textMuted };
                 const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
@@ -1838,51 +1872,6 @@ export default function WeeklyMenuPage() {
                   </Pressable>
                 </View>
               )}
-            </View>
-          ) : (
-            <View style={{ gap: spacing.sm }}>
-              {MEAL_ORDER.slice(0, 3).map((mealType) => (
-                <Pressable
-                  key={mealType}
-                  testID={`weekly-empty-slot-${selectedDay?.id ?? ""}-${mealType}`}
-                  onPress={() => {
-                    if (!selectedDay) return;
-                    setAddMealModalDayId(selectedDay.id);
-                    setAddMealModalDayDate(selectedDay.day_date);
-                    setAddMealModalMealType(mealType);
-                    setAddMealModalVisible(true);
-                  }}
-                  style={({ pressed }) => ({
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: spacing.md,
-                    padding: spacing.lg,
-                    backgroundColor: pressed ? colors.card : colors.bg,
-                    borderRadius: radius.lg,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    borderStyle: "dashed",
-                  })}
-                >
-                  <View
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: radius.md,
-                      backgroundColor: MEAL_CONFIG[mealType]?.color ?? colors.textMuted,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      opacity: 0.3,
-                    }}
-                  >
-                    <Ionicons name={MEAL_CONFIG[mealType]?.icon ?? "ellipse"} size={22} color="#fff" />
-                  </View>
-                  <Text style={{ flex: 1, fontSize: 14, color: colors.textMuted }}>
-                    {MEAL_CONFIG[mealType]?.label ?? mealType} を追加
-                  </Text>
-                  <Ionicons name="add-circle-outline" size={20} color={colors.textMuted} />
-                </Pressable>
-              ))}
             </View>
           )}
         </>
