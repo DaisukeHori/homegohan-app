@@ -1,0 +1,41 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 11: RecipeModal — レシピ詳細モーダルの表示・お気に入り・買い物リスト追加
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-screen"
+# 今週にメニューがある日を選択（最初の日付をタップ）
+- tapOn:
+    id: "weekly-day-tab-0"
+# レシピボタンをタップ
+- tapOn:
+    text: "レシピ"
+# モーダルが開くことを確認
+- assertVisible:
+    id: "recipe-modal"
+# お気に入りボタンが表示されること
+- assertVisible:
+    id: "recipe-favorite-btn"
+# 買い物リスト追加ボタンが表示されること
+- assertVisible:
+    id: "recipe-add-to-shopping-btn"
+# dish が少なくとも1つ表示されること
+- assertVisible:
+    id: "recipe-dish-0"
+# お気に入りトグル
+- tapOn:
+    id: "recipe-favorite-btn"
+# モーダルを閉じる
+- tapOn:
+    text: "✕"

@@ -18,6 +18,7 @@ import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../sr
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
+import { RecipeModal, type RecipeModalMeal } from "../../../src/components/menu/RecipeModal";
 import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
@@ -65,6 +66,17 @@ type PlannedMealRow = {
   vitamin_k_ug: number | null;
   folic_acid_ug: number | null;
   saturated_fat_g: number | null;
+  // recipe fields
+  ingredients: string[] | null;
+  recipe_steps: string[] | null;
+  dishes: Array<{
+    name: string;
+    role?: string;
+    ingredients?: string[];
+    ingredientsMd?: string;
+    recipeSteps?: string[];
+    recipeStepsMd?: string;
+  }> | null;
 };
 
 type DayRow = {
@@ -763,6 +775,9 @@ export default function WeeklyMenuPage() {
   const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
   const [addMealSlotDayId, setAddMealSlotDayId] = useState<string>("");
 
+  // RecipeModal state
+  const [recipeModalMeal, setRecipeModalMeal] = useState<RecipeModalMeal | null>(null);
+
   useEffect(() => {
     const fetchRadarProfile = async () => {
       try {
@@ -916,6 +931,11 @@ export default function WeeklyMenuPage() {
           vitamin_k_ug:    m.vitaminKUg     ?? null,
           folic_acid_ug:   m.folicAcidUg    ?? null,
           saturated_fat_g: m.saturatedFatG  ?? null,
+          // recipe fields
+          role:            m.role            ?? null,
+          ingredients:     m.ingredients     ?? null,
+          recipe_steps:    m.recipeSteps     ?? null,
+          dishes:          m.dishes          ?? null,
         })),
       }));
 
@@ -1655,6 +1675,35 @@ export default function WeeklyMenuPage() {
                           <Ionicons name="create-outline" size={14} color={colors.textLight} />
                           <Text style={{ fontSize: 11, color: colors.textLight }}>{mealCfg.label}</Text>
                         </Pressable>
+                        {/* レシピボタン */}
+                        <Pressable
+                          onPress={() => setRecipeModalMeal({
+                            id: m.id,
+                            dish_name: m.dish_name,
+                            calories_kcal: m.calories_kcal,
+                            protein_g: m.protein_g,
+                            fat_g: m.fat_g,
+                            carbs_g: m.carbs_g,
+                            ingredients: m.ingredients ?? undefined,
+                            recipe_steps: m.recipe_steps ?? undefined,
+                            dishes: m.dishes ?? undefined,
+                            role: m.role ?? undefined,
+                          })}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 4,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: radius.sm,
+                            backgroundColor: colors.card,
+                            borderWidth: 1,
+                            borderColor: colors.border,
+                          }}
+                        >
+                          <Ionicons name="book-outline" size={14} color={colors.textLight} />
+                          <Text style={{ fontSize: 11, color: colors.textLight }}>レシピ</Text>
+                        </Pressable>
                         <Pressable
                           onPress={() => regenerateMeal(m.id, m.meal_type)}
                           disabled={!!regeneratingMealId}
@@ -1806,6 +1855,13 @@ export default function WeeklyMenuPage() {
       <ServingsModal
         visible={showServingsModal}
         onClose={() => setShowServingsModal(false)}
+      />
+
+      {/* レシピ詳細モーダル */}
+      <RecipeModal
+        visible={recipeModalMeal !== null}
+        meal={recipeModalMeal}
+        onClose={() => setRecipeModalMeal(null)}
       />
     </View>
   );
