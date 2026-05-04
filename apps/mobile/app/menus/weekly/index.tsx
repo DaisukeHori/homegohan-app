@@ -1423,8 +1423,8 @@ export default function WeeklyMenuPage() {
             </View>
           )}
 
-          {/* 日付セレクタ — 横並び丸型ピル */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+          {/* 日付セレクタ — 7日固定横並び (flex均等配置) */}
+          <View style={{ flexDirection: "row" }}>
             {days.map((d) => {
               const selected = d.day_date === selectedDate;
               const dow = getDayOfWeek(d.day_date);
@@ -1444,34 +1444,31 @@ export default function WeeklyMenuPage() {
                   testID={`weekly-day-tab-${d.day_date}`}
                   onPress={() => setSelectedDate(d.day_date)}
                   style={({ pressed }) => ({
+                    flex: 1,
                     alignItems: "center",
                     gap: 4,
                     paddingVertical: spacing.sm,
-                    paddingHorizontal: spacing.md,
+                    paddingHorizontal: 2,
                     borderRadius: radius.lg,
-                    backgroundColor: selected ? (accentColor ?? colors.accent) : colors.card,
-                    borderWidth: 1,
-                    borderColor: selected ? (accentColor ?? colors.accent) : (accentColor ? `${accentColor}33` : colors.border),
-                    minWidth: 48,
-                    ...shadows.sm,
+                    backgroundColor: selected ? (accentColor ?? colors.accent) : "transparent",
                     ...(pressed ? { opacity: 0.9 } : {}),
                   })}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: "600", color: selected ? "#fff" : (accentColor ?? colors.textMuted) }}>{dow}</Text>
-                  <Text style={{ fontSize: 16, fontWeight: "800", color: selected ? "#fff" : (accentColor ?? colors.text) }}>{dayNum}</Text>
+                  <Text style={{ fontSize: 9, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>{dayNum}</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: selected ? "#fff" : (accentColor ?? colors.text) }}>{dow}</Text>
                   {completedAll ? (
-                    <Ionicons name="checkmark-circle" size={14} color={selected ? "#fff" : colors.success} />
+                    <Ionicons name="checkmark-circle" size={12} color={selected ? "#fff" : colors.success} />
                   ) : hasGenerating ? (
-                    <ActivityIndicator size={12} color={selected ? "#fff" : (accentColor ?? colors.accent)} />
+                    <ActivityIndicator size={10} color={selected ? "#fff" : (accentColor ?? colors.accent)} />
                   ) : (
-                    <Text style={{ fontSize: 10, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>
+                    <Text style={{ fontSize: 9, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>
                       {d.planned_meals.length}食
                     </Text>
                   )}
                 </Pressable>
               );
             })}
-          </ScrollView>
+          </View>
 
           {/* 選択日のサマリ */}
           {selectedDay && daySummary.total > 0 && (
