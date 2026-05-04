@@ -1,0 +1,22 @@
+appId: com.homegohan.app
+---
+- launchApp
+- tapOn:
+    text: "ほめゴハン"
+- tapOn:
+    id: "tab-menus"
+- tapOn:
+    id: "header-shopping-btn"
+- assertVisible:
+    id: "shopping-list-modal"
+- tapOn:
+    id: "shopping-list-add-btn"
+- assertVisible:
+    id: "add-shopping-modal"
+- tapOn:
+    id: "add-shopping-name-input"
+- inputText: "テストアイテム"
+- tapOn:
+    id: "add-shopping-submit-btn"
+- assertVisible:
+    text: "テストアイテム"

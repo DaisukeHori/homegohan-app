@@ -28,6 +28,7 @@ import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
 import { NutritionDetailModal } from "../../../src/components/menu/NutritionDetailModal";
 import { RegenerateMealModal } from "../../../src/components/menu/RegenerateMealModal";
+import { ShoppingListModal } from "../../../src/components/menu/ShoppingListModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
@@ -1192,10 +1193,7 @@ export default function WeeklyMenuPage() {
           console.log('fridge modal placeholder');
           setActiveModal('fridge');
         }}
-        onPressShopping={() => {
-          console.log('shopping modal placeholder');
-          setActiveModal('shopping');
-        }}
+        onPressShopping={() => setActiveModal('shopping')}
       />
 
       {/* V4 AI アシスタント モーダル */}
@@ -1809,6 +1807,14 @@ export default function WeeklyMenuPage() {
         userId={profile?.id ?? ''}
         weekDayLabels={getDayLabels(weekStartDay)}
         todayMeals={todayMealsForStats}
+      />
+
+      {/* 買い物リストモーダル */}
+      <ShoppingListModal
+        visible={activeModal === 'shopping'}
+        onClose={() => setActiveModal(null)}
+        onOpenAdd={() => {}}
+        onOpenRange={() => setActiveModal(null)}
       />
 
       {/* 献立を改善モーダル */}
