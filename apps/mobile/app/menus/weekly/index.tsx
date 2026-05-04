@@ -643,6 +643,9 @@ export default function WeeklyMenuPage() {
   // RecipeModal state
   const [recipeModalMeal, setRecipeModalMeal] = useState<RecipeModalMeal | null>(null);
 
+  // 展開中の食事カード ID (WEB 仕様と同様のインライン展開)
+  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
+
   // RegenerateMealModal state
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [selectedMealForRegen, setSelectedMealForRegen] = useState<PlannedMealRow | null>(null);
@@ -1507,178 +1510,309 @@ export default function WeeklyMenuPage() {
                 const mealCfg = MEAL_CONFIG[m.meal_type] ?? { icon: "ellipse", label: m.meal_type, color: colors.textMuted };
                 const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
                 const isGenerating = m.is_generating;
-                return (
-                  <Pressable
-                    key={m.id}
-                    testID={`weekly-meal-card-${m.id}`}
-                    onPress={() => toggleMealCompletion(m.id, m.is_completed)}
-                    style={({ pressed }) => ({
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: spacing.md,
-                      padding: spacing.lg,
-                      backgroundColor: m.is_completed ? colors.successLight : isGenerating ? colors.accentLight : colors.card,
-                      borderRadius: radius.lg,
-                      borderWidth: 1,
-                      borderColor: m.is_completed ? "#C8E6C9" : isGenerating ? "#FED7AA" : colors.border,
-                      ...shadows.sm,
-                      ...(pressed ? { opacity: 0.9 } : {}),
-                    })}
-                  >
-                    {/* 食事タイプアイコン */}
-                    <View
-                      style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: radius.md,
-                        backgroundColor: m.is_completed ? colors.success : mealCfg.color,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      {m.is_completed ? (
-                        <Ionicons name="checkmark" size={24} color="#fff" />
-                      ) : isGenerating ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <Ionicons name={mealCfg.icon} size={22} color="#fff" />
-                      )}
-                    </View>
+                const isExpanded = expandedMealId === m.id;
+                const dishesArray: Array<{ name: string; role?: string; ingredients?: string[]; ingredientsMd?: string; recipeSteps?: string[]; recipeStepsMd?: string }> =
+                  Array.isArray(m.dishes) ? m.dishes : [];
 
-                    {/* 情報 */}
-                    <View style={{ flex: 1, gap: 3 }}>
-                      <Text testID={`weekly-meal-dish-name-${m.id}`} style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
-                        {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
-                      </Text>
-                      {m.role ? <RoleBadge role={m.role} /> : null}
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealCfg.label}</Text>
+                return (
+                  <View key={m.id}>
+                    {/* 折り畳み時カード (CollapsedMealCard 相当) */}
+                    {!isExpanded && (
+                      <Pressable
+                        testID={`weekly-meal-card-${m.id}`}
+                        onPress={() => setExpandedMealId(m.id)}
+                        style={({ pressed }) => ({
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: spacing.md,
+                          padding: spacing.lg,
+                          backgroundColor: m.is_completed ? colors.successLight : isGenerating ? colors.accentLight : colors.card,
+                          borderRadius: radius.lg,
+                          borderWidth: 1,
+                          borderColor: m.is_completed ? "#C8E6C9" : isGenerating ? "#FED7AA" : colors.border,
+                          ...shadows.sm,
+                          ...(pressed ? { opacity: 0.9 } : {}),
+                        })}
+                      >
+                        {/* 食事タイプアイコン */}
                         <View
                           style={{
-                            backgroundColor: modeCfg.bg,
-                            paddingHorizontal: 6,
-                            paddingVertical: 2,
-                            borderRadius: 4,
+                            width: 44,
+                            height: 44,
+                            borderRadius: radius.md,
+                            backgroundColor: m.is_completed ? colors.success : mealCfg.color,
+                            alignItems: "center",
+                            justifyContent: "center",
                           }}
                         >
-                          <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
+                          {m.is_completed ? (
+                            <Ionicons name="checkmark" size={24} color="#fff" />
+                          ) : isGenerating ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Ionicons name={mealCfg.icon} size={22} color="#fff" />
+                          )}
                         </View>
-                        {m.calories_kcal ? (
-                          <Text testID={`weekly-meal-calories-${m.id}`} style={{ fontSize: 12, color: colors.textMuted }}>{m.calories_kcal} kcal</Text>
-                        ) : null}
-                      </View>
-                    </View>
 
-                    {/* ステータス & アクション */}
-                    <View testID={`weekly-meal-toggle-${m.id}`} style={{ alignItems: "center", gap: 4 }}>
-                      {m.is_completed ? (
-                        <StatusBadge variant="completed" label="完了" />
-                      ) : isGenerating ? (
-                        <StatusBadge variant="generating" label="生成中" />
-                      ) : (
-                        <Ionicons name="checkmark-circle-outline" size={22} color={colors.textMuted} />
-                      )}
-                    </View>
-                  </Pressable>
+                        {/* 情報 */}
+                        <View style={{ flex: 1, gap: 3 }}>
+                          <Text testID={`weekly-meal-dish-name-${m.id}`} style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
+                            {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
+                          </Text>
+                          {m.role ? <RoleBadge role={m.role} /> : null}
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealCfg.label}</Text>
+                            <View
+                              style={{
+                                backgroundColor: modeCfg.bg,
+                                paddingHorizontal: 6,
+                                paddingVertical: 2,
+                                borderRadius: 4,
+                              }}
+                            >
+                              <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
+                            </View>
+                            {m.calories_kcal ? (
+                              <Text testID={`weekly-meal-calories-${m.id}`} style={{ fontSize: 12, color: colors.textMuted }}>{m.calories_kcal} kcal</Text>
+                            ) : null}
+                          </View>
+                        </View>
+
+                        {/* 右端: 完了ステータス + 展開アイコン */}
+                        <View style={{ alignItems: "center", gap: 4 }}>
+                          {m.is_completed ? (
+                            <StatusBadge variant="completed" label="完了" />
+                          ) : isGenerating ? (
+                            <StatusBadge variant="generating" label="生成中" />
+                          ) : (
+                            <Ionicons name="checkmark-circle-outline" size={22} color={colors.textMuted} />
+                          )}
+                          <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+                        </View>
+                      </Pressable>
+                    )}
+
+                    {/* 展開時カード (ExpandedMealCard 相当) */}
+                    {isExpanded && (
+                      <View
+                        style={{
+                          backgroundColor: colors.card,
+                          borderRadius: radius.lg,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          padding: spacing.lg,
+                          gap: spacing.md,
+                          ...shadows.sm,
+                        }}
+                      >
+                        {/* ヘッダー行: タップで折りたたむ */}
+                        <Pressable
+                          testID={`weekly-meal-card-${m.id}`}
+                          onPress={() => setExpandedMealId(null)}
+                          style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}
+                        >
+                          <View
+                            style={{
+                              width: 44,
+                              height: 44,
+                              borderRadius: radius.md,
+                              backgroundColor: m.is_completed ? colors.success : mealCfg.color,
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            {m.is_completed ? (
+                              <Ionicons name="checkmark" size={24} color="#fff" />
+                            ) : isGenerating ? (
+                              <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                              <Ionicons name={mealCfg.icon} size={22} color="#fff" />
+                            )}
+                          </View>
+                          <View style={{ flex: 1, gap: 3 }}>
+                            <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
+                              {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
+                            </Text>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                              <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealCfg.label}</Text>
+                              <View style={{ backgroundColor: modeCfg.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
+                              </View>
+                              {m.calories_kcal ? (
+                                <Text style={{ fontSize: 12, color: colors.textMuted }}>{m.calories_kcal} kcal</Text>
+                              ) : null}
+                            </View>
+                          </View>
+                          <Ionicons name="chevron-up" size={14} color={colors.textMuted} />
+                        </Pressable>
+
+                        {/* dishes 一覧: 各 dish タップで RecipeModal open */}
+                        {dishesArray.length > 0 && (
+                          <View style={{ gap: spacing.sm }}>
+                            {dishesArray.map((dish, idx) => (
+                              <Pressable
+                                key={idx}
+                                onPress={() => setRecipeModalMeal({
+                                  id: m.id,
+                                  dish_name: dish.name,
+                                  calories_kcal: m.calories_kcal,
+                                  protein_g: m.protein_g,
+                                  fat_g: m.fat_g,
+                                  carbs_g: m.carbs_g,
+                                  ingredients: dish.ingredients ?? m.ingredients ?? undefined,
+                                  recipe_steps: dish.recipeSteps ?? m.recipe_steps ?? undefined,
+                                  dishes: [dish],
+                                  role: dish.role ?? m.role ?? undefined,
+                                })}
+                                style={({ pressed }) => ({
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  gap: spacing.sm,
+                                  paddingVertical: spacing.sm,
+                                  paddingHorizontal: spacing.md,
+                                  backgroundColor: pressed ? colors.accentLight : colors.bg,
+                                  borderRadius: radius.md,
+                                  borderWidth: 1,
+                                  borderColor: colors.border,
+                                })}
+                              >
+                                <Ionicons name="book-outline" size={14} color={colors.accent} />
+                                <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>{dish.name}</Text>
+                                {dish.role ? <RoleBadge role={dish.role} /> : null}
+                                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+                              </Pressable>
+                            ))}
+                          </View>
+                        )}
+
+                        {/* dishes がない場合はレシピボタン */}
+                        {dishesArray.length === 0 && (
+                          <Pressable
+                            onPress={() => setRecipeModalMeal({
+                              id: m.id,
+                              dish_name: m.dish_name,
+                              calories_kcal: m.calories_kcal,
+                              protein_g: m.protein_g,
+                              fat_g: m.fat_g,
+                              carbs_g: m.carbs_g,
+                              ingredients: m.ingredients ?? undefined,
+                              recipe_steps: m.recipe_steps ?? undefined,
+                              dishes: m.dishes ?? undefined,
+                              role: m.role ?? undefined,
+                            })}
+                            style={({ pressed }) => ({
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: spacing.sm,
+                              paddingVertical: spacing.sm,
+                              paddingHorizontal: spacing.md,
+                              backgroundColor: pressed ? colors.accentLight : colors.bg,
+                              borderRadius: radius.md,
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                            })}
+                          >
+                            <Ionicons name="book-outline" size={14} color={colors.accent} />
+                            <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>レシピを見る</Text>
+                            <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+                          </Pressable>
+                        )}
+
+                        {/* アクションボタン行 (展開時のみ) */}
+                        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+                          {/* 完了トグル */}
+                          <Pressable
+                            testID={`weekly-meal-toggle-${m.id}`}
+                            onPress={() => toggleMealCompletion(m.id, m.is_completed)}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 4,
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: radius.sm,
+                              backgroundColor: m.is_completed ? colors.successLight : colors.card,
+                              borderWidth: 1,
+                              borderColor: m.is_completed ? colors.success : colors.border,
+                            }}
+                          >
+                            <Ionicons
+                              name={m.is_completed ? "checkmark-circle" : "checkmark-circle-outline"}
+                              size={14}
+                              color={m.is_completed ? colors.success : colors.textLight}
+                            />
+                            <Text style={{ fontSize: 11, color: m.is_completed ? colors.success : colors.textLight }}>
+                              {m.is_completed ? "完了済" : "完了"}
+                            </Text>
+                          </Pressable>
+                          {/* 編集ボタン */}
+                          <Pressable
+                            onPress={() => router.push(`/meals/${m.id}/edit`)}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 4,
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: radius.sm,
+                              backgroundColor: colors.card,
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                            }}
+                          >
+                            <Ionicons name="create-outline" size={14} color={colors.textLight} />
+                            <Text style={{ fontSize: 11, color: colors.textLight }}>編集</Text>
+                          </Pressable>
+                          {/* AI で変更ボタン */}
+                          <Pressable
+                            onPress={() => {
+                              setSelectedMealForRegen(m);
+                              setShowRegenerateModal(true);
+                            }}
+                            disabled={!!regeneratingMealId}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 4,
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: radius.sm,
+                              backgroundColor: regeneratingMealId === m.id ? colors.accentLight : colors.card,
+                              borderWidth: 1,
+                              borderColor: regeneratingMealId === m.id ? colors.accent : colors.border,
+                            }}
+                          >
+                            <Ionicons name="refresh" size={14} color={regeneratingMealId === m.id ? colors.accent : colors.textLight} />
+                            <Text style={{ fontSize: 11, color: regeneratingMealId === m.id ? colors.accent : colors.textLight }}>AIで変更</Text>
+                          </Pressable>
+                          {/* 削除ボタン */}
+                          <Pressable
+                            testID={`weekly-meal-delete-btn-${m.id}`}
+                            onPress={() => setDeleteTargetMeal({ id: m.id, name: m.dish_name || "この食事" })}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 4,
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: radius.sm,
+                              backgroundColor: colors.errorLight,
+                              borderWidth: 1,
+                              borderColor: colors.error,
+                            }}
+                          >
+                            <Ionicons name="trash-outline" size={14} color={colors.error} />
+                          </Pressable>
+                        </View>
+                      </View>
+                    )}
+                  </View>
                 );
               })}
 
-              {/* アクションボタン行 */}
+              {/* +食事タイプ追加ボタン */}
               {selectedDay && (
                 <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-                  {sortedMeals.map((m) => {
-                    const mealCfg = MEAL_CONFIG[m.meal_type] ?? { label: m.meal_type };
-                    return (
-                      <View key={m.id} style={{ flexDirection: "row", gap: 4 }}>
-                        <Pressable
-                          onPress={() => router.push(`/meals/${m.id}/edit`)}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 4,
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: radius.sm,
-                            backgroundColor: colors.card,
-                            borderWidth: 1,
-                            borderColor: colors.border,
-                          }}
-                        >
-                          <Ionicons name="create-outline" size={14} color={colors.textLight} />
-                          <Text style={{ fontSize: 11, color: colors.textLight }}>{mealCfg.label}</Text>
-                        </Pressable>
-                        {/* レシピボタン */}
-                        <Pressable
-                          onPress={() => setRecipeModalMeal({
-                            id: m.id,
-                            dish_name: m.dish_name,
-                            calories_kcal: m.calories_kcal,
-                            protein_g: m.protein_g,
-                            fat_g: m.fat_g,
-                            carbs_g: m.carbs_g,
-                            ingredients: m.ingredients ?? undefined,
-                            recipe_steps: m.recipe_steps ?? undefined,
-                            dishes: m.dishes ?? undefined,
-                            role: m.role ?? undefined,
-                          })}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 4,
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: radius.sm,
-                            backgroundColor: colors.card,
-                            borderWidth: 1,
-                            borderColor: colors.border,
-                          }}
-                        >
-                          <Ionicons name="book-outline" size={14} color={colors.textLight} />
-                          <Text style={{ fontSize: 11, color: colors.textLight }}>レシピ</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => {
-                            setSelectedMealForRegen(m);
-                            setShowRegenerateModal(true);
-                          }}
-                          disabled={!!regeneratingMealId}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 4,
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: radius.sm,
-                            backgroundColor: regeneratingMealId === m.id ? colors.accentLight : colors.card,
-                            borderWidth: 1,
-                            borderColor: regeneratingMealId === m.id ? colors.accent : colors.border,
-                          }}
-                        >
-                          <Ionicons name="refresh" size={14} color={regeneratingMealId === m.id ? colors.accent : colors.textLight} />
-                          <Text style={{ fontSize: 11, color: regeneratingMealId === m.id ? colors.accent : colors.textLight }}>AIで変更</Text>
-                        </Pressable>
-                        <Pressable
-                          testID={`weekly-meal-delete-btn-${m.id}`}
-                          onPress={() => setDeleteTargetMeal({ id: m.id, name: m.dish_name || "この食事" })}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 4,
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: radius.sm,
-                            backgroundColor: colors.errorLight,
-                            borderWidth: 1,
-                            borderColor: colors.error,
-                          }}
-                        >
-                          <Ionicons name="trash-outline" size={14} color={colors.error} />
-                        </Pressable>
-                      </View>
-                    );
-                  })}
-
-                  {/* +食事タイプ追加ボタン */}
                   <Pressable
                     testID="weekly-add-meal-type-btn"
                     onPress={() => {
