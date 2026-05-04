@@ -1813,6 +1813,7 @@ export default function WeeklyMenuPage() {
         onClose={() => setActiveModal(null)}
         onOpenAdd={() => {}}
         onOpenRange={() => setActiveModal(null)}
+        onOpenServings={() => setShowServingsModal(true)}
       />
 
       {/* 献立を改善モーダル */}
@@ -1872,26 +1873,6 @@ export default function WeeklyMenuPage() {
         })}
       >
         <Ionicons name="sparkles" size={24} color="#fff" />
-      </Pressable>
-
-      {/* 人数設定フローティングボタン */}
-      <Pressable
-        testID="weekly-servings-btn"
-        onPress={() => setShowServingsModal(true)}
-        style={{
-          position: "absolute",
-          bottom: 24 + 56 + 12,
-          right: spacing.lg,
-          backgroundColor: colors.accent,
-          borderRadius: 28,
-          width: 56,
-          height: 56,
-          alignItems: "center",
-          justifyContent: "center",
-          ...shadows.lg,
-        }}
-      >
-        <Ionicons name="people-outline" size={24} color="#FFF" />
       </Pressable>
 
       {/* 人数設定モーダル */}

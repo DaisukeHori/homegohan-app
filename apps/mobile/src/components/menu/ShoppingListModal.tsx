@@ -66,12 +66,14 @@ interface Props {
   onClose: () => void;
   onOpenAdd: () => void;   // ShoppingListModal 内で AddShoppingModal を開く場合の外部トリガー (未使用だが設計書 props 準拠)
   onOpenRange: () => void; // 再生成モーダル (本 PR では placeholder)
+  onOpenServings?: () => void; // 人数設定モーダルを開く
 }
 
 export const ShoppingListModal: React.FC<Props> = ({
   visible,
   onClose,
   onOpenRange,
+  onOpenServings,
 }) => {
   const [items, setItems] = useState<ShoppingItemData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -238,9 +240,21 @@ export const ShoppingListModal: React.FC<Props> = ({
                 <Ionicons name="cart" size={18} color={colors.accent} />
                 <Text style={styles.headerTitle}>買い物リスト</Text>
               </View>
-              <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
-                <Ionicons name="close" size={18} color={colors.textLight} />
-              </Pressable>
+              <View style={styles.headerRight}>
+                {onOpenServings && (
+                  <Pressable
+                    testID="shopping-list-servings-btn"
+                    onPress={onOpenServings}
+                    style={styles.servingsBtn}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="people-outline" size={20} color={colors.textLight} />
+                  </Pressable>
+                )}
+                <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
+                  <Ionicons name="close" size={18} color={colors.textLight} />
+                </Pressable>
+              </View>
             </View>
 
             {/* サブタイトル */}
@@ -367,6 +381,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  servingsBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.full,
+    backgroundColor: colors.bg,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitle: {
     ...typography.h3,
