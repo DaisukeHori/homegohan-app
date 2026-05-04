@@ -1,0 +1,9 @@
+appId: com.homegohan.app
+---
+- launchApp
+- tapOn: { text: "ほめゴハン" }
+- waitForAnimationToEnd
+- tapOn: { id: "tab-menus" }
+- waitForAnimationToEnd
+- assertVisible: { text: "週間献立" }
+- assertNotVisible: { text: "詳細を見る" }

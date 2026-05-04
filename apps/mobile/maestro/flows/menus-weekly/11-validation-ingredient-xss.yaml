@@ -9,10 +9,10 @@ env:
     id: "tab-menus"
 - extendedWaitUntil:
     visible:
-      id: "menus-screen"
+      id: "weekly-screen"
     timeout: 10000
 - tapOn:
-    id: "menus-request-button"
+    id: "weekly-request-button"
 - extendedWaitUntil:
     visible:
       id: "weekly-request-screen"
