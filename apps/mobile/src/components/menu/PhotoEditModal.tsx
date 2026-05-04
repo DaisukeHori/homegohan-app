@@ -40,6 +40,23 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
     onClose();
   }
 
+  const takePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("権限エラー", "カメラへのアクセスを許可してください");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"] as any,
+      base64: true,
+      quality: 0.7,
+    });
+    if (!result.canceled) {
+      const b64 = result.assets[0].base64;
+      if (b64) setPhotos((prev) => [...prev, b64]);
+    }
+  };
+
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
@@ -98,8 +115,7 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
             backgroundColor: colors.bg,
             borderTopLeftRadius: radius["2xl"],
             borderTopRightRadius: radius["2xl"],
-            maxHeight: "85%",
-            paddingBottom: spacing["2xl"],
+            maxHeight: "90%",
             ...shadows.lg,
           }}
         >
@@ -114,9 +130,12 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
               borderBottomColor: colors.border,
             }}
           >
-            <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
-              写真から解析
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="camera" size={20} color={colors.text} />
+              <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
+                写真から入力
+              </Text>
+            </View>
             <Pressable
               testID="photo-edit-close"
               onPress={handleClose}
@@ -127,91 +146,166 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
             </Pressable>
           </View>
 
-          {/* 説明文 */}
-          <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
-            <Text style={{ fontSize: 13, color: colors.textMuted, lineHeight: 18 }}>
-              食事の写真をアップロードすると、AIが料理名・カロリーを自動で認識します。複数枚まとめて解析できます。
-            </Text>
-          </View>
-
-          {/* プレビュー横スクロール */}
           <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginTop: spacing.lg }}
-            contentContainerStyle={{
-              paddingHorizontal: spacing.lg,
-              gap: spacing.sm,
-              alignItems: "flex-start",
-            }}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: spacing["2xl"] }}
           >
-            {photos.map((p, i) => (
-              <View
-                key={i}
-                style={{
-                  width: 90,
-                  height: 90,
-                  borderRadius: radius.lg,
-                  overflow: "visible",
-                  position: "relative",
-                }}
-              >
-                <Image
-                  source={{ uri: `data:image/jpeg;base64,${p}` }}
-                  style={{
-                    width: 90,
-                    height: 90,
-                    borderRadius: radius.lg,
-                    backgroundColor: colors.card,
-                  }}
-                />
-                <Pressable
-                  testID={`photo-edit-remove-${i}`}
-                  onPress={() => removePhoto(i)}
-                  style={{
-                    position: "absolute",
-                    top: -6,
-                    right: -6,
-                    backgroundColor: colors.bg,
-                    borderRadius: 10,
-                    padding: 0,
-                  }}
-                >
-                  <Ionicons name="close-circle" size={22} color={colors.error} />
-                </Pressable>
-              </View>
-            ))}
-
-            {/* + 写真追加ボタン */}
-            <Pressable
-              testID="photo-edit-add-photo"
-              onPress={pickPhoto}
+            {/* 説明文 2 行 */}
+            <View
               style={{
-                width: 90,
-                height: 90,
-                borderRadius: radius.lg,
-                borderWidth: 1.5,
-                borderColor: colors.accent,
-                borderStyle: "dashed",
-                backgroundColor: colors.accentLight,
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
+                paddingHorizontal: spacing.lg,
+                paddingTop: spacing.lg,
+                gap: spacing.xs,
               }}
             >
-              <Ionicons name="add" size={28} color={colors.accent} />
-              <Text style={{ fontSize: 11, fontWeight: "600", color: colors.accent }}>
-                写真追加
+              <Text style={{ fontSize: 13, color: colors.textMuted, lineHeight: 20 }}>
+                食事の写真を撮影またはアップロードすると、AIが料理を認識して栄養素を推定します。
               </Text>
-            </Pressable>
+              <Text style={{ fontSize: 13, color: colors.textMuted, lineHeight: 20 }}>
+                複数枚の写真をまとめて追加できます。
+              </Text>
+            </View>
+
+            {/* 2 大ボタン (横並び 1:1) */}
+            <View
+              style={{
+                flexDirection: "row",
+                paddingHorizontal: spacing.lg,
+                paddingTop: spacing.lg,
+                gap: spacing.md,
+              }}
+            >
+              {/* 撮影する */}
+              <Pressable
+                testID="photo-edit-camera-btn"
+                onPress={takePhoto}
+                style={({ pressed }: { pressed: boolean }) => ({
+                  flex: 1,
+                  backgroundColor: colors.card,
+                  borderRadius: radius.xl,
+                  paddingVertical: spacing.xl,
+                  alignItems: "center" as const,
+                  justifyContent: "center" as const,
+                  gap: spacing.sm,
+                  opacity: pressed ? 0.75 : 1,
+                  ...shadows.sm,
+                })}
+              >
+                <Ionicons name="camera-outline" size={28} color={colors.accent} />
+                <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text }}>
+                  撮影する
+                </Text>
+              </Pressable>
+
+              {/* 選択する */}
+              <Pressable
+                testID="photo-edit-gallery-btn"
+                onPress={pickPhoto}
+                style={({ pressed }: { pressed: boolean }) => ({
+                  flex: 1,
+                  backgroundColor: colors.card,
+                  borderRadius: radius.xl,
+                  paddingVertical: spacing.xl,
+                  alignItems: "center" as const,
+                  justifyContent: "center" as const,
+                  gap: spacing.sm,
+                  opacity: pressed ? 0.75 : 1,
+                  ...shadows.sm,
+                })}
+              >
+                <Ionicons name="images-outline" size={28} color={colors.accent} />
+                <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text }}>
+                  選択する
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* プレビュー横スクロール (写真追加済の場合のみ表示) */}
+            {photos.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginTop: spacing.lg }}
+                contentContainerStyle={{
+                  paddingHorizontal: spacing.lg,
+                  gap: spacing.sm,
+                  alignItems: "flex-start",
+                }}
+              >
+                {photos.map((p, i) => (
+                  <View
+                    key={i}
+                    style={{
+                      width: 90,
+                      height: 90,
+                      borderRadius: radius.lg,
+                      overflow: "visible",
+                      position: "relative",
+                    }}
+                  >
+                    <Image
+                      source={{ uri: `data:image/jpeg;base64,${p}` }}
+                      style={{
+                        width: 90,
+                        height: 90,
+                        borderRadius: radius.lg,
+                        backgroundColor: colors.card,
+                      }}
+                    />
+                    <Pressable
+                      testID={`photo-edit-remove-${i}`}
+                      onPress={() => removePhoto(i)}
+                      style={{
+                        position: "absolute",
+                        top: -6,
+                        right: -6,
+                        backgroundColor: colors.bg,
+                        borderRadius: 10,
+                        padding: 0,
+                      }}
+                    >
+                      <Ionicons name="close-circle" size={22} color={colors.error} />
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
+            {/* ヒント */}
+            <View
+              style={{
+                marginHorizontal: spacing.lg,
+                marginTop: spacing.lg,
+                backgroundColor: colors.warningLight,
+                borderRadius: radius.lg,
+                padding: spacing.md,
+                flexDirection: "row",
+                gap: spacing.sm,
+                alignItems: "flex-start",
+              }}
+            >
+              <Text style={{ fontSize: 16, lineHeight: 22 }}>💡</Text>
+              <Text
+                style={{
+                  flex: 1,
+                  fontSize: 13,
+                  color: colors.textLight,
+                  lineHeight: 20,
+                }}
+              >
+                AIが写真から料理名、カロリー、栄養素を自動で推定します。複数枚の場合はまとめて解析します。
+              </Text>
+            </View>
           </ScrollView>
 
-          {/* 解析ボタン */}
+          {/* AIで解析する ボタン (画面下部固定) */}
           <View
             style={{
               paddingHorizontal: spacing.lg,
-              paddingTop: spacing.lg,
-              paddingBottom: spacing.sm,
+              paddingTop: spacing.md,
+              paddingBottom: spacing["2xl"],
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
             }}
           >
             <Pressable
