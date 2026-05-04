@@ -96,6 +96,14 @@ type DayRow = {
   planned_meals: PlannedMealRow[];
 };
 
+// plan が存在しない週でも 7 日分のグリッドを表示するための仮想 day 型
+// id が null = API の day レコードがまだ存在しない (plan 未作成)
+type VirtualDayRow = {
+  id: string | null;
+  day_date: string;
+  planned_meals: PlannedMealRow[];
+};
+
 type MealPlanRow = {
   id: string;
   start_date: string;
@@ -294,7 +302,7 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
 interface NutritionSheetProps {
   visible: boolean;
   onClose: () => void;
-  day: DayRow | null;
+  day: VirtualDayRow | null;
   dateLabel: string;
   radarKeys: (keyof DayNutritionTotals)[];
   weekDays: DayRow[];
@@ -614,7 +622,7 @@ export default function WeeklyMenuPage() {
   }, [v4Generate]);
 
   // Nutrition sheet state
-  const [nutritionSheetDay, setNutritionSheetDay] = useState<DayRow | null>(null);
+  const [nutritionSheetDay, setNutritionSheetDay] = useState<VirtualDayRow | null>(null);
   const [nutritionSheetLabel, setNutritionSheetLabel] = useState("");
 
   // Radar chart nutrient keys — fetched from profile (falls back to DEFAULT_RADAR_KEYS)
@@ -828,13 +836,34 @@ export default function WeeklyMenuPage() {
     loadData();
   }, [weekStartStr, weekEndStr]);
 
-  const selectedDay = useMemo(() => days.find((d) => d.day_date === selectedDate) ?? null, [days, selectedDate]);
+  // plan が存在しない週でも 7 日分タブ・EmptySlot・AIバナーを常に表示するための仮想グリッド
+  const virtualDays = useMemo((): VirtualDayRow[] => {
+    const start = new Date(weekStartStr + "T00:00:00");
+    const result: VirtualDayRow[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const dayDate = formatLocalDate(d);
+      const existingDay = days.find((day) => day.day_date === dayDate);
+      if (existingDay) {
+        result.push(existingDay);
+      } else {
+        result.push({ id: null, day_date: dayDate, planned_meals: [] });
+      }
+    }
+    return result;
+  }, [days, weekStartStr]);
+
+  const selectedDay = useMemo(
+    () => virtualDays.find((d) => d.day_date === selectedDate) ?? null,
+    [virtualDays, selectedDate],
+  );
 
   const emptySlotCount = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     let count = 0;
-    for (const day of days) {
+    for (const day of virtualDays) {
       const dayDate = new Date(day.day_date + "T00:00:00");
       if (dayDate < today) continue;
       const filledTypes = new Set(day.planned_meals.map((m) => m.meal_type));
@@ -843,7 +872,7 @@ export default function WeeklyMenuPage() {
       }
     }
     return count;
-  }, [days]);
+  }, [virtualDays]);
 
   function shiftWeek(delta: number) {
     const d = new Date(weekStart);
@@ -874,7 +903,7 @@ export default function WeeklyMenuPage() {
     }
   }
 
-  function openNutritionSheet(day: DayRow) {
+  function openNutritionSheet(day: VirtualDayRow) {
     const d = new Date(day.day_date + "T00:00:00");
     setNutritionSheetLabel(`${d.getMonth() + 1}/${d.getDate()}`);
     setNutritionSheetDay(day);
@@ -985,7 +1014,7 @@ export default function WeeklyMenuPage() {
   }, [days, pendingRequestId, weekStartStr, weekEndStr]);
 
   async function reorderMeal(mealId: string, direction: "up" | "down") {
-    if (!selectedDay) return;
+    if (!selectedDay?.id) return;
     try {
       const api = getApi();
       await api.post("/api/meal-plans/meals/reorder", { mealId, direction, dayId: selectedDay.id });
@@ -1409,8 +1438,8 @@ export default function WeeklyMenuPage() {
               <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>前の週</Text>
             </Pressable>
 
-            {/* 7日タブ */}
-            {days.map((d) => {
+            {/* 7日タブ — virtualDays を使い plan 未作成週でも常に 7 タブ表示 */}
+            {virtualDays.map((d) => {
               const selected = d.day_date === selectedDate;
               const isToday = d.day_date === todayStr;
               const dow = getDayOfWeek(d.day_date);
@@ -1426,7 +1455,7 @@ export default function WeeklyMenuPage() {
 
               return (
                 <Pressable
-                  key={d.id}
+                  key={d.id ?? d.day_date}
                   testID={`weekly-day-tab-${d.day_date}`}
                   onPress={() => setSelectedDate(d.day_date)}
                   style={({ pressed }) => ({
@@ -1518,7 +1547,7 @@ export default function WeeklyMenuPage() {
             </View>
           )}
 
-          {/* 食事一覧 — 朝食/昼食/夕食スロットを常時表示 */}
+          {/* 食事一覧 — 朝食/昼食/夕食スロットを常時表示 (virtualDays により plan 未作成週でも表示) */}
           {selectedDay && (
             <View style={{ gap: spacing.md }}>
               {(["breakfast", "lunch", "dinner"] as const).map((mealType) => {
@@ -1532,7 +1561,19 @@ export default function WeeklyMenuPage() {
                       dayDate={selectedDay.day_date}
                       mealLabel={MEAL_CONFIG[mealType]?.label ?? mealType}
                       onPress={() => {
-                        setAddMealModalDayId(selectedDay.id);
+                        // plan が未作成の場合 (id が null) は AI 献立作成を促す
+                        if (!selectedDay.id) {
+                          Alert.alert(
+                            "週間献立の作成",
+                            "この週の献立がまだ作成されていません。AIに献立を作成してもらいましょう。",
+                            [
+                              { text: "キャンセル", style: "cancel" },
+                              { text: "AIで作成", onPress: () => setShowV4Modal(true) },
+                            ],
+                          );
+                          return;
+                        }
+                        setAddMealModalDayId(selectedDay.id as string);
                         setAddMealModalDayDate(selectedDay.day_date);
                         setAddMealModalMealType(mealType);
                         setAddMealModalVisible(true);
@@ -1844,13 +1885,13 @@ export default function WeeklyMenuPage() {
                 );
               })}
 
-              {/* +食事タイプ追加ボタン */}
-              {selectedDay && (
+              {/* +食事タイプ追加ボタン — plan 作成済みの day のみ表示 */}
+              {selectedDay?.id && (
                 <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
                   <Pressable
                     testID="weekly-add-meal-type-btn"
                     onPress={() => {
-                      setAddMealSlotDayId(selectedDay.id);
+                      setAddMealSlotDayId(selectedDay.id as string);
                       setAddMealSlotVisible(true);
                     }}
                     style={({ pressed }) => ({

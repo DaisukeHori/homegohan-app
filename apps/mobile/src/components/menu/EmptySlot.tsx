@@ -7,7 +7,7 @@ import { colors, radius, spacing } from "../../theme";
 
 interface Props {
   mealType: "breakfast" | "lunch" | "dinner" | "snack";
-  dayId: string;
+  dayId: string | null;
   dayDate: string;
   onPress: () => void;
   isGenerating?: boolean;
