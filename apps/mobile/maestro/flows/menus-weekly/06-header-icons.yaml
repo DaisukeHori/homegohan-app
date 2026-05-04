@@ -1,0 +1,13 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+- launchApp
+- tapOn: { text: "ほめゴハン" }
+- waitForAnimationToEnd
+- tapOn: { id: "tab-menus" }
+- waitForAnimationToEnd
+- assertVisible: { id: "header-stats-btn" }
+- assertVisible: { id: "header-fridge-btn" }
+- assertVisible: { id: "header-shopping-btn" }

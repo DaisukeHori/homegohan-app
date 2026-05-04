@@ -14,7 +14,8 @@ import {
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
 import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition } from "@homegohan/shared";
-import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
+import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
+import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
@@ -710,6 +711,9 @@ export default function WeeklyMenuPage() {
   const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
   const fetchedRangesRef = useRef<Set<string>>(new Set());
 
+  // Modal state (将来用 — Phase 5/6 で各モーダルを open する)
+  const [activeModal, setActiveModal] = useState<'stats' | 'fridge' | 'shopping' | null>(null);
+
   useEffect(() => {
     const fetchRadarProfile = async () => {
       try {
@@ -1124,6 +1128,21 @@ export default function WeeklyMenuPage() {
     return map;
   }, [days, calendarMealDates]);
 
+  // WeeklyHeader 用の集計値
+  const weeklyStats = useMemo(() => {
+    const allMeals = days.flatMap(d => d.planned_meals);
+    const totalMeals = allMeals.length;
+    if (totalMeals === 0) return { cookRate: 0, avgKcal: 0 };
+    const cookMeals = allMeals.filter(m => m.mode === 'cook' || m.mode === null).length;
+    const cookRate = Math.round((cookMeals / totalMeals) * 100);
+    const totalKcal = allMeals.reduce((s, m) => s + (m.calories_kcal ?? 0), 0);
+    const daysWithMeals = days.filter(d => d.planned_meals.length > 0).length;
+    const avgKcal = daysWithMeals > 0 ? Math.round(totalKcal / daysWithMeals) : 0;
+    return { cookRate, avgKcal };
+  }, [days]);
+
+  const weekRangeLabel = `${weekStartStr.slice(5)} - ${weekEndStr.slice(5)}`;
+
   function handleCalendarDateClick(day: Date) {
     const newWeekStart = getWeekStart(day, weekStartDay);
     const newWeekStartStr = formatLocalDate(newWeekStart);
@@ -1136,7 +1155,24 @@ export default function WeeklyMenuPage() {
 
   return (
     <View testID="weekly-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
-      <PageHeader title="週間献立" />
+      <WeeklyHeader
+        weekRangeLabel={weekRangeLabel}
+        weeklyStats={weeklyStats}
+        expiringCount={0}
+        uncheckedShoppingCount={0}
+        onPressStats={() => {
+          console.log('stats modal placeholder');
+          setActiveModal('stats');
+        }}
+        onPressFridge={() => {
+          console.log('fridge modal placeholder');
+          setActiveModal('fridge');
+        }}
+        onPressShopping={() => {
+          console.log('shopping modal placeholder');
+          setActiveModal('shopping');
+        }}
+      />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {/* ヘッダー: 週ナビゲーション */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
