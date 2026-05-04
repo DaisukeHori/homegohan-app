@@ -2,26 +2,17 @@ import { TextStyle } from 'react-native';
 import { colors } from './colors';
 
 export const typography = {
-  h1: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: colors.text,
-  } as TextStyle,
-  h2: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.text,
-  } as TextStyle,
-  h3: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.text,
-  } as TextStyle,
-  body: {
-    fontSize: 15,
-    fontWeight: '400',
-    color: colors.textLight,
-  } as TextStyle,
+  // --- 設計書 COMMON.md Section 2 準拠 ---
+  h1:       { fontSize: 24, fontWeight: '800' as const, lineHeight: 32 },
+  h2:       { fontSize: 20, fontWeight: '700' as const, lineHeight: 28 },
+  h3:       { fontSize: 16, fontWeight: '700' as const, lineHeight: 22 },
+  body:     { fontSize: 14, fontWeight: '400' as const, lineHeight: 20 },
+  bodyBold: { fontSize: 14, fontWeight: '700' as const, lineHeight: 20 },
+  small:    { fontSize: 12, fontWeight: '400' as const, lineHeight: 16 },
+  smallBold:{ fontSize: 12, fontWeight: '700' as const, lineHeight: 16 },
+  tiny:     { fontSize: 10, fontWeight: '700' as const, lineHeight: 14 },
+
+  // --- 後方互換 (既存スクリーンで参照中のキー) ---
   bodySmall: {
     fontSize: 13,
     fontWeight: '400',
