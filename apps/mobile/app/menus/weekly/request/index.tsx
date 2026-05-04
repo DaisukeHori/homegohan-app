@@ -43,6 +43,17 @@ function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   return d;
 }
 
+// 過渡期マッピング: 日本語テーマ選択 → WEB 形式英語テーマキー
+// PR 3-3 で明示テーマ選択 UI に切り替えたとき削除予定
+function japaneseThemesToWebThemes(selectedJaThemes: string[]): string[] {
+  const themes: string[] = [];
+  if (selectedJaThemes.includes("冷蔵庫の食材を優先")) themes.push("💰 Saving");
+  if (selectedJaThemes.includes("時短メニュー中心")) themes.push("⏱️ Speed");
+  if (selectedJaThemes.includes("和食多め")) themes.push("🍱 Bento");
+  if (selectedJaThemes.includes("ヘルシーに")) themes.push("🥗 Diet");
+  return themes;
+}
+
 export default function WeeklyRequestPage() {
   const { profile } = useProfile();
   const weekStartDay = profile?.weekStartDay ?? 'monday';
@@ -140,28 +151,32 @@ export default function WeeklyRequestPage() {
       const ws = getWeekStart(parsedDate, weekStartDay);
       const weekStartStr = formatLocalDate(ws);
 
-      const useFridgeFirst = selectedThemes.includes("冷蔵庫の食材を優先");
-      const quickMeals = selectedThemes.includes("時短メニュー中心");
-      const japaneseStyle = selectedThemes.includes("和食多め");
-      const healthy = selectedThemes.includes("ヘルシーに");
-
-      const extraLines: string[] = [];
-      if (selectedThemes.length) extraLines.push(`テーマ: ${selectedThemes.join("、")}`);
-      if (ingredients.length) extraLines.push(`使いたい食材: ${ingredients.join("、")}`);
-      if (cheatDay.trim()) extraLines.push(`チートデイ: ${cheatDay.trim()}`);
-      const noteForApi = [note.trim(), ...extraLines].filter(Boolean).join("\n");
+      const parsedFamilySize = Math.max(1, Math.min(10, parseInt(familySize || "1") || 1));
+      const parsedCheatDay = cheatDay.trim() || null;
+      // 過渡期マッピング: 日本語テーマ → WEB 形式英語テーマ (PR 3-3 で UI 切替後に削除)
+      const webThemes = japaneseThemesToWebThemes(selectedThemes);
 
       const api = getApi();
 
       if (isUltimateMode) {
         // 究極モード: /api/ai/menu/v4/generate に ultimateMode: true で送信
+        // TODO: PR 4-1 で constraints を WEB 形式に統一
+        const useFridgeFirst = selectedThemes.includes("冷蔵庫の食材を優先");
+        const quickMeals = selectedThemes.includes("時短メニュー中心");
+        const japaneseStyle = selectedThemes.includes("和食多め");
+        const healthy = selectedThemes.includes("ヘルシーに");
+        const extraLines: string[] = [];
+        if (selectedThemes.length) extraLines.push(`テーマ: ${selectedThemes.join("、")}`);
+        if (ingredients.length) extraLines.push(`使いたい食材: ${ingredients.join("、")}`);
+        if (parsedCheatDay) extraLines.push(`チートデイ: ${parsedCheatDay}`);
+        const noteForV4 = [note.trim(), ...extraLines].filter(Boolean).join("\n");
         const targetSlots = buildWeekTargetSlots(weekStartStr);
         await api.post("/api/ai/menu/v4/generate", {
           targetSlots,
           resolveExistingMeals: true,
-          note: noteForApi,
+          note: noteForV4,
           ultimateMode: true,
-          familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
+          familySize: parsedFamilySize,
           constraints: {
             useFridgeFirst,
             quickMeals,
@@ -175,13 +190,21 @@ export default function WeeklyRequestPage() {
           "6ステップの栄養バランス分析で究極の献立を生成します。完了まで数分かかります。"
         );
       } else {
-        // 通常モード
+        // 通常モード: WEB 形式 constraints で送信
+        // 過渡期: cookingTime は固定値 (PR 3-2 でスライダー追加予定)
+        // 過渡期: inventoryImageUrl は null (PR 8-1 で Supabase Storage URL 化予定)
         await api.post("/api/ai/menu/weekly/request", {
           startDate: weekStartStr,
-          note: noteForApi,
-          familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
-          cheatDay: cheatDay.trim() || null,
-          preferences: { useFridgeFirst, quickMeals, japaneseStyle, healthy, ingredients },
+          constraints: {
+            ingredients,
+            cookingTime: { weekday: 30, weekend: 60 },
+            themes: webThemes,
+            familySize: parsedFamilySize,
+            cheatDay: parsedCheatDay,
+          },
+          inventoryImageUrl: null,
+          detectedIngredients: ingredients,
+          note: note.trim() || null,
         });
         Alert.alert("生成開始", "週間献立の生成を開始しました。生成中は「生成中...」と表示されます。");
       }
