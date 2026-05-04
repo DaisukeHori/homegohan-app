@@ -1793,41 +1793,44 @@ export default function WeeklyMenuPage() {
                           </Pressable>
                         )}
 
-                        {/* アクションボタン行 (展開時のみ) */}
-                        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-                          {/* 完了トグル */}
+                        {/* アクションボタン行 (展開時のみ) — WEB 仕様: 3 ボタン横並び等幅 */}
+                        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                          {/* AIで変更ボタン */}
                           <Pressable
-                            testID={`weekly-meal-toggle-${m.id}`}
-                            onPress={() => toggleMealCompletion(m.id, m.is_completed)}
+                            testID={`meal-action-regenerate-${m.id}`}
+                            onPress={() => {
+                              setSelectedMealForRegen(m);
+                              setShowRegenerateModal(true);
+                            }}
+                            disabled={!!regeneratingMealId}
                             style={{
+                              flex: 1,
                               flexDirection: "row",
                               alignItems: "center",
+                              justifyContent: "center",
                               gap: 4,
-                              paddingVertical: 6,
+                              paddingVertical: 8,
                               paddingHorizontal: 10,
                               borderRadius: radius.sm,
-                              backgroundColor: m.is_completed ? colors.successLight : colors.card,
+                              backgroundColor: colors.accentLight,
                               borderWidth: 1,
-                              borderColor: m.is_completed ? colors.success : colors.border,
+                              borderColor: colors.accent,
                             }}
                           >
-                            <Ionicons
-                              name={m.is_completed ? "checkmark-circle" : "checkmark-circle-outline"}
-                              size={14}
-                              color={m.is_completed ? colors.success : colors.textLight}
-                            />
-                            <Text style={{ fontSize: 11, color: m.is_completed ? colors.success : colors.textLight }}>
-                              {m.is_completed ? "完了済" : "完了"}
-                            </Text>
+                            <Ionicons name="sparkles" size={16} color={colors.accent} />
+                            <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>AIで変更</Text>
                           </Pressable>
-                          {/* 編集ボタン */}
+                          {/* 手動で修正ボタン */}
                           <Pressable
+                            testID={`meal-action-manual-${m.id}`}
                             onPress={() => router.push(`/meals/${m.id}/edit`)}
                             style={{
+                              flex: 1,
                               flexDirection: "row",
                               alignItems: "center",
+                              justifyContent: "center",
                               gap: 4,
-                              paddingVertical: 6,
+                              paddingVertical: 8,
                               paddingHorizontal: 10,
                               borderRadius: radius.sm,
                               backgroundColor: colors.card,
@@ -1835,48 +1838,26 @@ export default function WeeklyMenuPage() {
                               borderColor: colors.border,
                             }}
                           >
-                            <Ionicons name="create-outline" size={14} color={colors.textLight} />
-                            <Text style={{ fontSize: 11, color: colors.textLight }}>編集</Text>
+                            <Ionicons name="create-outline" size={16} color={colors.textLight} />
+                            <Text style={{ fontSize: 12, fontWeight: "600", color: colors.textLight }}>手動で修正</Text>
                           </Pressable>
-                          {/* AI で変更ボタン */}
+                          {/* 削除ボタン (アイコンのみ) */}
                           <Pressable
-                            onPress={() => {
-                              setSelectedMealForRegen(m);
-                              setShowRegenerateModal(true);
-                            }}
-                            disabled={!!regeneratingMealId}
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 4,
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: radius.sm,
-                              backgroundColor: regeneratingMealId === m.id ? colors.accentLight : colors.card,
-                              borderWidth: 1,
-                              borderColor: regeneratingMealId === m.id ? colors.accent : colors.border,
-                            }}
-                          >
-                            <Ionicons name="refresh" size={14} color={regeneratingMealId === m.id ? colors.accent : colors.textLight} />
-                            <Text style={{ fontSize: 11, color: regeneratingMealId === m.id ? colors.accent : colors.textLight }}>AIで変更</Text>
-                          </Pressable>
-                          {/* 削除ボタン */}
-                          <Pressable
-                            testID={`weekly-meal-delete-btn-${m.id}`}
+                            testID={`meal-action-delete-${m.id}`}
                             onPress={() => setDeleteTargetMeal({ id: m.id, name: m.dish_name || "この食事" })}
                             style={{
                               flexDirection: "row",
                               alignItems: "center",
-                              gap: 4,
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
+                              justifyContent: "center",
+                              paddingVertical: 8,
+                              paddingHorizontal: 14,
                               borderRadius: radius.sm,
-                              backgroundColor: colors.errorLight,
+                              backgroundColor: colors.dangerLight,
                               borderWidth: 1,
-                              borderColor: colors.error,
+                              borderColor: colors.danger,
                             }}
                           >
-                            <Ionicons name="trash-outline" size={14} color={colors.error} />
+                            <Ionicons name="trash-outline" size={16} color={colors.danger} />
                           </Pressable>
                         </View>
                       </View>
