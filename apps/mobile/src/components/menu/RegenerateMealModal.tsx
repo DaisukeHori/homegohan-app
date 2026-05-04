@@ -13,10 +13,20 @@ import {
 
 import { setItemWithTTL } from "../../lib/persistence";
 import { colors, radius, spacing } from "../../theme";
-import type { MenuGenerationConstraints } from "../../../../../types/domain";
-import { ConditionPills } from "./ConditionPills";
+import { MEAL_LABELS } from "@homegohan/shared";
 import { getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
+
+// ============================================================
+// Constants
+// ============================================================
+
+const CONDITIONS: { key: string; label: string }[] = [
+  { key: "useFridgeFirst", label: "冷蔵庫の食材を優先" },
+  { key: "quickMeals",     label: "時短メニュー中心" },
+  { key: "japaneseStyle",  label: "和食多め" },
+  { key: "healthy",        label: "ヘルシーに" },
+];
 
 // ============================================================
 // Types
@@ -40,21 +50,27 @@ interface Props {
 // ============================================================
 
 export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose }) => {
-  const [conditions, setConditions] = useState<MenuGenerationConstraints>({
-    useFridgeFirst: false,
-    quickMeals: false,
-    japaneseStyle: false,
-    healthy: false,
-  });
+  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const mealName =
     meal?.dishes?.[0]?.name ?? meal?.dish_name ?? "食事";
 
+  const mealLabel =
+    meal?.meal_type && meal.meal_type in MEAL_LABELS
+      ? MEAL_LABELS[meal.meal_type as keyof typeof MEAL_LABELS]
+      : "食事";
+
+  const toggleCondition = (key: string) => {
+    setSelectedConditions(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+    );
+  };
+
   const handleClose = () => {
     if (submitting) return;
-    setConditions({ useFridgeFirst: false, quickMeals: false, japaneseStyle: false, healthy: false });
+    setSelectedConditions([]);
     setNote("");
     onClose();
   };
@@ -67,6 +83,14 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
+      const conditions = {
+        useFridgeFirst: selectedConditions.includes("useFridgeFirst"),
+        quickMeals: selectedConditions.includes("quickMeals"),
+        japaneseStyle: selectedConditions.includes("japaneseStyle"),
+        healthy: selectedConditions.includes("healthy"),
+      };
+
       const r = await fetch(`${base}/api/ai/menu/meal/regenerate`, {
         method: "POST",
         headers: {
@@ -98,10 +122,7 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
         <View testID="regenerate-meal-modal" style={styles.container}>
           {/* Header */}
           <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Ionicons name="sparkles" size={18} color={colors.accent} />
-              <Text style={styles.title}>AIで変更</Text>
-            </View>
+            <Text style={styles.title}>✨ {mealLabel}をAIで変更</Text>
             <Pressable
               testID="regenerate-meal-close"
               onPress={handleClose}
@@ -117,29 +138,51 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
             keyboardShouldPersistTaps="handled"
           >
             {/* 現在の献立 */}
-            <View style={styles.currentMealBox}>
-              <Text style={styles.currentMealLabel}>現在の献立</Text>
-              <Text style={styles.currentMealName}>{mealName}</Text>
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>現在の献立</Text>
+              <View style={styles.currentMealBox}>
+                <Text style={styles.currentMealName}>{mealName}</Text>
+              </View>
             </View>
 
-            {/* 条件 */}
-            <Text style={styles.sectionLabel}>新しい条件を指定（複数選択可）</Text>
-            <ConditionPills values={conditions} onChange={setConditions} />
+            {/* 条件 4 ボタン */}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>新しい条件を指定（複数選択可）</Text>
+              {CONDITIONS.map(c => {
+                const active = selectedConditions.includes(c.key);
+                return (
+                  <Pressable
+                    key={c.key}
+                    testID={`regenerate-condition-${c.key}`}
+                    onPress={() => toggleCondition(c.key)}
+                    style={[
+                      styles.conditionBtn,
+                      active ? styles.conditionBtnActive : styles.conditionBtnInactive,
+                    ]}
+                  >
+                    <Text style={[
+                      styles.conditionLabel,
+                      { color: active ? "#FFF" : colors.accent },
+                    ]}>{c.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
-            {/* メモ */}
-            <Text style={[styles.sectionLabel, { marginTop: spacing.lg }]}>
-              リクエスト（任意）
-            </Text>
-            <TextInput
-              testID="regenerate-meal-note"
-              multiline
-              numberOfLines={4}
-              value={note}
-              onChangeText={setNote}
-              placeholder="例: もっとヘルシーに、魚料理がいい..."
-              placeholderTextColor={colors.textMuted}
-              style={styles.textarea}
-            />
+            {/* リクエスト */}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>リクエスト（任意）</Text>
+              <TextInput
+                testID="regenerate-meal-note"
+                multiline
+                numberOfLines={3}
+                value={note}
+                onChangeText={setNote}
+                placeholder="例: もっとヘルシーに、魚料理がいい..."
+                placeholderTextColor={colors.textMuted}
+                style={styles.textarea}
+              />
+            </View>
           </ScrollView>
 
           {/* Submit */}
@@ -154,7 +197,7 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
                 <ActivityIndicator color="#FFF" />
               ) : (
                 <>
-                  <Ionicons name="sparkles" size={16} color="#FFF" />
+                  <Ionicons name="sparkles" size={18} color="#FFF" />
                   <Text style={styles.submitText}>AIで別の献立に変更</Text>
                 </>
               )}
@@ -191,11 +234,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
   title: {
     fontSize: 15,
     fontWeight: "600",
@@ -215,26 +253,39 @@ const styles = StyleSheet.create({
   bodyContent: {
     padding: spacing.lg,
   },
+  section: {
+    marginBottom: spacing.lg,
+  },
+  sectionLabel: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginBottom: spacing.sm,
+  },
   currentMealBox: {
     backgroundColor: colors.bg,
     borderRadius: radius.md,
     padding: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  currentMealLabel: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginBottom: 4,
   },
   currentMealName: {
-    fontSize: 14,
-    fontWeight: "500",
+    fontSize: 16,
+    fontWeight: "700",
     color: colors.text,
   },
-  sectionLabel: {
-    fontSize: 13,
-    color: colors.textMuted,
+  conditionBtn: {
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
     marginBottom: spacing.sm,
+  },
+  conditionBtnInactive: {
+    backgroundColor: colors.accentLight,
+  },
+  conditionBtnActive: {
+    backgroundColor: colors.accent,
+  },
+  conditionLabel: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   textarea: {
     backgroundColor: colors.bg,
