@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { BackButton } from "@/components/ui/shared/BackButton";
+import { THEME_LABELS_REQUEST } from "@homegohan/shared";
 
 // ステップ定義
 const STEPS = [
@@ -357,7 +358,7 @@ export default function MenuRequestWizard() {
                 <div>
                   <Label>Theme</Label>
                   <div className="grid grid-cols-2 gap-3 mt-2">
-                    {["💰 Saving", "💪 Muscle", "⚡️ Recovery", "🥗 Diet", "🍱 Bento", "⏱️ Speed"].map(theme => (
+                    {THEME_LABELS_REQUEST.map(theme => (
                       <button
                         key={theme}
                         onClick={() => toggleTheme(theme)}

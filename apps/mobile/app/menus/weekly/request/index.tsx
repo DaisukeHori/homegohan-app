@@ -9,6 +9,7 @@ import { getApi } from "../../../../src/lib/api";
 import { colors, radius, spacing } from "../../../../src/theme";
 import { useProfile } from "../../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
+import { THEME_LABELS_REQUEST } from "@homegohan/shared";
 
 const MEAL_TYPES = ["breakfast", "lunch", "dinner"] as const;
 
@@ -43,16 +44,6 @@ function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   return d;
 }
 
-// 過渡期マッピング: 日本語テーマ選択 → WEB 形式英語テーマキー
-// PR 3-3 で明示テーマ選択 UI に切り替えたとき削除予定
-function japaneseThemesToWebThemes(selectedJaThemes: string[]): string[] {
-  const themes: string[] = [];
-  if (selectedJaThemes.includes("冷蔵庫の食材を優先")) themes.push("💰 Saving");
-  if (selectedJaThemes.includes("時短メニュー中心")) themes.push("⏱️ Speed");
-  if (selectedJaThemes.includes("和食多め")) themes.push("🍱 Bento");
-  if (selectedJaThemes.includes("ヘルシーに")) themes.push("🥗 Diet");
-  return themes;
-}
 
 export default function WeeklyRequestPage() {
   const { profile } = useProfile();
@@ -75,15 +66,8 @@ export default function WeeklyRequestPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const themes = useMemo(
-    () => [
-      "冷蔵庫の食材を優先",
-      "時短メニュー中心",
-      "和食多め",
-      "ヘルシーに",
-    ],
-    []
-  );
+  // テーマ選択肢: @homegohan/shared の THEME_LABELS_REQUEST (英語 6 種)
+  const themes = useMemo(() => THEME_LABELS_REQUEST, []);
   const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
 
   function toggleTheme(t: string) {
@@ -153,18 +137,17 @@ export default function WeeklyRequestPage() {
 
       const parsedFamilySize = Math.max(1, Math.min(10, parseInt(familySize || "1") || 1));
       const parsedCheatDay = cheatDay.trim() || null;
-      // 過渡期マッピング: 日本語テーマ → WEB 形式英語テーマ (PR 3-3 で UI 切替後に削除)
-      const webThemes = japaneseThemesToWebThemes(selectedThemes);
+      // selectedThemes は英語 6 種 (THEME_LABELS_REQUEST) から選択されるため変換不要
+      const webThemes = selectedThemes;
 
       const api = getApi();
 
       if (isUltimateMode) {
         // 究極モード: /api/ai/menu/v4/generate に ultimateMode: true で送信
-        // TODO: PR 4-1 で constraints を WEB 形式に統一
-        const useFridgeFirst = selectedThemes.includes("冷蔵庫の食材を優先");
-        const quickMeals = selectedThemes.includes("時短メニュー中心");
-        const japaneseStyle = selectedThemes.includes("和食多め");
-        const healthy = selectedThemes.includes("ヘルシーに");
+        const useFridgeFirst = selectedThemes.includes("💰 Saving");
+        const quickMeals = selectedThemes.includes("⏱️ Speed");
+        const japaneseStyle = selectedThemes.includes("🍱 Bento");
+        const healthy = selectedThemes.includes("🥗 Diet");
         const extraLines: string[] = [];
         if (selectedThemes.length) extraLines.push(`テーマ: ${selectedThemes.join("、")}`);
         if (ingredients.length) extraLines.push(`使いたい食材: ${ingredients.join("、")}`);
