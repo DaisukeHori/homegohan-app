@@ -5,6 +5,7 @@ import { ActivityIndicator, View } from "react-native";
 import { colors } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
+import { AIFloatingFab } from "../../src/components/ai/AIFloatingFab";
 
 export default function TabsLayout() {
   const { session, isLoading } = useAuth();
@@ -30,7 +31,8 @@ export default function TabsLayout() {
   }
 
   return (
-    <Tabs
+    <>
+      <Tabs
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
@@ -107,5 +109,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="health" options={{ href: null }} />
       <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>
+      <AIFloatingFab />
+    </>
   );
 }
