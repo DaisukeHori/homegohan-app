@@ -27,7 +27,9 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { imageUrl, imageBase64, mimeType } = body;
+    // inventoryImageUrl は imageUrl の別名として受け付ける (App / WEB 統一)
+    const { imageBase64, mimeType } = body;
+    const imageUrl: string | undefined = body.imageUrl ?? body.inventoryImageUrl;
 
     const images: { base64: string; mimeType: string }[] =
       Array.isArray(body.images) && body.images.length > 0

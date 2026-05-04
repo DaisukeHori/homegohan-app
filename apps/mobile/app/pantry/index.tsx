@@ -13,6 +13,8 @@ import { PageHeader } from "../../src/components/ui/PageHeader";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 
 import { getApi } from "../../src/lib/api";
+import { uploadFridgePhoto } from "../../src/lib/storage";
+import { supabase } from "../../src/lib/supabase";
 import { colors, radius, spacing } from "../../src/theme";
 
 type PantryItem = {
@@ -240,7 +242,6 @@ export default function PantryPage() {
       }
       picked = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
-        base64: true,
         quality: 0.8,
       });
     } else {
@@ -251,14 +252,13 @@ export default function PantryPage() {
       }
       picked = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        base64: true,
         quality: 0.8,
       });
     }
 
     if (picked.canceled) return;
     const asset = picked.assets?.[0];
-    if (!asset?.base64) {
+    if (!asset?.uri) {
       Alert.alert("失敗", "画像の取得に失敗しました。");
       return;
     }
@@ -269,6 +269,9 @@ export default function PantryPage() {
     setDetected([]);
     setSuggestions([]);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("ログインが必要です");
+      const imageUrl = await uploadFridgePhoto(asset.uri, user.id);
       const api = getApi();
       const res = await api.post<{
         ingredients: string[];
@@ -276,8 +279,7 @@ export default function PantryPage() {
         summary: string;
         suggestions: string[];
       }>("/api/ai/analyze-fridge", {
-        imageBase64: asset.base64,
-        mimeType: (asset as any).mimeType ?? "image/jpeg",
+        imageUrl,
       });
       setAnalysisSummary(res.summary || null);
       setDetected((res.detailedIngredients ?? []) as any);
