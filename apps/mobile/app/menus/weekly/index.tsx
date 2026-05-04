@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
 import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType } from "@homegohan/shared";
@@ -1183,7 +1184,7 @@ export default function WeeklyMenuPage() {
   }
 
   return (
-    <View testID="weekly-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
+    <SafeAreaView testID="weekly-screen" edges={["top"]} style={{ flex: 1, backgroundColor: colors.bg }}>
       <WeeklyHeader
         weekRangeLabel={weekRangeLabel}
         weeklyStats={weeklyStats}
@@ -2035,6 +2036,6 @@ export default function WeeklyMenuPage() {
         visible={activeModal === 'fridge'}
         onClose={() => setActiveModal(null)}
       />
-    </View>
+    </SafeAreaView>
   );
 }
