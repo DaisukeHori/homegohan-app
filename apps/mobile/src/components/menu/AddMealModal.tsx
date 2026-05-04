@@ -120,7 +120,7 @@ export function AddMealModal({ visible, onClose, dayId: _dayId, dayDate, mealTyp
     setIsSubmitting(true);
     try {
       const api = getApi();
-      await api.post("/api/meal-plans/meals/simple", {
+      await api.post("/api/meal-plans/meals", {
         dayDate,
         mealType,
         mode: selectedMode,
