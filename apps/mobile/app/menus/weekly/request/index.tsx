@@ -6,6 +6,7 @@ import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, Input, PageHeader, SectionHeader } from "../../../../src/components/ui";
 import { getApi } from "../../../../src/lib/api";
+import { uploadFridgePhoto } from "../../../../src/lib/storage";
 import { colors, radius, spacing } from "../../../../src/theme";
 import { useProfile } from "../../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
@@ -55,6 +56,7 @@ export default function WeeklyRequestPage() {
 
   const [ingredients, setIngredients] = useState<string[]>([]);
   const [fridgeImageUri, setFridgeImageUri] = useState<string | null>(null);
+  const [inventoryImageUrl, setInventoryImageUrl] = useState<string | null>(null);
   const [fridgeSummary, setFridgeSummary] = useState<string | null>(null);
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
 
@@ -83,13 +85,12 @@ export default function WeeklyRequestPage() {
 
     const picked = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"] as any,
-      base64: true,
       quality: 0.8,
     });
     if (picked.canceled) return;
 
     const asset = picked.assets?.[0];
-    if (!asset?.base64) {
+    if (!asset?.uri) {
       Alert.alert("失敗", "画像の取得に失敗しました。");
       return;
     }
@@ -99,6 +100,10 @@ export default function WeeklyRequestPage() {
     setFridgeSuggestions([]);
     try {
       setFridgeImageUri(asset.uri ?? null);
+      const userId = profile?.id;
+      if (!userId) throw new Error("ログインが必要です");
+      const uploadedUrl = await uploadFridgePhoto(asset.uri, userId);
+      setInventoryImageUrl(uploadedUrl);
       const api = getApi();
       const analyzed = await api.post<{
         ingredients: string[];
@@ -106,8 +111,7 @@ export default function WeeklyRequestPage() {
         summary: string;
         suggestions: string[];
       }>("/api/ai/analyze-fridge", {
-        imageBase64: asset.base64,
-        mimeType: (asset as any).mimeType ?? "image/jpeg",
+        imageUrl: uploadedUrl,
       });
 
       const detected: string[] = Array.isArray((analyzed as any)?.ingredients) ? (analyzed as any).ingredients : [];
@@ -175,7 +179,6 @@ export default function WeeklyRequestPage() {
       } else {
         // 通常モード: WEB 形式 constraints で送信
         // 過渡期: cookingTime は固定値 (PR 3-2 でスライダー追加予定)
-        // 過渡期: inventoryImageUrl は null (PR 8-1 で Supabase Storage URL 化予定)
         await api.post("/api/ai/menu/weekly/request", {
           startDate: weekStartStr,
           constraints: {
@@ -185,7 +188,7 @@ export default function WeeklyRequestPage() {
             familySize: parsedFamilySize,
             cheatDay: parsedCheatDay,
           },
-          inventoryImageUrl: null,
+          inventoryImageUrl: inventoryImageUrl ?? null,
           detectedIngredients: ingredients,
           note: note.trim() || null,
         });
