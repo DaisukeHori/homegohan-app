@@ -1,0 +1,22 @@
+appId: com.homegohan.app
+---
+# 週間メニュー画面: 食事カード tap → 完了アイコン状態変化テスト
+- launchApp
+# /menus/weekly へナビゲート
+- tapOn:
+    text: "週間献立"
+- waitForAnimationToEnd
+# 週間メニュー画面が表示されていることを確認
+- assertVisible:
+    text: "週間献立"
+# 最初の食事カードの未完了アイコン (checkmark-circle-outline) が表示されていることを確認
+# 注意: Maestro では Ionicons のアクセシビリティラベルか testID が必要。
+# ここでは食事カードのテキストを起点にして tap する。
+- tapOn:
+    index: 0
+    text: ".*"
+    enabled: true
+- waitForAnimationToEnd
+# tap 後に完了バッジ or 完了を示すテキストが表示されることを確認
+- assertVisible:
+    text: "完了"

@@ -1,0 +1,37 @@
+appId: com.homegohan.app
+---
+# 状態遷移 26: 保存後 modal 閉じ確認
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-name-input"
+- inputText: "モーダルテスト"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "400"
+
+- tapOn:
+    id: "meal-save-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "meal-save-success-message"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: "meals-screen"
+    timeout: 5000
+
+- assertNotVisible:
+    id: "meal-form-screen"

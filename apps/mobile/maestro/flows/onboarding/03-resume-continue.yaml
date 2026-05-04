@@ -1,0 +1,45 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 03: 途中中断したオンボーディングを resume=true で再開 → continue
+# Step1: ログインしてnickname入力後にHomeボタンでアプリを中断
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-text-input"
+- inputText: "再開テスト"
+- pressKey: Enter
+# 進捗が保存されたのでHomeボタンでバックグラウンドへ
+- waitForAnimationToEnd:
+    timeout: 2000
+- pressKey: Home
+- waitForAnimationToEnd:
+    timeout: 3000
+# アプリを再起動 (clearState: false で状態を保持)
+- launchApp:
+    clearState: false
+# resume 画面が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-resume-screen"
+    timeout: 15000
+- assertVisible:
+    id: "onboarding-resume-continue-button"
+- tapOn:
+    id: "onboarding-resume-continue-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- assertVisible:
+    id: "onboarding-progress-bar"

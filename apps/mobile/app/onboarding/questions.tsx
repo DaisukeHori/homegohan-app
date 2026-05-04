@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState } from "../../src/components/ui";
@@ -119,7 +119,7 @@ function createDefaultServingsConfig(familySize: number): ServingsConfig {
 const QUESTIONS: Question[] = [
   {
     id: "nickname",
-    text: "はじめまして！\n私はあなたの食生活をサポートするAI栄養士です。\n\nお名前（ニックネーム）を教えてください",
+    text: "はじめまして！🍳\n私はあなたの食生活をサポートするAI栄養士です。\n\nお名前（ニックネーム）を教えてください",
     type: "text",
     placeholder: "例: たろう",
     required: true,
@@ -129,9 +129,9 @@ const QUESTIONS: Question[] = [
     text: "{nickname}さん、よろしくお願いします！\n\n正確な栄養計算のために、性別を教えてください",
     type: "choice",
     options: [
-      { label: "男性", value: "male" },
-      { label: "女性", value: "female" },
-      { label: "回答しない", value: "unspecified" },
+      { label: "👨 男性", value: "male" },
+      { label: "👩 女性", value: "female" },
+      { label: "🙂 回答しない", value: "unspecified" },
     ],
   },
   {
@@ -144,10 +144,10 @@ const QUESTIONS: Question[] = [
     text: "一番の目標は何ですか？",
     type: "choice",
     options: [
-      { label: "減量・ダイエット", value: "lose_weight", description: "体重を落としたい" },
-      { label: "筋肉増量・バルクアップ", value: "gain_muscle", description: "筋肉をつけたい" },
-      { label: "現状維持・健康管理", value: "maintain", description: "今の体型を維持したい" },
-      { label: "競技パフォーマンス", value: "athlete_performance", description: "大会・試合に向けて" },
+      { label: "🏃 減量・ダイエット", value: "lose_weight", description: "体重を落としたい" },
+      { label: "💪 筋肉増量・バルクアップ", value: "gain_muscle", description: "筋肉をつけたい" },
+      { label: "⚖️ 現状維持・健康管理", value: "maintain", description: "今の体型を維持したい" },
+      { label: "🏆 競技パフォーマンス", value: "athlete_performance", description: "大会・試合に向けて" },
     ],
   },
   // Performance OS v3: アスリート向け追加質問
@@ -157,17 +157,17 @@ const QUESTIONS: Question[] = [
     type: "choice",
     showIf: (answers) => answers.nutrition_goal === "athlete_performance",
     options: [
-      { label: "サッカー", value: "soccer" },
-      { label: "バスケットボール", value: "basketball" },
-      { label: "バレーボール", value: "volleyball" },
-      { label: "野球", value: "baseball" },
-      { label: "テニス", value: "tennis" },
-      { label: "水泳", value: "swimming" },
-      { label: "陸上競技", value: "track_and_field" },
-      { label: "自転車", value: "road_cycling" },
-      { label: "格闘技", value: "martial_arts_general" },
-      { label: "ウェイトリフティング", value: "weightlifting" },
-      { label: "その他", value: "custom" },
+      { label: "⚽ サッカー", value: "soccer" },
+      { label: "🏀 バスケットボール", value: "basketball" },
+      { label: "🏐 バレーボール", value: "volleyball" },
+      { label: "⚾ 野球", value: "baseball" },
+      { label: "🎾 テニス", value: "tennis" },
+      { label: "🏊 水泳", value: "swimming" },
+      { label: "🏃 陸上競技", value: "track_and_field" },
+      { label: "🚴 自転車", value: "road_cycling" },
+      { label: "🥊 格闘技", value: "martial_arts_general" },
+      { label: "🏋️ ウェイトリフティング", value: "weightlifting" },
+      { label: "🎯 その他", value: "custom" },
     ],
   },
   {
@@ -184,9 +184,9 @@ const QUESTIONS: Question[] = [
     type: "choice",
     showIf: (answers) => answers.nutrition_goal === "athlete_performance",
     options: [
-      { label: "初心者（1年未満）", value: "beginner", description: "始めたばかり" },
-      { label: "中級者（1〜3年）", value: "intermediate", description: "基礎は身についている" },
-      { label: "上級者（3年以上）", value: "advanced", description: "競技会・大会出場レベル" },
+      { label: "🔰 初心者（1年未満）", value: "beginner", description: "始めたばかり" },
+      { label: "📈 中級者（1〜3年）", value: "intermediate", description: "基礎は身についている" },
+      { label: "🏆 上級者（3年以上）", value: "advanced", description: "競技会・大会出場レベル" },
     ],
   },
   {
@@ -195,10 +195,10 @@ const QUESTIONS: Question[] = [
     type: "choice",
     showIf: (answers) => answers.nutrition_goal === "athlete_performance",
     options: [
-      { label: "トレーニング期", value: "training", description: "体力・技術向上中" },
-      { label: "試合期", value: "competition", description: "大会・試合シーズン" },
-      { label: "減量期", value: "cut", description: "体重調整中（階級制など）" },
-      { label: "回復期", value: "recovery", description: "オフシーズン・ケガからの復帰" },
+      { label: "🏋️ トレーニング期", value: "training", description: "体力・技術向上中" },
+      { label: "🏆 試合期", value: "competition", description: "大会・試合シーズン" },
+      { label: "⚖️ 減量期", value: "cut", description: "体重調整中（階級制など）" },
+      { label: "🛌 回復期", value: "recovery", description: "オフシーズン・ケガからの復帰" },
     ],
   },
   {
@@ -232,9 +232,9 @@ const QUESTIONS: Question[] = [
     type: "choice",
     showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
     options: [
-      { label: "ゆっくり（月1-2kg）", value: "slow" },
-      { label: "普通（月2-3kg）", value: "moderate" },
-      { label: "積極的（月3kg以上）", value: "aggressive" },
+      { label: "🐢 ゆっくり（月1-2kg）", value: "slow", description: "無理なく長期的に" },
+      { label: "🚶 普通（月2-3kg）", value: "moderate", description: "バランス重視" },
+      { label: "🚀 積極的（月3kg以上）", value: "aggressive", description: "短期集中で" },
     ],
   },
   {
@@ -242,15 +242,15 @@ const QUESTIONS: Question[] = [
     text: "普段どんな運動をしていますか？（複数選択可）",
     type: "multi_choice",
     options: [
-      { label: "筋トレ", value: "weight_training" },
-      { label: "ランニング", value: "running" },
-      { label: "サイクリング", value: "cycling" },
-      { label: "水泳", value: "swimming" },
-      { label: "ヨガ", value: "yoga" },
-      { label: "球技", value: "team_sports" },
-      { label: "格闘技", value: "martial_arts" },
-      { label: "ウォーキング", value: "walking" },
-      { label: "運動していない", value: "none" },
+      { label: "🏋️ 筋トレ・ウェイト", value: "weight_training" },
+      { label: "🏃 ランニング・ジョギング", value: "running" },
+      { label: "🚴 サイクリング", value: "cycling" },
+      { label: "🏊 水泳", value: "swimming" },
+      { label: "🧘 ヨガ・ピラティス", value: "yoga" },
+      { label: "⚽ 球技・チームスポーツ", value: "team_sports" },
+      { label: "🥊 格闘技・ボクシング", value: "martial_arts" },
+      { label: "🚶 ウォーキング", value: "walking" },
+      { label: "❌ 運動していない", value: "none" },
     ],
   },
   {
@@ -273,10 +273,10 @@ const QUESTIONS: Question[] = [
     type: "choice",
     showIf: (answers) => !answers.exercise_types?.includes("none"),
     options: [
-      { label: "軽い", value: "light" },
-      { label: "普通", value: "moderate" },
-      { label: "激しい", value: "intense" },
-      { label: "アスリート", value: "athlete" },
+      { label: "🚶 軽い（息が上がらない程度）", value: "light", description: "ウォーキング、軽いヨガなど" },
+      { label: "🏃 普通（少し息が上がる）", value: "moderate", description: "ジョギング、一般的な筋トレなど" },
+      { label: "🔥 激しい（かなり息が上がる）", value: "intense", description: "HIIT、高重量トレーニングなど" },
+      { label: "💪 アスリートレベル", value: "athlete", description: "毎日ハードなトレーニング" },
     ],
   },
   {
@@ -285,10 +285,10 @@ const QUESTIONS: Question[] = [
     type: "choice",
     showIf: (answers) => !answers.exercise_types?.includes("none"),
     options: [
-      { label: "30分未満", value: "30" },
-      { label: "30分〜1時間", value: "60" },
-      { label: "1〜2時間", value: "90" },
-      { label: "2時間以上", value: "120" },
+      { label: "⏱️ 30分未満", value: "30" },
+      { label: "⏱️ 30分〜1時間", value: "60" },
+      { label: "⏱️ 1〜2時間", value: "90" },
+      { label: "⏱️ 2時間以上", value: "120" },
     ],
   },
   {
@@ -296,12 +296,12 @@ const QUESTIONS: Question[] = [
     text: "普段の仕事・活動スタイルは？",
     type: "choice",
     options: [
-      { label: "デスクワーク", value: "sedentary" },
-      { label: "オフィス（立ち座り半々）", value: "light_active" },
-      { label: "立ち仕事・移動多め", value: "moderately_active" },
-      { label: "肉体労働", value: "very_active" },
-      { label: "学生", value: "student" },
-      { label: "主婦/主夫", value: "homemaker" },
+      { label: "💻 デスクワーク（座り仕事）", value: "sedentary" },
+      { label: "🏢 オフィス（立ち座り半々）", value: "light_active" },
+      { label: "🚶 立ち仕事・移動多め", value: "moderately_active" },
+      { label: "🔨 肉体労働", value: "very_active" },
+      { label: "📚 学生", value: "student" },
+      { label: "🏠 主婦/主夫", value: "homemaker" },
     ],
   },
   {
@@ -310,20 +310,67 @@ const QUESTIONS: Question[] = [
     type: "multi_choice",
     allowSkip: true,
     options: [
-      { label: "高血圧", value: "高血圧" },
-      { label: "糖尿病", value: "糖尿病" },
-      { label: "脂質異常症", value: "脂質異常症" },
-      { label: "心臓病", value: "心臓病" },
-      { label: "腎臓病", value: "腎臓病" },
-      { label: "骨粗しょう症", value: "骨粗しょう症" },
-      { label: "貧血", value: "貧血" },
-      { label: "痛風", value: "痛風" },
-      { label: "便秘・下痢", value: "消化器系" },
-      { label: "不眠・睡眠障害", value: "睡眠障害" },
-      { label: "花粉症・アレルギー", value: "アレルギー" },
-      { label: "甲状腺疾患", value: "甲状腺疾患" },
-      { label: "自律神経失調", value: "自律神経" },
-      { label: "うつ・不安障害", value: "メンタル" },
+      { label: "📈 高血圧", value: "高血圧" },
+      { label: "🍬 糖尿病・血糖値", value: "糖尿病" },
+      { label: "🩸 脂質異常症", value: "脂質異常症" },
+      { label: "🫀 心臓病", value: "心臓病" },
+      { label: "🫁 腎臓病", value: "腎臓病" },
+      { label: "🦴 骨粗しょう症", value: "骨粗しょう症" },
+      { label: "🩺 貧血", value: "貧血" },
+      { label: "🦶 痛風", value: "痛風" },
+      { label: "🌿 便秘・下痢", value: "消化器系" },
+      { label: "😪 不眠・睡眠障害", value: "睡眠障害" },
+      { label: "🤧 花粉症・アレルギー", value: "アレルギー" },
+      { label: "🌡️ 甲状腺疾患", value: "甲状腺疾患" },
+      { label: "🧠 自律神経失調", value: "自律神経" },
+      { label: "😰 うつ・不安障害", value: "メンタル" },
+    ],
+  },
+  {
+    id: "body_concerns",
+    text: "体の悩みはありますか？（複数選択可、なければスキップ）",
+    type: "multi_choice",
+    allowSkip: true,
+    options: [
+      { label: "🥶 冷え性", value: "cold_sensitivity" },
+      { label: "🦵 むくみやすい", value: "swelling_prone" },
+      { label: "💤 疲れやすい", value: "fatigue" },
+      { label: "🤕 肩こり・腰痛", value: "stiff_shoulders" },
+      { label: "😵 頭痛持ち", value: "headache" },
+      { label: "🌡️ 汗をかきにくい", value: "low_sweating" },
+      { label: "🍂 肌荒れ", value: "skin_trouble" },
+      { label: "💇 髪のパサつき", value: "dry_hair" },
+    ],
+  },
+  {
+    id: "sleep_quality",
+    text: "睡眠の質はいかがですか？",
+    type: "choice",
+    options: [
+      { label: "😴 良好", value: "good", description: "よく眠れている" },
+      { label: "😐 普通", value: "average", description: "特に問題なし" },
+      { label: "😫 悪い", value: "poor", description: "睡眠に問題がある" },
+    ],
+  },
+  {
+    id: "stress_level",
+    text: "日々のストレスレベルは？",
+    type: "choice",
+    options: [
+      { label: "😌 低い", value: "low", description: "リラックスできている" },
+      { label: "😐 普通", value: "medium", description: "日常的なストレス" },
+      { label: "😰 高い", value: "high", description: "ストレスを感じている" },
+    ],
+  },
+  {
+    id: "pregnancy_status",
+    text: "妊娠・授乳の状況を教えてください",
+    type: "choice",
+    showIf: (answers) => answers.gender === "female",
+    options: [
+      { label: "🙅‍♀️ 該当なし", value: "none", description: "妊娠・授乳中ではない" },
+      { label: "🤰 妊娠中", value: "pregnant", description: "現在妊娠中" },
+      { label: "🤱 授乳中", value: "nursing", description: "現在授乳中" },
     ],
   },
   {
@@ -332,12 +379,12 @@ const QUESTIONS: Question[] = [
     type: "multi_choice",
     allowSkip: true,
     options: [
-      { label: "ワーファリン", value: "warfarin" },
-      { label: "降圧剤", value: "antihypertensive" },
-      { label: "糖尿病薬", value: "diabetes_medication" },
-      { label: "利尿剤", value: "diuretic" },
-      { label: "抗生物質", value: "antibiotics" },
-      { label: "ステロイド", value: "steroid" },
+      { label: "💊 ワーファリン（血液サラサラ）", value: "warfarin" },
+      { label: "💊 降圧剤", value: "antihypertensive" },
+      { label: "💊 糖尿病薬", value: "diabetes_medication" },
+      { label: "💊 利尿剤", value: "diuretic" },
+      { label: "💊 抗生物質", value: "antibiotics" },
+      { label: "💊 ステロイド", value: "steroid" },
     ],
   },
   {
@@ -370,12 +417,12 @@ const QUESTIONS: Question[] = [
     type: "choice",
     allowSkip: true,
     options: [
-      { label: "通常", value: "normal", description: "特に制限なし" },
-      { label: "ベジタリアン", value: "vegetarian", description: "肉を食べない" },
-      { label: "ヴィーガン", value: "vegan", description: "動物性食品を食べない" },
-      { label: "ペスカタリアン", value: "pescatarian", description: "魚は食べる" },
-      { label: "グルテンフリー", value: "gluten_free", description: "小麦を避ける" },
-      { label: "ケトジェニック", value: "keto", description: "低糖質・高脂質" },
+      { label: "🍽️ 通常", value: "normal", description: "特に制限なし" },
+      { label: "🥬 ベジタリアン", value: "vegetarian", description: "肉を食べない" },
+      { label: "🌱 ヴィーガン", value: "vegan", description: "動物性食品を食べない" },
+      { label: "🐟 ペスカタリアン", value: "pescatarian", description: "魚は食べる" },
+      { label: "🌾 グルテンフリー", value: "gluten_free", description: "小麦を避ける" },
+      { label: "🥑 ケトジェニック", value: "keto", description: "低糖質・高脂質" },
     ],
   },
   {
@@ -383,9 +430,9 @@ const QUESTIONS: Question[] = [
     text: "料理の経験は？",
     type: "choice",
     options: [
-      { label: "初心者", value: "beginner" },
-      { label: "中級者", value: "intermediate" },
-      { label: "上級者", value: "advanced" },
+      { label: "🔰 初心者（1年未満）", value: "beginner" },
+      { label: "👨‍🍳 中級者（1-3年）", value: "intermediate" },
+      { label: "👨‍🍳 上級者（3年以上）", value: "advanced" },
     ],
   },
   {
@@ -393,10 +440,10 @@ const QUESTIONS: Question[] = [
     text: "平日の夕食にかけられる調理時間は？",
     type: "choice",
     options: [
-      { label: "15分以内", value: "15" },
-      { label: "30分以内", value: "30" },
-      { label: "45分以内", value: "45" },
-      { label: "1時間以上OK", value: "60" },
+      { label: "⚡ 15分以内", value: "15" },
+      { label: "🕐 30分以内", value: "30" },
+      { label: "🕑 45分以内", value: "45" },
+      { label: "🕒 1時間以上OK", value: "60" },
     ],
   },
   {
@@ -404,12 +451,12 @@ const QUESTIONS: Question[] = [
     text: "好きな料理ジャンルは？（複数選択可）",
     type: "multi_choice",
     options: [
-      { label: "和食", value: "japanese" },
-      { label: "洋食", value: "western" },
-      { label: "中華", value: "chinese" },
-      { label: "イタリアン", value: "italian" },
-      { label: "エスニック", value: "ethnic" },
-      { label: "韓国料理", value: "korean" },
+      { label: "🍱 和食", value: "japanese" },
+      { label: "🍝 洋食", value: "western" },
+      { label: "🥡 中華", value: "chinese" },
+      { label: "🍕 イタリアン", value: "italian" },
+      { label: "🌶️ エスニック", value: "ethnic" },
+      { label: "🥘 韓国料理", value: "korean" },
     ],
   },
   {
@@ -430,10 +477,10 @@ const QUESTIONS: Question[] = [
     text: "普段の買い物の頻度は？",
     type: "choice",
     options: [
-      { label: "毎日買い物に行く", value: "daily" },
-      { label: "週2〜3回", value: "2-3_weekly" },
-      { label: "週1回まとめ買い", value: "weekly" },
-      { label: "2週間に1回程度", value: "biweekly" },
+      { label: "🛒 毎日買い物に行く", value: "daily" },
+      { label: "🛒 週2〜3回", value: "2-3_weekly" },
+      { label: "🛒 週1回まとめ買い", value: "weekly" },
+      { label: "🛒 2週間に1回程度", value: "biweekly" },
     ],
   },
   {
@@ -442,12 +489,12 @@ const QUESTIONS: Question[] = [
     type: "choice",
     allowSkip: true,
     options: [
-      { label: "〜5,000円", value: "5000" },
-      { label: "5,000〜10,000円", value: "10000" },
-      { label: "10,000〜15,000円", value: "15000" },
-      { label: "15,000〜20,000円", value: "20000" },
-      { label: "20,000円以上", value: "25000" },
-      { label: "特に決めていない", value: "none" },
+      { label: "💰 〜5,000円", value: "5000" },
+      { label: "💰 5,000〜10,000円", value: "10000" },
+      { label: "💰 10,000〜15,000円", value: "15000" },
+      { label: "💰 15,000〜20,000円", value: "20000" },
+      { label: "💰 20,000円以上", value: "25000" },
+      { label: "🤷 特に決めていない", value: "none" },
     ],
   },
   {
@@ -456,12 +503,12 @@ const QUESTIONS: Question[] = [
     type: "multi_choice",
     allowSkip: true,
     options: [
-      { label: "オーブン/オーブンレンジ", value: "oven" },
-      { label: "魚焼きグリル", value: "grill" },
-      { label: "圧力鍋", value: "pressure_cooker" },
-      { label: "ホットクック/電気圧力鍋", value: "slow_cooker" },
-      { label: "エアフライヤー", value: "air_fryer" },
-      { label: "フードプロセッサー/ミキサー", value: "food_processor" },
+      { label: "🔥 オーブン/オーブンレンジ", value: "oven" },
+      { label: "🐟 魚焼きグリル", value: "grill" },
+      { label: "⏱️ 圧力鍋", value: "pressure_cooker" },
+      { label: "🤖 ホットクック/電気圧力鍋", value: "slow_cooker" },
+      { label: "🍟 エアフライヤー", value: "air_fryer" },
+      { label: "🥤 フードプロセッサー/ミキサー", value: "food_processor" },
     ],
   },
   {
@@ -469,8 +516,8 @@ const QUESTIONS: Question[] = [
     text: "お使いのコンロは？",
     type: "choice",
     options: [
-      { label: "ガスコンロ", value: "stove:gas" },
-      { label: "IHコンロ", value: "stove:ih" },
+      { label: "🔥 ガスコンロ", value: "stove:gas" },
+      { label: "⚡ IHコンロ", value: "stove:ih" },
     ],
   },
   {
@@ -635,6 +682,11 @@ export default function OnboardingQuestions() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(isResume);
   const [isCalculating, setIsCalculating] = useState(false);
+
+  // custom_stats フィールド間のフォーカス移動用 ref
+  const occupationRef = useRef<TextInput>(null);
+  const heightRef = useRef<TextInput>(null);
+  const weightRef = useRef<TextInput>(null);
 
   // 再開時は進捗を復元
   useEffect(() => {
@@ -906,6 +958,7 @@ export default function OnboardingQuestions() {
   }
 
   const canSkip = (currentQuestion as any)?.allowSkip;
+  const isLastStep = getNextQuestion(currentStep, answers) === -1;
 
   if (isLoading) {
     return <LoadingState message="前回の進捗を読み込み中..." style={{ backgroundColor: "#FFF7ED" }} />;
@@ -931,13 +984,17 @@ export default function OnboardingQuestions() {
   }
 
   return (
-    <View style={[styles.screenContainer, { paddingTop: insets.top }]}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
+    >
+    <View testID="onboarding-questions-screen" style={[styles.screenContainer, { paddingTop: insets.top }]}>
       {/* ── Header: back + progress ── */}
       <View style={styles.headerSection}>
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             {stepHistory.length > 0 && (
-              <Pressable onPress={handleBack} style={styles.backButton} hitSlop={12}>
+              <Pressable testID="onboarding-back-button" onPress={handleBack} style={styles.backButton} hitSlop={12}>
                 <Ionicons name="chevron-back" size={18} color="#666" />
               </Pressable>
             )}
@@ -948,7 +1005,7 @@ export default function OnboardingQuestions() {
           <Text style={styles.headerCounter}>{progress.current} / {progress.total}</Text>
         </View>
         {/* Progress bar */}
-        <View style={styles.progressTrack}>
+        <View testID="onboarding-progress-bar" style={styles.progressTrack}>
           <View style={[styles.progressFill, { width: `${(progress.current / progress.total) * 100}%` }]} />
         </View>
       </View>
@@ -964,7 +1021,7 @@ export default function OnboardingQuestions() {
         </View>
 
         {/* Question text */}
-        <View style={styles.questionSection}>
+        <View testID="onboarding-question-text" style={styles.questionSection}>
           {getQuestionText()
             .split("\n")
             .map((line, i) => (
@@ -982,6 +1039,7 @@ export default function OnboardingQuestions() {
         {currentQuestion.type === "text" && (
           <View style={styles.inputRow}>
             <TextInput
+              testID="onboarding-text-input"
               autoFocus
               placeholder={currentQuestion.placeholder}
               placeholderTextColor={colors.textMuted}
@@ -1002,33 +1060,44 @@ export default function OnboardingQuestions() {
 
         {/* Number input */}
         {currentQuestion.type === "number" && (
-          <View style={styles.inputRow}>
-            <TextInput
-              autoFocus
-              keyboardType="number-pad"
-              placeholder={currentQuestion.placeholder}
-              placeholderTextColor={colors.textMuted}
-              value={inputValue}
-              onChangeText={(v) => setInputValue(v.replace(/[^0-9]/g, ""))}
-              onSubmitEditing={() => { if (isNumberValid) handleAnswer(numberValue); }}
-              style={[styles.textInput, { flex: 1 }]}
-            />
-            <Pressable
-              onPress={() => { if (isNumberValid) handleAnswer(numberValue); }}
-              disabled={!isNumberValid}
-              style={[styles.arrowButton, !isNumberValid && styles.arrowButtonDisabled]}
-            >
-              <Ionicons name="arrow-forward" size={20} color="#fff" />
-            </Pressable>
+          <View style={{ gap: spacing.xs }}>
+            <View style={styles.inputRow}>
+              <TextInput
+                testID="onboarding-number-input"
+                autoFocus
+                keyboardType="number-pad"
+                returnKeyType="done"
+                placeholder={currentQuestion.placeholder}
+                placeholderTextColor={colors.textMuted}
+                value={inputValue}
+                onChangeText={(v) => setInputValue(v.replace(/[^0-9]/g, ""))}
+                onSubmitEditing={() => { if (isNumberValid) handleAnswer(numberValue); }}
+                style={[styles.textInput, { flex: 1 }]}
+              />
+              <Pressable
+                testID="onboarding-number-submit-button"
+                onPress={() => { if (isNumberValid) handleAnswer(numberValue); }}
+                disabled={!isNumberValid}
+                style={[styles.arrowButton, !isNumberValid && styles.arrowButtonDisabled]}
+              >
+                <Ionicons name="arrow-forward" size={20} color="#fff" />
+              </Pressable>
+            </View>
+            {inputValue.length > 0 && !isNumberValid && (
+              <Text testID="onboarding-error-text" style={styles.errorText}>
+                {numberMin}〜{numberMax} の範囲で入力してください
+              </Text>
+            )}
           </View>
         )}
 
         {/* Choice — outline buttons (matching web) */}
         {currentQuestion.type === "choice" && (
-          <View style={styles.choiceGroup}>
+          <View testID={`onboarding-${currentQuestion.id}-screen`} style={styles.choiceGroup}>
             {(currentQuestion.options || []).map((opt) => (
               <Pressable
                 key={opt.value}
+                testID={`onboarding-choice-option-${opt.value}`}
                 onPress={() => handleAnswer(opt.value)}
                 style={({ pressed }) => [styles.choiceButton, pressed && { backgroundColor: colors.accent, borderColor: colors.accent }]}
               >
@@ -1054,6 +1123,7 @@ export default function OnboardingQuestions() {
                 return (
                   <Pressable
                     key={opt.value}
+                    testID={`onboarding-multi-choice-option-${opt.value}`}
                     onPress={() => handleMultiSelect(opt.value)}
                     style={[styles.multiButton, selected && styles.multiButtonSelected]}
                   >
@@ -1066,11 +1136,12 @@ export default function OnboardingQuestions() {
             </View>
             <View style={styles.actionRow}>
               {canSkip && (
-                <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+                <Pressable testID="onboarding-skip-question-button" onPress={() => handleAnswer(null)} style={styles.skipButton}>
                   <Text style={styles.skipButtonText}>スキップ</Text>
                 </Pressable>
               )}
               <Pressable
+                testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
                 onPress={() => { if (isMultiReady) handleAnswer(selectedMulti); }}
                 disabled={!isMultiReady}
                 style={[styles.nextButton, !isMultiReady && styles.nextButtonDisabled]}
@@ -1121,11 +1192,12 @@ export default function OnboardingQuestions() {
 
             <View style={styles.actionRow}>
               {canSkip && (
-                <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+                <Pressable testID="onboarding-skip-question-button" onPress={() => handleAnswer(null)} style={styles.skipButton}>
                   <Text style={styles.skipButtonText}>スキップ</Text>
                 </Pressable>
               )}
               <Pressable
+                testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
                 onPress={() => { if (hasTags) handleAnswer(tags); }}
                 disabled={!hasTags}
                 style={[styles.nextButton, !hasTags && styles.nextButtonDisabled]}
@@ -1138,36 +1210,48 @@ export default function OnboardingQuestions() {
 
         {/* Custom stats */}
         {currentQuestion.type === "custom_stats" && (
-          <View style={{ gap: spacing.md }}>
+          <View testID="onboarding-body-stats-screen" style={{ gap: spacing.md }}>
             <View style={styles.statsRow}>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>年齢</Text>
-                <TextInput keyboardType="number-pad" placeholder="25" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-age-input" keyboardType="number-pad" placeholder="25" placeholderTextColor={colors.textMuted}
                   value={answers.age || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, age: v }))}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => occupationRef.current?.focus()}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>職業</Text>
-                <TextInput placeholder="会社員" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-occupation-input" ref={occupationRef} placeholder="会社員" placeholderTextColor={colors.textMuted}
                   value={answers.occupation || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, occupation: v }))}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => heightRef.current?.focus()}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
             </View>
             <View style={styles.statsRow}>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>身長 (cm)</Text>
-                <TextInput keyboardType="decimal-pad" placeholder="170" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-height-input" ref={heightRef} keyboardType="decimal-pad" placeholder="170" placeholderTextColor={colors.textMuted}
                   value={answers.height || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, height: v }))}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => weightRef.current?.focus()}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
               <View style={styles.statsField}>
                 <Text style={styles.statsLabel}>体重 (kg)</Text>
-                <TextInput keyboardType="decimal-pad" placeholder="60" placeholderTextColor={colors.textMuted}
+                <TextInput testID="onboarding-weight-input" ref={weightRef} keyboardType="decimal-pad" placeholder="60" placeholderTextColor={colors.textMuted}
                   value={answers.weight || ""} onChangeText={(v) => setAnswers((prev) => ({ ...prev, weight: v }))}
+                  returnKeyType="done"
+                  blurOnSubmit={true}
                   style={[styles.textInput, { textAlign: "center" }]} />
               </View>
             </View>
             <Pressable
+              testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
               onPress={() => handleAnswer("completed")}
               disabled={!answers.age || !answers.height || !answers.weight}
               style={[styles.nextButton, (!answers.age || !answers.height || !answers.weight) && styles.nextButtonDisabled]}
@@ -1207,7 +1291,7 @@ export default function OnboardingQuestions() {
             </Pressable>
           </View>
           {canSkip && (
-            <Pressable onPress={() => handleAnswer(null)} style={styles.skipButton}>
+            <Pressable testID="onboarding-skip-question-button" onPress={() => handleAnswer(null)} style={styles.skipButton}>
               <Text style={styles.skipButtonText}>スキップ</Text>
             </Pressable>
           )}
@@ -1216,7 +1300,7 @@ export default function OnboardingQuestions() {
 
       {/* Servings grid */}
       {currentQuestion.type === "servings_grid" ? (
-        <View style={{ gap: spacing.md }}>
+        <View testID="onboarding-servings-screen" style={{ gap: spacing.md }}>
           <Text style={styles.gridHint}>
             各セルをタップして人数を変更できます
           </Text>
@@ -1315,6 +1399,7 @@ export default function OnboardingQuestions() {
           </View>
 
           <Pressable
+            testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
             onPress={() => {
               const familySize = parseInt(answers.family_size) || 2;
               const config = answers.servings_config || createDefaultServingsConfig(familySize);
@@ -1330,6 +1415,7 @@ export default function OnboardingQuestions() {
 
       </ScrollView>
     </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -1585,6 +1671,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#4B5563",
     fontSize: 12,
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: 12,
+    textAlign: "center",
   },
   /* ── Stats ── */
   statsRow: {

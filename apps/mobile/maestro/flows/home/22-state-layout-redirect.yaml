@@ -1,0 +1,36 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 22: 状態遷移 - タブナビゲーションが正しく動作すること
+# NOTE: tab-meals testID は未実装のため、tab-favorites/tab-comparison でナビゲーションを確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# タブナビゲーション経由でホームに留まる
+- tapOn:
+    id: "tab-home"
+- assertVisible:
+    id: "home-screen"
+
+# お気に入りタブに移動
+- tapOn:
+    id: "tab-favorites"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-screen"
+    timeout: 8000
+- assertVisible:
+    id: "favorites-screen"
+
+# ホームに戻る
+- tapOn:
+    id: "tab-home"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 8000
+- assertVisible:
+    id: "home-screen"

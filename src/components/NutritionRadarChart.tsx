@@ -10,11 +10,11 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
-import { 
-  getNutrientDefinition, 
+import {
+  getNutrientDefinition,
   calculateDriPercentage,
   DEFAULT_RADAR_NUTRIENTS,
-} from "@/lib/nutrition-constants";
+} from "@homegohan/shared";
 
 // ============================================
 // Types

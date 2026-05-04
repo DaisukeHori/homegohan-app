@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 22: Adversarial - submit ボタン連打 → 重複リクエスト防止
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-note-input"
+- tapOn:
+    id: "weekly-request-note-input"
+- inputText: "連打テスト"
+- scroll
+# submit ボタンを連打
+- tapOn:
+    id: "weekly-request-submit-button"
+- tapOn:
+    id: "weekly-request-submit-button"
+- tapOn:
+    id: "weekly-request-submit-button"
+- tapOn:
+    id: "weekly-request-submit-button"
+- tapOn:
+    id: "weekly-request-submit-button"
+# アプリがクラッシュしないこと (画面が維持されること)
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 15000
+- assertVisible:
+    id: "weekly-request-screen"

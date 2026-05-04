@@ -1,0 +1,37 @@
+appId: com.homegohan.app
+---
+# バリデーション 12: 未来日付で保存試行
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-name-input"
+- inputText: "未来の食事"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "500"
+
+- tapOn:
+    id: "meal-date-input"
+- assertVisible:
+    id: "date-picker"
+
+- tapOn:
+    id: "date-picker-future-date"
+
+- tapOn:
+    id: "meal-save-button"
+
+- assertVisible:
+    id: "meal-date-error"
+- assertNotVisible:
+    id: "meals-screen"

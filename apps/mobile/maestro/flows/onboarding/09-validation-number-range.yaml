@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 09: バリデーション - body_stats で height/weight 空のまま → next disabled
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-text-input"
+- inputText: "レンジテスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-unspecified"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
+# 年齢のみ入力して身長・体重は空 → next が disabled
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "25"
+# next を押しても body-stats-screen のまま
+- tapOn:
+    id: "onboarding-next-button"
+- assertVisible:
+    id: "onboarding-body-stats-screen"
+- assertNotVisible:
+    id: "onboarding-nutrition_goal-screen"

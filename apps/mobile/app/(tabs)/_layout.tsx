@@ -50,13 +50,15 @@ export default function TabsLayout() {
         options={{
           title: "ホーム",
           tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
+          tabBarButtonTestID: "tab-home",
         }}
       />
       <Tabs.Screen
         name="menus"
         options={{
           title: "献立",
-          tabBarIcon: ({ color, size }) => <Ionicons name="restaurant" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="book-outline" size={size} color={color} />,
+          tabBarButtonTestID: "tab-menus",
         }}
       />
       <Tabs.Screen
@@ -83,16 +85,14 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="favorites"
-        options={{
-          title: "お気に入り",
-          tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
-        }}
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="comparison"
         options={{
           title: "比較",
           tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
+          tabBarButtonTestID: "tab-comparison",
         }}
       />
       <Tabs.Screen
@@ -100,6 +100,7 @@ export default function TabsLayout() {
         options={{
           title: "マイページ",
           tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
+          tabBarButtonTestID: "tab-profile",
         }}
       />
       {/* タブバーに表示しないが(tabs)グループ内に必要なファイル */}

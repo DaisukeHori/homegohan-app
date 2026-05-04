@@ -12,7 +12,7 @@ import { getApi } from "../../src/lib/api";
 // 型定義
 // ----------------------------------------------------------------
 type Period = "week" | "month" | "3months" | "year";
-type Metric = "weight" | "body_fat" | "bp" | "sleep";
+type Metric = "weight" | "body_fat" | "bp" | "sleep" | "mood" | "energy_level" | "heart_rate" | "body_temp";
 
 interface HealthRecord {
   id: string;
@@ -21,6 +21,10 @@ interface HealthRecord {
   body_fat_percentage?: number | null;
   systolic_bp?: number | null;
   sleep_hours?: number | null;
+  mood_score?: number | null;
+  energy_level?: number | null;
+  heart_rate?: number | null;
+  body_temp?: number | null;
   fromCheckup?: boolean;
 }
 
@@ -314,6 +318,18 @@ export default function HealthGraphsPage() {
           case "sleep":
             value = rec.sleep_hours ?? null;
             break;
+          case "mood":
+            value = rec.mood_score ?? null;
+            break;
+          case "energy_level":
+            value = rec.energy_level ?? null;
+            break;
+          case "heart_rate":
+            value = rec.heart_rate ?? null;
+            break;
+          case "body_temp":
+            value = rec.body_temp ?? null;
+            break;
         }
       }
       result.push({ date: dateStr, value, fromCheckup: rec?.fromCheckup });
@@ -348,13 +364,17 @@ export default function HealthGraphsPage() {
     body_fat: { label: "体脂肪率", unit: "%", color: colors.purple },
     bp: { label: "血圧(収縮期)", unit: "mmHg", color: colors.error },
     sleep: { label: "睡眠時間", unit: "h", color: colors.blue },
+    mood: { label: "気分スコア", unit: "/ 5", color: colors.warning },
+    energy_level: { label: "エネルギー", unit: "/ 5", color: colors.success },
+    heart_rate: { label: "心拍数", unit: "bpm", color: colors.streak },
+    body_temp: { label: "体温", unit: "℃", color: colors.accentDark },
   };
 
   const currentMetric = metricConfig[metric];
   const hasData = graphData.some((d) => d.value !== null);
 
   return (
-    <View style={styles.screen}>
+    <View testID="health-graphs-screen" style={styles.screen}>
       <PageHeader
         title="推移グラフ"
         right={
@@ -369,6 +389,7 @@ export default function HealthGraphsPage() {
           {(Object.keys(metricConfig) as Metric[]).map((m) => (
             <TouchableOpacity
               key={m}
+              testID={`health-graphs-metric-${m}`}
               onPress={() => setMetric(m)}
               style={[
                 styles.chip,
@@ -392,6 +413,7 @@ export default function HealthGraphsPage() {
           {(["week", "month", "3months", "year"] as Period[]).map((p) => (
             <TouchableOpacity
               key={p}
+              testID={`health-graphs-period-${p}`}
               onPress={() => setPeriod(p)}
               style={[
                 styles.periodBtn,
@@ -422,6 +444,7 @@ export default function HealthGraphsPage() {
           </Card>
         ) : !hasData ? (
           <EmptyState
+            testID="health-graphs-empty"
             icon={<Ionicons name="analytics-outline" size={48} color={colors.textMuted} />}
             message="データがありません。健康記録を開始しましょう。"
             actionLabel="記録する"
@@ -430,7 +453,7 @@ export default function HealthGraphsPage() {
         ) : (
           <>
             {/* メトリクスカード */}
-            <View style={styles.chartCard}>
+            <View testID="health-graphs-chart" style={styles.chartCard}>
               {/* サマリーヘッダー */}
               <View style={styles.chartHeader}>
                 <View>

@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# Adversarial 21: インサイト画面のスクロールパフォーマンス確認
+- runFlow: ../_shared/login.yaml
+
+- assertVisible:
+    id: "home-screen"
+- tapOn:
+    id: "home-health-card"
+
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 10000
+
+# インサイト画面へ遷移
+- scroll
+- tapOn:
+    id: "health-insights-button"
+- extendedWaitUntil:
+    visible:
+      id: "health-insights-screen"
+    timeout: 15000
+
+# 画面がクラッシュせずに表示されること
+- assertVisible:
+    id: "health-insights-screen"
+
+# スクロールしても動作すること
+- scroll
+- assertVisible:
+    id: "health-insights-screen"

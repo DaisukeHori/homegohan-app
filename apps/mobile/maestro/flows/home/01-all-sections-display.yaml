@@ -1,0 +1,18 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 01: ホーム画面の全セクションが表示されることを確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- assertVisible:
+    id: "home-health-card"
+- assertVisible:
+    id: "home-streak-card"
+- assertVisible:
+    id: "home-checkin-button"
+- scroll
+- assertVisible:
+    id: "home-weekly-graph-card"

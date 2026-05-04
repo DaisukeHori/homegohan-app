@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useMemo, useState, useEffect, useRef } from "react";
-import { Animated, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Animated, Image, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
 import { Svg, Circle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -93,6 +93,7 @@ export default function HomeScreen() {
     shoppingRemaining,
     badgeCount,
     latestBadge,
+    bestMealThisWeek,
     activityLevel,
     suggestion,
     performanceAnalysis,
@@ -101,10 +102,12 @@ export default function HomeScreen() {
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
+    executeNutritionSuggestion,
     submitPerformanceCheckin,
     refetch,
   } = useHomeData(user?.id);
 
+  const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
   const [checkinSubmitting, setCheckinSubmitting] = useState(false);
   const [checkinForm, setCheckinForm] = useState({
@@ -162,7 +165,7 @@ export default function HomeScreen() {
   });
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="home-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
         {/* ========== ヒーローセクション ========== */}
         <View style={{ backgroundColor: "#FFF7ED", paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: spacing.lg }}>
@@ -178,7 +181,7 @@ export default function HomeScreen() {
                 さん
               </Text>
             </View>
-            <Pressable onPress={() => router.push("/profile")}>
+            <Pressable testID="home-profile-avatar" onPress={() => router.push("/profile")}>
               <View style={{
                 width: 44, height: 44, borderRadius: 22,
                 backgroundColor: colors.card, alignItems: "center", justifyContent: "center",
@@ -194,6 +197,7 @@ export default function HomeScreen() {
           {/* ストリーク & 今月の自炊 */}
           <View style={{ flexDirection: "row", gap: spacing.md }}>
             <StatCard
+              testID="home-streak-card"
               icon={<Ionicons name="flame" size={22} color="#fff" />}
               label="連続自炊"
               value={cookingStreak}
@@ -202,6 +206,7 @@ export default function HomeScreen() {
               accentColor={colors.streak}
             />
             <StatCard
+              testID="home-monthly-cook-card"
               icon={<Ionicons name="restaurant" size={22} color="#fff" />}
               label="今月の自炊"
               value={monthlyStats.cookCount}
@@ -218,6 +223,7 @@ export default function HomeScreen() {
             {announcements.map((ann) => (
               <View
                 key={ann.id}
+                testID={`home-announcement-banner-${ann.id}`}
                 style={{
                   backgroundColor: "#EFF6FF",
                   borderWidth: 1,
@@ -236,7 +242,7 @@ export default function HomeScreen() {
                     <Text style={{ fontSize: 12, color: "#1D4ED8", marginTop: 2, lineHeight: 17 }}>{ann.content}</Text>
                   ) : null}
                 </View>
-                <Pressable onPress={() => dismissAnnouncement(ann.id)} hitSlop={12}>
+                <Pressable testID={`home-announcement-dismiss-${ann.id}`} onPress={() => dismissAnnouncement(ann.id)} hitSlop={12}>
                   <Ionicons name="close" size={16} color="#93C5FD" />
                 </Pressable>
               </View>
@@ -247,7 +253,7 @@ export default function HomeScreen() {
         <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg, gap: spacing.lg }}>
 
           {/* ========== 健康記録カード ========== */}
-          <Pressable onPress={() => router.push("/health")} style={({ pressed }) => ({
+          <Pressable testID="home-health-card" onPress={() => router.push("/health")} style={({ pressed }) => ({
             backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg,
             borderWidth: 1, borderColor: colors.purpleLight, ...shadows.sm,
             ...(pressed ? { opacity: 0.9 } : {}),
@@ -428,6 +434,7 @@ export default function HomeScreen() {
                   <Text style={{ fontSize: 14, fontWeight: "800", color: colors.text }}>30秒チェックイン</Text>
                 </View>
                 <Pressable
+                  testID="home-checkin-button"
                   onPress={() => setShowCheckin(!showCheckin)}
                   style={{
                     paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.xl,
@@ -493,6 +500,7 @@ export default function HomeScreen() {
                   ))}
 
                   <Button
+                    testID="home-checkin-submit-button"
                     onPress={async () => {
                       setCheckinSubmitting(true);
                       setCheckinFeedback(null);
@@ -522,6 +530,7 @@ export default function HomeScreen() {
           {/* ========== 次の一手カード ========== */}
           {performanceAnalysis.nextAction && (
             <LinearGradient
+              testID="home-next-action-card"
               colors={["#8B5CF6", "#6366F1"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -573,17 +582,31 @@ export default function HomeScreen() {
 
           {/* ========== AIサジェスト ========== */}
           {suggestion && (
-            <View style={{
-              padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.accent,
-              ...shadows.md,
-            }}>
+            <View
+              testID="home-ai-suggestion-card"
+              style={{
+                padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.accent,
+                ...shadows.md,
+              }}
+            >
               <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
                 <Ionicons name="sparkles" size={18} color="#fff" style={{ marginTop: 2 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 11, fontWeight: "800", color: "rgba(255,255,255,0.8)", marginBottom: 2 }}>💡 今日のアドバイス</Text>
                   <Text style={{ fontSize: 13, fontWeight: "600", color: "#fff", lineHeight: 20 }}>{suggestion}</Text>
+                  {nutritionAnalysis.suggestion && (
+                    <Pressable
+                      testID="home-ai-suggestion-execute-button"
+                      onPress={() => executeNutritionSuggestion()}
+                      style={{ marginTop: spacing.sm }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: "rgba(255,255,255,0.9)", textDecorationLine: "underline" }}>
+                        献立表でAI変更する
+                      </Text>
+                    </Pressable>
+                  )}
                 </View>
-                <Pressable onPress={() => setSuggestion(null)} hitSlop={12}>
+                <Pressable testID="home-ai-suggestion-dismiss-button" onPress={() => setSuggestion(null)} hitSlop={12}>
                   <Ionicons name="close" size={16} color="rgba(255,255,255,0.6)" />
                 </Pressable>
               </View>
@@ -711,6 +734,7 @@ export default function HomeScreen() {
                   return (
                     <Pressable
                       key={m.id}
+                      testID={`home-meal-card-${m.id}`}
                       onPress={() => toggleMealCompletion(m.id, !!m.is_completed)}
                       style={({ pressed }) => ({
                         flexDirection: "row", alignItems: "center", gap: spacing.md,
@@ -778,6 +802,7 @@ export default function HomeScreen() {
           {/* ========== クイックアクション ========== */}
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             <Pressable
+              testID="home-record-meal-button"
               onPress={() => router.push("/meals/new")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, ...shadows.sm }}
             >
@@ -788,6 +813,7 @@ export default function HomeScreen() {
               <Text style={{ fontSize: 11, color: colors.textMuted }}>写真から入力</Text>
             </Pressable>
             <Pressable
+              testID="home-ai-menu-button"
               onPress={() => router.push("/menus/weekly/request")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, ...shadows.sm }}
             >
@@ -801,6 +827,7 @@ export default function HomeScreen() {
 
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             <Pressable
+              testID="home-shopping-button"
               onPress={() => router.push("/shopping-list")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
             >
@@ -809,10 +836,13 @@ export default function HomeScreen() {
               </View>
               <View>
                 <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>買い物リスト</Text>
-                {shoppingRemaining > 0 && <Text style={{ fontSize: 11, color: colors.warning }}>残り{shoppingRemaining}件</Text>}
+                {shoppingRemaining > 0 && (
+                  <Text style={{ fontSize: 11, color: colors.warning }}>残り{shoppingRemaining}件</Text>
+                )}
               </View>
             </Pressable>
             <Pressable
+              testID="home-pantry-button"
               onPress={() => router.push("/pantry")}
               style={{ flex: 1, backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm, flexDirection: "row", alignItems: "center", gap: spacing.sm }}
             >
@@ -828,6 +858,7 @@ export default function HomeScreen() {
 
           {/* ========== レシピブラウズ ========== */}
           <Pressable
+            testID="home-recipes-button"
             onPress={() => router.push("/recipes")}
             style={{
               backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.md,
@@ -847,7 +878,7 @@ export default function HomeScreen() {
 
           {/* ========== 週間自炊率グラフ ========== */}
           {weeklyStats.days.length > 0 && (
-            <Card>
+            <Card testID="home-weekly-graph-card" onPress={() => setShowWeeklyDetail(true)}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
@@ -856,12 +887,15 @@ export default function HomeScreen() {
                     </View>
                     <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text }}>今週の自炊率</Text>
                   </View>
-                  <Text style={{ fontSize: 22, fontWeight: "900", color: colors.success }}>{weeklyStats.avgCookRate}%</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <Text style={{ fontSize: 22, fontWeight: "900", color: colors.success }}>{weeklyStats.avgCookRate}%</Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                  </View>
                 </View>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: 60 }}>
                   {weeklyStats.days.map((day) => {
                     const barH = Math.max(4, (day.cookRate / 100) * 48);
-                    const isToday = day.dayOfWeek === DOW[new Date().getDay()];
+                    const isToday = day.date === new Date().toISOString().slice(0, 10);
                     return (
                       <View key={day.date} style={{ alignItems: "center", gap: 4, flex: 1 }}>
                         <View style={{
@@ -884,16 +918,36 @@ export default function HomeScreen() {
 
           {/* ========== 冷蔵庫アラート ========== */}
           {expiringItems.length > 0 && (
-            <Card onPress={() => router.push("/pantry")} variant="accent">
-              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+            <Card testID="home-expiring-alert-card" onPress={() => router.push("/pantry")} variant="accent">
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md }}>
                 <View style={{ width: 40, height: 40, borderRadius: radius.md, backgroundColor: colors.warning, alignItems: "center", justifyContent: "center" }}>
                   <Ionicons name="alert" size={22} color="#fff" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }}>期限間近の食材が{expiringItems.length}件</Text>
-                  <Text style={{ fontSize: 12, color: colors.textMuted }} numberOfLines={1}>
-                    {expiringItems.slice(0, 3).map((it: any) => it.name || it.item_name).join("、")}
-                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text, marginBottom: spacing.xs }}>期限間近の食材が{expiringItems.length}件</Text>
+                  {expiringItems.slice(0, 3).map((it: any) => {
+                    const expDate = it.expiration_date ?? it.expiry_date ?? it.expirationDate;
+                    const daysLeft = expDate
+                      ? Math.ceil((new Date(expDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                      : null;
+                    const isUrgent = daysLeft !== null && daysLeft <= 1;
+                    const badgeBg = isUrgent ? "#FEE2E2" : "#FEF3C7";
+                    const badgeText = isUrgent ? "#EF4444" : "#F59E0B";
+                    const label = daysLeft === null ? null : daysLeft <= 0 ? "今日まで" : `あと${daysLeft}日`;
+                    return (
+                      <View key={it.id ?? it.item_name ?? it.name} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                        <Text style={{ fontSize: 12, color: colors.text, flex: 1 }} numberOfLines={1}>{it.name ?? it.item_name}</Text>
+                        {label !== null && (
+                          <View style={{ backgroundColor: badgeBg, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2, marginLeft: spacing.xs }}>
+                            <Text style={{ fontSize: 11, fontWeight: "700", color: badgeText }}>{label}</Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                  {expiringItems.length > 3 && (
+                    <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>他{expiringItems.length - 3}件</Text>
+                  )}
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
               </View>
@@ -901,7 +955,7 @@ export default function HomeScreen() {
           )}
 
           {/* バッジ */}
-          <Pressable onPress={() => router.push("/badges")} style={{
+          <Pressable testID="home-badges-button" onPress={() => router.push("/badges")} style={{
             flexDirection: "row", alignItems: "center", gap: spacing.md,
             backgroundColor: colors.purpleLight, borderRadius: radius.xl, padding: spacing.lg,
             borderWidth: 1, borderColor: "#D1C4E9",
@@ -920,11 +974,151 @@ export default function HomeScreen() {
               </View>
             )}
           </Pressable>
+
+          {/* ========== 今週のベスト料理 ========== */}
+          {bestMealThisWeek && bestMealThisWeek.image_url && (
+            <View style={{
+              borderRadius: radius.xl, overflow: "hidden",
+              borderWidth: 1, borderColor: colors.border, ...shadows.sm,
+            }}>
+              <View style={{ height: 128 }}>
+                <Image
+                  source={{ uri: bestMealThisWeek.image_url }}
+                  style={{ width: "100%", height: "100%" }}
+                  resizeMode="cover"
+                />
+                <LinearGradient
+                  colors={["transparent", "rgba(0,0,0,0.65)"]}
+                  style={{
+                    position: "absolute", left: 0, right: 0, bottom: 0, top: 0,
+                  }}
+                />
+                <View style={{
+                  position: "absolute", bottom: 0, left: 0, right: 0, padding: spacing.md,
+                }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 4 }}>
+                    <Ionicons name="ribbon" size={12} color="#FFD700" />
+                    <Text style={{ fontSize: 10, fontWeight: "800", color: "#FFD700" }}>今週のベスト</Text>
+                  </View>
+                  <Text style={{ fontSize: 14, fontWeight: "800", color: "#fff" }} numberOfLines={1}>
+                    {bestMealThisWeek.dish_name ?? ""}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
 
+      {/* ========== 週間詳細モーダル ========== */}
+      <Modal
+        visible={showWeeklyDetail}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowWeeklyDetail(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}
+          onPress={() => setShowWeeklyDetail(false)}
+        />
+        <View
+          testID="home-weekly-modal"
+          style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            padding: spacing.lg,
+            paddingBottom: insets.bottom + spacing.lg,
+            maxHeight: "80%",
+            ...shadows.lg,
+          }}
+        >
+          {/* ドラッグハンドル */}
+          <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: spacing.lg }} />
+
+          {/* ヘッダー */}
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>今週の統計</Text>
+            <Pressable
+              testID="home-weekly-modal-close"
+              onPress={() => setShowWeeklyDetail(false)}
+              style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}
+            >
+              <Ionicons name="close" size={18} color={colors.textLight} />
+            </Pressable>
+          </View>
+
+          {/* サマリー */}
+          <View style={{ flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg }}>
+            <View style={{ flex: 1, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.successLight }}>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 4 }}>自炊率</Text>
+              <Text style={{ fontSize: 28, fontWeight: "900", color: colors.success }}>{weeklyStats.avgCookRate}%</Text>
+            </View>
+            <View style={{ flex: 1, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.accentLight }}>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 4 }}>総食事数</Text>
+              <Text style={{ fontSize: 28, fontWeight: "900", color: colors.accent }}>{weeklyStats.totalMealCount}食</Text>
+            </View>
+          </View>
+
+          {/* 日別詳細 */}
+          <Text style={{ fontSize: 11, fontWeight: "800", color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm }}>
+            日別詳細
+          </Text>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={{ gap: spacing.xs }}>
+              {weeklyStats.days.map((day) => {
+                const isToday = day.date === new Date().toISOString().slice(0, 10);
+                return (
+                  <View
+                    key={day.date}
+                    style={{
+                      flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+                      padding: spacing.md, borderRadius: radius.lg,
+                      backgroundColor: isToday ? "#FFF3E0" : colors.bg,
+                      borderWidth: 1, borderColor: isToday ? "#FFCC80" : "transparent",
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                      <Text style={{ fontSize: 14, fontWeight: "800", color: isToday ? colors.accent : colors.text, width: 20 }}>
+                        {day.dayOfWeek}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                        {day.date.slice(5).replace("-", "/")}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                      <Text style={{ fontSize: 12, color: colors.textMuted }}>{day.mealCount}食</Text>
+                      <View style={{ width: 60, height: 6, backgroundColor: colors.border, borderRadius: 3, overflow: "hidden" }}>
+                        <View style={{
+                          height: "100%", width: `${day.cookRate}%`,
+                          backgroundColor: colors.success, borderRadius: 3,
+                        }} />
+                      </View>
+                      <Text style={{ fontSize: 13, fontWeight: "800", color: colors.success, width: 38, textAlign: "right" }}>
+                        {day.cookRate}%
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+
+          <Pressable
+            onPress={() => setShowWeeklyDetail(false)}
+            style={{
+              marginTop: spacing.lg, paddingVertical: 14, borderRadius: radius.xl,
+              backgroundColor: colors.text, alignItems: "center",
+            }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: "800", color: "#fff" }}>閉じる</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
       {/* ========== AIフローティングボタン ========== */}
       <Pressable
+        testID="home-ai-fab"
         onPress={() => router.push("/ai")}
         style={{
           position: "absolute", bottom: 100, right: spacing.lg,
@@ -939,6 +1133,7 @@ export default function HomeScreen() {
       {/* ========== チェックインフィードバックトースト ========== */}
       {checkinFeedback && (
         <Animated.View
+          testID="home-checkin-toast"
           accessibilityLiveRegion="polite"
           style={{
             position: "absolute",

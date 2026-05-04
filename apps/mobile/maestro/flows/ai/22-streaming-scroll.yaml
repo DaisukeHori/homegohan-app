@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 22-streaming-scroll: ストリーミング中にスクロール → UIがフリーズしない
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力して送信
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "テストメッセージをスクロールテスト用に送信します"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# 送信後にスクロール操作を実行
+- waitForAnimationToEnd:
+    timeout: 2000
+
+- scroll
+
+- waitForAnimationToEnd:
+    timeout: 1000
+
+# UIがフリーズしていないことを確認 (チャット画面が引き続き表示されている)
+- assertVisible:
+    id: "ai-chat-screen"

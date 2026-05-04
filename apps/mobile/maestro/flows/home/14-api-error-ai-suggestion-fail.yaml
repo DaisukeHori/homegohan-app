@@ -1,0 +1,27 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 14: AI サジェストカードの表示/非表示を確認
+# NOTE: assertTrue JS 式は Maestro 非対応。AI カードの有無を optional で確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# AI サジェストカードにスクロール (存在する場合)
+- scroll
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# AI サジェストカードが表示される場合は dismiss ボタンを確認
+- tapOn:
+    id: "home-ai-suggestion-dismiss-button"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# ホーム画面が引き続き表示されていること
+- assertVisible:
+    id: "home-screen"

@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 正常 02: 買い物リスト表示 → 空状態 or アイテム表示確認
+# NOTE: 全件チェックでゼロ件にするテストは動的データに依存するため
+# リストが空の場合は empty-state、ある場合はアイテム表示を確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-shopping-button"
+- extendedWaitUntil:
+    visible:
+      id: "shopping-list-screen"
+    timeout: 10000
+- assertVisible:
+    id: "shopping-list-screen"

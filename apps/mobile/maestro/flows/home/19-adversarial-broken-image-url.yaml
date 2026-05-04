@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 19: Adversarial - ホーム画面で画像エラーがあってもクラッシュしないこと
+# NOTE: home-meals-section testID は未実装。ホーム画面の安定性確認に変更
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# スクロールしてもクラッシュしないことを確認
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# ホーム画面が表示されていること
+- assertVisible:
+    id: "home-screen"
+
+# "ERROR" 文字列が表示されていないことを確認
+- assertNotVisible:
+    text: "ERROR"

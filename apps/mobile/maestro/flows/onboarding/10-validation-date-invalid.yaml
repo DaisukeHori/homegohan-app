@@ -1,0 +1,85 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 10: athlete_performance → competition_date (date型) に不正値入力 → 次へ進める (バリデーションなし)
+# アプリはdate入力値をサーバーへそのまま送るため、フロントエンドでのエラー表示はしない
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-text-input"
+- inputText: "日付テスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-male"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "22"
+- tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "170"
+- tapOn:
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "65"
+- tapOn:
+    id: "onboarding-next-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-nutrition_goal-screen"
+    timeout: 15000
+- tapOn:
+    id: "onboarding-choice-option-athlete_performance"
+# sport_type 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-sport_type-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-soccer"
+# sport_experience 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-sport_experience-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-beginner"
+# training_phase 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-training_phase-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-competition"
+# competition_date (date型) が表示される
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 8000
+# スキップして次へ
+- tapOn:
+    id: "onboarding-skip-question-button"
+- assertVisible:
+    id: "onboarding-questions-screen"

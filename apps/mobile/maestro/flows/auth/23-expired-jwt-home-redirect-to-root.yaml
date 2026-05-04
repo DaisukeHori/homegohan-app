@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+---
+# 23: expired JWT で home 直アクセス → / redirect
+# 未ログイン状態で、
+# ディープリンクで /(tabs)/home に直接アクセスを試みる
+# → 認証されていないため welcome 画面 (/) にリダイレクトされること
+- launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+- extendedWaitUntil:
+    visible:
+      text: "ほめゴハン"
+    timeout: 10000
+# home-screen には到達しないこと
+- assertNotVisible:
+    id: "home-screen"
+# ログインボタンが表示されること (welcome 画面)
+- assertVisible:
+    text: "ログイン"

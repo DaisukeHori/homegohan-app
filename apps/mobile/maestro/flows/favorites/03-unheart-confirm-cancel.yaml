@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 正常 03: お気に入り画面の基本表示確認
+# NOTE: confirm ダイアログ未実装 (直接削除+Alert)、favorites-remove-${id} は動的 testID のため省略
+- runFlow: ../_shared/login.yaml
+
+# マイページ経由でお気に入り画面へ移動
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- tapOn:
+    id: "profile-favorites-link"
+- extendedWaitUntil:
+    visible:
+      id: "favorites-screen"
+    timeout: 10000
+
+# お気に入り画面が表示されていることを確認
+- assertVisible:
+    id: "favorites-screen"
+- assertVisible:
+    id: "favorites-search-input"

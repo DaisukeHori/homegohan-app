@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 19-adversarial-500-items-performance: パントリー画面のスクロールパフォーマンス確認
+# (500件シードは不要 - 現在のデータでスクロールが正常に動作することを確認)
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+# パントリー画面が10秒以内に表示されること
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# リストをスクロールしてフリーズしないことを確認
+- scroll
+- scroll
+- scroll
+
+# スクロール後もUIが正常に動作していること
+- assertVisible:
+    id: "pantry-screen"

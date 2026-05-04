@@ -1,0 +1,37 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 07-adversarial-search-xss: Adversarial - 検索にXSSペイロード
+- runFlow: ../_shared/login.yaml
+
+# ホーム画面からレシピへ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-recipes-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# XSSペイロードを検索フィールドに入力
+- tapOn:
+    id: "recipes-search-input"
+- inputText: "<img src=x onerror=alert('xss')><script>document.cookie</script>"
+
+# キーボードを閉じる
+- hideKeyboard
+
+# アプリがクラッシュしないこと
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# アプリが正常動作していることを確認（スクリプトが実行されていない）
+- assertVisible:
+    id: "recipes-search-input"

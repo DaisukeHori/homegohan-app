@@ -1,0 +1,27 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 23: 状態遷移 - リクエスト画面の表示・非表示を確認
+# NOTE: launchApp clearState: false は無効な YAML (issue #642)
+# BG→FG テストは openLink がシステムダイアログを表示するため SKIP
+# リクエスト画面が正常に表示されることのみ確認
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-screen"
+- scroll
+- assertVisible:
+    id: "weekly-request-submit-button"

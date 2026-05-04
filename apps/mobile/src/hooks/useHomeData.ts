@@ -38,6 +38,7 @@ interface NutritionAnalysis {
   score: number;
   issues: string[];
   advice: string | null;
+  suggestion: any | null;
   comparison: Record<string, { actual: number; target: number; percentage: number; status: string }>;
   loading: boolean;
 }
@@ -50,6 +51,13 @@ interface TodayMeal {
   calories_kcal: number | null;
   is_completed: boolean | null;
   image_url: string | null;
+}
+
+interface BestMeal {
+  id: string;
+  dish_name: string | null;
+  image_url: string;
+  veg_score: number | null;
 }
 
 const DOW = ["日", "月", "火", "水", "木", "金", "土"];
@@ -73,12 +81,13 @@ export const useHomeData = (userId: string | undefined) => {
     todayRecord: null, healthStreak: 0, weightChange: null, latestWeight: null, targetWeight: null, hasAlert: false,
   });
   const [nutritionAnalysis, setNutritionAnalysis] = useState<NutritionAnalysis>({
-    score: 0, issues: [], advice: null, comparison: {}, loading: false,
+    score: 0, issues: [], advice: null, suggestion: null, comparison: {}, loading: false,
   });
   const [expiringItems, setExpiringItems] = useState<any[]>([]);
   const [shoppingRemaining, setShoppingRemaining] = useState(0);
   const [badgeCount, setBadgeCount] = useState(0);
   const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
+  const [bestMealThisWeek, setBestMealThisWeek] = useState<BestMeal | null>(null);
 
   // ─── Announcements ───
   const [announcements, setAnnouncements] = useState<{ id: string; title: string; content: string }[]>([]);
@@ -103,6 +112,7 @@ export const useHomeData = (userId: string | undefined) => {
         fetchBadgeInfo(userId),
         fetchActivityLevel(userId),
         fetchAnnouncements(),
+        fetchBestMealThisWeek(userId),
       ]);
 
       // Heavier fetches — async
@@ -360,7 +370,48 @@ export const useHomeData = (userId: string | undefined) => {
         );
       }
     } catch (e) {
-      console.error("Announcements fetch error:", e);
+      // E2E 環境でもネットワーク到達不可の場合があるため warn に変更 (LogBox 自動オープンを防ぐ)
+      console.warn("Announcements fetch error:", e);
+    }
+  }
+
+  async function fetchBestMealThisWeek(uid: string) {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+
+      const { data } = await supabase
+        .from("planned_meals")
+        .select(`
+          id,
+          dish_name,
+          image_url,
+          veg_score,
+          user_daily_meals!inner(
+            day_date,
+            user_id
+          )
+        `)
+        .eq("user_daily_meals.user_id", uid)
+        .gte("user_daily_meals.day_date", formatLocalDate(sevenDaysAgo))
+        .eq("is_completed", true)
+        .not("image_url", "is", null)
+        .order("veg_score", { ascending: false, nullsFirst: false })
+        .limit(1);
+
+      if (data && data.length > 0 && (data[0] as any).image_url) {
+        const row = data[0] as any;
+        setBestMealThisWeek({
+          id: row.id,
+          dish_name: row.dish_name,
+          image_url: row.image_url,
+          veg_score: row.veg_score,
+        });
+      } else {
+        setBestMealThisWeek(null);
+      }
+    } catch (e) {
+      console.error("Best meal fetch error:", e);
     }
   }
 
@@ -368,13 +419,14 @@ export const useHomeData = (userId: string | undefined) => {
     try {
       setNutritionAnalysis((prev) => ({ ...prev, loading: true }));
       const api = getApi();
-      const data = await api.get<any>("/api/ai/nutrition-analysis?period=today&includeAdvice=true");
+      const data = await api.get<any>("/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true");
 
       if (data?.success && data?.analysis) {
         setNutritionAnalysis({
           score: data.analysis.score || 0,
           issues: data.analysis.issues || [],
           advice: data.advice || null,
+          suggestion: data.suggestion || null,
           comparison: data.analysis.comparison || {},
           loading: false,
         });
@@ -384,6 +436,54 @@ export const useHomeData = (userId: string | undefined) => {
     } catch (e) {
       // API server not running is expected in dev - silently skip
       setNutritionAnalysis((prev) => ({ ...prev, loading: false }));
+    }
+  }
+
+  async function executeNutritionSuggestion() {
+    const suggestionData = nutritionAnalysis.suggestion;
+    const issues = nutritionAnalysis.issues || [];
+
+    if (!suggestionData && issues.length === 0) {
+      setSuggestion("現在提案できる献立変更はありません。");
+      return;
+    }
+
+    try {
+      const todayStr = getTodayStr();
+      let targetDate = todayStr;
+      let targetMealType = "dinner";
+      let prompt = "";
+
+      if (suggestionData) {
+        targetDate = suggestionData.targetDate || todayStr;
+        targetMealType = suggestionData.targetMeal || "dinner";
+        const dishes = suggestionData.suggestedDishes || [];
+        const dishNames = dishes.map((d: any) => d.name).join("、");
+        prompt = suggestionData.currentIssue
+          ? `${suggestionData.currentIssue}を解決するために${dishNames ? `、${dishNames}を含めた` : ""}バランスの良い献立に変更してください。`
+          : "栄養バランスを改善する献立に変更してください。";
+      } else {
+        prompt = `${issues[0]}。この問題を解決するバランスの良い献立に変更してください。`;
+      }
+
+      setSuggestion("献立を変更中...");
+
+      const api = getApi();
+      const result = await api.post<any>("/api/ai/nutrition-analysis", {
+        targetDate,
+        targetMealType,
+        prompt,
+      });
+
+      if (result) {
+        await fetchAll();
+        setSuggestion("献立を変更しました！");
+      } else {
+        setSuggestion("変更に失敗しました。もう一度お試しください。");
+      }
+    } catch (e) {
+      console.error("Execute nutrition suggestion error:", e);
+      setSuggestion("変更に失敗しました。もう一度お試しください。");
     }
   }
 
@@ -604,6 +704,7 @@ export const useHomeData = (userId: string | undefined) => {
     shoppingRemaining,
     badgeCount,
     latestBadge,
+    bestMealThisWeek,
     activityLevel,
     suggestion,
     performanceAnalysis,
@@ -612,6 +713,7 @@ export const useHomeData = (userId: string | undefined) => {
     toggleMealCompletion,
     updateActivityLevel,
     setSuggestion,
+    executeNutritionSuggestion,
     submitPerformanceCheckin,
     refetch: fetchAll,
   };

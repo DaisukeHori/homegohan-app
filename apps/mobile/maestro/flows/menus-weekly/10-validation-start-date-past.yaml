@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 10: バリデーション - 開始日に過去の日付入力 → アプリがクラッシュしないこと
+# NOTE: date-picker-modal testID は実装にない。start-date は直接テキスト入力
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-start-date-input"
+- tapOn:
+    id: "weekly-request-start-date-input"
+- eraseText: 20
+- inputText: "2020-01-01"
+- tapOn:
+    id: "weekly-request-submit-button"
+# アプリがクラッシュせず画面が維持されること
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 15000
+- assertVisible:
+    id: "weekly-request-screen"

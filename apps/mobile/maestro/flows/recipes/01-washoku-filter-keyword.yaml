@@ -1,0 +1,36 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 01-washoku-filter-keyword: 正常系 - カテゴリフィルタ + キーワード検索
+- runFlow: ../_shared/login.yaml
+
+# ホーム画面からレシピへ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-recipes-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# 検索フィールドにキーワードを入力
+- tapOn:
+    id: "recipes-search-input"
+- inputText: "サラダ"
+
+# 検索実行
+- hideKeyboard
+
+# レシピ画面が正常に表示されていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+- assertVisible:
+    id: "recipes-screen"

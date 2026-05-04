@@ -1,0 +1,24 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 07: 正常 - 冷蔵庫画像ボタンがリクエスト画面に表示されること
+# NOTE: iOS ネイティブ画像ピッカーに testID がないため実際のアップロードはテスト不可
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-screen"
+- assertVisible:
+    id: "weekly-request-fridge-photo-button"

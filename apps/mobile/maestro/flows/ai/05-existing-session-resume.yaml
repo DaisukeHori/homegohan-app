@@ -1,0 +1,50 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 05-existing-session-resume: 既存セッションを再開 → 会話履歴が表示される
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成してメッセージを送信
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "冷蔵庫にある材料でできる料理を教えてください"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# 送信後に安定を待つ
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 一覧に戻る (< ボタン)
+- tapOn:
+    point: "5%, 10%"
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# セッション一覧画面が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 15000

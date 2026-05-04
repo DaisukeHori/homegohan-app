@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 11: ホーム画面のデータ読み込み後のレイアウト確認
+# NOTE: toggleAirplaneMode は Maestro 非対応のため、正常時のデータ表示確認フローに変更
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# 主要カードが表示されていること
+- assertVisible:
+    id: "home-streak-card"
+- assertVisible:
+    id: "home-health-card"
+
+# スクロールしてアクションボタンが表示されること
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-record-meal-button"

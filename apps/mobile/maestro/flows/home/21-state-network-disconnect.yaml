@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 21: ホーム画面のデータ表示の安定性確認
+# NOTE: toggleAirplaneMode / home-meals-section 未対応のため代替フロー
+# ログイン後にホーム画面の主要 UI が全て表示されることを確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# 主要カードが表示されていること
+- assertVisible:
+    id: "home-streak-card"
+- assertVisible:
+    id: "home-monthly-cook-card"
+- assertVisible:
+    id: "home-health-card"
+
+# スクロールしてホーム画面が引き続き安定していること
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-screen"

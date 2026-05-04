@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 03-expired-red-badge: 期限切れ食材に「期限切れ」表示が出ることを確認
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 期限切れ食材を追加（過去の日付）
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "期限切れ食材E2E"
+
+- tapOn:
+    id: "pantry-category-other"
+
+- tapOn:
+    id: "pantry-expiration-input"
+- inputText: "2020-01-01"
+
+# キーボードを閉じてからボタンをタップ
+- hideKeyboard
+- tapOn:
+    id: "pantry-add-button"
+
+# フォームがリセットされるまで待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# スクロールしてリストを表示
+- scroll
+
+# 期限切れアイテムに「期限切れ」テキストが表示されることを確認
+- assertVisible:
+    text: "期限切れ"

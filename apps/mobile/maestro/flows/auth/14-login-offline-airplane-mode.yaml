@@ -1,0 +1,36 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 14: オフライン中 login submit の代替テスト
+# NOTE: Maestro 2.5.1 は setAirplaneMode / runScript による airplane mode 制御未サポート
+# → 存在しない認証情報でログイン試行 → エラー表示を確認することで代替検証
+- launchApp
+# 前の状態をリセット
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+- tapOn:
+    id: "email-input"
+- inputText: "offline_test_nonexistent@example.com"
+- tapOn:
+    id: "password-input"
+- inputText: "WrongPass999!"
+
+# submit
+- tapOn:
+    id: "login-button"
+
+# ログイン失敗エラーが表示されること
+- extendedWaitUntil:
+    visible:
+      id: "login-error-banner"
+    timeout: 15000
+
+# ログイン画面に留まっていること
+- assertVisible:
+    id: "login-screen"

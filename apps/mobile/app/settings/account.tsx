@@ -32,7 +32,7 @@ export default function AccountSettingsPage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="account-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="アカウント" />
       <ScrollView contentContainerStyle={styles.container}>
 
@@ -44,7 +44,7 @@ export default function AccountSettingsPage() {
         <Text style={typography.body}>
           アカウント削除は取り消しできません。必要なデータは事前に控えてください。
         </Text>
-        <Button onPress={deleteAccount} variant="destructive" size="lg">
+        <Button testID="account-delete-button" onPress={deleteAccount} variant="destructive" size="lg">
           <Ionicons name="trash-outline" size={18} color="#FFF" />
           <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 16 }}>アカウント削除</Text>
         </Button>

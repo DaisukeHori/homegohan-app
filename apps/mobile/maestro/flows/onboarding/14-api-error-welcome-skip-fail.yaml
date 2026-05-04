@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 14: welcome skip → home 画面に遷移する (API エラー不要の代替テスト)
+# フロー04でUSER_04はreset済みなのでwelcome画面から開始
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+# skip ボタンをタップ → API呼び出し → home へリダイレクト
+- tapOn:
+    id: "onboarding-skip-button"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+- assertVisible:
+    id: "home-screen"

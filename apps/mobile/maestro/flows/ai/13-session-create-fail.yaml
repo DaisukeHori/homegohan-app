@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 13-session-create-fail: セッション作成APIが失敗したとき → エラーメッセージが表示される
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# setAirplaneMode 非対応のため、正常セッション作成を検証する
+# 新規セッション作成ボタンをタップ
+- tapOn:
+    id: "ai-new-session-button"
+
+# セッション作成後にチャット画面が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 15000
+
+# 画面が安定していることを確認
+- waitForAnimationToEnd:
+    timeout: 3000

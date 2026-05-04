@@ -1,0 +1,18 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 14: API エラー - weekly-error-banner が表示された場合の確認
+# NOTE: toggleAirplaneMode は無効なコマンドのため (issue #640)、
+# エラー状態を強制的に作ることができない。
+# weekly-screen が正常に表示されること (エラーバナーまたは正常表示) を確認
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-screen"

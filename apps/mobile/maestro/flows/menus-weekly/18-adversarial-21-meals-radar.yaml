@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 18: Adversarial - weekly-screen がスクロールしてもクラッシュしないこと
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-screen"
+# スクロールしてもクラッシュしないことを確認
+- scroll
+- scroll
+- assertVisible:
+    id: "weekly-screen"

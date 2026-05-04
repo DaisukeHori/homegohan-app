@@ -9,11 +9,12 @@ type EmptyStateProps = {
   actionLabel?: string;
   onAction?: () => void;
   style?: ViewStyle;
+  testID?: string;
 };
 
-export function EmptyState({ icon, message, actionLabel, onAction, style }: EmptyStateProps) {
+export function EmptyState({ icon, message, actionLabel, onAction, style, testID }: EmptyStateProps) {
   return (
-    <View style={[{ alignItems: 'center', paddingVertical: spacing['3xl'], gap: spacing.md }, style]}>
+    <View testID={testID} style={[{ alignItems: 'center', paddingVertical: spacing['3xl'], gap: spacing.md }, style]}>
       {icon ?? null}
       <Text style={{ fontSize: 15, color: colors.textMuted, textAlign: 'center' }}>{message}</Text>
       {actionLabel && onAction ? (

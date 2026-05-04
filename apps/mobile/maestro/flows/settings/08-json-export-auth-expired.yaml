@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 08-json-export-auth-expired: JSON export 時に認証切れが発生した場合 (API 異常系)
+# NOTE: clearKeychain 非対応のため、JSONエクスポートの基本動作確認のみ
+- runFlow: ../_shared/login.yaml
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "profile-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+
+# JSON エクスポートをタップ
+- scrollUntilVisible:
+    element:
+      id: "settings-export-json-row"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "settings-export-json-row"
+
+# エクスポート後に何らかの応答が出ることを確認 (エラーまたは成功)
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# アプリがクラッシュしていないことを確認
+- assertVisible:
+    id: "settings-screen"

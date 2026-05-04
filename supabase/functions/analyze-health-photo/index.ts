@@ -115,6 +115,7 @@ Deno.serve(async (req) => {
     const imageFile = formData.get("image") as File | null;
     const imageBase64 = formData.get("image_base64") as string | null;
     const deviceType = formData.get("device_type") as string || "auto";
+    const mimeTypeField = formData.get("mime_type") as string | null;
 
     let base64Image: string;
     let mimeType: string;
@@ -125,7 +126,7 @@ Deno.serve(async (req) => {
       mimeType = imageFile.type || "image/jpeg";
     } else if (imageBase64) {
       base64Image = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-      mimeType = "image/jpeg";
+      mimeType = mimeTypeField || "image/jpeg";
     } else {
       return new Response(
         JSON.stringify({ error: "Image is required" }),

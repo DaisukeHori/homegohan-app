@@ -1,0 +1,34 @@
+appId: com.homegohan.app
+---
+# API エラー 16: 保存 fail
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-name-input"
+- inputText: "エラーテスト"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "500"
+
+- tapOn:
+    id: "meal-save-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "meal-save-error-message"
+    timeout: 10000
+
+- assertVisible:
+    id: "meal-save-retry-button"
+- assertNotVisible:
+    id: "meals-screen"

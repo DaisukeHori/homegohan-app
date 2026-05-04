@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 10: チェックインを送信してトーストが表示されること
+# NOTE: チェックインスライダーの testID は未実装のため、チェックイン送信確認に変更
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# チェックインボタンにスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-button"
+    direction: DOWN
+    timeout: 15000
+- tapOn:
+    id: "home-checkin-button"
+
+# チェックインフォームが展開されるのを待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 送信ボタンが見えるまでスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-submit-button"
+    direction: DOWN
+    timeout: 10000
+- assertVisible:
+    id: "home-checkin-submit-button"
+- tapOn:
+    id: "home-checkin-submit-button"
+
+# チェックイントーストまたはホーム画面に戻ること
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertVisible:
+    id: "home-screen"

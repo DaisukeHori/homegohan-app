@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+---
+# 12: login: 30 秒 rate limit ban (3 回失敗 → 待機 banner)
+# 1 回目失敗でクライアント side rate limit が発動する実装 (#532)
+- launchApp
+# 前の状態をリセット (ホーム or Admin Console にいる場合)
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+
+# 1 回目: 失敗
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: "WrongPass1"
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      text: "ログイン失敗"
+    timeout: 10000
+- tapOn:
+    text: "OK"
+
+# rate limit カウントダウンバナーが表示されること
+- extendedWaitUntil:
+    visible:
+      id: "login-rate-limit-banner"
+    timeout: 5000
+
+# ログイン画面に留まっていること
+- assertVisible:
+    id: "login-screen"

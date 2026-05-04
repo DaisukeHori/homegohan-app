@@ -1,0 +1,24 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 07: AI FAB をタップして AI セッション画面に遷移すること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+- assertVisible:
+    id: "home-ai-fab"
+- tapOn:
+    id: "home-ai-fab"
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+- assertVisible:
+    id: "ai-sessions-screen"
+
+# ホームタブにナビゲートして戻る
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"

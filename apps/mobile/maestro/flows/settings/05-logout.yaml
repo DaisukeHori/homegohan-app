@@ -1,0 +1,51 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 05-logout: ログアウトを実行する (正常系)
+- runFlow: ../_shared/login.yaml
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "profile-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+
+# ログアウトボタンをタップ (スクロールして表示)
+- scrollUntilVisible:
+    element:
+      id: "settings-logout-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "settings-logout-button"
+
+# 確認モーダルが表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "settings-logout-confirm-button"
+    timeout: 10000
+
+# 確認ボタンをタップしてログアウト
+- tapOn:
+    id: "settings-logout-confirm-button"
+
+# ウェルカム画面に戻ることを確認
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 10000

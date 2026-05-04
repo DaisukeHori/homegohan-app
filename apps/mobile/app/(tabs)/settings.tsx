@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system";
+import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
 import React, { useEffect, useState } from "react";
@@ -22,9 +23,10 @@ type SettingRowProps = {
   right?: React.ReactNode;
   onPress?: () => void;
   last?: boolean;
+  testID?: string;
 };
 
-function SettingRow({ icon, iconBg, title, subtitle, right, onPress, last }: SettingRowProps) {
+function SettingRow({ icon, iconBg, title, subtitle, right, onPress, last, testID }: SettingRowProps) {
   const content = (
     <View style={[styles.settingRow, !last && styles.settingRowBorder]}>
       <View style={styles.settingLeft}>
@@ -41,9 +43,9 @@ function SettingRow({ icon, iconBg, title, subtitle, right, onPress, last }: Set
   );
 
   if (onPress) {
-    return <Pressable onPress={onPress}>{content}</Pressable>;
+    return <Pressable testID={testID} onPress={onPress}>{content}</Pressable>;
   }
-  return content;
+  return <View testID={testID}>{content}</View>;
 }
 
 export default function SettingsTab() {
@@ -93,6 +95,28 @@ export default function SettingsTab() {
     currentValue: boolean,
   ) {
     const newValue = !currentValue;
+
+    // 通知を ON にするときは OS の通知権限をリクエスト
+    if (key === "notifications_enabled" && newValue) {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== "granted") {
+        Alert.alert(
+          "通知が許可されていません",
+          "通知を受け取るには、端末の設定からアプリの通知を許可してください。",
+          [
+            { text: "キャンセル", style: "cancel" },
+            { text: "設定を開く", onPress: () => Linking.openSettings() },
+          ],
+        );
+        return; // DB への保存も行わない
+      }
+    }
+
     setter(newValue);
     try {
       const api = getApi();
@@ -220,7 +244,7 @@ export default function SettingsTab() {
   }
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View testID="settings-screen" style={[styles.screen, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>設定</Text>
@@ -236,12 +260,14 @@ export default function SettingsTab() {
               icon="🔔"
               iconBg="#EFF6FF"
               title="通知"
+              testID="settings-notifications-toggle"
               right={<Switch value={notifications} onValueChange={() => handleToggleNotificationPreference("notifications_enabled", setNotifications, notifications)} trackColor={{ true: colors.accent }} />}
             />
             <SettingRow
               icon="🤖"
               iconBg="#F3E8FF"
               title="自動解析"
+              testID="settings-auto-analyze-toggle"
               right={<Switch value={autoAnalyze} onValueChange={() => handleToggleNotificationPreference("auto_analyze_enabled", setAutoAnalyze, autoAnalyze)} trackColor={{ true: colors.accent }} />}
             />
             <SettingRow
@@ -253,6 +279,7 @@ export default function SettingsTab() {
               right={
                 <View style={styles.weekStartRow}>
                   <Pressable
+                    testID="settings-week-start-sunday"
                     onPress={() => handleWeekStartDayChange("sunday")}
                     disabled={savingWeekStart}
                     style={[styles.weekStartBtn, weekStartDay === "sunday" && styles.weekStartBtnActive]}
@@ -260,6 +287,7 @@ export default function SettingsTab() {
                     <Text style={[styles.weekStartText, weekStartDay === "sunday" && styles.weekStartTextActive]}>日曜</Text>
                   </Pressable>
                   <Pressable
+                    testID="settings-week-start-monday"
                     onPress={() => handleWeekStartDayChange("monday")}
                     disabled={savingWeekStart}
                     style={[styles.weekStartBtn, weekStartDay === "monday" && styles.weekStartBtnActive]}
@@ -281,6 +309,7 @@ export default function SettingsTab() {
               iconBg="#EFF6FF"
               title="プロフィール"
               subtitle="名前、年齢、身長・体重など"
+              testID="settings-profile-row"
               onPress={() => router.push("/profile")}
             />
             <SettingRow
@@ -288,6 +317,7 @@ export default function SettingsTab() {
               iconBg="#FEF2F2"
               title="健康診断"
               subtitle="検査結果の記録・分析"
+              testID="settings-blood-test-row"
               onPress={() => router.push("/health/blood-tests")}
             />
             <SettingRow
@@ -295,6 +325,7 @@ export default function SettingsTab() {
               iconBg="#FFF7ED"
               title="栄養目標を再設定"
               subtitle="計算根拠を見ながら目標カロリーを調整"
+              testID="settings-nutrition-targets-row"
               onPress={() => router.push("/profile/nutrition-targets")}
               last
             />
@@ -310,6 +341,7 @@ export default function SettingsTab() {
               iconBg="#F0FDF4"
               title="JSONでエクスポート"
               subtitle="全データを JSON 形式でダウンロード"
+              testID="settings-export-json-row"
               onPress={handleExportJson}
               right={exportingJson ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
             />
@@ -318,6 +350,7 @@ export default function SettingsTab() {
               iconBg="#F0FDF4"
               title="CSVでエクスポート"
               subtitle="食事記録を CSV 形式でダウンロード"
+              testID="settings-export-csv-row"
               onPress={handleExportCsv}
               right={exportingCsv ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
             />
@@ -340,12 +373,14 @@ export default function SettingsTab() {
               icon="📄"
               iconBg="#F9FAFB"
               title="利用規約"
+              testID="settings-tos-row"
               onPress={() => Linking.openURL("https://homegohan.app/terms")}
             />
             <SettingRow
               icon="🔒"
               iconBg="#F9FAFB"
               title="プライバシーポリシー"
+              testID="settings-privacy-row"
               onPress={() => Linking.openURL("https://homegohan.app/privacy")}
             />
             <SettingRow
@@ -367,6 +402,7 @@ export default function SettingsTab() {
               iconBg="#FEF2F2"
               title="アカウント管理"
               subtitle="アカウント削除"
+              testID="settings-account-row"
               onPress={() => router.push("/settings/account")}
               last
             />
@@ -374,7 +410,7 @@ export default function SettingsTab() {
         </View>
 
         {/* ── ログアウト ── */}
-        <Pressable onPress={() => setShowLogoutModal(true)} style={styles.logoutBtn}>
+        <Pressable testID="settings-logout-button" onPress={() => setShowLogoutModal(true)} style={styles.logoutBtn}>
           <Text style={styles.logoutText}>ログアウト</Text>
         </Pressable>
 
@@ -384,7 +420,7 @@ export default function SettingsTab() {
       </ScrollView>
 
       {/* ── ログアウト確認モーダル ── */}
-      <Modal visible={showLogoutModal} transparent animationType="fade">
+      <Modal visible={showLogoutModal} transparent animationType="fade" testID="settings-logout-confirm-modal">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalIcon}>
@@ -394,10 +430,10 @@ export default function SettingsTab() {
             <Text style={styles.modalSub}>
               ログアウトしてもデータは保持されます。{"\n"}またすぐにお会いしましょう。
             </Text>
-            <Pressable onPress={handleLogout} style={styles.modalLogoutBtn}>
+            <Pressable testID="settings-logout-confirm-button" onPress={handleLogout} style={styles.modalLogoutBtn}>
               <Text style={styles.modalLogoutText}>ログアウト</Text>
             </Pressable>
-            <Pressable onPress={() => setShowLogoutModal(false)} style={styles.modalCancelBtn}>
+            <Pressable testID="settings-logout-cancel-button" onPress={() => setShowLogoutModal(false)} style={styles.modalCancelBtn}>
               <Text style={styles.modalCancelText}>キャンセル</Text>
             </Pressable>
           </View>

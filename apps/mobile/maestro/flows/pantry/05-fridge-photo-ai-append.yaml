@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 05-fridge-photo-ai-append: 冷蔵庫写真ボタンの表示確認（写真選択まではシミュレーター制約でSKIP）
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 冷蔵庫写真ボタンが表示されていることを確認
+- assertVisible:
+    id: "pantry-fridge-photo-button"
+
+# ボタンをタップしてシステムフォトピッカーが起動することを確認
+- tapOn:
+    id: "pantry-fridge-photo-button"
+
+# システムフォトピッカー or 権限ダイアログが表示されることを確認（テキストで判断）
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# キャンセルしてパントリー画面に戻る
+- tapOn:
+    optional: true
+    text: "キャンセル"
+
+- tapOn:
+    optional: true
+    text: "Cancel"
+
+# パントリー画面に留まっていることを確認
+- assertVisible:
+    id: "pantry-screen"

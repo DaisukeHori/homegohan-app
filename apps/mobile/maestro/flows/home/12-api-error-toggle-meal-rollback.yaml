@@ -1,0 +1,34 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 12: ホーム画面の週間グラフカードとアクション確認
+# NOTE: toggleAirplaneMode / meal 動的 testID は未対応のため代替フローに変更
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# 週間グラフカードにスクロール
+- scroll
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-weekly-graph-card"
+
+# 週間グラフカードをタップしてモーダル確認
+- tapOn:
+    id: "home-weekly-graph-card"
+- extendedWaitUntil:
+    visible:
+      id: "home-weekly-modal"
+    timeout: 8000
+- assertVisible:
+    id: "home-weekly-modal"
+- tapOn:
+    id: "home-weekly-modal-close"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-screen"

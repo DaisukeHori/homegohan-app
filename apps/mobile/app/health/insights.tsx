@@ -104,7 +104,7 @@ export default function HealthInsightsPage() {
   }
 
   return (
-    <View style={styles.screen}>
+    <View testID="health-insights-screen" style={styles.screen}>
       <PageHeader
         title="インサイト"
         right={
@@ -163,14 +163,15 @@ export default function HealthInsightsPage() {
           </Card>
         ) : items.length === 0 ? (
           <EmptyState
+            testID="health-insights-empty"
             icon={<Ionicons name="bulb-outline" size={40} color={colors.textMuted} />}
             message="インサイトがありません。AIインサイトを生成してみましょう。"
           />
         ) : (
           <View style={styles.list}>
             {items.map((i) => (
-              <Pressable key={i.id} onPress={() => handleSelectInsight(i)}>
-                <Card variant={i.is_alert ? "warning" : "default"}>
+              <Pressable key={i.id} testID={`health-insights-item-${i.id}`} onPress={() => handleSelectInsight(i)}>
+                <Card testID={`health-insights-mark-read-${i.id}`} variant={i.is_alert ? "warning" : "default"}>
                   <View style={styles.insightHeader}>
                     <View style={styles.insightTitleRow}>
                       {i.is_alert && <Ionicons name="alert-circle" size={18} color={colors.warning} />}

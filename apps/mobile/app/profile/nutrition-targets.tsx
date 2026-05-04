@@ -132,7 +132,7 @@ export default function NutritionTargetsPage() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="nutrition-targets-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="栄養目標" />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {/* ヘッダー説明 */}
@@ -266,7 +266,7 @@ export default function NutritionTargetsPage() {
                 最終計算日: {new Date(targets.last_calculated_at).toLocaleDateString("ja-JP")}
               </Text>
             )}
-            <Button variant="secondary" onPress={recalculate} loading={isRecalculating}>
+            <Button testID="nutrition-targets-recalculate-button" variant="secondary" onPress={recalculate} loading={isRecalculating}>
               再計算する
             </Button>
           </View>

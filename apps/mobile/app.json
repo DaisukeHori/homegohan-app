@@ -45,7 +45,6 @@
     },
     "plugins": [
       "expo-router",
-      "expo-image-manipulator",
       "expo-image-picker",
       "expo-notifications"
     ],

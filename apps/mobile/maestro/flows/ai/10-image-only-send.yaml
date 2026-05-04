@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 10-image-only-send: 画像のみ (テキストなし) で送信 → 送信ボタンが有効または無効になる
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 入力欄が空のことを確認 → ストリーミングなし
+- assertNotVisible:
+    id: "ai-chat-streaming-view"
+
+# 画像添付ボタンをタップ
+- tapOn:
+    id: "ai-chat-image-attach-button"
+
+# フォトライブラリが表示されるまで待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# キャンセルしてチャット画面に戻る
+- tapOn:
+    text: "キャンセル"
+
+# チャット画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 入力欄が空の状態を確認
+- assertVisible:
+    id: "ai-chat-input"

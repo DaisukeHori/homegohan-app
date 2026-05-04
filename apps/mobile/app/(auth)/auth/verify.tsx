@@ -75,7 +75,7 @@ export default function VerifyPage() {
   if (hasSession && isDone && !hasError) return <Redirect href="/(tabs)/home" />;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="verify-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       {/* 戻るボタン */}
       <Pressable
         onPress={() => router.back()}
@@ -110,7 +110,7 @@ export default function VerifyPage() {
             borderWidth: 1, borderColor: colors.border, ...shadows.sm,
             width: "100%",
           }}>
-            <ActivityIndicator size="large" color={colors.accent} />
+            <ActivityIndicator testID="verify-loading" size="large" color={colors.accent} />
             <Text style={{ fontSize: 15, color: colors.textMuted }}>確認中...</Text>
           </View>
         ) : (
@@ -132,11 +132,14 @@ export default function VerifyPage() {
                 </Text>
               </View>
             ) : (
-              <View style={{
-                backgroundColor: colors.errorLight, borderRadius: radius.lg,
-                padding: spacing.md, flexDirection: "row", alignItems: "center",
-                gap: spacing.sm, width: "100%",
-              }}>
+              <View
+                testID="verify-error-text"
+                style={{
+                  backgroundColor: colors.errorLight, borderRadius: radius.lg,
+                  padding: spacing.md, flexDirection: "row", alignItems: "center",
+                  gap: spacing.sm, width: "100%",
+                }}
+              >
                 <Ionicons name="warning-outline" size={20} color={colors.error} />
                 <Text style={{ fontSize: 14, color: colors.error, flex: 1 }}>
                   確認できませんでした。

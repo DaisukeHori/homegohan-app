@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 02-week-start-switch: 週開始日を日曜→月曜に切り替える (正常系)
+- runFlow: ../_shared/login.yaml
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "profile-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+
+# 週開始日を月曜日に切り替え
+- tapOn:
+    id: "settings-week-start-monday"
+- assertVisible:
+    id: "settings-week-start-monday"
+
+# 日曜日に戻す
+- tapOn:
+    id: "settings-week-start-sunday"
+- assertVisible:
+    id: "settings-week-start-sunday"

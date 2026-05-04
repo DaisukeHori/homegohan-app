@@ -10,9 +10,10 @@ type ListItemProps = {
   onPress?: () => void;
   style?: ViewStyle;
   highlighted?: boolean;
+  testID?: string;
 };
 
-export function ListItem({ title, subtitle, right, left, onPress, style, highlighted }: ListItemProps) {
+export function ListItem({ title, subtitle, right, left, onPress, style, highlighted, testID }: ListItemProps) {
   const content = (
     <View
       style={{
@@ -39,11 +40,11 @@ export function ListItem({ title, subtitle, right, left, onPress, style, highlig
 
   if (onPress) {
     return (
-      <Pressable onPress={onPress} style={({ pressed }) => (pressed ? { opacity: 0.9, transform: [{ scale: 0.99 }] } : {})}>
+      <Pressable testID={testID} onPress={onPress} style={({ pressed }) => (pressed ? { opacity: 0.9, transform: [{ scale: 0.99 }] } : {})}>
         {content}
       </Pressable>
     );
   }
 
-  return content;
+  return <View testID={testID}>{content}</View>;
 }

@@ -6,9 +6,11 @@ import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Button, Card, ChipSelector, Input, PageHeader, SectionHeader } from "../../../../src/components/ui";
 import { getApi } from "../../../../src/lib/api";
+import { uploadFridgePhoto } from "../../../../src/lib/storage";
 import { colors, radius, spacing } from "../../../../src/theme";
 import { useProfile } from "../../../../src/providers/ProfileProvider";
 import type { WeekStartDay } from "../../../../src/providers/ProfileProvider";
+import { THEME_LABELS_REQUEST } from "@homegohan/shared";
 
 const MEAL_TYPES = ["breakfast", "lunch", "dinner"] as const;
 
@@ -43,6 +45,7 @@ function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   return d;
 }
 
+
 export default function WeeklyRequestPage() {
   const { profile } = useProfile();
   const weekStartDay = profile?.weekStartDay ?? 'monday';
@@ -53,6 +56,7 @@ export default function WeeklyRequestPage() {
 
   const [ingredients, setIngredients] = useState<string[]>([]);
   const [fridgeImageUri, setFridgeImageUri] = useState<string | null>(null);
+  const [inventoryImageUrl, setInventoryImageUrl] = useState<string | null>(null);
   const [fridgeSummary, setFridgeSummary] = useState<string | null>(null);
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
 
@@ -64,15 +68,8 @@ export default function WeeklyRequestPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const themes = useMemo(
-    () => [
-      "冷蔵庫の食材を優先",
-      "時短メニュー中心",
-      "和食多め",
-      "ヘルシーに",
-    ],
-    []
-  );
+  // テーマ選択肢: @homegohan/shared の THEME_LABELS_REQUEST (英語 6 種)
+  const themes = useMemo(() => THEME_LABELS_REQUEST, []);
   const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
 
   function toggleTheme(t: string) {
@@ -88,13 +85,12 @@ export default function WeeklyRequestPage() {
 
     const picked = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"] as any,
-      base64: true,
       quality: 0.8,
     });
     if (picked.canceled) return;
 
     const asset = picked.assets?.[0];
-    if (!asset?.base64) {
+    if (!asset?.uri) {
       Alert.alert("失敗", "画像の取得に失敗しました。");
       return;
     }
@@ -104,6 +100,10 @@ export default function WeeklyRequestPage() {
     setFridgeSuggestions([]);
     try {
       setFridgeImageUri(asset.uri ?? null);
+      const userId = profile?.id;
+      if (!userId) throw new Error("ログインが必要です");
+      const uploadedUrl = await uploadFridgePhoto(asset.uri, userId);
+      setInventoryImageUrl(uploadedUrl);
       const api = getApi();
       const analyzed = await api.post<{
         ingredients: string[];
@@ -111,8 +111,7 @@ export default function WeeklyRequestPage() {
         summary: string;
         suggestions: string[];
       }>("/api/ai/analyze-fridge", {
-        imageBase64: asset.base64,
-        mimeType: (asset as any).mimeType ?? "image/jpeg",
+        imageUrl: uploadedUrl,
       });
 
       const detected: string[] = Array.isArray((analyzed as any)?.ingredients) ? (analyzed as any).ingredients : [];
@@ -140,28 +139,31 @@ export default function WeeklyRequestPage() {
       const ws = getWeekStart(parsedDate, weekStartDay);
       const weekStartStr = formatLocalDate(ws);
 
-      const useFridgeFirst = selectedThemes.includes("冷蔵庫の食材を優先");
-      const quickMeals = selectedThemes.includes("時短メニュー中心");
-      const japaneseStyle = selectedThemes.includes("和食多め");
-      const healthy = selectedThemes.includes("ヘルシーに");
-
-      const extraLines: string[] = [];
-      if (selectedThemes.length) extraLines.push(`テーマ: ${selectedThemes.join("、")}`);
-      if (ingredients.length) extraLines.push(`使いたい食材: ${ingredients.join("、")}`);
-      if (cheatDay.trim()) extraLines.push(`チートデイ: ${cheatDay.trim()}`);
-      const noteForApi = [note.trim(), ...extraLines].filter(Boolean).join("\n");
+      const parsedFamilySize = Math.max(1, Math.min(10, parseInt(familySize || "1") || 1));
+      const parsedCheatDay = cheatDay.trim() || null;
+      // selectedThemes は英語 6 種 (THEME_LABELS_REQUEST) から選択されるため変換不要
+      const webThemes = selectedThemes;
 
       const api = getApi();
 
       if (isUltimateMode) {
         // 究極モード: /api/ai/menu/v4/generate に ultimateMode: true で送信
+        const useFridgeFirst = selectedThemes.includes("💰 Saving");
+        const quickMeals = selectedThemes.includes("⏱️ Speed");
+        const japaneseStyle = selectedThemes.includes("🍱 Bento");
+        const healthy = selectedThemes.includes("🥗 Diet");
+        const extraLines: string[] = [];
+        if (selectedThemes.length) extraLines.push(`テーマ: ${selectedThemes.join("、")}`);
+        if (ingredients.length) extraLines.push(`使いたい食材: ${ingredients.join("、")}`);
+        if (parsedCheatDay) extraLines.push(`チートデイ: ${parsedCheatDay}`);
+        const noteForV4 = [note.trim(), ...extraLines].filter(Boolean).join("\n");
         const targetSlots = buildWeekTargetSlots(weekStartStr);
         await api.post("/api/ai/menu/v4/generate", {
           targetSlots,
           resolveExistingMeals: true,
-          note: noteForApi,
+          note: noteForV4,
           ultimateMode: true,
-          familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
+          familySize: parsedFamilySize,
           constraints: {
             useFridgeFirst,
             quickMeals,
@@ -175,13 +177,20 @@ export default function WeeklyRequestPage() {
           "6ステップの栄養バランス分析で究極の献立を生成します。完了まで数分かかります。"
         );
       } else {
-        // 通常モード
+        // 通常モード: WEB 形式 constraints で送信
+        // 過渡期: cookingTime は固定値 (PR 3-2 でスライダー追加予定)
         await api.post("/api/ai/menu/weekly/request", {
           startDate: weekStartStr,
-          note: noteForApi,
-          familySize: Math.max(1, Math.min(10, parseInt(familySize || "1") || 1)),
-          cheatDay: cheatDay.trim() || null,
-          preferences: { useFridgeFirst, quickMeals, japaneseStyle, healthy, ingredients },
+          constraints: {
+            ingredients,
+            cookingTime: { weekday: 30, weekend: 60 },
+            themes: webThemes,
+            familySize: parsedFamilySize,
+            cheatDay: parsedCheatDay,
+          },
+          inventoryImageUrl: inventoryImageUrl ?? null,
+          detectedIngredients: ingredients,
+          note: note.trim() || null,
         });
         Alert.alert("生成開始", "週間献立の生成を開始しました。生成中は「生成中...」と表示されます。");
       }
@@ -197,7 +206,7 @@ export default function WeeklyRequestPage() {
   const themeOptions = themes.map((t) => ({ value: t, label: t }));
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="weekly-request-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="AIで週間献立を作成"
         subtitle="食材や好みに合わせた1週間の献立を自動生成"
@@ -211,6 +220,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ marginTop: spacing.sm }}>
           <Input
+            testID="weekly-request-start-date-input"
             label={weekStartDay === 'sunday' ? "週の日曜日推奨" : "週の月曜日推奨"}
             value={startDate}
             onChangeText={setStartDate}
@@ -226,6 +236,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
           <Button
+            testID="weekly-request-fridge-photo-button"
             onPress={uploadFridgePhotoAndAnalyze}
             disabled={isUploading || isSubmitting}
             loading={isUploading}
@@ -239,7 +250,7 @@ export default function WeeklyRequestPage() {
             </View>
           </Button>
           {fridgeImageUri ? (
-            <Image source={{ uri: fridgeImageUri }} style={{ width: "100%", height: 160, borderRadius: radius.md }} />
+            <Image testID="weekly-request-fridge-image-preview" source={{ uri: fridgeImageUri }} style={{ width: "100%", height: 160, borderRadius: radius.md }} />
           ) : null}
           {fridgeSummary ? (
             <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
@@ -271,12 +282,14 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
           <Input
+            testID="weekly-request-family-size-input"
             label="家族人数"
             value={familySize}
             onChangeText={setFamilySize}
             keyboardType="number-pad"
           />
           <Input
+            testID="weekly-request-cheat-day-toggle"
             label="チートデイ（任意）"
             value={cheatDay}
             onChangeText={setCheatDay}
@@ -290,6 +303,7 @@ export default function WeeklyRequestPage() {
               selected={selectedThemes}
               onSelect={toggleTheme}
               multiple
+              testIDPrefix="weekly-request-theme"
             />
           </View>
         </View>
@@ -302,6 +316,7 @@ export default function WeeklyRequestPage() {
         />
         <View style={{ marginTop: spacing.sm }}>
           <Input
+            testID="weekly-request-note-input"
             value={note}
             onChangeText={setNote}
             placeholder="例: 野菜多め、魚を増やしたい"
@@ -313,6 +328,7 @@ export default function WeeklyRequestPage() {
 
       {/* 究極モードトグル */}
       <Pressable
+        testID="weekly-request-ultimate-toggle"
         onPress={() => setIsUltimateMode((prev) => !prev)}
         style={{
           flexDirection: "row",
@@ -361,7 +377,7 @@ export default function WeeklyRequestPage() {
         </View>
       </Pressable>
 
-      <Button onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
+      <Button testID="weekly-request-submit-button" onPress={submit} disabled={isSubmitting || isUploading} loading={isSubmitting} size="lg">
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           <Ionicons name={isUltimateMode ? "flash" : "sparkles"} size={18} color="#FFFFFF" />
           <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 16 }}>

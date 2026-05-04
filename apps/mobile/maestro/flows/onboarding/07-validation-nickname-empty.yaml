@@ -1,0 +1,27 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_07_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_07_PASSWORD}
+---
+# 07: バリデーション - nickname 空のまま → 送信ボタンがdisabledで画面遷移しない
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- assertVisible:
+    id: "onboarding-text-input"
+# nickname 未入力のまま待機 (5秒)
+- waitForAnimationToEnd:
+    timeout: 5000
+# text-inputが空のままで body-stats-screen に遷移しないことを確認
+- assertNotVisible:
+    id: "onboarding-body-stats-screen"
+# questions-screen のまま (nickname設問が表示されている)
+- assertVisible:
+    id: "onboarding-questions-screen"

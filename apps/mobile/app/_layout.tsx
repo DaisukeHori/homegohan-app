@@ -1,7 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Stack } from "expo-router";
 import { useEffect } from "react";
+import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+
+// E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
+// (console.error は引き続き Metro ログに出力される)
+LogBox.ignoreAllLogs();
 
 import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";

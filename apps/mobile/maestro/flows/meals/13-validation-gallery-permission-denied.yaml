@@ -1,0 +1,24 @@
+appId: com.homegohan.app
+---
+# バリデーション 13: ギャラリー権限拒否
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-meal"
+
+- tapOn:
+    id: "camera-gallery-button"
+
+- assertVisible:
+    id: "permission-request-dialog"
+- tapOn:
+    id: "permission-deny-button"
+
+- assertVisible:
+    id: "gallery-permission-denied-message"
+- assertNotVisible:
+    id: "gallery-picker-screen"

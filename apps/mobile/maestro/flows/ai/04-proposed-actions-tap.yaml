@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 04-proposed-actions-tap: proposedActions をタップ → アクションが実行される
+# NOTE: XAI_API_KEY が必要なため、チャット画面起動と入力フォームの基本確認のみ
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力して送信
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "今週の献立を提案してください"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# 送信後も画面が表示されていることを確認
+- waitForAnimationToEnd:
+    timeout: 5000
+
+- assertVisible:
+    id: "ai-chat-screen"

@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 10-validation-quantity-string: 量フィールドに文字列入力でも保存できることを確認
+# アプリの実装: amount は自由文字列 (バリデーションなし)
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 名前入力
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "数量テスト食材"
+
+# カテゴリ選択
+- tapOn:
+    id: "pantry-category-other"
+
+# 量に文字列を入力
+- tapOn:
+    id: "pantry-amount-input"
+- inputText: "たくさん"
+
+# 期限入力
+- tapOn:
+    id: "pantry-expiration-input"
+- inputText: "2026-12-31"
+
+# キーボードを閉じてから追加
+- hideKeyboard
+- tapOn:
+    id: "pantry-add-button"
+
+# 少し待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# アプリがクラッシュせず pantry-screen が表示されていることを確認
+- assertVisible:
+    id: "pantry-screen"

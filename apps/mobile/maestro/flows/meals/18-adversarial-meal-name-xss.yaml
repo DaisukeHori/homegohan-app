@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+---
+# Adversarial 18: 料理名 XSS インジェクション
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-name-input"
+- inputText: "<script>alert('xss')</script>"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "500"
+
+- tapOn:
+    id: "meal-save-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "meals-screen"
+    timeout: 10000
+
+- assertNotVisible:
+    text: "<script>"

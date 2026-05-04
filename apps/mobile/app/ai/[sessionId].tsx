@@ -29,6 +29,7 @@ export default function AiSessionPage() {
   const [text, setText] = useState("");
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [attachedImage, setAttachedImage] = useState<{ uri: string; base64: string } | null>(null);
+  const [imagePreviewReady, setImagePreviewReady] = useState(false);
   // 自動実行済みのメッセージID集合。GET レスポンスは proposed_actions を返し続けるため、
   // クライアント側でアクションボタンを非表示にするためのトラッキングに使用する。
   const executedMessageIds = useRef<Set<string>>(new Set());
@@ -78,6 +79,7 @@ export default function AiSessionPage() {
     if (!result.canceled && result.assets.length > 0) {
       const asset = result.assets[0];
       if (asset.base64) {
+        setImagePreviewReady(false);
         setAttachedImage({ uri: asset.uri, base64: asset.base64 });
       }
     }
@@ -328,6 +330,7 @@ export default function AiSessionPage() {
     return (
       <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.sm }}>
         <Pressable
+          testID={`ai-chat-action-${messageId}-execute`}
           onPress={() => executeActionByMessageId(messageId)}
           style={({ pressed }) => ({
             flexDirection: "row",
@@ -344,6 +347,7 @@ export default function AiSessionPage() {
           <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>実行</Text>
         </Pressable>
         <Pressable
+          testID={`ai-chat-action-${messageId}-reject`}
           onPress={() => rejectActionByMessageId(messageId)}
           style={({ pressed }) => ({
             flexDirection: "row",
@@ -367,7 +371,7 @@ export default function AiSessionPage() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, backgroundColor: colors.bg }}>
-      <View style={{ flex: 1 }}>
+      <View testID="ai-chat-screen" style={{ flex: 1 }}>
         <PageHeader
           title="AIチャット"
           right={
@@ -398,7 +402,7 @@ export default function AiSessionPage() {
               {error && (
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md, backgroundColor: colors.errorLight, borderRadius: radius.md }}>
                   <Ionicons name="alert-circle" size={16} color={colors.error} />
-                  <Text style={{ color: colors.error, fontSize: 13, flex: 1 }}>{error}</Text>
+                  <Text testID="ai-chat-error-text" style={{ color: colors.error, fontSize: 13, flex: 1 }}>{error}</Text>
                 </View>
               )}
               {messages.map((m) => {
@@ -408,12 +412,14 @@ export default function AiSessionPage() {
                 return (
                   <View
                     key={m.id}
+                    testID={`ai-chat-message-${m.id}`}
                     style={{
                       alignSelf: isUser ? "flex-end" : "flex-start",
                       maxWidth: "85%",
                     }}
                   >
                     <View
+                      testID={isUser ? `ai-chat-message-user-${m.id}` : `ai-chat-message-assistant-${m.id}`}
                       style={{
                         padding: spacing.md,
                         borderRadius: radius.lg,
@@ -456,7 +462,7 @@ export default function AiSessionPage() {
                           {new Date(m.createdAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}
                         </Text>
                         {!isSystem && (
-                          <Pressable onPress={() => toggleImportant(m)} hitSlop={8}>
+                          <Pressable testID={`ai-chat-mark-important-${m.id}`} onPress={() => toggleImportant(m)} hitSlop={8}>
                             <Ionicons
                               name={m.isImportant ? "star" : "star-outline"}
                               size={16}
@@ -472,7 +478,7 @@ export default function AiSessionPage() {
 
               {/* ストリーミング中: リアルタイム表示 or ドットインジケータ */}
               {isSending && (
-                <View style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
+                <View testID="ai-chat-streaming-view" style={{ alignSelf: "flex-start", maxWidth: "85%" }}>
                   <View
                     style={{
                       padding: spacing.md,
@@ -516,11 +522,17 @@ export default function AiSessionPage() {
                 <View style={{ marginBottom: spacing.sm }}>
                   <View style={{ position: "relative", alignSelf: "flex-start" }}>
                     <Image
+                      testID="ai-chat-image-preview"
                       source={{ uri: attachedImage.uri }}
                       style={{ width: 80, height: 80, borderRadius: radius.md }}
                       resizeMode="cover"
+                      onLoad={() => setImagePreviewReady(true)}
                     />
+                    {imagePreviewReady && (
+                      <View testID="ai-chat-image-preview-ready" style={{ position: "absolute", width: 0, height: 0 }} />
+                    )}
                     <Pressable
+                      testID="ai-chat-image-remove-button"
                       onPress={() => setAttachedImage(null)}
                       style={{
                         position: "absolute",
@@ -543,6 +555,7 @@ export default function AiSessionPage() {
               <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-end" }}>
                 {/* 画像添付ボタン */}
                 <Pressable
+                  testID="ai-chat-image-attach-button"
                   onPress={pickImage}
                   disabled={isSending}
                   style={({ pressed }) => ({
@@ -561,6 +574,7 @@ export default function AiSessionPage() {
                 </Pressable>
 
                 <TextInput
+                  testID="ai-chat-input"
                   value={text}
                   onChangeText={setText}
                   placeholder="相談内容を入力..."
@@ -579,6 +593,7 @@ export default function AiSessionPage() {
                   }}
                 />
                 <Pressable
+                  testID="ai-chat-send-button"
                   onPress={send}
                   disabled={isSending || (!text.trim() && !attachedImage)}
                   style={({ pressed }) => ({

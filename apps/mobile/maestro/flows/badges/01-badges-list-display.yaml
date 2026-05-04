@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 01-badges-list-display: 正常系 - バッジ画面の表示確認
+- runFlow: ../_shared/login.yaml
+
+# ホーム画面からバッジへ移動
+- assertVisible:
+    id: "home-screen"
+- scrollUntilVisible:
+    element:
+      id: "home-badges-button"
+    timeout: 15000
+- tapOn:
+    id: "home-badges-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "badges-screen"
+    timeout: 10000
+
+# バッジ画面が表示されることを確認
+- assertVisible:
+    id: "badges-screen"
+
+# 獲得数カウントが表示されること
+- assertVisible:
+    id: "badges-earned-count"

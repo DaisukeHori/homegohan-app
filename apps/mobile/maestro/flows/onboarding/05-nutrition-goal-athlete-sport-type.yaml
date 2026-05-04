@@ -1,0 +1,62 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_05_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_05_PASSWORD}
+---
+# 05: nutrition_goal=athlete_performance 選択時に sport_type 動的設問が出ることを確認
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-text-input"
+- inputText: "アスリート太郎"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-male"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "25"
+- tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "175"
+- tapOn:
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "70"
+- tapOn:
+    id: "onboarding-next-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-nutrition_goal-screen"
+    timeout: 15000
+- tapOn:
+    id: "onboarding-choice-option-athlete_performance"
+# athlete_performance 選択時は sport_type 設問が動的に追加される
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-sport_type-screen"
+    timeout: 8000
+- assertVisible:
+    id: "onboarding-choice-option-soccer"
+- tapOn:
+    id: "onboarding-choice-option-road_cycling"

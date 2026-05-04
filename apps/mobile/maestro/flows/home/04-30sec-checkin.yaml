@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_04_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_04_PASSWORD}
+---
+# 04: チェックインボタンをタップしてモーダルが表示されること
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# チェックインボタンにスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-button"
+    direction: DOWN
+    timeout: 15000
+- tapOn:
+    id: "home-checkin-button"
+
+# チェックインフォームが展開されるのを待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 送信ボタンが見えるまでスクロール
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-submit-button"
+    direction: DOWN
+    timeout: 10000
+- assertVisible:
+    id: "home-checkin-submit-button"
+
+# 閉じるためにホームへ戻る
+- scrollUntilVisible:
+    element:
+      id: "home-checkin-button"
+    direction: UP
+    timeout: 10000
+- tapOn:
+    id: "home-checkin-button"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "home-screen"

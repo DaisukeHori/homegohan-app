@@ -1,0 +1,37 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 06-adversarial-search-sql-injection: Adversarial - 検索にSQLインジェクション
+- runFlow: ../_shared/login.yaml
+
+# ホーム画面からレシピへ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-recipes-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# SQLインジェクションペイロードを検索フィールドに入力
+- tapOn:
+    id: "recipes-search-input"
+- inputText: "' OR '1'='1'; DROP TABLE recipes; --"
+
+# キーボードを閉じる
+- hideKeyboard
+
+# アプリがクラッシュしないこと
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# アプリが正常動作していることを確認
+- assertVisible:
+    id: "recipes-search-input"

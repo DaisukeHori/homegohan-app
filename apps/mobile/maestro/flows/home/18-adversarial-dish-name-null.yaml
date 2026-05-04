@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_08_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_08_PASSWORD}
+---
+# 18: Adversarial - ホーム画面でクラッシュなく "null" 文字列が表示されないこと
+# NOTE: home-meals-section testID は未実装。ホーム画面の安定性確認に変更
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# スクロールしてもクラッシュしないことを確認
+- scroll
+- waitForAnimationToEnd:
+    timeout: 2000
+- scroll
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# "null" 文字列が表示されていないことを確認
+- assertNotVisible:
+    text: "null"
+
+# アプリがクラッシュしないことを確認
+- assertVisible:
+    id: "home-screen"

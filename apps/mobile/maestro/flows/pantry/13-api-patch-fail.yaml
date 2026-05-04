@@ -1,0 +1,68 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 13-api-patch-fail: 編集保存の正常確認 (モックサーバー不可環境)
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# アイテムがない場合は先に追加
+- runFlow:
+    when:
+      visible:
+        id: "pantry-empty"
+    commands:
+      - tapOn:
+          id: "pantry-name-input"
+      - inputText: "パッチテスト食材"
+      - tapOn:
+          id: "pantry-category-vegetable"
+      - tapOn:
+          id: "pantry-add-button"
+      - extendedWaitUntil:
+          visible:
+            text: "パッチテスト食材"
+          timeout: 10000
+
+# 編集ボタンをタップ（pantry-item-edit-{uuid}形式のIDをregexでマッチ）
+- scroll
+- tapOn:
+    id: "pantry-item-edit-.*"
+
+# 編集フォームが表示されるのを待つ
+- extendedWaitUntil:
+    visible:
+      id: "pantry-edit-name-input"
+    timeout: 5000
+
+# 名前を変更
+- tapOn:
+    id: "pantry-edit-name-input"
+- eraseText: 50
+- inputText: "PATCH後の食材名"
+
+# キーボードを閉じる
+- hideKeyboard
+
+# 保存ボタンをタップ (キーボード消去後に表示される)
+- tapOn:
+    id: "pantry-edit-save-button"
+
+# 変更後の名前が表示されることを確認 (スクロールして確認)
+- waitForAnimationToEnd:
+    timeout: 3000
+- scroll
+- assertVisible:
+    text: "PATCH後の食材名"

@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 04-validation-all-filters-cleared: バリデーション - 検索フィールド入力とクリア
+- runFlow: ../_shared/login.yaml
+
+# ホーム画面からレシピへ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-recipes-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# 検索フィールドにテキストを入力
+- tapOn:
+    id: "recipes-search-input"
+- inputText: "テスト検索"
+
+# キーボードを閉じる
+- hideKeyboard
+
+# レシピ画面が正常に表示されていることを確認
+- assertVisible:
+    id: "recipes-screen"
+
+# 検索フィールドが表示されていることを確認
+- assertVisible:
+    id: "recipes-search-input"

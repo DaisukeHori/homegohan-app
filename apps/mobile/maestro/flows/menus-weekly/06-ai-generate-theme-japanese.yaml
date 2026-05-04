@@ -1,0 +1,33 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 06: 正常 - AI 生成テーマ「和食」で週間メニュー生成リクエスト画面を開く
+# NOTE: 実際にAI生成は時間がかかるため、リクエスト画面が開けることのみ確認
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-screen"
+- assertVisible:
+    id: "weekly-request-note-input"
+- scroll
+- assertVisible:
+    id: "weekly-request-submit-button"
+- tapOn:
+    id: "weekly-request-note-input"
+- inputText: "和食メインでお願いします"
+- scroll
+- assertVisible:
+    id: "weekly-request-submit-button"

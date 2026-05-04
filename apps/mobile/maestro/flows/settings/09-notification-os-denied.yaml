@@ -1,0 +1,42 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 09-notification-os-denied: OS レベルで通知権限が拒否されている場合 (Adversarial)
+- runFlow: ../_shared/login.yaml
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "profile-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+
+# 通知 toggle をタップ (OS 側で拒否されているか確認不可のため、トグル操作後の画面確認のみ)
+- tapOn:
+    id: "settings-notifications-toggle"
+
+# 操作後に設定画面が安定していることを確認
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# iOS設定へのダイアログが出た場合はキャンセル
+- tapOn:
+    text: "キャンセル"
+    optional: true
+
+- assertVisible:
+    id: "settings-screen"

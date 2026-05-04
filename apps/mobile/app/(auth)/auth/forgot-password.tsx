@@ -10,6 +10,7 @@ import { supabase } from "../../../src/lib/supabase";
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   async function onSubmit() {
     const trimmed = email.trim();
@@ -23,7 +24,9 @@ export default function ForgotPasswordPage() {
       const redirectTo = Linking.createURL("/auth/reset-password");
       const { error } = await supabase.auth.resetPasswordForEmail(trimmed, { redirectTo });
       if (error) throw error;
-      Alert.alert("送信しました", "パスワード再設定用のメールを送信しました。");
+      const successMsg = "パスワード再設定用のメールを送信しました。";
+      setSuccessMessage(successMsg);
+      Alert.alert("送信しました", successMsg);
     } catch (e: any) {
       Alert.alert("送信失敗", e?.message ?? "送信に失敗しました。");
     } finally {
@@ -33,6 +36,7 @@ export default function ForgotPasswordPage() {
 
   return (
     <KeyboardAvoidingView
+      testID="forgot-screen"
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
@@ -77,6 +81,7 @@ export default function ForgotPasswordPage() {
             }}>
               <Ionicons name="mail-outline" size={18} color={colors.textMuted} />
               <TextInput
+                testID="forgot-email-input"
                 placeholder="email@example.com"
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="none"
@@ -92,8 +97,19 @@ export default function ForgotPasswordPage() {
             </View>
           </View>
 
+          {/* 送信成功メッセージ */}
+          {successMessage !== null && (
+            <Text
+              testID="forgot-success-text"
+              style={{ fontSize: 14, color: colors.success, textAlign: "center" }}
+            >
+              {successMessage}
+            </Text>
+          )}
+
           {/* 送信ボタン */}
           <Pressable
+            testID="forgot-submit-button"
             onPress={onSubmit}
             disabled={isSubmitting}
             style={({ pressed }) => ({

@@ -116,6 +116,7 @@ export default function FavoritesScreen() {
 
   const renderItem = ({ item }: { item: FavoriteItem }) => (
     <View
+      testID={`favorites-item-${item.id}`}
       style={{
         flexDirection: "row",
         alignItems: "center",
@@ -167,6 +168,7 @@ export default function FavoritesScreen() {
 
       {/* ハートボタン */}
       <Pressable
+        testID={`favorites-remove-${item.id}`}
         onPress={() => handleRemove(item)}
         disabled={removingId === item.id}
         accessibilityLabel="お気に入りから削除"
@@ -194,6 +196,7 @@ export default function FavoritesScreen() {
     if (loading) return null;
     return (
       <View
+        testID="favorites-empty"
         style={{
           alignItems: "center",
           justifyContent: "center",
@@ -251,7 +254,7 @@ export default function FavoritesScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="favorites-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       {/* ヘッダー */}
       <View
         style={{
@@ -318,6 +321,7 @@ export default function FavoritesScreen() {
         >
           <Ionicons name="search" size={16} color={colors.textMuted} />
           <TextInput
+            testID="favorites-search-input"
             ref={searchInputRef}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -343,6 +347,7 @@ export default function FavoritesScreen() {
           {SORT_OPTIONS.map((opt) => (
             <Pressable
               key={opt.value}
+              testID={opt.value === "newest" ? "favorites-sort-newest" : opt.value === "oldest" ? "favorites-sort-oldest" : "favorites-sort-name"}
               onPress={() => setSort(opt.value)}
               style={{
                 paddingHorizontal: spacing.md,

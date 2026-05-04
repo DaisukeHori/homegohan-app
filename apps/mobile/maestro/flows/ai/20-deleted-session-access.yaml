@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 20-deleted-session-access: 削除済みsessionIdに直アクセス → エラーまたは一覧画面へリダイレクト
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# セッション一覧画面が表示されること確認
+- assertVisible:
+    id: "ai-sessions-screen"
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# < ボタンで一覧に戻る
+- tapOn:
+    point: "5%, 10%"
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# セッション一覧画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 15000

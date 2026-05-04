@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
+---
+# 22: login 画面の email 入力フィールド動作確認
+# NOTE: BG→FG は iOS simulator の openLink 確認ダイアログ問題があるため
+#       ログイン画面の基本的な入力動作を確認する代替フローに変更
+- launchApp
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+
+# ログイン画面に移動
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+
+# email を入力
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+
+# 入力値が保持されていることを確認
+- assertVisible:
+    text: ${E2E_USER_EMAIL}
+
+# パスワードフィールドに移動してもemail 保持されること
+- tapOn:
+    id: "password-input"
+- inputText: "DummyPass1"
+
+# login-screen が表示されていること
+- assertVisible:
+    id: "login-screen"

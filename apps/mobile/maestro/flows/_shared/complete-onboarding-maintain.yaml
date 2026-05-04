@@ -1,0 +1,198 @@
+appId: com.homegohan.app
+---
+# _shared/complete-onboarding-maintain.yaml
+# nutrition_goal=maintain 選択後の全設問を回答してオンボーディングを完了する共通フロー
+# 呼び出し元でoboarding-nutrition_goal-screen を待機し、maintain を選択した後に呼び出す
+
+# exercise_types 設問 (multi_choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-multi-choice-option-none"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-multi-choice-option-none"
+- tapOn:
+    id: "onboarding-next-button"
+
+# work_style 設問 (choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-work_style-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-sedentary"
+
+# health_conditions 設問 (multi_choice, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# body_concerns 設問 (multi_choice, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# sleep_quality 設問 (choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-sleep_quality-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-average"
+
+# stress_level 設問 (choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-stress_level-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-medium"
+
+# medications 設問 (multi_choice, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# allergies 設問 (tags, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# dislikes 設問 (tags, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# favorite_ingredients 設問 (tags, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# diet_style 設問 (choice, allowSkip だが skip ボタンなし)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-diet_style-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-normal"
+
+# cooking_experience 設問 (choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-cooking_experience-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-intermediate"
+
+# cooking_time 設問 (choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-cooking_time-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-30"
+
+# cuisine_preference 設問 (multi_choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-multi-choice-option-japanese"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-multi-choice-option-japanese"
+- tapOn:
+    id: "onboarding-next-button"
+
+# family_size 設問 (number, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-number-input"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-number-input"
+- inputText: "2"
+- tapOn:
+    id: "onboarding-number-submit-button"
+
+# servings_config 設問 (servings_grid)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-servings-screen"
+    timeout: 15000
+- tapOn:
+    id: "onboarding-next-button"
+
+# shopping_frequency 設問 (choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-shopping_frequency-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-2-3_weekly"
+
+# weekly_food_budget 設問 (choice, "none" を選択)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-weekly_food_budget-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-none"
+
+# kitchen_appliances 設問 (multi_choice, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# stove_type 設問 (choice, 必須)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-stove_type-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-choice-option-stove:gas"
+
+# hobbies 設問 (tags, allowSkip)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-skip-question-button"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-skip-question-button"
+
+# onboarding-complete-screen が表示される
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-complete-screen"
+    timeout: 30000
+# CTA ボタンをスクロールで見つけてタップ
+- scrollUntilVisible:
+    element:
+      id: "onboarding-complete-cta-button"
+    direction: DOWN
+- tapOn:
+    id: "onboarding-complete-cta-button"
+# home-screen に到達
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 30000

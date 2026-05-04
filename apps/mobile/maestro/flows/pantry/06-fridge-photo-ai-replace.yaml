@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 06-fridge-photo-ai-replace: 冷蔵庫写真ボタンの表示確認（05と同様の簡易チェック）
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 冷蔵庫写真ボタンが表示されていることを確認
+- assertVisible:
+    id: "pantry-fridge-photo-button"
+
+# パントリー画面が正常に表示されていることを確認
+- assertVisible:
+    id: "pantry-name-input"
+
+- assertVisible:
+    id: "pantry-add-button"

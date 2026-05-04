@@ -1,0 +1,31 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 03-recalculate: 再計算ボタンをタップしてランキングを更新する (正常系)
+- runFlow: ../_shared/login.yaml
+
+# 比較画面へ移動
+- tapOn:
+    id: "tab-comparison"
+- extendedWaitUntil:
+    visible:
+      id: "comparison-screen"
+    timeout: 10000
+
+# 初回ロードを待機
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# 再計算ボタンをタップ
+- tapOn:
+    id: "comparison-recalculate-button"
+
+# 再計算後のロード完了を待機
+- waitForAnimationToEnd:
+    timeout: 15000
+
+# 比較画面が表示されていることを確認
+- assertVisible:
+    id: "comparison-screen"

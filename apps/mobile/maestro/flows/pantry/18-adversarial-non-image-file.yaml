@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 18-adversarial-non-image-file: 冷蔵庫写真ボタンからキャンセルしてもアプリがクラッシュしない
+# (非画像ファイル選択はシミュレーター制約でテスト困難)
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 冷蔵庫写真ボタンをタップ
+- tapOn:
+    id: "pantry-fridge-photo-button"
+
+# キャンセル
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    optional: true
+    text: "キャンセル"
+- tapOn:
+    optional: true
+    text: "Cancel"
+
+# アプリがクラッシュせずパントリー画面が表示されていることを確認
+- assertVisible:
+    id: "pantry-screen"

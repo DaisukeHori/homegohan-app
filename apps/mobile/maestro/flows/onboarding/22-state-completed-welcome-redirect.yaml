@@ -1,0 +1,17 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 22: 状態遷移 - onboarding を skip 完了後にログアウト→ログインすると home に遷移する
+# (フロー02でUSER_02はskipによりonboarding完了済み)
+- runFlow:
+    file: "../_shared/login.yaml"
+# onboarding 完了済みユーザーは home 画面に遷移する
+- assertVisible:
+    id: "home-screen"
+# onboarding 画面が表示されないことを確認
+- assertNotVisible:
+    id: "onboarding-welcome-screen"
+- assertNotVisible:
+    id: "onboarding-questions-screen"

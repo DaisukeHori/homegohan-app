@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 08-adversarial-heart-rapid-tap: Adversarial - ハート連打による二重送信防止
+- runFlow: ../_shared/login.yaml
+
+# ホーム画面からレシピへ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-recipes-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "recipes-screen"
+    timeout: 10000
+
+# レシピがある場合のみいいね連打テスト
+- runFlow:
+    when:
+      visible:
+        id: "recipes-like-.*"
+    commands:
+      # ハートを高速連打（regex で最初のアイテム）
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      - tapOn:
+          id: "recipes-like-.*"
+      # アニメーション待機
+      - waitForAnimationToEnd:
+          timeout: 5000
+
+# アプリがクラッシュしていないこと
+- assertVisible:
+    id: "recipes-screen"

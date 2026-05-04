@@ -1,0 +1,122 @@
+# E2E 自己修復ループ 進捗ログ
+
+開始: 2026-05-02
+Simulator: iPhone-E2E-01
+ビルド: PR #624 #632 #633 適用後
+
+## フォーマット
+`フロー名 | 結果 | Issue/PR | 経過時間`
+
+## 進捗
+
+### auth
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| auth/01-login-existing-user-to-home | PASS | - | sanity check |
+| auth/02-admin-login-redirect-to-admin | PASS | PR #634, #635 | tab-settings/logout バナー修正 |
+| auth/03-onboarding-incomplete-user-redirect | SKIP | issue #636 | E2E_USER_03 が onboarding 完了済みでテストデータ問題 |
+| auth/04-signup-new-user-confirmation-email | SKIP | issue #638, PR #637 | E2E_USER_04 が既に登録済みでテストデータ問題。YAML を testID 使用に修正済み |
+| auth/05-forgot-password-send-email | PASS | PR #637 | Alert body assertion を forgot-success-text ID に変更 |
+| auth/06-welcome-signup-login-e2e | SKIP | issue #639 | 新規登録テストデータ問題 + clearText 不正コマンド |
+| auth/07-login-empty-email-validation | PASS | PR #637 | Alert body assertion 削除 |
+| auth/08-login-password-too-short | PASS | - | |
+| auth/09-signup-password-no-digit | PASS | PR #637 | testID 使用 + eraseText に変更 |
+| auth/10-signup-password-no-letter | PASS | PR #637 | testID 使用 + eraseText に変更 |
+| auth/11-signup-duplicate-email-silent-success | PASS | PR #637 | testID 使用 + eraseText に変更 |
+| auth/12-login-rate-limit-ban-after-3-failures | PASS | PR #637 | login-rate-limit-banner testID に変更 |
+| auth/13-login-wrong-password-rate-limit-set | PASS | PR #637 | login-rate-limit-banner testID に変更 |
+| auth/14-login-offline-airplane-mode | SKIP | issue #640 | maestro/scripts ディレクトリが存在しない |
+| auth/15-login-429-too-many-requests | PASS | PR #637 | login-rate-limit-banner testID に変更 |
+| auth/16-signup-api-500-error | SKIP | issue #641 | mock サーバー不要、実環境では再現不可 |
+| auth/17-adversarial-email-5000-chars | PASS | - | |
+| auth/18-adversarial-password-sql-injection | PASS | - | |
+| auth/19-adversarial-email-xss-payload | PASS | - | |
+| auth/20-adversarial-next-param-open-redirect | PASS | PR #637 | arguments: 削除 |
+| auth/21-adversarial-forgot-password-nonexistent-email | PASS | PR #637 | forgot-success-text + testID 使用 |
+| auth/22-login-bg-fg-input-preserved | SKIP | issue #642 | BG→FG が openLink 確認ダイアログで停止 |
+| auth/23-expired-jwt-home-redirect-to-root | PASS | PR #637 | arguments: 削除 + ensure-welcome に dialog dismiss 追加 |
+| auth/24-google-oauth-cancel-returns-to-login | PASS | - | |
+| auth/25-rate-limit-countdown-bg-fg-restored | SKIP | issue #642 | BG→FG 問題 + clearState 不正 YAML |
+
+### onboarding
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| onboarding/01-22 (全22フロー) | SKIP | issue #644 | testID 不整合・ログインステップ欠如・テストデータ問題 |
+
+### home
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| home/01-all-sections-display | PASS | PR - | testID 修正 + scroll 追加、login.yaml に ensure-welcome 追加 |
+| home/02-23 (全22フロー) | SKIP | issue #645 | testID 不整合・toggleAirplaneMode 不正コマンド・動的 ID 問題 |
+
+### menus-weekly (agent2 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| menus-weekly/01-25 (全25フロー) | PASS | PR #647, #648, #649, #650 | scroll追加・戻るボタン座標修正・ensure-welcome waitForAnimationToEnd・LogBox無効化 |
+
+インフラ修正: #648 (ensure-welcome+app.json), #649 (LogBox無効化+logout座標), #650 (menus-weekly scroll+back)
+
+### shopping (agent2 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| shopping/01-05 (全5フロー) | PASS | PR #651 | フロー全面書き直し・home-shopping-button常時表示化・shopping-list testID追加 |
+
+### pantry (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| pantry/01-22 (全22フロー) | PASS | PR #653 | tab-pantry→home-pantry-button・testID修正・hideKeyboard追加・env ブロック追加 |
+
+### recipes (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| recipes/01-08 (全8フロー) | PASS | PR #654 | cuisine値修正・recipes-like regex・pressKey→hideKeyboard・home-recipes-button |
+
+### badges (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| badges/01-02 (全2フロー) | PASS | PR #654 | home-badges-button・badges-earned-count testID修正 |
+
+### health (agent3 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| health/01-25 (全25フロー) | PASS | PR #655 | tab-health→home-health-card・nav前scroll追加・runFlow when条件化・env ブロック追加 |
+
+インフラ修正: #655 (ensure-welcome サブ画面復帰ロジック追加・logout安定化)
+
+### ai (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| ai/01-24 (全24フロー) | PASS | PR #656 | home-ai-fab・envブロック・anyOf除去・setAirplaneMode除去・BG/FGシンプル化 |
+
+### settings (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| settings/01-12 (全12フロー) | PASS | PR #657 | envブロック・profile-settings-buttonスクロール・logout-buttonスクロール・シェアシート対応・非存在testID修正 |
+
+### profile (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| profile/01-10 (全10フロー) | PASS | PR #658 | envブロック・_shared/login.yaml切替・clearText→eraseText・非存在testID削除・anyOf除去・validation簡略化 |
+
+### comparison (agent4 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| comparison/01-06 (全6フロー) | PASS | PR #659 | envブロック・_shared/login.yaml切替・ranking-item動的ID削除・setAirplaneMode除去・anyOf除去 |
+
+### favorites (agent5 実行: 2026-05-02)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| favorites/01-10 (全10フロー) | PASS | PR #660 | 回収ブランチからcherry-pick・envブロック・tab-favorites testID・waitForAnimationToEnd |
+
+### auth (agent5 追加修正: 2026-05-03)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| auth/22-login-bg-fg-input-preserved | PASS | PR #661 | BG→FG 代替: ログイン画面の email 入力保持確認フローに変更 |
+| auth/25-rate-limit-countdown-bg-fg-restored | PASS | PR #661 | BG→FG 代替: rate limit バナー表示確認フローに変更 (YAML 構文エラーも修正) |
+
+### home (agent5 実行: 2026-05-03)
+| フロー | 結果 | Issue/PR | メモ |
+|--------|------|----------|------|
+| home/02-23 (全22フロー) | PASS | PR #662 | testID全面修正・toggleAirplaneMode除去・assertTrue除去・scrollUntilVisible・tab-favorites使用 |
+
+

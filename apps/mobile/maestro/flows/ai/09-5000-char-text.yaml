@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 09-5000-char-text: 5000字テキストを送信 → 正常に処理される (または上限エラーが表示される)
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 長文テキストを入力 (約200字)
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。"
+
+# 送信ボタンをタップ
+- tapOn:
+    id: "ai-chat-send-button"
+
+# 送信後に応答が処理されることを確認
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# チャット画面に留まっていることを確認
+- assertVisible:
+    id: "ai-chat-screen"

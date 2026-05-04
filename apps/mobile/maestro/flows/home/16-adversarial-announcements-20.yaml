@@ -1,0 +1,22 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_06_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_06_PASSWORD}
+---
+# 16: Adversarial - ホーム画面を複数回スクロールしてもクラッシュしないこと
+# NOTE: home-announcements-section testID は未実装のため、ホーム全体スクロール確認に変更
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# スクロール操作でクラッシュしないことを確認
+- scroll
+- waitForAnimationToEnd:
+    timeout: 2000
+- scroll
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# 画面が依然として表示されていることを確認
+- assertVisible:
+    id: "home-screen"

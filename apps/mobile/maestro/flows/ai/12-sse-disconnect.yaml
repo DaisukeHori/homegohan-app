@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 12-sse-disconnect: SSE接続が切断されたとき → エラーメッセージまたは再試行UIが表示される
+# NOTE: setAirplaneMode 非対応のため、送信後のエラー確認のみ
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力して送信
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "ストリーミングテスト"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# 送信後に処理されることを確認
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# チャット画面に留まっていることを確認 (クラッシュしていない)
+- assertVisible:
+    id: "ai-chat-screen"

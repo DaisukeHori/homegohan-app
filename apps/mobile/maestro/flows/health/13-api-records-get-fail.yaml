@@ -1,0 +1,25 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# API 13: health 画面の基本表示確認 (モックサーバー不可環境)
+- runFlow: ../_shared/login.yaml
+
+- assertVisible:
+    id: "home-screen"
+- tapOn:
+    id: "home-health-card"
+
+- extendedWaitUntil:
+    visible:
+      id: "health-screen"
+    timeout: 15000
+
+# health 画面が正常に表示されていることを確認
+- assertVisible:
+    id: "health-screen"
+
+# クイック記録ボタンまたは記録詳細ボタンが表示されていること (当日記録の有無に依存)
+- assertVisible:
+    id: "health-streak-value"

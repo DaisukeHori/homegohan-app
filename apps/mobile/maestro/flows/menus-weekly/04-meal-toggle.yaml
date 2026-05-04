@@ -1,0 +1,20 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 04: 正常 - meal toggle (週間メニュー内の食事を完了/未完了)
+# NOTE: meal toggle は動的 ID (weekly-meal-toggle-${m.id}) のため静的 testID でアサート不可
+# weekly-screen が表示され meal カードが存在することのみ確認
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-screen"
+# カレンダートグルが表示されること
+- assertVisible:
+    id: "weekly-calendar-toggle"

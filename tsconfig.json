@@ -26,6 +26,12 @@
       "@/*": [
         "./src/*",
         "./*"
+      ],
+      "@homegohan/shared": [
+        "./packages/shared/src/index.ts"
+      ],
+      "@homegohan/shared/*": [
+        "./packages/shared/src/*"
       ]
     }
   },

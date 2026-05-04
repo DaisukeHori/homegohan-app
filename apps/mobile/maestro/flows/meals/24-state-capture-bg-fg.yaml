@@ -1,0 +1,31 @@
+appId: com.homegohan.app
+---
+# 状態遷移 24: 撮影中 BG→FG 復帰
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-meal"
+
+- assertVisible:
+    id: "camera-screen"
+
+- pressKey: Home
+- pause:
+    milliseconds: 2000
+
+- openLink: "homegohan://"
+- extendedWaitUntil:
+    visible:
+      id: "camera-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "camera-capture-button"
+- extendedWaitUntil:
+    visible:
+      id: "meal-form-screen"
+    timeout: 30000

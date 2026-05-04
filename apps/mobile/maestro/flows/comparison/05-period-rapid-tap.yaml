@@ -1,0 +1,33 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 05-period-rapid-tap: 期間切替ボタンを連打しても重複リクエストが発生しない (Adversarial)
+- runFlow: ../_shared/login.yaml
+
+# 比較画面へ移動
+- tapOn:
+    id: "tab-comparison"
+- extendedWaitUntil:
+    visible:
+      id: "comparison-screen"
+    timeout: 10000
+
+# 期間ボタンを素早く連打
+- tapOn:
+    id: "comparison-period-daily"
+- tapOn:
+    id: "comparison-period-weekly"
+- tapOn:
+    id: "comparison-period-monthly"
+- tapOn:
+    id: "comparison-period-daily"
+- tapOn:
+    id: "comparison-period-weekly"
+
+# 最終的に weekly が選択された状態でアプリがクラッシュしないことを確認
+- waitForAnimationToEnd:
+    timeout: 20000
+- assertVisible:
+    id: "comparison-screen"

@@ -1,0 +1,58 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_02_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_02_PASSWORD}
+---
+# 12: API エラー - モックサーバー不要の代替: onboarding 完了フローの確認
+# (実環境では API 500 を意図的に起こせないため、正常フローで代替)
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-text-input"
+- inputText: "APIテスト"
+- pressKey: Enter
+# gender 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-gender-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-choice-option-unspecified"
+# body_stats 設問
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-body-stats-screen"
+    timeout: 8000
+- tapOn:
+    id: "onboarding-age-input"
+- inputText: "30"
+- tapOn:
+    text: "Next"
+# occupation フィールドにフォーカス (text keyboard, Enter で次へ)
+- pressKey: Enter
+# height フィールドにフォーカス
+- inputText: "170"
+- tapOn:
+    text: "Next"
+# weight フィールドにフォーカス
+- inputText: "65"
+- tapOn:
+    id: "onboarding-next-button"
+# nutrition_goal
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-nutrition_goal-screen"
+    timeout: 15000
+- tapOn:
+    id: "onboarding-choice-option-maintain"
+# exercise_types 〜 home-screen まで共通フロー
+- runFlow:
+    file: "../_shared/complete-onboarding-maintain.yaml"

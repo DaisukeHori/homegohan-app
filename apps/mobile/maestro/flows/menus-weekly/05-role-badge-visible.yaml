@@ -1,0 +1,8 @@
+appId: com.homegohan.app
+---
+- launchApp
+- tapOn: { text: "ほめゴハン" }
+- waitForAnimationToEnd
+- tapOn: { id: "tab-menus" }
+- waitForAnimationToEnd
+- assertVisible: { id: "role-badge" }

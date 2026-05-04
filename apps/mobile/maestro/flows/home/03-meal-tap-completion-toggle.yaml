@@ -1,0 +1,23 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_03_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_03_PASSWORD}
+---
+# 03: ホーム画面のアクションボタン群が表示されること
+# NOTE: home-meals-section / meal-item 動的testID のため代替フローに変更
+# 食事記録ボタン・AI メニューボタン等の表示確認
+- runFlow: ../_shared/login.yaml
+- assertVisible:
+    id: "home-screen"
+
+# アクションボタン群にスクロール
+- scrollTo:
+    id: "home-record-meal-button"
+- assertVisible:
+    id: "home-record-meal-button"
+
+- assertVisible:
+    id: "home-ai-menu-button"
+
+- assertVisible:
+    id: "home-shopping-button"

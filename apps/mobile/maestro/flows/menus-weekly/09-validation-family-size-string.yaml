@@ -1,0 +1,44 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 09: バリデーション - family_size に文字列入力 → エラーまたは submit ボタンが有効なままであること確認
+# NOTE: クライアント側バリデーションエラー testID (ai-generate-family-size-error) は実装にない
+# weekly-request-family-size-input に文字列入力してもフォームが維持されることを確認
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-family-size-input"
+- tapOn:
+    id: "weekly-request-family-size-input"
+- eraseText: 10
+- inputText: "abc"
+- tapOn:
+    text: "AIで週間献立を作成"
+    optional: true
+- scrollUntilVisible:
+    element:
+      id: "weekly-request-submit-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-submit-button"
+# アプリがクラッシュせず画面が維持されること (エラーまたはリクエスト画面のまま)
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 15000
+- assertVisible:
+    id: "weekly-request-screen"

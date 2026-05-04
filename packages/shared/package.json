@@ -1,0 +1,10 @@
+{
+  "name": "@homegohan/shared",
+  "version": "0.1.0",
+  "private": true,
+  "sideEffects": false,
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

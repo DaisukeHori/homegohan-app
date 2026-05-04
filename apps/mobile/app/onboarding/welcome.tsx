@@ -6,10 +6,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Card } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { colors, radius, shadows, spacing } from "../../src/theme";
+import { useProfile } from "../../src/providers/ProfileProvider";
 
 // モバイル版: 初回ウェルカム画面 (OB-UI-06)
 export default function OnboardingWelcome() {
   const [isSkipping, setIsSkipping] = useState(false);
+  const { refresh } = useProfile();
 
   const handleSkip = async () => {
     if (isSkipping) return;
@@ -17,6 +19,8 @@ export default function OnboardingWelcome() {
     try {
       const api = getApi();
       await api.post("/api/onboarding/complete");
+      // プロフィールをリフレッシュして onboardingCompletedAt を反映させる
+      await refresh();
     } catch (error) {
       // エラーでもホームへ遷移する
       console.error("[onboarding] skip complete API failed:", error);
@@ -27,6 +31,7 @@ export default function OnboardingWelcome() {
 
   return (
     <ScrollView
+      testID="onboarding-welcome-screen"
       contentContainerStyle={styles.container}
       style={styles.scroll}
     >
@@ -90,6 +95,7 @@ export default function OnboardingWelcome() {
       {/* Buttons */}
       <View style={styles.buttonGroup}>
         <Pressable
+          testID="onboarding-start-button"
           onPress={() => router.push("/onboarding/questions")}
           style={({ pressed }) => [
             styles.primaryButton,
@@ -101,6 +107,7 @@ export default function OnboardingWelcome() {
         </Pressable>
 
         <Pressable
+          testID="onboarding-skip-button"
           onPress={handleSkip}
           style={styles.skipButton}
           disabled={isSkipping}

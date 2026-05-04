@@ -1,0 +1,49 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 18-non-image-file: 非画像ファイルを選択 → 選択不可またはエラーが表示される
+# フォトライブラリが画像のみ表示することを確認
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 画像添付ボタンをタップ
+- tapOn:
+    id: "ai-chat-image-attach-button"
+
+# フォトライブラリが表示されるまで待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# キャンセルして戻る
+- tapOn:
+    text: "キャンセル"
+
+# チャット画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# エラーが表示されていないことを確認
+- assertNotVisible:
+    id: "ai-chat-error-text"

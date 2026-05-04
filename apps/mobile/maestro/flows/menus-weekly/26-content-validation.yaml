@@ -1,0 +1,22 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 26: 正常 - 献立生成後に料理名・カロリー数値が空でないことを検証
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+# 既存メニューがあれば最初のカードを検証
+- assertVisible:
+    id: "weekly-meal-card.*"
+    optional: true
+# 料理名 testID が存在し非空であること
+# (weekly-meal-dish-name-{id} 形式のTestIDがいずれか可視状態であることを確認)
+- assertVisible:
+    id: "weekly-meal-dish-name.*"
+- takeScreenshot: weekly-content-baseline

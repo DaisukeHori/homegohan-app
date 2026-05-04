@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+---
+# API エラー 15: image upload 失敗
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-meal"
+
+- tapOn:
+    id: "camera-capture-button"
+- extendedWaitUntil:
+    visible:
+      id: "image-upload-indicator"
+    timeout: 10000
+
+- extendedWaitUntil:
+    visible:
+      id: "image-upload-error-message"
+    timeout: 30000
+
+- assertVisible:
+    id: "image-upload-retry-button"
+- assertNotVisible:
+    id: "meal-form-screen"

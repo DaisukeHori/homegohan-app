@@ -1,0 +1,55 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 11-logout-rapid-tap: ログアウトボタンを連打しても二重実行されない (Adversarial)
+- runFlow: ../_shared/login.yaml
+
+# 設定画面へ移動
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "profile-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+
+# ログアウトボタンを連打
+- scrollUntilVisible:
+    element:
+      id: "settings-logout-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "settings-logout-button"
+- tapOn:
+    id: "settings-logout-button"
+    optional: true
+- tapOn:
+    id: "settings-logout-button"
+    optional: true
+
+# 確認ボタンが表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "settings-logout-confirm-button"
+    timeout: 10000
+
+# 確認してログアウト
+- tapOn:
+    id: "settings-logout-confirm-button"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 10000

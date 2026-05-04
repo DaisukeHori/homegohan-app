@@ -11,7 +11,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { image } = body;
+    const { image, mimeType } = body;
 
     if (!image) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 });
@@ -21,6 +21,9 @@ export async function POST(request: Request) {
     const formData = new FormData();
     formData.append('image_base64', image);
     formData.append('device_type', 'weight_scale');
+    if (mimeType) {
+      formData.append('mime_type', mimeType);
+    }
 
     const invokePromise = supabase.functions.invoke('analyze-health-photo', {
       body: formData,

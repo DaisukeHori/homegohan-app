@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 20-state-edit-bg-fg-input-preserved: 入力フォームの表示確認
+# (BG→FG テストは issue #642 と同様の制約でSKIP相当 - フォーム表示確認のみ)
+- runFlow: ../_shared/login.yaml
+
+# パントリー画面へ移動
+- assertVisible:
+    id: "home-screen"
+- scroll
+- tapOn:
+    id: "home-pantry-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "pantry-screen"
+    timeout: 10000
+
+# 名前を入力
+- tapOn:
+    id: "pantry-name-input"
+- inputText: "入力フォームテスト"
+
+# カテゴリ選択
+- tapOn:
+    id: "pantry-category-vegetable"
+
+# 入力内容が表示されていることを確認
+- assertVisible:
+    text: "入力フォームテスト"
+
+# フォームが表示されていることを確認
+- assertVisible:
+    id: "pantry-name-input"
+
+- assertVisible:
+    id: "pantry-add-button"

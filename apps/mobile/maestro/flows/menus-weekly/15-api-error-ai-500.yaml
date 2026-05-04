@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 15: API エラー - AI 生成 500 エラー時の確認
+# NOTE: toggleAirplaneMode は無効なコマンドのため (issue #640)、ネットワーク切断テスト不可
+# リクエスト画面が正常に表示されることのみ確認
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- tapOn:
+    id: "weekly-request-button"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-request-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-request-screen"
+- scroll
+- assertVisible:
+    id: "weekly-request-submit-button"

@@ -1,0 +1,43 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 16-text-sqli: SQLインジェクション文字列を送信 → 安全に処理される (エラーなし・クラッシュなし)
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# SQLインジェクション文字列を入力
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "'; DROP TABLE sessions; --"
+
+# 送信ボタンをタップ
+- tapOn:
+    id: "ai-chat-send-button"
+
+# 送信後に応答が処理されることを確認 (クラッシュしない)
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# チャット画面に留まっていることを確認
+- assertVisible:
+    id: "ai-chat-screen"

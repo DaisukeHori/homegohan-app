@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 23-image-attach-bg-fg: 画像添付後にBG→FG復帰 → 添付画像が保持される
+# NOTE: フォトライブラリ選択のBG/FG操作は複雑なため、基本的なBG/FGのみ確認
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# アプリをバックグラウンドへ
+- pressKey: Home
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# アプリをフォアグラウンドへ復帰
+- launchApp:
+    stopApp: false
+
+# チャット画面に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# 画像添付ボタンが表示されていることを確認
+- assertVisible:
+    id: "ai-chat-image-attach-button"

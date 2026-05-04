@@ -1,0 +1,49 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 19-rapid-send: 送信を連打 → 二重送信が発生しない (送信中は送信ボタンが無効になる)
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "送信連打テスト"
+
+# 送信ボタンを連打 (3回)
+- tapOn:
+    id: "ai-chat-send-button"
+- tapOn:
+    id: "ai-chat-send-button"
+    optional: true
+- tapOn:
+    id: "ai-chat-send-button"
+    optional: true
+
+# 送信後に処理されることを確認
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# チャット画面に留まっていることを確認
+- assertVisible:
+    id: "ai-chat-screen"

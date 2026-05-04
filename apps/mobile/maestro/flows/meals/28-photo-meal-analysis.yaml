@@ -1,0 +1,49 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 28: 正常 - 食事写真モードで画像選択→解析結果検証
+# 事前条件: シミュレーターの Photos.app に meal-photo.jpg を配置済みであること
+# xcrun simctl addmedia <UDID> apps/mobile/maestro/testdata/meal-photo.jpg
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-meals"
+    optional: true
+- tapOn:
+    id: "home-meal-fab"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "meal-new-screen"
+    timeout: 10000
+# 食事モードを選択
+- tapOn:
+    id: "meal-mode-select-meal"
+- tapOn:
+    id: "meal-gallery-button"
+    optional: true
+- tapOn:
+    text: "撮影へ進む"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "meal-camera-button"
+    timeout: 5000
+- tapOn:
+    id: "meal-gallery-button"
+# Photos.app からフィクスチャ画像を選択
+- tapOn:
+    point: "10%, 30%"
+- waitForAnimationToEnd:
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: "meal-result-screen"
+    timeout: 60000
+# 解析結果の料理名・カロリーが表示されていることを確認
+- assertVisible:
+    id: "meal-result-dish-name"
+- assertVisible:
+    id: "meal-result-calories"
+- takeScreenshot: meal-photo-result

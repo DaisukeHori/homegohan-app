@@ -1,0 +1,29 @@
+appId: com.homegohan.app
+---
+# バリデーション 11: カロリー負値を入力
+- runFlow: ../_shared/login.yaml
+
+- tapOn:
+    id: "tab-meals"
+- tapOn:
+    id: "meals-add-button"
+- tapOn:
+    id: "meal-mode-manual"
+- assertVisible:
+    id: "meal-form-screen"
+
+- tapOn:
+    id: "meal-name-input"
+- inputText: "テスト料理"
+
+- tapOn:
+    id: "meal-calories-input"
+- inputText: "-100"
+
+- tapOn:
+    id: "meal-save-button"
+
+- assertVisible:
+    id: "meal-calories-error"
+- assertNotVisible:
+    id: "meals-screen"

@@ -8,6 +8,7 @@ type CardProps = {
   style?: ViewStyle;
   variant?: 'default' | 'accent' | 'success' | 'warning' | 'error' | 'purple';
   padding?: keyof typeof spacing;
+  testID?: string;
 };
 
 const BORDER_COLORS: Record<string, string> = {
@@ -19,7 +20,7 @@ const BORDER_COLORS: Record<string, string> = {
   purple: '#D1C4E9',
 };
 
-export function Card({ children, onPress, style, variant = 'default', padding = 'lg' }: CardProps) {
+export function Card({ children, onPress, style, variant = 'default', padding = 'lg', testID }: CardProps) {
   const cardStyle: ViewStyle = {
     backgroundColor: colors.card,
     borderRadius: radius.lg,
@@ -32,11 +33,11 @@ export function Card({ children, onPress, style, variant = 'default', padding = 
 
   if (onPress) {
     return (
-      <Pressable onPress={onPress} style={({ pressed }) => [cardStyle, pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] }]}>
+      <Pressable testID={testID} onPress={onPress} style={({ pressed }) => [cardStyle, pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] }]}>
         {children}
       </Pressable>
     );
   }
 
-  return <View style={cardStyle}>{children}</View>;
+  return <View testID={testID} style={cardStyle}>{children}</View>;
 }

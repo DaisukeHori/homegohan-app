@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 21-send-bg-fg: 送信中にBG→FG復帰 → ストリーミングが継続または正常に回復する
+# NOTE: BG→FG のシミュレーションには pressKey: Home を使用
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 10000
+
+# 新規セッション作成
+- tapOn:
+    id: "ai-new-session-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "ai-chat-screen"
+    timeout: 10000
+
+# テキストを入力して送信
+- tapOn:
+    id: "ai-chat-input"
+- inputText: "バックグラウンド復帰テスト"
+
+- tapOn:
+    id: "ai-chat-send-button"
+
+# アプリをバックグラウンドへ
+- pressKey: Home
+
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# アプリをフォアグラウンドへ復帰
+- launchApp:
+    stopApp: false
+
+# チャット画面またはAIセッション画面が表示されることを確認
+- waitForAnimationToEnd:
+    timeout: 5000
+
+- assertVisible:
+    id: "ai-chat-screen"

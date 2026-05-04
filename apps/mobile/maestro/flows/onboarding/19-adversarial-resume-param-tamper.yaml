@@ -1,0 +1,40 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_09_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_09_PASSWORD}
+---
+# 19: onboarding 途中ユーザーが questions?resume=true を開いて再開できることを確認
+# (param tamper ではなく正規の resume フロー確認)
+- runFlow:
+    file: "../_shared/login-for-onboarding.yaml"
+- assertVisible:
+    id: "onboarding-welcome-screen"
+- tapOn:
+    id: "onboarding-start-button"
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+- tapOn:
+    id: "onboarding-text-input"
+- inputText: "パラムテスト"
+- pressKey: Enter
+# 進捗が保存されたのでHomeボタンで中断
+- waitForAnimationToEnd:
+    timeout: 2000
+- pressKey: Home
+- waitForAnimationToEnd:
+    timeout: 3000
+# アプリ再起動
+- launchApp:
+    clearState: false
+# resume-screen が表示される
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-resume-screen"
+    timeout: 15000
+# onboarding-resume-screen が表示され、home-screen は表示されない
+- assertVisible:
+    id: "onboarding-resume-screen"
+- assertNotVisible:
+    id: "home-screen"

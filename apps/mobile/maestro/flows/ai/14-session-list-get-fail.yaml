@@ -1,0 +1,26 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 14-session-list-get-fail: セッション一覧GET APIが失敗したとき → エラーまたは空状態が表示される
+# NOTE: setAirplaneMode は Maestro では利用不可のため、正常表示確認のみ実施
+
+- runFlow: ../_shared/login.yaml
+
+# AI相談へ移動 (ホーム画面のフローティングボタン)
+- tapOn:
+    id: "home-ai-fab"
+
+# セッション一覧画面が表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "ai-sessions-screen"
+    timeout: 15000
+
+# アプリがクラッシュしていないことを確認
+- waitForAnimationToEnd:
+    timeout: 3000
+
+- assertVisible:
+    id: "ai-sessions-screen"

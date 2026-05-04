@@ -13,6 +13,8 @@ import { PageHeader } from "../../src/components/ui/PageHeader";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 
 import { getApi } from "../../src/lib/api";
+import { uploadFridgePhoto } from "../../src/lib/storage";
+import { supabase } from "../../src/lib/supabase";
 import { colors, radius, spacing } from "../../src/theme";
 
 type PantryItem = {
@@ -35,9 +37,11 @@ const CATEGORY_OPTIONS: { code: string; label: string }[] = [
 function CategoryPicker({
   value,
   onChange,
+  testIDPrefix,
 }: {
   value: string;
   onChange: (code: string) => void;
+  testIDPrefix?: string;
 }) {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
@@ -46,6 +50,7 @@ function CategoryPicker({
         return (
           <Pressable
             key={opt.code}
+            testID={testIDPrefix ? `${testIDPrefix}-${opt.code}` : undefined}
             onPress={() => onChange(opt.code)}
             style={{
               paddingHorizontal: 12,
@@ -237,7 +242,6 @@ export default function PantryPage() {
       }
       picked = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
-        base64: true,
         quality: 0.8,
       });
     } else {
@@ -248,14 +252,13 @@ export default function PantryPage() {
       }
       picked = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        base64: true,
         quality: 0.8,
       });
     }
 
     if (picked.canceled) return;
     const asset = picked.assets?.[0];
-    if (!asset?.base64) {
+    if (!asset?.uri) {
       Alert.alert("失敗", "画像の取得に失敗しました。");
       return;
     }
@@ -266,6 +269,9 @@ export default function PantryPage() {
     setDetected([]);
     setSuggestions([]);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("ログインが必要です");
+      const imageUrl = await uploadFridgePhoto(asset.uri, user.id);
       const api = getApi();
       const res = await api.post<{
         ingredients: string[];
@@ -273,8 +279,7 @@ export default function PantryPage() {
         summary: string;
         suggestions: string[];
       }>("/api/ai/analyze-fridge", {
-        imageBase64: asset.base64,
-        mimeType: (asset as any).mimeType ?? "image/jpeg",
+        imageUrl,
       });
       setAnalysisSummary(res.summary || null);
       setDetected((res.detailedIngredients ?? []) as any);
@@ -380,7 +385,7 @@ export default function PantryPage() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="pantry-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader title="冷蔵庫" subtitle="食材を管理しましょう" />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
@@ -403,11 +408,11 @@ export default function PantryPage() {
       <Card>
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="追加" />
-          <Input value={name} onChangeText={setName} placeholder="例: キャベツ" />
-          <Input value={amount} onChangeText={setAmount} placeholder="量（任意）" />
-          <CategoryPicker value={category} onChange={setCategory} />
-          <Input value={expirationDate} onChangeText={setExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" />
-          <Button onPress={add} disabled={isSubmitting} loading={isSubmitting}>
+          <Input testID="pantry-name-input" value={name} onChangeText={setName} placeholder="例: キャベツ" />
+          <Input testID="pantry-amount-input" value={amount} onChangeText={setAmount} placeholder="量（任意）" />
+          <CategoryPicker value={category} onChange={setCategory} testIDPrefix="pantry-category" />
+          <Input testID="pantry-expiration-input" value={expirationDate} onChangeText={setExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" />
+          <Button testID="pantry-add-button" onPress={add} disabled={isSubmitting} loading={isSubmitting}>
             {isSubmitting ? "追加中..." : "追加"}
           </Button>
         </View>
@@ -421,6 +426,7 @@ export default function PantryPage() {
             right={<Ionicons name="camera-outline" size={20} color={colors.accent} />}
           />
           <Button
+            testID="pantry-fridge-photo-button"
             onPress={analyzeFridge}
             disabled={isAnalyzing}
             loading={isAnalyzing}
@@ -565,11 +571,12 @@ export default function PantryPage() {
         <Card variant="error">
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
             <Ionicons name="alert-circle" size={20} color={colors.error} />
-            <Text style={{ color: colors.error, flex: 1 }}>{error}</Text>
+            <Text testID="pantry-error-text" style={{ color: colors.error, flex: 1 }}>{error}</Text>
           </View>
         </Card>
       ) : items.length === 0 ? (
         <EmptyState
+          testID="pantry-empty"
           icon={<Ionicons name="nutrition-outline" size={48} color={colors.textMuted} />}
           message="冷蔵庫は空です。"
           actionLabel="写真で追加"
@@ -579,7 +586,7 @@ export default function PantryPage() {
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title={`食材一覧（${items.length}件）`} />
           {items.map((it) => (
-            <Card key={it.id}>
+            <Card testID={`pantry-item-${it.id}`} key={it.id}>
               <View style={{ gap: spacing.sm }}>
                 {/* Item header */}
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
@@ -596,7 +603,7 @@ export default function PantryPage() {
                     </View>
                   )}
                   {!isExpired(it.expirationDate) && isExpiringSoon(it.expirationDate) && (
-                    <View style={{ backgroundColor: "#FFEBEE", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                    <View testID={`pantry-expiring-badge-${it.id}`} style={{ backgroundColor: "#FFEBEE", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
                       <Text style={{ fontSize: 11, color: colors.error, fontWeight: "600" }}>期限間近</Text>
                     </View>
                   )}
@@ -619,12 +626,12 @@ export default function PantryPage() {
                 {/* Edit form (inline) */}
                 {editingId === it.id ? (
                   <View style={{ gap: spacing.sm, marginTop: spacing.xs }}>
-                    <Input value={editName} onChangeText={setEditName} placeholder="食材名" />
+                    <Input testID="pantry-edit-name-input" value={editName} onChangeText={setEditName} placeholder="食材名" />
                     <Input value={editAmount} onChangeText={setEditAmount} placeholder="量（任意）" />
                     <CategoryPicker value={editCategory} onChange={setEditCategory} />
                     <Input value={editExpirationDate} onChangeText={setEditExpirationDate} placeholder="期限 YYYY-MM-DD（任意）" />
                     <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-                      <Button onPress={saveEdit} disabled={isSavingEdit} loading={isSavingEdit} size="sm">
+                      <Button testID="pantry-edit-save-button" onPress={saveEdit} disabled={isSavingEdit} loading={isSavingEdit} size="sm">
                         <Ionicons name="checkmark-outline" size={16} color="#FFFFFF" />
                         <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>
                           {isSavingEdit ? "保存中..." : "保存"}
@@ -637,11 +644,11 @@ export default function PantryPage() {
                   </View>
                 ) : (
                   <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.xs }}>
-                    <Button onPress={() => startEdit(it)} variant="secondary" size="sm">
+                    <Button testID={`pantry-item-edit-${it.id}`} onPress={() => startEdit(it)} variant="secondary" size="sm">
                       <Ionicons name="create-outline" size={16} color={colors.text} />
                       <Text style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>編集</Text>
                     </Button>
-                    <Button onPress={() => remove(it.id)} variant="destructive" size="sm">
+                    <Button testID={`pantry-item-delete-${it.id}`} onPress={() => remove(it.id)} variant="destructive" size="sm">
                       <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
                       <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 13 }}>削除</Text>
                     </Button>

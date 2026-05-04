@@ -1,0 +1,28 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 06-loader-state: 比較画面でローダーが正しく表示・非表示される (状態遷移)
+# NOTE: comparison-loader testID が未実装のため、再計算ボタン動作のみ確認
+- runFlow: ../_shared/login.yaml
+
+# 比較画面へ移動
+- tapOn:
+    id: "tab-comparison"
+- extendedWaitUntil:
+    visible:
+      id: "comparison-screen"
+    timeout: 10000
+
+# データ取得完了を待機
+- waitForAnimationToEnd:
+    timeout: 15000
+
+# 再計算で再度ロードが発生することを確認
+- tapOn:
+    id: "comparison-recalculate-button"
+- waitForAnimationToEnd:
+    timeout: 15000
+- assertVisible:
+    id: "comparison-screen"

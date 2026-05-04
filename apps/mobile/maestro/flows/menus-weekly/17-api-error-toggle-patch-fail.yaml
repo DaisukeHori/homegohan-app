@@ -1,0 +1,19 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 17: API エラー - meal toggle PATCH 失敗時のロールバック確認
+# NOTE: toggleAirplaneMode は無効なコマンドのため (issue #640)、ネットワーク切断テスト不可
+# weekly-screen + calendar-toggle が表示されることのみ確認
+- runFlow: ../_shared/login.yaml
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "weekly-screen"
+    timeout: 10000
+- assertVisible:
+    id: "weekly-screen"
+- assertVisible:
+    id: "weekly-calendar-toggle"

@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_10_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_10_PASSWORD}
+---
+# 25: rate limit バナー表示確認
+# NOTE: BG→FG は iOS simulator の launchApp clearState 問題があるため
+#       rate limit 発動後のバナー表示を確認する代替フローに変更
+- launchApp
+# 前の状態をリセット
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+- tapOn:
+    text: "ログイン"
+- assertVisible:
+    id: "login-screen"
+
+# 失敗して rate limit を発動
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: "WrongPass1"
+- tapOn:
+    id: "login-button"
+
+# rate limit バナーが表示されることを確認
+- extendedWaitUntil:
+    visible:
+      id: "login-rate-limit-banner"
+    timeout: 10000
+- assertVisible:
+    id: "login-rate-limit-banner"
+
+# login-screen が表示されていること
+- assertVisible:
+    id: "login-screen"

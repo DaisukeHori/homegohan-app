@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 import { Button } from "../../src/components/ui/Button";
@@ -75,6 +75,27 @@ export default function ShoppingListPage() {
   const [servings, setServings] = useState(2);
   const [isTodayExpanded, setIsTodayExpanded] = useState(false);
   const [daysCountInput, setDaysCountInput] = useState('3');
+
+  // Realtime subscription refs for regeneration progress
+  const regenChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const regenPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function cleanupRegenSubscription() {
+    if (regenPollingRef.current) {
+      clearInterval(regenPollingRef.current);
+      regenPollingRef.current = null;
+    }
+    if (regenChannelRef.current) {
+      supabase.removeChannel(regenChannelRef.current);
+      regenChannelRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      cleanupRegenSubscription();
+    };
+  }, []);
 
   async function load() {
     setIsLoading(true);
@@ -342,53 +363,87 @@ export default function ShoppingListPage() {
 
       const response = await api.post<{ requestId?: string }>("/api/shopping-list/regenerate", body);
 
-      // 非同期処理：requestIdが返ってくるのでポーリング
+      // 非同期処理：requestIdが返ってくるので Realtime 購読 + ポーリングフォールバック
       if (response.requestId) {
+        const requestId = response.requestId;
         let attempts = 0;
         const maxAttempts = 60; // 最大2分
 
-        const poll = async () => {
-          try {
-            const statusRes = await api.get<{ status: string; result?: any }>(`/api/shopping-list/regenerate/status?requestId=${response.requestId}`);
-            if (statusRes.status === 'completed') {
-              if (statusRes.result?.stats?.totalServings) {
-                setTotalServings(statusRes.result.stats.totalServings);
-              }
-              await load();
-              const stats = statusRes.result?.stats;
-              const servingsText = stats?.totalServings ? ` (${stats.totalServings}食分)` : '';
-              Alert.alert("完了", `${stats?.outputCount ?? 0}件の材料を整理しました${servingsText}`);
-              return true;
-            } else if (statusRes.status === 'failed') {
-              throw new Error(statusRes.result?.error || '再生成に失敗しました');
-            }
-            return false;
-          } catch (e) {
-            throw e;
+        const handleCompleted = async (result?: any) => {
+          cleanupRegenSubscription();
+          if (result?.stats?.totalServings) {
+            setTotalServings(result.stats.totalServings);
           }
+          await load();
+          const stats = result?.stats;
+          const servingsText = stats?.totalServings ? ` (${stats.totalServings}食分)` : '';
+          Alert.alert("完了", `${stats?.outputCount ?? 0}件の材料を整理しました${servingsText}`);
+          setIsRegenerating(false);
         };
 
-        const pollInterval = setInterval(async () => {
+        const handleFailed = (errorMsg: string) => {
+          cleanupRegenSubscription();
+          setIsRegenerating(false);
+          Alert.alert("再生成失敗", errorMsg);
+        };
+
+        // ポーリング（Realtime 未接続時のフォールバック）
+        regenPollingRef.current = setInterval(async () => {
           attempts++;
           if (attempts > maxAttempts) {
-            clearInterval(pollInterval);
+            cleanupRegenSubscription();
             setIsRegenerating(false);
             Alert.alert("タイムアウト", "処理に時間がかかっています。後で確認してください。");
             return;
           }
           try {
-            const done = await poll();
-            if (done) {
-              clearInterval(pollInterval);
-              setIsRegenerating(false);
+            const statusRes = await api.get<{ status: string; result?: any }>(`/api/shopping-list/regenerate/status?requestId=${requestId}`);
+            if (statusRes.status === 'completed') {
+              await handleCompleted(statusRes.result);
+            } else if (statusRes.status === 'failed') {
+              handleFailed(statusRes.result?.error || '再生成に失敗しました');
             }
           } catch (e: any) {
-            clearInterval(pollInterval);
+            cleanupRegenSubscription();
             setIsRegenerating(false);
             Alert.alert("再生成失敗", e?.message ?? "再生成に失敗しました。");
           }
         }, 2000);
 
+        // Realtime 購読（接続成功時にポーリングを停止）
+        regenChannelRef.current = supabase
+          .channel(`shopping-list-request-${requestId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'shopping_list_requests',
+              filter: `id=eq.${requestId}`,
+            },
+            async (payload) => {
+              const newData = payload.new as {
+                status: string;
+                result?: { stats?: { outputCount: number; totalServings?: number }; error?: string };
+              };
+              if (newData.status === 'completed') {
+                await handleCompleted(newData.result);
+              } else if (newData.status === 'failed') {
+                handleFailed(newData.result?.error || '再生成に失敗しました');
+              }
+            }
+          )
+          .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+              // Realtime 接続成功でポーリング停止
+              if (regenPollingRef.current) {
+                clearInterval(regenPollingRef.current);
+                regenPollingRef.current = null;
+              }
+            }
+          });
+
+        // Realtime/ポーリング中は return（setIsRegenerating(false) は各ハンドラ内で処理）
         return;
       }
 
@@ -421,7 +476,7 @@ export default function ShoppingListPage() {
     meal === 'breakfast' ? '朝食' : meal === 'lunch' ? '昼食' : '夕食';
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View testID="shopping-list-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
       <PageHeader
         title="買い物リスト"
         right={
@@ -887,6 +942,7 @@ export default function ShoppingListPage() {
         </Card>
       ) : items.length === 0 ? (
         <EmptyState
+          testID="shopping-empty-state"
           icon={<Ionicons name="cart-outline" size={48} color={colors.textMuted} />}
           message="買い物リストは空です。"
           actionLabel="献立から生成"
@@ -897,9 +953,10 @@ export default function ShoppingListPage() {
           {grouped.map(([category, arr]) => (
             <View key={category} style={{ gap: spacing.sm }}>
               <SectionHeader title={category} />
-              {arr.map((it) => (
+              {arr.map((it, idx) => (
                 <Card
                   key={it.id}
+                  testID={idx === 0 ? "shopping-list-item" : undefined}
                   style={{
                     backgroundColor: it.is_checked ? colors.successLight : colors.card,
                   }}
@@ -908,6 +965,7 @@ export default function ShoppingListPage() {
                     {/* Item header row */}
                     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                       <Pressable
+                        testID={idx === 0 ? (it.is_checked ? "shopping-first-item-checked" : "shopping-first-item-checkbox") : idx === 1 ? "shopping-second-item-checkbox" : idx === 2 ? "shopping-third-item-checkbox" : undefined}
                         onPress={() => toggleChecked(it.id, !it.is_checked)}
                         hitSlop={8}
                       >
