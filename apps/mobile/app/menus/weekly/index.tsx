@@ -18,6 +18,7 @@ import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../sr
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
+import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
@@ -755,6 +756,7 @@ export default function WeeklyMenuPage() {
 
   // Modal state (将来用 — Phase 5/6 で各モーダルを open する)
   const [activeModal, setActiveModal] = useState<'stats' | 'fridge' | 'shopping' | null>(null);
+  const [showServingsModal, setShowServingsModal] = useState(false);
   const [deleteTargetMeal, setDeleteTargetMeal] = useState<{ id: string; name: string } | null>(null);
 
   // AddMealSlotModal state
@@ -1779,6 +1781,32 @@ export default function WeeklyMenuPage() {
       >
         <Ionicons name="sparkles" size={24} color="#fff" />
       </Pressable>
+
+      {/* 人数設定フローティングボタン */}
+      <Pressable
+        testID="weekly-servings-btn"
+        onPress={() => setShowServingsModal(true)}
+        style={{
+          position: "absolute",
+          bottom: 24 + 56 + 12,
+          right: spacing.lg,
+          backgroundColor: colors.accent,
+          borderRadius: 28,
+          width: 56,
+          height: 56,
+          alignItems: "center",
+          justifyContent: "center",
+          ...shadows.lg,
+        }}
+      >
+        <Ionicons name="people-outline" size={24} color="#FFF" />
+      </Pressable>
+
+      {/* 人数設定モーダル */}
+      <ServingsModal
+        visible={showServingsModal}
+        onClose={() => setShowServingsModal(false)}
+      />
     </View>
   );
 }
