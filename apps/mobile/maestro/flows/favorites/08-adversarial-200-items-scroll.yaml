@@ -6,9 +6,15 @@ env:
 # Adversarial 08: 無限スクロールでクラッシュしない
 - runFlow: ../_shared/login.yaml
 
-# お気に入りタブへ移動
+# マイページ経由でお気に入り画面へ移動
 - tapOn:
-    id: "tab-favorites"
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+- tapOn:
+    id: "profile-favorites-link"
 - extendedWaitUntil:
     visible:
       id: "favorites-screen"

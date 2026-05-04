@@ -1,0 +1,29 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# PR 1-2: タブ削除後のお気に入り到達確認 (マイページ経由)
+- runFlow: ../_shared/login.yaml
+
+# お気に入りタブが非表示であることを確認
+- assertNotVisible:
+    id: "tab-favorites"
+
+# マイページへ移動
+- tapOn:
+    id: "tab-profile"
+- waitForAnimationToEnd
+
+# マイページにお気に入りリンクが表示されることを確認
+- assertVisible:
+    id: "profile-favorites-link"
+
+# お気に入りリンクをタップ
+- tapOn:
+    id: "profile-favorites-link"
+- waitForAnimationToEnd
+
+# お気に入り画面が表示されることを確認
+- assertVisible:
+    text: "お気に入りレシピ"
