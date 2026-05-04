@@ -13,10 +13,11 @@ import {
 } from "react-native";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition, type MealType } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
+import { ProgressTodoCard } from "../../../src/components/menu/ProgressTodoCard";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
 import { RecipeModal, type RecipeModalMeal } from "../../../src/components/menu/RecipeModal";
 import { ServingsModal } from "../../../src/components/menu/ServingsModal";
@@ -516,156 +517,6 @@ function getWeekStart(date: Date, weekStartDay: WeekStartDay = 'monday'): Date {
   d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
-}
-
-// PROGRESS_PHASES / ULTIMATE_PROGRESS_PHASES / PhaseDefinition は @homegohan/shared からインポート
-
-type ProgressTodoCardProps = {
-  progress: PendingProgress | null;
-  phases?: PhaseDefinition[];
-  defaultMessage?: string;
-};
-
-function ProgressTodoCard({ progress, phases = PROGRESS_PHASES, defaultMessage = "AIが献立を生成中..." }: ProgressTodoCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const currentPercentage = progress?.percentage ?? 0;
-  const currentPhase = progress?.phase ?? "";
-  const totalSlots = progress?.totalSlots ?? 0;
-  const totalDays = totalSlots > 0 ? Math.ceil(totalSlots / 3) : 0;
-
-  const dynamicPhases = useMemo(() => {
-    return phases.map((p) => {
-      if (p.phase === "generating" && totalDays > 0) {
-        const dayLabel = totalDays === 1 ? "1日分" : `${totalDays}日分`;
-        return { ...p, label: `${dayLabel}の献立をAIが作成` };
-      }
-      return p;
-    });
-  }, [phases, totalDays]);
-
-  const getPhaseStatus = (phase: PhaseDefinition): "completed" | "in_progress" | "pending" => {
-    if (currentPercentage >= phase.threshold) return "completed";
-    if (
-      currentPhase === phase.phase ||
-      (currentPhase.startsWith(phase.phase.split("_")[0]) && currentPercentage < phase.threshold)
-    )
-      return "in_progress";
-    return "pending";
-  };
-
-  const isError = currentPhase === "failed";
-
-  const headerMessage =
-    totalDays > 0
-      ? `献立を生成中...（${progress?.completedSlots ?? 0}/${totalSlots}食、${totalDays}日分）`
-      : (progress?.message ?? defaultMessage);
-
-  return (
-    <LinearGradient
-      colors={
-        isError
-          ? ["#ef4444", "#dc2626"]
-          : [colors.accent, colors.purple]
-      }
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={{
-        borderRadius: radius.lg,
-        overflow: "hidden",
-      }}
-    >
-      {/* ヘッダー */}
-      <Pressable
-        onPress={() => setIsExpanded((prev) => !prev)}
-        style={{ padding: spacing.md, gap: spacing.sm }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-          <ActivityIndicator size="small" color="#fff" />
-          <Text style={{ flex: 1, color: "#fff", fontWeight: "700", fontSize: 13 }}>
-            {headerMessage}
-          </Text>
-          {currentPercentage > 0 && (
-            <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>{currentPercentage}%</Text>
-          )}
-          <Ionicons
-            name={isExpanded ? "chevron-up" : "chevron-down"}
-            size={14}
-            color="rgba(255,255,255,0.7)"
-          />
-        </View>
-        {currentPercentage > 0 && (
-          <View style={{ height: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 3, overflow: "hidden" }}>
-            <View
-              style={{
-                width: `${currentPercentage}%`,
-                height: "100%",
-                backgroundColor: "#fff",
-                borderRadius: 3,
-              }}
-            />
-          </View>
-        )}
-      </Pressable>
-
-      {/* 展開時のフェーズToDoリスト */}
-      {isExpanded && (
-        <View
-          style={{
-            paddingHorizontal: spacing.md,
-            paddingBottom: spacing.md,
-            paddingTop: spacing.sm,
-            borderTopWidth: 1,
-            borderTopColor: "rgba(255,255,255,0.2)",
-            gap: spacing.sm,
-          }}
-        >
-          {dynamicPhases.filter((p) => p.phase !== "failed").map((phase) => {
-            const status = getPhaseStatus(phase);
-            return (
-              <View key={phase.phase} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                {status === "completed" ? (
-                  <View
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: 8,
-                      backgroundColor: "#fff",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Ionicons name="checkmark" size={10} color={colors.accent} />
-                  </View>
-                ) : status === "in_progress" ? (
-                  <ActivityIndicator size="small" color="#fff" style={{ width: 16, height: 16 }} />
-                ) : (
-                  <View
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: 8,
-                      borderWidth: 2,
-                      borderColor: "rgba(255,255,255,0.4)",
-                    }}
-                  />
-                )}
-                <Text
-                  style={{
-                    fontSize: 11,
-                    color: status === "pending" ? "rgba(255,255,255,0.5)" : "#fff",
-                    fontWeight: status === "in_progress" ? "600" : "400",
-                  }}
-                >
-                  {phase.label}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </LinearGradient>
-  );
 }
 
 const DOW = ["月", "火", "水", "木", "金", "土", "日"];
@@ -1481,8 +1332,12 @@ export default function WeeklyMenuPage() {
           {pendingRequestId && (
             <View testID="weekly-generating-indicator">
               <ProgressTodoCard
-                progress={pendingProgress}
-                phases={pendingIsUltimate ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
+                mode={pendingIsUltimate ? "ultimate" : "normal"}
+                currentPhase={pendingProgress?.phase ?? ""}
+                progress={pendingProgress?.percentage ?? 0}
+                completedSlots={pendingProgress?.completedSlots}
+                totalSlots={pendingProgress?.totalSlots}
+                message={pendingProgress?.message}
                 defaultMessage={pendingIsUltimate ? "究極モードで献立を生成中..." : "AIが献立を生成中..."}
               />
             </View>
