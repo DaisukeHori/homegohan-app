@@ -13,6 +13,8 @@ import {
   View,
 } from "react-native";
 
+import { ConditionPills } from "./ConditionPills";
+
 import type { MenuGenerationConstraints, TargetSlot } from "../../../../../types/domain";
 import {
   buildAiOnlySlots,
@@ -314,10 +316,6 @@ export function V4GenerateModal({
     }
   };
 
-  const toggleConstraint = (key: keyof MenuGenerationConstraints) => {
-    setConstraints((prev: MenuGenerationConstraints) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const handleClose = () => {
     setSelectedMode(null);
     setIsSubmitting(false);
@@ -378,18 +376,6 @@ export function V4GenerateModal({
       disabled: false,
       testID: "v4-mode-range",
     },
-  ];
-
-  // Constraint options
-  const constraintOptions: {
-    key: keyof MenuGenerationConstraints;
-    iconName: keyof typeof Ionicons.glyphMap;
-    label: string;
-  }[] = [
-    { key: "useFridgeFirst", iconName: "cube-outline", label: "冷蔵庫優先" },
-    { key: "quickMeals", iconName: "flash-outline", label: "時短中心" },
-    { key: "japaneseStyle", iconName: "restaurant-outline", label: "和食多め" },
-    { key: "healthy", iconName: "heart-outline", label: "ヘルシー" },
   ];
 
   return (
@@ -630,47 +616,12 @@ export function V4GenerateModal({
               </View>
             )}
 
-            {/* 条件を指定 (PR 4-2 で詳細実装、仮 UI) */}
+            {/* 条件を指定 */}
             <View style={{ gap: spacing.sm }}>
               <Text style={{ fontSize: 13, fontWeight: "700", color: C.textLight }}>
                 条件を指定
               </Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-                {constraintOptions.map((opt) => {
-                  const active = !!constraints[opt.key];
-                  return (
-                    <Pressable
-                      key={String(opt.key)}
-                      onPress={() => toggleConstraint(opt.key)}
-                      style={({ pressed }) => ({
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 4,
-                        paddingHorizontal: spacing.md,
-                        paddingVertical: spacing.sm,
-                        borderRadius: radius.full,
-                        backgroundColor: active ? C.accent : C.bg,
-                        opacity: pressed ? 0.8 : 1,
-                      })}
-                    >
-                      <Ionicons
-                        name={opt.iconName}
-                        size={14}
-                        color={active ? "#fff" : C.textLight}
-                      />
-                      <Text
-                        style={{
-                          fontSize: 13,
-                          fontWeight: "700",
-                          color: active ? "#fff" : C.textLight,
-                        }}
-                      >
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <ConditionPills values={constraints} onChange={setConstraints} />
             </View>
 
             {/* 究極モード (PR 4-3 で実装、仮 UI: disabled) */}
