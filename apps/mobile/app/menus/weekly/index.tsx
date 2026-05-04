@@ -22,6 +22,7 @@ import { RecipeModal, type RecipeModalMeal } from "../../../src/components/menu/
 import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
 import { V4GenerateModal } from "../../../src/components/menu/V4GenerateModal";
+import { NutritionDetailModal } from "../../../src/components/menu/NutritionDetailModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
@@ -1800,7 +1801,7 @@ export default function WeeklyMenuPage() {
         }}
       />
 
-      {/* 栄養分析ボトムシート */}
+      {/* 栄養分析ボトムシート (旧) */}
       <NutritionBottomSheet
         visible={nutritionSheetDay !== null}
         onClose={() => setNutritionSheetDay(null)}
@@ -1809,6 +1810,27 @@ export default function WeeklyMenuPage() {
         radarKeys={radarChartNutrients}
         weekDays={days}
       />
+
+      {/* 栄養分析詳細モーダル (PR 6-2: 26 栄養素 + AI フィードバック) */}
+      {nutritionSheetDay && (
+        <NutritionDetailModal
+          visible={nutritionSheetDay !== null}
+          onClose={() => setNutritionSheetDay(null)}
+          date={nutritionSheetDay.day_date}
+          dateLabel={nutritionSheetLabel}
+          totals={calcDayTotals(nutritionSheetDay.planned_meals)}
+          mealCount={nutritionSheetDay.planned_meals.filter((m) => m.dish_name).length}
+          radarKeys={radarChartNutrients as string[]}
+          onRadarKeysSaved={(keys) => setRadarChartNutrients(keys as (keyof DayNutritionTotals)[])}
+          weekDays={days.map((d) => ({
+            date: d.day_date,
+            meals: d.planned_meals.map((m) => ({
+              title: m.dish_name,
+              calories: m.calories_kcal,
+            })),
+          }))}
+        />
+      )}
 
       {/* フローティング AI アシスタントボタン */}
       <Pressable
