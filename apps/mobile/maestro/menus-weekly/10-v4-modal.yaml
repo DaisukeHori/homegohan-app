@@ -1,0 +1,50 @@
+appId: com.homegohan.app
+---
+# 週間献立画面: V4 AI アシスタントモーダル 4 モードテスト
+- launchApp
+# 週間献立へナビゲート
+- tapOn:
+    text: "週間献立"
+- waitForAnimationToEnd
+# フローティングボタンが表示されることを確認
+- assertVisible:
+    id: "weekly-ai-assistant-btn"
+# AI アシスタントボタンをタップ
+- tapOn:
+    id: "weekly-ai-assistant-btn"
+- waitForAnimationToEnd
+# モーダルが表示されることを確認
+- assertVisible:
+    id: "v4-modal"
+# single_day モードを選択
+- tapOn:
+    id: "v4-mode-single-day"
+- waitForAnimationToEnd
+# 日付ピッカーが表示されることを確認
+- assertVisible:
+    id: "v4-date-picker-single"
+# empty モードを選択
+- tapOn:
+    id: "v4-mode-empty"
+- waitForAnimationToEnd
+# ai_only モードを選択
+- tapOn:
+    id: "v4-mode-ai-only"
+- waitForAnimationToEnd
+# range モードを選択
+- tapOn:
+    id: "v4-mode-range"
+- waitForAnimationToEnd
+# range の入力が表示されることを確認
+- assertVisible:
+    id: "v4-range-start"
+- assertVisible:
+    id: "v4-range-end"
+- assertVisible:
+    id: "v4-range-include-existing"
+# 生成ボタンが表示されることを確認
+- assertVisible:
+    id: "v4-submit-btn"
+# メモ欄が表示されることを確認
+- assertVisible:
+    id: "v4-memo"
