@@ -15,6 +15,7 @@ import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
 import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition, type MealType } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
+import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
@@ -774,6 +775,12 @@ export default function WeeklyMenuPage() {
   // AddMealSlotModal state
   const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
   const [addMealSlotDayId, setAddMealSlotDayId] = useState<string>("");
+
+  // AddMealModal state
+  const [addMealModalVisible, setAddMealModalVisible] = useState(false);
+  const [addMealModalDayId, setAddMealModalDayId] = useState<string>("");
+  const [addMealModalDayDate, setAddMealModalDayDate] = useState<string>("");
+  const [addMealModalMealType, setAddMealModalMealType] = useState<MealType>("dinner");
 
   // RecipeModal state
   const [recipeModalMeal, setRecipeModalMeal] = useState<RecipeModalMeal | null>(null);
@@ -1768,10 +1775,50 @@ export default function WeeklyMenuPage() {
               )}
             </View>
           ) : (
-            <EmptyState
-              icon={<Ionicons name="restaurant-outline" size={40} color={colors.textMuted} />}
-              message="この日の食事がありません"
-            />
+            <View style={{ gap: spacing.sm }}>
+              {MEAL_ORDER.slice(0, 3).map((mealType) => (
+                <Pressable
+                  key={mealType}
+                  testID={`weekly-empty-slot-${selectedDay?.id ?? ""}-${mealType}`}
+                  onPress={() => {
+                    if (!selectedDay) return;
+                    setAddMealModalDayId(selectedDay.id);
+                    setAddMealModalDayDate(selectedDay.day_date);
+                    setAddMealModalMealType(mealType);
+                    setAddMealModalVisible(true);
+                  }}
+                  style={({ pressed }) => ({
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: spacing.md,
+                    padding: spacing.lg,
+                    backgroundColor: pressed ? colors.card : colors.bg,
+                    borderRadius: radius.lg,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderStyle: "dashed",
+                  })}
+                >
+                  <View
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: radius.md,
+                      backgroundColor: MEAL_CONFIG[mealType]?.color ?? colors.textMuted,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      opacity: 0.3,
+                    }}
+                  >
+                    <Ionicons name={MEAL_CONFIG[mealType]?.icon ?? "ellipse"} size={22} color="#fff" />
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 14, color: colors.textMuted }}>
+                    {MEAL_CONFIG[mealType]?.label ?? mealType} を追加
+                  </Text>
+                  <Ionicons name="add-circle-outline" size={20} color={colors.textMuted} />
+                </Pressable>
+              ))}
+            </View>
           )}
         </>
       )}
@@ -1782,9 +1829,23 @@ export default function WeeklyMenuPage() {
         visible={addMealSlotVisible}
         onClose={() => setAddMealSlotVisible(false)}
         dayId={addMealSlotDayId}
-        onSelect={(_mealType: MealType) => {
+        onSelect={(mealType: MealType) => {
           setAddMealSlotVisible(false);
+          setAddMealModalDayId(addMealSlotDayId);
+          setAddMealModalDayDate(selectedDate);
+          setAddMealModalMealType(mealType);
+          setAddMealModalVisible(true);
         }}
+      />
+
+      {/* 食事追加モーダル */}
+      <AddMealModal
+        visible={addMealModalVisible}
+        onClose={() => setAddMealModalVisible(false)}
+        dayId={addMealModalDayId}
+        dayDate={addMealModalDayDate}
+        mealType={addMealModalMealType}
+        onSuccess={() => loadData()}
       />
 
       {/* 削除確認モーダル */}
