@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, PageHeader, StatusBadge } from "../../../src/components/ui";
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
@@ -81,7 +82,7 @@ type PendingProgress = {
 };
 
 // ============================================================
-// Nutrition Constants (DRI — mirrors lib/nutrition-constants.ts)
+// DayNutritionTotals — 26 栄養素の集計型
 // ============================================================
 
 interface DayNutritionTotals {
@@ -113,34 +114,8 @@ interface DayNutritionTotals {
   saturatedFatG: number;
 }
 
-interface NutrientDef {
-  key: keyof DayNutritionTotals;
-  label: string;
-  unit: string;
-  dri: number;
-  decimals: number;
-}
-
-const NUTRIENT_DEFS: NutrientDef[] = [
-  { key: "caloriesKcal", label: "エネルギー",   unit: "kcal", dri: 2000, decimals: 0 },
-  { key: "proteinG",     label: "タンパク質",   unit: "g",    dri: 60,    decimals: 1 },
-  { key: "fatG",         label: "脂質",         unit: "g",    dri: 55,    decimals: 1 },
-  { key: "carbsG",       label: "炭水化物",     unit: "g",    dri: 300,   decimals: 1 },
-  { key: "fiberG",       label: "食物繊維",     unit: "g",    dri: 21,    decimals: 1 },
-  { key: "sugarG",       label: "糖質",         unit: "g",    dri: 250,   decimals: 1 },
-  { key: "sodiumG",      label: "塩分",         unit: "g",    dri: 7.5,   decimals: 1 },
-  { key: "potassiumMg",  label: "カリウム",     unit: "mg",   dri: 2500,  decimals: 0 },
-  { key: "calciumMg",    label: "カルシウム",   unit: "mg",   dri: 700,   decimals: 0 },
-  { key: "magnesiumMg",  label: "マグネシウム", unit: "mg",   dri: 340,   decimals: 0 },
-  { key: "ironMg",       label: "鉄分",         unit: "mg",   dri: 7.5,   decimals: 1 },
-  { key: "zincMg",       label: "亜鉛",         unit: "mg",   dri: 10,    decimals: 1 },
-  { key: "vitaminAUg",   label: "ビタミンA",   unit: "µg",   dri: 850,   decimals: 0 },
-  { key: "vitaminB1Mg",  label: "ビタミンB1",  unit: "mg",   dri: 1.3,   decimals: 2 },
-  { key: "vitaminB2Mg",  label: "ビタミンB2",  unit: "mg",   dri: 1.5,   decimals: 2 },
-  { key: "vitaminCMg",   label: "ビタミンC",   unit: "mg",   dri: 100,   decimals: 0 },
-  { key: "vitaminDUg",   label: "ビタミンD",   unit: "µg",   dri: 8.5,   decimals: 1 },
-  { key: "vitaminEMg",   label: "ビタミンE",   unit: "mg",   dri: 6.5,   decimals: 1 },
-];
+// @homegohan/shared の NUTRIENT_DEFINITIONS を使用 (26 栄養素)
+const NUTRIENT_DEFS: NutrientDefinition[] = NUTRIENT_DEFINITIONS;
 
 const DEFAULT_RADAR_KEYS: (keyof DayNutritionTotals)[] = [
   "caloriesKcal", "proteinG", "fatG", "carbsG", "fiberG", "calciumMg", "vitaminCMg",
@@ -429,8 +404,8 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
             </Text>
             <View style={{ gap: spacing.sm }}>
               {DRI_BAR_NUTRIENTS.map((def) => {
-                const value = totals[def.key] as number;
-                const pct = driPercent(def.key, value);
+                const value = totals[def.key as keyof DayNutritionTotals] as number;
+                const pct = driPercent(def.key as keyof DayNutritionTotals, value);
                 const barColor = driColor(pct);
                 return (
                   <View key={String(def.key)} style={{ backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, gap: 4 }}>
