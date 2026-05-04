@@ -1,16 +1,25 @@
+import {
+  NotoSansJP_400Regular,
+  NotoSansJP_500Medium,
+  NotoSansJP_700Bold,
+  useFonts,
+} from '@expo-google-fonts/noto-sans-jp';
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SplashScreen from 'expo-splash-screen';
 import { Stack } from "expo-router";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
+import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
+import { ProfileProvider } from "../src/providers/ProfileProvider";
+
 // E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
 // (console.error は引き続き Metro ログに出力される)
 LogBox.ignoreAllLogs();
 
-import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
-import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
-import { ProfileProvider } from "../src/providers/ProfileProvider";
+SplashScreen.preventAutoHideAsync();
 
 const PUSH_TOKEN_REGISTERED_KEY = "push_token_registered_v1";
 
@@ -38,6 +47,20 @@ function PushTokenRegistrar() {
 }
 
 export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    NotoSansJP_400Regular,
+    NotoSansJP_500Medium,
+    NotoSansJP_700Bold,
+  });
+
+  useEffect(() => {
+    if (fontsLoaded) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded]);
+
+  if (!fontsLoaded) return null;
+
   return (
     <SafeAreaProvider>
       <AuthProvider>
