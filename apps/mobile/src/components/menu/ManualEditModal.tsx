@@ -14,6 +14,7 @@ import {
 import { getApi } from "../../lib/api";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { DishEditor, type DishItem } from "./DishEditor";
+import { PhotoEditModal, type MealAnalysis } from "./PhotoEditModal";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
   const [isCatalogSearching, setIsCatalogSearching] = useState(false);
   const [catalogError, setCatalogError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [showPhotoEdit, setShowPhotoEdit] = useState(false);
 
   const cancelledRef = useRef(false);
 
@@ -94,6 +96,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
       setCatalogResults([]);
       setCatalogError("");
       setIsSaving(false);
+      setShowPhotoEdit(false);
     }
   }, [visible, meal]);
 
@@ -207,7 +210,17 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
+  function handlePhotoResult(analysis: MealAnalysis) {
+    const newDishes: DishItem[] = analysis.dishes.map((d) => ({
+      name: d.name,
+      role: d.role ?? "main",
+      kcal: d.kcal ?? null,
+    }));
+    setDishes((prev) => [...prev, ...newDishes]);
+  }
+
   return (
+    <>
     <Modal
       testID="manual-edit-modal"
       visible={visible}
@@ -422,8 +435,8 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                 <View style={{ flexDirection: "row", gap: spacing.sm }}>
                   <Pressable
                     testID="manual-edit-photo-btn"
-                    disabled
-                    style={{
+                    onPress={() => setShowPhotoEdit(true)}
+                    style={({ pressed }) => ({
                       flex: 1,
                       flexDirection: "row",
                       alignItems: "center",
@@ -434,8 +447,8 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                       backgroundColor: colors.blueLight,
                       borderWidth: 1,
                       borderColor: colors.border,
-                      opacity: 0.6,
-                    }}
+                      opacity: pressed ? 0.7 : 1,
+                    })}
                   >
                     <Ionicons name="camera-outline" size={16} color={colors.blue} />
                     <Text style={{ fontSize: 12, fontWeight: "600", color: colors.blue }}>
@@ -498,5 +511,11 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
         </View>
       </View>
     </Modal>
+    <PhotoEditModal
+      visible={showPhotoEdit}
+      onClose={() => setShowPhotoEdit(false)}
+      onResult={handlePhotoResult}
+    />
+    </>
   );
 }
