@@ -1,0 +1,30 @@
+appId: com.homegohan.app
+---
+- launchApp
+- tapOn:
+    text: "ほめゴハン"
+- tapOn:
+    id: "tab-menus"
+- waitForAnimationToEnd
+- tapOn:
+    id: "header-stats-btn"
+- assertVisible:
+    id: "stats-modal"
+- assertVisible:
+    id: "stats-tab-today"
+- tapOn:
+    id: "stats-tab-week"
+- assertVisible:
+    text: "平均"
+- tapOn:
+    id: "stats-tab-today"
+- tapOn:
+    id: "stats-radar-edit-btn"
+- assertVisible:
+    id: "stats-radar-key-proteinG"
+- tapOn:
+    id: "stats-radar-edit-btn"
+- tapOn:
+    id: "stats-improve-btn"
+- assertVisible:
+    id: "improve-meal-modal"
