@@ -37,8 +37,14 @@ export const WeeklyHeader: React.FC<Props> = ({
         <Text style={styles.weekLabel}>{weekRangeLabel}</Text>
       </View>
       <View style={styles.statsRow}>
-        <Text style={styles.statItem}>自炊率 {weeklyStats.cookRate}%</Text>
-        <Text style={styles.statItem}>平均 {weeklyStats.avgKcal} kcal</Text>
+        <View style={styles.statItem}>
+          <Ionicons name="restaurant-outline" size={14} color={colors.textLight} />
+          <Text style={styles.statText}>自炊率 {weeklyStats.cookRate}%</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Ionicons name="flame-outline" size={14} color={colors.textLight} />
+          <Text style={styles.statText}>平均 {weeklyStats.avgKcal} kcal</Text>
+        </View>
       </View>
       <View style={styles.actions}>
         <Pressable testID="header-stats-btn" onPress={onPressStats} style={styles.iconBtn}>
@@ -49,7 +55,7 @@ export const WeeklyHeader: React.FC<Props> = ({
           onPress={onPressFridge}
           style={[styles.iconBtn, fridgeDanger && styles.iconBtnDanger]}
         >
-          <Ionicons name="snow" size={20} color={fridgeDanger ? colors.error : colors.text} />
+          <Ionicons name="nutrition-outline" size={20} color={fridgeDanger ? colors.error : colors.text} />
           {expiringCount > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{expiringCount}</Text>
@@ -78,9 +84,8 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   titleRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.sm,
+    flexDirection: 'column',
+    gap: spacing.xs,
   },
   title: {
     ...typography.h2,
@@ -96,6 +101,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   statItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  statText: {
     ...typography.bodySmall,
     color: colors.textLight,
   },
