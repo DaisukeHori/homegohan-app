@@ -7,9 +7,6 @@ env:
 - runFlow: ../_shared/login.yaml
 - tapOn:
     id: "tab-menus"
-- tapOn:
-    id: "menus-weekly-button"
-    optional: true
 - extendedWaitUntil:
     visible:
       id: "weekly-screen"
