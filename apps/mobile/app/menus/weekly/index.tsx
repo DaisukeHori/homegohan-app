@@ -13,8 +13,9 @@ import {
 } from "react-native";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, type PhaseDefinition, type MealType } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
+import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
 import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteModal";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
@@ -717,6 +718,10 @@ export default function WeeklyMenuPage() {
   // Modal state (将来用 — Phase 5/6 で各モーダルを open する)
   const [activeModal, setActiveModal] = useState<'stats' | 'fridge' | 'shopping' | null>(null);
   const [deleteTargetMeal, setDeleteTargetMeal] = useState<{ id: string; name: string } | null>(null);
+
+  // AddMealSlotModal state
+  const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
+  const [addMealSlotDayId, setAddMealSlotDayId] = useState<string>("");
 
   useEffect(() => {
     const fetchRadarProfile = async () => {
@@ -1636,6 +1641,29 @@ export default function WeeklyMenuPage() {
                       </View>
                     );
                   })}
+
+                  {/* +食事タイプ追加ボタン */}
+                  <Pressable
+                    testID="weekly-add-meal-type-btn"
+                    onPress={() => {
+                      setAddMealSlotDayId(selectedDay.id);
+                      setAddMealSlotVisible(true);
+                    }}
+                    style={({ pressed }) => ({
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 4,
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                      borderRadius: radius.sm,
+                      backgroundColor: pressed ? colors.accentLight : colors.card,
+                      borderWidth: 1,
+                      borderColor: colors.accent,
+                    })}
+                  >
+                    <Ionicons name="add" size={14} color={colors.accent} />
+                    <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "600" }}>食事タイプ追加</Text>
+                  </Pressable>
                 </View>
               )}
             </View>
@@ -1648,6 +1676,16 @@ export default function WeeklyMenuPage() {
         </>
       )}
       </ScrollView>
+
+      {/* 食事タイプ選択モーダル */}
+      <AddMealSlotModal
+        visible={addMealSlotVisible}
+        onClose={() => setAddMealSlotVisible(false)}
+        dayId={addMealSlotDayId}
+        onSelect={(_mealType: MealType) => {
+          setAddMealSlotVisible(false);
+        }}
+      />
 
       {/* 削除確認モーダル */}
       <ConfirmDeleteModal
