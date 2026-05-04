@@ -258,11 +258,11 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
         {gridPolygons.map((pts, l) => (
           <Polygon key={`g${l}`} points={pts} fill="none" stroke="#E8E8E8" strokeWidth={1} />
         ))}
-        <Polygon points={refPolygon} fill="none" stroke="#B0B0B0" strokeWidth={1} strokeDasharray="3 3" />
+        <Polygon points={refPolygon} fill="none" stroke={colors.textMuted} strokeWidth={1} strokeDasharray="3 3" />
         {spokes.map((p, i) => (
           <Line key={`s${i}`} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#E8E8E8" strokeWidth={1} />
         ))}
-        <Polygon points={dataPolygon} fill="rgba(224,122,95,0.25)" stroke={colors.accent} strokeWidth={2} />
+        <Polygon points={dataPolygon} fill={`${colors.accent}40`} stroke={colors.accent} strokeWidth={2} />
         {dataPoints.map((p, i) => (
           <Circle key={`d${i}`} cx={p.x} cy={p.y} r={3} fill={colors.accent} />
         ))}
@@ -1565,8 +1565,7 @@ export default function WeeklyMenuPage() {
                           backgroundColor: m.is_completed ? colors.successLight : isGenerating ? colors.accentLight : colors.card,
                           borderRadius: radius.lg,
                           borderWidth: 1,
-                          borderColor: m.is_completed ? "#C8E6C9" : isGenerating ? "#FED7AA" : colors.border,
-                          ...shadows.sm,
+                          borderColor: m.is_completed ? colors.successLight : isGenerating ? colors.accentLight : colors.border,
                           ...(pressed ? { opacity: 0.9 } : {}),
                         })}
                       >
@@ -1638,7 +1637,6 @@ export default function WeeklyMenuPage() {
                           borderColor: colors.border,
                           padding: spacing.lg,
                           gap: spacing.md,
-                          ...shadows.sm,
                         }}
                       >
                         {/* ヘッダー行: タップで折りたたむ */}
