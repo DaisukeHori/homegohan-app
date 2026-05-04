@@ -14,6 +14,7 @@ import {
 } from "react-native";
 
 import { ConditionPills } from "./ConditionPills";
+import { UltimateModeToggle } from "./UltimateModeToggle";
 
 import type { MenuGenerationConstraints, TargetSlot } from "../../../../../types/domain";
 import {
@@ -624,61 +625,8 @@ export function V4GenerateModal({
               <ConditionPills values={constraints} onChange={setConstraints} />
             </View>
 
-            {/* 究極モード (PR 4-3 で実装、仮 UI: disabled) */}
-            <View
-              style={{
-                padding: spacing.md,
-                borderRadius: radius.xl,
-                backgroundColor: C.bg,
-                opacity: 0.65,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: spacing.md,
-              }}
-            >
-              <View
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: C.border,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Ionicons name="star-outline" size={18} color={C.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }}>
-                    究極モード
-                  </Text>
-                  <View
-                    style={{
-                      backgroundColor: "#FEF3C7",
-                      paddingHorizontal: 6,
-                      paddingVertical: 2,
-                      borderRadius: radius.sm,
-                    }}
-                  >
-                    <Text style={{ fontSize: 10, fontWeight: "700", color: "#D97706" }}>
-                      Premium
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 11, color: C.textMuted }}>準備中</Text>
-                </View>
-                <Text style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>
-                  AIが献立を自動で見直し、栄養バランスを改善
-                </Text>
-              </View>
-              <Switch
-                testID="ultimate-mode-toggle"
-                value={false}
-                disabled
-                trackColor={{ false: C.border, true: C.border }}
-                thumbColor={C.card}
-              />
-            </View>
+            {/* 究極モード (PR 4-3) */}
+            <UltimateModeToggle enabled={false} />
 
             {/* メモ */}
             <TextInput
