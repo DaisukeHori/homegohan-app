@@ -1116,6 +1116,30 @@ export default function WeeklyMenuPage() {
     });
   }, [selectedDay]);
 
+  // 同タイプ複数対応: mealType ごとにグループ化 (display_order 昇順)
+  const groupedMeals = useMemo(() => {
+    const grouped: Record<string, PlannedMealRow[]> = {};
+    for (const m of sortedMeals) {
+      (grouped[m.meal_type] ??= []).push(m);
+    }
+    return grouped;
+  }, [sortedMeals]);
+
+  // 番号付きラベル: 1件目は「朝」「昼」「夕」、2件目以降は「朝食2」「朝3」...
+  const getMealLabel = (mealType: string, indexInGroup: number): string => {
+    const cfg = MEAL_CONFIG[mealType];
+    const base = cfg?.label ?? mealType;
+    const short =
+      mealType === "breakfast" ? "朝" :
+      mealType === "lunch" ? "昼" :
+      mealType === "dinner" ? "夕" :
+      mealType === "snack" ? "おやつ" :
+      mealType === "midnight_snack" ? "夜食" : base;
+    if (indexInGroup === 0) return short;
+    if (indexInGroup === 1) return `${base}${indexInGroup + 1}`;
+    return `${short}${indexInGroup + 1}`;
+  };
+
   const daySummary = useMemo(() => {
     if (!selectedDay?.planned_meals) return { totalCalories: 0, completed: 0, total: 0 };
     const meals = selectedDay.planned_meals;
@@ -1551,8 +1575,8 @@ export default function WeeklyMenuPage() {
           {selectedDay && (
             <View style={{ gap: spacing.md }}>
               {(["breakfast", "lunch", "dinner"] as const).map((mealType) => {
-                const m = sortedMeals.find((meal) => meal.meal_type === mealType);
-                if (!m) {
+                const meals = groupedMeals[mealType] ?? [];
+                if (meals.length === 0) {
                   return (
                     <EmptySlot
                       key={mealType}
@@ -1590,9 +1614,57 @@ export default function WeeklyMenuPage() {
                 const isExpanded = expandedMealId === m.id;
                 const dishesArray: Array<{ name: string; role?: string; ingredients?: string[]; ingredientsMd?: string; recipeSteps?: string[]; recipeStepsMd?: string }> =
                   Array.isArray(m.dishes) ? m.dishes : [];
+                const sameTypeGroup = groupedMeals[m.meal_type] ?? [];
+                const idxInGroup = sameTypeGroup.findIndex((x) => x.id === m.id);
+                const mealLabel = getMealLabel(m.meal_type, idxInGroup);
+                const isFirstInGroup = idxInGroup === 0;
+                const isLastInGroup = idxInGroup === sameTypeGroup.length - 1;
 
                 return (
-                  <View key={m.id}>
+                  <View key={m.id} style={{ flexDirection: "row", alignItems: "stretch", gap: 4 }}>
+                    {/* ↑↓ 並び替えボタン (同タイプ複数時のみ表示) */}
+                    {sameTypeGroup.length > 1 && (
+                      <View style={{ justifyContent: "center", gap: 2 }}>
+                        <Pressable
+                          testID={`meal-reorder-up-${m.id}`}
+                          onPress={() => reorderMeal(m.id, "up")}
+                          disabled={isFirstInGroup}
+                          style={{
+                            width: 24,
+                            height: 24,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: 4,
+                            backgroundColor: isFirstInGroup ? colors.bg : colors.card,
+                            borderWidth: 1,
+                            borderColor: isFirstInGroup ? colors.border : colors.border,
+                            opacity: isFirstInGroup ? 0.3 : 1,
+                          }}
+                        >
+                          <Ionicons name="arrow-up" size={12} color={isFirstInGroup ? colors.border : colors.textLight} />
+                        </Pressable>
+                        <Pressable
+                          testID={`meal-reorder-down-${m.id}`}
+                          onPress={() => reorderMeal(m.id, "down")}
+                          disabled={isLastInGroup}
+                          style={{
+                            width: 24,
+                            height: 24,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: 4,
+                            backgroundColor: isLastInGroup ? colors.bg : colors.card,
+                            borderWidth: 1,
+                            borderColor: isLastInGroup ? colors.border : colors.border,
+                            opacity: isLastInGroup ? 0.3 : 1,
+                          }}
+                        >
+                          <Ionicons name="arrow-down" size={12} color={isLastInGroup ? colors.border : colors.textLight} />
+                        </Pressable>
+                      </View>
+                    )}
+
+                    <View style={{ flex: 1 }}>
                     {/* 折り畳み時カード (CollapsedMealCard 相当) */}
                     {!isExpanded && (
                       <Pressable
@@ -1637,7 +1709,7 @@ export default function WeeklyMenuPage() {
                           </Text>
                           {m.role ? <RoleBadge role={m.role} /> : null}
                           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                            <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealCfg.label}</Text>
+                            <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealLabel}</Text>
                             <View
                               style={{
                                 backgroundColor: modeCfg.bg,
@@ -1709,7 +1781,7 @@ export default function WeeklyMenuPage() {
                               {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
                             </Text>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                              <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealCfg.label}</Text>
+                              <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealLabel}</Text>
                               <View style={{ backgroundColor: modeCfg.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                                 <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
                               </View>
@@ -1862,6 +1934,7 @@ export default function WeeklyMenuPage() {
                         </View>
                       </View>
                     )}
+                    </View>
                   </View>
                 );
               })}
