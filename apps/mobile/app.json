@@ -23,6 +23,8 @@
     "ios": {
       "bundleIdentifier": "com.homegohan.app",
       "infoPlist": {
+        "CFBundleDevelopmentRegion": "ja",
+        "CFBundleLocalizations": ["ja", "en"],
         "NSCameraUsageDescription": "食事写真を撮影するためにカメラを使用します。",
         "NSPhotoLibraryUsageDescription": "食事写真を選択するために写真ライブラリを使用します。",
         "NSPhotoLibraryAddUsageDescription": "解析結果の保存のために写真ライブラリへ追加する場合があります。"

@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
-import { useNavigation } from 'expo-router';
+import { WebView, ShouldStartLoadRequest } from 'react-native-webview';
+import { useNavigation, useRouter } from 'expo-router';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 
@@ -16,11 +16,22 @@ interface Props {
   testID?: string;
 }
 
+// 各タブの「所有する」パス prefix と Expo Router タブルート のマッピング
+// path は各タブの root path (サブパスも含む前方一致で判定)
+const TAB_ROUTES: Array<{ pathPrefix: string; tab: string }> = [
+  { pathPrefix: '/menus', tab: '/(tabs)/menus' },
+  { pathPrefix: '/meals', tab: '/(tabs)/meals' },
+  { pathPrefix: '/comparison', tab: '/(tabs)/comparison' },
+  { pathPrefix: '/profile', tab: '/(tabs)/profile' },
+  { pathPrefix: '/home', tab: '/(tabs)/home' },
+];
+
 export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
+  const router = useRouter();
 
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
@@ -101,6 +112,55 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
     init();
   }, [path]);
 
+  // Fix 1: タブ独立性
+  // 別タブのパスへのナビゲーションを interceptして router.push でタブ切り替えを行う
+  const onShouldStartLoadWithRequest = (request: ShouldStartLoadRequest): boolean => {
+    try {
+      const url = new URL(request.url);
+      const webBaseUrl = new URL(WEB_BASE_URL);
+
+      // 自ドメイン以外 (外部リンク) はそのまま許可
+      if (url.origin !== webBaseUrl.origin) return true;
+
+      const targetPath = url.pathname;
+
+      // このタブが所有する path prefix を特定する
+      // path prop からクエリ・ハッシュを除いた純粋なパス部分を取得
+      const currentTabPath = path.split('?')[0].split('#')[0];
+
+      // 現在のタブが所有するパス (同じタブ内ナビゲーション) → 許可
+      if (
+        targetPath === currentTabPath ||
+        targetPath.startsWith(currentTabPath + '/')
+      ) {
+        return true;
+      }
+
+      // auth 関連パス (native-bridge 等) は WebView 内で処理
+      if (targetPath.startsWith('/auth/')) return true;
+
+      // 別タブのパスに該当する場合 → router.push でタブ切り替え、WebView では読み込まない
+      const matched = TAB_ROUTES.find(
+        (t) =>
+          targetPath === t.pathPrefix ||
+          targetPath.startsWith(t.pathPrefix + '/')
+      );
+      if (matched) {
+        // setTimeout でナビゲーションを非同期化し、WebView コールバック中の直接呼び出しを避ける
+        setTimeout(() => {
+          router.push(matched.tab as any);
+        }, 0);
+        return false;
+      }
+
+      // それ以外 (未マッピングのパス) は WebView 内で許可
+      return true;
+    } catch {
+      // URL パース失敗時は安全側でそのまま許可
+      return true;
+    }
+  };
+
   if (!uri) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
@@ -125,6 +185,14 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         javaScriptEnabled={true}
         startInLoadingState={true}
         pullToRefreshEnabled={true}
+        // Fix 1: 別タブへのリンクをタブ切り替えに変換
+        onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+        // Fix 3: iOS 18 カメラバツボタン workaround
+        // <input type="file"> 経由カメラの dismiss が効かないケースへの対処
+        // 根本解決は次 PR で expo-image-picker ネイティブブリッジ実装予定
+        // TODO: Phase B-2 で <input type="file"> を expo-image-picker bridge に置換
+        allowsInlineMediaPlayback={true}
+        mediaPlaybackRequiresUserAction={false}
         onMessage={(_event) => {
           // ネイティブからのメッセージ受信 (撮影結果等)
           // TODO: Phase B-2 で実装
