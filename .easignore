@@ -4,12 +4,12 @@ homegohan-app/
 # Root の node_modules (EAS が apps/mobile/node_modules を別途 install するため不要)
 node_modules/
 
-# Web アプリのビルド成果物
+# Web アプリのビルド成果物 (ルート直下のみ除外、apps/mobile/src 等は除外しない)
 .next/
 .vercel/
-src/
-public/
-supabase/
+/src/
+/public/
+/supabase/
 
 # テスト / playwright
 tests/
