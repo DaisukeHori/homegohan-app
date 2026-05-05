@@ -233,6 +233,13 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
                   router.push(matched.tab as any);
                 }, 0);
               }
+            } else if (data.type === 'navigate-back') {
+              // × ボタンや戻るボタン用: Expo Router の history を使って前画面に戻る
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.push('/(tabs)/home' as any);
+              }
             }
           } catch {
             // JSON パース失敗は無視
