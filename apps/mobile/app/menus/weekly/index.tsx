@@ -58,7 +58,7 @@ import { RegenerateMealModal } from "../../../src/components/menu/RegenerateMeal
 import { PantryModal } from "../../../src/components/menu/PantryModal";
 import { ShoppingListModal } from "../../../src/components/menu/ShoppingListModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
-import { colors, spacing, radius, shadows } from "../../../src/theme";
+import { colors, spacing, radius } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
@@ -401,7 +401,7 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }} onPress={onClose} />
-      <View testID="weekly-nutrition-sheet" style={{ backgroundColor: colors.bg, borderTopLeftRadius: radius["2xl"], borderTopRightRadius: radius["2xl"], maxHeight: "85%", ...shadows.lg }}>
+      <View testID="weekly-nutrition-sheet" style={{ backgroundColor: colors.bg, borderTopLeftRadius: radius["2xl"], borderTopRightRadius: radius["2xl"], maxHeight: "85%" }}>
         {/* Header */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
@@ -1513,7 +1513,7 @@ export default function WeeklyMenuPage() {
                     paddingVertical: spacing.sm,
                     paddingHorizontal: 2,
                     borderRadius: radius.lg,
-                    backgroundColor: selected ? (accentColor ?? colors.accent) : "transparent",
+                    backgroundColor: selected ? colors.accent : "transparent",
                     ...(pressed ? { opacity: 0.9 } : {}),
                   })}
                 >
@@ -1706,25 +1706,10 @@ export default function WeeklyMenuPage() {
                           ...(pressed ? { opacity: 0.9 } : {}),
                         })}
                       >
-                        {/* 食事タイプアイコン */}
-                        <View
-                          style={{
-                            width: 44,
-                            height: 44,
-                            borderRadius: radius.md,
-                            backgroundColor: m.is_completed ? colors.success : mealCfg.color,
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          {m.is_completed ? (
-                            <Check size={24} color="#fff" />
-                          ) : isGenerating ? (
-                            <ActivityIndicator size="small" color="#fff" />
-                          ) : (
-                            <mealCfg.Icon size={22} color="#fff" />
-                          )}
-                        </View>
+                        {/* 食事タイプラベル (WEB 合わせ: テキストのみ) */}
+                        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.textMuted, width: 28, textAlign: "center" }}>
+                          {mealLabel}
+                        </Text>
 
                         {/* 情報 */}
                         <View style={{ flex: 1, gap: 3 }}>
@@ -1733,7 +1718,6 @@ export default function WeeklyMenuPage() {
                           </Text>
                           {m.role ? <RoleBadge role={m.role} /> : null}
                           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                            <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealLabel}</Text>
                             <View
                               style={{
                                 backgroundColor: modeCfg.bg,
@@ -1782,30 +1766,15 @@ export default function WeeklyMenuPage() {
                           onPress={() => setExpandedMealId(null)}
                           style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}
                         >
-                          <View
-                            style={{
-                              width: 44,
-                              height: 44,
-                              borderRadius: radius.md,
-                              backgroundColor: m.is_completed ? colors.success : mealCfg.color,
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            {m.is_completed ? (
-                              <Check size={24} color="#fff" />
-                            ) : isGenerating ? (
-                              <ActivityIndicator size="small" color="#fff" />
-                            ) : (
-                              <mealCfg.Icon size={22} color="#fff" />
-                            )}
-                          </View>
+                          {/* 食事タイプラベル (WEB 合わせ: テキストのみ) */}
+                          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.textMuted, width: 28, textAlign: "center" }}>
+                            {mealLabel}
+                          </Text>
                           <View style={{ flex: 1, gap: 3 }}>
                             <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
                               {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
                             </Text>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                              <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealLabel}</Text>
                               <View style={{ backgroundColor: modeCfg.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                                 <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
                               </View>
@@ -1963,32 +1932,43 @@ export default function WeeklyMenuPage() {
                 );
               })}
 
-              {/* +食事タイプ追加ボタン — plan 作成済みの day のみ表示 */}
-              {selectedDay?.id && (
-                <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-                  <Pressable
-                    testID="weekly-add-meal-type-btn"
-                    onPress={() => {
-                      setAddMealSlotDayId(selectedDay.id as string);
-                      setAddMealSlotVisible(true);
-                    }}
-                    style={({ pressed }) => ({
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 4,
-                      paddingVertical: 6,
-                      paddingHorizontal: 10,
-                      borderRadius: radius.sm,
-                      backgroundColor: pressed ? colors.accentLight : colors.card,
-                      borderWidth: 1,
-                      borderColor: colors.accent,
-                    })}
-                  >
-                    <Plus size={14} color={colors.accent} />
-                    <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "600" }}>食事タイプ追加</Text>
-                  </Pressable>
-                </View>
-              )}
+              {/* +食事を追加ボタン — 常時表示 (WEB仕様に統一) */}
+              <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+                <Pressable
+                  testID="weekly-add-meal-type-btn"
+                  onPress={() => {
+                    if (!selectedDay?.id) {
+                      // plan 未作成 → AI 献立作成を促す
+                      Alert.alert(
+                        "週間献立の作成",
+                        "この週の献立がまだ作成されていません。AIに献立を作成してもらいましょう。",
+                        [
+                          { text: "キャンセル", style: "cancel" },
+                          { text: "AIで作成", onPress: () => setShowV4Modal(true) },
+                        ],
+                      );
+                      return;
+                    }
+                    setAddMealSlotDayId(selectedDay.id as string);
+                    setAddMealSlotVisible(true);
+                  }}
+                  style={({ pressed }) => ({
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: radius.sm,
+                    backgroundColor: pressed ? colors.accentLight : colors.card,
+                    borderWidth: 1,
+                    borderStyle: "dashed",
+                    borderColor: colors.accent,
+                  })}
+                >
+                  <Plus size={14} color={colors.accent} />
+                  <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "600" }}>食事を追加</Text>
+                </Pressable>
+              </View>
             </View>
           )}
         </>
@@ -2110,7 +2090,6 @@ export default function WeeklyMenuPage() {
           backgroundColor: colors.accent,
           alignItems: "center",
           justifyContent: "center",
-          ...shadows.md,
           opacity: pressed ? 0.85 : 1,
         })}
       >
