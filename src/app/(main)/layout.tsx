@@ -4,8 +4,15 @@
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+import { cookies } from 'next/headers';
 import MainLayout from './MainLayout';
 
-export default function Layout({ children }: { children: React.ReactNode }) {
-  return <MainLayout>{children}</MainLayout>;
+export default async function Layout({ children }: { children: React.ReactNode }) {
+  // SSR 初回レンダリング時に Cookie を参照し、native アプリモードを判定
+  // middleware が ?mode=app を検出して Cookie をセットするため、
+  // 最初のリクエストから正しい初期値をクライアントへ渡せる
+  const cookieStore = await cookies();
+  const initialIsNativeApp = cookieStore.get('is_native_app')?.value === '1';
+
+  return <MainLayout initialIsNativeApp={initialIsNativeApp}>{children}</MainLayout>;
 }

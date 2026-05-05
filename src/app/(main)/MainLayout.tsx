@@ -29,9 +29,13 @@ const NAV_ITEMS = [
 /**
  * useNativeAppMode は useSearchParams を使うため Suspense 境界内で呼び出す必要がある。
  * BottomNav コンポーネントに分離することで Suspense を局所化する。
+ *
+ * initialIsNativeApp: SSR 時に server 側 (layout.tsx) で Cookie を読んだ初期値。
+ * これを useState の初期値として渡すことで、ハイドレーション前の HTML から
+ * 既に正しい表示状態が反映され、BottomNav のちらつき (フラッシュ) を防止する。
  */
-function BottomNav({ pathname }: { pathname: string }) {
-  const isNativeApp = useNativeAppMode();
+function BottomNav({ pathname, initialIsNativeApp }: { pathname: string; initialIsNativeApp: boolean }) {
+  const isNativeApp = useNativeAppMode(initialIsNativeApp);
 
   if (isNativeApp) return null;
 
@@ -82,8 +86,10 @@ function BottomNav({ pathname }: { pathname: string }) {
 
 export default function MainLayout({
   children,
+  initialIsNativeApp = false,
 }: {
   children: React.ReactNode
+  initialIsNativeApp?: boolean
 }) {
   const pathname = usePathname();
   const [userRoles, setUserRoles] = useState<string[]>([]);
@@ -249,7 +255,7 @@ export default function MainLayout({
 
       {/* モバイル用ボトムナビゲーション (Floating) — isNativeApp 時は非表示 */}
       <Suspense fallback={null}>
-        <BottomNav pathname={pathname} />
+        <BottomNav pathname={pathname} initialIsNativeApp={initialIsNativeApp} />
       </Suspense>
 
     </div>
