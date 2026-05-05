@@ -383,7 +383,8 @@ export function V4GenerateModal({
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="slide"
+      presentationStyle="overFullScreen"
       onRequestClose={handleClose}
       testID="v4-modal"
     >
