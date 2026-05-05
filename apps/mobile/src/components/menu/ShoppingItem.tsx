@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Check, Trash2 } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -49,7 +49,7 @@ export const ShoppingItem: React.FC<Props> = ({
         hitSlop={8}
       >
         {item.is_checked && (
-          <Ionicons name="checkmark" size={12} color="#fff" />
+          <Check size={12} color="#fff" />
         )}
       </Pressable>
 
@@ -98,7 +98,7 @@ export const ShoppingItem: React.FC<Props> = ({
         style={styles.deleteBtn}
         hitSlop={8}
       >
-        <Ionicons name="trash-outline" size={14} color={colors.textMuted} />
+        <Trash2 size={14} color={colors.textMuted} />
       </Pressable>
     </View>
   );

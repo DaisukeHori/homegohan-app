@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { BarChart3, ChefHat, Flame, Refrigerator, ShoppingCart } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -38,24 +38,24 @@ export const WeeklyHeader: React.FC<Props> = ({
       </View>
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
-          <Ionicons name="restaurant-outline" size={14} color={colors.textLight} />
+          <ChefHat size={14} color={colors.textLight} />
           <Text style={styles.statText}>自炊率 {weeklyStats.cookRate}%</Text>
         </View>
         <View style={styles.statItem}>
-          <Ionicons name="flame-outline" size={14} color={colors.textLight} />
+          <Flame size={14} color={colors.textLight} />
           <Text style={styles.statText}>平均 {weeklyStats.avgKcal} kcal</Text>
         </View>
       </View>
       <View style={styles.actions}>
         <Pressable testID="header-stats-btn" onPress={onPressStats} style={styles.iconBtn}>
-          <Ionicons name="bar-chart" size={20} color={colors.text} />
+          <BarChart3 size={20} color={colors.text} />
         </Pressable>
         <Pressable
           testID="header-fridge-btn"
           onPress={onPressFridge}
           style={[styles.iconBtn, fridgeDanger && styles.iconBtnDanger]}
         >
-          <Ionicons name="nutrition-outline" size={20} color={fridgeDanger ? colors.error : colors.text} />
+          <Refrigerator size={20} color={fridgeDanger ? colors.error : colors.text} />
           {expiringCount > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{expiringCount}</Text>
@@ -63,7 +63,7 @@ export const WeeklyHeader: React.FC<Props> = ({
           )}
         </Pressable>
         <Pressable testID="header-shopping-btn" onPress={onPressShopping} style={styles.iconBtn}>
-          <Ionicons name="cart" size={20} color={colors.text} />
+          <ShoppingCart size={20} color={colors.text} />
           {uncheckedShoppingCount > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{uncheckedShoppingCount}</Text>

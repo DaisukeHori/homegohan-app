@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Search, Trash2 } from "lucide-react-native";
 import { Pressable, Text, TextInput, View } from "react-native";
 
 import { getDishConfig } from "@homegohan/shared";
@@ -61,7 +61,7 @@ export function DishEditor({ dish, index, onChange, onDelete, onOpenCatalog }: P
             borderRadius: radius.sm,
           }}
         >
-          <Ionicons name="trash-outline" size={16} color={colors.error} />
+          <Trash2 size={16} color={colors.error} />
         </Pressable>
       </View>
 
@@ -154,7 +154,7 @@ export function DishEditor({ dish, index, onChange, onDelete, onOpenCatalog }: P
           paddingVertical: spacing.xs,
         }}
       >
-        <Ionicons name="search-outline" size={13} color={colors.accent} />
+        <Search size={13} color={colors.accent} />
         <Text style={{ fontSize: 12, color: colors.accent, fontWeight: "600" }}>
           カタログから検索
         </Text>

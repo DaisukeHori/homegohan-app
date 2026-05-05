@@ -1,5 +1,16 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useRef, useState } from "react";
+import {
+  CheckCircle,
+  ChefHat,
+  FastForward,
+  Search,
+  Sparkles,
+  Store,
+  UtensilsCrossed,
+  X,
+  XCircle,
+  Zap,
+} from "lucide-react-native";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -35,7 +46,7 @@ type ActionMode = "cook" | "quick" | "buy" | "out" | "ai_creative";
 interface ActionConfig {
   mode: ActionMode;
   label: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  Icon: React.ComponentType<any>;
   bgColor: string;
   textColor: string;
   outline?: boolean;
@@ -60,35 +71,35 @@ const ACTIONS: ActionConfig[] = [
   {
     mode: "cook",
     label: "自炊で追加",
-    icon: "restaurant-outline",
+    Icon: ChefHat,
     bgColor: colors.successLight,
     textColor: colors.success,
   },
   {
     mode: "quick",
     label: "時短で追加",
-    icon: "flash-outline",
+    Icon: Zap,
     bgColor: colors.blueLight,
     textColor: colors.blue,
   },
   {
     mode: "buy",
     label: "買うで追加",
-    icon: "bag-handle-outline",
+    Icon: Store,
     bgColor: colors.purpleLight,
     textColor: colors.purple,
   },
   {
     mode: "out",
     label: "外食で追加",
-    icon: "fork-knife-outline" as keyof typeof Ionicons.glyphMap,
+    Icon: UtensilsCrossed,
     bgColor: colors.warningLight,
     textColor: colors.warning,
   },
   {
     mode: "ai_creative",
     label: "AI献立で追加",
-    icon: "sparkles" as keyof typeof Ionicons.glyphMap,
+    Icon: Sparkles,
     bgColor: colors.accentLight,
     textColor: colors.accent,
   },
@@ -242,7 +253,7 @@ export function AddMealModal({
               {mealLabel}を追加
             </Text>
             <Pressable onPress={onClose} hitSlop={8} style={{ padding: 4 }}>
-              <Ionicons name="close" size={22} color={colors.textMuted} />
+              <X size={22} color={colors.textMuted} />
             </Pressable>
           </View>
 
@@ -269,7 +280,7 @@ export function AddMealModal({
                 gap: spacing.sm,
               }}
             >
-              <Ionicons name="search" size={16} color={colors.textMuted} />
+              <Search size={16} color={colors.textMuted} />
               <TextInput
                 testID="add-meal-search-input"
                 value={query}
@@ -377,7 +388,7 @@ export function AddMealModal({
                   borderColor: colors.purple,
                 }}
               >
-                <Ionicons name="checkmark-circle" size={16} color={colors.purple} />
+                <CheckCircle size={16} color={colors.purple} />
                 <Text style={{ flex: 1, fontSize: 13, color: colors.text, fontWeight: "600" }}>
                   {selectedProduct.name}
                 </Text>
@@ -389,7 +400,7 @@ export function AddMealModal({
                   }}
                   hitSlop={8}
                 >
-                  <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                  <XCircle size={16} color={colors.textMuted} />
                 </Pressable>
               </View>
             )}
@@ -415,7 +426,7 @@ export function AddMealModal({
                   {isSubmitting ? (
                     <ActivityIndicator size="small" color={action.textColor} />
                   ) : (
-                    <Ionicons name={action.icon} size={20} color={action.textColor} />
+                    <action.Icon size={20} color={action.textColor} />
                   )}
                   <Text style={{ fontSize: 14, fontWeight: "500", color: action.textColor }}>
                     {action.label}
@@ -440,11 +451,7 @@ export function AddMealModal({
                   opacity: pressed || isSubmitting ? 0.7 : 1,
                 })}
               >
-                <Ionicons
-                  name={"sparkles" as keyof typeof Ionicons.glyphMap}
-                  size={20}
-                  color={colors.accent}
-                />
+                <Sparkles size={20} color={colors.accent} />
                 <Text style={{ fontSize: 14, fontWeight: "500", color: colors.accent }}>
                   AIに提案してもらう
                 </Text>

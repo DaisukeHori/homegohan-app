@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Sparkles, X } from "lucide-react-native";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -128,7 +128,7 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
               onPress={handleClose}
               style={styles.closeBtn}
             >
-              <Ionicons name="close" size={20} color={colors.textLight} />
+              <X size={20} color={colors.textLight} />
             </Pressable>
           </View>
 
@@ -197,7 +197,7 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
                 <ActivityIndicator color="#FFF" />
               ) : (
                 <>
-                  <Ionicons name="sparkles" size={18} color="#FFF" />
+                  <Sparkles size={18} color="#FFF" />
                   <Text style={styles.submitText}>AIで別の献立に変更</Text>
                 </>
               )}

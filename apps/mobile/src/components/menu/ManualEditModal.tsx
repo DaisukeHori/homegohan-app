@@ -1,5 +1,18 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useRef, useState } from "react";
+import {
+  Camera,
+  CheckCircle,
+  ChefHat,
+  FastForward,
+  Palette,
+  Plus,
+  Search,
+  Sparkles,
+  Store,
+  UtensilsCrossed,
+  X,
+  Zap,
+} from "lucide-react-native";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -57,42 +70,42 @@ const MODE_OPTIONS = [
   {
     mode: "cook",
     label: "自炊",
-    icon: "restaurant" as const,
+    Icon: ChefHat,
     bg: colors.successLight,
     fg: colors.success,
   },
   {
     mode: "quick",
     label: "時短",
-    icon: "flash" as const,
+    Icon: Zap,
     bg: colors.blueLight,
     fg: colors.blue,
   },
   {
     mode: "buy",
     label: "買う",
-    icon: "bag" as const,
+    Icon: Store,
     bg: colors.purpleLight,
     fg: colors.purple,
   },
   {
     mode: "out",
     label: "外食",
-    icon: "restaurant-outline" as const,
+    Icon: UtensilsCrossed,
     bg: colors.warningLight,
     fg: colors.warning,
   },
   {
     mode: "skip",
     label: "なし",
-    icon: "remove-circle" as const,
+    Icon: FastForward,
     bg: "#F5F5F5",
     fg: colors.textMuted,
   },
   {
     mode: "ai_creative",
     label: "AI献立",
-    icon: "sparkles" as const,
+    Icon: Sparkles,
     bg: colors.accentLight,
     fg: colors.accent,
   },
@@ -317,7 +330,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                 手動で変更
               </Text>
               <Pressable onPress={onClose} hitSlop={8} style={{ padding: 4 }}>
-                <Ionicons name="close" size={22} color={colors.textMuted} />
+                <X size={22} color={colors.textMuted} />
               </Pressable>
             </View>
 
@@ -336,8 +349,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                   }}
                 >
                   <Pressable onPress={() => setShowCatalog(null)} hitSlop={8}>
-                    <Ionicons
-                      name="arrow-back"
+                    <X
                       size={20}
                       color={colors.accent}
                     />
@@ -367,8 +379,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                       gap: spacing.sm,
                     }}
                   >
-                    <Ionicons
-                      name="search"
+                    <Search
                       size={16}
                       color={colors.textMuted}
                     />
@@ -520,8 +531,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                               borderColor: isSelected ? opt.fg : colors.border,
                             }}
                           >
-                            <Ionicons
-                              name={opt.icon}
+                            <opt.Icon
                               size={14}
                               color={isSelected ? opt.fg : colors.textMuted}
                             />
@@ -563,8 +573,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                         gap: spacing.sm,
                       }}
                     >
-                      <Ionicons
-                        name="search-outline"
+                      <Search
                         size={16}
                         color={colors.textMuted}
                       />
@@ -628,8 +637,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                         hitSlop={8}
                         style={{ flexDirection: "row", alignItems: "center", gap: 2 }}
                       >
-                        <Ionicons
-                          name="add"
+                        <Plus
                           size={14}
                           color={colors.accent}
                         />
@@ -694,8 +702,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                         opacity: pressed ? 0.7 : 1,
                       })}
                     >
-                      <Ionicons
-                        name="camera-outline"
+                      <Camera
                         size={16}
                         color={colors.blue}
                       />
@@ -727,8 +734,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                         opacity: 0.5,
                       }}
                     >
-                      <Ionicons
-                        name="color-palette-outline"
+                      <Palette
                         size={16}
                         color={colors.accent}
                       />
@@ -765,8 +771,7 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
                     {isSaving ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
-                      <Ionicons
-                        name="checkmark-circle-outline"
+                      <CheckCircle
                         size={18}
                         color="#fff"
                       />
