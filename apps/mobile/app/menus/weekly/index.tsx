@@ -34,7 +34,7 @@ import { RegenerateMealModal } from "../../../src/components/menu/RegenerateMeal
 import { PantryModal } from "../../../src/components/menu/PantryModal";
 import { ShoppingListModal } from "../../../src/components/menu/ShoppingListModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
-import { colors, spacing, radius, shadows } from "../../../src/theme";
+import { colors, spacing, radius } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
@@ -377,7 +377,7 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }} onPress={onClose} />
-      <View testID="weekly-nutrition-sheet" style={{ backgroundColor: colors.bg, borderTopLeftRadius: radius["2xl"], borderTopRightRadius: radius["2xl"], maxHeight: "85%", ...shadows.lg }}>
+      <View testID="weekly-nutrition-sheet" style={{ backgroundColor: colors.bg, borderTopLeftRadius: radius["2xl"], borderTopRightRadius: radius["2xl"], maxHeight: "85%" }}>
         {/* Header */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
@@ -543,12 +543,12 @@ const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 // 表示順: breakfast / lunch / dinner / snack / midnight_snack
 const MEAL_ORDER = MEAL_ORDER_SHARED;
 
-const MEAL_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; label: string; color: string }> = {
-  breakfast: { icon: "sunny", label: "朝食", color: "#FF9800" },
-  lunch: { icon: "partly-sunny", label: "昼食", color: "#4CAF50" },
-  snack: { icon: "cafe", label: "おやつ", color: "#E91E63" },
-  dinner: { icon: "moon", label: "夕食", color: "#7C4DFF" },
-  midnight_snack: { icon: "cloudy-night", label: "夜食", color: "#3F51B5" },
+const MEAL_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; label: string }> = {
+  breakfast: { icon: "sunny", label: "朝食" },
+  lunch: { icon: "partly-sunny", label: "昼食" },
+  snack: { icon: "cafe", label: "おやつ" },
+  dinner: { icon: "moon", label: "夕食" },
+  midnight_snack: { icon: "cloudy-night", label: "夜食" },
 };
 
 // MODE_CONFIG — @homegohan/shared の抽象キーを App 用の実色値に変換
@@ -1608,7 +1608,6 @@ export default function WeeklyMenuPage() {
                 return null;
               })}
               {sortedMeals.map((m) => {
-                const mealCfg = MEAL_CONFIG[m.meal_type] ?? { icon: "ellipse", label: m.meal_type, color: colors.textMuted };
                 const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
                 const isGenerating = m.is_generating;
                 const isExpanded = expandedMealId === m.id;
@@ -1682,25 +1681,10 @@ export default function WeeklyMenuPage() {
                           ...(pressed ? { opacity: 0.9 } : {}),
                         })}
                       >
-                        {/* 食事タイプアイコン */}
-                        <View
-                          style={{
-                            width: 44,
-                            height: 44,
-                            borderRadius: radius.md,
-                            backgroundColor: m.is_completed ? colors.success : mealCfg.color,
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          {m.is_completed ? (
-                            <Ionicons name="checkmark" size={24} color="#fff" />
-                          ) : isGenerating ? (
-                            <ActivityIndicator size="small" color="#fff" />
-                          ) : (
-                            <Ionicons name={mealCfg.icon} size={22} color="#fff" />
-                          )}
-                        </View>
+                        {/* 食事タイプラベル (WEB 合わせ: テキストのみ) */}
+                        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.textMuted, width: 28, textAlign: "center" }}>
+                          {mealLabel}
+                        </Text>
 
                         {/* 情報 */}
                         <View style={{ flex: 1, gap: 3 }}>
@@ -1709,7 +1693,6 @@ export default function WeeklyMenuPage() {
                           </Text>
                           {m.role ? <RoleBadge role={m.role} /> : null}
                           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                            <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealLabel}</Text>
                             <View
                               style={{
                                 backgroundColor: modeCfg.bg,
@@ -1758,30 +1741,15 @@ export default function WeeklyMenuPage() {
                           onPress={() => setExpandedMealId(null)}
                           style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}
                         >
-                          <View
-                            style={{
-                              width: 44,
-                              height: 44,
-                              borderRadius: radius.md,
-                              backgroundColor: m.is_completed ? colors.success : mealCfg.color,
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            {m.is_completed ? (
-                              <Ionicons name="checkmark" size={24} color="#fff" />
-                            ) : isGenerating ? (
-                              <ActivityIndicator size="small" color="#fff" />
-                            ) : (
-                              <Ionicons name={mealCfg.icon} size={22} color="#fff" />
-                            )}
-                          </View>
+                          {/* 食事タイプラベル (WEB 合わせ: テキストのみ) */}
+                          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.textMuted, width: 28, textAlign: "center" }}>
+                            {mealLabel}
+                          </Text>
                           <View style={{ flex: 1, gap: 3 }}>
                             <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }} numberOfLines={1}>
                               {isGenerating ? "生成中..." : m.dish_name || "（未設定）"}
                             </Text>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                              <Text style={{ fontSize: 12, color: colors.textMuted }}>{mealLabel}</Text>
                               <View style={{ backgroundColor: modeCfg.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                                 <Text style={{ fontSize: 10, fontWeight: "700", color: modeCfg.color }}>{modeCfg.label}</Text>
                               </View>
@@ -2086,7 +2054,6 @@ export default function WeeklyMenuPage() {
           backgroundColor: colors.accent,
           alignItems: "center",
           justifyContent: "center",
-          ...shadows.md,
           opacity: pressed ? 0.85 : 1,
         })}
       >

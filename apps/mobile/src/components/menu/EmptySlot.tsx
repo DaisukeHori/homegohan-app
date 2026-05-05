@@ -16,13 +16,10 @@ interface Props {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function EmptySlot({ mealType, dayId, dayDate: _dayDate, onPress, isGenerating = false, mealLabel }: Props) {
-  const mealCfgColor = MEAL_COLORS[mealType] ?? colors.textMuted;
-  const mealCfgIcon = MEAL_ICONS[mealType] ?? "ellipse";
-
+export function EmptySlot({ mealType: _mealType, dayId, dayDate: _dayDate, onPress, isGenerating = false, mealLabel }: Props) {
   return (
     <Pressable
-      testID={`empty-slot-${dayId}-${mealType}`}
+      testID={`empty-slot-${dayId}-${_mealType}`}
       onPress={onPress}
       style={({ pressed }) => ({
         flexDirection: "row",
@@ -40,22 +37,21 @@ export function EmptySlot({ mealType, dayId, dayDate: _dayDate, onPress, isGener
         borderStyle: "dashed",
       })}
     >
-      {/* 食事タイプアイコン */}
+      {/* 食事タイプアイコン (グレー小型) */}
       <View
         style={{
-          width: 44,
-          height: 44,
-          borderRadius: radius.md,
-          backgroundColor: mealCfgColor,
+          width: 28,
+          height: 28,
+          borderRadius: radius.sm,
+          backgroundColor: colors.border,
           alignItems: "center",
           justifyContent: "center",
-          opacity: isGenerating ? 0.8 : 0.3,
         }}
       >
         {isGenerating ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={colors.textMuted} />
         ) : (
-          <Ionicons name={mealCfgIcon} size={22} color="#fff" />
+          <Ionicons name="add" size={16} color={colors.textMuted} />
         )}
       </View>
 
@@ -63,26 +59,7 @@ export function EmptySlot({ mealType, dayId, dayDate: _dayDate, onPress, isGener
       <Text style={{ flex: 1, fontSize: 14, color: isGenerating ? colors.accent : colors.textMuted }}>
         {isGenerating ? "AI が生成中..." : `+ ${mealLabel}を追加`}
       </Text>
-
-      {!isGenerating && (
-        <Ionicons name="add-circle-outline" size={20} color={colors.textMuted} />
-      )}
     </Pressable>
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const MEAL_COLORS: Record<string, string> = {
-  breakfast: "#FF9800",
-  lunch: "#4CAF50",
-  dinner: "#7C4DFF",
-  snack: "#E91E63",
-};
-
-const MEAL_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
-  breakfast: "sunny",
-  lunch: "partly-sunny",
-  dinner: "moon",
-  snack: "cafe",
-};
