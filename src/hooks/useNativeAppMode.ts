@@ -17,15 +17,22 @@ function getCookieValue(name: string): string | undefined {
   return match ? match.split('=')[1] : undefined;
 }
 
-export function useNativeAppMode(): boolean {
+/**
+ * @param initialIsNativeApp
+ *   server 側 (layout.tsx) で Cookie を読んだ初期値。
+ *   これを useState の初期値として使うことで、SSR HTML とクライアント初回 render が
+ *   一致し、BottomNav のフラッシュ (一瞬表示 → 消える) を防止できる。
+ *   省略時はクライアント側の Cookie / sessionStorage / URL params のみで判定する。
+ */
+export function useNativeAppMode(initialIsNativeApp?: boolean): boolean {
   const searchParams = useSearchParams();
 
-  // 初期値として Cookie を読む。
-  // クライアント初回レンダリング (hydration) 時点でブラウザが Cookie を持っていれば
-  // useState(false) → true の遷移が起きず bottom nav のちらつきを防止できる。
-  // SSR では document が存在しないため false のままにする (SSR は Cookie を読めない)。
+  // 初期値の優先順位:
+  //   1. server から渡された initialIsNativeApp (SSR Cookie 判定済み)
+  //   2. クライアント側の document.cookie (ハイドレーション後の2回目以降)
+  // これにより SSR → ハイドレーションのフラッシュを防止する。
   const [isNativeApp, setIsNativeApp] = useState<boolean>(
-    () => getCookieValue(COOKIE_NAME) === '1',
+    () => initialIsNativeApp ?? getCookieValue(COOKIE_NAME) === '1',
   );
 
   useEffect(() => {
