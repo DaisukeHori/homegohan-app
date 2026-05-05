@@ -6,6 +6,9 @@ import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 
 const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL ?? 'https://homegohan-app.vercel.app';
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+// "https://abc123.supabase.co" → "abc123"
+const PROJECT_REF = SUPABASE_URL.replace('https://', '').split('.')[0];
 
 interface Props {
   path: string;  // 例 '/home', '/menus/weekly'
@@ -15,6 +18,7 @@ interface Props {
 export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
+  const [injectedJS, setInjectedJS] = useState<string>('');
 
   useEffect(() => {
     const init = async () => {
@@ -30,6 +34,34 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         const next = encodeURIComponent(nextPath);
         const bridgeUrl = `${WEB_BASE_URL}/auth/native-bridge?access_token=${session.access_token}&refresh_token=${session.refresh_token}&next=${next}`;
         setUri(bridgeUrl);
+
+        // localStorage 注入: クライアント Supabase JS SDK が参照するキーに session を書き込む
+        // SSR middleware は Cookie で動作するが、クライアント側 SDK は localStorage を参照するため両方設定が必要
+        const storageKey = `sb-${PROJECT_REF}-auth-token`;
+        const sessionPayload = JSON.stringify({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          expires_at: session.expires_at,
+          expires_in: session.expires_in,
+          token_type: 'bearer',
+          user: session.user,
+          provider_token: session.provider_token ?? null,
+          provider_refresh_token: session.provider_refresh_token ?? null,
+        });
+        // JS 文字列リテラル内で安全に使えるよう バックスラッシュ・シングルクォートをエスケープ
+        const escapedPayload = sessionPayload
+          .replace(/\\/g, '\\\\')
+          .replace(/'/g, "\\'");
+        setInjectedJS(`
+          (function() {
+            try {
+              window.localStorage.setItem('${storageKey}', '${escapedPayload}');
+            } catch (e) {
+              // localStorage 書き込み失敗時は Cookie 経由で認証継続
+            }
+          })();
+          true;
+        `);
       } else {
         // セッションなし → 直接 path (mode=app 付き)
         const alreadyHasMode = path.includes('mode=app');
@@ -38,6 +70,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
           ? `${WEB_BASE_URL}${path}`
           : `${WEB_BASE_URL}${path}${separator}mode=app`;
         setUri(directUrl);
+        setInjectedJS('');
       }
     };
     init();
@@ -59,6 +92,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         ref={webViewRef}
         testID={testID ?? 'webview-screen'}
         source={{ uri }}
+        injectedJavaScriptBeforeContentLoaded={injectedJS || undefined}
         sharedCookiesEnabled={true}
         thirdPartyCookiesEnabled={true}
         contentInsetAdjustmentBehavior="never"
