@@ -111,13 +111,18 @@ export async function POST(request: Request) {
           .filter((name: string) => name.length > 0)
       : [];
 
+    if (!dishNames.length) {
+      return NextResponse.json(
+        { error: 'mode_mismatch', message: '料理が読み取れませんでした。食事が鮮明に写った写真を撮り直してください。' },
+        { status: 422 },
+      );
+    }
+
     let catalogMatches: Awaited<ReturnType<typeof findCatalogCandidatesForDishes>> = [];
-    if (dishNames.length > 0) {
-      try {
-        catalogMatches = await findCatalogCandidatesForDishes(supabase, dishNames, { limitPerDish: 3 });
-      } catch (catalogError) {
-        console.warn('Analyze Meal Photo: catalog lookup skipped', catalogError);
-      }
+    try {
+      catalogMatches = await findCatalogCandidatesForDishes(supabase, dishNames, { limitPerDish: 3 });
+    } catch (catalogError) {
+      console.warn('Analyze Meal Photo: catalog lookup skipped', catalogError);
     }
 
     return NextResponse.json({

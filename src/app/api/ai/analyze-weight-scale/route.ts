@@ -45,9 +45,10 @@ export async function POST(request: Request) {
 
     // 体重が取得できなかった場合
     if (!result.weight || result.weight <= 0) {
-      return NextResponse.json({
-        error: '体重を読み取れませんでした。体重計のディスプレイがはっきり映っている写真を使用してください。',
-      }, { status: 400 });
+      return NextResponse.json(
+        { error: 'mode_mismatch', message: '体重計の表示が読み取れませんでした。数値が鮮明に写った写真を撮り直してください。' },
+        { status: 422 },
+      );
     }
 
     return NextResponse.json(result);

@@ -55,6 +55,13 @@ export async function POST(request: Request) {
 
     const analysisResult = normalizeFridgeAnalysisResult(data);
 
+    if (!analysisResult.ingredients?.length) {
+      return NextResponse.json(
+        { error: 'mode_mismatch', message: '食材が読み取れませんでした。冷蔵庫の中身が見える写真を撮り直してください。' },
+        { status: 422 },
+      );
+    }
+
     return NextResponse.json({
       ingredients: analysisResult.ingredients.map((ingredient) => ingredient.name),
       detailedIngredients: analysisResult.ingredients,
