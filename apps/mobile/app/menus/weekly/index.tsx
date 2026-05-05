@@ -1506,6 +1506,107 @@ export default function WeeklyMenuPage() {
         )}
       </View>
 
+      {/* 週日付タブ — ScrollView 外で固定 (スクロールしても常に表示) */}
+      <View style={{ paddingHorizontal: spacing.lg }}>
+        {/* 日付セレクタ — 週ナビ左右端 + 7日タブ中央 */}
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          {/* 前の週ボタン */}
+          <Pressable
+            testID="weekly-prev-button"
+            onPress={() => shiftWeek(-1)}
+            style={({ pressed }) => ({
+              alignItems: "center",
+              justifyContent: "center",
+              paddingVertical: spacing.sm,
+              paddingHorizontal: 4,
+              borderRadius: radius.md,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <ChevronLeft size={16} color={colors.textMuted} />
+            <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>前の週</Text>
+          </Pressable>
+
+          {/* 7日タブ — virtualDays を使い plan 未作成週でも常に 7 タブ表示 */}
+          {virtualDays.map((d) => {
+            const selected = d.day_date === selectedDate;
+            const isToday = d.day_date === todayStr;
+            const dow = getDayOfWeek(d.day_date);
+            const dayNum = d.day_date.slice(8);
+            const completedAll = d.planned_meals.length > 0 && d.planned_meals.every((m) => m.is_completed);
+            const hasGenerating = d.planned_meals.some((m) => m.is_generating);
+            const dayOfWeek = new Date(d.day_date + "T00:00:00").getDay(); // 0=日,6=土
+            const isHolidayDay = !!holidays[d.day_date];
+            const isSunday = dayOfWeek === 0;
+            const isSaturday = dayOfWeek === 6;
+            // 祝日・日曜日=danger(赤系)、土曜日=blue(青系)
+            const accentColor = (isHolidayDay || isSunday) ? colors.danger : isSaturday ? colors.blue : null;
+
+            return (
+              <Pressable
+                key={d.id ?? d.day_date}
+                testID={`weekly-day-tab-${d.day_date}`}
+                onPress={() => setSelectedDate(d.day_date)}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  alignItems: "center",
+                  gap: 2,
+                  paddingVertical: spacing.sm,
+                  paddingHorizontal: 2,
+                  borderRadius: radius.lg,
+                  backgroundColor: selected ? colors.accent : "transparent",
+                  ...(pressed ? { opacity: 0.9 } : {}),
+                })}
+              >
+                <Text style={{ fontSize: 9, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>{dayNum}</Text>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: selected ? "#fff" : (accentColor ?? colors.text) }}>{dow}</Text>
+                {isToday && !selected ? (
+                  <View style={{
+                    backgroundColor: colors.accent,
+                    borderRadius: radius.sm,
+                    paddingHorizontal: 4,
+                    paddingVertical: 1,
+                  }}>
+                    <Text style={{ fontSize: 8, fontWeight: "700", color: "#fff" }}>今日</Text>
+                  </View>
+                ) : completedAll ? (
+                  <CheckCircle size={12} color={selected ? "#fff" : colors.success} />
+                ) : hasGenerating ? (
+                  <ActivityIndicator size={10} color={selected ? "#fff" : (accentColor ?? colors.accent)} />
+                ) : (
+                  <Text style={{ fontSize: 9, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>
+                    {d.planned_meals.length}食
+                  </Text>
+                )}
+              </Pressable>
+            );
+          })}
+
+          {/* 翌週ボタン */}
+          <Pressable
+            testID="weekly-next-button"
+            onPress={() => shiftWeek(1)}
+            style={({ pressed }) => ({
+              alignItems: "center",
+              justifyContent: "center",
+              paddingVertical: spacing.sm,
+              paddingHorizontal: 4,
+              borderRadius: radius.md,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <ChevronRight size={16} color={colors.textMuted} />
+            <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>翌週</Text>
+          </Pressable>
+        </View>
+
+        {/* AI バナー — 空欄件数表示 (固定領域) */}
+        <EmptySlotAIBanner
+          emptySlotCount={emptySlotCount}
+          onPress={() => setShowV4Modal(true)}
+        />
+      </View>
+
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {isLoading ? (
         <LoadingState />
@@ -1533,104 +1634,6 @@ export default function WeeklyMenuPage() {
               />
             </View>
           )}
-
-          {/* 日付セレクタ — 週ナビ左右端 + 7日タブ中央 */}
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            {/* 前の週ボタン */}
-            <Pressable
-              testID="weekly-prev-button"
-              onPress={() => shiftWeek(-1)}
-              style={({ pressed }) => ({
-                alignItems: "center",
-                justifyContent: "center",
-                paddingVertical: spacing.sm,
-                paddingHorizontal: 4,
-                borderRadius: radius.md,
-                opacity: pressed ? 0.7 : 1,
-              })}
-            >
-              <ChevronLeft size={16} color={colors.textMuted} />
-              <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>前の週</Text>
-            </Pressable>
-
-            {/* 7日タブ — virtualDays を使い plan 未作成週でも常に 7 タブ表示 */}
-            {virtualDays.map((d) => {
-              const selected = d.day_date === selectedDate;
-              const isToday = d.day_date === todayStr;
-              const dow = getDayOfWeek(d.day_date);
-              const dayNum = d.day_date.slice(8);
-              const completedAll = d.planned_meals.length > 0 && d.planned_meals.every((m) => m.is_completed);
-              const hasGenerating = d.planned_meals.some((m) => m.is_generating);
-              const dayOfWeek = new Date(d.day_date + "T00:00:00").getDay(); // 0=日,6=土
-              const isHolidayDay = !!holidays[d.day_date];
-              const isSunday = dayOfWeek === 0;
-              const isSaturday = dayOfWeek === 6;
-              // 祝日・日曜日=danger(赤系)、土曜日=blue(青系)
-              const accentColor = (isHolidayDay || isSunday) ? colors.danger : isSaturday ? colors.blue : null;
-
-              return (
-                <Pressable
-                  key={d.id ?? d.day_date}
-                  testID={`weekly-day-tab-${d.day_date}`}
-                  onPress={() => setSelectedDate(d.day_date)}
-                  style={({ pressed }) => ({
-                    flex: 1,
-                    alignItems: "center",
-                    gap: 2,
-                    paddingVertical: spacing.sm,
-                    paddingHorizontal: 2,
-                    borderRadius: radius.lg,
-                    backgroundColor: selected ? colors.accent : "transparent",
-                    ...(pressed ? { opacity: 0.9 } : {}),
-                  })}
-                >
-                  <Text style={{ fontSize: 9, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>{dayNum}</Text>
-                  <Text style={{ fontSize: 13, fontWeight: "600", color: selected ? "#fff" : (accentColor ?? colors.text) }}>{dow}</Text>
-                  {isToday && !selected ? (
-                    <View style={{
-                      backgroundColor: colors.accent,
-                      borderRadius: radius.sm,
-                      paddingHorizontal: 4,
-                      paddingVertical: 1,
-                    }}>
-                      <Text style={{ fontSize: 8, fontWeight: "700", color: "#fff" }}>今日</Text>
-                    </View>
-                  ) : completedAll ? (
-                    <CheckCircle size={12} color={selected ? "#fff" : colors.success} />
-                  ) : hasGenerating ? (
-                    <ActivityIndicator size={10} color={selected ? "#fff" : (accentColor ?? colors.accent)} />
-                  ) : (
-                    <Text style={{ fontSize: 9, color: selected ? "rgba(255,255,255,0.7)" : colors.textMuted }}>
-                      {d.planned_meals.length}食
-                    </Text>
-                  )}
-                </Pressable>
-              );
-            })}
-
-            {/* 翌週ボタン */}
-            <Pressable
-              testID="weekly-next-button"
-              onPress={() => shiftWeek(1)}
-              style={({ pressed }) => ({
-                alignItems: "center",
-                justifyContent: "center",
-                paddingVertical: spacing.sm,
-                paddingHorizontal: 4,
-                borderRadius: radius.md,
-                opacity: pressed ? 0.7 : 1,
-              })}
-            >
-              <ChevronRight size={16} color={colors.textMuted} />
-              <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>翌週</Text>
-            </Pressable>
-          </View>
-
-          {/* AI バナー — 空欄件数表示 */}
-          <EmptySlotAIBanner
-            emptySlotCount={emptySlotCount}
-            onPress={() => setShowV4Modal(true)}
-          />
 
           {/* 日別栄養サマリー — 3 段階 UX (WEB 仕様準拠) */}
           {selectedDay && daySummary.total > 0 && (
