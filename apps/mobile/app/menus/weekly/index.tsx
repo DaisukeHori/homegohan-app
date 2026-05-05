@@ -1952,6 +1952,68 @@ export default function WeeklyMenuPage() {
                           </Pressable>
                         )}
 
+                        {/* 栄養素セクション — WEB 仕様: 「この食事の栄養素」3列グリッド */}
+                        {(m.calories_kcal || m.protein_g || m.fat_g || m.carbs_g) ? (() => {
+                          // PlannedMealRow フィールドから NUTRIENT_DEFINITIONS キーへのマッピング
+                          const mealNutrientMap: Record<string, number | null> = {
+                            caloriesKcal:  m.calories_kcal,
+                            proteinG:      m.protein_g,
+                            fatG:          m.fat_g,
+                            carbsG:        m.carbs_g,
+                            fiberG:        m.fiber_g,
+                            sugarG:        m.sugar_g,
+                            sodiumG:       m.sodium_g,
+                            potassiumMg:   m.potassium_mg,
+                            calciumMg:     m.calcium_mg,
+                            magnesiumMg:   m.magnesium_mg,
+                            phosphorusMg:  m.phosphorus_mg,
+                            ironMg:        m.iron_mg,
+                            zincMg:        m.zinc_mg,
+                            iodineUg:      m.iodine_ug,
+                            vitaminAUg:    m.vitamin_a_ug,
+                            vitaminB1Mg:   m.vitamin_b1_mg,
+                            vitaminB2Mg:   m.vitamin_b2_mg,
+                            vitaminB6Mg:   m.vitamin_b6_mg,
+                            vitaminB12Ug:  m.vitamin_b12_ug,
+                            vitaminCMg:    m.vitamin_c_mg,
+                            vitaminDUg:    m.vitamin_d_ug,
+                            vitaminEMg:    m.vitamin_e_mg,
+                            vitaminKUg:    m.vitamin_k_ug,
+                            folicAcidUg:   m.folic_acid_ug,
+                            saturatedFatG: m.saturated_fat_g,
+                            cholesterolMg: m.cholesterol_mg,
+                          };
+                          return (
+                            <View style={{
+                              backgroundColor: "#F5F5F5",
+                              borderRadius: radius.md,
+                              padding: spacing.md,
+                            }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginBottom: spacing.xs }}>
+                                <BarChart3 size={12} color={colors.textMuted} />
+                                <Text style={{ fontSize: 11, fontWeight: "600", color: colors.textMuted }}>この食事の栄養素</Text>
+                              </View>
+                              <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                                {NUTRIENT_DEFS.map((def) => {
+                                  const raw = mealNutrientMap[def.key];
+                                  const value = raw ?? 0;
+                                  const displayValue = value === 0
+                                    ? "-"
+                                    : def.decimals === 0
+                                      ? String(Math.round(value))
+                                      : value.toFixed(def.decimals).replace(/\.?0+$/, "");
+                                  return (
+                                    <View key={def.key} style={{ width: "33.33%", paddingVertical: 3, paddingHorizontal: spacing.xs }}>
+                                      <Text style={{ fontSize: 10, color: colors.textMuted }} numberOfLines={1}>{def.label}</Text>
+                                      <Text style={{ fontSize: 10, fontWeight: "600", color: colors.text }}>{displayValue}{value !== 0 ? def.unit : ""}</Text>
+                                    </View>
+                                  );
+                                })}
+                              </View>
+                            </View>
+                          );
+                        })() : null}
+
                         {/* アクションボタン行 (展開時のみ) — WEB 仕様: 3 ボタン横並び等幅 */}
                         <View style={{ flexDirection: "row", gap: spacing.sm }}>
                           {/* AIで変更ボタン */}
