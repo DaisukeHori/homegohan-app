@@ -50,7 +50,7 @@ import { ConfirmDeleteModal } from "../../../src/components/menu/ConfirmDeleteMo
 import { ImproveMealModal } from "../../../src/components/menu/ImproveMealModal";
 import { ProgressTodoCard } from "../../../src/components/menu/ProgressTodoCard";
 import { RoleBadge } from "../../../src/components/menu/RoleBadge";
-import { RecipeModal, type RecipeModalMeal } from "../../../src/components/menu/RecipeModal";
+import { RecipeModal, type RecipeModalDish } from "../../../src/components/menu/RecipeModal";
 import { ServingsModal } from "../../../src/components/menu/ServingsModal";
 import { StatsModal, type NutrientValues, type WeekNutrientData } from "../../../src/components/menu/StatsModal";
 import { WeeklyHeader } from "../../../src/components/menu/WeeklyHeader";
@@ -710,7 +710,7 @@ export default function WeeklyMenuPage() {
   const [addMealModalMealType, setAddMealModalMealType] = useState<MealType>("dinner");
 
   // RecipeModal state
-  const [recipeModalMeal, setRecipeModalMeal] = useState<RecipeModalMeal | null>(null);
+  const [recipeModalMeal, setRecipeModalMeal] = useState<RecipeModalDish | null>(null);
 
   // 展開中の食事カード ID (WEB 仕様と同様のインライン展開)
   const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
@@ -1918,16 +1918,44 @@ export default function WeeklyMenuPage() {
                               <Pressable
                                 key={idx}
                                 onPress={() => setRecipeModalMeal({
-                                  id: m.id,
-                                  dish_name: dish.name,
-                                  calories_kcal: m.calories_kcal,
-                                  protein_g: m.protein_g,
-                                  fat_g: m.fat_g,
-                                  carbs_g: m.carbs_g,
-                                  ingredients: dish.ingredients ?? m.ingredients ?? undefined,
-                                  recipe_steps: dish.recipeSteps ?? m.recipe_steps ?? undefined,
-                                  dishes: [dish],
+                                  mealId: m.id,
+                                  name: dish.name,
                                   role: dish.role ?? m.role ?? undefined,
+                                  kcal: m.calories_kcal,
+                                  imageUrl: null,
+                                  imageStatus: null,
+                                  ingredientsMd: dish.ingredientsMd ?? undefined,
+                                  recipeStepsMd: dish.recipeStepsMd ?? undefined,
+                                  ingredients: dish.ingredients ?? m.ingredients ?? undefined,
+                                  recipeSteps: dish.recipeSteps ?? m.recipe_steps ?? undefined,
+                                  nutrients: {
+                                    caloriesKcal: m.calories_kcal,
+                                    proteinG: m.protein_g,
+                                    fatG: m.fat_g,
+                                    carbsG: m.carbs_g,
+                                    fiberG: m.fiber_g,
+                                    sugarG: m.sugar_g,
+                                    sodiumG: m.sodium_g,
+                                    potassiumMg: m.potassium_mg,
+                                    calciumMg: m.calcium_mg,
+                                    magnesiumMg: m.magnesium_mg,
+                                    phosphorusMg: m.phosphorus_mg,
+                                    ironMg: m.iron_mg,
+                                    zincMg: m.zinc_mg,
+                                    iodineUg: m.iodine_ug,
+                                    vitaminAUg: m.vitamin_a_ug,
+                                    vitaminB1Mg: m.vitamin_b1_mg,
+                                    vitaminB2Mg: m.vitamin_b2_mg,
+                                    vitaminB6Mg: m.vitamin_b6_mg,
+                                    vitaminB12Ug: m.vitamin_b12_ug,
+                                    vitaminCMg: m.vitamin_c_mg,
+                                    vitaminDUg: m.vitamin_d_ug,
+                                    vitaminEMg: m.vitamin_e_mg,
+                                    vitaminKUg: m.vitamin_k_ug,
+                                    folicAcidUg: m.folic_acid_ug,
+                                    saturatedFatG: m.saturated_fat_g,
+                                    cholesterolMg: m.cholesterol_mg,
+                                  },
                                 })}
                                 style={({ pressed }) => ({
                                   flexDirection: "row",
@@ -1954,16 +1982,44 @@ export default function WeeklyMenuPage() {
                         {dishesArray.length === 0 && (
                           <Pressable
                             onPress={() => setRecipeModalMeal({
-                              id: m.id,
-                              dish_name: m.dish_name,
-                              calories_kcal: m.calories_kcal,
-                              protein_g: m.protein_g,
-                              fat_g: m.fat_g,
-                              carbs_g: m.carbs_g,
-                              ingredients: m.ingredients ?? undefined,
-                              recipe_steps: m.recipe_steps ?? undefined,
-                              dishes: m.dishes ?? undefined,
+                              mealId: m.id,
+                              name: m.dish_name,
                               role: m.role ?? undefined,
+                              kcal: m.calories_kcal,
+                              imageUrl: null,
+                              imageStatus: null,
+                              ingredientsMd: undefined,
+                              recipeStepsMd: undefined,
+                              ingredients: m.ingredients ?? undefined,
+                              recipeSteps: m.recipe_steps ?? undefined,
+                              nutrients: {
+                                caloriesKcal: m.calories_kcal,
+                                proteinG: m.protein_g,
+                                fatG: m.fat_g,
+                                carbsG: m.carbs_g,
+                                fiberG: m.fiber_g,
+                                sugarG: m.sugar_g,
+                                sodiumG: m.sodium_g,
+                                potassiumMg: m.potassium_mg,
+                                calciumMg: m.calcium_mg,
+                                magnesiumMg: m.magnesium_mg,
+                                phosphorusMg: m.phosphorus_mg,
+                                ironMg: m.iron_mg,
+                                zincMg: m.zinc_mg,
+                                iodineUg: m.iodine_ug,
+                                vitaminAUg: m.vitamin_a_ug,
+                                vitaminB1Mg: m.vitamin_b1_mg,
+                                vitaminB2Mg: m.vitamin_b2_mg,
+                                vitaminB6Mg: m.vitamin_b6_mg,
+                                vitaminB12Ug: m.vitamin_b12_ug,
+                                vitaminCMg: m.vitamin_c_mg,
+                                vitaminDUg: m.vitamin_d_ug,
+                                vitaminEMg: m.vitamin_e_mg,
+                                vitaminKUg: m.vitamin_k_ug,
+                                folicAcidUg: m.folic_acid_ug,
+                                saturatedFatG: m.saturated_fat_g,
+                                cholesterolMg: m.cholesterol_mg,
+                              },
                             })}
                             style={({ pressed }) => ({
                               flexDirection: "row",
@@ -2255,7 +2311,7 @@ export default function WeeklyMenuPage() {
       {/* レシピ詳細モーダル */}
       <RecipeModal
         visible={recipeModalMeal !== null}
-        meal={recipeModalMeal}
+        dish={recipeModalMeal}
         onClose={() => setRecipeModalMeal(null)}
       />
       <RegenerateMealModal
