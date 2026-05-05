@@ -9,6 +9,7 @@ import AIChatBubble from "@/components/AIChatBubble";
 import { createClient } from "@/lib/supabase/client";
 import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
 
 // ロール別の管理メニュー
 const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
@@ -174,6 +175,7 @@ export default function MainLayout({
 
   return (
     <div className="flex min-h-screen bg-gray-50">
+      <NativeAppTabRouter />
       
       {/* デスクトップ用サイドバー (Hidden on Mobile) */}
       <aside className="hidden lg:flex flex-col w-64 fixed inset-y-0 left-0 bg-white border-r border-gray-100 z-50 shadow-sm">
