@@ -1,9 +1,9 @@
-import { Ionicons } from '@expo/vector-icons';
+import { HelpCircle } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { getDishConfig } from '@homegohan/shared';
-import { ICON_MAP_IONICONS } from '../../lib/icon-map';
+import { ICON_MAP_LUCIDE } from '../../lib/icon-map';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 
@@ -15,11 +15,11 @@ export const RoleBadge: React.FC<Props> = ({ role }) => {
   if (!role) return null;
   const cfg = getDishConfig(role);
   const color = colors[cfg.colorKey as keyof typeof colors] as string;
-  const iconName = ICON_MAP_IONICONS[cfg.iconKey] ?? 'help-circle-outline';
+  const IconComponent = ICON_MAP_LUCIDE[cfg.iconKey] ?? HelpCircle;
 
   return (
     <View testID="role-badge" style={[styles.container, { backgroundColor: color + '22' }]}>
-      <Ionicons name={iconName as any} size={10} color={color} />
+      <IconComponent size={10} color={color} />
       <Text style={[styles.label, { color }]}>{cfg.label}</Text>
     </View>
   );

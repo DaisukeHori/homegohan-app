@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Trash2 } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -85,7 +85,7 @@ export const PantryItem: React.FC<Props> = ({ item, onDelete }) => {
           hitSlop={8}
           style={styles.deleteBtn}
         >
-          <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+          <Trash2 size={16} color={colors.textMuted} />
         </Pressable>
       </View>
     </View>

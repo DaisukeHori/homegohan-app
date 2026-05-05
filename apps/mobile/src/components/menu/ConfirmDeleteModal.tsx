@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Trash2 } from "lucide-react-native";
 import {
   Modal,
   Pressable,
@@ -29,7 +29,7 @@ export function ConfirmDeleteModal({ visible, mealName, onCancel, onConfirm }: P
         <View testID="confirm-delete-modal" style={styles.container}>
           {/* アイコン */}
           <View style={styles.iconWrapper}>
-            <Ionicons name="trash" size={32} color={colors.error} />
+            <Trash2 size={32} color={colors.error} />
           </View>
 
           {/* タイトル */}
@@ -61,7 +61,7 @@ export function ConfirmDeleteModal({ visible, mealName, onCancel, onConfirm }: P
                 pressed && styles.confirmButtonPressed,
               ]}
             >
-              <Ionicons name="trash-outline" size={16} color="#fff" />
+              <Trash2 size={16} color="#fff" />
               <Text style={styles.confirmText}>削除する</Text>
             </Pressable>
           </View>

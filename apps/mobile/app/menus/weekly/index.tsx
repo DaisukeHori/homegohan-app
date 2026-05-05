@@ -1,7 +1,31 @@
-import { Ionicons } from "@expo/vector-icons";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  BookOpen,
+  Check,
+  CheckCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  CircleEllipsis,
+  Coffee,
+  CloudMoon,
+  Heart,
+  Moon,
+  Pencil,
+  Plus,
+  Sparkles,
+  Sun,
+  SunMedium,
+  Trash2,
+  X,
+} from "lucide-react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -381,11 +405,11 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
         {/* Header */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <Ionicons name="bar-chart" size={18} color={colors.accent} />
+            <BarChart3 size={18} color={colors.accent} />
             <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{dateLabel} の栄養分析</Text>
           </View>
           <Pressable testID="weekly-nutrition-sheet-close" onPress={onClose} hitSlop={8}>
-            <Ionicons name="close" size={22} color={colors.textMuted} />
+            <X size={22} color={colors.textMuted} />
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
@@ -397,7 +421,7 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
           <View style={{ gap: spacing.md }}>
             <View style={{ backgroundColor: colors.successLight, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                <Ionicons name="heart" size={14} color={colors.success} />
+                <Heart size={14} color={colors.success} />
                 <Text style={{ fontSize: 12, fontWeight: "600", color: colors.success }}>褒めポイント</Text>
                 {(praiseComment || adviceText) && !isLoadingFeedback && (
                   <Pressable onPress={() => { const mc = meals.filter((m) => m.dish_name).length; if (day) fetchFeedback(day.day_date, totals, mc, true); }}
@@ -420,7 +444,7 @@ function NutritionBottomSheet({ visible, onClose, day, dateLabel, radarKeys, wee
             {(adviceText || isLoadingFeedback) && (
               <View style={{ backgroundColor: colors.accentLight, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                  <Ionicons name="sparkles" size={14} color={colors.accent} />
+                  <Sparkles size={14} color={colors.accent} />
                   <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>改善アドバイス</Text>
                 </View>
                 {isLoadingFeedback ? (
@@ -543,12 +567,12 @@ const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 // 表示順: breakfast / lunch / dinner / snack / midnight_snack
 const MEAL_ORDER = MEAL_ORDER_SHARED;
 
-const MEAL_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; label: string; color: string }> = {
-  breakfast: { icon: "sunny", label: "朝食", color: "#FF9800" },
-  lunch: { icon: "partly-sunny", label: "昼食", color: "#4CAF50" },
-  snack: { icon: "cafe", label: "おやつ", color: "#E91E63" },
-  dinner: { icon: "moon", label: "夕食", color: "#7C4DFF" },
-  midnight_snack: { icon: "cloudy-night", label: "夜食", color: "#3F51B5" },
+const MEAL_CONFIG: Record<string, { Icon: React.ComponentType<any>; label: string; color: string }> = {
+  breakfast: { Icon: Sun, label: "朝食", color: "#FF9800" },
+  lunch: { Icon: SunMedium, label: "昼食", color: "#4CAF50" },
+  snack: { Icon: Coffee, label: "おやつ", color: "#E91E63" },
+  dinner: { Icon: Moon, label: "夕食", color: "#7C4DFF" },
+  midnight_snack: { Icon: CloudMoon, label: "夜食", color: "#3F51B5" },
 };
 
 // MODE_CONFIG — @homegohan/shared の抽象キーを App 用の実色値に変換
@@ -1297,11 +1321,11 @@ export default function WeeklyMenuPage() {
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Ionicons
-            name={isCalendarExpanded ? "chevron-up" : "chevron-down"}
-            size={14}
-            color={colors.textMuted}
-          />
+          {isCalendarExpanded ? (
+            <ChevronUp size={14} color={colors.textMuted} />
+          ) : (
+            <ChevronDown size={14} color={colors.textMuted} />
+          )}
           <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>
             {displayMonth.getFullYear()}年{displayMonth.getMonth() + 1}月
           </Text>
@@ -1315,7 +1339,7 @@ export default function WeeklyMenuPage() {
               }}
               style={{ padding: 4 }}
             >
-              <Ionicons name="chevron-back" size={14} color={colors.textMuted} />
+              <ChevronLeft size={14} color={colors.textMuted} />
             </Pressable>
             <Pressable
               onPress={e => {
@@ -1324,7 +1348,7 @@ export default function WeeklyMenuPage() {
               }}
               style={{ padding: 4 }}
             >
-              <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+              <ChevronRight size={14} color={colors.textMuted} />
             </Pressable>
           </View>
         )}
@@ -1421,7 +1445,7 @@ export default function WeeklyMenuPage() {
       ) : error ? (
         <Card testID="weekly-error-banner" variant="error">
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <AlertCircle size={20} color={colors.error} />
             <Text style={{ flex: 1, color: colors.error, fontSize: 13 }}>{error}</Text>
           </View>
           <Button size="sm" variant="ghost" onPress={() => { setError(null); loadData(); }}>再読み込み</Button>
@@ -1458,7 +1482,7 @@ export default function WeeklyMenuPage() {
                 opacity: pressed ? 0.7 : 1,
               })}
             >
-              <Ionicons name="chevron-back" size={16} color={colors.textMuted} />
+              <ChevronLeft size={16} color={colors.textMuted} />
               <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>前の週</Text>
             </Pressable>
 
@@ -1505,7 +1529,7 @@ export default function WeeklyMenuPage() {
                       <Text style={{ fontSize: 8, fontWeight: "700", color: "#fff" }}>今日</Text>
                     </View>
                   ) : completedAll ? (
-                    <Ionicons name="checkmark-circle" size={12} color={selected ? "#fff" : colors.success} />
+                    <CheckCircle size={12} color={selected ? "#fff" : colors.success} />
                   ) : hasGenerating ? (
                     <ActivityIndicator size={10} color={selected ? "#fff" : (accentColor ?? colors.accent)} />
                   ) : (
@@ -1530,7 +1554,7 @@ export default function WeeklyMenuPage() {
                 opacity: pressed ? 0.7 : 1,
               })}
             >
-              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              <ChevronRight size={16} color={colors.textMuted} />
               <Text style={{ fontSize: 8, color: colors.textMuted, marginTop: 2 }}>翌週</Text>
             </Pressable>
           </View>
@@ -1558,12 +1582,12 @@ export default function WeeklyMenuPage() {
                     borderWidth: 1, borderColor: colors.accent,
                   }}
                 >
-                  <Ionicons name="bar-chart" size={13} color={colors.accent} />
+                  <BarChart3 size={13} color={colors.accent} />
                   <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>栄養</Text>
                 </Pressable>
                 <Button testID="weekly-request-button" size="sm" variant="ghost" onPress={() => router.push("/menus/weekly/request")}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                    <Ionicons name="sparkles" size={14} color={colors.accent} />
+                    <Sparkles size={14} color={colors.accent} />
                     <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>AIで再生成</Text>
                   </View>
                 </Button>
@@ -1608,7 +1632,7 @@ export default function WeeklyMenuPage() {
                 return null;
               })}
               {sortedMeals.map((m) => {
-                const mealCfg = MEAL_CONFIG[m.meal_type] ?? { icon: "ellipse", label: m.meal_type, color: colors.textMuted };
+                const mealCfg = MEAL_CONFIG[m.meal_type] ?? { Icon: CircleEllipsis, label: m.meal_type, color: colors.textMuted };
                 const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
                 const isGenerating = m.is_generating;
                 const isExpanded = expandedMealId === m.id;
@@ -1641,7 +1665,7 @@ export default function WeeklyMenuPage() {
                             opacity: isFirstInGroup ? 0.3 : 1,
                           }}
                         >
-                          <Ionicons name="arrow-up" size={12} color={isFirstInGroup ? colors.border : colors.textLight} />
+                          <ArrowUp size={12} color={isFirstInGroup ? colors.border : colors.textLight} />
                         </Pressable>
                         <Pressable
                           testID={`meal-reorder-down-${m.id}`}
@@ -1659,7 +1683,7 @@ export default function WeeklyMenuPage() {
                             opacity: isLastInGroup ? 0.3 : 1,
                           }}
                         >
-                          <Ionicons name="arrow-down" size={12} color={isLastInGroup ? colors.border : colors.textLight} />
+                          <ArrowDown size={12} color={isLastInGroup ? colors.border : colors.textLight} />
                         </Pressable>
                       </View>
                     )}
@@ -1694,11 +1718,11 @@ export default function WeeklyMenuPage() {
                           }}
                         >
                           {m.is_completed ? (
-                            <Ionicons name="checkmark" size={24} color="#fff" />
+                            <Check size={24} color="#fff" />
                           ) : isGenerating ? (
                             <ActivityIndicator size="small" color="#fff" />
                           ) : (
-                            <Ionicons name={mealCfg.icon} size={22} color="#fff" />
+                            <mealCfg.Icon size={22} color="#fff" />
                           )}
                         </View>
 
@@ -1733,9 +1757,9 @@ export default function WeeklyMenuPage() {
                           ) : isGenerating ? (
                             <StatusBadge variant="generating" label="生成中" />
                           ) : (
-                            <Ionicons name="checkmark-circle-outline" size={22} color={colors.textMuted} />
+                            <CheckCircle size={22} color={colors.textMuted} />
                           )}
-                          <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+                          <ChevronDown size={14} color={colors.textMuted} />
                         </View>
                       </Pressable>
                     )}
@@ -1769,11 +1793,11 @@ export default function WeeklyMenuPage() {
                             }}
                           >
                             {m.is_completed ? (
-                              <Ionicons name="checkmark" size={24} color="#fff" />
+                              <Check size={24} color="#fff" />
                             ) : isGenerating ? (
                               <ActivityIndicator size="small" color="#fff" />
                             ) : (
-                              <Ionicons name={mealCfg.icon} size={22} color="#fff" />
+                              <mealCfg.Icon size={22} color="#fff" />
                             )}
                           </View>
                           <View style={{ flex: 1, gap: 3 }}>
@@ -1790,7 +1814,7 @@ export default function WeeklyMenuPage() {
                               ) : null}
                             </View>
                           </View>
-                          <Ionicons name="chevron-up" size={14} color={colors.textMuted} />
+                          <ChevronUp size={14} color={colors.textMuted} />
                         </Pressable>
 
                         {/* dishes 一覧: 各 dish タップで RecipeModal open */}
@@ -1823,10 +1847,10 @@ export default function WeeklyMenuPage() {
                                   borderColor: colors.border,
                                 })}
                               >
-                                <Ionicons name="book-outline" size={14} color={colors.accent} />
+                                <BookOpen size={14} color={colors.accent} />
                                 <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>{dish.name}</Text>
                                 {dish.role ? <RoleBadge role={dish.role} /> : null}
-                                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+                                <ChevronRight size={14} color={colors.textMuted} />
                               </Pressable>
                             ))}
                           </View>
@@ -1859,9 +1883,9 @@ export default function WeeklyMenuPage() {
                               borderColor: colors.border,
                             })}
                           >
-                            <Ionicons name="book-outline" size={14} color={colors.accent} />
+                            <BookOpen size={14} color={colors.accent} />
                             <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>レシピを見る</Text>
-                            <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+                            <ChevronRight size={14} color={colors.textMuted} />
                           </Pressable>
                         )}
 
@@ -1889,7 +1913,7 @@ export default function WeeklyMenuPage() {
                               borderColor: colors.accent,
                             }}
                           >
-                            <Ionicons name="sparkles" size={16} color={colors.accent} />
+                            <Sparkles size={16} color={colors.accent} />
                             <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>AIで変更</Text>
                           </Pressable>
                           {/* 手動で修正ボタン */}
@@ -1910,7 +1934,7 @@ export default function WeeklyMenuPage() {
                               borderColor: colors.border,
                             }}
                           >
-                            <Ionicons name="create-outline" size={16} color={colors.textLight} />
+                            <Pencil size={16} color={colors.textLight} />
                             <Text style={{ fontSize: 12, fontWeight: "600", color: colors.textLight }}>手動で修正</Text>
                           </Pressable>
                           {/* 削除ボタン (アイコンのみ) */}
@@ -1929,7 +1953,7 @@ export default function WeeklyMenuPage() {
                               borderColor: colors.danger,
                             }}
                           >
-                            <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                            <Trash2 size={16} color={colors.danger} />
                           </Pressable>
                         </View>
                       </View>
@@ -1960,7 +1984,7 @@ export default function WeeklyMenuPage() {
                       borderColor: colors.accent,
                     })}
                   >
-                    <Ionicons name="add" size={14} color={colors.accent} />
+                    <Plus size={14} color={colors.accent} />
                     <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "600" }}>食事タイプ追加</Text>
                   </Pressable>
                 </View>
@@ -2090,7 +2114,7 @@ export default function WeeklyMenuPage() {
           opacity: pressed ? 0.85 : 1,
         })}
       >
-        <Ionicons name="sparkles" size={24} color="#fff" />
+        <Sparkles size={24} color="#fff" />
       </Pressable>
 
       {/* 人数設定モーダル */}

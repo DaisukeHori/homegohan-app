@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Plus, RefreshCw, ShoppingCart, Trash2, Users, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -237,7 +237,7 @@ export const ShoppingListModal: React.FC<Props> = ({
             {/* ヘッダー */}
             <View style={styles.header}>
               <View style={styles.headerLeft}>
-                <Ionicons name="cart" size={18} color={colors.accent} />
+                <ShoppingCart size={18} color={colors.accent} />
                 <Text style={styles.headerTitle}>買い物リスト</Text>
               </View>
               <View style={styles.headerRight}>
@@ -248,11 +248,11 @@ export const ShoppingListModal: React.FC<Props> = ({
                     style={styles.servingsBtn}
                     hitSlop={8}
                   >
-                    <Ionicons name="people-outline" size={20} color={colors.textLight} />
+                    <Users size={20} color={colors.textLight} />
                   </Pressable>
                 )}
                 <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
-                  <Ionicons name="close" size={18} color={colors.textLight} />
+                  <X size={18} color={colors.textLight} />
                 </Pressable>
               </View>
             </View>
@@ -273,7 +273,7 @@ export const ShoppingListModal: React.FC<Props> = ({
               </View>
             ) : items.length === 0 ? (
               <View style={styles.emptyBox}>
-                <Ionicons name="cart-outline" size={40} color={colors.textMuted} />
+                <ShoppingCart size={40} color={colors.textMuted} />
                 <Text style={styles.emptyText}>買い物リストが空です</Text>
               </View>
             ) : (
@@ -312,7 +312,7 @@ export const ShoppingListModal: React.FC<Props> = ({
                 style={styles.addBtn}
                 onPress={() => setAddModalVisible(true)}
               >
-                <Ionicons name="add" size={14} color={colors.textMuted} />
+                <Plus size={14} color={colors.textMuted} />
                 <Text style={styles.addBtnText}>追加</Text>
               </Pressable>
 
@@ -321,7 +321,7 @@ export const ShoppingListModal: React.FC<Props> = ({
                 style={styles.regenBtn}
                 onPress={onOpenRange}
               >
-                <Ionicons name="refresh" size={14} color="#fff" />
+                <RefreshCw size={14} color="#fff" />
                 <Text style={styles.regenBtnText}>献立から再生成</Text>
               </Pressable>
 
@@ -334,7 +334,7 @@ export const ShoppingListModal: React.FC<Props> = ({
                 {clearingAll ? (
                   <ActivityIndicator size="small" color={colors.textMuted} />
                 ) : (
-                  <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+                  <Trash2 size={16} color={colors.textMuted} />
                 )}
               </Pressable>
             </View>
