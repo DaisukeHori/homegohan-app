@@ -29,6 +29,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   Modal,
   Pressable,
   ScrollView,
@@ -271,12 +273,6 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
       .map((p) => `${p.x},${p.y}`).join(" ");
   });
   const spokes = Array.from({ length: n }, (_, i) => ptOnCircle(maxRadius, i));
-  const dataPoints = nutrientKeys.map((key, i) => {
-    const val = totals[key] as number;
-    const pct = Math.min(driPercent(key, val), MAX_PCT);
-    return ptOnCircle((pct / MAX_PCT) * maxRadius, i);
-  });
-  const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(" ");
   const refPolygon = Array.from({ length: n }, (_, i) =>
     ptOnCircle((100 / MAX_PCT) * maxRadius, i)
   ).map((p) => `${p.x},${p.y}`).join(" ");
@@ -285,6 +281,41 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
   );
   const avgPct = Math.round(pcts.reduce((s, v) => s + v, 0) / pcts.length);
   const labelFontSize = Math.max(7, Math.min(9, size / 26));
+
+  // ── アニメーション ──────────────────────────────────────────
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const [animatedPolygon, setAnimatedPolygon] = useState<string>("");
+  const [animatedDots, setAnimatedDots] = useState<{ x: number; y: number }[]>([]);
+
+  const currentKey = nutrientKeys.join(",") + JSON.stringify(totals);
+  const prevKeyRef = useRef<string>("");
+
+  useEffect(() => {
+    if (prevKeyRef.current === currentKey) return;
+    prevKeyRef.current = currentKey;
+
+    progressAnim.setValue(0);
+
+    const id = progressAnim.addListener(({ value }) => {
+      const pts = nutrientKeys.map((key, i) => {
+        const pct = Math.min(driPercent(key, totals[key] as number), MAX_PCT);
+        const r = (pct / MAX_PCT) * maxRadius * value;
+        return { x: cx + r * Math.cos(angleOf(i)), y: cy + r * Math.sin(angleOf(i)) };
+      });
+      setAnimatedPolygon(pts.map((p) => `${p.x},${p.y}`).join(" "));
+      setAnimatedDots(pts);
+    });
+
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: 600,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+
+    return () => { progressAnim.removeListener(id); };
+  }, [currentKey]);
+
   return (
     <View style={{ alignItems: "center", width: size, height: size }}>
       <Svg width={size} height={size}>
@@ -295,8 +326,10 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
         {spokes.map((p, i) => (
           <Line key={`s${i}`} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#E8E8E8" strokeWidth={1} />
         ))}
-        <Polygon points={dataPolygon} fill={`${colors.accent}40`} stroke={colors.accent} strokeWidth={2} />
-        {dataPoints.map((p, i) => (
+        {animatedPolygon ? (
+          <Polygon points={animatedPolygon} fill={`${colors.accent}40`} stroke={colors.accent} strokeWidth={2} />
+        ) : null}
+        {animatedDots.map((p, i) => (
           <Circle key={`d${i}`} cx={p.x} cy={p.y} r={3} fill={colors.accent} />
         ))}
         {nutrientKeys.map((key, i) => {
@@ -313,8 +346,8 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
         })}
       </Svg>
       <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ fontSize: 20, fontWeight: "800", color: driColor(avgPct) }}>{avgPct}%</Text>
-        <Text style={{ fontSize: 9, color: colors.textMuted }}>平均達成率</Text>
+        <Text style={{ fontSize: Math.max(12, size * 0.127), fontWeight: "700", color: driColor(avgPct) }}>{avgPct}%</Text>
+        <Text style={{ fontSize: Math.max(7, size * 0.045), color: colors.textMuted }}>平均達成率</Text>
       </View>
     </View>
   );
@@ -1644,17 +1677,13 @@ export default function WeeklyMenuPage() {
                 >
                   {/* レーダー + 栄養バー横並び */}
                   <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "flex-start" }}>
-                    {/* 左: レーダー + 達成率 */}
-                    <View style={{ alignItems: "center", gap: 4 }}>
+                    {/* 左: レーダー */}
+                    <View style={{ alignItems: "center" }}>
                       <NutritionRadarChartSvg
                         totals={dayNutritionData.totals}
                         nutrientKeys={radarChartNutrients}
                         size={100}
                       />
-                      <Text style={{ fontSize: 13, fontWeight: "700", color: colors.accent }}>
-                        {dayNutritionData.avgAchievement}%
-                      </Text>
-                      <Text style={{ fontSize: 10, color: colors.textMuted }}>平均達成率</Text>
                     </View>
                     {/* 右: 6 栄養素バー */}
                     <View style={{ flex: 1, gap: 6 }}>
