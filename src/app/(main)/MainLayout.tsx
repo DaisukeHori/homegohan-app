@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
 import AIChatBubble from "@/components/AIChatBubble";
 import { createClient } from "@/lib/supabase/client";
 import { clearUserScopedLocalStorage } from "@/lib/user-storage";
+import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 
 // ロール別の管理メニュー
 const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: string; color: string }> = {
@@ -24,6 +25,60 @@ const NAV_ITEMS = [
   { href: "/comparison", label: "比較", icon: Icons.Chart },
   { href: "/profile", label: "マイページ", icon: Icons.Profile },
 ];
+
+/**
+ * useNativeAppMode は useSearchParams を使うため Suspense 境界内で呼び出す必要がある。
+ * BottomNav コンポーネントに分離することで Suspense を局所化する。
+ */
+function BottomNav({ pathname }: { pathname: string }) {
+  const isNativeApp = useNativeAppMode();
+
+  if (isNativeApp) return null;
+
+  return (
+    <div className="lg:hidden fixed bottom-4 left-0 right-0 z-50 flex justify-center px-4">
+      <div className="w-full max-w-md bg-white/90 backdrop-blur-xl border border-white/20 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] h-16 flex items-center justify-around px-4">
+        {NAV_ITEMS.map((item) => {
+          const isActive = pathname === item.href;
+          const Icon = item.icon;
+
+          if (item.isFab) {
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex flex-col items-center justify-center"
+              >
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="w-12 h-12 rounded-full bg-foreground flex items-center justify-center text-white shadow-lg"
+                >
+                  <Icon className="w-6 h-6" />
+                </motion.div>
+              </Link>
+            );
+          }
+
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex flex-col items-center justify-center w-12 h-12 transition-colors ${
+                isActive ? 'text-accent' : 'text-gray-400'
+              }`}
+            >
+              <Icon className={`w-6 h-6 ${isActive ? 'fill-current' : ''}`} />
+              {isActive && (
+                <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full bg-accent mt-1" />
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function MainLayout({
   children,
@@ -192,48 +247,10 @@ export default function MainLayout({
         <AIChatBubble />
       </main>
 
-      {/* モバイル用ボトムナビゲーション (Floating) */}
-      <div className="lg:hidden fixed bottom-4 left-0 right-0 z-50 flex justify-center px-4">
-        <div className="w-full max-w-md bg-white/90 backdrop-blur-xl border border-white/20 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] h-16 flex items-center justify-around px-4">
-          {NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.href;
-            const Icon = item.icon;
-            
-            if (item.isFab) {
-              return (
-                <Link 
-                  key={item.href} 
-                  href={item.href}
-                  className="flex flex-col items-center justify-center"
-                >
-                  <motion.div 
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="w-12 h-12 rounded-full bg-foreground flex items-center justify-center text-white shadow-lg"
-                  >
-                    <Icon className="w-6 h-6" />
-                  </motion.div>
-                </Link>
-              );
-            }
-
-            return (
-              <Link 
-                key={item.href} 
-                href={item.href}
-                className={`flex flex-col items-center justify-center w-12 h-12 transition-colors ${
-                  isActive ? 'text-accent' : 'text-gray-400'
-                }`}
-              >
-                <Icon className={`w-6 h-6 ${isActive ? 'fill-current' : ''}`} />
-                {isActive && (
-                   <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full bg-accent mt-1" />
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      </div>
+      {/* モバイル用ボトムナビゲーション (Floating) — isNativeApp 時は非表示 */}
+      <Suspense fallback={null}>
+        <BottomNav pathname={pathname} />
+      </Suspense>
 
     </div>
   )
