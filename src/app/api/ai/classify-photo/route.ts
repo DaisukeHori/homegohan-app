@@ -338,6 +338,18 @@ export async function POST(request: Request) {
       totalElapsedMs: Date.now() - startedAt,
     });
 
+    if (!result.type || result.type === 'unknown' || (result.confidence ?? 0) < 0.3) {
+      return NextResponse.json(
+        {
+          error: 'unknown_type',
+          message: '写真の種類を判定できませんでした。食事・冷蔵庫・健診結果・体重計のいずれかが鮮明に写った写真を撮り直してください。',
+          ...result,
+          modelUsed: model,
+        },
+        { status: 422 },
+      );
+    }
+
     return NextResponse.json({
       ...result,
       modelUsed: model,

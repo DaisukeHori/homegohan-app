@@ -519,13 +519,17 @@ export default function MealCaptureModal() {
         setCatalogMatches(Array.isArray(data.catalogMatches) ? data.catalogMatches : []);
         setStep('result');
       } else {
+        const errBody = await res.json().catch(() => ({}));
         void logToServer('warn', 'meal-photo analysis failed', {
           photoCount: photoFiles.length,
           mealType: selectedMealType,
           status: res.status,
+          error: errBody.error,
         });
-        alert('解析に失敗しました。もう一度お試しください。');
-        setStep('capture');
+        alert(errBody.message || errBody.error || '解析に失敗しました。もう一度お試しください。');
+        setStep('mode-select');
+        setPhotoFiles([]);
+        setPhotoPreviews([]);
       }
     } catch (error) {
       console.error('Analysis error:', error);
@@ -658,8 +662,11 @@ export default function MealCaptureModal() {
         setFridgeSuggestions(data.suggestions || []);
         setStep('fridge-result');
       } else {
-        alert('冷蔵庫の解析に失敗しました。');
-        setStep('capture');
+        const errBody = await res.json().catch(() => ({}));
+        alert(errBody.message || errBody.error || '冷蔵庫の解析に失敗しました。');
+        setStep('mode-select');
+        setPhotoFiles([]);
+        setPhotoPreviews([]);
       }
     } catch (error) {
       console.error('Fridge analysis error:', error);
@@ -694,8 +701,11 @@ export default function MealCaptureModal() {
         setHealthModelUsed(data.modelUsed || '');
         setStep('health-result');
       } else {
-        alert('健康診断結果の解析に失敗しました。');
-        setStep('capture');
+        const errBody = await res.json().catch(() => ({}));
+        alert(errBody.message || errBody.error || '健康診断結果の解析に失敗しました。');
+        setStep('mode-select');
+        setPhotoFiles([]);
+        setPhotoPreviews([]);
       }
     } catch (error) {
       console.error('Health checkup analysis error:', error);
@@ -746,8 +756,11 @@ export default function MealCaptureModal() {
         await fetchWeightHistory();
         setStep('weight-result');
       } else {
-        alert('体重計の読み取りに失敗しました。');
-        setStep('capture');
+        const errBody = await res.json().catch(() => ({}));
+        alert(errBody.message || errBody.error || '体重計の読み取りに失敗しました。');
+        setStep('mode-select');
+        setPhotoFiles([]);
+        setPhotoPreviews([]);
       }
     } catch (error) {
       console.error('Weight scale analysis error:', error);
@@ -1280,6 +1293,24 @@ export default function MealCaptureModal() {
 
         {/* ステップ3: 解析結果 */}
         {step === 'result' && (
+          !analyzedDishes.length ? (
+            <motion.div
+              key="result-empty"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
+            >
+              <div style={{ fontSize: 14, color: colors.textMuted }}>料理を読み取れませんでした</div>
+              <button
+                onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); setAnalyzedDishes([]); }}
+                className="py-3 px-6 rounded-xl"
+                style={{ background: colors.accent }}
+              >
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
+              </button>
+            </motion.div>
+          ) : (
           <motion.div
             key="result"
             initial={{ opacity: 0, y: 20 }}
@@ -1453,6 +1484,7 @@ export default function MealCaptureModal() {
               <span style={{ fontSize: 14, color: colors.textLight }}>撮り直す</span>
             </button>
           </motion.div>
+          )
         )}
 
         {/* ステップ4: 日時選択 */}
@@ -1590,6 +1622,24 @@ export default function MealCaptureModal() {
 
         {/* 冷蔵庫解析結果 */}
         {step === 'fridge-result' && (
+          !fridgeIngredients.length ? (
+            <motion.div
+              key="fridge-result-empty"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
+            >
+              <div style={{ fontSize: 14, color: colors.textMuted }}>食材を読み取れませんでした</div>
+              <button
+                onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); }}
+                className="py-3 px-6 rounded-xl"
+                style={{ background: colors.accent }}
+              >
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
+              </button>
+            </motion.div>
+          ) : (
           <motion.div
             key="fridge-result"
             initial={{ opacity: 0, y: 20 }}
@@ -1720,10 +1770,29 @@ export default function MealCaptureModal() {
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
           </motion.div>
+          )
         )}
 
         {/* 健康診断解析結果 */}
         {step === 'health-result' && (
+          Object.values(healthData ?? {}).every(v => v == null) ? (
+            <motion.div
+              key="health-result-empty"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
+            >
+              <div style={{ fontSize: 14, color: colors.textMuted }}>検査値を読み取れませんでした</div>
+              <button
+                onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); }}
+                className="py-3 px-6 rounded-xl"
+                style={{ background: colors.accent }}
+              >
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
+              </button>
+            </motion.div>
+          ) : (
           <motion.div
             key="health-result"
             initial={{ opacity: 0, y: 20 }}
@@ -1927,10 +1996,12 @@ export default function MealCaptureModal() {
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
           </motion.div>
+          )
         )}
 
         {/* 体重計結果 */}
-        {step === 'weight-result' && weightData && (
+        {step === 'weight-result' && (
+          weightData && weightData.weight > 0 ? (
           <motion.div
             key="weight-result"
             initial={{ opacity: 0, y: 20 }}
@@ -2097,6 +2168,24 @@ export default function MealCaptureModal() {
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
           </motion.div>
+          ) : (
+            <motion.div
+              key="weight-result-empty"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
+            >
+              <div style={{ fontSize: 14, color: colors.textMuted }}>体重を読み取れませんでした</div>
+              <button
+                onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); setWeightData(null); }}
+                className="py-3 px-6 rounded-xl"
+                style={{ background: colors.accent }}
+              >
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
+              </button>
+            </motion.div>
+          )
         )}
 
         {/* 判別失敗画面 */}

@@ -45,6 +45,13 @@ export async function POST(request: Request) {
     const extractedData = normalizeHealthCheckupExtractedData(data);
     const fieldCount = countExtractedHealthFields(extractedData);
 
+    if (fieldCount === 0) {
+      return NextResponse.json(
+        { error: 'mode_mismatch', message: '健康診断結果が読み取れませんでした。健康診断書がはっきり写った写真を撮り直してください。' },
+        { status: 422 },
+      );
+    }
+
     return NextResponse.json({
       extractedData,
       fieldCount,
