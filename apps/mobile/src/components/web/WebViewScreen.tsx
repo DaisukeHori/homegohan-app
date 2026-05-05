@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView, ShouldStartLoadRequest } from 'react-native-webview';
+import { WebView, ShouldStartLoadRequest, WebViewNavigation } from 'react-native-webview';
 import { useNavigation, useRouter } from 'expo-router';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -32,6 +32,8 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
   const router = useRouter();
+  // SPA (pushState) ナビゲーションによるタブ越え検知用: 重複処理防止
+  const lastRedirectedRef = useRef<string | null>(null);
 
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
@@ -161,6 +163,53 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
     }
   };
 
+  // Fix 1b: SPA (Next.js App Router pushState) によるタブ越えナビゲーション検知
+  // onShouldStartLoadWithRequest は HTTP リクエストのみ発火するため、
+  // client-side navigation (pushState) は捕捉できない。
+  // onNavigationStateChange は URL 変化のたびに発火するため SPA ナビゲーションも捕捉可能。
+  const onNavigationStateChange = (navState: WebViewNavigation) => {
+    try {
+      const url = new URL(navState.url);
+      const webBaseUrl = new URL(WEB_BASE_URL);
+
+      // 自ドメイン以外は無視
+      if (url.origin !== webBaseUrl.origin) return;
+
+      const targetPath = url.pathname;
+      const currentTabPath = path.split('?')[0].split('#')[0];
+
+      // auth 関連パスは無視
+      if (targetPath.startsWith('/auth/')) return;
+
+      // 同じタブ内ナビゲーション → lastRedirectedRef をリセットして終了
+      if (
+        targetPath === currentTabPath ||
+        targetPath.startsWith(currentTabPath + '/')
+      ) {
+        lastRedirectedRef.current = null;
+        return;
+      }
+
+      // 既にこの URL へのリダイレクトを処理済みなら無限ループ防止のためスキップ
+      if (lastRedirectedRef.current === navState.url) return;
+
+      // 別タブのパスに該当する場合 → router.push でタブ切り替え
+      const matched = TAB_ROUTES.find(
+        (t) =>
+          targetPath === t.pathPrefix ||
+          targetPath.startsWith(t.pathPrefix + '/')
+      );
+      if (matched) {
+        lastRedirectedRef.current = navState.url;
+        setTimeout(() => {
+          router.push(matched.tab as any);
+        }, 0);
+      }
+    } catch {
+      // URL パース失敗時は無視
+    }
+  };
+
   if (!uri) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
@@ -185,8 +234,10 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         javaScriptEnabled={true}
         startInLoadingState={true}
         pullToRefreshEnabled={true}
-        // Fix 1: 別タブへのリンクをタブ切り替えに変換
+        // Fix 1: 別タブへのリンクをタブ切り替えに変換 (HTTP リクエスト)
         onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+        // Fix 1b: SPA (pushState) ナビゲーションによるタブ越えを検知してタブ切り替え
+        onNavigationStateChange={onNavigationStateChange}
         // Fix 3: iOS 18 カメラバツボタン workaround
         // <input type="file"> 経由カメラの dismiss が効かないケースへの対処
         // 根本解決は次 PR で expo-image-picker ネイティブブリッジ実装予定
