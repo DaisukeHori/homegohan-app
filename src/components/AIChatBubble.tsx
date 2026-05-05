@@ -159,6 +159,12 @@ export default function AIChatBubble() {
   const [fabPosition, setFabPosition] = useState<{ x: number; y: number }>(() => {
     if (typeof window === 'undefined') return { x: 16, y: 96 };
     try {
+      // Cookie 優先（タブ間共有）
+      const cookieMatch = document.cookie.match(/aiChatBubblePosition=([^;]+)/);
+      if (cookieMatch) {
+        return JSON.parse(decodeURIComponent(cookieMatch[1]));
+      }
+      // フォールバック: localStorage
       const saved = localStorage.getItem('aiChatBubblePosition');
       if (saved) return JSON.parse(saved);
     } catch {
@@ -838,7 +844,10 @@ export default function AIChatBubble() {
               if (wasDrag) {
                 // ドラッグ終了 → 最終位置を保存 (ref から最新値を取得)
                 try {
-                  localStorage.setItem('aiChatBubblePosition', JSON.stringify(fabPositionRef.current));
+                  const json = JSON.stringify(fabPositionRef.current);
+                  localStorage.setItem('aiChatBubblePosition', json);
+                  // Cookie にも保存（タブ間共有、30日）
+                  document.cookie = `aiChatBubblePosition=${encodeURIComponent(json)}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
                 } catch {
                   // ignore
                 }
