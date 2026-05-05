@@ -1489,7 +1489,7 @@ export default function WeeklyMenuPage() {
                     paddingVertical: spacing.sm,
                     paddingHorizontal: 2,
                     borderRadius: radius.lg,
-                    backgroundColor: selected ? (accentColor ?? colors.accent) : "transparent",
+                    backgroundColor: selected ? colors.accent : "transparent",
                     ...(pressed ? { opacity: 0.9 } : {}),
                   })}
                 >
