@@ -1116,20 +1116,6 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* ========== AIフローティングボタン ========== */}
-      <Pressable
-        testID="home-ai-fab"
-        onPress={() => router.push("/ai")}
-        style={{
-          position: "absolute", bottom: 100, right: spacing.lg,
-          width: 56, height: 56, borderRadius: 28,
-          backgroundColor: colors.accent, alignItems: "center", justifyContent: "center",
-          ...shadows.lg,
-        }}
-      >
-        <Ionicons name="chatbubble-ellipses" size={24} color="#fff" />
-      </Pressable>
-
       {/* ========== チェックインフィードバックトースト ========== */}
       {checkinFeedback && (
         <Animated.View
