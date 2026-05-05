@@ -76,6 +76,7 @@ export default function RootLayout() {
             <Stack.Screen name="(support)" />
             <Stack.Screen name="(super-admin)" />
             <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
+            <Stack.Screen name="web-prefill" options={{ presentation: "modal", title: "食事記録" }} />
           </Stack>
         </ProfileProvider>
       </AuthProvider>
