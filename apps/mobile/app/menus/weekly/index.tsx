@@ -1507,7 +1507,7 @@ export default function WeeklyMenuPage() {
       </View>
 
       {/* 週日付タブ — ScrollView 外で固定 (スクロールしても常に表示) */}
-      <View style={{ paddingHorizontal: spacing.lg }}>
+      <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md, shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 2 }}>
         {/* 日付セレクタ — 週ナビ左右端 + 7日タブ中央 */}
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           {/* 前の週ボタン */}
@@ -1607,7 +1607,7 @@ export default function WeeklyMenuPage() {
         />
       </View>
 
-      <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+      <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.md, gap: spacing.lg }}>
       {isLoading ? (
         <LoadingState />
       ) : error ? (
