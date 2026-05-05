@@ -58,6 +58,7 @@ apps/mobile/.expo
 apps/mobile/dist
 apps/mobile/web-build
 apps/mobile/.eas*
+!apps/mobile/.easignore
 
 # データセット（CSVは大きいのでGitに含めない）
 data/raw/
