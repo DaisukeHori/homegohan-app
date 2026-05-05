@@ -1,5 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Text } from "react-native";
 
 import { colors, radius, spacing } from "../../theme";
 
@@ -21,45 +20,25 @@ export function EmptySlot({ mealType: _mealType, dayId, dayDate: _dayDate, onPre
     <Pressable
       testID={`empty-slot-${dayId}-${_mealType}`}
       onPress={onPress}
-      style={({ pressed }) => ({
-        flexDirection: "row",
+      style={{
         alignItems: "center",
-        gap: spacing.md,
-        padding: spacing.lg,
-        backgroundColor: isGenerating
-          ? colors.accentLight
-          : pressed
-          ? colors.card
-          : colors.bg,
+        justifyContent: "center",
+        paddingVertical: spacing.lg,
+        paddingHorizontal: spacing.lg,
+        backgroundColor: colors.card,
         borderRadius: radius.lg,
         borderWidth: 2,
         borderColor: isGenerating ? colors.accent : colors.border,
         borderStyle: "dashed",
-      })}
+      }}
     >
-      {/* 食事タイプアイコン (グレー小型) */}
-      <View
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: radius.sm,
-          backgroundColor: colors.border,
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {isGenerating ? (
-          <ActivityIndicator size="small" color={colors.textMuted} />
-        ) : (
-          <Ionicons name="add" size={16} color={colors.textMuted} />
-        )}
-      </View>
-
-      {/* テキスト */}
-      <Text style={{ flex: 1, fontSize: 14, color: isGenerating ? colors.accent : colors.textMuted }}>
-        {isGenerating ? "AI が生成中..." : `+ ${mealLabel}を追加`}
-      </Text>
+      {isGenerating ? (
+        <ActivityIndicator size="small" color={colors.accent} />
+      ) : (
+        <Text style={{ fontSize: 14, color: colors.textMuted }}>
+          {`+ ${mealLabel}を追加`}
+        </Text>
+      )}
     </Pressable>
   );
 }
-
