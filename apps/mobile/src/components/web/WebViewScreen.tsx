@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView, ShouldStartLoadRequest, WebViewNavigation } from 'react-native-webview';
+import { WebView } from 'react-native-webview';
 import { useNavigation, useRouter } from 'expo-router';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -26,14 +26,87 @@ const TAB_ROUTES: Array<{ pathPrefix: string; tab: string }> = [
   { pathPrefix: '/home', tab: '/(tabs)/home' },
 ];
 
+// Fix 1: postMessage 方式によるタブ独立性
+// WebView 内に inject して <a> クリックを capture phase で捕捉し、
+// 別タブのパスへの遷移を preventDefault + postMessage で React Native に通知する。
+// onNavigationStateChange / onShouldStartLoadWithRequest よりも確実 (SPA pushState も捕捉)。
+const buildTabInterceptScript = (currentTabRoot: string): string => {
+  const tabPaths = TAB_ROUTES.map((t) => t.pathPrefix);
+  return `
+(function() {
+  if (window.__tabInterceptInstalled) return;
+  window.__tabInterceptInstalled = true;
+
+  var TAB_PATHS = ${JSON.stringify(tabPaths)};
+  var CURRENT_TAB_ROOT = ${JSON.stringify(currentTabRoot)};
+
+  function findClickedLink(target) {
+    while (target && target !== document.body) {
+      if (target.tagName === 'A' && target.href) return target;
+      target = target.parentElement;
+    }
+    return null;
+  }
+
+  function matchTab(targetPath) {
+    // 自タブ内なら null (素通し)
+    if (targetPath === CURRENT_TAB_ROOT || targetPath.indexOf(CURRENT_TAB_ROOT + '/') === 0) return null;
+    // 別タブにマッチするか
+    for (var i = 0; i < TAB_PATHS.length; i++) {
+      var p = TAB_PATHS[i];
+      if (targetPath === p || targetPath.indexOf(p + '/') === 0) return p;
+    }
+    return null;
+  }
+
+  // クリックイベントを capture phase で intercept
+  document.addEventListener('click', function(e) {
+    var link = findClickedLink(e.target);
+    if (!link) return;
+    try {
+      var url = new URL(link.href, window.location.origin);
+      if (url.origin !== window.location.origin) return;
+      var matched = matchTab(url.pathname);
+      if (matched) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'tab-navigate',
+          path: matched,
+          fullPath: url.pathname + url.search,
+        }));
+      }
+    } catch (err) {}
+  }, true);
+
+  // Next.js の history.pushState を hook して programmatic navigation も捕捉
+  var _pushState = history.pushState.bind(history);
+  history.pushState = function() {
+    var result = _pushState.apply(history, arguments);
+    setTimeout(function() {
+      var matched = matchTab(window.location.pathname);
+      if (matched) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'tab-navigate',
+          path: matched,
+          fullPath: window.location.pathname + window.location.search,
+        }));
+        history.back();
+      }
+    }, 0);
+    return result;
+  };
+})();
+true;
+`;
+};
+
 export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
   const navigation = useNavigation();
   const router = useRouter();
-  // SPA (pushState) ナビゲーションによるタブ越え検知用: 重複処理防止
-  const lastRedirectedRef = useRef<string | null>(null);
 
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
@@ -114,101 +187,8 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
     init();
   }, [path]);
 
-  // Fix 1: タブ独立性
-  // 別タブのパスへのナビゲーションを interceptして router.push でタブ切り替えを行う
-  const onShouldStartLoadWithRequest = (request: ShouldStartLoadRequest): boolean => {
-    try {
-      const url = new URL(request.url);
-      const webBaseUrl = new URL(WEB_BASE_URL);
-
-      // 自ドメイン以外 (外部リンク) はそのまま許可
-      if (url.origin !== webBaseUrl.origin) return true;
-
-      const targetPath = url.pathname;
-
-      // このタブが所有する path prefix を特定する
-      // path prop からクエリ・ハッシュを除いた純粋なパス部分を取得
-      const currentTabPath = path.split('?')[0].split('#')[0];
-
-      // 現在のタブが所有するパス (同じタブ内ナビゲーション) → 許可
-      if (
-        targetPath === currentTabPath ||
-        targetPath.startsWith(currentTabPath + '/')
-      ) {
-        return true;
-      }
-
-      // auth 関連パス (native-bridge 等) は WebView 内で処理
-      if (targetPath.startsWith('/auth/')) return true;
-
-      // 別タブのパスに該当する場合 → router.push でタブ切り替え、WebView では読み込まない
-      const matched = TAB_ROUTES.find(
-        (t) =>
-          targetPath === t.pathPrefix ||
-          targetPath.startsWith(t.pathPrefix + '/')
-      );
-      if (matched) {
-        // setTimeout でナビゲーションを非同期化し、WebView コールバック中の直接呼び出しを避ける
-        setTimeout(() => {
-          router.push(matched.tab as any);
-        }, 0);
-        return false;
-      }
-
-      // それ以外 (未マッピングのパス) は WebView 内で許可
-      return true;
-    } catch {
-      // URL パース失敗時は安全側でそのまま許可
-      return true;
-    }
-  };
-
-  // Fix 1b: SPA (Next.js App Router pushState) によるタブ越えナビゲーション検知
-  // onShouldStartLoadWithRequest は HTTP リクエストのみ発火するため、
-  // client-side navigation (pushState) は捕捉できない。
-  // onNavigationStateChange は URL 変化のたびに発火するため SPA ナビゲーションも捕捉可能。
-  const onNavigationStateChange = (navState: WebViewNavigation) => {
-    try {
-      const url = new URL(navState.url);
-      const webBaseUrl = new URL(WEB_BASE_URL);
-
-      // 自ドメイン以外は無視
-      if (url.origin !== webBaseUrl.origin) return;
-
-      const targetPath = url.pathname;
-      const currentTabPath = path.split('?')[0].split('#')[0];
-
-      // auth 関連パスは無視
-      if (targetPath.startsWith('/auth/')) return;
-
-      // 同じタブ内ナビゲーション → lastRedirectedRef をリセットして終了
-      if (
-        targetPath === currentTabPath ||
-        targetPath.startsWith(currentTabPath + '/')
-      ) {
-        lastRedirectedRef.current = null;
-        return;
-      }
-
-      // 既にこの URL へのリダイレクトを処理済みなら無限ループ防止のためスキップ
-      if (lastRedirectedRef.current === navState.url) return;
-
-      // 別タブのパスに該当する場合 → router.push でタブ切り替え
-      const matched = TAB_ROUTES.find(
-        (t) =>
-          targetPath === t.pathPrefix ||
-          targetPath.startsWith(t.pathPrefix + '/')
-      );
-      if (matched) {
-        lastRedirectedRef.current = navState.url;
-        setTimeout(() => {
-          router.push(matched.tab as any);
-        }, 0);
-      }
-    } catch {
-      // URL パース失敗時は無視
-    }
-  };
+  // path からクエリ・ハッシュを除いた純粋なパス部分
+  const currentTabRoot = path.split('?')[0].split('#')[0];
 
   if (!uri) {
     return (
@@ -227,6 +207,9 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         testID={testID ?? 'webview-screen'}
         source={{ uri }}
         injectedJavaScriptBeforeContentLoaded={injectedJS || undefined}
+        // Fix 1: postMessage 方式のタブ intercept script を全ページロード後に inject
+        // capture phase click + pushState hook で SPA ナビゲーションも確実に捕捉
+        injectedJavaScript={buildTabInterceptScript(currentTabRoot)}
         sharedCookiesEnabled={true}
         thirdPartyCookiesEnabled={true}
         contentInsetAdjustmentBehavior="never"
@@ -234,19 +217,26 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         javaScriptEnabled={true}
         startInLoadingState={true}
         pullToRefreshEnabled={true}
-        // Fix 1: 別タブへのリンクをタブ切り替えに変換 (HTTP リクエスト)
-        onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
-        // Fix 1b: SPA (pushState) ナビゲーションによるタブ越えを検知してタブ切り替え
-        onNavigationStateChange={onNavigationStateChange}
         // Fix 3: iOS 18 カメラバツボタン workaround
         // <input type="file"> 経由カメラの dismiss が効かないケースへの対処
         // 根本解決は次 PR で expo-image-picker ネイティブブリッジ実装予定
         // TODO: Phase B-2 で <input type="file"> を expo-image-picker bridge に置換
         allowsInlineMediaPlayback={true}
         mediaPlaybackRequiresUserAction={false}
-        onMessage={(_event) => {
-          // ネイティブからのメッセージ受信 (撮影結果等)
-          // TODO: Phase B-2 で実装
+        onMessage={(event) => {
+          try {
+            const data = JSON.parse(event.nativeEvent.data);
+            if (data.type === 'tab-navigate') {
+              const matched = TAB_ROUTES.find((t) => t.pathPrefix === data.path);
+              if (matched) {
+                setTimeout(() => {
+                  router.push(matched.tab as any);
+                }, 0);
+              }
+            }
+          } catch {
+            // JSON パース失敗は無視
+          }
         }}
         renderLoading={() => (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>

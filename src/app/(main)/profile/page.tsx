@@ -323,15 +323,14 @@ function ProfilePageContent() {
     <div className="min-h-screen bg-gray-50 pb-40">
 
       {/* ヘッダーエリア (#188: 常に即時レンダリング → LCP 改善) */}
-      <div className="relative h-56 bg-gradient-to-br from-orange-400 to-orange-500 overflow-hidden">
-        <div className="absolute inset-0 opacity-20">
-          <div className="absolute top-10 left-10 w-32 h-32 rounded-full bg-white/30" />
-          <div className="absolute bottom-0 right-0 w-48 h-48 rounded-full bg-white/20 -mb-20 -mr-20" />
-        </div>
-        <div className="absolute top-0 left-0 right-0 p-6 z-10 flex justify-between">
+      {/* 他ページ (home 等) と同じ薄いグラデーション背景に統一 */}
+      <div className="relative overflow-hidden bg-gradient-to-br from-orange-50 via-amber-50 to-rose-50">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl from-orange-200/30 to-transparent rounded-full blur-3xl" />
+        <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-rose-200/30 to-transparent rounded-full blur-3xl" />
+        <div className="relative px-6 pt-10 pb-24 z-10 flex justify-between">
           <Button
             variant="ghost"
-            className="text-white hover:bg-white/20"
+            className="text-gray-600 hover:bg-black/5"
             onClick={() => router.push('/settings')}
           >
             <Icons.Settings className="w-6 h-6" />
@@ -339,14 +338,14 @@ function ProfilePageContent() {
           <div className="flex gap-2">
             <Button
               variant="ghost"
-              className="text-white hover:bg-white/20"
+              className="text-gray-600 hover:bg-black/5"
               onClick={() => setIsEditing(true)}
             >
               <Icons.Edit className="w-6 h-6" />
             </Button>
             <Button
               variant="ghost"
-              className="text-white hover:bg-white/20"
+              className="text-gray-600 hover:bg-black/5"
               onClick={async () => {
                 if (!confirm('ログアウトしますか？')) return;
                 clearUserScopedLocalStorage();
