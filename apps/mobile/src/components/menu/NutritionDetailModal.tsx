@@ -15,6 +15,7 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -244,12 +245,11 @@ export const NutritionDetailModal: React.FC<Props> = ({
         testID="nutrition-detail-modal"
         visible={visible}
         animationType="slide"
-        transparent
-        statusBarTranslucent
+        presentationStyle="pageSheet"
         onRequestClose={onClose}
       >
-        <View style={styles.backdrop}>
-          <View style={styles.sheet}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+          <View style={{ flex: 1 }}>
             {/* Header */}
             <View style={styles.header}>
               <View style={styles.headerLeft}>
@@ -382,7 +382,7 @@ export const NutritionDetailModal: React.FC<Props> = ({
               <View style={styles.bottomPad} />
             </ScrollView>
           </View>
-        </View>
+        </SafeAreaView>
       </Modal>
 
       {/* 献立改善モーダル */}
@@ -400,22 +400,6 @@ export const NutritionDetailModal: React.FC<Props> = ({
 // ============================================================
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: radius['2xl'],
-    borderTopRightRadius: radius['2xl'],
-    maxHeight: '92%',
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: -4 },
-    elevation: 12,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

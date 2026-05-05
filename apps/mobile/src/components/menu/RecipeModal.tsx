@@ -4,6 +4,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,7 +12,7 @@ import {
 } from "react-native";
 
 import { getApi } from "../../lib/api";
-import { colors, radius, shadows, spacing } from "../../theme";
+import { colors, radius, spacing } from "../../theme";
 
 // ============================================================
 // Types
@@ -160,13 +161,12 @@ export const RecipeModal: React.FC<Props> = ({ visible, meal, onClose }) => {
   return (
     <Modal
       visible={visible}
-      transparent
       animationType="slide"
+      presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View testID="recipe-modal" style={styles.overlay}>
-        <Pressable style={styles.backdrop} onPress={onClose} />
-        <View style={styles.sheet}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.card }}>
+        <View testID="recipe-modal" style={styles.sheet}>
           {/* ヘッダー */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -318,7 +318,7 @@ export const RecipeModal: React.FC<Props> = ({ visible, meal, onClose }) => {
             </Pressable>
           </View>
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 };
@@ -328,20 +328,8 @@ export const RecipeModal: React.FC<Props> = ({ visible, meal, onClose }) => {
 // ============================================================
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.5)",
-  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    maxHeight: "85%",
-    ...shadows.lg,
+    flex: 1,
   },
   header: {
     flexDirection: "row",

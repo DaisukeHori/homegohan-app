@@ -3,8 +3,11 @@ import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -98,10 +101,14 @@ export const ServingsModal: React.FC<Props> = ({
     <Modal
       visible={visible}
       animationType="slide"
-      transparent
+      presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
         <View testID="servings-modal" style={styles.container}>
           {/* ヘッダー */}
           <View style={styles.header}>
@@ -234,26 +241,18 @@ export const ServingsModal: React.FC<Props> = ({
             )}
           </Pressable>
         </View>
-      </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
   container: {
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: radius["2xl"],
-    borderTopRightRadius: radius["2xl"],
+    flex: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xl,
-    maxHeight: "90%",
-    ...shadows.lg,
   },
   header: {
     flexDirection: "row",

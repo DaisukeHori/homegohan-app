@@ -5,6 +5,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -75,10 +76,10 @@ export const PantryModal: React.FC<Props> = ({ visible, onClose }) => {
         testID="pantry-modal"
         visible={visible}
         animationType="slide"
-        transparent
+        presentationStyle="pageSheet"
         onRequestClose={onClose}
       >
-        <View style={styles.overlay}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.card }}>
           <View style={styles.sheet}>
             {/* Header */}
             <View style={styles.header}>
@@ -134,7 +135,7 @@ export const PantryModal: React.FC<Props> = ({ visible, onClose }) => {
               </ScrollView>
             )}
           </View>
-        </View>
+        </SafeAreaView>
       </Modal>
 
       <AddFridgeModal
@@ -147,16 +148,8 @@ export const PantryModal: React.FC<Props> = ({ visible, onClose }) => {
 };
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    maxHeight: '80%',
+    flex: 1,
   },
   header: {
     flexDirection: 'row',

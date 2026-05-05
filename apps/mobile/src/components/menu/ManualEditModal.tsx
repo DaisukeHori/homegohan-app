@@ -16,8 +16,11 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   Text,
   TextInput,
@@ -293,24 +296,18 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
         testID="manual-edit-modal"
         visible={visible}
         animationType="slide"
-        transparent
+        presentationStyle="pageSheet"
         onRequestClose={onClose}
       >
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "flex-end",
-            backgroundColor: "rgba(0,0,0,0.4)",
-          }}
-        >
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
           <View
             style={{
-              backgroundColor: colors.bg,
-              borderTopLeftRadius: radius["2xl"],
-              borderTopRightRadius: radius["2xl"],
-              maxHeight: "92%",
+              flex: 1,
               paddingBottom: spacing["2xl"],
-              ...shadows.lg,
             }}
           >
             {/* ヘッダー */}
@@ -790,7 +787,8 @@ export function ManualEditModal({ visible, meal, onClose, onSave }: Props) {
               </>
             )}
           </View>
-        </View>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
       <PhotoEditModal
         visible={showPhotoEdit}

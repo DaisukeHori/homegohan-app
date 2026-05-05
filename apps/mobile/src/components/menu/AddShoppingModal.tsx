@@ -2,8 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -78,12 +81,16 @@ export const AddShoppingModal: React.FC<Props> = ({ visible, onClose, onAdded })
     <Modal
       testID="add-shopping-modal"
       visible={visible}
-      transparent
       animationType="slide"
+      presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <Pressable style={styles.overlay} onPress={handleClose}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.card }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+        <View style={styles.sheet}>
           {/* ヘッダー */}
           <View style={styles.header}>
             <Text style={styles.title}>買い物アイテム追加</Text>
@@ -170,22 +177,16 @@ export const AddShoppingModal: React.FC<Props> = ({ visible, onClose, onAdded })
               </Text>
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius['2xl'],
-    borderTopRightRadius: radius['2xl'],
+    flex: 1,
     paddingBottom: spacing['2xl'],
   },
   header: {
