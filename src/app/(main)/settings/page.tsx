@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { requestNotificationPermission } from "@/lib/local-notification";
+import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 
 type WeekStartDay = 'sunday' | 'monday';
 
@@ -39,7 +40,19 @@ const Switch = ({
 export default function SettingsPage() {
   const router = useRouter();
   const supabase = createClient();
+  const isNativeApp = useNativeAppMode();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+
+  // Fix 3: mode=app 時は postMessage で RN に転送 (iOS WebView では <a download> が動作しないため)
+  const postMessageDownload = (filename: string, content: string, mimeType: string) => {
+    const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
+    w.ReactNativeWebView?.postMessage(JSON.stringify({
+      type: 'download',
+      filename,
+      content,
+      mimeType,
+    }));
+  };
 
   const [settings, setSettings] = useState({
     notifications: true,
@@ -144,16 +157,23 @@ export default function SettingsPage() {
         }
         throw new Error(`Export failed: ${res.status}`);
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
       const today = new Date().toISOString().slice(0, 10);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `homegohan-export-${today}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const filename = `homegohan-export-${today}.json`;
+      if (isNativeApp) {
+        // Fix 3: iOS WebView では Blob URL が使えないので RN へ転送
+        const text = await res.text();
+        postMessageDownload(filename, text, 'application/json');
+      } else {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
     } catch (err) {
       console.error(err);
       alert('エクスポートに失敗しました。時間をおいて再度お試しください。');
@@ -175,16 +195,23 @@ export default function SettingsPage() {
         }
         throw new Error(`CSV export failed: ${res.status}`);
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
       const today = new Date().toISOString().slice(0, 10);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `homegohan-meals-${today}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const filename = `homegohan-meals-${today}.csv`;
+      if (isNativeApp) {
+        // Fix 3: iOS WebView では Blob URL が使えないので RN へ転送
+        const text = await res.text();
+        postMessageDownload(filename, text, 'text/csv');
+      } else {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
     } catch (err) {
       console.error(err);
       alert('CSVエクスポートに失敗しました。時間をおいて再度お試しください。');
