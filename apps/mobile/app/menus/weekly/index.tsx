@@ -57,6 +57,7 @@ import { NutritionDetailModal } from "../../../src/components/menu/NutritionDeta
 import { RegenerateMealModal } from "../../../src/components/menu/RegenerateMealModal";
 import { PantryModal } from "../../../src/components/menu/PantryModal";
 import { ShoppingListModal } from "../../../src/components/menu/ShoppingListModal";
+import { ManualEditModal, type ManualEditMeal } from "../../../src/components/menu/ManualEditModal";
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
@@ -684,6 +685,10 @@ export default function WeeklyMenuPage() {
   // RegenerateMealModal state
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [selectedMealForRegen, setSelectedMealForRegen] = useState<PlannedMealRow | null>(null);
+
+  // ManualEditModal state
+  const [showManualEditModal, setShowManualEditModal] = useState(false);
+  const [manualEditTargetMeal, setManualEditTargetMeal] = useState<ManualEditMeal | null>(null);
 
   // 日別栄養サマリー 3 段階 UX
   const [dayNutritionExpanded, setDayNutritionExpanded] = useState(false);
@@ -1977,7 +1982,10 @@ export default function WeeklyMenuPage() {
                           {/* 手動で修正ボタン */}
                           <Pressable
                             testID={`meal-action-manual-${m.id}`}
-                            onPress={() => router.push(`/meals/${m.id}/edit`)}
+                            onPress={() => {
+                              setManualEditTargetMeal(m);
+                              setShowManualEditModal(true);
+                            }}
                             style={{
                               flex: 1,
                               flexDirection: "row",
@@ -2170,6 +2178,21 @@ export default function WeeklyMenuPage() {
       <PantryModal
         visible={activeModal === 'fridge'}
         onClose={() => setActiveModal(null)}
+      />
+
+      {/* 手動編集モーダル */}
+      <ManualEditModal
+        visible={showManualEditModal}
+        meal={manualEditTargetMeal}
+        onClose={() => {
+          setShowManualEditModal(false);
+          setManualEditTargetMeal(null);
+        }}
+        onSave={() => {
+          setShowManualEditModal(false);
+          setManualEditTargetMeal(null);
+          loadData();
+        }}
       />
     </SafeAreaView>
   );
