@@ -8,7 +8,7 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   onSelect: (mealType: MealType) => void;
-  dayId: string;
+  dayId: string | null;
 }
 
 const TYPES: MealType[] = ["breakfast", "lunch", "dinner", "snack"];
