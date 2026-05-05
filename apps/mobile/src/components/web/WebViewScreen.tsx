@@ -1,8 +1,8 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import { useFocusEffect } from 'expo-router';
+import { useNavigation } from 'expo-router';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 
@@ -20,29 +20,30 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
-  // 初回フォーカスをスキップするためのフラグ
-  const isFirstFocus = useRef(true);
+  const navigation = useNavigation();
 
   // タブ再タップ時に WebView を初期 URL にリセットする
-  useFocusEffect(useCallback(() => {
-    if (isFirstFocus.current) {
-      isFirstFocus.current = false;
-      return;
-    }
-    // 2 回目以降のフォーカス = 他タブから戻ってきた / タブ再タップ
-    const alreadyHasMode = path.includes('mode=app');
-    const separator = path.includes('?') ? '&' : '?';
-    const targetPath = alreadyHasMode ? path : `${path}${separator}mode=app`;
-    const targetUrl = `${WEB_BASE_URL}${targetPath}`;
-    webViewRef.current?.injectJavaScript(`
-      (function() {
-        if (window.location.href !== '${targetUrl}') {
-          window.location.href = '${targetUrl}';
-        }
-      })();
-      true;
-    `);
-  }, [path]));
+  // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('tabPress' as any, () => {
+      // isFocused() が true = 既にアクティブなタブを再タップした
+      if (navigation.isFocused()) {
+        const alreadyHasMode = path.includes('mode=app');
+        const separator = path.includes('?') ? '&' : '?';
+        const targetPath = alreadyHasMode ? path : `${path}${separator}mode=app`;
+        const targetUrl = `${WEB_BASE_URL}${targetPath}`;
+        webViewRef.current?.injectJavaScript(`
+          (function() {
+            if (window.location.href !== '${targetUrl}') {
+              window.location.href = '${targetUrl}';
+            }
+          })();
+          true;
+        `);
+      }
+    });
+    return unsubscribe;
+  }, [navigation, path]);
 
   useEffect(() => {
     const init = async () => {
