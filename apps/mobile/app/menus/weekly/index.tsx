@@ -29,8 +29,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  Easing,
   Modal,
   Pressable,
   ScrollView,
@@ -282,39 +280,13 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
   const avgPct = Math.round(pcts.reduce((s, v) => s + v, 0) / pcts.length);
   const labelFontSize = Math.max(9, size * 0.06);
 
-  // ── アニメーション ──────────────────────────────────────────
-  const progressAnim = useRef(new Animated.Value(0)).current;
-  const [animatedPolygon, setAnimatedPolygon] = useState<string>("");
-  const [animatedDots, setAnimatedDots] = useState<{ x: number; y: number }[]>([]);
-
-  const currentKey = nutrientKeys.join(",") + JSON.stringify(totals);
-  const prevKeyRef = useRef<string>("");
-
-  useEffect(() => {
-    if (prevKeyRef.current === currentKey) return;
-    prevKeyRef.current = currentKey;
-
-    progressAnim.setValue(0);
-
-    const id = progressAnim.addListener(({ value }) => {
-      const pts = nutrientKeys.map((key, i) => {
-        const pct = Math.min(driPercent(key, totals[key] as number), MAX_PCT);
-        const r = (pct / MAX_PCT) * maxRadius * value;
-        return { x: cx + r * Math.cos(angleOf(i)), y: cy + r * Math.sin(angleOf(i)) };
-      });
-      setAnimatedPolygon(pts.map((p) => `${p.x},${p.y}`).join(" "));
-      setAnimatedDots(pts);
-    });
-
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: 600,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-
-    return () => { progressAnim.removeListener(id); };
-  }, [currentKey]);
+  // 静的 polygon (アニメなし、JS スレッド負荷を排除)
+  const dataPoints = nutrientKeys.map((key, i) => {
+    const pct = Math.min(driPercent(key, totals[key] as number), MAX_PCT);
+    const r = (pct / MAX_PCT) * maxRadius;
+    return { x: cx + r * Math.cos(angleOf(i)), y: cy + r * Math.sin(angleOf(i)) };
+  });
+  const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(" ");
 
   return (
     <View style={{ alignItems: "center", width: size, height: size }}>
@@ -326,10 +298,8 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
         {spokes.map((p, i) => (
           <Line key={`s${i}`} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#E8E8E8" strokeWidth={1} />
         ))}
-        {animatedPolygon ? (
-          <Polygon points={animatedPolygon} fill={`${colors.accent}40`} stroke={colors.accent} strokeWidth={2} />
-        ) : null}
-        {animatedDots.map((p, i) => (
+        <Polygon points={dataPolygon} fill={`${colors.accent}40`} stroke={colors.accent} strokeWidth={2} />
+        {dataPoints.map((p, i) => (
           <Circle key={`d${i}`} cx={p.x} cy={p.y} r={3} fill={colors.accent} />
         ))}
         {nutrientKeys.map((key, i) => {

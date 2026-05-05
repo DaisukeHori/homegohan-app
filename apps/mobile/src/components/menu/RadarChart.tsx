@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Text, View } from 'react-native';
+import React from 'react';
+import { Text, View } from 'react-native';
 import Svg, {
   Circle,
   Line,
@@ -89,43 +89,13 @@ export const RadarChart: React.FC<RadarChartProps> = ({
 
   const labelFontSize = Math.max(7, Math.min(9, size / 26));
 
-  // ── アニメーション ──────────────────────────────────────────
-  const progressAnim = useRef(new Animated.Value(0)).current;
-  const [animatedPolygon, setAnimatedPolygon] = useState<string>('');
-  const [animatedDots, setAnimatedDots] = useState<{ x: number; y: number }[]>([]);
-
-  // keys/values が変わったらアニメーションをリセットして再実行
-  const keysRef = useRef<string>('');
-  const currentKey = nutrientKeys.join(',') + JSON.stringify(totals);
-
-  useEffect(() => {
-    if (keysRef.current === currentKey) return;
-    keysRef.current = currentKey;
-
-    progressAnim.setValue(0);
-
-    const id = progressAnim.addListener(({ value }) => {
-      const pts = nutrientKeys.map((key, i) => {
-        const pct = Math.min(getDriPercent(key, totals[key] ?? 0), MAX_PCT);
-        const r = (pct / MAX_PCT) * maxRadius * value;
-        const p = { x: cx + r * Math.cos(angleOf(i)), y: cy + r * Math.sin(angleOf(i)) };
-        return p;
-      });
-      setAnimatedPolygon(pts.map((p) => `${p.x},${p.y}`).join(' '));
-      setAnimatedDots(pts);
-    });
-
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: 600,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-
-    return () => {
-      progressAnim.removeListener(id);
-    };
-  }, [currentKey]);
+  // 静的 polygon (アニメなし、JS スレッド負荷を排除)
+  const dataPoints = nutrientKeys.map((key, i) => {
+    const pct = Math.min(getDriPercent(key, totals[key] ?? 0), MAX_PCT);
+    const r = (pct / MAX_PCT) * maxRadius;
+    return { x: cx + r * Math.cos(angleOf(i)), y: cy + r * Math.sin(angleOf(i)) };
+  });
+  const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(' ');
 
   return (
     <View style={{ alignItems: 'center', width: size, height: size }}>
@@ -157,15 +127,13 @@ export const RadarChart: React.FC<RadarChartProps> = ({
             strokeWidth={1}
           />
         ))}
-        {animatedPolygon ? (
-          <Polygon
-            points={animatedPolygon}
-            fill="rgba(224,122,95,0.25)"
-            stroke={colors.accent}
-            strokeWidth={2}
-          />
-        ) : null}
-        {animatedDots.map((p, i) => (
+        <Polygon
+          points={dataPolygon}
+          fill="rgba(224,122,95,0.25)"
+          stroke={colors.accent}
+          strokeWidth={2}
+        />
+        {dataPoints.map((p, i) => (
           <Circle key={`d${i}`} cx={p.x} cy={p.y} r={3} fill={colors.accent} />
         ))}
         {nutrientKeys.map((key, i) => {
