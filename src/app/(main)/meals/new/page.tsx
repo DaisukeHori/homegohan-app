@@ -1010,7 +1010,18 @@ export default function MealCaptureModal() {
 
   // 閉じる
   const handleClose = () => {
-    router.back();
+    // WebView ネイティブアプリ環境では ReactNativeWebView に back メッセージを送る
+    const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
+    if (w.ReactNativeWebView) {
+      w.ReactNativeWebView.postMessage(JSON.stringify({ type: 'navigate-back' }));
+      return;
+    }
+    // Web 環境: history があれば戻る、なければ home へ
+    if (window.history.length > 1) {
+      router.back();
+    } else {
+      router.push('/home');
+    }
   };
 
   return (
