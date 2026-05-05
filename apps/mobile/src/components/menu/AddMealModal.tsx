@@ -14,8 +14,11 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   Text,
   TextInput,
@@ -25,7 +28,7 @@ import {
 import type { MealType } from "@homegohan/shared";
 import { MEAL_LABELS } from "@homegohan/shared";
 import { getApi } from "../../lib/api";
-import { colors, radius, shadows, spacing } from "../../theme";
+import { colors, radius, spacing } from "../../theme";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -218,25 +221,13 @@ export function AddMealModal({
       testID="add-meal-modal"
       visible={visible}
       animationType="slide"
-      transparent
+      presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "flex-end",
-          backgroundColor: "rgba(0,0,0,0.4)",
-        }}
-      >
-        <View
-          style={{
-            backgroundColor: colors.bg,
-            borderTopLeftRadius: radius["2xl"],
-            borderTopRightRadius: radius["2xl"],
-            maxHeight: "85%",
-            paddingBottom: spacing["2xl"],
-            ...shadows.lg,
-          }}
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           {/* ヘッダー */}
           <View
@@ -247,6 +238,7 @@ export function AddMealModal({
               padding: spacing.lg,
               borderBottomWidth: 1,
               borderBottomColor: colors.border,
+              backgroundColor: colors.bg,
             }}
           >
             <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
@@ -457,9 +449,12 @@ export function AddMealModal({
                 </Text>
               </Pressable>
             </View>
+
+            {/* bottom padding for safe area */}
+            <View style={{ height: spacing.xl }} />
           </ScrollView>
-        </View>
-      </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }

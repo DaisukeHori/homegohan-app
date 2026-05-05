@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Modal, Pressable, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { MEAL_LABELS, type MealType } from "@homegohan/shared";
-import { colors, radius, shadows, spacing } from "../../theme";
+import { colors, radius, spacing } from "../../theme";
 
 interface Props {
   visible: boolean;
@@ -35,24 +35,13 @@ export function AddMealSlotModal({ visible, onClose, onSelect, dayId: _dayId }: 
       testID="add-meal-slot-modal"
       visible={visible}
       animationType="slide"
-      transparent
+      presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "flex-end",
-          backgroundColor: "rgba(0,0,0,0.4)",
-        }}
-      >
-        <View
-          style={{
-            backgroundColor: colors.bg,
-            borderTopLeftRadius: radius.xl,
-            borderTopRightRadius: radius.xl,
-            paddingBottom: spacing.xl,
-            ...shadows.lg,
-          }}
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           {/* ヘッダー */}
           <View
@@ -63,6 +52,7 @@ export function AddMealSlotModal({ visible, onClose, onSelect, dayId: _dayId }: 
               padding: spacing.lg,
               borderBottomWidth: 1,
               borderBottomColor: colors.border,
+              backgroundColor: colors.bg,
             }}
           >
             <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
@@ -109,8 +99,8 @@ export function AddMealSlotModal({ visible, onClose, onSelect, dayId: _dayId }: 
               </Pressable>
             ))}
           </View>
-        </View>
-      </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
