@@ -60,5 +60,17 @@ export async function GET(req: NextRequest) {
     redirectUrl = new URL('/home?mode=app', req.url)
   }
 
-  return NextResponse.redirect(redirectUrl)
+  const response = NextResponse.redirect(redirectUrl)
+
+  // WebView セッション中は is_native_app Cookie を設定する。
+  // これにより SSR 初回レンダリング時から bottom nav を非表示にでき、
+  // クライアント hydration 後のちらつき (flash) を防ぐ。
+  response.cookies.set('is_native_app', '1', {
+    maxAge: 60 * 60 * 24 * 30, // 30 日
+    httpOnly: false,            // クライアント側 (document.cookie) からも読み取り可能
+    sameSite: 'lax',
+    path: '/',
+  })
+
+  return response
 }
