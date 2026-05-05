@@ -1,7 +1,8 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { useFocusEffect } from 'expo-router';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 
@@ -19,6 +20,29 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
+  // 初回フォーカスをスキップするためのフラグ
+  const isFirstFocus = useRef(true);
+
+  // タブ再タップ時に WebView を初期 URL にリセットする
+  useFocusEffect(useCallback(() => {
+    if (isFirstFocus.current) {
+      isFirstFocus.current = false;
+      return;
+    }
+    // 2 回目以降のフォーカス = 他タブから戻ってきた / タブ再タップ
+    const alreadyHasMode = path.includes('mode=app');
+    const separator = path.includes('?') ? '&' : '?';
+    const targetPath = alreadyHasMode ? path : `${path}${separator}mode=app`;
+    const targetUrl = `${WEB_BASE_URL}${targetPath}`;
+    webViewRef.current?.injectJavaScript(`
+      (function() {
+        if (window.location.href !== '${targetUrl}') {
+          window.location.href = '${targetUrl}';
+        }
+      })();
+      true;
+    `);
+  }, [path]));
 
   useEffect(() => {
     const init = async () => {
