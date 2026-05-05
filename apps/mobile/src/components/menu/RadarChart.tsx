@@ -1,5 +1,5 @@
-import React from 'react';
-import { Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Text, View } from 'react-native';
 import Svg, {
   Circle,
   Line,
@@ -74,20 +74,6 @@ export const RadarChart: React.FC<RadarChartProps> = ({
     ptOnCircle(maxRadius, i)
   );
 
-  const dataPoints = nutrientKeys.map((key, i) => {
-    const val = totals[key] ?? 0;
-    const pct = Math.min(getDriPercent(key, val), MAX_PCT);
-    return ptOnCircle((pct / MAX_PCT) * maxRadius, i);
-  });
-
-  const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(' ');
-
-  const refPolygon = Array.from({ length: n }, (_, i) =>
-    ptOnCircle((100 / MAX_PCT) * maxRadius, i)
-  )
-    .map((p) => `${p.x},${p.y}`)
-    .join(' ');
-
   const pcts = nutrientKeys.map((key) =>
     Math.min(getDriPercent(key, totals[key] ?? 0), MAX_PCT)
   );
@@ -95,7 +81,51 @@ export const RadarChart: React.FC<RadarChartProps> = ({
     pcts.reduce((s, v) => s + v, 0) / pcts.length
   );
 
+  const refPolygon = Array.from({ length: n }, (_, i) =>
+    ptOnCircle((100 / MAX_PCT) * maxRadius, i)
+  )
+    .map((p) => `${p.x},${p.y}`)
+    .join(' ');
+
   const labelFontSize = Math.max(7, Math.min(9, size / 26));
+
+  // ── アニメーション ──────────────────────────────────────────
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const [animatedPolygon, setAnimatedPolygon] = useState<string>('');
+  const [animatedDots, setAnimatedDots] = useState<{ x: number; y: number }[]>([]);
+
+  // keys/values が変わったらアニメーションをリセットして再実行
+  const keysRef = useRef<string>('');
+  const currentKey = nutrientKeys.join(',') + JSON.stringify(totals);
+
+  useEffect(() => {
+    if (keysRef.current === currentKey) return;
+    keysRef.current = currentKey;
+
+    progressAnim.setValue(0);
+
+    const id = progressAnim.addListener(({ value }) => {
+      const pts = nutrientKeys.map((key, i) => {
+        const pct = Math.min(getDriPercent(key, totals[key] ?? 0), MAX_PCT);
+        const r = (pct / MAX_PCT) * maxRadius * value;
+        const p = { x: cx + r * Math.cos(angleOf(i)), y: cy + r * Math.sin(angleOf(i)) };
+        return p;
+      });
+      setAnimatedPolygon(pts.map((p) => `${p.x},${p.y}`).join(' '));
+      setAnimatedDots(pts);
+    });
+
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: 600,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+
+    return () => {
+      progressAnim.removeListener(id);
+    };
+  }, [currentKey]);
 
   return (
     <View style={{ alignItems: 'center', width: size, height: size }}>
@@ -127,13 +157,15 @@ export const RadarChart: React.FC<RadarChartProps> = ({
             strokeWidth={1}
           />
         ))}
-        <Polygon
-          points={dataPolygon}
-          fill="rgba(224,122,95,0.25)"
-          stroke={colors.accent}
-          strokeWidth={2}
-        />
-        {dataPoints.map((p, i) => (
+        {animatedPolygon ? (
+          <Polygon
+            points={animatedPolygon}
+            fill="rgba(224,122,95,0.25)"
+            stroke={colors.accent}
+            strokeWidth={2}
+          />
+        ) : null}
+        {animatedDots.map((p, i) => (
           <Circle key={`d${i}`} cx={p.x} cy={p.y} r={3} fill={colors.accent} />
         ))}
         {nutrientKeys.map((key, i) => {
@@ -174,14 +206,14 @@ export const RadarChart: React.FC<RadarChartProps> = ({
       >
         <Text
           style={{
-            fontSize: 20,
-            fontWeight: '800',
+            fontSize: Math.max(12, size * 0.127),
+            fontWeight: '700',
             color: getBarColor(avgPct),
           }}
         >
           {avgPct}%
         </Text>
-        <Text style={{ fontSize: 9, color: colors.textMuted }}>
+        <Text style={{ fontSize: Math.max(7, size * 0.045), color: colors.textMuted }}>
           平均達成率
         </Text>
       </View>
