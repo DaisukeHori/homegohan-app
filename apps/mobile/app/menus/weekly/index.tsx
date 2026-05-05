@@ -280,7 +280,7 @@ function NutritionRadarChartSvg({ totals, nutrientKeys, size = 220 }: RadarChart
     Math.min(driPercent(key, totals[key] as number), MAX_PCT)
   );
   const avgPct = Math.round(pcts.reduce((s, v) => s + v, 0) / pcts.length);
-  const labelFontSize = Math.max(7, Math.min(9, size / 26));
+  const labelFontSize = Math.max(9, size * 0.06);
 
   // ── アニメーション ──────────────────────────────────────────
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -1684,7 +1684,7 @@ export default function WeeklyMenuPage() {
                       <NutritionRadarChartSvg
                         totals={dayNutritionData.totals}
                         nutrientKeys={radarChartNutrients}
-                        size={100}
+                        size={170}
                       />
                     </View>
                     {/* 右: 6 栄養素バー */}
