@@ -1,5 +1,14 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useRef, useState } from "react";
+import { LinearGradient } from "expo-linear-gradient";
+import {
+  Archive,
+  Calendar,
+  ChevronDown,
+  MessageCircle,
+  Send,
+  Sparkles,
+  X,
+} from "lucide-react-native";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -7,6 +16,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,9 +24,9 @@ import {
   View,
 } from "react-native";
 
-import { colors, radius, shadows, spacing } from "../../theme";
 import { getApi, getApiBaseUrl } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
+import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
 
 // ============================================================
@@ -70,20 +80,22 @@ interface Props {
 // ============================================================
 
 export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
+  const [showSessionList, setShowSessionList] = useState(false);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [inputText, setInputText] = useState("");
   const [sending, setSending] = useState(false);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [dayMenuModalVisible, setDayMenuModalVisible] = useState(false);
+  const [isClosingSession, setIsClosingSession] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
 
-  // セッション初期化
+  // 起動時セッション一覧取得
   useEffect(() => {
-    if (visible && !currentSessionId) {
-      initSession();
-    }
+    if (!visible) return;
+    initSession();
   }, [visible]);
 
   // メッセージ追加時にスクロール
@@ -97,23 +109,19 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   async function initSession() {
     try {
       const api = getApi();
-      // 既存アクティブセッション取得
       const res = await api.get<{ sessions: Session[] }>(
-        "/api/ai/consultation/sessions?status=active"
+        "/api/ai/consultation/sessions?status=all"
       );
-      const sessions = res.sessions ?? [];
-      if (sessions.length > 0) {
-        setCurrentSessionId(sessions[0].id);
-        // 既存メッセージを読み込む
-        const msgRes = await api.get<{ messages: Message[] }>(
-          `/api/ai/consultation/sessions/${sessions[0].id}/messages`
-        );
-        const loaded = msgRes.messages ?? [];
-        if (loaded.length > 0) {
-          setMessages(loaded);
-        } else {
-          setMessages([WELCOME_MESSAGE]);
-        }
+      const allSessions = res.sessions ?? [];
+      setSessions(allSessions);
+
+      const active = allSessions.find((s) => s.status === "active");
+      if (active) {
+        await loadMessages(active.id);
+        setCurrentSessionId(active.id);
+      } else if (allSessions.length > 0) {
+        await loadMessages(allSessions[0].id);
+        setCurrentSessionId(allSessions[0].id);
       } else {
         // 新規セッション作成
         const createRes = await api.post<{
@@ -124,8 +132,91 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         setMessages([WELCOME_MESSAGE]);
       }
     } catch {
-      // セッション作成失敗時はウェルカムメッセージだけ表示
       setMessages([WELCOME_MESSAGE]);
+    }
+  }
+
+  async function loadMessages(sessionId: string) {
+    try {
+      const api = getApi();
+      const msgRes = await api.get<{ messages: Message[] }>(
+        `/api/ai/consultation/sessions/${sessionId}/messages`
+      );
+      const loaded = msgRes.messages ?? [];
+      if (loaded.length > 0) {
+        setMessages(loaded);
+      } else {
+        setMessages([WELCOME_MESSAGE]);
+      }
+    } catch {
+      setMessages([WELCOME_MESSAGE]);
+    }
+  }
+
+  async function createNewSession() {
+    try {
+      const api = getApi();
+      const createRes = await api.post<{
+        success: boolean;
+        session: { id: string };
+      }>("/api/ai/consultation/sessions", { title: "AI相談" });
+      setCurrentSessionId(createRes.session.id);
+      setMessages([WELCOME_MESSAGE]);
+      setShowSessionList(false);
+      // セッション一覧を更新
+      const res = await api.get<{ sessions: Session[] }>(
+        "/api/ai/consultation/sessions?status=all"
+      );
+      setSessions(res.sessions ?? []);
+    } catch {
+      Alert.alert("エラー", "新しいセッションの作成に失敗しました。");
+    }
+  }
+
+  async function selectSession(sessionId: string) {
+    setCurrentSessionId(sessionId);
+    setShowSessionList(false);
+    await loadMessages(sessionId);
+  }
+
+  async function archiveSession() {
+    if (!currentSessionId || isClosingSession) return;
+    setIsClosingSession(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token ?? null;
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(
+        `${baseUrl}/api/ai/consultation/sessions/${currentSessionId}/close`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.summary) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `summary-${Date.now()}`,
+              role: "assistant",
+              content: `📝 相談を要約しました：\n\n${data.summary.summary}`,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        }
+        await createNewSession();
+      } else {
+        Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
+      }
+    } catch {
+      Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
+    } finally {
+      setIsClosingSession(false);
     }
   }
 
@@ -143,10 +234,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       content: trimmed,
       createdAt: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, optimistic]);
+    setMessages((prev) => {
+      // ウェルカムメッセージを除いて追加
+      const withoutWelcome = prev.filter((m) => m.id !== "welcome");
+      return [...withoutWelcome, optimistic];
+    });
 
     try {
-      // セッションがなければ作成
       let sessionId = currentSessionId;
       if (!sessionId) {
         const api = getApi();
@@ -189,11 +283,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
       if (!res.body) {
         // SSE非対応環境: メッセージ一覧を再取得
-        const api = getApi();
-        const msgRes = await api.get<{ messages: Message[] }>(
-          `/api/ai/consultation/sessions/${sessionId}/messages`
-        );
-        setMessages(msgRes.messages ?? [WELCOME_MESSAGE]);
+        await loadMessages(sessionId);
         return;
       }
 
@@ -237,7 +327,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
               id: parsed.aiMessage.id ?? `ai-${Date.now()}`,
               role: "assistant",
               content: parsed.aiMessage.content ?? accumulated,
-              createdAt: parsed.aiMessage.createdAt ?? new Date().toISOString(),
+              createdAt:
+                parsed.aiMessage.createdAt ?? new Date().toISOString(),
             };
             setMessages((prev) => {
               const withoutOptimistic = prev.filter(
@@ -249,7 +340,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                     role: "user",
                     content: parsed.userMessage.content ?? trimmed,
                     createdAt:
-                      parsed.userMessage.createdAt ?? new Date().toISOString(),
+                      parsed.userMessage.createdAt ??
+                      new Date().toISOString(),
                   }
                 : optimistic;
               return [...withoutOptimistic, userMsg, aiMsg];
@@ -274,18 +366,16 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             return [...withoutOptimistic, optimistic, aiMsg];
           });
         } else {
-          // 蓄積なし: 一覧再取得
-          const api = getApi();
-          const msgRes = await api.get<{ messages: Message[] }>(
-            `/api/ai/consultation/sessions/${sessionId}/messages`
-          );
-          setMessages(msgRes.messages ?? [WELCOME_MESSAGE]);
+          await loadMessages(sessionId);
         }
       }
     } catch (e: any) {
       setStreamingContent(null);
       if (e?.name === "AbortError") {
-        Alert.alert("タイムアウト", "応答がタイムアウトしました。しばらく待ってから再度お試しください。");
+        Alert.alert(
+          "タイムアウト",
+          "応答がタイムアウトしました。しばらく待ってから再度お試しください。"
+        );
       } else {
         Alert.alert("エラー", e?.message ?? "送信に失敗しました。");
       }
@@ -293,14 +383,6 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     } finally {
       setSending(false);
     }
-  }
-
-  function handleQuickQuestion(question: string) {
-    sendMessage(question);
-  }
-
-  function handleClose() {
-    onClose();
   }
 
   // ウェルカムメッセージのみの状態かどうか
@@ -314,117 +396,190 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         visible={visible}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={handleClose}
+        onRequestClose={onClose}
       >
-        <KeyboardAvoidingView
-          style={styles.container}
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
-        >
-          {/* ヘッダー */}
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.headerIcon}>
-                <Ionicons name="sparkles" size={16} color={colors.accent} />
+        <SafeAreaView style={styles.safeArea}>
+          <KeyboardAvoidingView
+            style={styles.container}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+          >
+            {/* ヘッダー */}
+            <View style={styles.header}>
+              <View style={styles.headerLeft}>
+                <LinearGradient
+                  colors={[colors.accent, colors.warning]}
+                  style={styles.iconCircle}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <Sparkles size={16} color="#FFF" />
+                </LinearGradient>
+                <View>
+                  <Text style={styles.headerTitle}>AIアドバイザー</Text>
+                  <Text style={styles.headerSubtitle}>
+                    いつでも相談できます
+                  </Text>
+                </View>
               </View>
-              <View>
-                <Text style={styles.headerTitle}>AIアドバイザー</Text>
-                <Text style={styles.headerSubtitle}>いつでも相談できます</Text>
+              <View style={styles.headerActions}>
+                <Pressable
+                  testID="ai-archive-btn"
+                  onPress={archiveSession}
+                  disabled={isClosingSession || !currentSessionId}
+                  style={styles.headerActionBtn}
+                >
+                  {isClosingSession ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.textLight}
+                    />
+                  ) : (
+                    <Archive size={20} color={colors.textLight} />
+                  )}
+                </Pressable>
+                <Pressable
+                  testID="ai-toggle-sessions"
+                  onPress={() => setShowSessionList(!showSessionList)}
+                  style={styles.headerActionBtn}
+                >
+                  <ChevronDown size={20} color={colors.textLight} />
+                </Pressable>
+                <Pressable
+                  testID="ai-close-btn"
+                  onPress={onClose}
+                  style={styles.headerActionBtn}
+                >
+                  <X size={20} color={colors.textLight} />
+                </Pressable>
               </View>
             </View>
-            <Pressable
-              testID="ai-close-btn"
-              onPress={handleClose}
-              style={styles.closeButton}
-            >
-              <Ionicons name="close" size={20} color={colors.textLight} />
-            </Pressable>
-          </View>
 
-          {/* メッセージリスト */}
-          <ScrollView
-            ref={scrollRef}
-            style={styles.messageList}
-            contentContainerStyle={styles.messageListContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
-            ))}
-
-            {/* ストリーミング中の仮メッセージ */}
-            {streamingContent != null && (
-              <MessageBubble
-                key="streaming"
-                message={{
-                  id: "streaming",
-                  role: "assistant",
-                  content: streamingContent,
-                  createdAt: new Date().toISOString(),
-                }}
-                isStreaming
-              />
-            )}
-
-            {/* クイック質問チップ (ウェルカムのみ表示時) */}
-            {isWelcomeOnly && (
-              <View style={styles.quickQuestions}>
-                {QUICK_QUESTIONS.map((q, i) => (
+            {/* ボディ */}
+            {showSessionList ? (
+              /* セッション一覧モード */
+              <ScrollView
+                style={styles.body}
+                contentContainerStyle={styles.bodyContent}
+              >
+                <Pressable
+                  testID="ai-new-session"
+                  onPress={createNewSession}
+                  style={styles.newSessionBtn}
+                >
+                  <MessageCircle size={16} color={colors.accent} />
+                  <Text style={styles.newSessionLabel}>
+                    新しい相談を始める
+                  </Text>
+                </Pressable>
+                {sessions.map((s) => (
                   <Pressable
-                    key={i}
-                    testID={`ai-quick-question-${i}`}
-                    onPress={() => handleQuickQuestion(q)}
-                    style={styles.quickChip}
+                    key={s.id}
+                    testID={`ai-session-${s.id}`}
+                    onPress={() => selectSession(s.id)}
+                    style={[
+                      styles.sessionRow,
+                      currentSessionId === s.id && styles.sessionRowActive,
+                    ]}
                   >
-                    <Text style={styles.quickChipText}>{q}</Text>
+                    <Text style={styles.sessionRowText}>
+                      AI相談 ({s.messageCount}件)
+                    </Text>
+                    {s.status === "closed" && (
+                      <View style={styles.closedBadge}>
+                        <Text style={styles.closedBadgeText}>終了</Text>
+                      </View>
+                    )}
                   </Pressable>
                 ))}
-              </View>
+              </ScrollView>
+            ) : (
+              /* 通常メッセージモード */
+              <ScrollView
+                ref={scrollRef}
+                style={styles.body}
+                contentContainerStyle={styles.messageListContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {messages.map((msg) => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
+
+                {/* ストリーミング中の仮メッセージ */}
+                {streamingContent != null && (
+                  <MessageBubble
+                    key="streaming"
+                    message={{
+                      id: "streaming",
+                      role: "assistant",
+                      content: streamingContent,
+                      createdAt: new Date().toISOString(),
+                    }}
+                    isStreaming
+                  />
+                )}
+
+                {/* クイック質問チップ (ウェルカムのみ表示時) */}
+                {isWelcomeOnly && (
+                  <View style={styles.quickQuestions}>
+                    {QUICK_QUESTIONS.map((q, i) => (
+                      <Pressable
+                        key={i}
+                        testID={`ai-quick-${i}`}
+                        onPress={() => sendMessage(q)}
+                        style={styles.quickChip}
+                      >
+                        <Text style={styles.quickChipText}>{q}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </ScrollView>
             )}
-          </ScrollView>
 
-          {/* クイックアクションバー */}
-          <View style={styles.actionBar}>
-            <Pressable
-              testID="ai-day-menu-btn"
-              onPress={() => setDayMenuModalVisible(true)}
-              style={styles.dayMenuBtn}
-            >
-              <Ionicons name="calendar" size={14} color={colors.accent} />
-              <Text style={styles.dayMenuBtnText}>1日献立を作成</Text>
-            </Pressable>
-          </View>
+            {/* クイックアクションバー */}
+            <View style={styles.actionBar}>
+              <Pressable
+                testID="ai-day-menu-btn"
+                onPress={() => setDayMenuModalVisible(true)}
+                style={styles.dayMenuBtn}
+              >
+                <Calendar size={14} color={colors.accent} />
+                <Text style={styles.dayMenuBtnText}>1日献立変更</Text>
+              </Pressable>
+            </View>
 
-          {/* 入力欄 */}
-          <View style={styles.inputRow}>
-            <TextInput
-              testID="ai-input"
-              style={styles.input}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="メッセージを入力..."
-              placeholderTextColor={colors.textMuted}
-              multiline
-              maxLength={1000}
-              editable={!sending}
-            />
-            <Pressable
-              testID="ai-send-btn"
-              onPress={() => sendMessage(inputText)}
-              disabled={!inputText.trim() || sending}
-              style={[
-                styles.sendButton,
-                (!inputText.trim() || sending) && styles.sendButtonDisabled,
-              ]}
-            >
-              {sending ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Ionicons name="send" size={16} color="#FFF" />
-              )}
-            </Pressable>
-          </View>
-        </KeyboardAvoidingView>
+            {/* 入力欄 */}
+            <View style={styles.inputRow}>
+              <TextInput
+                testID="ai-input"
+                style={styles.input}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder="メッセージを入力..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+                maxLength={1000}
+                editable={!sending}
+              />
+              <Pressable
+                testID="ai-send-btn"
+                onPress={() => sendMessage(inputText)}
+                disabled={!inputText.trim() || sending}
+                style={[
+                  styles.sendButton,
+                  (!inputText.trim() || sending) && styles.sendButtonDisabled,
+                ]}
+              >
+                {sending ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Send size={16} color="#FFF" />
+                )}
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
 
       {/* 1日献立モーダル */}
@@ -470,9 +625,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           ]}
         >
           {message.content}
-          {isStreaming && (
-            <Text style={styles.cursor}>▌</Text>
-          )}
+          {isStreaming && <Text style={styles.cursor}>▌</Text>}
         </Text>
       </View>
     </View>
@@ -484,6 +637,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 // ============================================================
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -504,11 +661,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
   },
-  headerIcon: {
+  iconCircle: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.accentLight,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -521,7 +677,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textMuted,
   },
-  closeButton: {
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  headerActionBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -529,12 +690,60 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  messageList: {
+  body: {
     flex: 1,
+  },
+  bodyContent: {
+    padding: spacing.md,
+    gap: spacing.xs,
   },
   messageListContent: {
     padding: spacing.md,
     gap: spacing.sm,
+  },
+  newSessionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    marginBottom: spacing.sm,
+  },
+  newSessionLabel: {
+    fontSize: 13,
+    color: colors.accent,
+    fontWeight: "600",
+  },
+  sessionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    marginBottom: spacing.xs,
+    ...shadows.sm,
+  },
+  sessionRowActive: {
+    backgroundColor: colors.accentLight,
+  },
+  sessionRowText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.text,
+  },
+  closedBadge: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    backgroundColor: colors.border,
+  },
+  closedBadgeText: {
+    fontSize: 10,
+    color: colors.textMuted,
   },
   bubbleWrapper: {
     flexDirection: "row",
@@ -554,11 +763,11 @@ const styles = StyleSheet.create({
   },
   bubbleUser: {
     backgroundColor: colors.accent,
-    borderBottomRightRadius: radius.xs,
+    borderBottomRightRadius: radius.sm,
   },
   bubbleAssistant: {
     backgroundColor: colors.card,
-    borderBottomLeftRadius: radius.xs,
+    borderBottomLeftRadius: radius.sm,
     ...shadows.sm,
   },
   bubbleText: {
