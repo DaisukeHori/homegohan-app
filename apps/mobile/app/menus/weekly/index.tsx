@@ -1370,141 +1370,143 @@ export default function WeeklyMenuPage() {
         weekEndDate={weekEndStr}
         isGenerating={isV4Generating}
       />
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
-      {/* 月カレンダー展開バー */}
-      <Pressable
-        testID="weekly-calendar-toggle"
-        onPress={() => setIsCalendarExpanded(prev => !prev)}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          paddingVertical: spacing.sm,
-          paddingHorizontal: spacing.sm,
-          borderRadius: radius.md,
-          backgroundColor: colors.bg,
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          {isCalendarExpanded ? (
-            <ChevronUp size={14} color={colors.textMuted} />
-          ) : (
-            <ChevronDown size={14} color={colors.textMuted} />
+      {/* 月カレンダー展開バー (ScrollView の外で固定) */}
+      <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}>
+        <Pressable
+          testID="weekly-calendar-toggle"
+          onPress={() => setIsCalendarExpanded(prev => !prev)}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingVertical: spacing.sm,
+            paddingHorizontal: spacing.sm,
+            borderRadius: radius.md,
+            backgroundColor: colors.bg,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            {isCalendarExpanded ? (
+              <ChevronUp size={14} color={colors.textMuted} />
+            ) : (
+              <ChevronDown size={14} color={colors.textMuted} />
+            )}
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>
+              {displayMonth.getFullYear()}年{displayMonth.getMonth() + 1}月
+            </Text>
+          </View>
+          {isCalendarExpanded && (
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Pressable
+                onPress={e => {
+                  e.stopPropagation?.();
+                  setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+                }}
+                style={{ padding: 4 }}
+              >
+                <ChevronLeft size={14} color={colors.textMuted} />
+              </Pressable>
+              <Pressable
+                onPress={e => {
+                  e.stopPropagation?.();
+                  setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+                }}
+                style={{ padding: 4 }}
+              >
+                <ChevronRight size={14} color={colors.textMuted} />
+              </Pressable>
+            </View>
           )}
-          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>
-            {displayMonth.getFullYear()}年{displayMonth.getMonth() + 1}月
-          </Text>
-        </View>
+        </Pressable>
+
+        {/* 月カレンダーグリッド (固定 View — スクロール不可) */}
         {isCalendarExpanded && (
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Pressable
-              onPress={e => {
-                e.stopPropagation?.();
-                setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
-              }}
-              style={{ padding: 4 }}
-            >
-              <ChevronLeft size={14} color={colors.textMuted} />
-            </Pressable>
-            <Pressable
-              onPress={e => {
-                e.stopPropagation?.();
-                setDisplayMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
-              }}
-              style={{ padding: 4 }}
-            >
-              <ChevronRight size={14} color={colors.textMuted} />
-            </Pressable>
-          </View>
-        )}
-      </Pressable>
+          <View style={{ paddingHorizontal: spacing.sm, paddingBottom: spacing.md }}>
+            {/* 曜日ヘッダー */}
+            <View style={{ flexDirection: "row", marginBottom: 4 }}>
+              {dayLabels.map((label, i) => {
+                const isWeekendCol = weekStartDay === 'sunday'
+                  ? (i === 0 || i === 6)
+                  : (i === 5 || i === 6);
+                return (
+                  <View key={label} style={{ flex: 1, alignItems: "center", paddingVertical: 4 }}>
+                    <Text style={{ fontSize: 10, color: isWeekendCol ? colors.accent : colors.textMuted }}>
+                      {label}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+            {/* 日付グリッド */}
+            <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+              {calendarDays.map((day, i) => {
+                const dateStr = formatLocalDate(day);
+                const isCurrentMonth = day.getMonth() === displayMonth.getMonth();
+                const isSelected = dateStr === selectedDate;
+                const isInSelectedWeek =
+                  dateStr >= weekStartStr && dateStr <= weekEndStr;
+                const isToday = dateStr === todayStr;
+                const hasMeal = mealExistenceMap.get(dateStr);
+                const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+                const isHoliday = !!holidays[dateStr];
 
-      {/* 月カレンダーグリッド */}
-      {isCalendarExpanded && (
-        <View style={{ paddingHorizontal: spacing.sm, paddingBottom: spacing.md }}>
-          {/* 曜日ヘッダー */}
-          <View style={{ flexDirection: "row", marginBottom: 4 }}>
-            {dayLabels.map((label, i) => {
-              const isWeekendCol = weekStartDay === 'sunday'
-                ? (i === 0 || i === 6)
-                : (i === 5 || i === 6);
-              return (
-                <View key={label} style={{ flex: 1, alignItems: "center", paddingVertical: 4 }}>
-                  <Text style={{ fontSize: 10, color: isWeekendCol ? colors.accent : colors.textMuted }}>
-                    {label}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-          {/* 日付グリッド */}
-          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-            {calendarDays.map((day, i) => {
-              const dateStr = formatLocalDate(day);
-              const isCurrentMonth = day.getMonth() === displayMonth.getMonth();
-              const isSelected = dateStr === selectedDate;
-              const isInSelectedWeek =
-                dateStr >= weekStartStr && dateStr <= weekEndStr;
-              const isToday = dateStr === todayStr;
-              const hasMeal = mealExistenceMap.get(dateStr);
-              const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-              const isHoliday = !!holidays[dateStr];
-
-              return (
-                <Pressable
-                  key={i}
-                  testID={`weekly-day-cell-${dateStr}`}
-                  onPress={() => handleCalendarDateClick(day)}
-                  style={{
-                    width: "14.28%",
-                    alignItems: "center",
-                    paddingVertical: 6,
-                    borderRadius: radius.md,
-                    backgroundColor: isSelected
-                      ? colors.accent
-                      : isInSelectedWeek
-                        ? colors.accentLight
-                        : "transparent",
-                    opacity: isCurrentMonth ? 1 : 0.3,
-                  }}
-                >
-                  <Text
+                return (
+                  <Pressable
+                    key={i}
+                    testID={`weekly-day-cell-${dateStr}`}
+                    onPress={() => handleCalendarDateClick(day)}
                     style={{
-                      fontSize: 12,
-                      fontWeight: isToday ? "700" : "400",
-                      color: isSelected
-                        ? "#fff"
-                        : isHoliday
-                          ? colors.danger
-                          : isToday
-                            ? colors.accent
-                            : isWeekend
-                              ? colors.accent
-                              : colors.text,
+                      width: "14.28%",
+                      alignItems: "center",
+                      paddingVertical: 6,
+                      borderRadius: radius.md,
+                      backgroundColor: isSelected
+                        ? colors.accent
+                        : isInSelectedWeek
+                          ? colors.accentLight
+                          : "transparent",
+                      opacity: isCurrentMonth ? 1 : 0.3,
                     }}
                   >
-                    {day.getDate()}
-                  </Text>
-                  {hasMeal ? (
-                    <View
+                    <Text
                       style={{
-                        width: 4,
-                        height: 4,
-                        borderRadius: 2,
-                        marginTop: 2,
-                        backgroundColor: isSelected ? "#fff" : colors.success,
+                        fontSize: 12,
+                        fontWeight: isToday ? "700" : "400",
+                        color: isSelected
+                          ? "#fff"
+                          : isHoliday
+                            ? colors.danger
+                            : isToday
+                              ? colors.accent
+                              : isWeekend
+                                ? colors.accent
+                                : colors.text,
                       }}
-                    />
-                  ) : (
-                    <View style={{ width: 4, height: 4, marginTop: 2 }} />
-                  )}
-                </Pressable>
-              );
-            })}
+                    >
+                      {day.getDate()}
+                    </Text>
+                    {hasMeal ? (
+                      <View
+                        style={{
+                          width: 4,
+                          height: 4,
+                          borderRadius: 2,
+                          marginTop: 2,
+                          backgroundColor: isSelected ? "#fff" : colors.success,
+                        }}
+                      />
+                    ) : (
+                      <View style={{ width: 4, height: 4, marginTop: 2 }} />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
-        </View>
-      )}
+        )}
+      </View>
 
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {isLoading ? (
         <LoadingState />
       ) : error ? (
