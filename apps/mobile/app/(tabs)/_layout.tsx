@@ -78,12 +78,6 @@ export default function TabsLayout() {
           ),
           tabBarLabel: () => null,
         }}
-        listeners={{
-          tabPress: (e) => {
-            e.preventDefault();
-            router.push("/meals/new");
-          },
-        }}
       />
       <Tabs.Screen
         name="favorites"

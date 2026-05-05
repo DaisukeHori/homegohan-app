@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
@@ -320,6 +320,33 @@ export default function MealCaptureModal() {
   });
   
   const [isSaving, setIsSaving] = useState(false);
+
+  // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const prefillParam = searchParams.get('prefill');
+    if (!prefillParam) return;
+    try {
+      const data = JSON.parse(decodeURIComponent(prefillParam));
+      if (data && typeof data === 'object') {
+        if (Array.isArray(data.dishes)) setAnalyzedDishes(data.dishes);
+        if (typeof data.totalCalories === 'number') setTotalCalories(data.totalCalories);
+        if (typeof data.totalProtein === 'number') setTotalProtein(data.totalProtein);
+        if (typeof data.totalCarbs === 'number') setTotalCarbs(data.totalCarbs);
+        if (typeof data.totalFat === 'number') setTotalFat(data.totalFat);
+        if (typeof data.overallScore === 'number') setOverallScore(data.overallScore);
+        if (typeof data.vegScore === 'number') setVegScore(data.vegScore);
+        if (typeof data.praiseComment === 'string') setPraiseComment(data.praiseComment);
+        if (typeof data.nutritionTip === 'string') setNutritionTip(data.nutritionTip);
+        if (typeof data.nutritionalAdvice === 'string') setNutritionalAdvice(data.nutritionalAdvice);
+        if (Array.isArray(data.catalogMatches)) setCatalogMatches(data.catalogMatches);
+        setStep('result');
+      }
+    } catch {
+      // 無効な prefill は無視して通常フローへ
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // analyzing ステップに 45 秒の上限タイマー — タイムアウト時は classify-failed に遷移
   useEffect(() => {
