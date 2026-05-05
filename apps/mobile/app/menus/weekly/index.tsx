@@ -2076,26 +2076,6 @@ export default function WeeklyMenuPage() {
         />
       )}
 
-      {/* フローティング AI アシスタントボタン */}
-      <Pressable
-        testID="weekly-ai-assistant-btn"
-        onPress={() => setShowV4Modal(true)}
-        style={({ pressed }) => ({
-          position: "absolute",
-          bottom: spacing["2xl"],
-          right: spacing.lg,
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          backgroundColor: colors.accent,
-          alignItems: "center",
-          justifyContent: "center",
-          opacity: pressed ? 0.85 : 1,
-        })}
-      >
-        <Sparkles size={24} color="#fff" />
-      </Pressable>
-
       {/* 人数設定モーダル */}
       <ServingsModal
         visible={showServingsModal}

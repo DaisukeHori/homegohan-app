@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Switch,
@@ -382,72 +384,57 @@ export function V4GenerateModal({
   return (
     <Modal
       visible={visible}
-      transparent
       animationType="slide"
-      presentationStyle="overFullScreen"
+      presentationStyle="pageSheet"
       onRequestClose={handleClose}
       testID="v4-modal"
     >
-      {/* Backdrop */}
-      <Pressable
-        onPress={handleClose}
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,0.5)",
-          justifyContent: "flex-end",
-        }}
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: C.bg }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
-        {/* Sheet */}
-        <Pressable
-          onPress={(e) => e.stopPropagation()}
+        {/* Header */}
+        <View
           style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md,
+            borderBottomWidth: 1,
+            borderBottomColor: C.border,
             backgroundColor: C.card,
-            borderTopLeftRadius: radius["2xl"],
-            borderTopRightRadius: radius["2xl"],
-            maxHeight: "90%",
-            ...shadows.md,
           }}
         >
-          {/* Header */}
-          <View
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="sparkles" size={20} color={C.accent} />
+            <Text style={{ fontSize: 17, fontWeight: "700", color: C.text }}>
+              AI献立アシスタント
+            </Text>
+          </View>
+          <Pressable
+            onPress={handleClose}
+            hitSlop={8}
             style={{
-              flexDirection: "row",
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              backgroundColor: C.bg,
               alignItems: "center",
-              justifyContent: "space-between",
-              paddingHorizontal: spacing.lg,
-              paddingVertical: spacing.md,
-              borderBottomWidth: 1,
-              borderBottomColor: C.border,
+              justifyContent: "center",
             }}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-              <Ionicons name="sparkles" size={20} color={C.accent} />
-              <Text style={{ fontSize: 17, fontWeight: "700", color: C.text }}>
-                AIアシスタント
-              </Text>
-            </View>
-            <Pressable
-              onPress={handleClose}
-              hitSlop={8}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                backgroundColor: C.bg,
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Ionicons name="close" size={18} color={C.textLight} />
-            </Pressable>
-          </View>
+            <Ionicons name="close" size={18} color={C.textLight} />
+          </Pressable>
+        </View>
 
-          {/* Scrollable content */}
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}
-            keyboardShouldPersistTaps="handled"
-          >
+        {/* Scrollable content */}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}
+          keyboardShouldPersistTaps="handled"
+        >
             {/* Mode label */}
             <Text style={{ fontSize: 13, fontWeight: "700", color: C.textLight }}>
               何を生成しますか？
@@ -693,8 +680,7 @@ export function V4GenerateModal({
             {/* bottom padding for safe area */}
             <View style={{ height: spacing.xl }} />
           </ScrollView>
-        </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
