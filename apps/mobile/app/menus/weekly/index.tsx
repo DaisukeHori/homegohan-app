@@ -1343,7 +1343,7 @@ export default function WeeklyMenuPage() {
   }
 
   return (
-    <SafeAreaView testID="weekly-screen" edges={["top"]} style={{ flex: 1, backgroundColor: colors.bg }}>
+    <SafeAreaView testID="weekly-screen" edges={["top"]} style={{ flex: 1, backgroundColor: colors.card }}>
       <WeeklyHeader
         weekRangeLabel={weekRangeLabel}
         weeklyStats={weeklyStats}
@@ -1382,7 +1382,7 @@ export default function WeeklyMenuPage() {
             paddingVertical: spacing.sm,
             paddingHorizontal: spacing.sm,
             borderRadius: radius.md,
-            backgroundColor: colors.bg,
+            backgroundColor: colors.card,
           }}
         >
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -1607,7 +1607,7 @@ export default function WeeklyMenuPage() {
         />
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+      <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
       {isLoading ? (
         <LoadingState />
       ) : error ? (
