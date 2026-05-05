@@ -155,6 +155,18 @@ export default function AIChatBubble() {
   const [isClosingSession, setIsClosingSession] = useState(false);
   const [isToggling, setIsToggling] = useState(false); // #125: 連続クリック防止フラグ
   const [showDayMenuModal, setShowDayMenuModal] = useState(false);
+  // FAB ドラッグ位置 (right/bottom px)
+  const [fabPosition, setFabPosition] = useState<{ x: number; y: number }>(() => {
+    if (typeof window === 'undefined') return { x: 16, y: 96 };
+    try {
+      const saved = localStorage.getItem('aiChatBubblePosition');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return { x: 16, y: 96 };
+  });
+  const [isDragging, setIsDragging] = useState(false);
   // Bug-5 (#21): Default to the date currently displayed on the weekly menu
   // page (published via window.__weeklyCurrentDate). If unavailable, fall back
   // to *tomorrow* rather than today to avoid silently overwriting today's
@@ -217,6 +229,9 @@ export default function AIChatBubble() {
   const inputRef = useRef<HTMLInputElement>(null);
   const streamingRef = useRef<{ messageId: string; fullContent: string; currentIndex: number } | null>(null);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const fabDragStart = useRef<{ clientX: number; clientY: number; t: number; pos: { x: number; y: number } } | null>(null);
+  const fabDraggingRef = useRef(false);
+  const fabPositionRef = useRef<{ x: number; y: number }>({ x: 16, y: 96 });
 
   // クライアントサイドでのみレンダリング
   useEffect(() => {
@@ -776,15 +791,64 @@ export default function AIChatBubble() {
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={openChat}
+            whileHover={isDragging ? undefined : { scale: 1.1 }}
+            whileTap={isDragging ? undefined : { scale: 0.95 }}
             type="button"
             aria-label="AIアドバイザーを開く"
             data-testid="ai-chat-floating-button"
-            className="fixed bottom-24 right-4 z-[51] w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
+            className="fixed z-[51] w-14 h-14 rounded-full shadow-lg flex items-center justify-center touch-none select-none"
             style={{
+              right: fabPosition.x,
+              bottom: fabPosition.y,
               background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.warning} 100%)`,
+              cursor: isDragging ? 'grabbing' : 'grab',
+            }}
+            onPointerDown={(e: React.PointerEvent<HTMLButtonElement>) => {
+              fabDragStart.current = {
+                clientX: e.clientX,
+                clientY: e.clientY,
+                t: Date.now(),
+                pos: { ...fabPosition },
+              };
+              fabDraggingRef.current = false;
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e: React.PointerEvent<HTMLButtonElement>) => {
+              if (!fabDragStart.current) return;
+              const dx = e.clientX - fabDragStart.current.clientX;
+              const dy = e.clientY - fabDragStart.current.clientY;
+              if (!fabDraggingRef.current && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+                fabDraggingRef.current = true;
+                setIsDragging(true);
+              }
+              if (fabDraggingRef.current) {
+                const newX = Math.max(8, Math.min(window.innerWidth - 64, fabDragStart.current.pos.x - dx));
+                const newY = Math.max(8, Math.min(window.innerHeight - 64, fabDragStart.current.pos.y + dy));
+                const newPos = { x: newX, y: newY };
+                fabPositionRef.current = newPos;
+                setFabPosition(newPos);
+              }
+            }}
+            onPointerUp={(e: React.PointerEvent<HTMLButtonElement>) => {
+              if (!fabDragStart.current) return;
+              const elapsed = Date.now() - fabDragStart.current.t;
+              const dx = Math.abs(e.clientX - fabDragStart.current.clientX);
+              const dy = Math.abs(e.clientY - fabDragStart.current.clientY);
+              const wasDrag = fabDraggingRef.current || dx > 5 || dy > 5 || elapsed > 250;
+              if (wasDrag) {
+                // ドラッグ終了 → 最終位置を保存 (ref から最新値を取得)
+                try {
+                  localStorage.setItem('aiChatBubblePosition', JSON.stringify(fabPositionRef.current));
+                } catch {
+                  // ignore
+                }
+              } else {
+                // タップ → チャット展開
+                openChat();
+              }
+              fabDragStart.current = null;
+              fabDraggingRef.current = false;
+              setIsDragging(false);
             }}
           >
             <Sparkles size={24} color="#fff" />
