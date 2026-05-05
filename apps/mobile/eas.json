@@ -48,7 +48,7 @@
     "production": {
       "ios": {
         "appleId": "hori@hori.tech",
-        "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID",
+        "ascAppId": "6766483691",
         "appleTeamId": "PW644RQ3ZR"
       },
       "android": {
@@ -60,7 +60,7 @@
     "preview": {
       "ios": {
         "appleId": "hori@hori.tech",
-        "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID",
+        "ascAppId": "6766483691",
         "appleTeamId": "PW644RQ3ZR"
       },
       "android": {
