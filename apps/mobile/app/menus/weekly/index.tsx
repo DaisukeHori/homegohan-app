@@ -1907,32 +1907,43 @@ export default function WeeklyMenuPage() {
                 );
               })}
 
-              {/* +食事タイプ追加ボタン — plan 作成済みの day のみ表示 */}
-              {selectedDay?.id && (
-                <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-                  <Pressable
-                    testID="weekly-add-meal-type-btn"
-                    onPress={() => {
-                      setAddMealSlotDayId(selectedDay.id as string);
-                      setAddMealSlotVisible(true);
-                    }}
-                    style={({ pressed }) => ({
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 4,
-                      paddingVertical: 6,
-                      paddingHorizontal: 10,
-                      borderRadius: radius.sm,
-                      backgroundColor: pressed ? colors.accentLight : colors.card,
-                      borderWidth: 1,
-                      borderColor: colors.accent,
-                    })}
-                  >
-                    <Ionicons name="add" size={14} color={colors.accent} />
-                    <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "600" }}>食事タイプ追加</Text>
-                  </Pressable>
-                </View>
-              )}
+              {/* +食事を追加ボタン — 常時表示 (WEB仕様に統一) */}
+              <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+                <Pressable
+                  testID="weekly-add-meal-type-btn"
+                  onPress={() => {
+                    if (!selectedDay?.id) {
+                      // plan 未作成 → AI 献立作成を促す
+                      Alert.alert(
+                        "週間献立の作成",
+                        "この週の献立がまだ作成されていません。AIに献立を作成してもらいましょう。",
+                        [
+                          { text: "キャンセル", style: "cancel" },
+                          { text: "AIで作成", onPress: () => setShowV4Modal(true) },
+                        ],
+                      );
+                      return;
+                    }
+                    setAddMealSlotDayId(selectedDay.id as string);
+                    setAddMealSlotVisible(true);
+                  }}
+                  style={({ pressed }) => ({
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: radius.sm,
+                    backgroundColor: pressed ? colors.accentLight : colors.card,
+                    borderWidth: 1,
+                    borderStyle: "dashed",
+                    borderColor: colors.accent,
+                  })}
+                >
+                  <Ionicons name="add" size={14} color={colors.accent} />
+                  <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "600" }}>食事を追加</Text>
+                </Pressable>
+              </View>
             </View>
           )}
         </>
