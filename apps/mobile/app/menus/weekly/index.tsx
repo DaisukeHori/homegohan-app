@@ -685,6 +685,10 @@ export default function WeeklyMenuPage() {
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [selectedMealForRegen, setSelectedMealForRegen] = useState<PlannedMealRow | null>(null);
 
+  // 日別栄養サマリー 3 段階 UX
+  const [dayNutritionExpanded, setDayNutritionExpanded] = useState(false);
+  const [showNutritionDetailModal, setShowNutritionDetailModal] = useState(false);
+
   useEffect(() => {
     const fetchRadarProfile = async () => {
       try {
@@ -1174,6 +1178,24 @@ export default function WeeklyMenuPage() {
     };
   }, [selectedDay]);
 
+  // 日別栄養 — インラインカード用 6 栄養素サブセットと平均達成率
+  const INLINE_NUTRITION_KEYS: (keyof DayNutritionTotals)[] = [
+    "caloriesKcal", "proteinG", "fatG", "carbsG", "fiberG", "vitaminCMg",
+  ];
+  const dayNutritionData = useMemo(() => {
+    if (!selectedDay) return null;
+    const totals = calcDayTotals(selectedDay.planned_meals);
+    const pcts = radarChartNutrients.map((key) => {
+      const def = NUTRIENT_DEFS.find((d) => d.key === key);
+      if (!def || def.dri === 0) return 0;
+      return Math.min(Math.round(((totals[key] as number) / def.dri) * 100), 150);
+    });
+    const avgAchievement = pcts.length > 0
+      ? Math.round(pcts.reduce((s, v) => s + v, 0) / pcts.length)
+      : 0;
+    return { totals, avgAchievement };
+  }, [selectedDay, radarChartNutrients]);
+
   // Calendar memos
   const calendarDays = useMemo(() => getCalendarDays(displayMonth, weekStartDay), [displayMonth, weekStartDay]);
   const dayLabels = useMemo(() => getDayLabels(weekStartDay), [weekStartDay]);
@@ -1266,6 +1288,11 @@ export default function WeeklyMenuPage() {
       calories_kcal: m.calories_kcal,
     }));
   }, [days, selectedDate]);
+
+  // 選択日変更時に日別栄養展開をリセット
+  useEffect(() => {
+    setDayNutritionExpanded(false);
+  }, [selectedDate]);
 
   function handleCalendarDateClick(day: Date) {
     const newWeekStart = getWeekStart(day, weekStartDay);
@@ -1565,26 +1592,99 @@ export default function WeeklyMenuPage() {
             onPress={() => setShowV4Modal(true)}
           />
 
-          {/* 選択日のサマリ */}
+          {/* 日別栄養サマリー — 3 段階 UX (WEB 仕様準拠) */}
           {selectedDay && daySummary.total > 0 && (
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={{ fontSize: 13, color: colors.textMuted }}>
-                {daySummary.totalCalories.toLocaleString()} kcal・{daySummary.completed}/{daySummary.total} 完了
-              </Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                {/* 栄養分析ボタン */}
+            <View>
+              {/* 段階 1 / 2: 折りたたみ・展開ヘッダー行 */}
+              <Pressable
+                testID="day-nutrition-toggle"
+                onPress={() => setDayNutritionExpanded((prev) => !prev)}
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  paddingVertical: spacing.sm,
+                }}
+              >
+                <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                  {daySummary.completed}/{daySummary.total} 完了
+                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  {/* kcal + chevron */}
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>
+                    {daySummary.totalCalories.toLocaleString()} kcal
+                  </Text>
+                  {dayNutritionExpanded ? (
+                    <ChevronUp size={16} color={colors.textLight} />
+                  ) : (
+                    <ChevronDown size={16} color={colors.textLight} />
+                  )}
+                </View>
+              </Pressable>
+
+              {/* 段階 2: インライン栄養カード */}
+              {dayNutritionExpanded && dayNutritionData && (
                 <Pressable
-                  onPress={() => openNutritionSheet(selectedDay)}
+                  testID="day-nutrition-card"
+                  onPress={() => setShowNutritionDetailModal(true)}
                   style={{
-                    flexDirection: "row", alignItems: "center", gap: 4,
-                    paddingVertical: 5, paddingHorizontal: spacing.md,
-                    borderRadius: radius.sm, backgroundColor: colors.accentLight,
-                    borderWidth: 1, borderColor: colors.accent,
+                    backgroundColor: colors.card,
+                    borderRadius: radius.lg,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    padding: spacing.md,
+                    gap: spacing.md,
+                    marginBottom: spacing.sm,
                   }}
                 >
-                  <BarChart3 size={13} color={colors.accent} />
-                  <Text style={{ fontSize: 12, fontWeight: "600", color: colors.accent }}>栄養</Text>
+                  {/* レーダー + 栄養バー横並び */}
+                  <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "flex-start" }}>
+                    {/* 左: レーダー + 達成率 */}
+                    <View style={{ alignItems: "center", gap: 4 }}>
+                      <NutritionRadarChartSvg
+                        totals={dayNutritionData.totals}
+                        nutrientKeys={radarChartNutrients}
+                        size={100}
+                      />
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: colors.accent }}>
+                        {dayNutritionData.avgAchievement}%
+                      </Text>
+                      <Text style={{ fontSize: 10, color: colors.textMuted }}>平均達成率</Text>
+                    </View>
+                    {/* 右: 6 栄養素バー */}
+                    <View style={{ flex: 1, gap: 6 }}>
+                      <Text style={{ fontSize: 11, fontWeight: "600", color: colors.text }}>
+                        📊 {daySummary.total}食分の栄養
+                      </Text>
+                      {INLINE_NUTRITION_KEYS.map((key) => {
+                        const def = NUTRIENT_DEFS.find((d) => d.key === key);
+                        if (!def) return null;
+                        const val = dayNutritionData.totals[key] as number;
+                        const pct = driPercent(key, val);
+                        const barColor = driColor(pct);
+                        return (
+                          <View key={String(key)} style={{ gap: 2 }}>
+                            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                              <Text style={{ fontSize: 10, color: colors.textLight }}>{def.label}</Text>
+                              <Text style={{ fontSize: 10, fontWeight: "600", color: barColor }}>{pct}%</Text>
+                            </View>
+                            <View style={{ height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: "hidden" }}>
+                              <View style={{ width: `${Math.min(pct, 100)}%`, height: "100%", backgroundColor: barColor, borderRadius: 2 }} />
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                  {/* タップで詳細ヒント */}
+                  <Text style={{ fontSize: 11, color: colors.textMuted, textAlign: "center" }}>
+                    タップで詳細
+                  </Text>
                 </Pressable>
+              )}
+
+              {/* AI再生成ボタン */}
+              <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
                 <Button testID="weekly-request-button" size="sm" variant="ghost" onPress={() => router.push("/menus/weekly/request")}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                     <Sparkles size={14} color={colors.accent} />
@@ -2024,25 +2124,15 @@ export default function WeeklyMenuPage() {
         selectedDate={selectedDate}
       />
 
-      {/* 栄養分析ボトムシート (旧) */}
-      <NutritionBottomSheet
-        visible={nutritionSheetDay !== null}
-        onClose={() => setNutritionSheetDay(null)}
-        day={nutritionSheetDay}
-        dateLabel={nutritionSheetLabel}
-        radarKeys={radarChartNutrients}
-        weekDays={days}
-      />
-
-      {/* 栄養分析詳細モーダル (PR 6-2: 26 栄養素 + AI フィードバック) */}
-      {nutritionSheetDay && (
+      {/* 栄養分析詳細モーダル (段階 3: フルスクリーン) */}
+      {selectedDay && (
         <NutritionDetailModal
-          visible={nutritionSheetDay !== null}
-          onClose={() => setNutritionSheetDay(null)}
-          date={nutritionSheetDay.day_date}
-          dateLabel={nutritionSheetLabel}
-          totals={calcDayTotals(nutritionSheetDay.planned_meals)}
-          mealCount={nutritionSheetDay.planned_meals.filter((m) => m.dish_name).length}
+          visible={showNutritionDetailModal}
+          onClose={() => setShowNutritionDetailModal(false)}
+          date={selectedDay.day_date}
+          dateLabel={`${new Date(selectedDay.day_date + "T00:00:00").getMonth() + 1}/${new Date(selectedDay.day_date + "T00:00:00").getDate()}`}
+          totals={calcDayTotals(selectedDay.planned_meals)}
+          mealCount={selectedDay.planned_meals.filter((m) => m.dish_name).length}
           radarKeys={radarChartNutrients as string[]}
           onRadarKeysSaved={(keys) => setRadarChartNutrients(keys as (keyof DayNutritionTotals)[])}
           weekDays={days.map((d) => ({
