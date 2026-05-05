@@ -47,9 +47,9 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "REPLACE_WITH_APPLE_ID@example.com",
+        "appleId": "hori@hori.tech",
         "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID",
-        "appleTeamId": "REPLACE_WITH_APPLE_TEAM_ID"
+        "appleTeamId": "PW644RQ3ZR"
       },
       "android": {
         "serviceAccountKeyPath": "../../secrets/google-play-service-account.json",
@@ -59,9 +59,9 @@
     },
     "preview": {
       "ios": {
-        "appleId": "REPLACE_WITH_APPLE_ID@example.com",
+        "appleId": "hori@hori.tech",
         "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID",
-        "appleTeamId": "REPLACE_WITH_APPLE_TEAM_ID"
+        "appleTeamId": "PW644RQ3ZR"
       },
       "android": {
         "serviceAccountKeyPath": "../../secrets/google-play-service-account.json",

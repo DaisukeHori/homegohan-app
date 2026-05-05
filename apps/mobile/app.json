@@ -50,8 +50,10 @@
     ],
     "extra": {
       "eas": {
-        "projectId": ""
-      }
-    }
+        "projectId": "ce2a0961-4696-472c-8377-a3f83cecdff5"
+      },
+      "router": {}
+    },
+    "owner": "nvidia.homeftp.net"
   }
 }
