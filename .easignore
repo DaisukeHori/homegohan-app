@@ -1,0 +1,51 @@
+# ネストされた旧リポジトリ (本番モバイルビルドに不要)
+homegohan-app/
+
+# Root の node_modules (EAS が apps/mobile/node_modules を別途 install するため不要)
+node_modules/
+
+# Web アプリのビルド成果物
+.next/
+.vercel/
+src/
+public/
+supabase/
+
+# テスト / playwright
+tests/
+playwright-report/
+test-results/
+e2e/
+
+# EAS でビルドしない apps
+apps/web/
+
+# ビルド成果物
+**/ios/build/
+**/ios/Pods/
+**/ios/DerivedData/
+**/android/build/
+**/android/app/build/
+**/android/.gradle/
+
+# キャッシュ
+.expo/
+.expo-shared/
+.metro-cache/
+.gradle/
+.cxx/
+.turbo/
+
+# カバレッジ
+coverage/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# ログ
+*.log
+
+# ソースマップ
+*.map
