@@ -323,6 +323,20 @@ export default function MealCaptureModal() {
 
   // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
   const searchParams = useSearchParams();
+
+  // mode=app かつ prefill なし の場合、mount 時に step をリセット
+  // タブバー中央ボタン再タップ → WebView reload → page remount の際に前の state が残らないよう
+  useEffect(() => {
+    const modeParam = searchParams.get('mode');
+    const prefillParam = searchParams.get('prefill');
+    if (modeParam === 'app' && !prefillParam) {
+      setStep('mode-select');
+      setPhotoFiles([]);
+      setPhotoPreviews([]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const prefillParam = searchParams.get('prefill');
     if (!prefillParam) return;
@@ -370,12 +384,14 @@ export default function MealCaptureModal() {
     if (files && files.length > 0) {
       const newFiles = Array.from(files);
       setPhotoFiles(prev => [...prev, ...newFiles]);
-      
+
       newFiles.forEach(file => {
         const url = URL.createObjectURL(file);
         setPhotoPreviews(prev => [...prev, url]);
       });
     }
+    // 同じファイルを再度選択できるように input をリセット
+    e.target.value = '';
   };
   
   // 写真を削除
@@ -1025,7 +1041,7 @@ export default function MealCaptureModal() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: colors.bg }}>
+    <div className="min-h-screen flex flex-col overflow-x-hidden" style={{ background: colors.bg }}>
       {/* ヘッダー */}
       <div className="sticky top-0 z-50 px-4 py-3 flex items-center justify-between" style={{ background: colors.card, borderBottom: `1px solid ${colors.border}` }}>
         <button onClick={handleClose} className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
@@ -1713,7 +1729,7 @@ export default function MealCaptureModal() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="flex-1 p-4 overflow-auto"
+            className="flex-1 p-4 overflow-y-auto overflow-x-hidden"
           >
             {/* 写真プレビュー */}
             {photoPreviews.length > 0 && (
@@ -1821,7 +1837,7 @@ export default function MealCaptureModal() {
                     {healthData.totalCholesterol && (
                       <div className="text-center">
                         <p style={{ fontSize: 14, fontWeight: 700, color: colors.text, margin: 0 }}>{healthData.totalCholesterol}</p>
-                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>総コレステロール</p>
+                        <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }} className="break-all">総コレステロール</p>
                       </div>
                     )}
                   </div>

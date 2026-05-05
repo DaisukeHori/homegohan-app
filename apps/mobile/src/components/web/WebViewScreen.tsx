@@ -2,7 +2,9 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import { useNavigation, useRouter } from 'expo-router';
+import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 
@@ -108,6 +110,10 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   const navigation = useNavigation();
   const router = useRouter();
 
+  // Fix 2: tab-navigate で fullPath (クエリ付き) を受け取った場合に初期 URL を上書き
+  const params = useLocalSearchParams<{ initialPath?: string }>();
+  const effectivePath = params.initialPath ?? path;
+
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
   useEffect(() => {
@@ -118,11 +124,11 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         const separator = path.includes('?') ? '&' : '?';
         const targetPath = alreadyHasMode ? path : `${path}${separator}mode=app`;
         const targetUrl = `${WEB_BASE_URL}${targetPath}`;
+        // window.location.replace で履歴を残さず初期 URL に置換してフレッシュな state に戻す
+        // (写真撮影デッドロック対策: step state や input キャッシュをリセット)
         webViewRef.current?.injectJavaScript(`
           (function() {
-            if (window.location.href !== '${targetUrl}') {
-              window.location.href = '${targetUrl}';
-            }
+            window.location.replace('${targetUrl}');
           })();
           true;
         `);
@@ -136,12 +142,12 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && session?.refresh_token) {
         // bridge URL に access/refresh token + next path を埋め込む
-        // path に既に mode=app が含まれている場合は重複付与しない
-        const alreadyHasMode = path.includes('mode=app');
-        const separator = path.includes('?') ? '&' : '?';
+        // effectivePath に既に mode=app が含まれている場合は重複付与しない
+        const alreadyHasMode = effectivePath.includes('mode=app');
+        const separator = effectivePath.includes('?') ? '&' : '?';
         const nextPath = alreadyHasMode
-          ? path
-          : `${path}${separator}mode=app`;
+          ? effectivePath
+          : `${effectivePath}${separator}mode=app`;
         const next = encodeURIComponent(nextPath);
         const bridgeUrl = `${WEB_BASE_URL}/auth/native-bridge?access_token=${session.access_token}&refresh_token=${session.refresh_token}&next=${next}`;
         setUri(bridgeUrl);
@@ -174,21 +180,21 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
           true;
         `);
       } else {
-        // セッションなし → 直接 path (mode=app 付き)
-        const alreadyHasMode = path.includes('mode=app');
-        const separator = path.includes('?') ? '&' : '?';
+        // セッションなし → 直接 effectivePath (mode=app 付き)
+        const alreadyHasMode = effectivePath.includes('mode=app');
+        const separator = effectivePath.includes('?') ? '&' : '?';
         const directUrl = alreadyHasMode
-          ? `${WEB_BASE_URL}${path}`
-          : `${WEB_BASE_URL}${path}${separator}mode=app`;
+          ? `${WEB_BASE_URL}${effectivePath}`
+          : `${WEB_BASE_URL}${effectivePath}${separator}mode=app`;
         setUri(directUrl);
         setInjectedJS('');
       }
     };
     init();
-  }, [path]);
+  }, [effectivePath]);
 
-  // path からクエリ・ハッシュを除いた純粋なパス部分
-  const currentTabRoot = path.split('?')[0].split('#')[0];
+  // effectivePath からクエリ・ハッシュを除いた純粋なパス部分
+  const currentTabRoot = effectivePath.split('?')[0].split('#')[0];
 
   if (!uri) {
     return (
@@ -230,7 +236,16 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
               const matched = TAB_ROUTES.find((t) => t.pathPrefix === data.path);
               if (matched) {
                 setTimeout(() => {
-                  router.push(matched.tab as any);
+                  // Fix 2: fullPath (クエリパラメータ含む) を initialPath として渡すことで
+                  // 買い物リストのモーダル等を開くクエリが失われないようにする
+                  if (data.fullPath && data.fullPath !== data.path) {
+                    router.push({
+                      pathname: matched.tab as any,
+                      params: { initialPath: data.fullPath },
+                    });
+                  } else {
+                    router.push(matched.tab as any);
+                  }
                 }, 0);
               }
             } else if (data.type === 'navigate-back') {
@@ -240,6 +255,27 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
               } else {
                 router.push('/(tabs)/home' as any);
               }
+            } else if (data.type === 'download') {
+              // Fix 3: iOS WebView でのエクスポート対応
+              // Web 側から postMessage で受け取ったファイル内容を expo-sharing で保存・共有
+              const { filename, content, mimeType } = data;
+              (async () => {
+                try {
+                  const filePath = `${FileSystem.documentDirectory}${filename}`;
+                  await FileSystem.writeAsStringAsync(filePath, content, {
+                    encoding: FileSystem.EncodingType.UTF8,
+                  });
+                  const isAvailable = await Sharing.isAvailableAsync();
+                  if (isAvailable) {
+                    await Sharing.shareAsync(filePath, {
+                      mimeType,
+                      dialogTitle: filename,
+                    });
+                  }
+                } catch (e) {
+                  console.error('[WebViewScreen] download failed', e);
+                }
+              })();
             }
           } catch {
             // JSON パース失敗は無視
