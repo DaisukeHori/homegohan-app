@@ -1,0 +1,40 @@
+# Build artifacts
+ios/build/
+ios/Pods/
+ios/DerivedData/
+android/build/
+android/app/build/
+android/.gradle/
+android/.idea/
+
+# Native dependencies (re-installed by EAS)
+node_modules/
+
+# Caches
+.expo/
+.expo-shared/
+.metro-cache/
+.gradle/
+.cxx/
+
+# Test artifacts
+coverage/
+*.log
+maestro-output/
+.maestro/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Source maps (regenerated)
+*.map
+
+# Local env (sensitive, EAS env vars used instead)
+.env.local
+.env.*.local
