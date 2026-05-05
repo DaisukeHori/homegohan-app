@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
+import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 
 // シンプルなマークダウンパーサー
 const parseMarkdown = (text: string): string => {
@@ -139,6 +140,7 @@ const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }>
 };
 
 export default function AIChatBubble() {
+  const isNativeApp = useNativeAppMode();
   const [isMounted, setIsMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -785,6 +787,11 @@ export default function AIChatBubble() {
 
   // サーバーサイドでは何もレンダリングしない
   if (!isMounted) {
+    return null;
+  }
+
+  // ネイティブアプリ (mode=app) ではモバイル側の AIFloatingFab に任せる
+  if (isNativeApp) {
     return null;
   }
 
