@@ -211,7 +211,7 @@ export default function AdminDashboard() {
                       borderRadius: '8px',
                       boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                     }}
-                    formatter={(value: number | undefined) => [value ?? 0, '完了数']}
+                    formatter={(value) => [typeof value === 'number' ? value : Number(value) || 0, '完了数']}
                   />
                   <Line
                     type="monotone"
@@ -263,7 +263,7 @@ export default function AdminDashboard() {
                       border: '1px solid #e5e7eb',
                       borderRadius: '8px',
                     }}
-                    formatter={(value: number | undefined) => [(value ?? 0).toLocaleString(), '件']}
+                    formatter={(value) => [(typeof value === 'number' ? value : Number(value) || 0).toLocaleString(), '件']}
                   />
                   <Legend />
                 </PieChart>
