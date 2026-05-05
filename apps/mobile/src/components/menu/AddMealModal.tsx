@@ -55,8 +55,8 @@ interface ActionConfig {
 interface Props {
   visible: boolean;
   onClose: () => void;
-  /** user_daily_meals.id */
-  dayId: string;
+  /** user_daily_meals.id (plan 未作成時は null — API 側で自動作成) */
+  dayId: string | null;
   /** 対応する日付文字列 YYYY-MM-DD (POST に必要) */
   dayDate: string;
   mealType: MealType;

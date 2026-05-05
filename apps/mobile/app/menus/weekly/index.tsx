@@ -667,11 +667,11 @@ export default function WeeklyMenuPage() {
 
   // AddMealSlotModal state
   const [addMealSlotVisible, setAddMealSlotVisible] = useState(false);
-  const [addMealSlotDayId, setAddMealSlotDayId] = useState<string>("");
+  const [addMealSlotDayId, setAddMealSlotDayId] = useState<string | null>(null);
 
   // AddMealModal state
   const [addMealModalVisible, setAddMealModalVisible] = useState(false);
-  const [addMealModalDayId, setAddMealModalDayId] = useState<string>("");
+  const [addMealModalDayId, setAddMealModalDayId] = useState<string | null>(null);
   const [addMealModalDayDate, setAddMealModalDayDate] = useState<string>("");
   const [addMealModalMealType, setAddMealModalMealType] = useState<MealType>("dinner");
 
@@ -1609,19 +1609,8 @@ export default function WeeklyMenuPage() {
                       dayDate={selectedDay.day_date}
                       mealLabel={MEAL_CONFIG[mealType]?.label ?? mealType}
                       onPress={() => {
-                        // plan が未作成の場合 (id が null) は AI 献立作成を促す
-                        if (!selectedDay.id) {
-                          Alert.alert(
-                            "週間献立の作成",
-                            "この週の献立がまだ作成されていません。AIに献立を作成してもらいましょう。",
-                            [
-                              { text: "キャンセル", style: "cancel" },
-                              { text: "AIで作成", onPress: () => setShowV4Modal(true) },
-                            ],
-                          );
-                          return;
-                        }
-                        setAddMealModalDayId(selectedDay.id as string);
+                        // plan 未作成 (id が null) でも AddMealModal を開く — API 側で user_daily_meals を自動作成
+                        setAddMealModalDayId(selectedDay.id ?? null);
                         setAddMealModalDayDate(selectedDay.day_date);
                         setAddMealModalMealType(mealType);
                         setAddMealModalVisible(true);
@@ -1937,19 +1926,8 @@ export default function WeeklyMenuPage() {
                 <Pressable
                   testID="weekly-add-meal-type-btn"
                   onPress={() => {
-                    if (!selectedDay?.id) {
-                      // plan 未作成 → AI 献立作成を促す
-                      Alert.alert(
-                        "週間献立の作成",
-                        "この週の献立がまだ作成されていません。AIに献立を作成してもらいましょう。",
-                        [
-                          { text: "キャンセル", style: "cancel" },
-                          { text: "AIで作成", onPress: () => setShowV4Modal(true) },
-                        ],
-                      );
-                      return;
-                    }
-                    setAddMealSlotDayId(selectedDay.id as string);
+                    // plan 未作成 (id が null) でも AddMealSlotModal を開く
+                    setAddMealSlotDayId(selectedDay?.id ?? "");
                     setAddMealSlotVisible(true);
                   }}
                   style={({ pressed }) => ({
@@ -1982,7 +1960,8 @@ export default function WeeklyMenuPage() {
         dayId={addMealSlotDayId}
         onSelect={(mealType: MealType) => {
           setAddMealSlotVisible(false);
-          setAddMealModalDayId(addMealSlotDayId);
+          // plan 未作成時は addMealSlotDayId が "" になるため null に正規化
+          setAddMealModalDayId(addMealSlotDayId || null);
           setAddMealModalDayDate(selectedDate);
           setAddMealModalMealType(mealType);
           setAddMealModalVisible(true);
