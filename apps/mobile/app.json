@@ -27,20 +27,27 @@
         "NSPhotoLibraryUsageDescription": "食事写真を選択するために写真ライブラリを使用します。",
         "NSPhotoLibraryAddUsageDescription": "解析結果の保存のために写真ライブラリへ追加する場合があります。"
       },
-      "icon": "./assets/icon-ios.png"
+      "icon": "./assets/icon-ios.png",
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "android": {
       "package": "com.homegohan.app",
       "permissions": [
-        "CAMERA",
-        "READ_MEDIA_IMAGES",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "POST_NOTIFICATIONS"
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#E07A5F"
+      },
+      "runtimeVersion": {
+        "policy": "appVersion"
       }
     },
     "plugins": [
@@ -54,6 +61,11 @@
       },
       "router": {}
     },
-    "owner": "nvidia.homeftp.net"
+    "owner": "nvidia.homeftp.net",
+    "updates": {
+      "url": "https://u.expo.dev/ce2a0961-4696-472c-8377-a3f83cecdff5",
+      "checkAutomatically": "NEVER",
+      "enabled": false
+    }
   }
 }
