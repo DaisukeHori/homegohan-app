@@ -2,8 +2,11 @@ import { Sparkles, X } from "lucide-react-native";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -115,96 +118,101 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
     <Modal
       visible={visible}
       animationType="slide"
-      transparent
+      presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <View style={styles.backdrop}>
-        <View testID="regenerate-meal-modal" style={styles.container}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>✨ {mealLabel}をAIで変更</Text>
-            <Pressable
-              testID="regenerate-meal-close"
-              onPress={handleClose}
-              style={styles.closeBtn}
-            >
-              <X size={20} color={colors.textLight} />
-            </Pressable>
-          </View>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.card }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View testID="regenerate-meal-modal" style={{ flex: 1 }}>
+            {/* Header */}
+            <View style={styles.header}>
+              <Text style={styles.title}>✨ {mealLabel}をAIで変更</Text>
+              <Pressable
+                testID="regenerate-meal-close"
+                onPress={handleClose}
+                style={styles.closeBtn}
+              >
+                <X size={20} color={colors.textLight} />
+              </Pressable>
+            </View>
 
-          <ScrollView
-            style={styles.body}
-            contentContainerStyle={styles.bodyContent}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* 現在の献立 */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>現在の献立</Text>
-              <View style={styles.currentMealBox}>
-                <Text style={styles.currentMealName}>{mealName}</Text>
+            <ScrollView
+              style={styles.body}
+              contentContainerStyle={styles.bodyContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* 現在の献立 */}
+              <View style={styles.section}>
+                <Text style={styles.sectionLabel}>現在の献立</Text>
+                <View style={styles.currentMealBox}>
+                  <Text style={styles.currentMealName}>{mealName}</Text>
+                </View>
               </View>
-            </View>
 
-            {/* 条件 4 ボタン */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>新しい条件を指定（複数選択可）</Text>
-              {CONDITIONS.map(c => {
-                const active = selectedConditions.includes(c.key);
-                return (
-                  <Pressable
-                    key={c.key}
-                    testID={`regenerate-condition-${c.key}`}
-                    onPress={() => toggleCondition(c.key)}
-                    style={[
-                      styles.conditionBtn,
-                      active ? styles.conditionBtnActive : styles.conditionBtnInactive,
-                    ]}
-                  >
-                    <Text style={[
-                      styles.conditionLabel,
-                      { color: active ? "#FFF" : colors.accent },
-                    ]}>{c.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+              {/* 条件 4 ボタン */}
+              <View style={styles.section}>
+                <Text style={styles.sectionLabel}>新しい条件を指定（複数選択可）</Text>
+                {CONDITIONS.map(c => {
+                  const active = selectedConditions.includes(c.key);
+                  return (
+                    <Pressable
+                      key={c.key}
+                      testID={`regenerate-condition-${c.key}`}
+                      onPress={() => toggleCondition(c.key)}
+                      style={[
+                        styles.conditionBtn,
+                        active ? styles.conditionBtnActive : styles.conditionBtnInactive,
+                      ]}
+                    >
+                      <Text style={[
+                        styles.conditionLabel,
+                        { color: active ? "#FFF" : colors.accent },
+                      ]}>{c.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
 
-            {/* リクエスト */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>リクエスト（任意）</Text>
-              <TextInput
-                testID="regenerate-meal-note"
-                multiline
-                numberOfLines={3}
-                value={note}
-                onChangeText={setNote}
-                placeholder="例: もっとヘルシーに、魚料理がいい..."
-                placeholderTextColor={colors.textMuted}
-                style={styles.textarea}
-              />
-            </View>
-          </ScrollView>
+              {/* リクエスト */}
+              <View style={styles.section}>
+                <Text style={styles.sectionLabel}>リクエスト（任意）</Text>
+                <TextInput
+                  testID="regenerate-meal-note"
+                  multiline
+                  numberOfLines={3}
+                  value={note}
+                  onChangeText={setNote}
+                  placeholder="例: もっとヘルシーに、魚料理がいい..."
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.textarea}
+                />
+              </View>
+            </ScrollView>
 
-          {/* Submit */}
-          <View style={styles.footer}>
-            <Pressable
-              testID="regenerate-meal-submit"
-              onPress={submit}
-              disabled={submitting}
-              style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <>
-                  <Sparkles size={18} color="#FFF" />
-                  <Text style={styles.submitText}>AIで別の献立に変更</Text>
-                </>
-              )}
-            </Pressable>
+            {/* Submit */}
+            <View style={styles.footer}>
+              <Pressable
+                testID="regenerate-meal-submit"
+                onPress={submit}
+                disabled={submitting}
+                style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <>
+                    <Sparkles size={18} color="#FFF" />
+                    <Text style={styles.submitText}>AIで別の献立に変更</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
           </View>
-        </View>
-      </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 };
@@ -214,17 +222,6 @@ export const RegenerateMealModal: React.FC<Props> = ({ visible, meal, onClose })
 // ============================================================
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
-  container: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: "80%",
-  },
   header: {
     flexDirection: "row",
     alignItems: "center",

@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -744,12 +745,11 @@ export const StatsModal: React.FC<StatsModalProps> = ({
     <Modal
       visible={visible}
       animationType="slide"
-      transparent
+      presentationStyle="pageSheet"
       onRequestClose={onClose}
-      statusBarTranslucent
     >
-      <View style={styles.backdrop}>
-        <View testID="stats-modal" style={styles.container}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <View testID="stats-modal" style={{ flex: 1 }}>
           {/* ヘッダー */}
           <View style={styles.header}>
             <Ionicons name="bar-chart" size={18} color={colors.accent} />
@@ -809,25 +809,12 @@ export const StatsModal: React.FC<StatsModalProps> = ({
             />
           )}
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
-  container: {
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: radius['2xl'],
-    borderTopRightRadius: radius['2xl'],
-    maxHeight: '92%',
-    flex: 1,
-    ...shadows.lg,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

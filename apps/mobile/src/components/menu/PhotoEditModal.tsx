@@ -5,8 +5,11 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   Text,
   View,
@@ -99,25 +102,17 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
     <Modal
       visible={visible}
       animationType="slide"
-      transparent
+      presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "flex-end",
-          backgroundColor: "rgba(0,0,0,0.4)",
-        }}
-      >
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
         <View
           testID="photo-edit-modal"
-          style={{
-            backgroundColor: colors.bg,
-            borderTopLeftRadius: radius["2xl"],
-            borderTopRightRadius: radius["2xl"],
-            maxHeight: "90%",
-            ...shadows.lg,
-          }}
+          style={{ flex: 1 }}
         >
           {/* ヘッダー */}
           <View
@@ -336,7 +331,8 @@ export function PhotoEditModal({ visible, onClose, onResult }: Props) {
             </Pressable>
           </View>
         </View>
-      </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }

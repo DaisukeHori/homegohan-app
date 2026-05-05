@@ -3,9 +3,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   Modal,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,11 +14,9 @@ import {
 
 import { getApi, getApiBaseUrl } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
-import { colors, radius, shadows, spacing, typography } from '../../theme';
+import { colors, radius, spacing, typography } from '../../theme';
 import { AddShoppingModal } from './AddShoppingModal';
 import { type ShoppingItemData, ShoppingItem } from './ShoppingItem';
-
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // スーパーの動線に合わせたカテゴリ順序
 const CATEGORY_ORDER = [
@@ -228,12 +226,12 @@ export const ShoppingListModal: React.FC<Props> = ({
       <Modal
         testID="shopping-list-modal"
         visible={visible}
-        transparent
         animationType="slide"
+        presentationStyle="pageSheet"
         onRequestClose={onClose}
       >
-        <Pressable style={styles.overlay} onPress={onClose}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.card }}>
+          <View style={styles.sheet}>
             {/* ヘッダー */}
             <View style={styles.header}>
               <View style={styles.headerLeft}>
@@ -338,8 +336,8 @@ export const ShoppingListModal: React.FC<Props> = ({
                 )}
               </Pressable>
             </View>
-          </Pressable>
-        </Pressable>
+          </View>
+        </SafeAreaView>
       </Modal>
 
       {/* 追加モーダル (ShoppingListModal の上にスタック) */}
@@ -356,17 +354,8 @@ export const ShoppingListModal: React.FC<Props> = ({
 };
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius['2xl'],
-    borderTopRightRadius: radius['2xl'],
-    maxHeight: SCREEN_HEIGHT * 0.85,
-    ...shadows.md,
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
