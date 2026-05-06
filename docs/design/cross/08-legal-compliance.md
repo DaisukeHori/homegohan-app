@@ -61,7 +61,7 @@ export function CheckoutConfirmation({
           </tr>
           <tr>
             <td className="py-2 text-text-secondary">月額料金</td>
-            <td className="py-2 font-medium">¥{plan.monthly_price_jpy.toLocaleString()} (税込)</td>
+            <td className="py-2 font-medium">¥{(plan.monthly_price_jpy ?? 0).toLocaleString()} (税込)</td>
           </tr>
           <tr>
             <td className="py-2 text-text-secondary">更新</td>
@@ -77,7 +77,7 @@ export function CheckoutConfirmation({
           </tr>
           <tr>
             <td className="py-2 text-text-secondary">解約予告期間</td>
-            <td className="py-2">{plan.cancel_notice_period}</td>
+            <td className="py-2">{plan.plan_type === 'personal' ? 'いつでも解約可能 (次回更新日まで利用可)' : '月末まで'}</td>
           </tr>
         </tbody>
       </table>

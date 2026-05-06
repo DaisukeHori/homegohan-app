@@ -887,7 +887,7 @@ deprecated → private にロールバック (緊急用)
 ### GET /api/super-admin/plans/{id}/impact
 価格変更影響シミュレーション
 
-**クエリ**: `?new_monthly_price=1180&applies_to=on_renewal`
+**クエリ**: `?new_monthly_price_jpy=1180&applies_to=on_renewal`
 
 **レスポンス**:
 ```json

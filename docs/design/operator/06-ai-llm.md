@@ -113,8 +113,9 @@ export async function logLLMUsage(
 
 // コスト計算 (概算、モデル別レート)
 function calculateCost(tokens: number, model: string): number {
-  const rates: Record<string, number> = {
-    'grok-4-1-fast-non-reasoning': 0.000002,   // $2 / 1M tokens
+  const rates: Record<string, { input: number; output: number } | number> = {
+    'grok-4-1-fast-non-reasoning': { input: 0.000005, output: 0.000020 },
+    'grok-4-1-fast': { input: 0.000005, output: 0.000020 },
     'grok-4': 0.000005,
     'gemini-2.0-flash': 0.0000003,
     'gemini-2.0-flash-lite': 0.00000015,
@@ -257,34 +258,9 @@ export async function detectLLMAnomaly(userId: string, dailyCount: number): Prom
 
 ### 6.1 ProposedRecipeSchema (Zod)
 
-```typescript
-// supabase/functions/_shared/schemas/proposed-recipe.ts
-import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
-
-export const ProposedRecipeSchema = z.object({
-  dish_name: z.string().min(1).max(200),
-  description: z.string().max(500).optional(),
-  ingredients: z.array(z.object({
-    name: z.string().min(1).max(100),
-    quantity: z.number().positive().optional(),
-    unit: z.string().max(20).optional(),
-    allergen_tags: z.array(z.string()).default([]),
-  })).min(1).max(30),
-  steps: z.array(z.string().max(300)).min(1).max(20),
-  nutrition: z.object({
-    calories_kcal: z.number().nonnegative(),
-    protein_g: z.number().nonnegative(),
-    fat_g: z.number().nonnegative(),
-    carb_g: z.number().nonnegative(),
-    salt_g: z.number().nonnegative(),
-  }),
-  prep_time_minutes: z.number().int().positive().optional(),
-  difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
-  allergen_free_confirmed: z.boolean().default(false),
-});
-
-export type ProposedRecipe = z.infer<typeof ProposedRecipeSchema>;
-```
+> **注意**: `ProposedRecipeSchema` の canonical 定義は **family/04-meal-request-flow.md §8** を参照。
+> 個別献立フローのドメイン主管であるため、family/04 の定義を唯一の正とする。
+> 本ファイルでは重複定義を保持しない。
 
 ### 6.2 アレルゲン突合フロー
 
@@ -497,6 +473,7 @@ export async function validateAndLoadContext(
 ```typescript
 // supabase/functions/industrial-doctor-advice/index.ts
 Deno.serve(async (req) => {
+  const startTime = Date.now();
   const { targetUserId, adviceRequest } = await req.json();
 
   // JWT からログイン中の産業医の user_id を取得
@@ -538,7 +515,7 @@ Deno.serve(async (req) => {
     model: 'claude-3-5-sonnet-20241022',
   }, response.usage, Date.now() - startTime);
 
-  return new Response(JSON.stringify(response.content));
+  return new Response(JSON.stringify(response.content), { headers: { 'Content-Type': 'application/json' } });
 });
 ```
 
