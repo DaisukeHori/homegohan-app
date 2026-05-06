@@ -203,7 +203,7 @@ export async function logStreamingUsage(
 export async function checkLLMQuota(
   userId: string,
   planKey: string,
-  subscriptionStatus: PersonalSubscriptionStatus
+  subscriptionStatus: SubscriptionStatus
 ): Promise<QuotaCheckResult> {
   const quotaConfig = getQuotaConfig(planKey, subscriptionStatus);
   if (!quotaConfig) return { allowed: true }; // フリー制限 (50/日)
@@ -220,7 +220,7 @@ export async function checkLLMQuota(
   return { allowed: true, remaining: quotaConfig.daily_limit - todayUsage };
 }
 
-function getQuotaConfig(planKey: string, status: PersonalSubscriptionStatus): QuotaConfig | null {
+function getQuotaConfig(planKey: string, status: SubscriptionStatus): QuotaConfig | null {
   // 試用中は試用専用 quota
   if (status === 'trialing') {
     const trialQuotas: Record<string, number> = {
