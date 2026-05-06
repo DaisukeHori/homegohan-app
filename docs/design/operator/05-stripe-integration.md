@@ -518,25 +518,40 @@ $$ LANGUAGE plpgsql;
 
 ## 9. グレースペリオド詳細 (§18.7)
 
-**フロー**:
+**フロー** (3 段階遷移、cross/08-legal-compliance.md §9 + operator/08-cron-batches.md §5.7 と整合):
 
 ```
 Day 0: invoice.payment_failed webhook 受信
-  → personal_subscriptions.status = 'past_due'
+  → personal_subscriptions.status = 'past_due', past_due_since = NOW()
   → メール: 「お支払いに失敗しました。カード情報をご確認ください」
+  → Stripe Smart Retries が裏で動作 (1 日後 / 3 日後 / 5 日後に自動再試行)
 
-Day 1-6: 毎日リマインダーメール (Vercel Cron: grace-period-check 09:30 JST、operator/08 §3.2 と整合)
-  → SELECT WHERE status='past_due' AND updated_at <= NOW() - INTERVAL '1 day'
+Day 1-6: 毎日リマインダーメール (Vercel Cron: grace_period_check 09:30 JST、operator/08 §5.7 と整合)
+  → SELECT WHERE status='past_due' AND past_due_since <= NOW() - INTERVAL '1 day'
 
-Day 7: グレースペリオド終了バッチ
-  → invoice.payment_failed から 7 日以上経過し、invoice.paid を受信していない
-  → status = 'cancelled'
-  → 機能停止
+Day 7: 機能制限開始 (Stage 1)
+  → invoice.payment_failed から 7 日経過、invoice.paid 未受信
+  → status = 'past_due' → 'grace', grace_started_at = NOW()
+  → AI 解析 / 家族共有等の有料機能を制限 (基本閲覧は可)
+  → 通知メール: 「機能制限を開始しました。30 日以内に支払いを再開してください」
+
+Day 8-29: grace 状態で継続リマインダー
+  → SELECT WHERE status='grace' AND grace_started_at <= NOW() - INTERVAL '<n> days'
+  → 7 日 / 14 日 / 21 日 / 28 日にエスカレートメール
+
+Day 30: 完全解約 (Stage 2)
+  → grace_started_at から 23 日経過 (合計 30 日)
+  → status = 'grace' → 'cancelled', cancelled_at = NOW()
+  → アクセス停止 (データ 90 日保持後に GDPR フローへ)
   → 解約通知メール + 解約理由アンケート
   → Stripe subscription cancel (端数処理なし)
 ```
 
-**グレースペリオド中の機能**: `getUserActivePlan()` は `past_due` でも本来のプランを返す。
+**グレースペリオド中の機能解放**:
+- `getUserActivePlan()` は `past_due` および `grace` 状態でも **本来のプランを返す** が、UI 層と Edge Function 層で個別に制限を実装:
+  - `past_due` (Day 0-6): 機能は通常通り (回復チャンス重視)
+  - `grace` (Day 7-29): AI 解析・家族共有・産業医アドバイス等の有料機能を 402 (Payment Required) で拒否、基本閲覧は可
+  - `cancelled`: 全機能停止 (ログイン可、課金画面のみアクセス可能)
 
 ## 10. チャージバック対応 (§18.8)
 
