@@ -1064,8 +1064,7 @@ export default function MealCaptureModal() {
         <div className="w-10" />
       </div>
 
-      <AnimatePresence mode="popLayout">
-        {/* ステップ0: モード選択 */}
+      {/* ステップ0: モード選択 */}
         {step === 'mode-select' && (
           <motion.div
             key="mode-select"
@@ -2302,7 +2301,6 @@ export default function MealCaptureModal() {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
     </div>
   );
 }
