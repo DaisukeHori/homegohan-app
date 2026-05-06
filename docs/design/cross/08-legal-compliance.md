@@ -479,12 +479,16 @@ stateDiagram-v2
 ```typescript
 // src/lib/billing/grace-period.ts
 
+// DDL CHECK 制約 (operator/01-data-model.md:343) と完全一致
+// チャージバックは status='past_due' + notes で表現 (operator/05 §4.2)
 export type SubscriptionStatus =
+  | 'trialing'
   | 'active'
+  | 'paused'
   | 'past_due'
   | 'grace'
   | 'cancelled'
-  | 'disputed';
+  | 'expired';
 
 /**
  * Stripe の `invoice.payment_failed` webhook 受信時に呼び出す。
