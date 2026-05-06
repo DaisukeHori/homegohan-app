@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:mvp": "playwright test tests/e2e/0[1-5]-*.spec.ts --reporter=list",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report tests/e2e/.report",

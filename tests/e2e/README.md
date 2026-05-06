@@ -41,8 +41,16 @@ test("...", async ({ authedPage }) => {
 
 ## NPM スクリプト
 
+| コマンド | 内容 |
+|---------|------|
+| `npm run test:e2e:mvp` | **MVP 5 spec のみ** (推奨、30秒以内) |
+| `npm run test:e2e` | 全 spec (探索系含む) |
+| `npm run test:e2e:ui` | UI モード (デバッグ用) |
+| `npm run test:e2e:report` | 前回レポート表示 |
+
 ```bash
-npm run test:e2e            # CLI 実行 (デフォルト: 本番 URL)
+npm run test:e2e:mvp        # MVP 5 spec のみ実行 (PR 前チェックに最適)
+npm run test:e2e            # CLI 実行 (デフォルト: 本番 URL、全 spec)
 npm run test:e2e:ui         # UI モード (推奨・デバッグ向け)
 npm run test:e2e:headed     # ブラウザ表示
 npm run test:e2e:report     # 前回レポート表示
