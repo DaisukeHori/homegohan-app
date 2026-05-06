@@ -81,8 +81,8 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     // 3. 明日〜1週間の献立
     supabase.from('planned_meals').select(`
       id, meal_type, dish_name, calories_kcal, is_completed, mode,
-      user_daily_meals!inner(day_date)
-    `).eq('user_id', userId)
+      user_daily_meals!inner(day_date, user_id)
+    `).eq('user_daily_meals.user_id', userId)
       .gt('user_daily_meals.day_date', today)
       .lte('user_daily_meals.day_date', oneWeekLater.toISOString().split('T')[0])
       .limit(30),
@@ -90,8 +90,8 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     // 4. 過去14日の食事
     supabase.from('planned_meals').select(`
       id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode,
-      user_daily_meals!inner(day_date)
-    `).eq('user_id', userId)
+      user_daily_meals!inner(day_date, user_id)
+    `).eq('user_daily_meals.user_id', userId)
       .gte('user_daily_meals.day_date', fourteenDaysAgo.toISOString().split('T')[0])
       .lt('user_daily_meals.day_date', today)
       .limit(50),
