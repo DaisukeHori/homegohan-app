@@ -544,7 +544,7 @@ export const personalSubscriptionFactory = (
 ) => ({
   id: faker.string.uuid(),
   user_id: faker.string.uuid(),
-  plan_key: 'individual_pro',
+  plan_key: 'pro',  // operator/01 §3 公式 plan_key seed と整合
   stripe_subscription_id: `sub_${faker.string.alphanumeric(14)}`,
   stripe_customer_id: `cus_${faker.string.alphanumeric(14)}`,
   status: 'active' as const,
@@ -567,7 +567,7 @@ export const subscriptionPlanFactory = (
 ) => ({
   plan_key: `test_plan_${faker.string.alphanumeric(6)}`,
   display_name: faker.commerce.productName(),
-  plan_type: 'individual' as const,
+  plan_type: 'personal' as const,  // CHECK 制約値: personal / family / org (operator/01)
   monthly_price_jpy: 980,
   annual_price_jpy: 9800,
   features: { ai_analysis: true, family_sharing: false },
@@ -578,17 +578,17 @@ export const subscriptionPlanFactory = (
   ...overrides,
 });
 
-// 9 種の標準プラン定義
+// 9 種公式 plan_key (operator/01-data-model.md §3 の seed と完全一致)
 export const STANDARD_PLANS = [
   { plan_key: 'free', display_name: '無料プラン', monthly_price_jpy: 0 },
-  { plan_key: 'individual_pro', display_name: '個人 Pro', monthly_price_jpy: 980 },
-  { plan_key: 'family_basic', display_name: '家族ベーシック', monthly_price_jpy: 1480 },
-  { plan_key: 'family_pro', display_name: '家族 Pro', monthly_price_jpy: 2480 },
-  { plan_key: 'family_addon', display_name: '家族アドオン', monthly_price_jpy: 0 },
-  { plan_key: 'org_starter', display_name: '組織スターター', monthly_price_jpy: 9800 },
-  { plan_key: 'org_standard', display_name: '組織スタンダード', monthly_price_jpy: 29800 },
-  { plan_key: 'org_premium', display_name: '組織プレミアム', monthly_price_jpy: 59800 },
-  { plan_key: 'org_enterprise', display_name: '組織エンタープライズ', monthly_price_jpy: null },
+  { plan_key: 'pro', display_name: 'Pro', monthly_price_jpy: 980 },
+  { plan_key: 'family_basic', display_name: 'Family Basic', monthly_price_jpy: 1480 },
+  { plan_key: 'family_pro', display_name: 'Family Pro', monthly_price_jpy: 2480 },
+  { plan_key: 'family_addon', display_name: 'Family Addon', monthly_price_jpy: 280 },
+  { plan_key: 'org_starter', display_name: 'Org Starter', monthly_price_jpy: 580 },
+  { plan_key: 'org_standard', display_name: 'Org Standard', monthly_price_jpy: 980 },
+  { plan_key: 'org_pro', display_name: 'Org Pro', monthly_price_jpy: 1980 },
+  { plan_key: 'org_enterprise', display_name: 'Org Enterprise', monthly_price_jpy: null },
 ] as const;
 ```
 
@@ -1192,8 +1192,8 @@ function createSubscriptionCreatedEvent(subscriptionId: string) {
           data: [
             {
               price: {
-                id: 'price_individual_pro',
-                metadata: { plan_key: 'individual_pro' },
+                id: 'price_pro',
+                metadata: { plan_key: 'pro' },
               },
             },
           ],
@@ -2403,7 +2403,7 @@ describe('Stripe Price 同期', () => {
   it('inserts plan_price_history when price is updated via Stripe webhook', async () => {
     const event = {
       type: 'price.updated',
-      data: { object: { id: 'price_123', unit_amount: 1200, metadata: { plan_key: 'individual_pro' } } },
+      data: { object: { id: 'price_123', unit_amount: 1200, metadata: { plan_key: 'pro' } } },
     };
     await POST('/api/webhooks/stripe', signStripeEvent(event));
     const { data } = await supabaseAdmin

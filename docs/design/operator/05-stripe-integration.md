@@ -694,7 +694,7 @@ describe('Stripe Webhook Events Integration', () => {
           customer: `cus_test_${faker.string.alphanumeric(14)}`,
           status: 'active',
           items: {
-            data: [{ price: { metadata: { plan_key: 'individual_pro' } } }],
+            data: [{ price: { metadata: { plan_key: 'pro' } } }],
           },
           current_period_start: Math.floor(Date.now() / 1000),
           current_period_end:

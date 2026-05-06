@@ -1282,7 +1282,7 @@ import { describe, it, expect } from 'vitest';
 describe('personal_subscriptions 制約テスト', () => {
   it('returns unique violation when same user has two active personal_subscriptions', async () => {
     const user = await createTestUser('user');
-    const base = personalSubscriptionFactory({ user_id: user.id, plan_key: 'individual_pro' });
+    const base = personalSubscriptionFactory({ user_id: user.id, plan_key: 'pro' });
 
     await supabaseAdmin.from('personal_subscriptions').insert(base);
 
@@ -1386,7 +1386,7 @@ describe('subscription_plans seed', () => {
     const planKeys = data?.map((p) => p.plan_key) ?? [];
     const expectedKeys = [
       'free',
-      'individual_pro',
+      'pro',
       'family_basic',
       'family_pro',
       'family_addon',

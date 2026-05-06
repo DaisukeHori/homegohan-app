@@ -567,7 +567,7 @@ stateDiagram-v2
 
 主要テストケース:
 
-1. `it('returns highest-tier plan when user has both individual_pro and org_standard')`
+1. `it('returns highest-tier plan when user has both pro and org_standard')`
 2. `it('includes family_addon features when org includes family license')`
 3. `it('used_licenses is consistent after 100 concurrent INSERT attempts')`
 4. `it('rejects UPDATE on available_licenses generated column')`
@@ -581,13 +581,13 @@ import { describe, it, expect } from 'vitest';
 import { getUserActivePlan } from '@/lib/org/license-management';
 
 describe('getUserActivePlan - フィーチャー和集合ロジック', () => {
-  it('returns highest-tier plan when user has both individual_pro and org_standard', () => {
+  it('returns highest-tier plan when user has both pro and org_standard', () => {
     const plans = [
-      { plan_key: 'individual_pro', source: 'personal' },
+      { plan_key: 'pro', source: 'personal' },
       { plan_key: 'org_standard', source: 'org_license' },
     ];
     const activePlan = getUserActivePlan(plans);
-    // org_standard は individual_pro より上位のため org_standard が優先
+    // org_standard は pro より上位のため org_standard が優先
     expect(activePlan.effective_plan_key).toBe('org_standard');
   });
 

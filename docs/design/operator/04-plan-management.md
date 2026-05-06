@@ -542,7 +542,7 @@ describe('プランライフサイクル Integration', () => {
     const oldPrice = 980;
     const newPrice = 1200;
 
-    await fetch(`${BASE_URL}/api/super-admin/plans/individual_pro/price`, {
+    await fetch(`${BASE_URL}/api/super-admin/plans/pro/price`, {
       method: 'PATCH',
       headers: {
         Authorization: `Bearer ${superAdminToken}`,
