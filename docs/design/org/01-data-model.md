@@ -648,7 +648,7 @@ erDiagram
 | `org_license_audit_log` | `idx_org_license_audit_org` | `(organization_id, created_at DESC)` | - | 監査ログ時系列 |
 | `org_health_access_logs` | `idx_org_health_access_doctor` | `(doctor_id, accessed_at DESC)` | - | 産業医アクセス履歴 |
 | `org_health_access_logs` | `idx_org_health_access_patient` | `(patient_id, accessed_at DESC)` | - | 患者別閲覧履歴 |
-| `hr_revoke_jobs` | `idx_hr_revoke_pending` | `(status, next_attempt_at)` | `status IN ('pending','failed')` | pg_cron worker |
+| `hr_revoke_jobs` | `idx_hr_revoke_pending` | `(status, next_attempt_at)` | `status IN ('pending','failed')` | Vercel Cron worker |
 
 ## 6. 注目設計ポイント
 

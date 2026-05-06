@@ -282,8 +282,8 @@ sequenceDiagram
   SCIM->>DB: INSERT hr_revoke_jobs (SCIM 経由)
   SCIM-->>IdP: 200 OK
 
-  note over DB: pg_cron worker 5分後
-  DB->>DB: process_hr_revoke_jobs()
+  note over DB: Vercel Cron hourly :30
+  DB->>DB: hr_revoke_jobs_processor (TypeScript)
   DB->>DB: revoke org_license_assignments
   DB->>DB: freeze family_groups (if applicable)
 ```

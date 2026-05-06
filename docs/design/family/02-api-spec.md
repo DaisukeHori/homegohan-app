@@ -815,7 +815,7 @@ UC-ORG-17 シナリオ。
 }
 ```
 
-**動作**: Realtime ブロードキャストも同時発火 (`shopping_list_updated` チャンネル)
+**動作**: Realtime ブロードキャストも同時発火 (`shopping_list_{list_id}` チャンネル、リスト ID で動的)
 
 **レスポンス 200**: 更新後の item
 

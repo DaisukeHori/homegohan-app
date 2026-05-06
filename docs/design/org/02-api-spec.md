@@ -1015,7 +1015,7 @@ sequenceDiagram
   API->>DB: INSERT hr_revoke_jobs × N
   API-->>HR: 202 Accepted
 
-  loop 5分ごと
+  loop hourly :30
     Cron->>DB: SELECT hr_revoke_jobs WHERE status='pending'
     DB-->>Cron: job list
     Cron->>DB: UPDATE org_license_assignments SET revoked_at = NOW()

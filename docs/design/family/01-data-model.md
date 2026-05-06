@@ -312,7 +312,7 @@ CREATE TABLE child_promotion_notifications (
 
 ```sql
 -- 既存 planned_meals テーブルへの拡張
--- マイグレーション: 2026MMDD008_alter_planned_meals.sql
+-- マイグレーション: 2026MMDD005a_alter_planned_meals.sql
 
 ALTER TABLE planned_meals
   ADD COLUMN IF NOT EXISTS family_shared_menu_id UUID
@@ -332,7 +332,7 @@ ALTER TABLE planned_meals
 ### 4.12 ALTER `user_daily_meals` (子供代理操作用カラム追加)
 
 ```sql
--- マイグレーション: 2026MMDD009_alter_user_daily_meals.sql
+-- マイグレーション: 2026MMDD005b_alter_user_daily_meals.sql
 
 ALTER TABLE user_daily_meals
   ADD COLUMN IF NOT EXISTS proxy_family_member_id UUID
@@ -597,8 +597,8 @@ WHERE family_shopping_list_id = $1 AND is_checked = FALSE;
 ### 8.3 新規
 
 - 全 8 テーブル + 2 ALTER は `2026MMDD005_create_family_management.sql`
-- `planned_meals` ALTER は `2026MMDD008_alter_planned_meals.sql`
-- `user_daily_meals` ALTER は `2026MMDD009_alter_user_daily_meals.sql`
+- `planned_meals` ALTER は `2026MMDD005a_alter_planned_meals.sql`
+- `user_daily_meals` ALTER は `2026MMDD005b_alter_user_daily_meals.sql`
 
 ## 4.13 `parental_consents` (子供同意記録)
 

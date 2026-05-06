@@ -112,10 +112,12 @@ $$;
 // API Route Handler での catch 例
 try {
   await supabase.from('org_license_assignments').insert({ ... });
-} catch (err) {
-  if (err.code === 'P0001' && err.message.includes('license_pool_exhausted')) {
+} catch (err: unknown) {
+  // PostgreSQL エラーは PostgrestError を継承、code/message/hint を持つ
+  const pgErr = err as { code?: string; message?: string; hint?: string };
+  if (pgErr.code === 'P0001' && pgErr.message?.includes('license_pool_exhausted')) {
     return Response.json(
-      { error: 'CONFLICT_LICENSE_POOL_EXHAUSTED', hint: err.hint },
+      { error: 'CONFLICT_LICENSE_POOL_EXHAUSTED', hint: pgErr.hint },
       { status: 409 }
     );
   }
@@ -178,12 +180,13 @@ async function bulkAssignLicenses(
           notes: row.notes,
         });
         results.push({ email: row.email, success: true });
-      } catch (err) {
-        if (err.code === 'P0001') {
+      } catch (err: unknown) {
+        const pgErr = err as { code?: string; message?: string };
+        if (pgErr.code === 'P0001') {
           // プール枯渇: 残り割当を中断
           return { ...results, exhausted: true };
         }
-        results.push({ email: row.email, success: false, error: err.message });
+        results.push({ email: row.email, success: false, error: pgErr.message ?? 'unknown' });
       }
     }
   }

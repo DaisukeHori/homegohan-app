@@ -8,7 +8,7 @@
 - UC-ORG-17: 退職時の家族グループ owner 処理
 - HR Webhook 受信の冪等化設計
 - `hr_webhook_events` / `hr_revoke_jobs` のキュー処理
-- pg_cron worker (5 分ごと処理)
+- Vercel Cron + TypeScript (hourly :30 処理)
 - 30 日 grace period
 - 楽観的ロック (`If-Unmodified-Since` + advisory lock)
 
@@ -25,7 +25,7 @@ sequenceDiagram
   participant HR as HR System
   participant API as /api/webhooks/hr
   participant DB as PostgreSQL
-  participant Cron as pg_cron (5分)
+  participant Cron as Vercel Cron (hourly :30)
   participant User as 退職者
   participant Family as 家族メンバー
 
@@ -34,7 +34,7 @@ sequenceDiagram
   API->>DB: INSERT hr_revoke_jobs × N
   API-->>HR: 202 Accepted (即時返却)
 
-  loop 5分ごと
+  loop hourly :30
     Cron->>DB: SELECT hr_revoke_jobs WHERE status='pending' AND next_attempt_at <= NOW()
     DB-->>Cron: job list (batch 10件)
 
@@ -313,7 +313,7 @@ stateDiagram-v2
 
 - **Integration**:
   - HR Webhook 冪等テスト: 同一 external_id を 2 回 POST → 2 回目は 200 (idempotent)
-  - pg_cron worker テスト: `hr_revoke_jobs` に pending ジョブを INSERT → `process_hr_revoke_jobs()` 実行 → `org_license_assignments.revoked_at` が設定されること
+  - Vercel Cron テスト: `hr_revoke_jobs` に pending ジョブを INSERT → hourly :30 で TypeScript ハンドラ実行 → `org_license_assignments.revoked_at` が設定されること
   - 家族グループ凍結テスト: assignment revoke → family_groups.status='frozen' を確認
   - advisory lock テスト: 2 並行 POST /migrate-to-personal → 1 つ成功 / 1 つ 412
 - **E2E**:

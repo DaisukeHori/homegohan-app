@@ -27,7 +27,7 @@
 
 ```sql
 -- org/05-offboarding-flow の pg_cron ジョブから呼び出し
--- process_hr_revoke_jobs 内で family_groups を凍結
+-- hr_revoke_jobs_processor (Vercel Cron) で family_groups を凍結
 
 UPDATE family_groups
 SET
@@ -116,9 +116,9 @@ sequenceDiagram
   participant B as 退職者 (操作B: dissolve)
   participant DB as Supabase DB
 
-  A->>DB: pg_advisory_xact_lock (group_id)
+  A->>DB: acquire_family_group_lock(group_id)
   Note over DB: ロック取得: A
-  B->>DB: pg_advisory_xact_lock (group_id)
+  B->>DB: acquire_family_group_lock(group_id)
   Note over DB: B は待機中
 
   A->>DB: 楽観的ロック検証 OK
@@ -243,7 +243,7 @@ sequenceDiagram
 
   API->>API: 楽観的ロック検証
   API->>API: パスワード再認証
-  API->>DB: pg_advisory_xact_lock
+  API->>DB: acquire_family_group_lock(group_id)
 
   alt split_members に child が含まれる
     API->>Push: notify all split_members (同意要求)
@@ -388,7 +388,7 @@ sequenceDiagram
   HR->>OrgAPI: POST /webhooks/hr { 退職者リスト }
   OrgAPI->>DB: INSERT hr_webhook_events, hr_revoke_jobs
 
-  Cron->>DB: process_hr_revoke_jobs (5 分ごと)
+  Cron->>DB: hr_revoke_jobs_processor (Vercel Cron, hourly :30)
   DB->>DB: org_license_assignments.revoked_at = NOW()
   DB->>DB: UPDATE family_groups SET status='frozen', freeze_grace_until=NOW()+30d
 
@@ -396,7 +396,7 @@ sequenceDiagram
 
   User->>FamilyAPI: POST /groups/{id}/migrate-to-personal
   Note over FamilyAPI: If-Unmodified-Since ヘッダ必須
-  FamilyAPI->>DB: pg_advisory_xact_lock
+  FamilyAPI->>DB: acquire_family_group_lock(group_id)
   FamilyAPI->>DB: 楽観的ロック検証
   FamilyAPI->>Stripe: サブスクリプション作成
   Stripe-->>FamilyAPI: subscription_id
