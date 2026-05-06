@@ -1830,12 +1830,68 @@ CREATE TABLE infra_alerts (
 - 検索・フィルタ
 - 個別キャンセル対応 (顧客対応用)
 
+#### 9.4.10.1 `/admin/finance/personal/{userId}` (個別詳細・新規) ⭐
+**個人課金者の Stripe 連携詳細画面** (顧客サポート時に頻用):
+
+| セクション | 内容 |
+|----------|------|
+| 基本情報 | nickname / email / 登録日 / 最終ログイン |
+| 現在のプラン | `personal_subscriptions` 全行 (active + 履歴) |
+| Stripe 直接リンク | **🔗 Stripe Customer Dashboard** (`https://dashboard.stripe.com/customers/{stripe_customer_id}`) |
+| Stripe Subscription | **🔗 Stripe Subscription** (`https://dashboard.stripe.com/subscriptions/{stripe_subscription_id}`) |
+| Invoice 履歴 | 直近 12 ヶ月、各行から **🔗 Stripe Invoice** (`https://dashboard.stripe.com/invoices/{invoice_id}`) |
+| 適用クーポン | 現在有効なもの + 履歴 (`coupon_redemptions`) |
+| 操作 | 解約予約 / 即時解約 / プラン変更 / 返金 (Stripe ダッシュボードへ誘導) |
+| 監査ログ | このユーザーへの全操作履歴 |
+
+**リンク表記**: 「Stripe で開く ↗」 アイコン付きボタン、新規タブで開く
+
+**operator 権限**:
+- `support` ロール: 閲覧のみ + 解約予約のみ可能
+- `finance` ロール: 上記 + 返金処理 (Stripe Dashboard へ誘導、操作は Stripe 側で実施)
+- `admin` / `super_admin`: 全操作
+
+#### 9.4.10.2 `/admin/organizations/{orgId}/billing` (組織課金詳細・新規) ⭐
+**組織契約の Stripe 連携詳細画面**:
+- 同様に Stripe Customer / Subscription / Invoice への直接リンク
+- ライセンスプール一覧 + 各プールの Stripe Subscription Link
+- 請求書一括ダウンロード (Stripe API 経由)
+- 担当営業 / 経理メモ
+
+#### 9.4.10.3 Stripe ダッシュボード設定 (super_admin のみ) ⭐
+`/super-admin/integrations/stripe` (新規):
+- Stripe Publishable Key / Secret Key 設定 (env 経由、UI では masked 表示)
+- Webhook Endpoint URL の確認 (`/api/webhooks/stripe`)
+- Webhook Signing Secret 設定
+- **テスト/本番環境切替** 表示 (現在のモードを画面上部に常時表示、誤操作防止)
+- Stripe API バージョンの確認・更新通知
+- Stripe Dashboard へのトップリンク (`https://dashboard.stripe.com`)
+
+#### 9.4.10.4 価格変更の Stripe 反映フロー (重要)
+
+`POST /api/super-admin/plans/{id}/price-change` 実行時の Stripe 連携:
+1. 内部 `subscription_plans.monthly_price_jpy` を更新
+2. Stripe API でも対応する Price object を新規作成 (Stripe Price は immutable のため新規作成必須)
+   - `stripe.prices.create({ product: planStripeProductId, unit_amount: newPrice, currency: 'jpy', recurring: { interval: 'month' } })`
+3. 適用範囲に応じて:
+   - **新規のみ**: `subscription_plans.stripe_price_id` のみ更新
+   - **更新時**: 既存 `personal_subscriptions` の各サブスクリプションを次回更新日に新 Price に切り替え
+   - **即時**: `stripe.subscriptions.update({ proration_behavior: 'create_prorations' })`
+4. 結果を `plan_price_history` に記録 (Stripe Price ID 含む)
+5. 失敗時: Stripe 側で作った Price を deactivate、DB rollback
+
+```typescript
+// supabase/functions/stripe-price-sync/index.ts (新規)
+// super_admin が価格変更 API を呼ぶと内部で発火
+```
+
 #### 9.4.11 `/admin/finance/dashboard` 拡張
 - 日次・月次 MRR / ARR
 - セグメント別: personal / family / org
 - 解約予測カード
 - アップグレードファネル
 - 価格変更影響レポート
+- **Stripe Dashboard へのトップリンク** (経理担当が頻用)
 
 ---
 
