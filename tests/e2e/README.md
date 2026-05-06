@@ -39,6 +39,35 @@ test("...", async ({ authedPage }) => {
 `.github/workflows/e2e.yml` が `pull_request` と `workflow_dispatch` で動く。
 本番 URL に対して走るため、ローカル dev server は起動しない。
 
+## NPM スクリプト
+
+```bash
+npm run test:e2e            # CLI 実行 (デフォルト: 本番 URL)
+npm run test:e2e:ui         # UI モード (推奨・デバッグ向け)
+npm run test:e2e:headed     # ブラウザ表示
+npm run test:e2e:report     # 前回レポート表示
+npm run test:e2e:install    # Chromium インストール (初回のみ)
+```
+
+## MVP フロー (01-05)
+
+| ファイル | カバーするフロー |
+|---|---|
+| `01-login.spec.ts` | ログイン基本動作 |
+| `02-meal-photo.spec.ts` | 食事画像認識 (fixture 画像が必要: `fixtures/karaage.jpg`) |
+| `03-ai-advisor.spec.ts` | AI Advisor チャット送受信 |
+| `04-menu-page.spec.ts` | 献立週間表示 |
+| `05-shopping-list.spec.ts` | 買い物リストモーダル URL |
+
+### fixture 画像の準備 (02 のみ必要)
+
+```bash
+# 唐揚げ等の食事画像を配置
+cp ~/Downloads/karaage.jpg tests/e2e/fixtures/karaage.jpg
+```
+
+画像が存在しない場合、`02-meal-photo.spec.ts` は自動的にスキップされます。
+
 ## バグ回帰スペック
 
 `tests/e2e/bug-XX-*.spec.ts` の命名で 1 Issue = 1 ファイル。

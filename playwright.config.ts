@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 import * as fs from "fs";
+import { config as dotenvConfig } from "dotenv";
+
+// .env.local から環境変数を読み込む (E2E_USER_EMAIL / E2E_USER_PASSWORD など)
+dotenvConfig({ path: ".env.local" });
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 const isCI = !!process.env.CI;
