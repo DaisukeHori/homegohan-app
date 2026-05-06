@@ -1177,9 +1177,129 @@ NPS サーベイ送信 (日次 14:00 JST)
 
 ## 24. テスト方針
 
-- **Unit**: Stripe Webhook 署名検証 / idempotency ロジック / クーポン適用計算
-- **Integration**: Supabase Local + Stripe Test Mode での webhook 受信テスト
-- **E2E**: Playwright で super_admin によるプラン作成 → 公開 → ユーザー購入 → webhook 受信 → DB 更新確認
+主要テストケース:
+
+1. `it('rejects webhook with invalid Stripe signature')`
+2. `it('returns already_processed on second webhook with same event_id')`
+3. `it('applies coupon discount correctly to subscription price')`
+4. `it('returns 403 when non-super_admin calls POST /api/super-admin/plans')`
+5. `it('returns 403 when admin role calls impersonate endpoint')`
+6. `it('creates admin_audit_log entry on impersonation')`
+7. `it('updates plan status to deprecated and triggers migration job')`
+8. `it('E2E: super_admin creates plan, publishes, user purchases, webhook updates DB')`
+
+```typescript
+// tests/unit/operator/stripe-webhook-signature.test.ts
+import { describe, it, expect } from 'vitest';
+import Stripe from 'stripe';
+import { validateStripeSignature } from '@/lib/operator/stripe-webhook';
+
+describe('Stripe Webhook 署名検証', () => {
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST!, {
+    apiVersion: '2024-11-20.acacia',
+  });
+
+  it('accepts webhook with valid signature', () => {
+    const payload = JSON.stringify({ type: 'customer.subscription.created' });
+    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    const signature = stripe.webhooks.generateTestHeaderString({
+      payload,
+      secret,
+    });
+    expect(() => validateStripeSignature(payload, signature, secret)).not.toThrow();
+  });
+
+  it('rejects webhook with invalid signature', () => {
+    const payload = JSON.stringify({ type: 'customer.subscription.created' });
+    const secret = process.env.STRIPE_WEBHOOK_SECRET!;
+    expect(() =>
+      validateStripeSignature(payload, 'invalid-sig', secret),
+    ).toThrow();
+  });
+});
+
+// tests/unit/operator/coupon-calculation.test.ts
+import { applyCoupon } from '@/lib/operator/coupon';
+
+describe('クーポン適用計算', () => {
+  it('applies percentage discount correctly', () => {
+    const result = applyCoupon({
+      original_price_jpy: 980,
+      coupon: { discount_type: 'percent', discount_value: 20 },
+    });
+    expect(result.discounted_price_jpy).toBe(784); // 980 * 0.8
+    expect(result.discount_amount_jpy).toBe(196);
+  });
+
+  it('applies fixed amount discount correctly', () => {
+    const result = applyCoupon({
+      original_price_jpy: 980,
+      coupon: { discount_type: 'fixed', discount_value: 300 },
+    });
+    expect(result.discounted_price_jpy).toBe(680); // 980 - 300
+  });
+
+  it('clamps discounted price to 0 when fixed discount exceeds original price', () => {
+    const result = applyCoupon({
+      original_price_jpy: 300,
+      coupon: { discount_type: 'fixed', discount_value: 500 },
+    });
+    expect(result.discounted_price_jpy).toBe(0); // 0 以下にならない
+  });
+});
+
+// tests/integration/operator/api-permissions.integration.test.ts
+describe('operator API 権限テスト', () => {
+  it('returns 403 when non-super_admin calls POST /api/super-admin/plans', async () => {
+    const adminToken = await signInAsUser('admin@test.local'); // finance ロール
+    const res = await fetch(`${BASE_URL}/api/super-admin/plans`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ plan_key: 'test_plan', display_name: 'テスト' }),
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe('FORBIDDEN');
+  });
+
+  it('returns 403 when admin role calls impersonate endpoint', async () => {
+    const adminToken = await signInAsUser('admin@test.local');
+    const res = await fetch(
+      `${BASE_URL}/api/super-admin/users/${faker.string.uuid()}/impersonate`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}` },
+      },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('creates admin_audit_log entry on successful impersonation', async () => {
+    const superToken = await signInAsUser('super@test.local');
+    const targetUserId = faker.string.uuid();
+
+    await fetch(`${BASE_URL}/api/super-admin/users/${targetUserId}/impersonate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${superToken}` },
+    });
+
+    const { data: logs } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('*')
+      .eq('action_type', 'impersonate')
+      .eq('target_id', targetUserId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    expect(logs).toHaveLength(1);
+    expect(logs![0].actor_id).toBeTruthy();
+    expect(logs![0].impersonated_by).toBeTruthy();
+  });
+});
+```
 
 ## 25. 既存実装との関連
 

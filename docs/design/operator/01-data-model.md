@@ -1265,12 +1265,142 @@ sequenceDiagram
 
 ## 7. テスト方針
 
-- **Unit**: `plan_key` FK の ON UPDATE CASCADE 動作、`idx_personal_subscriptions_active_per_user` 制約
-- **Integration** (Supabase Local):
-  - `admin_audit_logs` への UPDATE/DELETE が RLS で 403 になることを確認
-  - `coupon_redemptions` の unique partial index が `ended_at IS NULL` の重複を防ぐことを確認
-  - `subscription_plans` の seed 9 件が正しく INSERT されていることを確認
-- **E2E**: プラン作成 → 公開 → 個人ユーザーが試用開始 → 試用終了 → 課金開始の全フロー
+主要テストケース:
+
+1. `it('plan_key FK updates cascade to all referencing tables on UPDATE')`
+2. `it('returns unique violation when same user has two active personal_subscriptions')`
+3. `it('rejects UPDATE on admin_audit_logs via RLS')`
+4. `it('rejects DELETE on admin_audit_logs via RLS')`
+5. `it('returns unique violation when same user applies same coupon twice (ended_at IS NULL)')`
+6. `it('subscription_plans seed contains exactly 9 records')`
+7. `it('revenue_snapshots insert succeeds for daily aggregation batch')`
+
+```typescript
+// tests/integration/operator/data-model-constraints.integration.test.ts
+import { describe, it, expect } from 'vitest';
+
+describe('personal_subscriptions 制約テスト', () => {
+  it('returns unique violation when same user has two active personal_subscriptions', async () => {
+    const user = await createTestUser('user');
+    const base = personalSubscriptionFactory({ user_id: user.id, plan_key: 'individual_pro' });
+
+    await supabaseAdmin.from('personal_subscriptions').insert(base);
+
+    // 2 件目 (同ユーザー × active) → unique partial index 違反
+    const { error } = await supabaseAdmin.from('personal_subscriptions').insert({
+      ...personalSubscriptionFactory({ user_id: user.id, plan_key: 'family_basic' }),
+      status: 'active',
+    });
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23505'); // unique_violation
+  });
+});
+
+describe('admin_audit_logs immutability (RLS)', () => {
+  it('rejects UPDATE on admin_audit_logs for admin role', async () => {
+    const adminToken = await signInAsUser('admin@test.local');
+    const adminClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
+    );
+    const { error } = await adminClient
+      .from('admin_audit_logs')
+      .update({ action_type: '改ざん' } as never)
+      .eq('id', faker.string.uuid());
+    expect(error).not.toBeNull();
+  });
+
+  it('rejects DELETE on admin_audit_logs for super_admin role', async () => {
+    const superToken = await signInAsUser('super@test.local');
+    const superClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${superToken}` } } },
+    );
+    const { error } = await superClient
+      .from('admin_audit_logs')
+      .delete()
+      .eq('id', faker.string.uuid());
+    expect(error).not.toBeNull();
+  });
+});
+
+describe('coupon_redemptions partial unique index', () => {
+  it('returns unique violation when same user applies same coupon twice (ended_at IS NULL)', async () => {
+    const user = await createTestUser('user');
+    const couponId = faker.string.uuid();
+
+    await supabaseAdmin.from('coupon_redemptions').insert({
+      user_id: user.id,
+      coupon_id: couponId,
+      redeemed_at: new Date().toISOString(),
+      ended_at: null, // アクティブ
+    });
+
+    const { error } = await supabaseAdmin.from('coupon_redemptions').insert({
+      user_id: user.id,
+      coupon_id: couponId,
+      redeemed_at: new Date().toISOString(),
+      ended_at: null, // 重複 (ended_at IS NULL の partial unique)
+    });
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23505');
+  });
+
+  it('allows same coupon after ended_at is set (second redemption after expiry)', async () => {
+    const user = await createTestUser('user');
+    const couponId = faker.string.uuid();
+
+    // 1 件目: 終了済み
+    await supabaseAdmin.from('coupon_redemptions').insert({
+      user_id: user.id,
+      coupon_id: couponId,
+      redeemed_at: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      ended_at: new Date(Date.now() - 1000).toISOString(), // 終了済み
+    });
+
+    // 2 件目: NULL (新規適用) → OK
+    const { error } = await supabaseAdmin.from('coupon_redemptions').insert({
+      user_id: user.id,
+      coupon_id: couponId,
+      redeemed_at: new Date().toISOString(),
+      ended_at: null,
+    });
+    expect(error).toBeNull();
+  });
+});
+
+describe('subscription_plans seed', () => {
+  it('contains exactly 9 plan records', async () => {
+    const { count } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('*', { count: 'exact', head: true });
+    expect(count).toBe(9);
+  });
+
+  it('includes all expected plan_keys', async () => {
+    const { data } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('plan_key');
+    const planKeys = data?.map((p) => p.plan_key) ?? [];
+    const expectedKeys = [
+      'free',
+      'individual_pro',
+      'family_basic',
+      'family_pro',
+      'family_addon',
+      'org_starter',
+      'org_standard',
+      'org_premium',
+      'org_enterprise',
+    ];
+    for (const key of expectedKeys) {
+      expect(planKeys).toContain(key);
+    }
+  });
+});
+```
 
 ## 8. 既存実装との関連
 

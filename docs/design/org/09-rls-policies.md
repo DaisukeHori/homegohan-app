@@ -548,12 +548,168 @@ CREATE POLICY "meals_industrial_doctor" ON user_daily_meals
 
 ## 19. テスト方針
 
-- **Integration (Supabase Local)**:
-  - `org_member` ユーザーで `org_license_pools` を SELECT → 403 相当 (0 行返却) を確認
-  - 産業医が別組織の `org_health_notes` を SELECT → 0 行返却を確認
-  - `org_license_audit_log` への UPDATE → RLS エラーを確認
-  - `hr_webhook_events` を直接 SELECT (anon/auth role) → 403 を確認
-  - 産業医が `user_daily_meals` で `source_family_group_id IS NOT NULL` の行を SELECT → 0 行確認
+主要テストケース:
+
+1. `it('returns 0 rows when org_member selects org_license_pools')`
+2. `it('returns 0 rows when industrial_doctor selects org_health_notes of other org')`
+3. `it('rejects UPDATE on org_license_audit_log for all roles')`
+4. `it('returns 0 rows when anon role selects hr_webhook_events')`
+5. `it('returns 0 rows when industrial_doctor selects family meal records (source_family_group_id IS NOT NULL)')`
+6. `it('org_admin can SELECT all org_license_pools in own org')`
+7. `it('org_admin cannot SELECT org_license_pools from other org')`
+
+```typescript
+// tests/integration/org/rls-policies.integration.test.ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
+import { signInAsUser } from '../../helpers/auth';
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+);
+
+describe('org_license_pools RLS', () => {
+  let orgMemberToken: string;
+  let orgAdminToken: string;
+
+  beforeAll(async () => {
+    orgMemberToken = await signInAsUser('org-member@test.local');
+    orgAdminToken = await signInAsUser('org-admin@test.local');
+  });
+
+  it('returns 0 rows when org_member selects org_license_pools', async () => {
+    const memberClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${orgMemberToken}` } } },
+    );
+    const { data, error } = await memberClient
+      .from('org_license_pools')
+      .select('id');
+    expect(error).toBeNull();
+    expect(data).toHaveLength(0); // RLS: org_member は閲覧不可
+  });
+
+  it('org_admin can SELECT all org_license_pools in own org', async () => {
+    const adminClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${orgAdminToken}` } } },
+    );
+    const { data, error } = await adminClient
+      .from('org_license_pools')
+      .select('id');
+    expect(error).toBeNull();
+    expect(data!.length).toBeGreaterThan(0); // org_admin は自組織を閲覧可
+  });
+
+  it('org_admin cannot SELECT org_license_pools from other org', async () => {
+    const adminClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${orgAdminToken}` } } },
+    );
+    // 他組織のプールを直接 ID 指定で取得しようとする
+    const otherOrgPoolId = await getPoolIdFromOrg('org-002');
+    const { data } = await adminClient
+      .from('org_license_pools')
+      .select('id')
+      .eq('id', otherOrgPoolId);
+    expect(data).toHaveLength(0); // RLS: 他組織のデータは見えない
+  });
+});
+
+describe('org_health_notes RLS (産業医)', () => {
+  let doctorToken: string;
+
+  beforeAll(async () => {
+    doctorToken = await signInAsUser('doctor@test.local');
+  });
+
+  it('returns 0 rows when industrial_doctor selects health_notes of other org', async () => {
+    const doctorClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${doctorToken}` } } },
+    );
+    const otherOrgPatientId = await getPatientFromOrg('org-002');
+    const { data } = await doctorClient
+      .from('org_health_notes')
+      .select('id')
+      .eq('patient_user_id', otherOrgPatientId);
+    expect(data).toHaveLength(0);
+  });
+
+  it('returns 0 rows when industrial_doctor selects family meal records', async () => {
+    const doctorClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${doctorToken}` } } },
+    );
+    // 家族グループ由来の food records は産業医から見えない
+    const { data } = await doctorClient
+      .from('user_daily_meals')
+      .select('id')
+      .not('source_family_group_id', 'is', null);
+    expect(data).toHaveLength(0);
+  });
+});
+
+describe('org_license_audit_log RLS (immutable)', () => {
+  it('rejects UPDATE on org_license_audit_log for org_admin', async () => {
+    const orgAdminToken = await signInAsUser('org-admin@test.local');
+    const adminClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${orgAdminToken}` } } },
+    );
+    const { error } = await adminClient
+      .from('org_license_audit_log')
+      .update({ action: '改ざん試行' } as never)
+      .eq('id', faker.string.uuid());
+    expect(error).not.toBeNull(); // RLS: UPDATE 禁止
+  });
+
+  it('rejects DELETE on org_license_audit_log for super_admin', async () => {
+    const superToken = await signInAsUser('super@test.local');
+    const superClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${superToken}` } } },
+    );
+    const { error } = await superClient
+      .from('org_license_audit_log')
+      .delete()
+      .eq('id', faker.string.uuid());
+    expect(error).not.toBeNull(); // RLS: DELETE 禁止
+  });
+});
+
+describe('hr_webhook_events RLS', () => {
+  it('returns 0 rows when anon role selects hr_webhook_events', async () => {
+    const anonClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+    );
+    const { data, error } = await anonClient
+      .from('hr_webhook_events')
+      .select('id');
+    expect(error).toBeNull();
+    expect(data).toHaveLength(0);
+  });
+
+  it('returns 0 rows when org_member selects hr_webhook_events', async () => {
+    const orgMemberToken = await signInAsUser('org-member@test.local');
+    const memberClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${orgMemberToken}` } } },
+    );
+    const { data } = await memberClient.from('hr_webhook_events').select('id');
+    expect(data).toHaveLength(0); // service_role のみアクセス可
+  });
+});
 
 ## 20. 既存実装との関連
 

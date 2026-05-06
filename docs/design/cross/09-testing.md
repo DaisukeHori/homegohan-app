@@ -518,13 +518,18 @@ export const organizationFactory = (overrides?: Partial<Organization>) => ({
 
 ```typescript
 // tests/factories/org-license-pool.factory.ts
+// DDL は org/01-data-model.md §3.2 を参照
 export const orgLicensePoolFactory = (overrides?: Partial<OrgLicensePool>) => ({
   id: faker.string.uuid(),
   organization_id: faker.string.uuid(),
-  plan_key: 'family_basic',
+  plan_key: 'org_pro',
   total_licenses: 10,
   used_licenses: 0,
-  expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+  // NOT NULL 必須列
+  starts_at: new Date().toISOString(),
+  ends_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+  unit_price_jpy: 1980,
+  billing_cycle: 'monthly',
   auto_renew: true,
   ...overrides,
 });

@@ -310,7 +310,7 @@ BEGIN
   INSERT INTO admin_audit_logs (actor_id, action_type, target_id, target_type, severity, details)
   VALUES (
     p_changed_by, 'super_admin.plan.price_change', p_plan_id, 'plan', 'warn',
-    jsonb_build_object('new_price_jpy', p_new_monthly_price_jpy, 'applies_to', p_applies_to)
+    jsonb_build_object('new_monthly_price_jpy', p_new_monthly_price_jpy, 'applies_to', p_applies_to)
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -609,15 +609,191 @@ sequenceDiagram
 
 ## 13. テスト方針
 
-- **Unit**: `generateInvoiceNumber()` / `mapStripeStatus()` / `calculateGrossMargin()`
-- **Integration** (Stripe Test Mode):
-  - Webhook 冪等性: 同一 event.id を 2 回 POST → 2 回目は 200 early return
-  - `invoice.payment_failed` → `status='past_due'` 確認
-  - `charge.dispute.created` → soft-suspend + audit log 確認
-  - Price sync → `plan_price_history` INSERT 確認
-- **E2E** (Playwright + Stripe Test):
-  - `op/stripe-reconcile.spec.ts`
-  - `op/payment-failure-grace.spec.ts`
+主要テストケース:
+
+1. `it('generateInvoiceNumber returns unique sequential invoice number')`
+2. `it('mapStripeStatus maps all Stripe statuses correctly')`
+3. `it('same event_id is processed only once (idempotency)')`
+4. `it('invoice.payment_failed sets subscription status to past_due')`
+5. `it('charge.dispute.created soft-suspends subscription and records audit_log')`
+6. `it('Stripe Price update inserts plan_price_history record')`
+7. `it('customer.subscription.deleted sets status to cancelled')`
+8. `it('E2E: payment failure shows grace period banner, subscription suspends after 7 days')`
+
+```typescript
+// tests/unit/operator/stripe-helpers.test.ts
+import { describe, it, expect } from 'vitest';
+import {
+  generateInvoiceNumber,
+  mapStripeStatus,
+} from '@/lib/operator/stripe-helpers';
+
+describe('generateInvoiceNumber', () => {
+  it('returns INV-YYYY-NNNNNN format', () => {
+    const inv = generateInvoiceNumber({ year: 2026, sequence: 42 });
+    expect(inv).toBe('INV-2026-000042');
+  });
+
+  it('generates unique numbers for different sequences', () => {
+    const inv1 = generateInvoiceNumber({ year: 2026, sequence: 1 });
+    const inv2 = generateInvoiceNumber({ year: 2026, sequence: 2 });
+    expect(inv1).not.toBe(inv2);
+  });
+});
+
+describe('mapStripeStatus', () => {
+  const cases: Array<[string, string]> = [
+    ['active', 'active'],
+    ['past_due', 'past_due'],
+    ['canceled', 'cancelled'],
+    ['trialing', 'trialing'],
+    ['unpaid', 'past_due'],
+    ['incomplete', 'pending'],
+    ['incomplete_expired', 'cancelled'],
+  ];
+
+  for (const [stripeStatus, expected] of cases) {
+    it(`maps stripe status "${stripeStatus}" to "${expected}"`, () => {
+      expect(mapStripeStatus(stripeStatus)).toBe(expected);
+    });
+  }
+});
+
+// tests/integration/operator/stripe-webhook-events.integration.test.ts
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY_TEST!, {
+  apiVersion: '2024-11-20.acacia',
+});
+
+function signEvent(payload: object) {
+  const body = JSON.stringify(payload);
+  const signature = stripe.webhooks.generateTestHeaderString({
+    payload: body,
+    secret: process.env.STRIPE_WEBHOOK_SECRET!,
+  });
+  return {
+    body,
+    headers: {
+      'stripe-signature': signature,
+      'Content-Type': 'application/json',
+    },
+  };
+}
+
+describe('Stripe Webhook Events Integration', () => {
+  it('same event_id is processed only once (idempotency)', async () => {
+    const eventId = `evt_test_${faker.string.alphanumeric(16)}`;
+    const subId = `sub_test_${faker.string.alphanumeric(14)}`;
+    const event = {
+      id: eventId,
+      type: 'customer.subscription.created',
+      data: {
+        object: {
+          id: subId,
+          customer: `cus_test_${faker.string.alphanumeric(14)}`,
+          status: 'active',
+          items: {
+            data: [{ price: { metadata: { plan_key: 'individual_pro' } } }],
+          },
+          current_period_start: Math.floor(Date.now() / 1000),
+          current_period_end:
+            Math.floor(Date.now() / 1000) + 30 * 24 * 3600,
+          cancel_at_period_end: false,
+          trial_end: null,
+        },
+      },
+      created: Math.floor(Date.now() / 1000),
+    };
+    const { body, headers } = signEvent(event);
+
+    const res1 = await fetch(`${BASE_URL}/api/webhooks/stripe`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(res1.status).toBe(200);
+
+    const res2 = await fetch(`${BASE_URL}/api/webhooks/stripe`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(res2.status).toBe(200);
+    const result2 = await res2.json();
+    expect(result2.processed).toBe(false);
+    expect(result2.reason).toBe('already_processed');
+  });
+
+  it('sets status to past_due when invoice.payment_failed is received', async () => {
+    const subId = `sub_test_${faker.string.alphanumeric(14)}`;
+    await supabaseAdmin
+      .from('personal_subscriptions')
+      .insert(
+        personalSubscriptionFactory({
+          stripe_subscription_id: subId,
+          status: 'active',
+        }),
+      );
+
+    const event = {
+      id: `evt_test_${faker.string.alphanumeric(16)}`,
+      type: 'invoice.payment_failed',
+      data: { object: { subscription: subId, attempt_count: 1 } },
+      created: Math.floor(Date.now() / 1000),
+    };
+    const { body, headers } = signEvent(event);
+    await fetch(`${BASE_URL}/api/webhooks/stripe`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+
+    const { data: sub } = await supabaseAdmin
+      .from('personal_subscriptions')
+      .select('status')
+      .eq('stripe_subscription_id', subId)
+      .single();
+    expect(sub?.status).toBe('past_due');
+  });
+
+  it('records audit_log on charge.dispute.created', async () => {
+    const subId = `sub_test_${faker.string.alphanumeric(14)}`;
+    await supabaseAdmin
+      .from('personal_subscriptions')
+      .insert(
+        personalSubscriptionFactory({
+          stripe_subscription_id: subId,
+          status: 'active',
+        }),
+      );
+
+    const event = {
+      id: `evt_test_${faker.string.alphanumeric(16)}`,
+      type: 'charge.dispute.created',
+      data: {
+        object: {
+          payment_intent: `pi_test_${faker.string.alphanumeric(16)}`,
+          metadata: { subscription_id: subId },
+        },
+      },
+      created: Math.floor(Date.now() / 1000),
+    };
+    const { body, headers } = signEvent(event);
+    await fetch(`${BASE_URL}/api/webhooks/stripe`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+
+    const { data: logs } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('*')
+      .eq('action_type', 'stripe_dispute_soft_suspend')
+      .eq('target_id', subId);
+    expect(logs).toHaveLength(1);
+  });
+});
 
 ## 14. 既存実装との関連
 

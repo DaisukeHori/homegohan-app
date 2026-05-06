@@ -439,16 +439,131 @@ sequenceDiagram
 
 ## 8. テスト方針
 
-- **Unit**: `validatePlanCreate()` / `applyCoupon()` / `calculateGrossMargin()` / `forecastMRR()`
-- **Integration** (Supabase Local + Stripe Test):
-  - `idx_personal_subscriptions_active_per_user` の一意制約テスト
-  - deprecated プラン適用時の `org_license_pools.auto_renew=FALSE` 連動
-  - クーポン重複適用の unique partial index 動作確認
-  - 価格変更 → `plan_price_history` INSERT の確認
-- **E2E** (Playwright):
-  - `op/plan-lifecycle.spec.ts`: draft → public → private → deprecated
-  - `op/coupon-apply.spec.ts`: クーポン適用 → 重複禁止確認
-  - `op/trial-flow.spec.ts`: 試用開始 → リマインダー → 自動課金
+主要テストケース:
+
+1. `it('validatePlanCreate rejects plan_key with uppercase letters')`
+2. `it('validatePlanCreate rejects monthly_price_jpy below 0')`
+3. `it('calculateGrossMargin returns correct margin for standard plan')`
+4. `it('forecastMRR increases linearly with constant monthly growth')`
+5. `it('auto_renew is set to FALSE when plan is deprecated')`
+6. `it('plan_price_history is inserted when price is changed')`
+7. `it('E2E: plan transitions through full lifecycle draft → public → private → deprecated')`
+8. `it('E2E: trial starts, reminder sent at day 11, billing starts at day 14')`
+
+```typescript
+// tests/unit/operator/plan-validation.test.ts
+import { describe, it, expect } from 'vitest';
+import { validatePlanCreate, calculateGrossMargin } from '@/lib/operator/plan-management';
+
+describe('validatePlanCreate', () => {
+  it('rejects plan_key with uppercase letters', () => {
+    const result = validatePlanCreate({ plan_key: 'Individual_Pro', display_name: 'Test' });
+    expect(result.success).toBe(false);
+    expect(result.errors?.find((e) => e.field === 'plan_key')).toBeTruthy();
+  });
+
+  it('rejects plan_key with spaces', () => {
+    const result = validatePlanCreate({ plan_key: 'my plan', display_name: 'Test' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects monthly_price_jpy below 0', () => {
+    const result = validatePlanCreate({
+      plan_key: 'test_plan',
+      display_name: 'Test',
+      monthly_price_jpy: -100,
+    });
+    expect(result.success).toBe(false);
+    expect(result.errors?.find((e) => e.field === 'monthly_price_jpy')).toBeTruthy();
+  });
+
+  it('accepts valid plan payload', () => {
+    const result = validatePlanCreate({
+      plan_key: 'test_plan_001',
+      display_name: 'テストプラン',
+      plan_type: 'individual',
+      monthly_price_jpy: 980,
+      trial_days: 14,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('calculateGrossMargin', () => {
+  it('returns correct margin for standard 980 yen plan', () => {
+    const result = calculateGrossMargin({
+      monthly_price_jpy: 980,
+      stripe_fee_rate: 0.036,
+      infra_cost_jpy: 50,
+    });
+    // 980 * (1 - 0.036) - 50 = 980 * 0.964 - 50 = 944.72 - 50 = 894.72 → floor = 894
+    expect(result.gross_margin_jpy).toBe(894);
+    expect(result.gross_margin_rate).toBeGreaterThan(0.9);
+  });
+
+  it('returns 0 margin when price equals costs', () => {
+    const result = calculateGrossMargin({
+      monthly_price_jpy: 100,
+      stripe_fee_rate: 0.036,
+      infra_cost_jpy: 97, // ほぼコストと同額
+    });
+    expect(result.gross_margin_jpy).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// tests/integration/operator/plan-lifecycle.integration.test.ts
+describe('プランライフサイクル Integration', () => {
+  it('sets auto_renew=FALSE on org_license_pools when plan is deprecated', async () => {
+    // deprecated プランに紐づくプールを作成
+    const pool = await createOrgLicensePoolInDB(supabaseAdmin, {
+      plan_key: 'org_starter',
+      auto_renew: true,
+    });
+
+    // プランを deprecated に変更
+    await supabaseAdmin
+      .from('subscription_plans')
+      .update({ status: 'deprecated' })
+      .eq('plan_key', 'org_starter');
+
+    // トリガーまたはバッチが連動して auto_renew を FALSE にする
+    const { triggerDeprecatePlan } = await import('@/lib/operator/plan-deprecation');
+    await triggerDeprecatePlan(supabaseAdmin, 'org_starter');
+
+    const { data: updatedPool } = await supabaseAdmin
+      .from('org_license_pools')
+      .select('auto_renew')
+      .eq('id', pool.id)
+      .single();
+    expect(updatedPool?.auto_renew).toBe(false);
+  });
+
+  it('inserts plan_price_history when price is changed', async () => {
+    const oldPrice = 980;
+    const newPrice = 1200;
+
+    await fetch(`${BASE_URL}/api/super-admin/plans/individual_pro/price`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${superAdminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ monthly_price_jpy: newPrice }),
+    });
+
+    const { data: history } = await supabaseAdmin
+      .from('plan_price_history')
+      .select('*')
+      .eq('plan_key', 'individual_pro')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    expect(history?.old_price_jpy).toBe(oldPrice);
+    expect(history?.new_price_jpy).toBe(newPrice);
+  });
+});
+```
 
 ## 9. 既存実装との関連
 

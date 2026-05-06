@@ -386,15 +386,143 @@ sequenceDiagram
 
 ## 10. テスト方針
 
-- **Unit**:
-  - `validateIndustrialDoctorAccess()` の 5 段階チェック (各 step で拒否されること)
-  - 家族グループデータが食事集計から除外されること
-- **Integration**:
-  - 産業医が別組織のデータを GET → 403 を確認 (E7)
-  - 同意撤回後に GET → 403 を確認 (E10)
-  - `org_health_access_logs` に毎回記録されることを確認
-- **E2E (Playwright)**:
-  - 産業医として patients 一覧表示 → 個別データ閲覧 → メモ追加 → AI アドバイス生成
+主要テストケース:
+
+1. `it('rejects access at step 1: doctor does not have industrial_doctor role')`
+2. `it('rejects access at step 2: doctor is not affiliated with patient org')`
+3. `it('rejects access at step 3: patient has not consented')`
+4. `it('rejects access at step 4: patient has revoked consent')`
+5. `it('rejects access at step 5: doctor access is suspended by org_admin')`
+6. `it('excludes family meal data from patient nutrition summary')`
+7. `it('records org_health_access_log entry on every patient data access')`
+8. `it('returns 403 when doctor accesses patient from different org')`
+
+```typescript
+// tests/unit/org/industrial-doctor-access.test.ts
+import { describe, it, expect } from 'vitest';
+import { validateIndustrialDoctorAccess } from '@/lib/org/industrial-doctor-access';
+
+describe('validateIndustrialDoctorAccess - 5 段階チェック', () => {
+  const baseContext = {
+    doctorUserId: 'doctor-001',
+    patientUserId: 'patient-001',
+    organizationId: 'org-001',
+  };
+
+  it('rejects at step 1 when caller does not have industrial_doctor role', async () => {
+    const result = await validateIndustrialDoctorAccess({
+      ...baseContext,
+      doctorRoles: ['org_member'], // industrial_doctor ロールなし
+    });
+    expect(result.ok).toBe(false);
+    expect(result.step).toBe(1);
+    expect(result.error).toBe('NOT_INDUSTRIAL_DOCTOR');
+  });
+
+  it('rejects at step 2 when doctor is not affiliated with patient org', async () => {
+    const result = await validateIndustrialDoctorAccess({
+      ...baseContext,
+      doctorRoles: ['org_industrial_doctor'],
+      doctorOrganizationId: 'different-org-999', // 別組織
+    });
+    expect(result.ok).toBe(false);
+    expect(result.step).toBe(2);
+    expect(result.error).toBe('DIFFERENT_ORGANIZATION');
+  });
+
+  it('rejects at step 3 when patient has not consented', async () => {
+    const result = await validateIndustrialDoctorAccess({
+      ...baseContext,
+      doctorRoles: ['org_industrial_doctor'],
+      doctorOrganizationId: 'org-001',
+      patientConsentStatus: null, // 同意なし
+    });
+    expect(result.ok).toBe(false);
+    expect(result.step).toBe(3);
+    expect(result.error).toBe('CONSENT_NOT_GIVEN');
+  });
+
+  it('rejects at step 4 when patient has revoked consent', async () => {
+    const result = await validateIndustrialDoctorAccess({
+      ...baseContext,
+      doctorRoles: ['org_industrial_doctor'],
+      doctorOrganizationId: 'org-001',
+      patientConsentStatus: 'revoked',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.step).toBe(4);
+    expect(result.error).toBe('CONSENT_REVOKED');
+  });
+
+  it('allows access when all 5 steps pass', async () => {
+    const result = await validateIndustrialDoctorAccess({
+      ...baseContext,
+      doctorRoles: ['org_industrial_doctor'],
+      doctorOrganizationId: 'org-001',
+      patientConsentStatus: 'active',
+      doctorSuspended: false,
+    });
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('家族食事データ除外', () => {
+  it('excludes family meal data (source_family_group_id IS NOT NULL) from patient summary', async () => {
+    const { buildPatientNutritionSummary } = await import(
+      '@/lib/org/patient-nutrition'
+    );
+
+    const meals = [
+      { id: '1', calories: 500, source_family_group_id: null },          // 個人
+      { id: '2', calories: 600, source_family_group_id: 'group-001' },   // 家族 (除外)
+      { id: '3', calories: 400, source_family_group_id: null },          // 個人
+    ];
+
+    const summary = buildPatientNutritionSummary(meals);
+    expect(summary.total_calories).toBe(900); // 500 + 400 のみ
+    expect(summary.meal_count).toBe(2);
+  });
+});
+
+// tests/integration/org/industrial-doctor-access-log.integration.test.ts
+describe('org_health_access_logs 記録', () => {
+  it('records access log entry on every patient data access', async () => {
+    const doctorToken = await signInAsUser('doctor@test.local');
+    const patientId = await getConsentingPatientId('org-001');
+
+    // 2 回アクセス
+    await fetch(`${BASE_URL}/api/org/industrial-doctor/patients/${patientId}`, {
+      headers: { Authorization: `Bearer ${doctorToken}` },
+    });
+    await fetch(`${BASE_URL}/api/org/industrial-doctor/patients/${patientId}`, {
+      headers: { Authorization: `Bearer ${doctorToken}` },
+    });
+
+    const { count } = await supabaseAdmin
+      .from('org_health_access_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('patient_user_id', patientId);
+
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
+
+  it('returns 403 and does not record log when accessing other org patient', async () => {
+    const doctorToken = await signInAsUser('doctor@test.local');
+    const otherOrgPatientId = await getPatientFromOrg('org-002');
+
+    const countBefore = await getAccessLogCount(otherOrgPatientId);
+
+    const res = await fetch(
+      `${BASE_URL}/api/org/industrial-doctor/patients/${otherOrgPatientId}`,
+      { headers: { Authorization: `Bearer ${doctorToken}` } },
+    );
+    expect(res.status).toBe(403);
+
+    const countAfter = await getAccessLogCount(otherOrgPatientId);
+    expect(countAfter).toBe(countBefore); // ログ記録なし
+  });
+});
+```
 
 ## 11. 既存実装との関連
 

@@ -563,14 +563,143 @@ sequenceDiagram
 
 ## 13. テスト方針
 
-- **Integration** (Supabase Local):
-  - `audit_logs_no_update` ポリシーが UPDATE を拒否することを確認
-  - `audit_logs_no_delete` ポリシーが DELETE を拒否することを確認
-  - `audit_logs_insert_admins` の WITH CHECK: actor_id != auth.uid() の INSERT が拒否されることを確認
-  - `audit_logs_select_super_admin`: admin ロールでの SELECT が空を返すことを確認
-- **E2E**:
-  - `op/02-user-ban.spec.ts`: BAN 実行 → audit_log に記録 → super_admin が閲覧可能
-  - `op/audit-log-immutable.spec.ts`: 監査ログへの UPDATE/DELETE が 403 になることを確認
+主要テストケース:
+
+1. `it('rejects UPDATE on admin_audit_logs via audit_logs_no_update policy')`
+2. `it('rejects DELETE on admin_audit_logs via audit_logs_no_delete policy')`
+3. `it('rejects INSERT when actor_id does not match auth.uid()')`
+4. `it('returns 0 rows when admin role (non-super_admin) selects audit_logs')`
+5. `it('super_admin can SELECT all audit_logs')`
+6. `it('E2E: BAN action creates audit_log entry visible to super_admin')`
+7. `it('Sentry error is captured when unhandled exception occurs in API route')`
+8. `it('Slack alert is sent when error rate exceeds 1% threshold')`
+
+```typescript
+// tests/integration/operator/audit-log-rls.integration.test.ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
+import { signInAsUser } from '../../helpers/auth';
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+);
+
+describe('admin_audit_logs RLS ポリシー', () => {
+  let superAdminToken: string;
+  let adminToken: string;
+  let testLogId: string;
+
+  beforeAll(async () => {
+    superAdminToken = await signInAsUser('super@test.local');
+    adminToken = await signInAsUser('admin@test.local');
+
+    // テスト用の監査ログを service_role で INSERT
+    const { data } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .insert({
+        actor_id: faker.string.uuid(),
+        action_type: 'test_action',
+        target_type: 'user',
+        target_id: faker.string.uuid(),
+        severity: 'info',
+      })
+      .select()
+      .single();
+    testLogId = data!.id;
+  });
+
+  it('rejects UPDATE on admin_audit_logs (audit_logs_no_update policy)', async () => {
+    const superClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
+    );
+    const { error } = await superClient
+      .from('admin_audit_logs')
+      .update({ action_type: '改ざん試行' } as never)
+      .eq('id', testLogId);
+    expect(error).not.toBeNull();
+  });
+
+  it('rejects DELETE on admin_audit_logs (audit_logs_no_delete policy)', async () => {
+    const superClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
+    );
+    const { error } = await superClient
+      .from('admin_audit_logs')
+      .delete()
+      .eq('id', testLogId);
+    expect(error).not.toBeNull();
+  });
+
+  it('returns 0 rows when admin role (non-super_admin) selects audit_logs', async () => {
+    const adminClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
+    );
+    const { data, error } = await adminClient
+      .from('admin_audit_logs')
+      .select('id');
+    expect(error).toBeNull();
+    expect(data).toHaveLength(0); // admin は super_admin 専用ログを閲覧不可
+  });
+
+  it('super_admin can SELECT all audit_logs', async () => {
+    const superClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${superAdminToken}` } } },
+    );
+    const { data, error } = await superClient
+      .from('admin_audit_logs')
+      .select('id')
+      .eq('id', testLogId);
+    expect(error).toBeNull();
+    expect(data!.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('rejects INSERT when actor_id does not match auth.uid()', async () => {
+    const adminClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${adminToken}` } } },
+    );
+    // actor_id を別ユーザーの UUID に偽装して INSERT 試行
+    const { error } = await adminClient.from('admin_audit_logs').insert({
+      actor_id: faker.string.uuid(), // 現在の auth.uid() と不一致
+      action_type: 'fake_action',
+      target_type: 'user',
+      target_id: faker.string.uuid(),
+      severity: 'info',
+    });
+    expect(error).not.toBeNull(); // WITH CHECK 違反
+  });
+});
+
+// tests/e2e/operator/operator-ban-audit-log.spec.ts
+test('BAN action creates audit_log entry visible to super_admin', async ({
+  page,
+}) => {
+  await page.goto('/operator/users');
+  const targetRow = page.locator('[data-testid=user-row]').first();
+  const targetUserId = await targetRow.getAttribute('data-user-id');
+
+  await targetRow.locator('[data-testid=ban-user-button]').click();
+  await page.click('[data-testid=confirm-ban-button]');
+  await expect(
+    page.locator('[data-testid=ban-success-toast]'),
+  ).toBeVisible();
+
+  // 監査ログページで確認
+  await page.goto('/operator/audit-logs');
+  const latestLog = page.locator('[data-testid=audit-log-entry]').first();
+  await expect(latestLog).toContainText('user_ban');
+  await expect(latestLog).toContainText(targetUserId ?? '');
+});
 
 ## 14. 既存実装との関連
 
