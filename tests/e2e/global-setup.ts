@@ -2,12 +2,15 @@
  * Playwright グローバルセットアップ
  *
  * 全 worker が共有する storageState を生成する。
- * ログインを 1 回だけ行い、認証済みセッションを
- * tests/e2e/.auth/user.json に保存する。
- * 各テストの authedPage fixture はこのファイルを読み込んで
- * ログイン処理をスキップするため、30s タイムアウト連鎖を回避できる。
  *
- * ログイン失敗時は警告を出力して続行する (storageState なしで各テストが個別ログインにフォールバック)。
+ * 戦略:
+ * 1. Supabase Auth REST API でトークン取得 (ブラウザログインをスキップ)
+ * 2. 取得したセッションを Cookie として Playwright コンテキストに直接設定
+ *    (@supabase/ssr は localStorage でなく Cookie を使うため)
+ * 3. /home に遷移して認証済み状態を確認
+ * 4. storageState を保存
+ *
+ * ログイン失敗時は警告を出力して続行する (各テストが個別ログインにフォールバック)。
  */
 
 import { chromium, type FullConfig } from "@playwright/test";
@@ -15,12 +18,46 @@ import * as fs from "fs";
 import * as path from "path";
 
 const STORAGE_STATE_PATH = "tests/e2e/.auth/user.json";
-const LOGIN_TIMEOUT_MS = 90_000;
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 2_000;
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Supabase Auth REST API でサインインしてセッションを取得する。
+ */
+async function fetchSupabaseSession(
+  supabaseUrl: string,
+  anonKey: string,
+  email: string,
+  password: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: anonKey,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      console.warn(`[global-setup] Supabase auth API error ${resp.status}: ${body.substring(0, 200)}`);
+      return null;
+    }
+    const data = await resp.json() as Record<string, unknown>;
+    if (!data.access_token) {
+      console.warn(`[global-setup] Supabase auth: no access_token in response`);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn(`[global-setup] fetchSupabaseSession error: ${err}`);
+    return null;
+  }
 }
 
 async function globalSetup(config: FullConfig): Promise<void> {
@@ -33,17 +70,19 @@ async function globalSetup(config: FullConfig): Promise<void> {
     process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
   const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
   // 保存先ディレクトリを作成
   const dir = path.dirname(STORAGE_STATE_PATH);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const browser = await chromium.launch();
-
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const browser = await chromium.launch();
     const context = await browser.newContext({
       locale: "ja-JP",
       timezoneId: "Asia/Tokyo",
@@ -51,53 +90,104 @@ async function globalSetup(config: FullConfig): Promise<void> {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${baseURL}/login`);
-      // React ハイドレーションが完了するまで待機する。
-      // ハイドレーション前に submit をクリックすると form が native GET 送信されてしまう。
-      await page.waitForLoadState("networkidle");
-      await page.locator("#email").fill(email);
-      await page.locator("#password").fill(password);
+      // 1. Supabase REST API でセッション取得
+      let sessionInjected = false;
 
-      await Promise.all([
-        page.waitForURL(
-          (url) =>
-            !url.pathname.startsWith("/login") &&
-            !url.pathname.startsWith("/auth"),
-          { timeout: LOGIN_TIMEOUT_MS },
-        ),
-        page.locator("button[type=submit]").click(),
-      ]);
+      if (supabaseUrl && supabaseAnonKey) {
+        console.log(`[global-setup] Supabase REST API でセッション取得中... (attempt ${attempt})`);
+        const session = await fetchSupabaseSession(supabaseUrl, supabaseAnonKey, email, password);
 
-      // オンボーディング未完了の場合はAPIで完了させてホームへ誘導
-      if (page.url().includes("/onboarding")) {
-        await page.evaluate(async () => {
-          try {
-            await fetch("/api/onboarding/complete", {
-              method: "POST",
-              credentials: "include",
-            });
-          } catch {
-            // エラーは無視して続行
-          }
-        });
-        await page.goto(`${baseURL}/home`);
-        await page.waitForURL("**/home", { timeout: 60_000 });
+        if (session) {
+          // 2. @supabase/ssr は Cookie を使う。セッションを Cookie として設定する。
+          //    Cookie 名は sb-{project-ref}-auth-token
+          const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+          const cookieName = `sb-${supabaseRef}-auth-token`;
+
+          // baseURL の domain を取得
+          const domain = new URL(baseURL).hostname;
+
+          // Cookie value は URL-encode された JSON
+          const cookieValue = encodeURIComponent(JSON.stringify(session));
+
+          const expiresAt = (session.expires_at as number) ?? (Date.now() / 1000 + 3600);
+
+          await context.addCookies([
+            {
+              name: cookieName,
+              value: cookieValue,
+              domain,
+              path: "/",
+              expires: expiresAt,
+              httpOnly: false,
+              secure: baseURL.startsWith("https"),
+              sameSite: "Lax",
+            },
+          ]);
+
+          console.log(`[global-setup] Cookie セッション設定完了: ${cookieName} @ ${domain}`);
+
+          // 3. /home に遷移して認証済み状態を確認
+          await page.goto(`${baseURL}/home`);
+          await page.waitForURL(
+            (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
+            { timeout: 30_000 },
+          );
+          console.log(`[global-setup] 認証確認成功: ${page.url()}`);
+          sessionInjected = true;
+        }
       }
 
-      // storageState を保存
+      if (!sessionInjected) {
+        // フォールバック: UI ログイン
+        console.log(`[global-setup] UI ログインにフォールバック (attempt ${attempt})`);
+        await page.goto(`${baseURL}/login`);
+        await page.waitForLoadState("networkidle");
+        await page.evaluate(() => { localStorage.removeItem("auth_last_fail_ts"); });
+
+        // React hydration 確認
+        await page.waitForFunction(
+          () => {
+            const btn = document.querySelector('form button[type="submit"], button[type="submit"]');
+            if (!btn) return false;
+            return Object.keys(btn as Record<string, unknown>).some(
+              (k) => k.startsWith("__reactProps") || k.startsWith("__reactFiber") || k.startsWith("__react"),
+            );
+          },
+          { timeout: 20_000 },
+        ).catch(async () => { await new Promise((r) => setTimeout(r, 1000)); });
+
+        await page.locator("#email").fill(email);
+        await page.locator("#password").fill(password);
+
+        const navPromise = page.waitForURL(
+          (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
+          { timeout: 90_000 },
+        );
+        await page.locator("button[type=submit]").click();
+        await navPromise;
+
+        if (page.url().includes("/onboarding")) {
+          await page.evaluate(async () => {
+            try {
+              await fetch("/api/onboarding/complete", { method: "POST", credentials: "include" });
+            } catch { /* ignore */ }
+          });
+          await page.goto(`${baseURL}/home`);
+          await page.waitForURL("**/home", { timeout: 60_000 });
+        }
+      }
+
+      // 4. storageState を保存
       await context.storageState({ path: STORAGE_STATE_PATH });
-      console.log(
-        `[global-setup] storageState saved to ${STORAGE_STATE_PATH} (attempt ${attempt})`,
-      );
+      console.log(`[global-setup] storageState saved to ${STORAGE_STATE_PATH} (attempt ${attempt})`);
       await context.close();
       await browser.close();
       return;
     } catch (err) {
       lastError = err;
-      console.warn(
-        `[global-setup] ログイン試行 ${attempt}/${MAX_RETRIES} 失敗: ${err}`,
-      );
+      console.warn(`[global-setup] ログイン試行 ${attempt}/${MAX_RETRIES} 失敗: ${err}`);
       await context.close();
+      await browser.close();
 
       if (attempt < MAX_RETRIES) {
         const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
@@ -107,13 +197,8 @@ async function globalSetup(config: FullConfig): Promise<void> {
     }
   }
 
-  await browser.close();
   // ログイン失敗時はエラーをスローせず警告のみ出力して続行する。
-  // storageState が生成されなかった場合、各テストの authedPage fixture が
-  // 個別ログインにフォールバックする。
-  console.warn(
-    `[global-setup] ${MAX_RETRIES} 回試行後もログイン失敗。storageState なしで続行: ${lastError}`,
-  );
+  console.warn(`[global-setup] ${MAX_RETRIES} 回試行後もログイン失敗。storageState なしで続行: ${lastError}`);
 }
 
 export default globalSetup;
