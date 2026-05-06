@@ -324,19 +324,6 @@ export default function MealCaptureModal() {
   // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
   const searchParams = useSearchParams();
 
-  // mode=app かつ prefill なし の場合、mount 時に step をリセット
-  // タブバー中央ボタン再タップ → WebView reload → page remount の際に前の state が残らないよう
-  useEffect(() => {
-    const modeParam = searchParams.get('mode');
-    const prefillParam = searchParams.get('prefill');
-    if (modeParam === 'app' && !prefillParam) {
-      setStep('mode-select');
-      setPhotoFiles([]);
-      setPhotoPreviews([]);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   useEffect(() => {
     const prefillParam = searchParams.get('prefill');
     if (!prefillParam) return;
