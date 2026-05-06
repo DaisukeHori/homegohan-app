@@ -753,26 +753,13 @@ $$);
 
 ### 16.1 gdpr_deletion_requests テーブル
 
-```sql
-CREATE TABLE gdpr_deletion_requests (
-  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID        NOT NULL REFERENCES auth.users(id),
-  requested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  cooling_period_ends_at TIMESTAMPTZ NOT NULL  -- requested_at + 30 days
-    GENERATED ALWAYS AS (requested_at + INTERVAL '30 days') STORED,
-  executed_at     TIMESTAMPTZ,   -- 実際の削除完了日時
-  status          VARCHAR(20)  NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'cooling', 'executing', 'completed', 'cancelled')),
-  deletion_reason TEXT,          -- 退会理由 (任意)
-  cancelled_at    TIMESTAMPTZ    -- 30日以内の撤回
-);
+DDL は **operator/01-data-model.md §3.21** を参照 (canonical)。
+canonical 列名:
+- `requested_at` / `cooling_until` (NOT GENERATED、INSERT 時に NOW() + 30 days をセット)
+- `executed_at` / `executed_by` / `cancelled_at` / `certificate_url` / `notes`
+- `status` 列は持たず、`cancelled_at IS NOT NULL` / `executed_at IS NOT NULL` で状態判定
 
-ALTER TABLE gdpr_deletion_requests ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "gdpr_self_read"
-  ON gdpr_deletion_requests FOR SELECT
-  USING (auth.uid() = user_id);
-```
+operator/09-runbook.md §15.7 の手順は cooling_until を参照 (整合済)。
 
 ### 16.2 削除フロー
 
