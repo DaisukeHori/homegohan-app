@@ -2,6 +2,18 @@
 
 全ドメイン横断のテスト戦略。各ドメイン設計書末尾の「テスト方針」セクションを統合・補完する。
 
+> **コード例の扱い (重要)**
+>
+> 本ドキュメント内の TypeScript / SQL コード例 (factory 関数 / テストケース / モック等) は **概念サンプル** です。
+> 列名・型・FK 制約の **正は各ドメイン設計書の DDL** (operator/01-data-model.md / family/01-data-model.md / org/01-data-model.md):
+> - `subscription_plans`: operator/01 §3.1
+> - `personal_subscriptions`: operator/01 §3.2
+> - `org_license_pools` / `org_license_assignments`: org/01 §3.2-3.3
+> - `family_groups` / `family_members` / `family_meal_requests`: family/01 §3-4
+>
+> 実装時は `supabase gen types typescript` で生成された型を直接使い、本ドキュメントのフィールド名と乖離があっても **DDL 側を真とする**。
+> 本ドキュメントのサンプルが古い場合は PR で更新するが、実装の正常動作の judgment は型生成結果優先。
+
 ## 1. 目的・スコープ
 
 - ピラミッド戦略 (Unit > Integration > E2E) の徹底
