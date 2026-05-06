@@ -237,8 +237,28 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     await loadMessages(sessionId);
   }
 
+  async function fetchSessions() {
+    try {
+      const api = getApi();
+      const res = await api.get<{ sessions: Session[] }>(
+        "/api/ai/consultation/sessions?status=all"
+      );
+      setSessions(res.sessions ?? []);
+    } catch {
+      // 取得失敗は無視
+    }
+  }
+
   async function archiveSession() {
     if (!currentSessionId || isClosingSession) return;
+
+    // クライアント側で既に closed か確認
+    const currentSession = sessions.find((s) => s.id === currentSessionId);
+    if (currentSession?.status === "closed") {
+      Alert.alert("情報", "このセッションは既にアーカイブ済みです。");
+      return;
+    }
+
     setIsClosingSession(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -268,8 +288,18 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           ]);
         }
         await createNewSession();
+      } else if (res.status === 400) {
+        // Already closed: UI を最新に合わせる
+        Alert.alert("情報", "このセッションは既にアーカイブ済みです。");
+        await fetchSessions();
       } else {
-        Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
+        const err = await res.json().catch(() => ({}));
+        Alert.alert(
+          "エラー",
+          (err as any)?.message ||
+            (err as any)?.error ||
+            "セッションのアーカイブに失敗しました。"
+        );
       }
     } catch {
       Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
@@ -488,7 +518,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                   <Pressable
                     testID="ai-archive-btn"
                     onPress={archiveSession}
-                    disabled={isClosingSession || !currentSessionId}
+                    disabled={
+                      isClosingSession ||
+                      !currentSessionId ||
+                      sessions.find((s) => s.id === currentSessionId)
+                        ?.status === "closed"
+                    }
                     style={styles.headerActionBtn}
                   >
                     {isClosingSession ? (
