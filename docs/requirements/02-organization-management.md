@@ -436,7 +436,7 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 ### 5.1 F-ORG-001: 組織レコード管理
 
 #### 5.1.1 属性
-- `id`, `name`, `industry` (業種)、`employee_count`、`plan`
+- `id`, `name`, `industry` (業種)、`employee_count`、`plan_key` (`subscription_plans.plan_key` 参照、03 §7.2.7)
 - `subscription_status` (active / suspended / cancelled / trialing)
 - `subscription_expires_at`, `billing_email`
 - `logo_url`, `primary_color` (カラーカスタマイズ Pro 以上)
@@ -1001,7 +1001,11 @@ CREATE INDEX idx_org_health_notes_patient ON org_health_notes(patient_id, create
 CREATE TABLE org_subscriptions (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  plan                    VARCHAR(50) NOT NULL,
+  -- 03 §7.2.7 subscription_plans の plan_key を参照 (org_starter / org_standard / org_pro / org_enterprise 等)
+  -- 既存本番に `plan VARCHAR(50)` がある場合は §15.8 の RENAME 戦略で移行
+  plan_key                VARCHAR(100) NOT NULL
+                            REFERENCES subscription_plans(plan_key)
+                            ON UPDATE CASCADE ON DELETE RESTRICT,
   billing_cycle           VARCHAR(20) NOT NULL CHECK (billing_cycle IN ('monthly', 'yearly')),
   amount_jpy              INT NOT NULL,
   currency                VARCHAR(3) NOT NULL DEFAULT 'JPY',

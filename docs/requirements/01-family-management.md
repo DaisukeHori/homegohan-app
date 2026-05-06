@@ -874,6 +874,39 @@ CREATE TABLE family_activity_log (
 CREATE INDEX idx_family_activity_group ON family_activity_log(family_group_id, created_at DESC);
 ```
 
+**RLS ポリシー** (監査ログ性質、不可逆):
+
+```sql
+ALTER TABLE family_activity_log ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: 同グループメンバー全員 (透明性のため)
+CREATE POLICY family_activity_log_select ON family_activity_log
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_activity_log.family_group_id
+        AND fm.user_id = auth.uid()
+    )
+  );
+
+-- INSERT: アプリ層 / トリガーから自動記録 (actor_id = auth.uid() を強制)
+CREATE POLICY family_activity_log_insert ON family_activity_log
+  FOR INSERT WITH CHECK (
+    actor_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_activity_log.family_group_id
+        AND fm.user_id = auth.uid()
+    )
+  );
+
+-- UPDATE / DELETE: 不可 (監査ログ不可逆)
+CREATE POLICY family_activity_log_immutable_update ON family_activity_log
+  FOR UPDATE USING (false);
+CREATE POLICY family_activity_log_immutable_delete ON family_activity_log
+  FOR DELETE USING (false);
+```
+
 #### 7.1.5 `family_shared_menus`
 
 ```sql
