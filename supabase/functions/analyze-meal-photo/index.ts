@@ -105,13 +105,8 @@ Deno.serve(async (req) => {
       })
     }
 
-<<<<<<< Updated upstream
-    // 非同期でバックグラウンドタスクを実行
-    analyzeMealPhotoBackgroundTask({ 
-=======
     // 非同期でバックグラウンドタスクを実行（EdgeRuntime.waitUntil で Edge が早期終了しないよう登録）
     const backgroundPromise = analyzeMealPhotoBackgroundTask({
->>>>>>> Stashed changes
       images: imageDataArray,
       mealId,
       mealType,
