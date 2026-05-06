@@ -21,6 +21,11 @@ node_modules/
 /tests/e2e/.output/
 /tests/e2e/.report/
 /tests/e2e/.auth/
+# E2E fixture 画像 (大容量のためリポジトリ管理外。CI では別途配置すること)
+/tests/e2e/fixtures/*.jpg
+/tests/e2e/fixtures/*.jpeg
+/tests/e2e/fixtures/*.png
+/tests/e2e/fixtures/*.webp
 
 # next.js
 /.next/
