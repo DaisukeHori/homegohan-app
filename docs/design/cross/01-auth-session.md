@@ -359,24 +359,7 @@ sequenceDiagram
 
 ### 13.1 password_history
 
-```sql
-CREATE TABLE password_history (
-  user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  password_hash VARCHAR(255) NOT NULL,
-  changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (user_id, changed_at)
-);
-
--- RLS: service_role のみ (パスワードハッシュは本人にも見せない、API 経由で履歴チェックは service_role 経由)
--- 正とする定義は operator/01-data-model.md §3.23
-ALTER TABLE password_history ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "password_history_no_direct_access"
-  ON password_history FOR ALL
-  USING (false);
-
--- INSERT / UPDATE / DELETE は service_role のみ (パスワード変更 Edge Function)
-```
+<!-- DDL/RLS は operator/01-data-model.md §3.23 を参照 (canonical)。本ドキュメントは設計方針のみ記述 -->
 
 ### 13.2 parental_consents
 
@@ -385,63 +368,13 @@ CREATE POLICY "password_history_no_direct_access"
 
 ### 13.3 user_sessions_metadata
 
-```sql
-CREATE TABLE user_sessions_metadata (
-  session_id     VARCHAR(255) PRIMARY KEY,
-  user_id        UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  device_name    VARCHAR(200),
-  ip_address     INET,
-  user_agent     TEXT,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  revoked_at     TIMESTAMPTZ
-);
-
-CREATE INDEX ON user_sessions_metadata (user_id, revoked_at);
-
-ALTER TABLE user_sessions_metadata ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "sessions_self_read"
-  ON user_sessions_metadata FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "sessions_self_update"
-  ON user_sessions_metadata FOR UPDATE
-  USING (auth.uid() = user_id);
-```
+<!-- DDL は operator/01-data-model.md §3.25 を参照 (canonical) -->
 
 ### 13.4 failed_invite_lookups
 
 招待トークンの総当たり攻撃の検知・レート制限用イベントログテーブル。
-正とする定義は `operator/01-data-model.md §3.24`。
 
-```sql
--- 招待トークン総当たり攻撃の検知・レート制限用
-CREATE TABLE failed_invite_lookups (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  ip_address  INET NOT NULL,
-  token_hint  VARCHAR(10),  -- トークン最初の 10 文字 (診断用)
-  invite_type VARCHAR(20) CHECK (invite_type IN ('family','org')),
-  attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_failed_invites_ip ON failed_invite_lookups(ip_address, attempted_at DESC);
-
--- 7 日以上古いレコードは pg_cron で削除
-ALTER TABLE failed_invite_lookups ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "failed_invites_no_access" ON failed_invite_lookups
-  FOR ALL USING (false);
--- service_role のみ (middleware 経由)
-```
-
-IP 単位の集計クエリ例 (レート制限判定用):
-```sql
-SELECT COUNT(*) AS attempt_count
-FROM failed_invite_lookups
-WHERE ip_address = $1
-  AND attempted_at > NOW() - INTERVAL '1 hour';
--- attempt_count >= 閾値 → レート制限を適用
-```
+<!-- DDL は operator/01-data-model.md §3.24 を参照 (canonical) -->
 
 ---
 
