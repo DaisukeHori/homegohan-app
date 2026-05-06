@@ -260,7 +260,7 @@ CREATE INDEX IF NOT EXISTS idx_org_license_revoke ON org_license_assignments(rev
 CREATE TABLE IF NOT EXISTS org_license_audit_log (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  pool_id         UUID REFERENCES org_license_pools(id),
+  license_pool_id UUID REFERENCES org_license_pools(id),
   assignment_id   UUID REFERENCES org_license_assignments(id),
   actor_id        UUID REFERENCES auth.users(id),
   action_type     VARCHAR(50) NOT NULL
@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS org_license_audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_org_license_audit_org  ON org_license_audit_log(organization_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_org_license_audit_pool ON org_license_audit_log(pool_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_org_license_audit_pool ON org_license_audit_log(license_pool_id, created_at DESC);
 ```
 
 #### `org_health_access_logs`
@@ -476,62 +476,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_delivery_fail  ON org_webhook_deliveries(
 
 ### 3.3 トリガー: sync_org_license_pool_usage
 
-```sql
--- org_license_assignments INSERT/UPDATE 時に org_license_pools.used_licenses を同期
--- FOR UPDATE で行ロックを取得し、同時 INSERT 競合を防ぐ
-CREATE OR REPLACE FUNCTION sync_org_license_pool_usage()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_pool RECORD;
-BEGIN
-  IF (TG_OP = 'INSERT' AND NEW.status = 'active') THEN
-    -- 排他ロック取得 (同時 INSERT を直列化)
-    SELECT id, organization_id, total_licenses, used_licenses
-      INTO v_pool
-      FROM org_license_pools
-      WHERE id = NEW.license_pool_id
-      FOR UPDATE;
-
-    IF NOT FOUND THEN
-      RAISE EXCEPTION 'license_pool_not_found: %', NEW.license_pool_id;
-    END IF;
-
-    -- 容量超過チェック
-    IF v_pool.used_licenses >= v_pool.total_licenses THEN
-      RAISE EXCEPTION 'license_pool_exhausted'
-        USING HINT = 'Pool ' || v_pool.id || ' is full ('
-                     || v_pool.used_licenses || '/' || v_pool.total_licenses || ')',
-              ERRCODE = 'P0001';
-    END IF;
-
-    -- organization_id を denormalize (INSERT 時のみ)
-    NEW.organization_id := v_pool.organization_id;
-
-    UPDATE org_license_pools
-      SET used_licenses = used_licenses + 1, updated_at = NOW()
-      WHERE id = NEW.license_pool_id;
-
-  ELSIF (TG_OP = 'UPDATE'
-         AND OLD.status = 'active'
-         AND NEW.status IN ('revoked', 'expired')) THEN
-    PERFORM 1 FROM org_license_pools WHERE id = NEW.license_pool_id FOR UPDATE;
-    UPDATE org_license_pools
-      SET used_licenses = GREATEST(used_licenses - 1, 0), updated_at = NOW()
-      WHERE id = NEW.license_pool_id;
-  END IF;
-
-  RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER trg_org_license_pool_usage
-  BEFORE INSERT OR UPDATE ON org_license_assignments
-  FOR EACH ROW EXECUTE FUNCTION sync_org_license_pool_usage();
-```
+<!-- 実装は org/04-license-management.md §3 を参照 (license-management ドメイン主管) -->
 
 ## 4. ER 図 (Mermaid)
 

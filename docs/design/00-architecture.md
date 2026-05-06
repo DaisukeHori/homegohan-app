@@ -163,8 +163,8 @@ HR システム
   → POST /api/webhooks/hr (退職者リスト)
     → INSERT hr_webhook_events (raw 保存)
     → INSERT hr_revoke_jobs × N (個別ジョブ)
-pg_cron worker
-  → process_hr_revoke_jobs (5 分ごと)
+Vercel Cron (hr_revoke_jobs_processor)
+  → hr_revoke_jobs_processor (hourly :30)
     → 各 job: org_license_assignments.revoked_at セット
     → 該当 family_groups.status = 'frozen'、freeze_grace_until = NOW() + 30d
     → 退職者本人 + 家族メンバーへ通知

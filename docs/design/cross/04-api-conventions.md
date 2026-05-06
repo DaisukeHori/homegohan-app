@@ -180,6 +180,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `ORG_LICENSE_NOT_FOUND` | ライセンスが見つからない | 404 |
 | `ORG_INACTIVE` | 組織が非アクティブ | 403 |
 | `ORG_SSO_REQUIRED` | SSO ログインが必要 | 403 |
+| `ORG_PERMISSION_DENIED` | 組織への権限がない | 403 |
 | `ORG_OFFBOARD_INVALID_STATUS` | オフボーディング操作の対象グループが不正なステータス | 409 |
 | `ORG_LICENSE_ALREADY_REVOKED` | ライセンスは既に取り消されている | 410 |
 | `ORG_LICENSE_POOL_EXPIRED` | ライセンスプールが期限切れ | 410 |
@@ -191,6 +192,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_PLAN_NOT_FOUND` | プランが見つからない | 404 |
 | `OP_FEATURE_FLAG_NOT_FOUND` | 機能フラグが見つからない | 404 |
 | `OP_TICKET_NOT_FOUND` | チケットが見つからない | 404 |
+| `OP_SUBSCRIPTION_ALREADY_ACTIVE` | サブスクリプションが既にアクティブ | 409 |
 
 ---
 

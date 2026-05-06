@@ -251,7 +251,10 @@ Org License Pool (org_pro)
 -- 家族シート使用数を org_license_assignments に反映するトリガー関数
 -- family/07-lifecycle.md と連携 (family ドメインからの更新)
 CREATE OR REPLACE FUNCTION update_family_seats_used()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
   -- AFTER トリガーのため RETURN 値は無視されるが、慣習で COALESCE(NEW, OLD) を返す
   -- INSERT/UPDATE 時は NEW、DELETE 時は OLD を使用して対象グループを特定する
@@ -364,7 +367,7 @@ SELECT
   olp.plan_key
 FROM org_license_audit_log olal
   LEFT JOIN user_profiles up ON olal.actor_id = up.id
-  LEFT JOIN org_license_pools olp ON olal.pool_id = olp.id
+  LEFT JOIN org_license_pools olp ON olal.license_pool_id = olp.id
 WHERE olal.organization_id = $org_id
   AND olal.created_at BETWEEN $start AND $end
 ORDER BY olal.created_at DESC;
@@ -389,10 +392,8 @@ async function bulkRevoke(
   reason: string,
   actorId: string
 ): Promise<BulkRevokeResult> {
-  // advisory lock: 同一 org への並行 bulk-revoke を防ぐ
-  await supabase.rpc('pg_advisory_xact_lock', {
-    key: hashtext('bulk-revoke:' + orgId)
-  });
+  // advisory lock: 同一 org への並行 bulk-revoke を防ぐ (cross/02-rls-patterns.md §ラッパー経由必須)
+  await supabase.rpc('acquire_advisory_lock', { lock_key: 'bulk-revoke:' + orgId });
 
   const { data, error } = await supabase
     .from('org_license_assignments')
@@ -413,7 +414,7 @@ async function bulkRevoke(
   await supabase.from('org_license_audit_log').insert(
     data.map(a => ({
       organization_id: orgId,
-      pool_id: a.license_pool_id,
+      license_pool_id: a.license_pool_id,
       assignment_id: a.id,
       actor_id: actorId,
       action_type: 'bulk_revoke',
@@ -556,7 +557,7 @@ stateDiagram-v2
 | プール枯渇 | `409 CONFLICT_LICENSE_POOL_EXHAUSTED` + 追加購入 UI |
 | プール未発見 | `404 ORG_NOT_FOUND` |
 | 権限不足 | `403 ORG_PERMISSION_DENIED` |
-| 既に revoked な assignment への revoke | `409 ORG_LICENSE_ALREADY_REVOKED` |
+| 既に revoked な assignment への revoke | `410 ORG_LICENSE_ALREADY_REVOKED` |
 | プールの ends_at 経過済みへの割当 | `422 ORG_LICENSE_POOL_EXPIRED` |
 
 ## 11. テスト方針

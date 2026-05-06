@@ -156,7 +156,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  rows_affected INT;
+  archived_count INT := 0;
   _group RECORD;
 BEGIN
   -- 凍結猶予 (freeze_grace_until) が切れた family_groups を archived に変更 (frozen → archived 遷移のみ)
@@ -169,6 +169,8 @@ BEGIN
     UPDATE family_groups
     SET status = 'archived', archived_at = NOW()
     WHERE id = _group.id;
+
+    archived_count := archived_count + 1;
 
     -- org/05-offboarding-flow.md §8 から統合: owner の個人プラン確認 → auto-migrate
     -- カード登録済なら個人プランへ自動移行 (source_org_assignment_id を NULL に)
@@ -184,8 +186,7 @@ BEGIN
     );
   END LOOP;
 
-  GET DIAGNOSTICS rows_affected = ROW_COUNT;
-  RAISE NOTICE 'family_freeze_grace_batch: % groups archived', rows_affected;
+  RAISE NOTICE 'family_freeze_grace_batch: % groups archived', archived_count;
 END;
 $$ LANGUAGE plpgsql;
 ```

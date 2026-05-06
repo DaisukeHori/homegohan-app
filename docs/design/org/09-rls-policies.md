@@ -26,6 +26,10 @@ RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
 $$;
 
 -- 現在ユーザーのロールが指定ロール配列に含まれるかチェック
+-- 注: user_profiles.roles 配列には system ロール (admin / super_admin) と
+-- org ロール (org_admin / org_member 等) が混在する。本関数は両方を判定可能で、
+-- has_org_role(ARRAY['admin', 'super_admin']) のような system ロール判定にも使える。
+-- 関数名は org/ ドメインに最適化されているが、実装上は汎用ロールチェック関数。
 CREATE OR REPLACE FUNCTION has_org_role(required_roles TEXT[])
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT roles && required_roles
