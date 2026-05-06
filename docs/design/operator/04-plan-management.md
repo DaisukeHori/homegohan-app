@@ -554,13 +554,13 @@ describe('プランライフサイクル Integration', () => {
     const { data: history } = await supabaseAdmin
       .from('plan_price_history')
       .select('*')
-      .eq('plan_key', 'individual_pro')
+      .eq('plan_id', planId)  // DDL の列は plan_id UUID (plan_key ではない)
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
 
-    expect(history?.old_price_jpy).toBe(oldPrice);
-    expect(history?.new_price_jpy).toBe(newPrice);
+    expect(history?.old_monthly_price_jpy).toBe(oldPrice);
+    expect(history?.new_monthly_price_jpy).toBe(newPrice);
   });
 });
 ```

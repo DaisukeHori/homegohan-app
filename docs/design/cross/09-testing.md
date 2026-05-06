@@ -2409,7 +2409,7 @@ describe('Stripe Price 同期', () => {
     const { data } = await supabaseAdmin
       .from('plan_price_history')
       .select('*')
-      .eq('plan_key', 'individual_pro')
+      .eq('plan_id', planId)  // DDL は plan_id UUID (operator/01 §3.x)
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
