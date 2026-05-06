@@ -2306,6 +2306,184 @@ CREATE TABLE gdpr_deletion_requests (
 
 ---
 
+## 16. 横断品質要件 (i18n / a11y / 型 / パフォーマンス / DR)
+
+実装着手前に確定すべき非機能要件。本セクションの全要件は **新規実装で必須**、既存実装は段階的移行。
+
+### 16.1 国際化 (i18n)
+
+**現状**: 日本語ハードコード 100%、ライブラリ未導入。要件 01 §14 で「英語 Phase 2」と記載済み。
+
+**Phase 1 (実装着手と同時に開始)**:
+- ライブラリ導入: Web は `next-intl`、Mobile は `i18next` + `react-i18next`
+- リソース配置: `messages/ja.json` (Web) / `apps/mobile/locales/ja.json` (Mobile)
+- **新規実装の UI 文字列はハードコード禁止**、必ず i18n key 経由
+- 既存日本語ハードコードは段階的に抽出 (PR ごとに対象ファイル分)
+- ESLint ルール `i18next/no-literal-string` を新規ファイルに warn レベルで導入
+
+**Phase 2 (英語対応、組織契約 enterprise 顧客から要望次第)**:
+- `messages/en.json` 追加、翻訳費用は外注
+- 言語切替 UI: ユーザー設定画面 (`user_profiles.preferred_locale` 列追加)
+- LLM プロンプトも en/ja で分岐 (`prompts/{function}/{locale}.md`)
+
+**確定 plan_key 別の i18n 提供**:
+| プラン | 提供言語 |
+|--------|---------|
+| `free` / `pro` / `family_*` | 日本語のみ |
+| `org_*` (Phase 2 以降) | 日本語 + 英語 |
+
+### 16.2 アクセシビリティ (a11y)
+
+**現状**: 部分対応 (Web 8 ファイル、Mobile 6 ファイル)、a11y テスト無し。
+
+**ターゲット**: **WCAG 2.1 Level AA**
+
+**必須対応** (新規実装):
+1. **セマンティック HTML**: `<button>` / `<a>` / `<form>` を正しく使用、`<div onClick>` 禁止
+2. **ARIA / accessibilityLabel**:
+   - 全ボタン・リンク・アイコンボタンに `aria-label` (Web) / `accessibilityLabel` (Mobile)
+   - `aria-describedby` で補足説明
+   - `aria-live="polite"` で動的更新通知 (献立提案完了等)
+3. **キーボードナビゲーション**:
+   - 全インタラクティブ要素に Tab フォーカス可能
+   - Esc でモーダル閉じる、Enter で確定
+   - フォーカスリング非表示禁止 (`outline: none` のみは NG)
+4. **カラーコントラスト**:
+   - 通常テキスト 4.5:1 以上
+   - 大きいテキスト (18pt+) 3:1 以上
+   - DESIGN.md にコントラスト基準を追加
+5. **スクリーンリーダー**: VoiceOver (iOS) / TalkBack (Android) / NVDA (Web) で全主要フローが操作可能
+
+**強制ツール**:
+- `eslint-plugin-jsx-a11y` を `recommended` で導入、新規 PR で error
+- `@axe-core/playwright` を E2E テストに統合、各画面で a11y violations = 0 を assert
+- カラーコントラストは Storybook (もしくは Figma プラグイン) で事前検証
+
+**プラン無関係**: a11y は全プランで必須 (法的要件、米国 ADA / EU EAA 準拠)。
+
+### 16.3 TypeScript 型 (Supabase 自動生成)
+
+**現状**: `types/database.ts` は手書き、Supabase 自動生成型なし → 実スキーマと乖離リスク高。
+
+**移行**:
+1. **Supabase 自動生成型を導入**:
+   ```bash
+   # 新規 npm script
+   "db:types": "supabase gen types typescript --project-id flmeolcfutuwwbjmzyoz --schema public > types/supabase.ts"
+   ```
+2. **手書き `types/database.ts` を `types/database-extended.ts` にリネーム**、Supabase 生成型を継承
+3. **CI で自動再生成 + 差分検知**:
+   ```yaml
+   # .github/workflows/types-check.yml (新規)
+   - name: Regenerate types
+     run: npm run db:types
+   - name: Check diff
+     run: git diff --exit-code types/supabase.ts
+   ```
+4. **マイグレーション PR は必ず types 再生成コミット込みで送る**
+5. **TypeScript strict 化**: `tsconfig.json` の `strict: true`、`noUncheckedIndexedAccess: true`
+
+**packages/core / packages/shared との整合**:
+- `packages/core/src/types/` で Supabase 型を re-export
+- ドメイン型 (例: `FamilyGroup`) は `packages/core` で定義し、Supabase 型を internal で参照
+
+### 16.4 パフォーマンス目標
+
+**現状**: 目標値・計測手段ともに記載なし。
+
+**確定目標値**:
+
+| 指標 | 目標 | 計測 |
+|------|------|------|
+| Lighthouse Performance Score | ≥ 90 | CI (Lighthouse CI) |
+| LCP (Largest Contentful Paint) | < 2.5s (75 percentile) | Vercel Analytics + Web Vitals |
+| FID (First Input Delay) | < 100ms | 同上 |
+| CLS (Cumulative Layout Shift) | < 0.1 | 同上 |
+| API レスポンスタイム p95 | < 500ms | Vercel Speed Insights |
+| API レスポンスタイム p99 | < 1500ms | 同上 |
+| `getUserActivePlan()` p95 | **< 100ms** (主要パス、頻繁に呼ばれる) | DB スロークエリログ |
+| Edge Function コールドスタート p95 | < 1s | Supabase Logs |
+| AI 応答 (`knowledge-gpt` 等) p95 | < 5s (ストリーミング first token) | LLM usage logs |
+| DB クエリ p95 | < 50ms | `pg_stat_statements` |
+
+**計測手段の導入**:
+1. **Lighthouse CI** (`.github/workflows/lighthouse.yml` 新規)
+2. **Vercel Speed Insights** 有効化
+3. **`pg_stat_statements` 拡張**:
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+   ```
+4. **スロークエリログ**:
+   ```sql
+   ALTER SYSTEM SET log_min_duration_statement = '200ms';
+   ```
+5. **OpenTelemetry** trace を Edge Function に導入 (Phase 2)
+
+**未達時のアクション**:
+- p95 が目標を 50% 超過 → P0 Issue 自動作成
+- Lighthouse Score < 80 → main へのマージ block
+
+### 16.5 災害復旧 (DR) / バックアップ
+
+**現状**: Supabase tier・バックアップ・リージョン・手順書すべて不明。
+
+**確定方針**:
+
+#### Supabase プラン
+- **本番: Supabase Pro Plan 以上必須** (PITR 7 日間)
+- **法人 Enterprise 顧客**: Team Plan に upgrade (PITR 14 日 + Read Replica)
+
+#### バックアップ
+| タイプ | 頻度 | 保持 | 保管場所 |
+|-------|------|------|---------|
+| PITR (Point-in-Time Recovery) | 連続 (Supabase 標準) | 7 日 (Pro) / 14 日 (Team) | Supabase 自動 |
+| Daily Logical Backup | 日次 02:00 UTC | 30 日 | S3 / R2 (`pg_dump` を Vercel Cron で実行) |
+| Weekly Cold Backup | 週次 | 1 年 | S3 Glacier |
+| Annual Backup | 年次 | 永久 | S3 Glacier (法的要件) |
+
+#### リージョン構成 (Phase 1 / Phase 2)
+
+**Phase 1 (現在 + 当面)**:
+- Supabase: Northeast Asia (Tokyo)
+- Vercel: hnd1 (Tokyo)
+- Storage: 同上
+- **単一リージョン運用**、地震・大規模障害時は手動復旧
+
+**Phase 2 (Org Enterprise 顧客 5 社 or 売上 1000 万円超)**:
+- Read Replica: Singapore (sin1)
+- Failover 手順書必須
+
+#### 復元テスト
+- **月 1 回**: staging 環境に本番 PITR から復元、smoke test
+- **四半期**: 全データ logical backup から fresh DB に復元、API smoke test
+- **年 1 回**: Disaster Recovery Drill (本番想定の障害シナリオ訓練)
+
+#### RPO / RTO 目標
+| プラン | RPO (許容データ損失) | RTO (復旧目標時間) |
+|--------|------------------|------------------|
+| `free` / `pro` | 24 時間 | best effort |
+| `family_*` | 1 時間 | 4 時間 |
+| `org_starter` / `standard` | 30 分 | 2 時間 |
+| `org_pro` | 5 分 | 1 時間 |
+| `org_enterprise` | 1 分 (PITR) | 30 分 |
+
+#### 障害シナリオ別手順 (要件)
+1. **Supabase DB 障害**: PITR から最新まで復元 (RTO 30 分)
+2. **Vercel 障害**: 別リージョンへ手動切替 or Cloudflare Pages フェイルオーバー
+3. **リージョン全体障害 (Tokyo)**: Phase 2 では Singapore Read Replica を Master に昇格
+4. **データ破壊 (誤 DELETE)**: PITR で T-1h に巻き戻し、論理バックアップで該当範囲のみ復元
+5. **ランサムウェア/侵害**: 全アクセスキー rotate、Cold Backup から復元、監査ログ精査
+
+#### バックアップ整合性
+- バックアップファイルに SHA256 ハッシュ + GPG 署名
+- 復元前に整合性検証必須
+
+#### 文書化
+- `docs/operations/dr-runbook.md` 必須 (新規作成)
+- `docs/operations/backup-restore.md` 必須
+
+---
+
 **END OF OPERATOR ADMIN REQUIREMENTS DOCUMENT**
 
 3 本完成。次は実装計画 PR の起案。
