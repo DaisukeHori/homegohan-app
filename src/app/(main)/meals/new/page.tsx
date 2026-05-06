@@ -1064,7 +1064,7 @@ export default function MealCaptureModal() {
         <div className="w-10" />
       </div>
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence>
         {/* ステップ0: モード選択 */}
         {step === 'mode-select' && (
           <motion.div
