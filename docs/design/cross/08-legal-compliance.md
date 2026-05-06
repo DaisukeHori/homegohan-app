@@ -550,10 +550,15 @@ async function handleDisputeCreated(event: Stripe.Event) {
 
   if (!sub) return;
 
-  // ステータスを disputed に変更
+  // ステータスを past_due (soft-suspend) に変更 + dispute メタ情報を notes に記録
+  // CHECK 制約: ('trialing','active','paused','cancelled','expired','past_due','grace')
+  // disputed という独立ステータスは設けず、past_due + notes で運用 (operator/05 §4.2 と整合)
   await supabaseAdmin
     .from('personal_subscriptions')
-    .update({ status: 'disputed' })
+    .update({
+      status: 'past_due',
+      notes: `チャージバック発生 (dispute_id: ${dispute.id})`,
+    })
     .eq('user_id', sub.user_id);
 
   // super_admin に Slack 通知

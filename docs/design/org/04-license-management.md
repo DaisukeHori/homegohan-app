@@ -461,7 +461,7 @@ async function getUserActivePlan(userId: string): Promise<PlanInfo> {
   // 2. 個人プラン
   const { data: personalSub } = await supabase
     .from('personal_subscriptions')
-    .select('plan_key, expires_at, subscription_plans(feature_packages, display_order)')
+    .select('plan_key, current_period_end, subscription_plans(feature_packages, display_order)')
     .eq('user_id', userId)
     .eq('status', 'active')
     .single();
@@ -497,7 +497,7 @@ async function getUserActivePlan(userId: string): Promise<PlanInfo> {
   // 5. 期限: 最も早い期限 (どれか切れたら再評価)
   const allExpiries = [
     ...(orgLicenses ?? []).map(l => l.org_license_pools.ends_at),
-    personalSub?.expires_at,
+    personalSub?.current_period_end,  // personal_subscriptions の期限列 (DDL)
   ].filter(Boolean).map(d => new Date(d));
   const earliestExpiry = allExpiries.length > 0
     ? new Date(Math.min(...allExpiries.map(d => +d)))
