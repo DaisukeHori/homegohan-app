@@ -12,6 +12,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -67,6 +68,63 @@ const QUICK_QUESTIONS = [
 ];
 
 // ============================================================
+// TypingIndicator
+// ============================================================
+
+const TypingIndicator: React.FC = () => {
+  const animations = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    const sequences = animations.map((anim, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 150),
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim, {
+            toValue: 0,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ])
+      )
+    );
+    sequences.forEach((s) => s.start());
+    return () => sequences.forEach((s) => s.stop());
+  }, []);
+
+  return (
+    <View style={styles.typingIndicatorContainer}>
+      {animations.map((anim, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            styles.typingDot,
+            {
+              transform: [
+                {
+                  translateY: anim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, -4],
+                  }),
+                },
+              ],
+              opacity: anim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.4, 1],
+              }),
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+};
+
+// ============================================================
 // Props
 // ============================================================
 
@@ -104,7 +162,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
     return () => clearTimeout(t);
-  }, [messages.length, streamingContent]);
+  }, [messages.length, streamingContent, sending]);
 
   async function initSession() {
     try {
@@ -389,6 +447,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const isWelcomeOnly =
     messages.length === 1 && messages[0].id === "welcome";
 
+  // typing indicator を表示するか: 送信中かつストリームがまだ来ていない
+  const showTypingIndicator = sending && streamingContent === null;
+
   return (
     <>
       <Modal
@@ -398,188 +459,199 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         presentationStyle="pageSheet"
         onRequestClose={onClose}
       >
-        <SafeAreaView style={styles.safeArea}>
-          <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
-          >
-            {/* ヘッダー */}
-            <View style={styles.header}>
-              <View style={styles.headerLeft}>
-                <LinearGradient
-                  colors={[colors.accent, colors.warning]}
-                  style={styles.iconCircle}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <Sparkles size={16} color="#FFF" />
-                </LinearGradient>
-                <View>
-                  <Text style={styles.headerTitle}>AIアドバイザー</Text>
-                  <Text style={styles.headerSubtitle}>
-                    いつでも相談できます
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.headerActions}>
-                <Pressable
-                  testID="ai-archive-btn"
-                  onPress={archiveSession}
-                  disabled={isClosingSession || !currentSessionId}
-                  style={styles.headerActionBtn}
-                >
-                  {isClosingSession ? (
-                    <ActivityIndicator
-                      size="small"
-                      color={colors.textLight}
-                    />
-                  ) : (
-                    <Archive size={20} color={colors.textLight} />
-                  )}
-                </Pressable>
-                <Pressable
-                  testID="ai-toggle-sessions"
-                  onPress={() => setShowSessionList(!showSessionList)}
-                  style={styles.headerActionBtn}
-                >
-                  <ChevronDown size={20} color={colors.textLight} />
-                </Pressable>
-                <Pressable
-                  testID="ai-close-btn"
-                  onPress={onClose}
-                  style={styles.headerActionBtn}
-                >
-                  <X size={20} color={colors.textLight} />
-                </Pressable>
-              </View>
-            </View>
-
-            {/* ボディ */}
-            {showSessionList ? (
-              /* セッション一覧モード */
-              <ScrollView
-                style={styles.body}
-                contentContainerStyle={styles.bodyContent}
-              >
-                <Pressable
-                  testID="ai-new-session"
-                  onPress={createNewSession}
-                  style={styles.newSessionBtn}
-                >
-                  <MessageCircle size={16} color={colors.accent} />
-                  <Text style={styles.newSessionLabel}>
-                    新しい相談を始める
-                  </Text>
-                </Pressable>
-                {sessions.map((s) => (
-                  <Pressable
-                    key={s.id}
-                    testID={`ai-session-${s.id}`}
-                    onPress={() => selectSession(s.id)}
-                    style={[
-                      styles.sessionRow,
-                      currentSessionId === s.id && styles.sessionRowActive,
-                    ]}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
+        >
+          <SafeAreaView style={styles.safeArea}>
+            <View style={styles.container}>
+              {/* ヘッダー */}
+              <View style={styles.header}>
+                <View style={styles.headerLeft}>
+                  <LinearGradient
+                    colors={[colors.accent, colors.warning]}
+                    style={styles.iconCircle}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
                   >
-                    <Text style={styles.sessionRowText}>
-                      AI相談 ({s.messageCount}件)
+                    <Sparkles size={16} color="#FFF" />
+                  </LinearGradient>
+                  <View>
+                    <Text style={styles.headerTitle}>AIアドバイザー</Text>
+                    <Text style={styles.headerSubtitle}>
+                      いつでも相談できます
                     </Text>
-                    {s.status === "closed" && (
-                      <View style={styles.closedBadge}>
-                        <Text style={styles.closedBadgeText}>終了</Text>
-                      </View>
+                  </View>
+                </View>
+                <View style={styles.headerActions}>
+                  <Pressable
+                    testID="ai-archive-btn"
+                    onPress={archiveSession}
+                    disabled={isClosingSession || !currentSessionId}
+                    style={styles.headerActionBtn}
+                  >
+                    {isClosingSession ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={colors.textLight}
+                      />
+                    ) : (
+                      <Archive size={20} color={colors.textLight} />
                     )}
                   </Pressable>
-                ))}
-              </ScrollView>
-            ) : (
-              /* 通常メッセージモード */
-              <ScrollView
-                ref={scrollRef}
-                style={styles.body}
-                contentContainerStyle={styles.messageListContent}
-                showsVerticalScrollIndicator={false}
-              >
-                {messages.map((msg) => (
-                  <MessageBubble key={msg.id} message={msg} />
-                ))}
+                  <Pressable
+                    testID="ai-toggle-sessions"
+                    onPress={() => setShowSessionList(!showSessionList)}
+                    style={styles.headerActionBtn}
+                  >
+                    <ChevronDown size={20} color={colors.textLight} />
+                  </Pressable>
+                  <Pressable
+                    testID="ai-close-btn"
+                    onPress={onClose}
+                    style={styles.headerActionBtn}
+                  >
+                    <X size={20} color={colors.textLight} />
+                  </Pressable>
+                </View>
+              </View>
 
-                {/* ストリーミング中の仮メッセージ */}
-                {streamingContent != null && (
-                  <MessageBubble
-                    key="streaming"
-                    message={{
-                      id: "streaming",
-                      role: "assistant",
-                      content: streamingContent,
-                      createdAt: new Date().toISOString(),
-                    }}
-                    isStreaming
-                  />
-                )}
+              {/* ボディ */}
+              {showSessionList ? (
+                /* セッション一覧モード */
+                <ScrollView
+                  style={styles.body}
+                  contentContainerStyle={styles.bodyContent}
+                >
+                  <Pressable
+                    testID="ai-new-session"
+                    onPress={createNewSession}
+                    style={styles.newSessionBtn}
+                  >
+                    <MessageCircle size={16} color={colors.accent} />
+                    <Text style={styles.newSessionLabel}>
+                      新しい相談を始める
+                    </Text>
+                  </Pressable>
+                  {sessions.map((s) => (
+                    <Pressable
+                      key={s.id}
+                      testID={`ai-session-${s.id}`}
+                      onPress={() => selectSession(s.id)}
+                      style={[
+                        styles.sessionRow,
+                        currentSessionId === s.id && styles.sessionRowActive,
+                      ]}
+                    >
+                      <Text style={styles.sessionRowText}>
+                        AI相談 ({s.messageCount}件)
+                      </Text>
+                      {s.status === "closed" && (
+                        <View style={styles.closedBadge}>
+                          <Text style={styles.closedBadgeText}>終了</Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : (
+                /* 通常メッセージモード */
+                <ScrollView
+                  ref={scrollRef}
+                  style={styles.body}
+                  contentContainerStyle={styles.messageListContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {messages.map((msg) => (
+                    <MessageBubble key={msg.id} message={msg} />
+                  ))}
 
-                {/* クイック質問チップ (ウェルカムのみ表示時) */}
-                {isWelcomeOnly && (
-                  <View style={styles.quickQuestions}>
-                    {QUICK_QUESTIONS.map((q, i) => (
-                      <Pressable
-                        key={i}
-                        testID={`ai-quick-${i}`}
-                        onPress={() => sendMessage(q)}
-                        style={styles.quickChip}
-                      >
-                        <Text style={styles.quickChipText}>{q}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
-              </ScrollView>
-            )}
+                  {/* ストリーミング中の仮メッセージ */}
+                  {streamingContent != null && (
+                    <MessageBubble
+                      key="streaming"
+                      message={{
+                        id: "streaming",
+                        role: "assistant",
+                        content: streamingContent,
+                        createdAt: new Date().toISOString(),
+                      }}
+                      isStreaming
+                    />
+                  )}
 
-            {/* クイックアクションバー */}
-            <View style={styles.actionBar}>
-              <Pressable
-                testID="ai-day-menu-btn"
-                onPress={() => setDayMenuModalVisible(true)}
-                style={styles.dayMenuBtn}
-              >
-                <Calendar size={14} color={colors.accent} />
-                <Text style={styles.dayMenuBtnText}>1日献立変更</Text>
-              </Pressable>
+                  {/* 応答待ち typing indicator */}
+                  {showTypingIndicator && (
+                    <View style={styles.bubbleWrapperAssistant}>
+                      <View style={styles.bubbleAssistant}>
+                        <TypingIndicator />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* クイック質問チップ (ウェルカムのみ表示時) */}
+                  {isWelcomeOnly && (
+                    <View style={styles.quickQuestions}>
+                      {QUICK_QUESTIONS.map((q, i) => (
+                        <Pressable
+                          key={i}
+                          testID={`ai-quick-${i}`}
+                          onPress={() => sendMessage(q)}
+                          style={styles.quickChip}
+                        >
+                          <Text style={styles.quickChipText}>{q}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
+                </ScrollView>
+              )}
+
+              {/* クイックアクションバー */}
+              <View style={styles.actionBar}>
+                <Pressable
+                  testID="ai-day-menu-btn"
+                  onPress={() => setDayMenuModalVisible(true)}
+                  style={styles.dayMenuBtn}
+                >
+                  <Calendar size={14} color={colors.accent} />
+                  <Text style={styles.dayMenuBtnText}>1日献立変更</Text>
+                </Pressable>
+              </View>
+
+              {/* 入力欄 */}
+              <View style={styles.inputRow}>
+                <TextInput
+                  testID="ai-input"
+                  style={styles.input}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  placeholder="メッセージを入力..."
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  maxLength={1000}
+                  editable={!sending}
+                />
+                <Pressable
+                  testID="ai-send-btn"
+                  onPress={() => sendMessage(inputText)}
+                  disabled={!inputText.trim() || sending}
+                  style={[
+                    styles.sendButton,
+                    (!inputText.trim() || sending) && styles.sendButtonDisabled,
+                  ]}
+                >
+                  {sending ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Send size={16} color="#FFF" />
+                  )}
+                </Pressable>
+              </View>
             </View>
-
-            {/* 入力欄 */}
-            <View style={styles.inputRow}>
-              <TextInput
-                testID="ai-input"
-                style={styles.input}
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder="メッセージを入力..."
-                placeholderTextColor={colors.textMuted}
-                multiline
-                maxLength={1000}
-                editable={!sending}
-              />
-              <Pressable
-                testID="ai-send-btn"
-                onPress={() => sendMessage(inputText)}
-                disabled={!inputText.trim() || sending}
-                style={[
-                  styles.sendButton,
-                  (!inputText.trim() || sending) && styles.sendButtonDisabled,
-                ]}
-              >
-                {sending ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Send size={16} color="#FFF" />
-                )}
-              </Pressable>
-            </View>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* 1日献立モーダル */}
@@ -860,5 +932,18 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: colors.textMuted,
+  },
+  typingIndicatorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    gap: 5,
+  },
+  typingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#999",
   },
 });
