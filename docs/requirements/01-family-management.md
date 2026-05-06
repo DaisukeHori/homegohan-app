@@ -1225,6 +1225,64 @@ CREATE POLICY family_groups_insert_paid_only ON family_groups
 
 > **責務分担**: アプリ層 feature flag は **UX のため** (機能ボタンを非表示にする等)。RLS / サーバーサイド関数は **セキュリティのため** (API 直叩き防御)。両方実装する。
 
+### 7.6 子供メンバーのライフサイクル (P0、100-scenarios.md C7)
+
+**目的**: child member (`family_members.user_id IS NULL`) が 18 歳到達時に独立アカウントへ移行できるようにする。
+
+**自動検知バッチ** (pg_cron 月次):
+```sql
+-- 18 歳の誕生月に親へ通知 (移行を促す)
+SELECT user_id FROM family_members fm
+WHERE fm.birth_date IS NOT NULL
+  AND DATE_PART('year', AGE(fm.birth_date)) = 18
+  AND fm.user_id IS NULL
+  AND NOT EXISTS (SELECT 1 FROM child_promotion_notifications WHERE family_member_id = fm.id);
+-- → 通知 + child_promotion_notifications に記録
+```
+
+**移行 API**: `POST /api/family/members/{id}/promote-to-user`
+- リクエスト: `{ email, password, transfer_data: 'all' | 'history_only' | 'none' }`
+- 親 owner の承認必須 (パスワード再認証)
+- 子供本人の Email 確認 (新規アカウント認証)
+- 食事履歴・健康データの帰属を選択 (移管 / 共有継続 / 親側保持)
+- 完了後: `family_members.user_id` に新 auth.users.id をセット、`role` を `member` に変更
+
+**プラン継承**: 移行直後は **無料 30 日体験** + 個人 Pro 加入を促す UI
+
+### 7.7 家族グループ分割 (P0、100-scenarios.md C8)
+
+**目的**: 離婚・別居等で 1 グループを 2 つに分割。現状は解散 → 新規作成しか方法ないが、データ移行が手動になる。
+
+**API**: `POST /api/family/groups/{id}/split`
+- リクエスト: `{ split_members: [member_id1, member_id2, ...], new_group_name, new_owner_id }`
+- owner 限定、パスワード再認証必須
+- 全分割対象メンバーへ通知 + 同意取得 (24h 以内、未応答は分割中止)
+- 同意確定後:
+  1. 新 family_group 作成
+  2. 指定メンバーを移籍 (`family_members.family_group_id` 更新)
+  3. 食事履歴 (`meals` / `planned_meals`) は **両グループで共有 (read-only)** または完全分割 (選択可)
+  4. 共有献立・買い物リストは新オーナーが選択
+  5. 元グループのプランは継続、新グループのプランは新 owner が選択 (デフォルト `free`)
+
+**法的注意**: 子供メンバーがいる場合は親権者同意が必要 (家庭裁判所判断にかかる場合は Phase 2 で対応)。
+
+### 7.8 大人代理操作 (P1、100-scenarios.md H5)
+
+**目的**: 認知症・寝たきり等で本人が記録できない大人メンバーを、家族 owner / admin が代理操作する。
+
+**列追加**:
+```sql
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS proxy_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS proxy_reason VARCHAR(50);
+  -- 'dementia' / 'bedridden' / 'medical_treatment' / 'other'
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS proxy_legal_guardian_id UUID
+  REFERENCES auth.users(id);  -- 成年後見人等の登録 (Phase 2)
+```
+
+**RLS 拡張**: `proxy_required = TRUE` のメンバーに対しては `family_meal_requests` の child 代理ロジック (§7.1.8) を流用。
+
+**UI**: メンバー編集画面に「代理操作が必要」トグル + 理由選択。
+
 ### 7.4 family_groups / family_members の状態制限 RLS (frozen/archived)
 
 ```sql
