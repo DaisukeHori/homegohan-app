@@ -1068,6 +1068,8 @@ deprecated (新規申込・自動更新ともに不可、移行強制)
 - 検索・フィルタ
 - 個別キャンセル対応 (顧客対応用)
 
+> **§5.13 / §5.14 の配置について**: §5.13 (A/B テスト) と §5.14 (データエクスポート) は §5.15-5.17 (プラン管理系、後追加) の後に配置されているが、これは「課金・プラン関連を 5.10-5.12 + 5.15-5.17 で連続して読みやすくする」ための意図的レイアウト。§5.13/5.14 は独立機能なので位置に依存しない。
+
 ### 5.13 F-OP-013: A/B テスト基盤
 
 #### 5.13.1 実験設計
@@ -1543,7 +1545,7 @@ CREATE INDEX idx_personal_subscriptions_trial_ending ON personal_subscriptions(t
 - 新クーポン適用時 → 旧クーポンの `coupon_redemptions.ended_at = NOW()` をセット → 新クーポンを `active_coupon_redemption_id` に格納
 - クーポンは 1 契約 1 つまで
 
-#### 7.2.6 `infra_metrics`
+#### 7.2.13 `infra_metrics`
 ```sql
 CREATE TABLE infra_metrics (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

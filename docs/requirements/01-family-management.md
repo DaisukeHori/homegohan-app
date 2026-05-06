@@ -170,7 +170,7 @@
 1. ユーザーが Web/Mobile の「家族管理」メニューを開く
 2. 「家族グループを作成」ボタンをタップ
 3. グループ名 (例: 「田中家」)、説明 (任意) を入力
-4. プラン選択 (無料 4 人まで / 家族プラン 8 人まで月額 480 円 等)
+4. プラン選択 (`free` 4 人まで / `family_basic` 4 人まで月額 1,480 円 / `family_pro` 8 人まで月額 2,480 円。詳細は 03 §7.2.7 公式 plan_key リスト)
 5. 「作成」ボタン → API `POST /api/family/groups`
 6. 作成完了画面に「家族メンバーを招待しよう!」のフォロー UI
 
@@ -303,6 +303,8 @@
 2. 確認 → API `PATCH /api/family/members/{id}` with `role`
 3. 通知: 対象メンバーに「○○家の管理者に任命されました」
 
+> **§4.10a〜§4.10d** は 4.10 (オーナー譲渡) より前に出現するが、これは **個別献立リクエスト 4 パターン** (UC-FAM-11〜14) を §5.5.5 と並列で読みやすくするための意図的配置。論理的には §4.10 (UC-FAM-10) の補足扱い。
+
 ### 4.10a UC-FAM-11: 共有献立から自分で離脱 (パターン①)
 **アクター**: 任意のメンバー (子供以外)
 **事前条件**: 共有献立が存在
@@ -380,7 +382,7 @@
 **編集**
 - オーナーのみ
 - グループ名、説明、アイコン変更可
-- プラン変更は別フロー (UC-FAM-13、本書 Phase 2)
+- プラン変更は別フロー (`/account/billing` → `personal_subscriptions` 更新、03 §7.2.12 参照)
 
 **解散**
 - オーナーのみ
@@ -1192,7 +1194,7 @@ CREATE POLICY meals_industrial_doctor_select ON meals
   );
 ```
 
-### 7.4.5 プラン制限の RLS 二重防御
+### 7.5 プラン制限の RLS 二重防御
 
 要件全体で「Pro プランのみ」「Family プランのみ」等の制限が機能フラグ (アプリ層) で実装されるが、API 直叩きでバイパスされないよう **RLS 層でも防御** する:
 
@@ -1571,13 +1573,13 @@ CREATE POLICY family_meal_requests_no_insert_when_frozen ON family_meal_requests
 
 ### 8.7 通知設定
 
-#### 8.6.1 `GET /api/family/notification-preferences`
+#### 8.7.1 `GET /api/family/notification-preferences`
 
-#### 8.6.2 `PUT /api/family/notification-preferences`
+#### 8.7.2 `PUT /api/family/notification-preferences`
 
-### 8.7 アクティビティログ
+### 8.8 アクティビティログ
 
-#### 8.7.1 `GET /api/family/activity`
+#### 8.8.1 `GET /api/family/activity`
 **クエリ**: `?limit=20&before={timestamp}`
 
 ---
@@ -1897,7 +1899,7 @@ homegohan://invite/org/{token}
 **通知種別ごとのバッジ寄与**:
 | 通知種別 | バッジ加算 | カテゴリ ID |
 |---------|----------|----------|
-| 個別献立リクエスト | +1 | `family_meal_request` |
+| 個別献立リクエスト | +1 | `family_meal_requests` |
 | 提案完了 | +1 | `family_meal_proposed` |
 | 退職猶予通知 | +1 | `family_freeze_warning` |
 | 家族凍結通知 | +1 | `family_frozen` |

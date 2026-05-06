@@ -416,6 +416,31 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 - `POST /api/family/groups/{id}/transfer-ownership` (退職者: 譲渡)
 - `POST /api/family/groups/{id}/dissolve` (退職者: 解散)
 
+**並行実行制御 (重要、競合防止)**:
+
+これらの 3 API は同一リソース (`family_groups`) に対する排他的状態遷移であり、同時実行で「オーナー 2 人」「個人プラン契約と解散の同時実行」等の不整合が起きうる。以下を **必須**:
+
+1. **楽観的ロック** (`updated_at` を if-match ヘッダで送信):
+   ```
+   POST /api/family/groups/{id}/transfer-ownership
+   If-Unmodified-Since: 2026-05-07T12:34:56Z   # 直前 GET で取得した updated_at
+   ```
+   - サーバー側: `UPDATE family_groups SET ... WHERE id = $1 AND updated_at = $2` で UPDATE 行数 = 0 なら 412 Precondition Failed
+   - 失敗時はクライアントに最新状態を返し、再取得後にリトライさせる
+
+2. **アプリ層 advisory lock**:
+   ```sql
+   SELECT pg_advisory_xact_lock(hashtext('family-group:' || $family_id));
+   -- ↑ トランザクション終了で自動解放、同一 family_id への並行 UPDATE を直列化
+   ```
+
+3. **状態の事前検証**:
+   - `migrate-to-personal`: `status = 'frozen' AND archived_at IS NULL` のみ可 (変換後は `status = 'active'`、`source_org_assignment_id = NULL` にセット)
+   - `transfer-ownership`: 同上 + 譲渡先が同グループの `family_members.role = 'admin'` のみ可
+   - `dissolve`: 同上 + 確認パスワード再認証
+
+これらが満たされない場合、**409 Conflict** または **412 Precondition Failed** を返す。
+
 ### 4.18 UC-ORG-18: ライセンス使用状況レポート
 
 **アクター**: org_admin / finance
@@ -772,7 +797,7 @@ Family Group (社員 + 配偶者 + 子供 2 名)
 #### 5.12.5 退職時の家族グループ
 3 つのオプション (退職時にユーザーが選択):
 - **凍結**: データは保持、家族プランは無効化
-- **個人プランへ移行**: 個人で家族プラン (480 円/月) 契約 → 機能継続
+- **個人プランへ移行**: 個人で家族プラン (`family_basic` 1,480 円/月 or `family_pro` 2,480 円/月、03 §7.2.7) 契約 → 機能継続
 - **解散**: 家族グループを完全削除
 
 ### 5.13 F-ORG-013: ライセンス使用状況分析
@@ -792,6 +817,8 @@ Family Group (社員 + 配偶者 + 子供 2 名)
 #### 5.13.3 監査出力
 - ライセンス操作履歴 CSV (経理用)
 - 未使用ライセンスの返金処理データ
+
+> **§5.10 / §5.11-5.13 の順序について**: §5.10 (F-ORG-010 産業医) は当初 §5.10 として書かれ、後追加の §5.11-5.13 (F-ORG-011〜013 ライセンス系) はライセンスフローを連続して読みやすくするため §5.10 の前に配置。番号 5.10 → 5.11 → 5.12 → 5.13 → 5.10 に読み戻る形だが、各セクションは独立に読めるよう自己完結している。
 
 ### 5.10 F-ORG-010: 産業医・保健師連携
 
@@ -1155,27 +1182,48 @@ CREATE POLICY org_license_assignments_no_delete ON org_license_assignments
   FOR DELETE USING (false);
 ```
 
-**トリガー** (具体的 SQL):
+**トリガー + 行ロック** (具体的 SQL、同時 INSERT 競合対策):
 
 ```sql
 -- assignment 追加時に license_pool.used_licenses += 1 (available_licenses は GENERATED で自動計算)
+-- 重要: SELECT ... FOR UPDATE で license_pool 行を排他ロックし、同時 INSERT で total を超過しないよう保証
 CREATE OR REPLACE FUNCTION sync_org_license_pool_usage()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_pool RECORD;
 BEGIN
   -- INSERT 時 (status = 'active' 前提)
   IF (TG_OP = 'INSERT' AND NEW.status = 'active') THEN
+    -- 行ロック取得 (同時 INSERT の直列化)
+    SELECT id, organization_id, total_licenses, used_licenses
+      INTO v_pool
+      FROM org_license_pools
+      WHERE id = NEW.license_pool_id
+      FOR UPDATE;
+
+    -- 容量チェック (CHECK 制約より早期に明示エラー)
+    IF v_pool.used_licenses >= v_pool.total_licenses THEN
+      RAISE EXCEPTION 'license_pool_exhausted'
+        USING HINT = 'Pool ' || v_pool.id || ' is full (' || v_pool.total_licenses || ' / ' || v_pool.total_licenses || ')',
+              ERRCODE = 'P0001';  -- アプリ層で 409 Conflict にマップ
+    END IF;
+
+    -- organization_id 自動コピー (denormalize)
+    IF NEW.organization_id IS NULL THEN
+      NEW.organization_id := v_pool.organization_id;
+    END IF;
+
+    -- 加算 (排他ロック中なので race なし)
     UPDATE org_license_pools
       SET used_licenses = used_licenses + 1, updated_at = NOW()
       WHERE id = NEW.license_pool_id;
-    -- organization_id 自動コピー (denormalize)
-    IF NEW.organization_id IS NULL THEN
-      SELECT organization_id INTO NEW.organization_id
-        FROM org_license_pools WHERE id = NEW.license_pool_id;
-    END IF;
+
   -- UPDATE: active → revoked/expired で減算
   ELSIF (TG_OP = 'UPDATE'
          AND OLD.status = 'active'
          AND NEW.status IN ('revoked', 'expired')) THEN
+    -- 行ロック (整合性のため)
+    PERFORM 1 FROM org_license_pools WHERE id = NEW.license_pool_id FOR UPDATE;
     UPDATE org_license_pools
       SET used_licenses = GREATEST(used_licenses - 1, 0), updated_at = NOW()
       WHERE id = NEW.license_pool_id;
@@ -1381,10 +1429,34 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 #### 8.8.4 `POST /api/org/health/patients/{userId}/ai-advice` ⭐ (Org Pro 以上)
 **説明**: 同意済メンバーの食事+健康データを基に Claude 3.5 Sonnet で個別アドバイス生成
 
-**アクセス制御**:
-- 呼び出し元: `org_industrial_doctor` ロール
-- 対象: `consent_org_health_data = TRUE` のメンバーのみ
-- 別組織のメンバーは 403
+**アクセス制御** (server-side 検証ロジック必須):
+```typescript
+// 1. 呼び出し元のロール検証
+const caller = await getUserProfile(auth.uid());
+if (!caller.roles.includes('org_industrial_doctor')) return 403;
+
+// 2. 対象ユーザーの取得 + 組織一致チェック
+const target = await getUserProfile(userId);
+if (!target) return 404;
+if (target.organization_id !== caller.organization_id) return 403;  // 別組織不可
+
+// 3. 同意確認
+if (!target.consent_org_health_data) return 403;
+
+// 4. 退職者は閲覧不可
+if (!target.is_active_in_org) return 403;
+
+// 5. プラン確認 (Org Pro 以上)
+const plan = await getOrgActivePlan(caller.organization_id);
+if (!['org_pro', 'org_enterprise'].includes(plan.plan_key)) return 402; // Payment Required
+
+// 6. アクセスログ記録 (org_health_access_logs)
+await logHealthAccess({ doctor_id: caller.id, target_id: userId, action: 'ai_advice' });
+
+// ... LLM 呼び出し
+```
+
+家族領域 (`family_groups` 配下) は本 API では一切閲覧不可 (RLS と Edge Function 両方でガード)。
 
 **呼び出し先 Edge Function**: `supabase/functions/industrial-doctor-advice/index.ts` (新規実装)
 
@@ -1964,6 +2036,42 @@ POST /api/webhooks/stripe   (新規)
 
 組織側 (`org_license_pools.stripe_subscription_id`) も同 webhook で更新可能。
 
+#### 15.12.1 Idempotency 保証 (重複処理防止、必須)
+
+Stripe は同一イベントを **複数回送信する仕様** (Stripe webhook 公式仕様)。受信側で `event.id` を一意キーとして処理済みチェックする必要がある:
+
+```sql
+CREATE TABLE stripe_webhook_events (
+  event_id              VARCHAR(255) PRIMARY KEY,  -- Stripe event.id (例: 'evt_1ABC...')
+  event_type            VARCHAR(100) NOT NULL,
+  livemode              BOOLEAN NOT NULL,
+  payload               JSONB NOT NULL,
+  signature             VARCHAR(500),
+  processed_at          TIMESTAMPTZ,
+  processing_status     VARCHAR(20) NOT NULL DEFAULT 'received'
+                          CHECK (processing_status IN ('received', 'processing', 'completed', 'failed', 'replayed')),
+  retry_count           INT NOT NULL DEFAULT 0,
+  last_error            TEXT,
+  received_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_stripe_webhook_events_status ON stripe_webhook_events(processing_status, received_at);
+CREATE INDEX idx_stripe_webhook_events_unprocessed ON stripe_webhook_events(received_at)
+  WHERE processing_status IN ('received', 'failed');
+```
+
+**Webhook ハンドラフロー**:
+1. `Stripe-Signature` ヘッダ検証 → 失敗時 401
+2. `INSERT INTO stripe_webhook_events (event_id, ...)` (PRIMARY KEY 衝突 → 既処理 → 200 早期 return、`processing_status = 'replayed'` に更新)
+3. event.type に応じて `personal_subscriptions` / `org_license_pools` 更新 (トランザクション内)
+4. 成功時 `UPDATE stripe_webhook_events SET processing_status = 'completed', processed_at = NOW()`
+5. 失敗時 `processing_status = 'failed'`、`retry_count++`、5 回失敗で alert
+6. 5xx を返した場合 Stripe 自動リトライ (max 3 日) する
+
+**整合性検証 (§15.1 の reconciliation と組み合わせ)**:
+- 24 時間以上 `processing_status = 'received'` のイベントは alert
+- Stripe API で event_id 検索し DB 状態と比較
+
 ### 15.13 Storage バケット分離戦略
 
 既存は `fridge-images` バケットに食事写真・冷蔵庫写真・健診結果 PDF を全て保存。要件で扱う情報の機微度が異なるため **バケット分離が必須**:
@@ -1996,7 +2104,7 @@ POST /api/webhooks/stripe   (新規)
 // src/lib/auth-helpers.ts (新規)
 export async function requireOrgRole(
   userId: string,
-  organizationId: string,
+  organizationId: string,  // 引数で必ず明示 (body から自動取得は禁止)
   allowedRoles: ('org_admin' | 'org_manager' | 'org_member' | 'org_viewer' | 'org_industrial_doctor')[]
 ): Promise<boolean>;
 
@@ -2006,7 +2114,38 @@ if (!await requireOrgRole(user.id, orgId, ['org_admin', 'org_manager'])) {
 }
 ```
 
-複数組織所属対応: `requireOrgRole` は `user_profiles.organization_id` だけでなく、`org_license_assignments.organization_id` (active のみ) も検索する。
+#### 15.15.1 organization_id の取得元 (竄改防止、必須)
+
+**禁止**: クライアント送信の `organization_id` を信頼すること
+
+**必須**: 以下のいずれかの方法で server-side で導出:
+1. **URL path から**: `/api/org/{orgId}/...` の場合は path parameter から取得 (これも検証必須)
+2. **`user_profiles.organization_id`**: ログインユーザーの所属組織 (単一所属の場合)
+3. **`org_license_assignments`**: 複数組織所属の場合、active な assignment から推定 (UI で「どちらの組織として操作するか」明示)
+
+**チェックロジック**:
+```typescript
+async function resolveOrganizationId(userId: string, requestedOrgId?: string): Promise<string> {
+  const userOrgs = await getUserActiveOrganizations(userId);  // user_profiles + org_license_assignments
+  if (requestedOrgId) {
+    if (!userOrgs.some(o => o.id === requestedOrgId)) throw new ForbiddenError();
+    return requestedOrgId;
+  }
+  if (userOrgs.length === 1) return userOrgs[0].id;
+  throw new BadRequestError('organization_id required (multiple memberships)');
+}
+```
+
+#### 15.15.2 RLS と API ミドルウェアの整合性
+
+複数組織所属対応:
+- **RLS**: `org_license_assignments` の `organization_id` 列 (denormalize) で絞り込み (§7.2.8 ポリシー)
+- **API ミドルウェア**: `requireOrgRole` 内で `org_license_assignments.organization_id` (active のみ) を検索
+- **両方が同じ条件で許可** することで、API バイパス攻撃と RLS バイパス攻撃の両方を防御
+
+例: 組織 A の `org_member`、組織 B の `org_admin` のユーザー:
+- 組織 A のライセンス操作 → API: `requireOrgRole(uid, 'A', ['org_admin'])` が **false** (org_member だから) → 403
+- 仮に API バイパスされても RLS で同条件チェック → DB レベルで弾かれる
 
 ### 15.16 export API の完全リファクタ (account/delete も)
 
@@ -2102,6 +2241,72 @@ CREATE UNIQUE INDEX user_daily_meals_user_or_proxy_per_day
                       COALESCE(proxy_family_member_id, '00000000-0000-0000-0000-000000000000'::uuid),
                       day_date);
 ```
+
+### 15.20.5 招待トークン enumeration / brute force 対策
+
+招待トークン (32 byte ランダム + HMAC) は推測困難だが、attacker が大量に試す可能性に備える:
+
+**実装要件**:
+- `GET /api/family/invites/{token}` および `GET /api/org/invites/{token}` には rate limit 適用
+- **IP 単位**: 60 req/分 を超えると 429 (Vercel Edge Middleware で実装)
+- **応答時間固定化**: 存在する/しない token のいずれでも同等の処理時間 (timing attack 対策、min 200ms)
+- **Failed attempts ログ**: `failed_invite_lookups` テーブルに IP / token prefix / timestamp 記録、24h 集計で 100 fail / IP は自動 BAN
+
+```sql
+CREATE TABLE failed_invite_lookups (
+  id BIGSERIAL PRIMARY KEY,
+  ip_address INET NOT NULL,
+  invite_type VARCHAR(20) NOT NULL CHECK (invite_type IN ('family', 'org')),
+  token_prefix VARCHAR(8),  -- token 先頭 8 文字 (debug 用)
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_failed_invite_lookups_ip ON failed_invite_lookups(ip_address, attempted_at DESC);
+```
+
+### 15.20.6 AI Edge Function の context 漏洩防止
+
+LLM プロンプトに DB データを含める時、**必ず** scope 絞り込みを入れる:
+
+```typescript
+// supabase/functions/family-shared-menu-generate/index.ts (新規)
+// ❌ 禁止: 過去 7 日の食事を全件取得
+const meals = await supabase.from('meals').select('*').limit(100);
+
+// ✅ 必須: family_group_id で絞り込み
+const meals = await supabase.from('meals')
+  .select('*, family_members!inner(family_group_id)')
+  .eq('family_members.family_group_id', input.family_group_id)
+  .gte('created_at', new Date(Date.now() - 7*24*3600*1000).toISOString())
+  .limit(100);
+```
+
+要件として **すべての AI Edge Function に対し**:
+- 入力 `family_group_id` または `organization_id` が必須パラメータ
+- LLM に渡すデータは server-side で当該 scope に絞り込む
+- 別 family / 別 org のデータが混入しないことを Code Review で必須チェック
+- E2E テストで「他 family のデータがプロンプトに含まれていない」ことを assert (snapshot)
+
+### 15.20.7 admin_audit_logs の actor_id 偽装防止
+
+03 §7.1.2 の `admin_audit_logs` に `actor_id = auth.uid()` を **WITH CHECK で強制**:
+
+```sql
+DROP POLICY IF EXISTS audit_logs_insert_admins ON admin_audit_logs;
+CREATE POLICY audit_logs_insert_admins ON admin_audit_logs
+  FOR INSERT WITH CHECK (
+    actor_id = auth.uid()  -- 偽装防止: client 送信の actor_id を強制上書き
+    AND EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND ARRAY['admin', 'super_admin', 'support', 'sales', 'finance', 'content_moderator']::TEXT[] && roles
+    )
+  );
+
+-- service_role 経由で actor_id を任意指定する経路は禁止 (Edge Function でも auth.uid() を上書き必須)
+```
+
+`family_activity_log`, `org_license_audit_log`, `org_health_access_logs` も同様の WITH CHECK を必須化。
 
 ### 15.21 既存 RLS の本番ハードニング (P2)
 
