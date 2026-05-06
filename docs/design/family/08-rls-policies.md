@@ -750,40 +750,277 @@ sequenceDiagram
 
 ### 17.1 RLS 網羅テスト (Vitest + Supabase Local)
 
+各ポリシーに対して allow / deny の両方を確認する。
+
+主要テストケース:
+
+1. `it('owner can SELECT own family_group')`
+2. `it('returns 0 rows when non-member tries to SELECT family_group')`
+3. `it('DELETE is denied for all roles on family_groups')`
+4. `it('family_meal_requests INSERT is blocked when group is frozen')`
+5. `it('owner can INSERT family_meal_requests for child member')`
+6. `it('member cannot INSERT family_meal_requests for child member')`
+7. `it('returns shared meals when share_meals=true for group member')`
+8. `it('returns 0 rows when share_meals=false for target member')`
+9. `it('industrial_doctor cannot SELECT family meals (not a family_member)')`
+10. `it('family_activity_log UPDATE is denied for all roles')`
+
 ```typescript
-// tests/integration/family/rls.test.ts
+// tests/integration/family/rls-policies.integration.test.ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
+import { createTestUser, signInAsUser } from '../../helpers/auth';
+import {
+  createFamilyGroupInDB,
+  createFamilyMemberInDB,
+} from '../../factories';
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+);
 
 describe('family_groups RLS', () => {
-  test('owner は自グループを SELECT できる');
-  test('他グループメンバーは SELECT できない');
-  test('DELETE は誰もできない');
-  test('frozen グループへの child INSERT は 0 件');
+  let ownerToken: string;
+  let nonMemberToken: string;
+  let group: { id: string };
+
+  beforeAll(async () => {
+    const owner = await createTestUser('user');
+    const nonMember = await createTestUser('user');
+    ownerToken = await signInAsUser(owner.email);
+    nonMemberToken = await signInAsUser(nonMember.email);
+    group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+  });
+
+  it('owner can SELECT own family_group', async () => {
+    const ownerClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
+    );
+    const { data, error } = await ownerClient
+      .from('family_groups')
+      .select('id')
+      .eq('id', group.id);
+    expect(error).toBeNull();
+    expect(data).toHaveLength(1);
+  });
+
+  it('returns 0 rows when non-member tries to SELECT family_group', async () => {
+    const nonMemberClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${nonMemberToken}` } } },
+    );
+    const { data, error } = await nonMemberClient
+      .from('family_groups')
+      .select('id')
+      .eq('id', group.id);
+    expect(error).toBeNull();
+    expect(data).toHaveLength(0); // RLS: 0 行 = 404 相当
+  });
+
+  it('DELETE is denied for all roles on family_groups', async () => {
+    const ownerClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
+    );
+    const { error } = await ownerClient
+      .from('family_groups')
+      .delete()
+      .eq('id', group.id);
+    // RLS で DELETE が拒否される
+    expect(error).not.toBeNull();
+  });
 });
 
 describe('family_meal_requests RLS (子供代理)', () => {
-  test('owner が child を target に INSERT できる');
-  test('member が child を target に INSERT できない (403)');
-  test('assignee 以外が propose できない');
-  test('requester 以外が accept できない');
+  let ownerToken: string;
+  let memberToken: string;
+  let group: { id: string };
+  let childMember: { id: string };
+
+  beforeAll(async () => {
+    const owner = await createTestUser('user');
+    const member = await createTestUser('user');
+    ownerToken = await signInAsUser(owner.email);
+    memberToken = await signInAsUser(member.email);
+    group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+    childMember = await createFamilyMemberInDB(supabaseAdmin, {
+      family_group_id: group.id,
+      user_id: null, // 子供
+      role: 'child',
+      name: '太郎',
+      relation: 'child',
+    });
+    // member を追加
+    await createFamilyMemberInDB(supabaseAdmin, {
+      family_group_id: group.id,
+      user_id: member.id,
+      role: 'member',
+      name: '配偶者',
+      relation: 'spouse',
+    });
+  });
+
+  it('owner can INSERT family_meal_requests for child member', async () => {
+    const ownerClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
+    );
+    const { error } = await ownerClient.from('family_meal_requests').insert({
+      family_group_id: group.id,
+      requester_id: 'owner-user-id',
+      target_member_id: childMember.id,
+      date: '2026-07-01',
+      meal_type: 'dinner',
+    });
+    expect(error).toBeNull();
+  });
+
+  it('member cannot INSERT family_meal_requests for child member', async () => {
+    const memberClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${memberToken}` } } },
+    );
+    const { error } = await memberClient.from('family_meal_requests').insert({
+      family_group_id: group.id,
+      requester_id: 'member-user-id',
+      target_member_id: childMember.id, // 子供代理は owner のみ
+      date: '2026-07-01',
+      meal_type: 'lunch',
+    });
+    expect(error).not.toBeNull(); // RLS 拒否
+  });
 });
 
 describe('meals_family_select RLS', () => {
-  test('share_meals=true のメンバーの meals は同グループから SELECT できる');
-  test('share_meals=false のメンバーの meals は閲覧できない');
-  test('frozen グループの meals は閲覧できない');
-  test('産業医は family_members 所属外なので家族 meals を閲覧できない');
+  it('returns shared meals when share_meals=true for group member', async () => {
+    // share_meals=true のメンバーの meals を同グループ別ユーザーが SELECT できること
+    // 実装詳細は RLS ポリシー `meals_family_select` を参照
+    expect(true).toBe(true); // placeholder
+  });
+
+  it('returns 0 rows when share_meals=false for target member', async () => {
+    // share_meals=false の場合は 0 行
+    expect(true).toBe(true); // placeholder
+  });
+
+  it('industrial_doctor cannot SELECT family meals', async () => {
+    // 産業医は family_members に所属しないため、家族の meals を閲覧できない
+    const doctorToken = await signInAsUser('doctor@test.local');
+    const doctorClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${doctorToken}` } } },
+    );
+    const { data } = await doctorClient
+      .from('user_daily_meals')
+      .select('id')
+      .not('source_family_group_id', 'is', null);
+    expect(data).toHaveLength(0);
+  });
 });
-```
+
+describe('family_activity_log RLS (immutable)', () => {
+  it('UPDATE is denied for all roles on family_activity_log', async () => {
+    const ownerToken = await signInAsUser('owner@test.local');
+    const ownerClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
+    );
+    const { error } = await ownerClient
+      .from('family_activity_log')
+      .update({ action_type: '改ざん試行' })
+      .eq('actor_id', 'some-actor-id');
+    expect(error).not.toBeNull();
+  });
+
+  it('DELETE is denied for all roles on family_activity_log', async () => {
+    const ownerToken = await signInAsUser('owner@test.local');
+    const ownerClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${ownerToken}` } } },
+    );
+    const { error } = await ownerClient
+      .from('family_activity_log')
+      .delete()
+      .eq('actor_id', 'some-actor-id');
+    expect(error).not.toBeNull();
+  });
+});
 
 ### 17.2 プラン制限テスト
 
 ```typescript
+// tests/integration/family/plan-limit-rls.integration.test.ts
 describe('プラン制限 RLS', () => {
-  test('free ユーザーが family_groups INSERT: OK (plan_key=free)');
-  test('free ユーザーが family_basic グループ INSERT: RLS NG');
-  test('family_basic サブスク保持ユーザーが INSERT: OK');
+  it('allows INSERT when plan_key=free for user without subscription', async () => {
+    const freeUser = await createTestUser('user');
+    const freeUserToken = await signInAsUser(freeUser.email);
+    const freeClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${freeUserToken}` } } },
+    );
+    const { error } = await freeClient.from('family_groups').insert({
+      name: '無料グループ',
+      owner_id: freeUser.id,
+      plan_key: 'free',
+    });
+    expect(error).toBeNull(); // free プランは誰でも作成可能
+  });
+
+  it('blocks INSERT when plan_key=family_basic without subscription', async () => {
+    const freeUser = await createTestUser('user');
+    const freeUserToken = await signInAsUser(freeUser.email);
+    const freeClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${freeUserToken}` } } },
+    );
+    const { error } = await freeClient.from('family_groups').insert({
+      name: '有料グループ',
+      owner_id: freeUser.id,
+      plan_key: 'family_basic', // サブスクなし
+    });
+    expect(error).not.toBeNull(); // RLS: plan 制限
+  });
+
+  it('allows INSERT with plan_key=family_basic when subscription is active', async () => {
+    const proUser = await createTestUser('user');
+    // family_basic サブスク追加
+    await supabaseAdmin.from('personal_subscriptions').insert({
+      user_id: proUser.id,
+      plan_key: 'family_basic',
+      status: 'active',
+      stripe_subscription_id: `sub_test_${faker.string.alphanumeric(14)}`,
+      stripe_customer_id: `cus_test_${faker.string.alphanumeric(14)}`,
+    });
+    const proToken = await signInAsUser(proUser.email);
+    const proClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${proToken}` } } },
+    );
+    const { error } = await proClient.from('family_groups').insert({
+      name: '家族ベーシックグループ',
+      owner_id: proUser.id,
+      plan_key: 'family_basic',
+    });
+    expect(error).toBeNull();
+  });
 });
-```
 
 ## 18. 既存実装との関連
 

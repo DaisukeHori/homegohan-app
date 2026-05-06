@@ -565,13 +565,114 @@ stateDiagram-v2
 
 ## 11. テスト方針
 
-- **Unit**: `getUserActivePlan()` のフィーチャー和集合ロジック (多組織 × 個人プラン併用)
-- **Integration (Supabase Local)**:
-  - 100 concurrent INSERT → `used_licenses` の整合性検証
-  - `available_licenses` への直接 UPDATE が拒否されることを確認
-  - bulk-revoke 後の `used_licenses` 減算確認
-- **E2E**:
-  - CSV 100 件一括割当 → プール使用率更新 → 監査ログ確認
+主要テストケース:
+
+1. `it('returns highest-tier plan when user has both individual_pro and org_standard')`
+2. `it('includes family_addon features when org includes family license')`
+3. `it('used_licenses is consistent after 100 concurrent INSERT attempts')`
+4. `it('rejects UPDATE on available_licenses generated column')`
+5. `it('decrements used_licenses after bulk-revoke operation')`
+6. `it('distributes 100 licenses via CSV and records audit log')`
+7. `it('auto-revokes license when user has 90 days inactivity')`
+
+```typescript
+// tests/unit/org/license-feature-union.test.ts
+import { describe, it, expect } from 'vitest';
+import { getUserActivePlan } from '@/lib/org/license-management';
+
+describe('getUserActivePlan - フィーチャー和集合ロジック', () => {
+  it('returns highest-tier plan when user has both individual_pro and org_standard', () => {
+    const plans = [
+      { plan_key: 'individual_pro', source: 'personal' },
+      { plan_key: 'org_standard', source: 'org_license' },
+    ];
+    const activePlan = getUserActivePlan(plans);
+    // org_standard は individual_pro より上位のため org_standard が優先
+    expect(activePlan.effective_plan_key).toBe('org_standard');
+  });
+
+  it('includes family_addon features when org includes family license', () => {
+    const plans = [
+      { plan_key: 'org_standard', source: 'org_license' },
+      { plan_key: 'family_addon', source: 'org_family_license' },
+    ];
+    const activePlan = getUserActivePlan(plans);
+    expect(activePlan.features.family_sharing).toBe(true);
+    expect(activePlan.features.ai_analysis).toBe(true);
+  });
+
+  it('returns free plan when user has no active subscriptions', () => {
+    const activePlan = getUserActivePlan([]);
+    expect(activePlan.effective_plan_key).toBe('free');
+    expect(activePlan.features.ai_analysis).toBe(false);
+  });
+});
+
+// tests/integration/org/license-pool-operations.integration.test.ts
+describe('ライセンスプール操作', () => {
+  it('decrements used_licenses after bulk-revoke operation', async () => {
+    const pool = await createOrgLicensePoolInDB(supabaseAdmin, {
+      total_licenses: 5,
+      used_licenses: 3,
+    });
+
+    // 3 件のアクティブな割当を作成
+    const assignmentIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { data } = await supabaseAdmin
+        .from('org_license_assignments')
+        .insert({
+          pool_id: pool.id,
+          organization_id: pool.organization_id,
+          user_id: faker.string.uuid(),
+          plan_key: pool.plan_key,
+        })
+        .select()
+        .single();
+      if (data) assignmentIds.push(data.id);
+    }
+
+    // bulk-revoke
+    await fetch(`${BASE_URL}/api/org/licenses/bulk-revoke`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${orgAdminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ assignment_ids: assignmentIds }),
+    });
+
+    const { data: updatedPool } = await supabaseAdmin
+      .from('org_license_pools')
+      .select('used_licenses')
+      .eq('id', pool.id)
+      .single();
+
+    expect(updatedPool?.used_licenses).toBe(0); // 全件回収後は 0
+  });
+});
+
+// tests/e2e/org/org-03-license-csv.spec.ts
+test('distributes 100 licenses via CSV and records audit log', async ({
+  page,
+}) => {
+  const orgAdminPage = new OrgAdminPage(page);
+  await page.goto('/org/licenses/distribute');
+
+  const csvPath = './tests/e2e/fixtures/100-members.csv';
+  await orgAdminPage.uploadMemberCsv(csvPath);
+
+  // 処理完了を待つ
+  await expect(
+    page.locator('[data-testid=import-success-message]'),
+  ).toBeVisible({ timeout: 30_000 });
+
+  // 監査ログに記録されていることを確認
+  await page.goto('/org/audit-logs');
+  await expect(
+    page.locator('[data-testid=audit-log-entry]').first(),
+  ).toContainText('bulk_assign');
+});
 
 ## 12. 既存実装との関連
 

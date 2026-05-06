@@ -311,13 +311,144 @@ stateDiagram-v2
 
 ## 11. テスト方針
 
-- **Integration**:
-  - HR Webhook 冪等テスト: 同一 external_id を 2 回 POST → 2 回目は 200 (idempotent)
-  - Vercel Cron テスト: `hr_revoke_jobs` に pending ジョブを INSERT → hourly :30 で TypeScript ハンドラ実行 → `org_license_assignments.revoked_at` が設定されること
-  - 家族グループ凍結テスト: assignment revoke → family_groups.status='frozen' を確認
-  - advisory lock テスト: 2 並行 POST /migrate-to-personal → 1 つ成功 / 1 つ 412
-- **E2E**:
-  - Playwright: HR Webhook 受信 → 30 日猶予 → migrate-to-personal 完了 → family_group active 復帰
+主要テストケース:
+
+1. `it('returns idempotent=true on second HR webhook with same external_id')`
+2. `it('sets revoked_at on org_license_assignments when hr_revoke_jobs is processed')`
+3. `it('sets family_groups.status=frozen when assignment is revoked')`
+4. `it('one of two concurrent migrate-to-personal requests succeeds, other returns 412')`
+5. `it('restores family_group to active after successful migrate-to-personal')`
+6. `it('sends freeze notification email when group is frozen')`
+
+```typescript
+// tests/integration/org/offboarding-flow.integration.test.ts
+import { describe, it, expect } from 'vitest';
+
+describe('HR Webhook 冪等テスト', () => {
+  it('returns idempotent=true on second POST with same external_id', async () => {
+    const externalId = `hr-${faker.string.uuid()}`;
+    const member = await getOrgMember('org-member@test.local');
+
+    const body = JSON.stringify({
+      external_id: externalId,
+      action: 'revoke',
+      user_id: member.id,
+    });
+    const signature = computeHrWebhookSignature(body);
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-HR-Signature': signature,
+    };
+
+    const res1 = await fetch(`${BASE_URL}/api/webhooks/hr`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(res1.status).toBe(200);
+
+    const res2 = await fetch(`${BASE_URL}/api/webhooks/hr`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(res2.status).toBe(200);
+    const result2 = await res2.json();
+    expect(result2.idempotent).toBe(true);
+  });
+
+  it('sets revoked_at on org_license_assignments when hr_revoke_jobs is processed', async () => {
+    const member = await getOrgMember('org-member@test.local');
+    const assignment = await getActiveLicenseAssignment(member.id);
+
+    // hr_revoke_jobs に pending ジョブを直接 INSERT
+    const { data: job } = await supabaseAdmin
+      .from('hr_revoke_jobs')
+      .insert({
+        organization_id: assignment.organization_id,
+        user_id: member.id,
+        assignment_id: assignment.id,
+        status: 'pending',
+        scheduled_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    // バッチ処理を直接呼び出し
+    const { processHrRevokeJobs } = await import('@/lib/org/hr-revoke-processor');
+    await processHrRevokeJobs(supabaseAdmin);
+
+    const { data: updatedAssignment } = await supabaseAdmin
+      .from('org_license_assignments')
+      .select('revoked_at')
+      .eq('id', assignment.id)
+      .single();
+
+    expect(updatedAssignment?.revoked_at).not.toBeNull();
+  });
+
+  it('freezes family_group when org_license_assignment is revoked', async () => {
+    const owner = await createTestUser('user');
+    const assignment = await createLicenseAssignmentWithFamilyGroup(owner.id);
+
+    // アサインメントを revoke
+    await supabaseAdmin
+      .from('org_license_assignments')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('id', assignment.id);
+
+    // トリガーまたはバッチが実行されることを想定
+    const { triggerFamilyFreeze } = await import('@/lib/org/offboarding-trigger');
+    await triggerFamilyFreeze(supabaseAdmin, assignment.id);
+
+    const { data: group } = await supabaseAdmin
+      .from('family_groups')
+      .select('status, frozen_at, freeze_grace_until')
+      .eq('owner_id', owner.id)
+      .single();
+
+    expect(group?.status).toBe('frozen');
+    expect(group?.frozen_at).not.toBeNull();
+    expect(group?.freeze_grace_until).not.toBeNull();
+  });
+});
+
+describe('advisory lock: concurrent migrate-to-personal', () => {
+  it('one of two concurrent requests succeeds, other returns 412', async () => {
+    const owner = await createTestUser('user');
+    const frozenGroup = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+      status: 'frozen',
+    });
+    const ownerToken = await signInAsUser(owner.email);
+
+    const headers = {
+      Authorization: `Bearer ${ownerToken}`,
+      'Content-Type': 'application/json',
+      'If-Unmodified-Since': frozenGroup.updated_at,
+    };
+    const body = JSON.stringify({
+      target_plan_key: 'family_basic',
+      stripe_payment_method_id: 'pm_test_xxx',
+    });
+
+    const [res1, res2] = await Promise.all([
+      fetch(
+        `${BASE_URL}/api/family/groups/${frozenGroup.id}/migrate-to-personal`,
+        { method: 'POST', headers, body },
+      ),
+      fetch(
+        `${BASE_URL}/api/family/groups/${frozenGroup.id}/migrate-to-personal`,
+        { method: 'POST', headers, body },
+      ),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toContain(200);
+    expect(statuses).toContain(412);
+  });
+});
+```
 
 ## 12. 既存実装との関連
 

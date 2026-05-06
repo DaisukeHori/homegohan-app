@@ -423,30 +423,204 @@ sequenceDiagram
 
 ### 9.1 Unit テスト
 
+主要テストケース:
+
+1. `it('returns 200 when If-Unmodified-Since matches updated_at')`
+2. `it('returns 412 when If-Unmodified-Since does not match updated_at')`
+3. `it('inserts child_promotion_notifications in birthday month')`
+4. `it('does not insert duplicate notification (UNIQUE constraint)')`
+5. `it('calculates freeze_grace_until as 30 days after frozen_at')`
+
 ```typescript
 // tests/unit/family/lifecycle.test.ts
+import { describe, it, expect, vi } from 'vitest';
+import {
+  checkOptimisticLock,
+  calculateFreezeGraceUntil,
+  isEligibleForChildPromotion,
+} from '@/lib/family/lifecycle';
+
 describe('楽観的ロック', () => {
-  test('updated_at 一致: OK');
-  test('updated_at 不一致: 412 返却');
-  test('同時実行: advisory lock で片方が 412');
+  it('returns ok when If-Unmodified-Since matches updated_at', () => {
+    const timestamp = '2026-06-01T10:00:00Z';
+    const result = checkOptimisticLock({
+      ifUnmodifiedSince: timestamp,
+      currentUpdatedAt: timestamp,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns 412 when If-Unmodified-Since does not match updated_at', () => {
+    const result = checkOptimisticLock({
+      ifUnmodifiedSince: '2026-05-01T10:00:00Z',
+      currentUpdatedAt: '2026-06-01T10:00:00Z', // 不一致
+    });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(412);
+  });
 });
 
-describe('18歳バッチ', () => {
-  test('誕生月に child_promotion_notifications INSERT');
-  test('2 回目の月次バッチでは重複 INSERT しない (UNIQUE 制約)');
+describe('グループ凍結', () => {
+  it('calculates freeze_grace_until as 30 days after frozen_at', () => {
+    const frozenAt = new Date('2026-06-01T00:00:00Z');
+    const graceUntil = calculateFreezeGraceUntil(frozenAt);
+    const expected = new Date('2026-07-01T00:00:00Z');
+    expect(graceUntil.toISOString()).toBe(expected.toISOString());
+  });
+
+  it('uses organization freeze_grace_days setting when available', () => {
+    const frozenAt = new Date('2026-06-01T00:00:00Z');
+    const graceUntil = calculateFreezeGraceUntil(frozenAt, {
+      freeze_grace_days: 14,
+    });
+    const expected = new Date('2026-06-15T00:00:00Z');
+    expect(graceUntil.toISOString()).toBe(expected.toISOString());
+  });
+});
+
+describe('18 歳到達バッチ', () => {
+  it('identifies child member eligible for promotion', () => {
+    const today = new Date('2026-06-15');
+    const member = {
+      birth_date: '2008-06-10', // 18 歳誕生月
+      role: 'child',
+      user_id: null,
+    };
+    expect(isEligibleForChildPromotion(member, today)).toBe(true);
+  });
+
+  it('does not identify member whose birthday is next month', () => {
+    const today = new Date('2026-06-15');
+    const member = {
+      birth_date: '2008-07-10', // 来月誕生日
+      role: 'child',
+      user_id: null,
+    };
+    expect(isEligibleForChildPromotion(member, today)).toBe(false);
+  });
 });
 ```
 
 ### 9.2 Integration テスト
 
-- UC-ORG-17: HR Webhook → frozen → 30 日後 archived バッチ
-- promote-to-user: transfer_data 3 パターン全て
-- split: child 含む / child 含まない の 2 パターン
+主要テストケース:
+
+1. `it('freezes family_group when HR revoke is processed via org offboarding')`
+2. `it('archives family_group 30 days after freeze_grace_until has passed')`
+3. `it('promote-to-user: transfers planned_meals to new user account')`
+4. `it('promote-to-user: does not insert duplicate notification on second batch run')`
+5. `it('split: creates new group for specified members')`
+
+```typescript
+// tests/integration/family/lifecycle-flow.integration.test.ts
+describe('グループ凍結 → アーカイブ フロー', () => {
+  it('archives family_group 30 days after freeze_grace_until has passed', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+      status: 'frozen',
+      frozen_at: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(),
+      freeze_grace_until: new Date(
+        Date.now() - 24 * 60 * 60 * 1000,
+      ).toISOString(), // 猶予期限切れ
+    });
+
+    const { archiveFrozenGroups } = await import('@/lib/family/lifecycle-batch');
+    await archiveFrozenGroups(supabaseAdmin);
+
+    const { data } = await supabaseAdmin
+      .from('family_groups')
+      .select('status, archived_at')
+      .eq('id', group.id)
+      .single();
+    expect(data?.status).toBe('archived');
+    expect(data?.archived_at).not.toBeNull();
+  });
+
+  it('does not insert duplicate child_promotion_notification on second batch run', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+    const child = await supabaseAdmin
+      .from('family_members')
+      .insert({
+        family_group_id: group.id,
+        name: '太郎',
+        relation: 'child',
+        user_id: null,
+        birth_date: new Date(
+          Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000,
+        )
+          .toISOString()
+          .split('T')[0],
+        role: 'child',
+      })
+      .select()
+      .single();
+
+    const { processChildPromotions } = await import(
+      '@/lib/family/lifecycle-batch'
+    );
+
+    // 1 回目
+    await processChildPromotions(supabaseAdmin);
+    // 2 回目 (重複しないこと)
+    await processChildPromotions(supabaseAdmin);
+
+    const { count } = await supabaseAdmin
+      .from('child_promotion_notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('family_member_id', child.data!.id);
+
+    expect(count).toBe(1); // UNIQUE 制約により 1 件のみ
+  });
+});
+```
 
 ### 9.3 E2E (Playwright)
 
-- `tests/e2e/family/family-10-lifecycle-frozen.spec.ts`
-- `tests/e2e/family/family-11-child-promote.spec.ts`
+主要テストケース:
+
+1. `test('frozen group shows limited UI and prevents new meal requests')`
+2. `test('migrate-to-personal restores group to active status')`
+
+```typescript
+// tests/e2e/family/family-10-lifecycle-frozen.spec.ts
+import { test, expect } from '@playwright/test';
+
+test('frozen group shows limited UI and prevents new meal requests', async ({
+  page,
+}) => {
+  // 凍結状態のグループにアクセス
+  await page.goto('/family/dashboard');
+  await page.waitForLoadState('networkidle');
+
+  // 凍結バナーが表示されること
+  await expect(page.locator('[data-testid=frozen-banner]')).toBeVisible();
+
+  // 新規リクエスト作成ボタンが無効
+  await expect(
+    page.locator('[data-testid=new-meal-request-button]'),
+  ).toBeDisabled();
+
+  // 移行手続きボタンが表示されること
+  await expect(
+    page.locator('[data-testid=migrate-to-personal-button]'),
+  ).toBeVisible();
+});
+
+// tests/e2e/family/family-11-child-promote.spec.ts
+test('child member sees promotion notification and completes upgrade', async ({
+  page,
+}) => {
+  await page.goto('/family/members');
+  const promoBanner = page.locator('[data-testid=child-promotion-banner]');
+  await expect(promoBanner).toBeVisible();
+  await page.click('[data-testid=start-promotion-button]');
+  await page.waitForURL(/\/family\/promote\/.*/);
+  await expect(page.locator('[data-testid=promotion-form]')).toBeVisible();
+});
 
 ## 10. 既存実装との関連
 

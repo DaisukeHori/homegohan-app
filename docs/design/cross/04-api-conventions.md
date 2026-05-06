@@ -184,6 +184,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `ORG_OFFBOARD_INVALID_STATUS` | オフボーディング操作の対象グループが不正なステータス | 409 |
 | `ORG_LICENSE_ALREADY_REVOKED` | ライセンスは既に取り消されている | 410 |
 | `ORG_LICENSE_POOL_EXPIRED` | ライセンスプールが期限切れ | 410 |
+| `ORG_LICENSE_POOL_EXHAUSTED` | ライセンスプール枯渇 (容量超過) | 409 |
+| `CONFLICT_LICENSE_POOL_EXHAUSTED` | 同上 (CONFLICT_ プレフィックス版、要件記述で混在) | 409 |
 
 #### OP 系
 

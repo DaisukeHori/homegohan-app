@@ -1236,7 +1236,7 @@ describe('POST /api/family/groups', () => {
     const res = await createGroupHandler(req);
     expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error.code).toBe('FAM_VALIDATION_ERROR');
+    expect(body.error.code).toBe('VALID_REQUIRED_FIELD');
   });
 
   it('returns 409 when user already owns a group', async () => {

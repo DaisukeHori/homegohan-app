@@ -404,38 +404,225 @@ sequenceDiagram
 
 ### 11.1 Unit テスト (Vitest)
 
+主要テストケース:
+
+1. `it('extracts ingredients from dataset_recipes when recipe_id is provided')`
+2. `it('merges duplicate ingredients with same name and unit')`
+3. `it('keeps ingredients with different units as separate items')`
+4. `it('categorizes 鶏胸肉 as 肉')`
+5. `it('categorizes unknown ingredient as その他')`
+6. `it('returns empty array when menus have no dishes')`
+
 ```typescript
 // tests/unit/family/shopping-list-generator.test.ts
+import { describe, it, expect, vi } from 'vitest';
+import {
+  generateShoppingListFromMenus,
+  categorizeIngredient,
+} from '@/lib/family/shopping-list-generator';
+
+const mockMenusWithRecipe = [
+  {
+    id: 'menu-001',
+    dish_name: '鶏の照り焼き',
+    recipe_id: 'recipe-001',
+    recipe: {
+      ingredients: [
+        { name: '鶏胸肉', quantity: 200, unit: 'g' },
+        { name: '醤油', quantity: 30, unit: 'ml' },
+        { name: 'みりん', quantity: 20, unit: 'ml' },
+      ],
+    },
+  },
+  {
+    id: 'menu-002',
+    dish_name: '鶏の唐揚げ',
+    recipe_id: 'recipe-002',
+    recipe: {
+      ingredients: [
+        { name: '鶏胸肉', quantity: 300, unit: 'g' }, // 重複
+        { name: '片栗粉', quantity: 50, unit: 'g' },
+      ],
+    },
+  },
+];
+
 describe('generateShoppingListFromMenus', () => {
-  test('recipe_id あり: dataset_recipes から食材を正しく抽出');
-  test('重複食材 (同名+同単位) をマージ');
-  test('異なる単位は別アイテムとして保持');
+  it('extracts ingredients from dataset_recipes when recipe_id is provided', () => {
+    const items = generateShoppingListFromMenus(mockMenusWithRecipe);
+    const ingredientNames = items.map((i) => i.ingredient_name);
+    expect(ingredientNames).toContain('鶏胸肉');
+    expect(ingredientNames).toContain('醤油');
+    expect(ingredientNames).toContain('片栗粉');
+  });
+
+  it('merges duplicate ingredients with same name and unit', () => {
+    const items = generateShoppingListFromMenus(mockMenusWithRecipe);
+    const chicken = items.filter((i) => i.ingredient_name === '鶏胸肉');
+    expect(chicken).toHaveLength(1); // 200g + 300g = 500g にマージ
+    expect(chicken[0].quantity).toBe(500);
+    expect(chicken[0].unit).toBe('g');
+  });
+
+  it('keeps ingredients with different units as separate items', () => {
+    const menus = [
+      {
+        recipe: {
+          ingredients: [
+            { name: '塩', quantity: 5, unit: 'g' },
+            { name: '塩', quantity: 1, unit: '小さじ' }, // 単位が違う
+          ],
+        },
+      },
+    ];
+    const items = generateShoppingListFromMenus(menus);
+    const salt = items.filter((i) => i.ingredient_name === '塩');
+    expect(salt).toHaveLength(2); // 別アイテムとして保持
+  });
+
+  it('returns empty array when menus have no dishes', () => {
+    expect(generateShoppingListFromMenus([])).toHaveLength(0);
+  });
 });
 
 describe('categorizeIngredient', () => {
-  test('鶏胸肉 → 肉');
-  test('未知の食材 → その他');
+  it('categorizes 鶏胸肉 as 肉', () => {
+    expect(categorizeIngredient('鶏胸肉')).toBe('肉');
+  });
+
+  it('categorizes キャベツ as 野菜', () => {
+    expect(categorizeIngredient('キャベツ')).toBe('野菜');
+  });
+
+  it('categorizes 牛乳 as 乳製品', () => {
+    expect(categorizeIngredient('牛乳')).toBe('乳製品');
+  });
+
+  it('categorizes unknown ingredient as その他', () => {
+    expect(categorizeIngredient('zzz未知の食材zzz')).toBe('その他');
+  });
 });
 ```
 
 ### 11.2 Integration テスト
 
-- active リスト partial unique: 同グループに 2 件 INSERT で 409
-- completed → archived 遷移バッチ (時刻モック)
+主要テストケース:
+
+1. `it('returns 409 when second active shopping list is created for same group')`
+2. `it('batch transitions completed lists to archived after 7 days')`
+3. `it('generates shopping list items from family shared menus')`
+
+```typescript
+// tests/integration/family/shopping-list.integration.test.ts
+describe('買い物リスト Integration', () => {
+  it('returns 409 when second active shopping list is created for same group', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+
+    // 1 件目: OK
+    const res1 = await fetch(`${BASE_URL}/api/family/shopping-lists`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ownerToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        family_group_id: group.id,
+        start_date: '2026-06-01',
+        end_date: '2026-06-07',
+      }),
+    });
+    expect(res1.status).toBe(201);
+
+    // 2 件目: 409
+    const res2 = await fetch(`${BASE_URL}/api/family/shopping-lists`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ownerToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        family_group_id: group.id,
+        start_date: '2026-06-08',
+        end_date: '2026-06-14',
+      }),
+    });
+    expect(res2.status).toBe(409);
+  });
+
+  it('batch transitions completed lists to archived after 7 days', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, { owner_id: owner.id });
+
+    // completed 状態で 7 日以上前のリストを作成
+    const oldDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await supabaseAdmin.from('family_shopping_lists').insert({
+      family_group_id: group.id,
+      start_date: '2026-01-01',
+      end_date: '2026-01-07',
+      status: 'completed',
+      updated_at: oldDate.toISOString(),
+    });
+
+    const { archiveCompletedLists } = await import(
+      '@/lib/family/shopping-list-batch'
+    );
+    await archiveCompletedLists(supabaseAdmin);
+
+    const { data } = await supabaseAdmin
+      .from('family_shopping_lists')
+      .select('status')
+      .eq('family_group_id', group.id)
+      .single();
+    expect(data?.status).toBe('archived');
+  });
+});
+```
 
 ### 11.3 E2E (Playwright)
 
+主要テストケース:
+
+1. `test('Realtime: wife checks item, husband sees update within 5s')`
+2. `test('generates shopping list items from this week shared menus')`
+
 ```typescript
 // tests/e2e/family/family-06-shopping-realtime.spec.ts
-// 2 ページ同時接続でチェック状態が同期することを確認
-test('妻がチェックしたら夫の画面でも即反映', async ({ browser }) => {
-  const wifePage = await browser.newPage();
-  const husbandPage = await browser.newPage();
-  // 両ページでリストを開く
-  // 妻ページでアイテムをチェック
-  // 夫ページでチェックされていることを確認 (2s 以内)
+import { test, expect } from '@playwright/test';
+
+test('Realtime: wife checks item, husband sees update within 5s', async ({
+  browser,
+}) => {
+  // それぞれ別の認証コンテキストを作成
+  const wifeContext = await browser.newContext({
+    storageState: './tests/e2e/fixtures/wife-auth.json',
+  });
+  const husbandContext = await browser.newContext({
+    storageState: './tests/e2e/fixtures/husband-auth.json',
+  });
+
+  const wifePage = await wifeContext.newPage();
+  const husbandPage = await husbandContext.newPage();
+
+  // 同じ買い物リストページを両方で開く
+  await Promise.all([
+    wifePage.goto('/family/shopping-list'),
+    husbandPage.goto('/family/shopping-list'),
+  ]);
+  await Promise.all([
+    wifePage.waitForLoadState('networkidle'),
+    husbandPage.waitForLoadState('networkidle'),
+  ]);
+
+  // 妻がアイテムをチェック
+  const firstItem = wifePage.locator('[data-testid=shopping-item]').first();
+  await firstItem.locator('[data-testid=item-checkbox]').click();
+
+  // 夫の画面で反映を確認 (Supabase Realtime)
+  await expect(
+    husbandPage.locator('[data-testid=shopping-item]').first()
+      .locator('[data-testid=item-checkbox]'),
+  ).toBeChecked({ timeout: 5_000 });
+
+  await wifeContext.close();
+  await husbandContext.close();
 });
-```
 
 ## 12. 既存実装との関連
 

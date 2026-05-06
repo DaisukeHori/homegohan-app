@@ -894,7 +894,7 @@ import {
 } from 'https://deno.land/std@0.208.0/testing/asserts.ts';
 import { stub } from 'https://deno.land/std@0.208.0/testing/mock.ts';
 import { handler } from './index.ts';
-import { xaiGrokClient } from '../_shared/llm.ts';
+import { xaiGrokClient } from '../_shared/llm-usage.ts';
 
 Deno.test('AI 提案 - 正常系: 有効なレシピを返す', async () => {
   const stubChat = stub(
@@ -2408,7 +2408,7 @@ describe('Stripe Price 同期', () => {
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
-    expect(data?.new_price_jpy).toBe(1200);
+    expect(data?.new_monthly_price_jpy).toBe(1200);
   });
 });
 

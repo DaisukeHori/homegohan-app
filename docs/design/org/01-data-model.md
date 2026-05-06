@@ -678,10 +678,112 @@ CREATE UNIQUE INDEX idx_org_license_active_per_pool_user
 
 ## 7. テスト方針
 
-- `sync_org_license_pool_usage` トリガーの同時 INSERT: pgbench で 100 concurrent INSERT、used_licenses 整合性検証
-- `idx_org_license_active_per_pool_user` 制約: 同一プール同一ユーザーへの重複 INSERT が unique violation で失敗することを確認
-- `available_licenses` への直接 UPDATE が `ERROR: column "available_licenses" is a generated column` で拒否されることを確認
-- `hr_revoke_jobs` の exponential backoff スケジューリング unit test
+主要テストケース:
+
+1. `it('used_licenses stays consistent under 100 concurrent INSERT attempts')`
+2. `it('returns unique violation when same user is assigned to same pool twice')`
+3. `it('throws error when UPDATE is attempted on generated column available_licenses')`
+4. `it('schedules hr_revoke_jobs with exponential backoff on failure')`
+5. `it('org_license_audit_log INSERT succeeds but UPDATE is rejected')`
+6. `it('subscription_plans seed contains 9 plan records')`
+
+```typescript
+// tests/integration/org/data-model-constraints.integration.test.ts
+import { describe, it, expect } from 'vitest';
+
+describe('org_license_pools 同時 INSERT テスト', () => {
+  it('used_licenses stays consistent under 100 concurrent INSERT attempts', async () => {
+    const pool = await createOrgLicensePoolInDB(supabaseAdmin, {
+      total_licenses: 10,
+      used_licenses: 0,
+    });
+
+    // 100 件を同時に試みる (10 枠しかない)
+    const promises = Array.from({ length: 100 }, () =>
+      supabaseAdmin.from('org_license_assignments').insert({
+        pool_id: pool.id,
+        organization_id: pool.organization_id,
+        user_id: faker.string.uuid(),
+        plan_key: pool.plan_key,
+      }),
+    );
+    await Promise.allSettled(promises);
+
+    const { data: updatedPool } = await supabaseAdmin
+      .from('org_license_pools')
+      .select('used_licenses')
+      .eq('id', pool.id)
+      .single();
+
+    // トリガーにより used_licenses は total_licenses (10) を超えないはず
+    expect(updatedPool?.used_licenses).toBeLessThanOrEqual(10);
+  });
+
+  it('returns unique violation when same user is assigned to same pool twice', async () => {
+    const pool = await createOrgLicensePoolInDB(supabaseAdmin, {
+      total_licenses: 5,
+    });
+    const userId = faker.string.uuid();
+
+    await supabaseAdmin.from('org_license_assignments').insert({
+      pool_id: pool.id,
+      organization_id: pool.organization_id,
+      user_id: userId,
+      plan_key: pool.plan_key,
+    });
+
+    const { error } = await supabaseAdmin.from('org_license_assignments').insert({
+      pool_id: pool.id,
+      organization_id: pool.organization_id,
+      user_id: userId, // 重複
+      plan_key: pool.plan_key,
+    });
+
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23505'); // unique_violation
+  });
+
+  it('throws error when UPDATE is attempted on generated column available_licenses', async () => {
+    const pool = await createOrgLicensePoolInDB(supabaseAdmin);
+    const { error } = await supabaseAdmin
+      .from('org_license_pools')
+      .update({ available_licenses: 99 } as never) // 型エラーを無視して試行
+      .eq('id', pool.id);
+    // generated column への UPDATE は PostgreSQL がエラーを返す
+    expect(error).not.toBeNull();
+  });
+});
+
+describe('hr_revoke_jobs exponential backoff', () => {
+  it('schedules next_retry_at with exponential backoff on failure', () => {
+    const { calculateNextRetryAt } = require('@/lib/org/hr-revoke-scheduler');
+    const attempt1 = calculateNextRetryAt(1); // 1 回目: 5 分後
+    const attempt2 = calculateNextRetryAt(2); // 2 回目: 25 分後
+    const attempt3 = calculateNextRetryAt(3); // 3 回目: 125 分後
+
+    const now = Date.now();
+    expect(new Date(attempt1).getTime()).toBeGreaterThanOrEqual(now + 4.5 * 60 * 1000);
+    expect(new Date(attempt2).getTime()).toBeGreaterThan(new Date(attempt1).getTime());
+    expect(new Date(attempt3).getTime()).toBeGreaterThan(new Date(attempt2).getTime());
+  });
+});
+
+describe('org_license_audit_log immutability', () => {
+  it('rejects UPDATE on org_license_audit_log via RLS', async () => {
+    const orgAdminToken = await signInAsUser('org-admin@test.local');
+    const orgAdminClient = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${orgAdminToken}` } } },
+    );
+    const { error } = await orgAdminClient
+      .from('org_license_audit_log')
+      .update({ action: '改ざん' } as never)
+      .eq('id', faker.string.uuid());
+    expect(error).not.toBeNull();
+  });
+});
+```
 
 ## 8. 既存実装との関連
 

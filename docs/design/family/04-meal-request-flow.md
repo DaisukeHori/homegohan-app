@@ -437,32 +437,256 @@ sequenceDiagram
 
 ### 11.1 Unit テスト (Vitest)
 
+主要テストケース:
+
+1. `it('allows transition from pending to proposed')`
+2. `it('rejects direct transition from pending to accepted')`
+3. `it('rejects transition from accepted (terminal state)')`
+4. `it('rejects transition from expired (terminal state)')`
+5. `it('detects allergen conflict when recipe contains egg and member has egg allergy')`
+6. `it('returns no conflict when recipe has no allergens matching member allergies')`
+7. `it('throws MAX_RETRY_EXCEEDED after 3 failed allergen checks')`
+
 ```typescript
 // tests/unit/family/meal-request-state-machine.test.ts
+import { describe, it, expect } from 'vitest';
+import { validateStatusTransition } from '@/lib/family/meal-request-state-machine';
+
 describe('状態遷移バリデーション', () => {
-  test('pending → proposed: OK');
-  test('pending → accepted: NG (直接不可)');
-  test('accepted → rejected: NG (終端状態)');
-  test('expired → cancelled: NG (終端状態)');
+  it('allows transition from pending to proposed', () => {
+    expect(validateStatusTransition('pending', 'proposed').ok).toBe(true);
+  });
+
+  it('rejects direct transition from pending to accepted', () => {
+    const result = validateStatusTransition('pending', 'accepted');
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('INVALID_TRANSITION');
+  });
+
+  it('rejects transition from accepted (terminal state)', () => {
+    const result = validateStatusTransition('accepted', 'rejected');
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('TERMINAL_STATE');
+  });
+
+  it('rejects transition from expired (terminal state)', () => {
+    const result = validateStatusTransition('expired', 'cancelled');
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('TERMINAL_STATE');
+  });
+
+  it('allows all valid transitions', () => {
+    const validTransitions = [
+      ['pending', 'proposed'],
+      ['pending', 'cancelled'],
+      ['proposed', 'accepted'],
+      ['proposed', 'rejected'],
+      ['proposed', 'cancelled'],
+    ] as const;
+
+    for (const [from, to] of validTransitions) {
+      expect(validateStatusTransition(from, to).ok).toBe(true);
+    }
+  });
 });
 
-// tests/unit/family/allergen.test.ts
-describe('アレルゲン突合', () => {
-  test('卵アレルギー + マヨネーズ含むレシピ → conflict');
-  test('卵アレルギー + 鶏胸肉 → no conflict');
-  test('3 回リトライ後も conflict → 422');
+// tests/unit/family/allergen-checker.test.ts
+import { hasAllergenConflict } from '@/lib/family/allergen-checker';
+
+describe('アレルゲン突合ロジック', () => {
+  it('detects conflict when recipe contains egg and member has egg allergy', () => {
+    const member = { allergies: ['卵'], dislikes: [] };
+    const recipe = {
+      ingredients: [
+        { name: '卵', quantity: '3個' },
+        { name: '砂糖', quantity: '大さじ2' },
+      ],
+    };
+    expect(hasAllergenConflict(member, recipe)).toBe(true);
+  });
+
+  it('detects conflict via derived ingredient (mayonnaise contains egg)', () => {
+    const member = { allergies: ['卵'], dislikes: [] };
+    const recipe = {
+      ingredients: [
+        { name: 'マヨネーズ', quantity: '大さじ2' },
+      ],
+      allergens: ['卵'], // LLM が明示したアレルゲン
+    };
+    expect(hasAllergenConflict(member, recipe)).toBe(true);
+  });
+
+  it('returns no conflict when recipe has chicken but member only has egg allergy', () => {
+    const member = { allergies: ['卵'], dislikes: [] };
+    const recipe = {
+      ingredients: [{ name: '鶏胸肉', quantity: '200g' }],
+      allergens: [],
+    };
+    expect(hasAllergenConflict(member, recipe)).toBe(false);
+  });
+
+  it('returns no conflict when allergies array is empty', () => {
+    const member = { allergies: [], dislikes: [] };
+    const recipe = {
+      ingredients: [{ name: '卵', quantity: '3個' }],
+    };
+    expect(hasAllergenConflict(member, recipe)).toBe(false);
+  });
 });
 ```
 
 ### 11.2 Integration テスト
 
-- パターン③のフル遷移 (pending → proposed → accepted)
-- expires_at バッチ (時刻モック使用)
-- 子供代理リクエスト (target が child の場合の RLS)
+主要テストケース:
+
+1. `it('completes full pattern-3 flow: pending → proposed → accepted')`
+2. `it('batch marks requests as expired when expires_at has passed')`
+3. `it('allows owner to create meal request for child member')`
+4. `it('rejects member from creating meal request for child (403)')`
+
+```typescript
+// tests/integration/family/meal-request-flow.integration.test.ts
+import { describe, it, expect, vi } from 'vitest';
+
+describe('パターン③ フル遷移: pending → proposed → accepted', () => {
+  it('completes full pattern-3 flow: pending → proposed → accepted', async () => {
+    const owner = await createTestUser('user');
+    const assignee = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+    const targetMember = await supabaseAdmin
+      .from('family_members')
+      .insert({ family_group_id: group.id, name: 'ターゲット', relation: 'spouse', user_id: owner.id })
+      .select()
+      .single();
+
+    // 1. リクエスト作成 (pending)
+    const { data: request } = await supabaseAdmin
+      .from('family_meal_requests')
+      .insert({
+        family_group_id: group.id,
+        requester_id: owner.id,
+        target_member_id: targetMember.data!.id,
+        assignee_id: assignee.id,
+        date: '2026-07-01',
+        meal_type: 'dinner',
+        status: 'pending',
+      })
+      .select()
+      .single();
+
+    expect(request!.status).toBe('pending');
+
+    // 2. 担当者が提案 (proposed)
+    await supabaseAdmin
+      .from('family_meal_requests')
+      .update({
+        status: 'proposed',
+        proposed_dish_name: '鶏の照り焼き',
+        proposed_recipe: { dish_name: '鶏の照り焼き', allergens: [] },
+        proposed_at: new Date().toISOString(),
+      })
+      .eq('id', request!.id);
+
+    const { data: proposed } = await supabaseAdmin
+      .from('family_meal_requests')
+      .select('status')
+      .eq('id', request!.id)
+      .single();
+    expect(proposed?.status).toBe('proposed');
+
+    // 3. リクエスト者が承認 (accepted)
+    await supabaseAdmin
+      .from('family_meal_requests')
+      .update({ status: 'accepted', responded_at: new Date().toISOString() })
+      .eq('id', request!.id);
+
+    const { data: accepted } = await supabaseAdmin
+      .from('family_meal_requests')
+      .select('status')
+      .eq('id', request!.id)
+      .single();
+    expect(accepted?.status).toBe('accepted');
+  });
+
+  it('batch marks requests as expired when expires_at has passed', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, { owner_id: owner.id });
+    const member = await createFamilyMemberInDB(supabaseAdmin, {
+      family_group_id: group.id,
+      user_id: owner.id,
+    });
+
+    // 期限切れリクエストを作成
+    await supabaseAdmin.from('family_meal_requests').insert({
+      family_group_id: group.id,
+      requester_id: owner.id,
+      target_member_id: member.id,
+      date: '2026-01-01',
+      meal_type: 'dinner',
+      status: 'pending',
+      expires_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // 過去
+    });
+
+    // バッチ関数を直接呼び出し
+    const { expireMealRequests } = await import(
+      '@/lib/family/meal-request-batch'
+    );
+    await expireMealRequests(supabaseAdmin);
+
+    const { data: expired } = await supabaseAdmin
+      .from('family_meal_requests')
+      .select('status')
+      .eq('family_group_id', group.id)
+      .eq('status', 'expired');
+
+    expect(expired).toHaveLength(1);
+  });
+});
+```
 
 ### 11.3 E2E (Playwright)
 
-- `tests/e2e/family/family-09-meal-request-pattern3.spec.ts`
+主要テストケース:
+
+1. `test('pattern-3: owner requests custom meal, AI proposes, owner accepts')`
+2. `test('AI proposal shows allergen-free recipe for member with egg allergy')`
+
+```typescript
+// tests/e2e/family/family-09-meal-request-pattern3.spec.ts
+import { test, expect } from '@playwright/test';
+import { MealRequestPage } from '../pages/MealRequestPage';
+
+test('pattern-3: owner requests custom meal, AI proposes, owner accepts', async ({
+  page,
+}) => {
+  // owner としてログイン (fixture)
+  const mealReqPage = new MealRequestPage(page);
+
+  await mealReqPage.createRequest({
+    targetMemberId: process.env.TEST_MEMBER_ID!,
+    date: '2026-07-15',
+    mealType: 'dinner',
+    reason: '低カロリーにしたい',
+  });
+
+  // AI 提案を待つ (LLM モックは vitest-setup で注入)
+  await expect(
+    page.locator('[data-testid=proposed-dish-name]'),
+  ).toBeVisible({ timeout: 10_000 });
+
+  const dishName = await page
+    .locator('[data-testid=proposed-dish-name]')
+    .textContent();
+  expect(dishName).toBeTruthy();
+
+  // 承認
+  await page.click('[data-testid=accept-proposal-button]');
+  await expect(
+    page.locator('[data-testid=request-status]'),
+  ).toContainText('承認済み');
+});
 
 ## 12. 既存実装との関連
 

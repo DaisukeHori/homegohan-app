@@ -1033,10 +1033,145 @@ sequenceDiagram
 
 ## 17. テスト方針
 
-- 権限テスト: org_member が PATCH /api/org/members → 403 を確認
-- ライセンス枯渇テスト: total=5 のプールに 6 同時 INSERT → 1 件が 409 を受け取ること
-- 冪等テスト: 同じ `external_id` で POST /api/webhooks/hr を 2 回 → 2 回目は `idempotent: true`
-- 産業医境界: 別組織の patient への GET → 403 を確認
+主要テストケース:
+
+1. `it('returns 403 when org_member calls PATCH /api/org/members')`
+2. `it('returns 409 when 6th license assignment is attempted with total=5 pool')`
+3. `it('returns idempotent=true on second POST /api/webhooks/hr with same external_id')`
+4. `it('returns 403 when industrial doctor accesses other org patient')`
+5. `it('returns 200 with paginated members list for org_admin')`
+6. `it('returns 422 when CSV contains duplicate email addresses')`
+7. `it('returns 200 and triggers freeze when HR revoke webhook is received')`
+
+```typescript
+// tests/integration/org/api-permissions.integration.test.ts
+import { describe, it, expect } from 'vitest';
+
+describe('GET /api/org/members - 権限テスト', () => {
+  it('returns 200 with paginated member list for org_admin', async () => {
+    const res = await fetch(`${BASE_URL}/api/org/members`, {
+      headers: { Authorization: `Bearer ${orgAdminToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toBeInstanceOf(Array);
+    expect(body.pagination).toBeDefined();
+  });
+
+  it('returns 403 when org_member calls PATCH /api/org/members', async () => {
+    const res = await fetch(
+      `${BASE_URL}/api/org/members/${faker.string.uuid()}`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${orgMemberToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ role: 'org_admin' }),
+      },
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe('ORG_FORBIDDEN');
+  });
+
+  it('returns 403 when industrial doctor accesses other org patient', async () => {
+    // doctor@test.local は orgs[0] 所属
+    // other-org-patient は orgs[1] のメンバー
+    const res = await fetch(
+      `${BASE_URL}/api/org/industrial-doctor/patients/${otherOrgPatientId}`,
+      { headers: { Authorization: `Bearer ${doctorToken}` } },
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe('ORG_CROSS_ACCESS_DENIED');
+  });
+});
+
+describe('POST /api/org/licenses - ライセンス枯渇テスト', () => {
+  it('returns 409 when 6th license assignment is attempted with total=5 pool', async () => {
+    const pool = await createOrgLicensePoolInDB(supabaseAdmin, {
+      total_licenses: 5,
+      used_licenses: 5,
+    });
+
+    const res = await fetch(`${BASE_URL}/api/org/licenses`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${orgAdminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        pool_id: pool.id,
+        user_id: faker.string.uuid(),
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe('ORG_LICENSE_POOL_EXHAUSTED');
+  });
+});
+
+describe('POST /api/webhooks/hr - 冪等テスト', () => {
+  it('returns idempotent=true on second POST with same external_id', async () => {
+    const payload = {
+      external_id: `hr-revoke-${faker.string.uuid()}`,
+      action: 'revoke',
+      user_id: orgMemberId,
+      timestamp: new Date().toISOString(),
+    };
+
+    const sign = (body: string) => ({
+      'X-HR-Signature': `sha256=${createHmac('sha256', process.env.HR_WEBHOOK_SECRET!)
+        .update(body)
+        .digest('hex')}`,
+    });
+
+    const body1 = JSON.stringify(payload);
+    const res1 = await fetch(`${BASE_URL}/api/webhooks/hr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...sign(body1) },
+      body: body1,
+    });
+    expect(res1.status).toBe(200);
+
+    const res2 = await fetch(`${BASE_URL}/api/webhooks/hr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...sign(body1) },
+      body: body1,
+    });
+    expect(res2.status).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.idempotent).toBe(true);
+  });
+});
+
+describe('POST /api/org/members/bulk-csv - バリデーション', () => {
+  it('returns 422 when CSV contains duplicate email addresses', async () => {
+    const csvContent = [
+      'email,name,department',
+      'dup@example.com,田中,営業部',
+      'dup@example.com,田中2,開発部', // 重複
+    ].join('\n');
+
+    const formData = new FormData();
+    formData.append(
+      'file',
+      new Blob([csvContent], { type: 'text/csv' }),
+      'members.csv',
+    );
+
+    const res = await fetch(`${BASE_URL}/api/org/members/bulk-csv`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${orgAdminToken}` },
+      body: formData,
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error.code).toBe('ORG_CSV_DUPLICATE_EMAIL');
+  });
+});
+```
 
 ## 18. 既存実装との関連
 
