@@ -275,7 +275,7 @@ Step 6: family_groups 凍結フローの確認
   - source_org_assignment_id を持つ family_groups が frozen になっていることを確認
   SELECT COUNT(*) FROM family_groups
   WHERE source_org_assignment_id IN (
-    SELECT id FROM org_license_assignments WHERE pool_id='{pool_id}' AND status='revoked'
+    SELECT id FROM org_license_assignments WHERE license_pool_id='{pool_id}' AND status='revoked'
       AND revoked_at > NOW() - INTERVAL '1h'
   );
 ```

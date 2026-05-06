@@ -172,11 +172,11 @@ stateDiagram-v2
    -- deprecated プランの期限切れ処理
    UPDATE org_license_assignments
    SET status = 'expired'
-   WHERE pool_id IN (
+   WHERE license_pool_id IN (
      SELECT id FROM org_license_pools
      WHERE plan_key IN (
        SELECT plan_key FROM subscription_plans WHERE status = 'deprecated'
-     ) AND expires_at <= NOW()
+     ) AND ends_at <= NOW()
    );
    ```
 
