@@ -1305,27 +1305,9 @@ describe('Stripe webhook idempotency', () => {
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 
-// 共有スキーマ定義 (src/shared/schemas/proposed-recipe.ts と同期)
-const ProposedRecipeSchema = z.object({
-  dish_name: z.string().min(1).max(200),
-  ingredients: z.array(
-    z.object({
-      name: z.string(),
-      quantity: z.string(),
-      unit: z.string().optional(),
-    }),
-  ),
-  instructions: z.array(z.string()).min(1),
-  nutrition: z.object({
-    calories: z.number().positive(),
-    protein: z.number().nonnegative(),
-    carbs: z.number().nonnegative(),
-    fat: z.number().nonnegative(),
-  }),
-  cooking_time_min: z.number().positive().max(300),
-  allergens: z.array(z.string()),
-  servings: z.number().positive().default(2),
-});
+// canonical 定義は family/04-meal-request-flow.md §8 を参照
+// 実装時は src/shared/schemas/proposed-recipe.ts (family/04 canonical をコード化) からインポート
+import { ProposedRecipeSchema } from '@/shared/schemas/proposed-recipe';
 
 describe('family-meal-ai-propose スキーマ検証', () => {
   it('returns valid ProposedRecipeSchema on success', async () => {
@@ -1333,14 +1315,24 @@ describe('family-meal-ai-propose スキーマ検証', () => {
       proposed_recipe: {
         dish_name: '鶏胸肉の照り焼き',
         ingredients: [
-          { name: '鶏胸肉', quantity: '200g' },
-          { name: '醤油', quantity: '大さじ2' },
+          { name: '鶏胸肉', amount: '200g' },
+          { name: '醤油', amount: '大さじ2' },
         ],
-        instructions: ['①鶏胸肉を切る', '②焼く', '③タレを絡める'],
-        nutrition: { calories: 350, protein: 40, carbs: 12, fat: 10 },
-        cooking_time_min: 25,
-        allergens: ['小麦', '大豆'],
+        steps: [
+          { order: 1, description: '鶏胸肉を切る' },
+          { order: 2, description: '焼く' },
+          { order: 3, description: 'タレを絡める' },
+        ],
+        difficulty: 'easy',
+        cooking_time_min: 20,
         servings: 2,
+        allergen_free_of: ['卵'],
+        nutrition_per_serving: {  // optional (family/04 canonical)
+          calories: 350,
+          protein_g: 40,
+          carbs_g: 12,
+          fat_g: 10,
+        },
       },
     };
 
@@ -1349,14 +1341,14 @@ describe('family-meal-ai-propose スキーマ検証', () => {
     ).not.toThrow();
   });
 
-  it('throws ZodError when LLM returns missing nutrition fields', () => {
+  it('throws ZodError when LLM returns invalid steps structure', () => {
     const invalidResult = {
       dish_name: '鶏胸肉の照り焼き',
       ingredients: [],
-      instructions: ['①焼く'],
-      nutrition: { calories: 350 }, // protein, carbs, fat が欠損
+      steps: ['①焼く'],  // 文字列配列は不可、{ order, description } が必要
+      difficulty: 'easy',
       cooking_time_min: 25,
-      allergens: [],
+      allergen_free_of: [],
     };
 
     expect(() => ProposedRecipeSchema.parse(invalidResult)).toThrow(z.ZodError);
