@@ -2542,6 +2542,508 @@ CREATE TABLE gdpr_deletion_requests (
 
 ---
 
+## 17. 認証・セッション管理要件
+
+### 17.1 パスワードポリシー
+
+| 項目 | 一般ユーザー | org_member 以上 | admin / super_admin |
+|------|------------|---------------|--------------------|
+| 最小長 | 10 文字 | 12 文字 | 14 文字 |
+| 必須文字種 | 英大小英数 | 英大小英数記号 | 英大小英数記号 |
+| 過去履歴禁止 | 直近 3 個 | 直近 5 個 | 直近 10 個 |
+| 強制ローテーション | なし | なし (Enterprise オプションで 90 日) | 90 日必須 |
+| ハッシュ方式 | Supabase 標準 (bcrypt 12 rounds) | 同左 | 同左 |
+| 過去のリーク DB 突合 | HaveIBeenPwned API でチェック | 同左 | 同左 (拒否) |
+
+新規 `password_history` テーブル:
+```sql
+CREATE TABLE password_history (
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  password_hash VARCHAR(255) NOT NULL,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, changed_at)
+);
+```
+
+### 17.2 2FA / MFA
+
+| ロール | 必須 |
+|--------|------|
+| `super_admin` | **必須** (TOTP + バックアップコード) |
+| `admin` / `finance` | **必須** (TOTP) |
+| `org_admin` | 推奨 (Enterprise プランで強制可) |
+| `org_industrial_doctor` | **必須** (健康データ扱い) |
+| その他 | オプション |
+
+**実装**:
+- 方式: TOTP (Authenticator app) を最優先、WebAuthn (Phase 2)、SMS は disable (SIM Swap 攻撃のため)
+- Supabase Auth の MFA factor を利用
+- バックアップコード: 10 個生成、SHA-256 ハッシュ保存、使用済みは即無効化
+- 紛失時のリカバリ: super_admin による手動解除 + 監査ログ + 本人確認 (身分証アップロード)
+
+### 17.3 SSO (SAML / OIDC) — Enterprise 詳細
+
+**対応 IdP** (Phase 2):
+- Azure AD (Entra ID) — SAML 2.0
+- Google Workspace — SAML 2.0
+- Okta — SAML 2.0
+- 汎用 OIDC
+
+**機能**:
+- IdP 主導 / SP 主導ログイン両対応
+- JIT プロビジョニング (`user_profiles` 自動作成、`organization_id` 設定)
+- SCIM 2.0 でのユーザー同期 (新規追加・属性更新・削除)
+- グループ → ロールマッピング (IdP の Group claim → `user_profiles.roles`)
+
+`organizations` への列追加:
+```sql
+ALTER TABLE organizations ADD COLUMN sso_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE organizations ADD COLUMN sso_provider VARCHAR(50);
+ALTER TABLE organizations ADD COLUMN sso_metadata JSONB;
+ALTER TABLE organizations ADD COLUMN scim_token VARCHAR(255);  -- SCIM API 用 bearer
+```
+
+### 17.4 セッション管理
+
+**全ユーザー共通**:
+- アイドルタイムアウト: 24 時間 (個人) / 8 時間 (org_member 以上) / 1 時間 (admin 系)
+- 絶対タイムアウト: 30 日 (個人) / 7 日 (org_member 以上) / 12 時間 (admin 系)
+- Cookie: `Secure`, `HttpOnly`, `SameSite=Lax` 必須
+- 同時ログイン: 最大 5 端末 (超過時は最古のセッション無効化)
+- セッション一覧表示: `/account/sessions` (新規)、デバイス・IP・最終アクセス
+- 全端末ログアウト: `/account/sessions/revoke-all`
+
+`user_sessions` テーブル (Supabase Auth と並行):
+```sql
+CREATE TABLE user_sessions_metadata (
+  session_id VARCHAR(255) PRIMARY KEY,
+  user_id UUID NOT NULL,
+  device_name VARCHAR(200),
+  ip_address INET,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
+```
+
+### 17.5 ログイン失敗・アカウントロック
+
+- 5 回連続失敗 → 15 分アカウントロック
+- 10 回連続失敗 → 1 時間ロック + 本人へメール通知
+- 20 回連続失敗 → 24 時間ロック + 管理者通知
+- ロック中は正しいパスワードでも拒否、メール経由のリセットのみ可
+
+### 17.6 ソーシャルログイン
+
+**対応**:
+- Google (個人 + Org Workspace)
+- Apple (iOS App Store 必須)
+- LINE (Phase 2)
+
+**統合方針**:
+- 既存メール+パスワードと同じメールアドレスのソーシャル → 自動統合 (確認メール送信後)
+- 退会時: ソーシャル連携トークン全削除 + IdP 側にも revoke (Google/Apple のドキュメント準拠)
+
+### 17.7 CAPTCHA
+
+| 対象エンドポイント | CAPTCHA |
+|-----------------|---------|
+| ログイン (3 回失敗後) | Cloudflare Turnstile |
+| 新規登録 | 必須 |
+| パスワードリセット要求 | 必須 |
+| 招待受諾 | スコア型 (低スコアで強制表示) |
+
+### 17.8 メールアドレス変更
+
+```
+1. /account/email/change で新メール入力
+2. 新メールへ確認リンク送信 (24 時間有効)
+3. 確認後、旧メールへ変更通知 (詐取検知用)
+4. 組織所属者の場合: HR Webhook へ変更通知 (任意設定)
+5. 監査ログ記録
+```
+
+### 17.9 パスワードリセット
+
+- レート制限: 1 メールあたり 1 時間に 3 回まで、IP あたり 10 回 / 時間
+- enumeration 対策: 存在しないメールでも常に「リセットメールを送信しました」表示
+- リセットトークン: 32 byte random + 1 時間有効、使用済み即無効化
+
+### 17.10 子供アカウント保護 (COPPA / 日本)
+
+- `family_members.birth_date` で年齢計算
+- **13 歳未満 (米国 COPPA)**: 親 (家族 owner) の **電子署名同意必須** (`parental_consents` テーブル)
+- **18 歳未満 (日本)**: 同意必須、`parental_consent_signed_at` 記録
+- 子供アカウント自体は `auth.users` を持たない (`family_members.user_id IS NULL`)
+- 13 歳未満には Push 通知送信不可
+
+```sql
+CREATE TABLE parental_consents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_member_id UUID NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
+  parent_user_id UUID NOT NULL REFERENCES auth.users(id),
+  signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip_address INET,
+  user_agent TEXT,
+  consent_version VARCHAR(20) NOT NULL  -- 同意文書のバージョン
+);
+```
+
+### 17.11 impersonation (なりすまし支援)
+
+- `super_admin` のみ実行可
+- API: `POST /api/super-admin/impersonate/{userId}` → 一時セッショントークン発行 (max 1 時間)
+- **画面上部に常時赤バナー表示**: 「⚠ 〇〇 (運営) として 山田太郎 さんとしてログイン中。すべての操作が記録されます」
+- 全操作が `admin_audit_logs` に `impersonated_by` 列付きで記録
+- 個別ユーザーの設定で impersonate 拒否可能 (デフォルト: 許可)
+
+### 17.12 ログアウト時の Cookie 完全削除
+
+```typescript
+// /api/auth/logout
+response.cookies.set('sb-access-token', '', { maxAge: 0, path: '/', secure: true, httpOnly: true });
+response.cookies.set('sb-refresh-token', '', { maxAge: 0, path: '/', secure: true, httpOnly: true });
+// すべての関連 cookie を Set-Cookie で expires=過去 にする
+```
+
+---
+
+## 18. 法務・コンプライアンス要件
+
+### 18.1 特定商取引法 (日本サブスク必須)
+
+**最終確認画面の必須表示** (Stripe Checkout 直前):
+- プラン名 + 月額 (税込)
+- 自動更新であること、解約しなければ毎月課金される旨
+- 解約方法 (`/account/billing` から 1 タップで解約可能)
+- 解約予告期間 (個人: なし、組織: 月末まで)
+- 最低契約期間 (個人: なし、組織: プラン依存)
+- 利用規約 / プライバシーポリシーへのリンク
+
+要件: チェックボックス「上記内容を確認しました」必須クリック後にのみ「申し込む」ボタンが活性化。
+
+### 18.2 外国第三者提供同意 (個人情報保護法 24 条)
+
+**対象**: xAI (米国) / OpenAI (米国) / Anthropic (米国) / Google (米国) への食事写真・健康データ送信
+
+**実装**:
+- 初回 AI 機能利用時に同意モーダル必須:
+  ```
+  「ほめゴハンは AI 解析のため、食事写真と栄養データを以下の事業者へ送信します:
+   - xAI Inc. (米国カリフォルニア州) - データ保護水準 [GDPR 適合審査未取得]
+   - Anthropic PBC (米国カリフォルニア州) - 同上
+   - Google LLC (米国カリフォルニア州) - GDPR 適合
+   詳細はプライバシーポリシー §5 参照"
+  ```
+- `external_data_consents` テーブルに記録 (provider, consented_at, ip_address)
+- 同意拒否ユーザーは AI 機能制限 (`ai_analysis` パッケージ無効)
+
+### 18.3 漏洩 72 時間報告義務
+
+**インシデント発生時の運営側手順**:
+1. 検知 (24 時間以内) — Slack #incident チャンネル + Pager 通報
+2. 影響範囲特定 (48 時間以内) — 該当ユーザー数、漏洩データ種別
+3. **個人情報保護委員会への報告 (72 時間以内)** — 1,000 件以上の場合必須
+   - 報告先: https://www.ppc.go.jp/personalinfo/incidentReport/
+   - 報告フォーマットを `docs/operations/incident-report-template.md` に用意
+4. 該当ユーザーへの通知 (速やかに) — メール + アプリ内バナー
+5. ポストモーテム公開 (1 週間以内)
+
+### 18.4 インボイス制度 (適格請求書)
+
+**要件**:
+- `organizations` テーブルに `qualified_invoice_number VARCHAR(14)` 列追加 (T + 13 桁)
+- `org_invoices` (新規) に以下を記載:
+  - 適格請求書発行事業者番号 (運営側): `T1234567890123`
+  - 取引日 / 取引内容 / 税率区分 (10% / 軽減 8%) ごとの合計金額 + 消費税額
+- 法人顧客が「インボイス必須」設定をオンにした場合は標準フォーマットで PDF 生成
+- 電子保存法準拠 (改ざん防止、タイムスタンプ)
+
+### 18.5 利用規約・プライバシーポリシー再同意
+
+```sql
+CREATE TABLE terms_acceptances (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  document_type VARCHAR(50) NOT NULL CHECK (document_type IN ('terms_of_service', 'privacy_policy', 'parental_consent', 'external_data_provision')),
+  document_version VARCHAR(20) NOT NULL,
+  accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip_address INET,
+  user_agent TEXT
+);
+```
+
+**変更時のフロー**:
+- **重要変更** (有料化、機能廃止、データ取扱い変更): 全ユーザーに 30 日前メール通知 + アプリ内強制再同意モーダル
+- **マイナー変更** (誤字訂正、表現変更): 通知のみ、再同意不要
+- 旧バージョンを `docs/legal/archive/` に永久保管
+
+### 18.6 「医療行為ではない」免責表示
+
+UI 上の必須表示箇所:
+- アプリ起動時の初回モーダル: 「ほめゴハンは食事管理を支援するアプリであり、医師の診察・診断・治療を代替するものではありません」
+- 健診結果アップロード画面、産業医アドバイス画面、AI ヘルスインサイト画面のフッター
+- 利用規約 §X に明記
+- 緊急時 (急病) は受診を促すメッセージを表示
+
+### 18.7 課金失敗時のグレースペリオド
+
+```
+[active] ←→ [past_due] (Stripe Smart Retries: 1日後/3日後/5日後)
+              ↓ 7 日経過
+            [grace] (機能制限開始: AI 解析停止、家族共有制限)
+              ↓ 23 日経過 (合計 30 日)
+            [cancelled] (アクセス停止、データ 90 日保持)
+```
+
+各段階でメール + アプリ内バナー通知。法人プランも同様 (グレースは 30 日、解約は 60 日)。
+
+### 18.8 チャージバック対応
+
+- Stripe webhook `charge.dispute.created` を受信
+- 該当 `personal_subscriptions` を `disputed` ステータスに即時遷移
+- アカウントを soft-suspend (アプリ起動時に「チャージバックが発生しています、サポートにご連絡ください」)
+- super_admin に Slack 通知
+- 不正利用判定 → 確定で BAN
+
+### 18.9 月次データ整合性チェックバッチ
+
+```sql
+-- 月初 03:00 UTC 実行 (pg_cron)
+-- 1. org_license_pools.used_licenses vs 実 active assignment 数
+-- 2. family_groups.member_limit vs 実メンバー数
+-- 3. coupon_redemptions.discount_amount_jpy 累計 vs Stripe Refund
+-- 不整合 → admin_audit_logs に critical 記録 + Slack
+```
+
+### 18.10 産業医記録の保管期間 (医療法準拠)
+
+- `org_health_notes` 保管期間: **5 年** (労働安全衛生規則準拠)
+- `org_health_access_logs` 保管期間: **10 年** (§15.9 既出)
+- 退職者の記録は退職後 5 年で個人情報部分を匿名化、メタデータ保持
+
+### 18.11 Cookie 同意バナー (改正電気通信事業法)
+
+2023 年 6 月施行の外部送信規律対応:
+- 初回アクセス時にバナー表示: 「このサイトはアクセス解析・広告のため Cookie を使用します」
+- 「許可」「必須のみ」「設定」3 ボタン
+- 計測 Cookie (GA4 / PostHog 等) はオプトイン後にのみ発火
+- 同意状態を `cookie_consents` テーブル + localStorage 保存
+
+### 18.12 アナリティクス PII フィルタ
+
+- GA4 / PostHog に送信するイベントから email / name / phone / 食事内容詳細を除外
+- イベントスキーマを `analytics-schema.ts` に集約、code review 必須
+- IP 匿名化 ON
+
+### 18.13 退会フロー (個人ユーザー)
+
+```
+1. /account/delete でパスワード再認証
+2. 削除理由アンケート (任意)
+3. 30 日 cooling period (この間は復旧可能、ログイン制限)
+4. 30 日経過後、§15.7 GDPR 削除フローへ
+5. 完全削除前に家族グループ owner なら UC-ORG-17 と同等の引き継ぎ強制
+```
+
+### 18.14 プラン途中変更の按分計算
+
+- **アップグレード**: 残日数分の差額を即時請求 (Stripe `proration_behavior: create_prorations`)
+- **ダウングレード**:
+  - 個人: 次回更新日から新プラン (返金なし、機能は次回更新日まで現プラン継続)
+  - 組織: 残日数分を Stripe Credit として翌月請求から差し引き
+
+### 18.15 AI 生成コンテンツの著作権
+
+利用規約に明記:
+- AI 生成された献立・レシピ・コメントは **ユーザー帰属** (個人利用範囲)
+- ただし運営側は集計・改善目的で匿名化した形で利用可
+- ユーザーが投稿した口コミ等は CC0 相当のライセンスで運営に提供
+
+### 18.16 法人 SLA 違反時の自動返金
+
+- 月次稼働率 99.5% を下回った場合: 当該月料金の 25% を翌月クレジット
+- 99.0% を下回った場合: 50% クレジット
+- 95.0% を下回った場合: 100% クレジット + 解約権発生
+- 自動算出スクリプト: `pg_cron` 月次バッチ + Stripe Credit Note 自動発行
+
+### 18.17 法人契約の電子締結
+
+- 標準: CloudSign (国内最大手) 経由で契約書電子締結
+- API 連携でステータス取得 (signed / pending / expired)
+- `organizations.contract_status` 列追加
+- Org Enterprise は紙契約も可 (運営側の捺印手順あり)
+
+---
+
+## 19. 通信・データ規約
+
+### 19.1 メール配信インフラ (Resend で確定)
+
+**プロバイダ**: Resend (本番)、開発は Mailtrap
+
+**DNS 設定要件**:
+- SPF: `v=spf1 include:_spf.resend.com -all`
+- DKIM: Resend ダッシュボードから取得した key を CNAME 登録
+- DMARC: `v=DMARC1; p=quarantine; rua=mailto:dmarc@homegohan.app`
+
+**Bounces / Complaints**:
+- Resend Webhook 受信 (`/api/webhooks/resend`、新規) → `email_delivery_logs` テーブル記録
+- Hard bounce 3 回でブラックリスト追加 (`email_blacklist`)
+- ブラックリスト中ユーザーへの送信は内部スキップ + Slack alert
+
+```sql
+CREATE TABLE email_delivery_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  resend_email_id VARCHAR(255) UNIQUE,
+  to_email VARCHAR(255) NOT NULL,
+  template_key VARCHAR(100),
+  status VARCHAR(20) CHECK (status IN ('sent', 'delivered', 'bounced', 'complained', 'opened', 'clicked')),
+  error_message TEXT,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE email_blacklist (
+  email VARCHAR(255) PRIMARY KEY,
+  reason VARCHAR(50),
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**テンプレート管理**:
+- DB 保存 (`email_templates` テーブル) + Markdown + 変数展開
+- super_admin が UI 編集可能
+- ロケール対応 (`ja` / `en`)
+
+### 19.2 CSV 仕様 (確定)
+
+**入出力共通**:
+- 文字コード: **UTF-8 (BOM あり)** デフォルト、Shift_JIS BOM 付きも自動判定して受け入れ
+- 改行: **CRLF** (Windows/Excel 互換)
+- エスケープ: **RFC 4180 準拠** (フィールド内 `,` は `"..."` で囲む、`"` は `""` でエスケープ)
+- ヘッダ行必須
+- カラム順序固定 (要件記載順)
+
+**例**:
+```csv
+email,role,department,nickname,employee_id,joined_org_at
+yamada@example.com,org_member,営業部,山田太郎,E001,2024-04-01
+```
+
+### 19.3 タイムゾーン
+
+- DB: `TIMESTAMPTZ` (UTC 内部保存)
+- ユーザー表示: `user_profiles.timezone` (デフォルト `Asia/Tokyo`、IANA tz database)
+- バッチ実行時刻: **JST 基準で表記**、UTC で cron schedule (例: `0 3 * * *` JST = `0 18 * * *` UTC)
+- 「日次」境界: ユーザーごとの timezone での 00:00
+- 海外 Org Enterprise: 組織単位で `organizations.default_timezone` 設定可
+
+### 19.4 通貨・数値表記
+
+- **税込表記**: 個人プラン (例: `¥1,480 (税込)`)
+- **税抜+税額別記**: 法人プラン請求書 (例: `本体 ¥10,000 / 消費税 ¥1,000 / 合計 ¥11,000`)
+- 千区切りカンマ
+- 小数点以下なし (JPY)
+- API レスポンス: 整数 (例: `monthly_price_jpy: 1480`)
+
+### 19.5 エラーコード体系統一
+
+```
+AUTH_*       認証関連 (AUTH_INVALID_CREDENTIALS, AUTH_2FA_REQUIRED, ...)
+PERM_*       権限関連 (PERM_DENIED, PERM_ORG_MISMATCH, ...)
+VALID_*      バリデーション (VALID_EMAIL_FORMAT, VALID_REQUIRED_FIELD, ...)
+CONFLICT_*   競合 (CONFLICT_LICENSE_POOL_EXHAUSTED, CONFLICT_OPTIMISTIC_LOCK, ...)
+RATE_*       レート制限 (RATE_LIMIT_EXCEEDED, ...)
+EXT_*        外部サービス (EXT_STRIPE_WEBHOOK_FAILED, EXT_LLM_TIMEOUT, ...)
+FAM_*        家族管理ドメイン
+ORG_*        組織管理ドメイン
+OP_*         運営管理ドメイン (既存)
+```
+
+レスポンス形式:
+```json
+{ "error": { "code": "PERM_DENIED", "message": "この操作には org_admin 権限が必要です", "request_id": "req_abc123" } }
+```
+
+開発者向け詳細 (stack trace 等) は **本番では返さない**、`request_id` で運営側ログから引ける。
+
+### 19.6 PDF 生成
+
+- **エンジン**: `@react-pdf/renderer` (React Native 互換)
+- **フォント**: Noto Sans JP 埋め込み (CJK 文字対応)
+- 月次レポート / 領収書 / 請求書 / 契約書 を同エンジンで生成
+- 出力サイズ: A4 縦、余白 20mm
+- 文字化け防止のため必ず日本語フォント埋め込み
+
+### 19.7 ファイルアップロード制限
+
+| 種別 | 最大サイズ | 許可形式 | 処理 |
+|------|---------|---------|------|
+| 食事写真 | 10 MB | jpg, jpeg, png, heic, webp | 自動 EXIF 削除 (GPS 等)、リサイズ (max 2048px) |
+| 冷蔵庫写真 | 15 MB | 同上 | 同上 |
+| 健診結果 PDF | 20 MB | pdf のみ | ウイルススキャン (ClamAV) |
+| 組織ロゴ | 2 MB | jpg, png, svg | SVG はサニタイズ |
+| アバター | 3 MB | jpg, png | 自動正方形クロップ |
+
+ウイルススキャン: アップロード後に Edge Function `scan-file/index.ts` (新規) で ClamAV API 呼び出し。
+
+### 19.8 ページネーション
+
+```typescript
+// 統一形式
+GET /api/family/groups?cursor=eyJpZCI6IjEyMyJ9&limit=20
+
+Response:
+{
+  "data": [...],
+  "pagination": {
+    "next_cursor": "eyJpZCI6IjE0MyJ9",  // null = 最終ページ
+    "has_more": true
+  }
+}
+```
+
+- cursor-based を default、limit max 100
+- offset/limit 形式は管理画面の admin/* のみ許可 (件数表示が必要なため)
+
+### 19.9 OpenAPI
+
+- `docs/api/*.openapi.yaml` を Source of Truth
+- TypeScript 型自動生成 (`openapi-typescript`)
+- Swagger UI を `/admin/api-docs` で閲覧可 (admin 限定)
+- 公開 API (内部のみ): authentication 必須、外部 SDK 提供は Phase 3 以降
+
+### 19.10 構造化ログ
+
+```json
+{
+  "timestamp": "2026-05-07T12:34:56.789Z",
+  "level": "info",
+  "trace_id": "abc-123-def",
+  "user_id": "user_xxx",
+  "request_id": "req_yyy",
+  "function": "api/family/groups POST",
+  "message": "Family group created",
+  "metadata": { ... }
+}
+```
+
+PII 自動マスク: `email`, `phone`, `password`, `health_*` フィールドは自動的に `[REDACTED]` 化 (logger middleware)。
+
+### 19.11 Push 通知の Quiet Hours
+
+- デフォルト: 22:00 〜 7:00 (ユーザー timezone) は送信スキップ
+- ただし「緊急」カテゴリ (アカウントセキュリティ等) は除外
+- ユーザー個別設定: `notification_preferences.quiet_hours = { start: "22:00", end: "07:00" }`
+
+### 19.12 通知 1 日上限
+
+- 1 ユーザーへの通知は 1 日 10 件まで (緊急除く)
+- 集約: 同種別の通知が 5 件以上溜まったら「3 件の家族リクエストが届いています」とまとめ通知
+
+---
+
 **END OF OPERATOR ADMIN REQUIREMENTS DOCUMENT**
 
 3 本完成。次は実装計画 PR の起案。
