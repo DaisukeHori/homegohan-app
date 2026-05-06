@@ -1280,14 +1280,15 @@ export default function MealCaptureModal() {
 
         {/* ステップ3: 解析結果 */}
         {step === 'result' && (
-          !analyzedDishes.length ? (
-            <motion.div
-              key="result-empty"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
-            >
+          <motion.div
+            key="result"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 p-4 overflow-auto"
+          >
+          {!analyzedDishes.length ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
               <div style={{ fontSize: 14, color: colors.textMuted }}>料理を読み取れませんでした</div>
               <button
                 onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); setAnalyzedDishes([]); }}
@@ -1296,15 +1297,9 @@ export default function MealCaptureModal() {
               >
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
               </button>
-            </motion.div>
+            </div>
           ) : (
-          <motion.div
-            key="result"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="flex-1 p-4 overflow-auto"
-          >
+          <>
             {/* スコアと写真 */}
             <div className="relative mb-4">
               {photoPreviews.length > 0 && (
@@ -1470,8 +1465,9 @@ export default function MealCaptureModal() {
             >
               <span style={{ fontSize: 14, color: colors.textLight }}>撮り直す</span>
             </button>
+          </>
+          )}
           </motion.div>
-          )
         )}
 
         {/* ステップ4: 日時選択 */}
@@ -1609,14 +1605,15 @@ export default function MealCaptureModal() {
 
         {/* 冷蔵庫解析結果 */}
         {step === 'fridge-result' && (
-          !fridgeIngredients.length ? (
-            <motion.div
-              key="fridge-result-empty"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
-            >
+          <motion.div
+            key="fridge-result"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 p-4 overflow-auto"
+          >
+          {!fridgeIngredients.length ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
               <div style={{ fontSize: 14, color: colors.textMuted }}>食材を読み取れませんでした</div>
               <button
                 onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); }}
@@ -1625,15 +1622,9 @@ export default function MealCaptureModal() {
               >
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
               </button>
-            </motion.div>
+            </div>
           ) : (
-          <motion.div
-            key="fridge-result"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="flex-1 p-4 overflow-auto"
-          >
+          <>
             {/* 写真プレビュー */}
             {photoPreviews.length > 0 && (
               <div className="relative mb-4">
@@ -1756,20 +1747,22 @@ export default function MealCaptureModal() {
             >
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
+          </>
+          )}
           </motion.div>
-          )
         )}
 
         {/* 健康診断解析結果 */}
         {step === 'health-result' && (
-          Object.values(healthData ?? {}).every(v => v == null) ? (
-            <motion.div
-              key="health-result-empty"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
-            >
+          <motion.div
+            key="health-result"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 p-4 overflow-y-auto overflow-x-hidden"
+          >
+          {Object.values(healthData ?? {}).every(v => v == null) ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
               <div style={{ fontSize: 14, color: colors.textMuted }}>検査値を読み取れませんでした</div>
               <button
                 onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); }}
@@ -1778,15 +1771,9 @@ export default function MealCaptureModal() {
               >
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
               </button>
-            </motion.div>
+            </div>
           ) : (
-          <motion.div
-            key="health-result"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="flex-1 p-4 overflow-y-auto overflow-x-hidden"
-          >
+          <>
             {/* 写真プレビュー */}
             {photoPreviews.length > 0 && (
               <div className="relative mb-4">
@@ -1982,13 +1969,13 @@ export default function MealCaptureModal() {
             >
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
+          </>
+          )}
           </motion.div>
-          )
         )}
 
         {/* 体重計結果 */}
         {step === 'weight-result' && (
-          weightData && weightData.weight > 0 ? (
           <motion.div
             key="weight-result"
             initial={{ opacity: 0, y: 20 }}
@@ -1996,6 +1983,19 @@ export default function MealCaptureModal() {
             exit={{ opacity: 0, y: -20 }}
             className="flex-1 p-4 overflow-y-auto"
           >
+          {!(weightData && weightData.weight > 0) ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
+              <div style={{ fontSize: 14, color: colors.textMuted }}>体重を読み取れませんでした</div>
+              <button
+                onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); setWeightData(null); }}
+                className="py-3 px-6 rounded-xl"
+                style={{ background: colors.accent }}
+              >
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
+              </button>
+            </div>
+          ) : (
+          <>
             {/* 信頼度表示 */}
             <div className="flex items-center justify-center gap-2 mb-4">
               <div
@@ -2154,25 +2154,9 @@ export default function MealCaptureModal() {
             >
               <span style={{ fontSize: 14, color: colors.textLight }}>やり直す</span>
             </button>
+          </>
+          )}
           </motion.div>
-          ) : (
-            <motion.div
-              key="weight-result-empty"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col items-center justify-center p-8 gap-4"
-            >
-              <div style={{ fontSize: 14, color: colors.textMuted }}>体重を読み取れませんでした</div>
-              <button
-                onClick={() => { setStep('mode-select'); setPhotoFiles([]); setPhotoPreviews([]); setWeightData(null); }}
-                className="py-3 px-6 rounded-xl"
-                style={{ background: colors.accent }}
-              >
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>撮り直す</span>
-              </button>
-            </motion.div>
-          )
         )}
 
         {/* 判別失敗画面 */}
