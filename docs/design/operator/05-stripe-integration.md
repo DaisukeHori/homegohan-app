@@ -89,7 +89,7 @@ export async function POST(request: Request) {
       processing_status: 'completed',
       processed_at: new Date(),
     }).eq('id', event.id);
-  } catch (err) {
+  } catch (err: unknown) {
     await supabase.from('stripe_webhook_events').update({
       processing_status: 'failed',
       error_message: String(err),
@@ -229,7 +229,7 @@ Deno.serve(async (req) => {
       recurring: { interval: 'month' },
       metadata: { plan_key: input.plan_key, changed_by: input.changed_by },
     });
-  } catch (err) {
+  } catch (err: unknown) {
     return new Response(JSON.stringify({ error: 'OP_STRIPE_SYNC_FAILED', detail: String(err) }), {
       status: 502,
     });

@@ -881,7 +881,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 ```
 
 **処理**:
-1. `pg_advisory_xact_lock` 取得
+1. `acquire_advisory_lock('bulk-revoke:' || org_id)` 取得 (cross/02-rls-patterns.md §6.3 ラッパー経由)
 2. `org_license_assignments SET status='revoked', revoked_at=NOW()` (batch UPDATE)
 3. `sync_org_license_pool_usage` トリガーで used_licenses 減算
 4. `org_license_audit_log` に記録

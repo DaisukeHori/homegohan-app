@@ -237,7 +237,7 @@
 
 **動作**:
 1. `If-Unmodified-Since` 検証
-2. `pg_advisory_xact_lock` 取得
+2. `acquire_family_group_lock(group_id)` 取得 (ラッパー経由)
 3. パスワード再認証
 4. `family_members` で旧 owner → `admin`、新 owner → `owner`
 5. `family_groups.owner_id` 更新
@@ -269,7 +269,7 @@ UC-ORG-17 シナリオ。
 
 **動作**:
 1. 楽観的ロック検証
-2. `pg_advisory_xact_lock` 取得
+2. `acquire_family_group_lock(group_id)` 取得 (ラッパー経由)
 3. Stripe サブスクリプション作成
 4. `family_groups.plan_key` 更新、`status = 'active'`、`frozen_at = NULL`
 5. `family_activity_log` に `group_migrated_to_personal` 記録

@@ -91,7 +91,7 @@ export async function GET(request: Request) {
     });
 
     return Response.json({ ok: true, key: backupKey });
-  } catch (error) {
+  } catch (error: unknown) {
     // Slack アラート送信
     await notifySlack(`❌ Daily backup failed: ${String(error)}`);
     throw error;

@@ -512,7 +512,7 @@ for (const job of pendingJobs ?? []) {
   try {
     await processHrRevokeJob(job);
     await supabase.from('hr_revoke_jobs').update({ status: 'done' }).eq('id', job.id);
-  } catch (err) {
+  } catch (err: unknown) {
     const newAttempts = job.attempts + 1;
     if (newAttempts >= 5) {
       // デッドレター
@@ -624,7 +624,7 @@ export function withCronMonitoring(jobName: string, handler: CronHandler): CronH
       const result = await handler(request);
       logger.info(`cron.${jobName}.success`, { duration_ms: Date.now() - startTime });
       return result;
-    } catch (err) {
+    } catch (err: unknown) {
       logger.error(`cron.${jobName}.failed`, { error: String(err), duration_ms: Date.now() - startTime });
       await notifySlack({
         channel: '#cron-alerts',
