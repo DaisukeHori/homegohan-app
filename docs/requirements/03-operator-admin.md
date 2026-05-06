@@ -457,16 +457,20 @@
    - `ai_consultation_streaming`
    - `org_dashboard_advanced`
    - 等
-4. プランとパッケージの対応マトリクス:
+4. プランとパッケージの対応マトリクス (`family_addon` 含む):
 ```
-              | Free | Pro | Family | Org Std | Org Pro | Org Ent |
-基本機能      |  ✓   |  ✓  |   ✓    |    ✓    |    ✓    |    ✓    |
-AI 解析       |      |  ✓  |   ✓    |    ✓    |    ✓    |    ✓    |
-家族機能      |      |     |   ✓    |         |    ✓    |    ✓    |
-組織管理      |      |     |        |    ✓    |    ✓    |    ✓    |
-産業医連携    |      |     |        |         |    ✓    |    ✓    |
-SSO           |      |     |        |         |         |    ✓    |
+              | free | pro | family_basic | family_pro | family_addon | org_starter | org_standard | org_pro | org_enterprise |
+基本機能      |  ✓   |  ✓  |     ✓       |     ✓     |      ✓       |     ✓       |      ✓       |   ✓    |       ✓        |
+AI 解析       |      |  ✓  |     ✓       |     ✓     |      ✓       |             |      ✓       |   ✓    |       ✓        |
+家族機能      |      |     |     ✓       |     ✓     |      ✓       |             |              |   ※    |       ※       |
+家族 8 名拡張 |      |     |             |     ✓     |              |             |              |        |               |
+組織管理      |      |     |             |           |              |     ✓       |      ✓       |   ✓    |       ✓        |
+産業医連携    |      |     |             |           |              |             |              |   ✓    |       ✓        |
+SSO           |      |     |             |           |              |             |              |        |       ✓        |
 ```
+※ org_pro / org_enterprise は `family_addon` を組み合わせ販売することで家族機能を提供 (素のプランには家族機能は含まない)。
+
+`family_addon` は **個別購入不可** で、必ず組織契約 (`org_pro` / `org_enterprise`) と同時に購入される (UI バリデーション + API バリデーション)。`family_groups.source_org_assignment_id` が NOT NULL の場合のみ有効。
 5. 一括変更 → 全プラン即反映
 
 ### 4.18 UC-OP-18: ライセンス販売管理 (運営側ビュー)
@@ -663,10 +667,10 @@ SSO           |      |     |        |         |         |    ✓    |
 #### 5.5.3 クォータ
 | プラン | 1 日上限 | 1 ヶ月上限 |
 |--------|---------|----------|
-| Free | 50 リクエスト | 1,000 リクエスト |
-| Pro | 500 リクエスト | 10,000 リクエスト |
-| Premium | 2,000 リクエスト | 50,000 リクエスト |
-| 法人 | 組織単位で設定 | 組織単位で設定 |
+| `free` | 50 リクエスト | 1,000 リクエスト |
+| `pro` (個人) | 500 リクエスト | 10,000 リクエスト |
+| `family_basic` / `family_pro` | 1,000 リクエスト | 30,000 リクエスト |
+| `org_*` | 組織単位で設定 | 組織単位で設定 |
 
 #### 5.5.4 異常検知
 - 1 ユーザーが 1 日 5,000 リクエスト超 → アラート + 一時クォータ削減
@@ -685,7 +689,7 @@ SSO           |      |     |        |         |         |    ✓    |
 - 平均契約金額 (ACV)
 
 #### 5.6.2 プラン別内訳
-- 個人プラン (Free / Pro / Premium)
+- 個人プラン (`free` / `pro` / `family_basic` / `family_pro`)
 - 法人プラン (Org Starter / Standard / Pro / Enterprise)
 - 各プランのアクティブユーザー / 売上
 
@@ -969,7 +973,7 @@ deprecated (新規申込・自動更新ともに不可、移行強制)
 ### 5.17 F-OP-017: 個人課金管理
 
 #### 5.17.1 個人プラン
-- Free / Pro / Premium / Family Personal
+- `free` / `pro` / `family_basic` / `family_pro` (個人加入) — Stripe Subscription
 - Stripe Subscription
 - カード変更 / キャンセル / 一時停止
 
@@ -1044,9 +1048,30 @@ deprecated (新規申込・自動更新ともに不可、移行強制)
 ### 7.1 既存テーブル拡張
 
 #### 7.1.1 `user_profiles.roles`
+
+**公式ロール一覧** (TEXT[] 列、複数所持可):
+
+| ロール | 用途 | アクセス範囲 |
+|--------|------|-------------|
+| `user` | 一般ユーザー (デフォルト、明示付与不要) | 自分のデータのみ |
+| `support` | サポート対応 | サポートチケット閲覧、ユーザー基本情報のみ |
+| `sales` | 営業 | 見込み客 / 法人契約 / クーポン |
+| `finance` | 経理 | 請求 / 支払 / 売上 |
+| `content_moderator` | モデレーター | 不適切コンテンツ審査 |
+| `org_member` | 組織メンバー (一般) | 自分の組織情報閲覧 |
+| `org_viewer` | 組織閲覧専用 | 組織内データを閲覧のみ (管理操作不可、人事・労務担当向け) |
+| `org_manager` | 組織マネージャー | 部署・チャレンジ・メンバー閲覧 + 限定的な編集 |
+| `org_admin` | 組織管理者 | 組織全体の管理、ライセンス購入・配布 |
+| `org_industrial_doctor` | 産業医 | 同意済メンバーの個別健康データ (家族領域不可、§5.10) |
+| `admin` | 運営管理者 | 全ユーザー / 全組織 (super_admin 以外の操作) |
+| `super_admin` | 運営最上位 | プラン定義 / 機能パッケージ / DB スキーマ管理 |
+
 ```sql
--- 新規ロール追加
--- ロール: user / support / sales / finance / content_moderator / org_member / org_manager / org_admin / org_industrial_doctor / admin / super_admin
+-- ALTER TABLE 実行例
+-- ロールは user_profiles.roles TEXT[] (上記の文字列を配列で持つ)
+-- CHECK 制約は付けず、アプリ層でバリデーション (拡張性のため)
+COMMENT ON COLUMN user_profiles.roles IS
+  '公式ロール: user, support, sales, finance, content_moderator, org_member, org_viewer, org_manager, org_admin, org_industrial_doctor, admin, super_admin';
 ```
 
 #### 7.1.2 `admin_audit_logs`
@@ -1191,10 +1216,27 @@ CREATE TABLE sales_lead_activities (
 ```
 
 #### 7.2.7 `subscription_plans` (プラン定義、運営側マスター)
+
+**公式 plan_key リスト** (初期 seed、追加・廃止は super_admin が UI で管理):
+
+| plan_key | plan_type | display_name | 用途 | 価格 (月) |
+|----------|-----------|--------------|------|----------|
+| `free` | personal | Free | 全ユーザーのデフォルト、機能制限あり | 0 円 |
+| `pro` | personal | Pro | 個人 AI 解析・履歴無制限 | 980 円 |
+| `family_basic` | family | Family Basic | 家族最大 4 名 | 1,480 円 |
+| `family_pro` | family | Family Pro | 家族最大 8 名 + AI 個別アドバイス | 2,480 円 |
+| `family_addon` | family | Family Addon | 組織同梱配布専用 (個別購入不可、`source_org_assignment_id` 必須) | 単価 +280 円/seat |
+| `org_starter` | org | Org Starter | 〜30 名 / 基本機能のみ | 580 円/seat |
+| `org_standard` | org | Org Standard | 〜100 名 / 部署管理・チャレンジ | 980 円/seat |
+| `org_pro` | org | Org Pro | 〜500 名 / 産業医連携・AI 個別アドバイス | 1,980 円/seat |
+| `org_enterprise` | org | Org Enterprise | 制限なし / SAML SSO・SLA | カスタム |
+
+> **`Premium` は `pro` のエイリアス表記** (旧仕様の名残)。要件書内で混在する場合は `pro` (= 個人 Pro) として読む。営業資料や UI には `Pro` で統一表記。
+
 ```sql
 CREATE TABLE subscription_plans (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_key                VARCHAR(100) NOT NULL UNIQUE,  -- 'free', 'pro', 'family_basic', 'org_pro', etc.
+  plan_key                VARCHAR(100) NOT NULL UNIQUE,  -- 上記公式リスト参照
   display_name            VARCHAR(200) NOT NULL,
   plan_type               VARCHAR(20) NOT NULL CHECK (plan_type IN ('personal', 'family', 'org')),
   description             TEXT,
@@ -1281,14 +1323,31 @@ CREATE TABLE coupons (
 );
 
 CREATE TABLE coupon_redemptions (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  coupon_id       UUID NOT NULL REFERENCES coupons(id),
-  user_id         UUID REFERENCES auth.users(id),
-  organization_id UUID REFERENCES organizations(id),
-  applied_to_subscription_id UUID,  -- 個人 / 組織契約 のどちらか
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  coupon_id           UUID NOT NULL REFERENCES coupons(id),
+  user_id             UUID REFERENCES auth.users(id),
+  organization_id     UUID REFERENCES organizations(id),
+  -- 適用対象 (個人 personal_subscriptions または組織 org_license_pools のいずれか)
+  subscription_target VARCHAR(20) NOT NULL CHECK (subscription_target IN ('personal', 'org')),
+  applied_to_subscription_id UUID NOT NULL,  -- personal_subscriptions.id または org_license_pools.id
+  -- 値引き
   discount_amount_jpy INT NOT NULL,
-  redeemed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  -- 適用期間
+  duration_months     INT,  -- coupons.duration_months のスナップショット (NULL = ずっと)
+  redeemed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- 終了管理 (1 契約 1 クーポンの重複適用不可ロジック §4.19)
+  ended_at            TIMESTAMPTZ,        -- 別クーポンに置き換えられた・解約された
+  end_reason          VARCHAR(30),         -- 'replaced_by_other_coupon' / 'subscription_cancelled' / 'duration_expired'
+  -- 遡及適用 (super_admin 手動承認時のみ TRUE)
+  applied_retroactively BOOLEAN NOT NULL DEFAULT FALSE,
+  approved_by         UUID REFERENCES auth.users(id),  -- 遡及適用承認者 (super_admin)
+  -- 制約: 1 契約に対し有効な (ended_at IS NULL) redemption は 1 件まで
+  CHECK ((user_id IS NOT NULL) OR (organization_id IS NOT NULL))
 );
+
+CREATE UNIQUE INDEX idx_coupon_redemptions_active_per_subscription
+  ON coupon_redemptions(subscription_target, applied_to_subscription_id)
+  WHERE ended_at IS NULL;
 ```
 
 #### 7.2.11 `revenue_snapshots` (収益スナップショット、日次)
@@ -1317,6 +1376,63 @@ CREATE TABLE revenue_snapshots (
   computed_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
+
+#### 7.2.12 `personal_subscriptions` (個人課金) ⭐
+個人ユーザーの Stripe Subscription を 1 行で管理。組織ライセンス (02 §7.2.8) とは並列共存可能。
+
+```sql
+CREATE TABLE personal_subscriptions (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                  UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  plan_key                 VARCHAR(100) NOT NULL REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE,
+  -- ステータス
+  status                   VARCHAR(20) NOT NULL DEFAULT 'trialing'
+    CHECK (status IN ('trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due')),
+  -- 試用
+  trial_started_at         TIMESTAMPTZ,
+  trial_ends_at            TIMESTAMPTZ,
+  trial_source             VARCHAR(50),  -- 'direct' / 'referral' / 'campaign:xxx'
+  -- 一時停止 (組織ライセンス受領時に個人プランを paused にできる、§5.11.7 重複請求防止)
+  paused_at                TIMESTAMPTZ,
+  paused_until             TIMESTAMPTZ,  -- 組織ライセンスの expires_at と同じ値を入れる
+  pause_reason             VARCHAR(50),  -- 'org_license_received' / 'user_request'
+  -- 期間
+  starts_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  current_period_start     TIMESTAMPTZ,
+  current_period_end       TIMESTAMPTZ,
+  cancel_at                TIMESTAMPTZ,  -- 解約予約 (期間末に終了)
+  cancelled_at             TIMESTAMPTZ,  -- 即時解約時刻
+  -- Stripe
+  stripe_customer_id       VARCHAR(255),
+  stripe_subscription_id   VARCHAR(255) UNIQUE,
+  stripe_price_id          VARCHAR(255),
+  -- クーポン適用
+  active_coupon_redemption_id UUID REFERENCES coupon_redemptions(id),
+  -- メタ
+  notes                    TEXT,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- 制約: 1 ユーザー active/trialing/paused/past_due は最大 1 件 (cancelled/expired は履歴として残す)
+  CHECK (NOT (status = 'paused' AND paused_until IS NULL))
+);
+
+CREATE UNIQUE INDEX idx_personal_subscriptions_active_per_user
+  ON personal_subscriptions(user_id)
+  WHERE status IN ('trialing', 'active', 'paused', 'past_due');
+CREATE INDEX idx_personal_subscriptions_status ON personal_subscriptions(status);
+CREATE INDEX idx_personal_subscriptions_trial_ending ON personal_subscriptions(trial_ends_at)
+  WHERE status = 'trialing';
+```
+
+**RLS ポリシー**:
+- SELECT: 本人 (`user_id = auth.uid()`) or admin / super_admin / finance
+- INSERT: 本人 (Stripe Webhook 経由) or admin
+- UPDATE: 本人 (cancel / pause) or admin / super_admin / Stripe Webhook
+- DELETE: 不可 (履歴保持)
+
+**`active_coupon_redemption_id` のロジック** (重複適用不可、§4.19):
+- 新クーポン適用時 → 旧クーポンの `coupon_redemptions.ended_at = NOW()` をセット → 新クーポンを `active_coupon_redemption_id` に格納
+- クーポンは 1 契約 1 つまで
 
 #### 7.2.6 `infra_metrics`
 ```sql
@@ -1637,6 +1753,43 @@ CREATE TABLE infra_alerts (
 ---
 
 ## 11. 段階的実装計画
+
+### 11.0 マイグレーション依存順序 (重要)
+
+3 ファイルの DDL は以下の順序で適用すること。逆順だと FK 不在で失敗する:
+
+```
+1. 03-operator-admin.md §7.2 (運営マスター系)
+   ├── subscription_plans       (FK の起点、'free' レコードを必ず seed)
+   ├── feature_packages
+   ├── plan_price_history
+   ├── coupons / coupon_redemptions
+   ├── personal_subscriptions   ← 03 §7.2.12
+   └── revenue_snapshots
+
+2. 02-organization-management.md §7.2 (組織系)
+   ├── organizations (※ 既存運用テーブル、§13 移行ガイド参照)
+   ├── departments
+   ├── department_history
+   ├── org_subscriptions
+   ├── org_license_pools         ← FK: subscription_plans(plan_key)
+   ├── org_license_assignments   ← FK: org_license_pools(id) + auth.users(id)
+   └── org_license_audit_log
+   + ALTER TABLE user_profiles (organization_id, department_id 等)
+
+3. 01-family-management.md §7.1 (家族系)
+   ├── family_groups            ← FK: subscription_plans(plan_key) + org_license_assignments(id)
+   ├── family_members
+   ├── family_invites
+   ├── family_shared_menus
+   └── family_meal_requests
+```
+
+**seed データ依存**:
+- `subscription_plans` には公式 plan_key 9 種 (`free / pro / family_basic / family_pro / family_addon / org_starter / org_standard / org_pro / org_enterprise`) を初期 INSERT
+- `family_groups.plan_key DEFAULT 'free'` のため、`free` レコードが存在しないと既存ユーザーの ALTER 時に制約違反
+
+
 
 ### Phase 1: 既存機能の完成 (3 週間)
 - 監査ログ網羅 (現在記録されてない操作も記録)

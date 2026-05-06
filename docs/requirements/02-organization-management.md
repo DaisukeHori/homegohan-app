@@ -888,6 +888,10 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS suspended_reason TEXT;
 
 #### 7.1.2 `user_profiles` (department 正規化)
 ```sql
+-- 組織所属 (現状の本番 user_profiles に存在しない場合のみ追加)
+-- 複数組織所属対応 (§5.11.7) のため、メイン所属を表す。
+-- 副業・出向等で複数組織に所属する場合は org_license_assignments を真とし、ここはプライマリ表示用
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS department_id UUID REFERENCES departments(id) ON DELETE SET NULL;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50);
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS joined_org_at DATE;
@@ -1082,7 +1086,11 @@ CREATE TABLE org_license_assignments (
   updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX idx_org_license_active_per_user ON org_license_assignments(user_id) WHERE status = 'active';
+-- 同一プールへの重複割当を防ぐ (1 プール 1 ユーザー 1 active のみ)
+-- 注: 1 ユーザーが複数組織の異なるプールから active 割当を受ける「複数組織所属」は許可される (§5.11.7 参照)
+CREATE UNIQUE INDEX idx_org_license_active_per_pool_user
+  ON org_license_assignments(license_pool_id, user_id)
+  WHERE status = 'active';
 CREATE INDEX idx_org_license_pool ON org_license_assignments(license_pool_id, status);
 CREATE INDEX idx_org_license_user ON org_license_assignments(user_id, status);
 ```
@@ -1696,6 +1704,128 @@ sato.hanako@example.com,org_manager,開発部,佐藤花子,E002,2023-04-01
 - `03-operator-admin.md`
 - `docs/architecture/multi-tenancy.md` (組織テナント分離設計)
 - `docs/security/rls-policies.md`
+
+---
+
+## 15. 既存実装からの移行ガイド (重要)
+
+実装者向け。本要件と本番稼働中の既存コードベースとの差分・移行戦略をまとめる。
+
+### 15.1 既存テーブルのマイグレーション登録不在問題
+
+以下のテーブルは **Supabase ダッシュボード経由で本番に直接適用** されており、`supabase/migrations/` には CREATE TABLE が登録されていない:
+- `organizations`, `departments`, `org_members`, `organization_invites`, `organization_challenges`
+- `family_groups`, `family_members`
+
+**移行戦略**:
+1. 本番から `pg_dump --schema-only -t organizations -t departments ...` で現状 DDL を抽出
+2. `supabase/migrations/<timestamp>_align_existing_tables.sql` として「CREATE TABLE IF NOT EXISTS ...」形式で追加 (本番との差分はゼロ、ローカル/staging を本番に揃える目的)
+3. その後に本要件の ALTER 文を別マイグレーションで適用
+
+### 15.2 既存 API レスポンス形状との差分
+
+| API | 既存 | 要件 | 移行 |
+|-----|------|------|------|
+| `POST /api/family/groups` | `{success, group:{id,name,createdAt}}` | `{id,name,owner_id,plan_key,status,...,created_at}` | **破壊的**: フロントの fetch 受け取り側を全箇所修正、テスト追加 |
+| `POST /api/family/groups` 409 | 既存 400 | 要件 409 | 既存クライアントの 400 ハンドラを 409 にも対応 |
+| `/api/org/users` (既存) | メンバー一覧 | 要件: `/api/org/members` | **エイリアス併存期間**を設け、`/api/org/users` を `/api/org/members` への 301 redirect、3 ヶ月後に削除 |
+| `PUT /api/org/settings` | 既存 | 要件: `PATCH /api/org/me` | 同上のエイリアス戦略 |
+
+### 15.3 既存 family API の認可拡張
+
+既存:
+```typescript
+if (group.owner_id !== user.id) return 404;
+```
+
+要件 (§5.4 admin ロール対応):
+```typescript
+const member = await getFamilyMember(groupId, user.id);
+if (!member || !['owner', 'admin'].includes(member.role)) return 404;
+```
+
+影響範囲: `src/app/api/family/members/route.ts` (GET / POST), `src/app/api/family/groups/route.ts` 等。
+
+### 15.4 family_members 列名のリネーム
+
+| 既存 | 要件 |
+|------|------|
+| `height` (NUMERIC) | `height_cm` (NUMERIC(5,2)) |
+| `weight` (NUMERIC) | `weight_kg` (NUMERIC(5,2)) |
+
+**マイグレーション戦略**:
+1. `ALTER TABLE family_members RENAME COLUMN height TO height_cm;` (data 保持)
+2. `ALTER TABLE family_members RENAME COLUMN weight TO weight_kg;`
+3. CHECK 制約を新規列名で追加
+4. API コード修正 (insert / update / select)
+
+### 15.5 `family_members.role` 列の追加
+
+既存実装は `role` を渡さず insert している。要件は NOT NULL 必須:
+1. `ALTER TABLE family_members ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('owner','admin','member','child'));`
+2. 既存 owner レコードを `UPDATE family_members SET role = 'owner' WHERE user_id IN (SELECT owner_id FROM family_groups);` で backfill
+3. アプリ層の insert で `role` を必須化
+
+### 15.6 招待 URL の分離移行
+
+既存リンク (`/invite/{token}`) は本番で発行済みの可能性あり。
+
+**戦略**:
+- 既存 `/invite/[token]/page.tsx` を **互換ルート** として残し、トークンの種別を判定して新ルートにリダイレクト:
+  ```typescript
+  // /invite/[token]/page.tsx
+  const inviteType = await detectInviteType(token);  // family_invites or organization_invites
+  redirect(`/invite/${inviteType}/${token}`);
+  ```
+- 6 ヶ月後にレガシールート削除予定
+
+### 15.7 `/api/org/stats` の department_id 移行
+
+既存: `.eq('department', dept.name)` (テキスト一致)  
+要件: `.eq('department_id', dept.id)` (UUID)
+
+**移行**:
+1. マイグレーションで `user_profiles.department_id` を追加
+2. backfill SQL: `UPDATE user_profiles SET department_id = (SELECT id FROM departments WHERE name = user_profiles.department AND organization_id = user_profiles.organization_id);`
+3. アプリ層を一斉に切替
+4. 旧 `department` (text) 列は **3 ヶ月後** に DROP
+
+### 15.8 `org_subscriptions.plan` のリネーム
+
+既存: `plan VARCHAR(50)`  
+要件: 全体統一の `plan_key VARCHAR(100)` 命名
+
+```sql
+ALTER TABLE org_subscriptions RENAME COLUMN plan TO plan_key;
+ALTER TABLE org_subscriptions ALTER COLUMN plan_key TYPE VARCHAR(100);
+ALTER TABLE org_subscriptions ADD CONSTRAINT fk_org_subscriptions_plan_key
+  FOREIGN KEY (plan_key) REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE;
+```
+
+### 15.9 `super-admin/feature-flags` と `feature_packages` の関係
+
+既存 `super-admin/feature-flags` は **個別 feature flag のオン/オフ管理** (`flagName`, `enabled`, `targetUserIds`)。  
+要件の `feature_packages` は **flag のバンドル定義** (例: 「AI 解析パッケージ = `ai_food_recognition`, `ai_advisor`, ... の集合」)。
+
+**役割分担**:
+- `super-admin/feature-flags`: 個別 flag のテスト配信・ロールアウト管理 (継続)
+- `super-admin/feature-packages`: プランに含める flag のバンドル管理 (新規)
+- 評価ロジック: `userHasFeature(flag) = userPlan.feature_packages.flat_map(pkg.feature_flags).includes(flag) || feature_flags.targetUserIds.includes(userId)`
+
+### 15.10 DDL 適用順序の確認
+
+03 §11.0 の依存順序を必ず守ること。特に:
+1. `subscription_plans` に公式 plan_key 9 種を seed
+2. その後 `family_groups.plan_key` の ALTER または ADD COLUMN を適用 (DEFAULT 'free' のため)
+3. `family_groups.source_org_assignment_id` の ALTER は **02 の `org_license_assignments` 作成後** に実行
+
+### 15.11 既存実装で対応済みの要件 (再実装不要)
+
+以下は既存実装でカバー済みのため、新規実装が不要 (要件書では「実装済」マーク):
+
+- `user_profiles.roles[]` のロールチェックパターン (`admin/users/route.ts` 等)
+- `GET /api/admin/users`, `GET /api/admin/organizations` の super_admin / admin 認可
+- `organization_invites` テーブルとその基本 CRUD API
 
 ---
 
