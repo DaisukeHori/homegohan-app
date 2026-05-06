@@ -3044,6 +3044,585 @@ PII 自動マスク: `email`, `phone`, `password`, `health_*` フィールドは
 
 ---
 
+## 20. マーケティング・成長 (Growth)
+
+### 20.1 リファラル / 紹介プログラム
+
+**目的**: 既存ユーザー経由の口コミ流入をインセンティブ化
+
+**新規列・テーブル**:
+```sql
+ALTER TABLE user_profiles ADD COLUMN referral_code VARCHAR(20) UNIQUE;
+ALTER TABLE user_profiles ADD COLUMN referred_by UUID REFERENCES auth.users(id);
+
+CREATE TABLE referral_rewards (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  referrer_user_id UUID NOT NULL REFERENCES auth.users(id),
+  referred_user_id UUID NOT NULL REFERENCES auth.users(id),
+  status VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'qualified', 'rewarded', 'cancelled')),
+  qualified_at TIMESTAMPTZ,        -- 紹介者が有料化した時点
+  rewarded_at TIMESTAMPTZ,
+  reward_type VARCHAR(20),          -- 'discount_coupon' / 'free_month' / 'cash_credit'
+  reward_value_jpy INT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**フロー**:
+1. ユーザー登録時に `referral_code` を自動生成 (8 桁英数字)
+2. シェア URL: `https://homegohan.app/r/{referral_code}`
+3. 経由登録 → `referred_by` 記録
+4. 紹介された人が有料化 → 紹介者に **1 ヶ月無料クーポン**、紹介された人に **初月 50% OFF**
+5. 紹介数ダッシュボード `/account/referrals` で履歴表示
+
+### 20.2 オンボーディング・初回体験
+
+**目的**: 7 日間継続率 60% 以上の達成
+
+**ステップ**:
+1. 登録直後にウォークスルー (3 画面、30 秒)
+   - 「食事写真を撮るだけ」→ 「AI が栄養を分析」→ 「家族で共有」
+2. プロフィール簡易入力 (年齢・性別・目標)
+3. **最初の食事写真を促す CTA** (大きなボタン、達成で初期バッジ付与)
+4. 初日: 3 食記録チャレンジ
+5. 3 日目: 家族招待を促すモーダル
+6. 7 日目: NPS 簡易アンケート
+
+**実装**:
+- `user_profiles.onboarding_state` JSONB 列追加
+- 各ステップ完了で `onboarding_step_completions` テーブルに記録
+- 計測: 各ステップ離脱率を `/admin/analytics/onboarding` で可視化
+
+### 20.3 NPS / CSAT 計測
+
+```sql
+CREATE TABLE nps_surveys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  score INT NOT NULL CHECK (score >= 0 AND score <= 10),
+  comment TEXT,
+  surveyed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  context VARCHAR(50)  -- 'onboarding' / 'monthly' / 'pre_cancel' 等
+);
+
+CREATE TABLE csat_feedbacks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  feature_key VARCHAR(100) NOT NULL,  -- 'meal_request' / 'shared_menu' / 'industrial_doctor_advice'
+  rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  comment TEXT,
+  rated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**実施タイミング**:
+- NPS: 月次 1 回 (登録から 30 日後以降のユーザーのみ)、ランダム 10% に表示
+- CSAT: 機能利用直後にポップアップ (家族リクエスト承認後など)
+- 退会前 NPS (退会理由アンケートと統合)
+
+`/admin/analytics/nps` で集計・推移表示。
+
+### 20.4 退会理由アンケート
+
+```sql
+ALTER TABLE personal_subscriptions ADD COLUMN cancel_reason VARCHAR(50);
+ALTER TABLE personal_subscriptions ADD COLUMN cancel_feedback TEXT;
+
+-- 選択肢: 'price' / 'features' / 'usability' / 'didnt_use' / 'found_alternative' / 'other'
+```
+
+退会フロー (§18.13) で必須選択 + 自由記述。集計を `/admin/finance/churn-analysis` で表示。
+
+### 20.5 アプリストア最適化 (ASO) / レビュー誘導
+
+- **App Store / Play Store 説明文**:
+  - 50 文字キャッチコピー、日英対応 (Phase 2)
+  - スクリーンショット 5 枚 (主要機能を訴求)
+  - キーワード最適化 (「食事管理」「家族 献立」「AI 栄養」)
+- **アプリ内レビュー誘導**:
+  - 連続 7 日記録 + ポジティブ NPS スコア (9-10) で表示
+  - iOS: `SKStoreReviewController.requestReview()`
+  - Android: `Play Core In-App Review API`
+  - 1 ユーザー年 3 回上限 (OS 制約)
+- 既存ユーザーには redirect URL 提供 (App Store / Play Store)
+
+### 20.6 SEO / OGP
+
+**LP / 公開ページ**:
+- `sitemap.xml` 自動生成 (Next.js `app/sitemap.ts`)
+- `robots.txt` (本番は allow、staging は disallow)
+- `<link rel="canonical">` 各ページに必須
+- OGP タグ (`og:title` / `og:description` / `og:image`) 全ページ
+- Twitter Card: `summary_large_image`
+- OG 画像動的生成 (Vercel OG Image、献立を画像化してシェア)
+- JSON-LD 構造化データ (Recipe / Organization)
+
+**target SEO キーワード** (Phase 2 でコンテンツ SEO 開始):
+- 「食事管理 アプリ」「家族 献立 AI」「献立 自動生成」「健診結果 改善」
+
+### 20.7 DAU / WAU / MAU 計測
+
+```sql
+CREATE TABLE daily_active_users (
+  date DATE PRIMARY KEY,
+  dau INT NOT NULL,
+  wau INT NOT NULL,
+  mau INT NOT NULL,
+  new_signups INT NOT NULL,
+  retained_d1 INT NOT NULL,  -- 前日登録 → 当日 active
+  retained_d7 INT NOT NULL,
+  retained_d30 INT NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+日次バッチで集計、`/admin/analytics/active-users` でダッシュボード表示。
+
+### 20.8 リエンゲージメント通知
+
+**自動 CRM フロー**:
+- 7 日間ログインなし → Push「あなたの食事記録が止まっています」
+- 14 日間 → メール「最近どうですか?食事写真 1 枚から再開しましょう」
+- 30 日間 → 30% OFF クーポン付き復帰メール
+- 解約 30 日後 → 復帰特典メール (3 ヶ月無料)
+
+A/B テスト基盤 (§5.13) で件名・タイミング最適化。
+
+### 20.9 ソーシャルシェア
+
+- **献立シェア**: `/family/menu/{id}/share` で OG 画像生成 + X / LINE / Instagram シェアボタン
+- **食事記録シェア**: 個別の食事カードからシェア (公開設定 ON のみ)
+- **家族招待**: 既存 (01 §4.2)
+- シェア時は **Watermark** 「ほめゴハン」ロゴと referral_code 自動添付
+
+### 20.10 ヘルプセンター / FAQ
+
+**新規ページ**: `/help`
+- カテゴリ別 FAQ (家族管理 / 組織管理 / 課金 / 技術トラブル)
+- 全文検索 (Postgres FTS)
+- 動画チュートリアル (YouTube 埋め込み)
+- 「役に立った」フィードバック (helpful_count / not_helpful_count)
+- アプリ内: 各画面右上 ? アイコン → 該当 FAQ へ遷移
+
+```sql
+CREATE TABLE help_articles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug VARCHAR(200) NOT NULL UNIQUE,
+  category VARCHAR(50) NOT NULL,
+  title VARCHAR(500) NOT NULL,
+  body_md TEXT NOT NULL,  -- Markdown
+  helpful_count INT NOT NULL DEFAULT 0,
+  not_helpful_count INT NOT NULL DEFAULT 0,
+  view_count INT NOT NULL DEFAULT 0,
+  locale VARCHAR(5) NOT NULL DEFAULT 'ja',
+  status VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 20.11 顧客サポート連携 (チャットボット + 既存サポートチケット拡張)
+
+**Phase 1**: 既存 `support_tickets` (§F-OP-007) を強化
+**Phase 2**: Intercom / Zendesk 連携検討 (法人顧客向け)
+**Phase 3**: AI チャットボット (`knowledge-gpt` 流用) で初期問い合わせ自動応答
+
+### 20.12 changelog / リリースノート
+
+- `/changelog` 公開ページ
+- バージョン番号 + リリース日 + 機能追加・改善・バグ修正
+- アプリ内通知: 新機能リリース時にバナー表示 (1 回限り)
+- 翻訳: ja のみ (Phase 2 で en)
+
+---
+
+## 21. UX・デザインシステム
+
+### 21.1 デザイントークン (確定)
+
+**カラー** (Tailwind v4 `@theme` で定義):
+```css
+@theme {
+  --color-primary: #E07A5F;        /* Primary brand */
+  --color-primary-hover: #C76A50;
+  --color-primary-light: #F5C8B4;
+  --color-secondary: #81B29A;      /* Accent (健康・自然) */
+  --color-bg: #FAF9F7;             /* Background light */
+  --color-bg-dark: #1F2937;        /* Background dark */
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-info: #3B82F6;
+  --color-text: #111827;
+  --color-text-secondary: #6B7280;
+  --color-border: #E5E7EB;
+}
+```
+
+**タイポグラフィ** (Noto Sans JP 必須、CJK 対応):
+- xs: 12px / sm: 14px / base: 16px / lg: 18px / xl: 20px / 2xl: 24px / 3xl: 30px / 4xl: 36px
+- line-height: 1.5 (本文) / 1.25 (見出し)
+- font-weight: 400 (regular) / 500 (medium) / 700 (bold)
+
+**スペーシング**: **4px grid** (0.25rem 単位)、Tailwind デフォルト準拠
+
+**シャドウ**:
+- sm: subtle / md: card / lg: modal / xl: dropdown
+
+**角丸**: sm: 4px / md: 8px / lg: 12px / xl: 16px / full: 9999px
+
+**ボーダー**: 1px solid border / 2px focus ring (`--color-primary`)
+
+### 21.2 ダークモード
+
+**方針**: **Phase 2 で対応** (現在は Light mode のみ、`layout.tsx` でダークモード設定削除済み)
+
+- 切替: システム設定追従 (`prefers-color-scheme`) + 手動切替
+- 全カラートークンに `dark:` バリアント定義必須
+- `user_profiles.color_mode` 列追加 (`light` / `dark` / `system`)
+
+### 21.3 Skeleton / Loading / Empty / Error UI
+
+**ローディング規約**:
+- 短時間 (<300ms): Spinner なし (チラつき防止)
+- 300ms 〜 2s: Skeleton (UI 構造を維持)
+- 2s 〜: Spinner + 「読み込み中…」テキスト
+- 5s 超: 「時間がかかっています、ネットワークを確認してください」
+
+**Empty State**:
+- 家族グループ未作成: イラスト + 「家族を招待して食事を共有しましょう」+ CTA
+- 食事記録なし: 「最初の食事写真を撮ろう」CTA
+- 検索結果なし: 「結果が見つかりませんでした」+ 検索条件のヒント
+
+**エラーバウンダリ** (React Error Boundary):
+- グローバル: アプリ全体クラッシュ時に「申し訳ありません、エラーが発生しました」+ 報告ボタン (Sentry)
+- セクション別: 個別カードレベルでエラーを localize (他のセクションは生かす)
+
+### 21.4 トースト通知
+
+- **位置**: モバイル下部 / デスクトップ右上
+- **表示時間**: success/info 3s / warning/error 5s
+- **連続発火**: stack 表示 (max 3 件、それ以上は古いものから消える)
+- **ライブラリ**: `sonner` 推奨
+
+### 21.5 確認モーダル統一
+
+| 種別 | ボタン色 | パスワード再認証 |
+|-----|---------|---------------|
+| 削除 (家族グループ・組織・アカウント) | 赤 | 必須 |
+| ライセンス revoke | 赤 | 任意 |
+| プラン変更 | プライマリ | 任意 (Stripe checkout で再認証) |
+| 一般確認 (保存等) | プライマリ | 不要 |
+
+ボタン配置: **キャンセル左 / 実行右**、Esc でキャンセル、Enter で実行 (危険操作は Esc default focus)。
+
+### 21.6 フォーム UX
+
+- **リアルタイムバリデーション**: blur 時 + submit 時
+- **インラインエラー**: 該当フィールド直下に赤テキスト
+- **フォーカス移動**: submit 失敗時、最初のエラーフィールドへ自動フォーカス (a11y 必須)
+- **autocomplete**: ブラウザ標準属性 (`autocomplete="email"` 等) 必須
+- **必須/任意**: 必須は `<label>` に `*` (赤色)、任意は `(任意)` テキスト
+
+### 21.7 アバター生成
+
+- **デフォルトアバター**: ユーザー nickname 頭文字 + 自動色 (HSL hash) で生成
+- ライブラリ: `boring-avatars` または自前実装
+- 子供メンバー: 動物アイコンセット (8 種からランダム)
+
+### 21.8 画像最適化
+
+- Next.js `<Image>` コンポーネント必須使用
+- 自動 WebP / AVIF 変換 (Vercel Image Optimization)
+- レスポンシブ画像 (`sizes` 指定)
+- LQIP: blur placeholder 自動生成
+- 食事写真は CDN キャッシュ 7 日
+
+### 21.9 アクセシビリティ深掘り
+
+§16.2 に追加:
+- **Skip to main content リンク**: `<a href="#main">` 全ページ先頭、`Tab` でフォーカス可
+- **フォームエラー時のフォーカス移動**: 実装必須 (§21.6)
+- **色のみで情報伝達禁止**: 危険状態は赤色 + アイコン (`<AlertCircle>`) 併用、成功は緑色 + チェックマーク
+- **`prefers-reduced-motion`**: アニメーションを reduce 設定時はスキップ
+- **動画字幕**: `/help` の動画チュートリアルに字幕必須 (Vimeo / YouTube CC)
+
+### 21.10 キーボードショートカット (Web)
+
+| ショートカット | 動作 |
+|------------|------|
+| `Cmd/Ctrl + K` | グローバル検索 |
+| `Cmd/Ctrl + Enter` | フォーム送信 |
+| `Esc` | モーダル閉じる |
+| `Cmd/Ctrl + /` | キーボードショートカット一覧モーダル |
+| `g f` | 家族画面へ |
+| `g o` | 組織画面へ (org_member 以上) |
+| `g a` | 管理画面へ (admin 系) |
+
+### 21.11 ナビゲーション
+
+- **モバイル**: 下部タブ (max 5 個)、+ 中央 FAB で食事記録
+- **デスクトップ**: 左サイドバー (折りたたみ可) + 上部ヘッダー
+- **ブレッドクラム**: 3 階層以上のページで必須 (例: 家族 > メンバー一覧 > 山田太郎)
+- **タブ**: 同一エンティティの切替 (家族グループ詳細の「メンバー / 共有献立 / 買い物リスト / 設定」)
+
+### 21.12 印刷対応
+
+- `@media print` スタイル必須 (買い物リスト・献立カレンダー・月次レポート)
+- ヘッダー/サイドバー非表示
+- カラー → モノクロ変換は無効化 (献立画像のため)
+- ページサイズ: A4 縦 (デフォルト)
+
+### 21.13 PWA / オフライン
+
+- `manifest.json` 既存維持 (theme_color / background_color / display: standalone)
+- Service Worker 導入 (Phase 2):
+  - 静的アセットキャッシュ (Cache-First)
+  - API レスポンスキャッシュ (Network-First, fallback to Cache)
+  - オフライン時の食事記録: IndexedDB に保存 → オンライン時に同期
+- インストール促進バナー: 3 回利用後に表示
+
+---
+
+## 22. 技術運用・スケーラビリティ
+
+### 22.1 キャッシュ戦略 (確定)
+
+| 対象 | 場所 | TTL | キー設計 | パージトリガー |
+|-----|-----|-----|---------|------------|
+| 静的アセット | Vercel Edge CDN | 1 年 (versioned) | URL | デプロイ |
+| LP / 公開ページ | Vercel ISR | 1 時間 | path | コンテンツ更新時 revalidate |
+| ダッシュボード KPI | Upstash Redis | 5 分 | `dashboard:org:{orgId}` | 関連 INSERT/UPDATE |
+| Stripe customer 情報 | Upstash Redis | 1 時間 | `stripe:customer:{userId}` | webhook 受信時 |
+| AI 生成献立 | Supabase Storage | 永久 | content hash | - |
+| `getUserActivePlan()` 結果 | Upstash Redis | 30 秒 | `plan:user:{userId}` | プラン変更時 |
+| `subscription_plans` マスター | Edge Cache | 5 分 | global | super_admin 操作で purge |
+
+**Upstash Redis** を採用 (Vercel から低遅延、サーバーレス互換)。
+
+### 22.2 API レート制限 (確定値)
+
+| エンドポイント | 匿名 | 認証済み | 認証済 admin |
+|------------|-----|--------|-----------|
+| `GET /api/family/groups` | - | 60/min | 600/min |
+| `POST /api/family/meal-requests` | - | 30/min | 300/min |
+| `POST /api/family/meal-requests/{id}/ai-propose` | - | **5/min** (LLM コスト) | 50/min |
+| `POST /api/auth/login` | 10/min/IP | - | - |
+| `POST /api/auth/password-reset` | 3/h/IP | - | - |
+| `GET /api/family/invites/{token}` | 60/min/IP | - | - |
+| `POST /api/webhooks/stripe` | (signature 検証) | - | - |
+| `POST /api/webhooks/resend` | (signature 検証) | - | - |
+| AI Edge Functions (knowledge-gpt 等) | - | プラン依存 (§5.5.3) | 制限なし |
+| Default | 30/min/IP | 120/min | 1200/min |
+
+実装: Vercel Edge Middleware + Upstash Ratelimit。
+
+### 22.3 CI/CD パイプライン (確定)
+
+```yaml
+# .github/workflows/ci.yml
+on: [pull_request, push]
+jobs:
+  lint:    # eslint + prettier check
+  typecheck:  # tsc --noEmit + supabase gen types diff
+  test-unit:  # jest / vitest
+  test-e2e:   # playwright (smoke only on PR、full on main)
+  build:      # next build + apps/mobile build
+  a11y:       # @axe-core/playwright
+  lighthouse: # main only
+  deploy:
+    - staging (auto on main)
+    - production (manual approval)
+```
+
+**マイグレーション**: PR で staging に自動適用、本番は手動承認後に適用 (§11.0 順序遵守)。
+
+### 22.4 シークレット管理
+
+| 環境 | 場所 | ローテーション |
+|-----|-----|--------------|
+| 本番 | Vercel Environment Variables (Production) | 90 日 |
+| staging | Vercel Environment Variables (Preview) | 90 日 |
+| 開発 | `.env.local` (gitignore 済み、Doppler 同期) | - |
+| Edge Function | Supabase Vault | 90 日 |
+| GitHub Actions | GitHub Secrets | 180 日 |
+
+**ローテーションスケジュール**:
+- API キー (Stripe / xAI / Anthropic / Google AI / Resend): 90 日
+- Webhook signing secret: 180 日
+- DB credentials: Supabase 自動管理
+- super_admin 緊急アクセス token: 30 日
+
+漏洩疑い時は **即時 rotate**、関連サービスに通知。
+
+### 22.5 ローカル開発環境
+
+```
+docs/development/setup.md (新規)
+- Node.js 22.x / pnpm 9.x
+- Supabase CLI 1.x
+- Stripe CLI (test mode webhook 受信)
+- Doppler CLI (シークレット同期)
+
+# 起動
+pnpm install
+supabase start              # ローカル DB + Auth
+stripe listen --forward-to localhost:3000/api/webhooks/stripe
+pnpm dev
+pnpm seed                   # サンプルデータ投入
+
+# 主要 seed
+- 9 種 plan_key (subscription_plans)
+- テスト組織 3 件
+- テストユーザー (admin / org_admin / org_member / family_owner)
+```
+
+### 22.6 データ容量予測 (5 年スパン)
+
+| 期間 | ユーザー数 | DB サイズ | Storage (写真) | 月次コスト見込み |
+|-----|----------|----------|--------------|---------------|
+| 1 年 | 1 万 | 5 GB | 200 GB | ¥10 万 |
+| 3 年 | 10 万 | 50 GB | 2 TB | ¥50 万 |
+| 5 年 | 50 万 | 250 GB | 10 TB | ¥150 万 |
+
+**スケール対応**:
+- 5 万ユーザー超: Supabase Team Plan 必須
+- 10 万ユーザー超: Read Replica 検討
+- 写真は古いもの (1 年以上) を Cloudflare R2 / S3 IA に自動移行
+
+### 22.7 同時接続スケール想定
+
+- **DB connection pool**: PgBouncer (Supabase 標準)、最大 200 connection
+- **想定 QPS**: peak 500 / average 50
+- **WebSocket**: Realtime 同時接続 1 万まで (Supabase 標準上限)
+
+### 22.8 Supabase Branch DB / Vercel Preview
+
+- **Vercel Preview**: 全 PR で自動デプロイ
+- **Supabase Branch**: PR ごとに自動作成 (Supabase Pro Plan 機能)
+- **本番データのマスキング**: staging には本番 dump をマスキングして反映
+  - email → `user-{id}@masked.example.com`
+  - 健診結果 PDF → 削除
+  - 食事写真 → サンプル画像に置換
+- マスキングスクリプト: `scripts/mask-production-dump.sh`
+
+### 22.9 オブザーバビリティ (確定スタック)
+
+| カテゴリ | ツール | 用途 |
+|--------|------|------|
+| エラー監視 | **Sentry** | クライアント・サーバー両方 |
+| APM | Vercel Speed Insights + Sentry Performance | Web Vitals + API レイテンシ |
+| ログ集約 | Better Stack (旧 Logtail) | 構造化ログ集約 |
+| メトリクス | Grafana Cloud (Phase 2) | カスタム dashboard |
+| アラート | PagerDuty (Phase 2、Slack で代替) | 障害通知 |
+| Status Page | **status.homegohan.app** (Better Stack 提供) | 顧客向け |
+
+### 22.10 顧客発信 Webhook (法人 HR 連携)
+
+```sql
+CREATE TABLE org_webhook_endpoints (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  url VARCHAR(500) NOT NULL,
+  signing_secret VARCHAR(255) NOT NULL,    -- HMAC-SHA256
+  events VARCHAR(50)[] NOT NULL,           -- 'license.assigned' / 'license.revoked' / 'challenge.completed'
+  status VARCHAR(20) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE org_webhook_deliveries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  endpoint_id UUID NOT NULL REFERENCES org_webhook_endpoints(id),
+  event_id UUID NOT NULL,
+  event_type VARCHAR(50) NOT NULL,
+  payload JSONB NOT NULL,
+  status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'dead_letter')),
+  attempt_count INT NOT NULL DEFAULT 0,
+  last_response_status INT,
+  last_attempted_at TIMESTAMPTZ,
+  delivered_at TIMESTAMPTZ
+);
+```
+
+**仕様**:
+- POST に `Homegohan-Signature: t=...,v1=hmac` ヘッダ付与
+- リトライ: exponential backoff (1m / 5m / 30m / 2h / 12h)、5 回失敗で dead letter
+- 顧客側で signature 検証必須
+- イベント例: `license.assigned`, `license.revoked`, `challenge.completed`, `member.joined`
+
+### 22.11 外部システム連携
+
+**Phase 1**:
+- Slack: Incoming Webhook で組織内通知 (チャレンジ達成・新メンバー等)
+- Microsoft Teams: 同上 (`org_webhook_endpoints` 経由)
+
+**Phase 2**:
+- Google Calendar: 献立を予定として追加 (OAuth + Calendar API)
+- Apple HealthKit / Google Fit: 食事記録の双方向同期
+
+**Phase 3**:
+- 健診結果 OCR: AWS Textract / Google Document AI で PDF パース
+
+### 22.12 データインポート
+
+- **既存サービス移行**: FoodLog / あすけん / カロミル の CSV インポート
+- **`POST /api/import/meals`** で受信、ColumnMapping を UI で指定
+- インポート ジョブを `data_import_jobs` テーブルで管理
+- ロールバック可能 (誤インポート時)
+
+### 22.13 サードパーティ依存リスク・代替計画
+
+| サービス | 代替 1 候補 | 代替 2 候補 | 移行コスト |
+|--------|----------|----------|----------|
+| Stripe | KOMOJU (国内) | Square | 高 (DB 設計依存) |
+| Vercel | Cloudflare Pages | AWS Amplify | 中 |
+| Supabase | Neon + Auth0 | Firebase | 高 |
+| xAI Grok | OpenAI GPT-4 | Anthropic Claude | 低 (Edge Function 内のみ) |
+| Anthropic | OpenAI GPT-4 | Google Gemini | 低 |
+| Resend | SendGrid | AWS SES | 低 |
+| Upstash | Vercel KV | AWS ElastiCache | 中 |
+
+**評価頻度**: 半年ごとに代替コスト・パフォーマンス・コンプライアンスを再評価。
+
+### 22.14 依存ライブラリ管理
+
+- **Renovate** または **Dependabot** で自動 PR 作成
+- **更新頻度**: 月次 (毎月第 2 月曜)
+- **セキュリティパッチ**: 即時 (24h 以内)
+- **Major version 更新**: ステージングで 1 週間検証後に本番
+
+### 22.15 負荷テスト
+
+- **ツール**: k6 (Cloud)
+- **シナリオ**:
+  - 100 同時ユーザーでの食事記録 + AI 解析
+  - 1000 ユーザー × 1 分間の通知配信
+  - 組織 CSV 一括招待 10000 行
+- **頻度**: メジャーリリース前 + 半年ごと
+- **基準**: §16.4 のパフォーマンス目標を維持
+
+### 22.16 設定の階層・継承ルール
+
+```
+個人設定 (user_profiles)
+  ↓ オーバーライド
+家族設定 (family_groups.settings)
+  ↓ オーバーライド
+組織設定 (organizations.settings)
+  ↓ オーバーライド
+運営マスター設定 (subscription_plans の制限)
+```
+
+**例**:
+- 通知 ON/OFF: 個人設定が最優先
+- AI 機能の有効/無効: 組織設定 > 個人設定
+- 食事写真公開: 家族グループ設定 > 個人設定
+
+`/account/settings` で「現在有効な設定はどこから来ているか」を表示 (透明性)。
+
+---
+
 **END OF OPERATOR ADMIN REQUIREMENTS DOCUMENT**
 
 3 本完成。次は実装計画 PR の起案。
