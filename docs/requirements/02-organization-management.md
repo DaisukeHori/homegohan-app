@@ -1598,8 +1598,21 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 - 請求書 PDF
 - プラン変更フロー
 
+### Phase 5.5: ライセンス管理・退職フロー (4 週間) ⭐
+- F-ORG-011 (`org_license_pools` / `org_license_assignments` / `org_license_audit_log`) 構築
+- ライセンス購入・配布・回収・再割当 API + UI
+- F-ORG-012 家族プラン同梱配布
+- UC-ORG-17 退職時 family owner 処理:
+  - 凍結バッチ (HR Webhook → revoke → `family_groups.status='frozen'`)
+  - `POST /api/family/groups/{id}/migrate-to-personal`
+  - `POST /api/family/groups/{id}/transfer-ownership`
+  - `POST /api/family/groups/{id}/dissolve`
+  - 猶予期間タイマー + 期限経過バッチ (`freeze_grace_until` → archived)
+- 複数組織所属対応 `getUserActivePlan()` 改訂 (機能の和集合)
+- 個人プランとの併用 (一時停止/再開ロジック、Stripe Subscription pause/resume)
+
 ### Phase 6: 産業医・SSO・SLA (6 週間)
-- 産業医ロール + アクセス制御
+- 産業医ロール + アクセス制御 (家族不可境界の RLS)
 - 同意フロー
 - SAML SSO (Enterprise)
 - 監査ログ強化

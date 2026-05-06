@@ -1003,7 +1003,7 @@ source_request_id 設定 → 個別リクエストフローで作られた代替
   "name": "田中家",
   "description": "我が家の食事管理",
   "icon_url": null,
-  "plan": "free"
+  "plan_key": "free"
 }
 ```
 **レスポンス 201**:
@@ -1012,7 +1012,9 @@ source_request_id 設定 → 個別リクエストフローで作られた代替
   "id": "uuid",
   "name": "田中家",
   "owner_id": "uuid",
-  "plan": "free",
+  "plan_key": "free",
+  "status": "active",
+  "source_org_assignment_id": null,
   "member_limit": 4,
   "created_at": "2026-05-06T20:30:00Z"
 }

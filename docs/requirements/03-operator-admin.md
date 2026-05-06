@@ -1662,10 +1662,15 @@ CREATE TABLE infra_alerts (
 - `subscription_plans` / `feature_packages` / `plan_price_history` / `coupons` / `revenue_snapshots` テーブル
 - super_admin プラン管理 UI (`/super-admin/plans`、`/super-admin/feature-packages`)
 - ライセンス販売ダッシュボード (`/admin/finance/licenses`)
-- クーポン管理 UI
+- クーポン管理 UI (重複適用不可ロジック、redemption tracking)
 - プラン × 機能パッケージ マトリクス UI
 - 価格変更影響シミュレーション
-- 02-organization-management `org_license_pools` との連携 (プラン参照)
+- ダウングレード影響シミュレーション API: `GET /api/super-admin/plans/{id}/downgrade-impact?to_plan_id=...`
+  - 消失機能差分 + 影響メンバー一覧
+  - 7 日前の事前通知 (Push + Email) ジョブ
+- プラン deprecate フロー (90/30/7 日前通知バッチ、`auto_renew = FALSE` 強制更新)
+- `trial_days` 試用期間フロー (Stripe Setup Intent、リマインダー、自動課金開始)
+- 02-organization-management `org_license_pools` との連携 (プラン参照、FK)
 - 01-family-management の `family_groups.plan_key` との整合性
 
 ### Phase 5: 不正検知 (2 週間)
