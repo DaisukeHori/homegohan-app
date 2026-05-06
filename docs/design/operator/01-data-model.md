@@ -977,56 +977,12 @@ CREATE POLICY "email_blacklist_admin" ON email_blacklist
 
 ### 3.20 同意管理テーブル群
 
-```sql
--- Cookie 同意
-CREATE TABLE cookie_consents (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID REFERENCES auth.users(id),
-  session_id  VARCHAR(255),
-  consented   BOOLEAN NOT NULL,
-  categories  JSONB DEFAULT '{}',  -- { analytics: true, marketing: false }
-  ip_address  INET,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT cc_user_or_session CHECK (user_id IS NOT NULL OR session_id IS NOT NULL)
-);
+以下 3 テーブルの DDL は `cross/08-legal-compliance.md` を canonical とする。
 
--- 外部データ連携同意 (産業医・組織)
-CREATE TABLE external_data_consents (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID NOT NULL REFERENCES auth.users(id),
-  consent_type    VARCHAR(50) NOT NULL,
-    -- 'org_health_data' / 'industrial_doctor_access' / 'family_share'
-  organization_id UUID REFERENCES organizations(id),
-  consented       BOOLEAN NOT NULL,
-  version         VARCHAR(20) NOT NULL,
-  ip_address      INET,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 利用規約同意履歴
-CREATE TABLE terms_acceptances (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID NOT NULL REFERENCES auth.users(id),
-  terms_type      VARCHAR(30) NOT NULL
-    CHECK (terms_type IN ('tos', 'privacy_policy', 'coupon_terms')),
-  terms_version   VARCHAR(20) NOT NULL,
-  accepted_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ip_address      INET
-);
-
-ALTER TABLE cookie_consents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE external_data_consents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE terms_acceptances ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "cookie_consents_self" ON cookie_consents
-  FOR ALL USING (user_id = auth.uid() OR session_id IS NOT NULL);
-
-CREATE POLICY "external_consents_self" ON external_data_consents
-  FOR SELECT USING (user_id = auth.uid());
-
-CREATE POLICY "terms_self" ON terms_acceptances
-  FOR ALL USING (user_id = auth.uid());
-```
+- **cookie_consents** — §12.2 を参照 (改正電気通信事業法準拠、analytics / advertising BOOLEAN)
+- **external_data_consents** — §4.3 を参照 (外国第三者提供同意: xAI / Anthropic / Google / OpenAI)
+  - 産業医・組織への外部データ共有同意を扱う場合は別名テーブル (例: `org_data_sharing_consents`) で別途定義すること
+- **terms_acceptances** — §7.1 を参照 (document_type: terms_of_service / privacy_policy / parental_consent / external_data_provision)
 
 ### 3.21 `gdpr_deletion_requests`
 
