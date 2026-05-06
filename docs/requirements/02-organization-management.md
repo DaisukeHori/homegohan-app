@@ -58,7 +58,7 @@
 | `organization_invites`, `organization_challenges` 等 | ✅ |
 | `/org/dashboard`, `/org/members` 等 UI | ✅ |
 | `/api/org/*` API | ✅ (基本機能) |
-| 招待受諾フロー (`/invite/{token}`) | **未実装** |
+| 招待受諾フロー (`/invite/org/{token}`) | **未実装** |
 | 招待メール自動送信 | **未実装** |
 | メンバー除名 API | **未実装** |
 | CSV 一括インポート | **未実装** |
@@ -211,7 +211,7 @@
 2. Email、ロール (org_admin / org_manager / org_member / org_viewer)、部署 (任意) を入力
 3. 「招待を送る」 → API `POST /api/org/invites`
 4. 招待メール自動送信 (Resend)
-5. 受信者が `/invite/{token}` で受諾
+5. 受信者が `/invite/org/{token}` で受諾
 6. 既存ユーザーならログイン、未登録なら新規登録
 7. `user_profiles.organization_id` が設定 + 部署紐付け
 
@@ -380,7 +380,43 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 4. 社員が家族グループを作成 → 配偶者・子供を招待 → 家族全員が Pro 機能
 5. ただし家族メンバーは社員のライセンスに紐付くので、社員退職時に家族グループも凍結される (再契約 or 個人プランへ移行のオプション提示)
 
-### 4.17 UC-ORG-17: ライセンス使用状況レポート
+### 4.17 UC-ORG-17: 退職時の家族グループ owner 処理 (重要シーケンス)
+
+**アクター**: System / 退職者本人 / org_admin
+**事前条件**: 退職者が家族グループの owner であり、当該グループが組織同梱ライセンス (`family_groups.source_org_assignment_id` が NOT NULL) で運用されていた
+
+**シナリオ**: 同梱ライセンスが revoke された後、家族グループを即座に解散せず、退職者本人に選択肢を提示する。
+
+**フロー**:
+1. HR Webhook または手動操作で `org_license_assignments.revoked_at` がセットされる
+2. システムが「revoked 割当に紐付く `family_groups.source_org_assignment_id`」を検索
+3. 該当家族グループに対し:
+   - `family_groups.status = 'frozen'`
+   - `family_groups.frozen_at = NOW()`
+   - `family_groups.freeze_grace_until = NOW() + INTERVAL '30 days'` (組織設定で 7-90 日カスタマイズ可)
+4. 退職者本人へ通知 (Push + Email):
+   - 「組織を退職されたため、家族グループ『◯◯ファミリー』が一時凍結されました」
+   - 「30 日以内に以下から選択してください」
+     - 個人プラン (Family Basic / Pro) へ移行 (Stripe 課金画面)
+     - オーナー権限を他のメンバーへ譲渡 (該当メンバーが個人プラン課金で引き継ぎ)
+     - 解散 (データを 90 日後に削除)
+5. 家族メンバー (妻・子) へ通知:
+   - 「家族グループが凍結中です。閲覧のみ可能、新規記録不可。30 日以内にオーナーが対応します」
+6. 凍結中の制限:
+   - 食事記録の新規作成・AI 解析: 不可
+   - 既存データの閲覧: 可
+   - 家族メンバーの追加招待: 不可
+7. `freeze_grace_until` 経過後、選択がなければ:
+   - `status = 'archived'`
+   - 個人プランへ自動移行を試みる (オーナーがクレジットカード未登録なら Free に降格)
+   - さらに 90 日後に物理削除 (GDPR 配慮)
+
+**API**:
+- `POST /api/family/groups/{id}/migrate-to-personal` (退職者: 個人プランへ移行)
+- `POST /api/family/groups/{id}/transfer-ownership` (退職者: 譲渡)
+- `POST /api/family/groups/{id}/dissolve` (退職者: 解散)
+
+### 4.18 UC-ORG-18: ライセンス使用状況レポート
 
 **アクター**: org_admin / finance
 **フロー**:
@@ -462,7 +498,7 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 
 #### 5.4.1 個別招待
 - Email、ロール、部署、ニックネーム、社員番号 (任意)
-- 招待 URL: `/invite/{token}`
+- 招待 URL: `/invite/org/{token}`
 - 期限: 14 日
 - メール文面: 組織ロゴ + カスタムメッセージ (org_admin が事前設定)
 
@@ -481,7 +517,7 @@ email,role,department,nickname,employee_id,joined_at
 - 結果: エラー件は CSV ダウンロード可
 
 #### 5.4.3 受諾フロー (Phase 1 最重要)
-- `/invite/{token}` ページ作成 (現状未実装)
+- `/invite/org/{token}` ページ作成 (現状未実装)
 - 既存ユーザーならログイン → 紐付け
 - 未登録なら新規登録 (Email は招待 Email で自動入力、変更不可)
 - 受諾後 `user_profiles.organization_id` 設定
@@ -634,32 +670,68 @@ email,role,department,nickname,employee_id,joined_at
 - ただし個人で別途課金していた場合は個人プラン継続
 - 組織復帰時は両方有効、組織ライセンス優先
 
-#### 5.11.7 機能解放判定ロジック
+#### 5.11.7 機能解放判定ロジック (複数組織所属対応)
+
+**前提**: 1 ユーザーが複数組織に同時所属することを許可する (副業・出向・兼任を想定)。同一ユーザーに対し `org_license_assignments.status = 'active'` のレコードが複数存在しうる。
+
+**プラン優先順位ルール**:
+1. ユーザーの全 active 組織ライセンスを取得
+2. 各ライセンスの `subscription_plans` を解決し、機能パッケージの**和集合**を「組織提供機能セット」とする (例: 組織 A の Org Standard + 組織 B の Org Pro → 両方の機能が解放される)
+3. プラン名表示は最上位プラン (`subscription_plans.display_order` の最大) を採用
+4. 個人プランがあれば、和集合にさらに加算 (個人 Pro 機能も使える)
+5. すべて無ければ Free
+
 ```typescript
 function getUserActivePlan(userId: string): PlanInfo {
-  // 1. 組織ライセンス (優先)
-  const orgLicense = getActiveOrgLicense(userId);
-  if (orgLicense) {
-    return {
-      plan_key: orgLicense.plan_key,
-      source: 'organization',
-      organization_id: orgLicense.organization_id,
-      expires_at: orgLicense.expires_at,
-    };
-  }
-  // 2. 個人プラン
+  // 1. 全 active 組織ライセンス (複数所属対応)
+  const orgLicenses = getAllActiveOrgLicenses(userId);  // 配列を返す
+
+  // 2. 個人プラン (組織と並列で和集合形成)
   const personalPlan = getUserPersonalPlan(userId);
-  if (personalPlan) {
-    return {
-      plan_key: personalPlan.plan_key,
-      source: 'personal',
-      expires_at: personalPlan.expires_at,
-    };
+
+  if (orgLicenses.length === 0 && !personalPlan) {
+    return { plan_key: 'free', source: 'default', features: getFreeFeatures(), expires_at: null };
   }
-  // 3. デフォルト Free
-  return { plan_key: 'free', source: 'default', expires_at: null };
+
+  // 3. 機能の和集合
+  const featureSet = new Set<string>(getFreeFeatures());
+  for (const lic of orgLicenses) {
+    const plan = getSubscriptionPlan(lic.plan_key);
+    plan.feature_packages.flatMap(getPackageFeatures).forEach(f => featureSet.add(f));
+  }
+  if (personalPlan) {
+    const plan = getSubscriptionPlan(personalPlan.plan_key);
+    plan.feature_packages.flatMap(getPackageFeatures).forEach(f => featureSet.add(f));
+  }
+
+  // 4. 表示用プラン (display_order 最大の組織プラン優先、なければ個人)
+  const displayPlan = orgLicenses.length > 0
+    ? orgLicenses.map(l => getSubscriptionPlan(l.plan_key))
+        .sort((a, b) => b.display_order - a.display_order)[0]
+    : getSubscriptionPlan(personalPlan!.plan_key);
+
+  // 5. 期限は最も早い (どれか 1 つでも切れたら Free 寄りに再評価)
+  const allExpiries = [...orgLicenses.map(l => l.expires_at), personalPlan?.expires_at].filter(Boolean);
+  const earliestExpiry = allExpiries.length > 0 ? new Date(Math.min(...allExpiries.map(d => +new Date(d)))) : null;
+
+  return {
+    plan_key: displayPlan.plan_key,
+    source: orgLicenses.length > 0 ? 'organization' : 'personal',
+    organization_ids: orgLicenses.map(l => l.organization_id),  // 複数
+    features: Array.from(featureSet),
+    expires_at: earliestExpiry,
+  };
 }
 ```
+
+**重複請求防止**:
+- 個人プランで Pro 課金中のユーザーが組織から Org Pro ライセンスを受領した場合、システムは個人プラン側の自動更新を一時停止する選択肢を UI で提示 (`/account/billing` に「組織が Pro を提供中です。個人プランを一時停止しますか?」)
+- 一時停止中の個人プランは `personal_subscriptions.paused_until = org_license.expires_at` をセット
+- 組織ライセンス失効時に自動で個人プラン再開 (Stripe Subscription を resume)
+
+**家族グループへの影響**:
+- ユーザーの所属する全組織のうち、家族同梱付きライセンス (`family_addon_seats > 0`) が **1 つでもあれば** 同梱配布対象になる
+- 複数同梱は不可 (家族グループは 1 ユーザー 1 つ)。最初に受領したものが `family_groups.source_org_assignment_id` に記録される
 
 ### 5.12 F-ORG-012: 家族プラン同梱配布
 
@@ -718,10 +790,25 @@ Family Group (社員 + 配偶者 + 子供 2 名)
 - `org_industrial_doctor`: 産業医
 - `org_health_nurse`: 保健師 (将来)
 
-#### 5.10.2 アクセス制御
+#### 5.10.2 アクセス制御 (閲覧範囲の境界)
 - 同意済メンバー (`user_profiles.consent_org_health_data = true`) のみ詳細閲覧
 - 閲覧履歴を `org_health_access_logs` に記録
 - 産業医メモ: `org_health_notes` (本人非公開、産業医のみ)
+
+**閲覧可能な情報** (同一組織の同意済メンバーに限る):
+- 食事記録の集計値 (週次・月次の栄養素、カロリー、PFC バランス)
+- 健康スコア (アプリ算出値)
+- 健診結果 (アップロードされたもの)
+- HbA1c / 血圧 / BMI 等の数値入力データ
+- 食事写真のサムネイル + AI 解析結果サマリ (個別の写真コンテンツ詳細は不可)
+
+**閲覧不可の情報** (組織契約に関わらず、家族領域とプライベートデータの保護):
+- **家族グループ内の食事記録** (`family_groups` 配下のデータ) — 組織同梱ライセンス経由でも不可。本人個人の食事記録のみ
+- 食事写真の原寸画像 (プライバシー保護のためサムネイルのみ)
+- 個別レシピの詳細 (健康指導に関係しない嗜好情報)
+- 同意していないメンバーの一切のデータ
+- 別組織のメンバーのデータ (複数組織所属者でも、産業医の所属組織のデータのみ閲覧可)
+- 退職済みメンバーのデータ (`org_license_assignments.status = 'revoked'` 以降は閲覧不可、ただし退職前の閲覧履歴は監査ログで保持)
 
 #### 5.10.3 連携機能
 - 健診結果 PDF アップロード (将来)
@@ -942,13 +1029,14 @@ CREATE TABLE department_history (
   changed_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   reason                  TEXT
 );
+```
 
 #### 7.2.7 `org_license_pools` (ライセンスプール)
 ```sql
 CREATE TABLE org_license_pools (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  plan_key                VARCHAR(50) NOT NULL,  -- 'org_starter' / 'org_standard' / 'org_pro' / 'org_enterprise' / 'family_addon'
+  plan_key                VARCHAR(100) NOT NULL REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE,  -- 03 §7.2.7 で運営が定義した plan_key を参照 (例: 'org_starter' / 'org_standard' / 'org_pro' / 'org_enterprise' / 'family_addon')
   total_licenses          INT NOT NULL DEFAULT 0,
   used_licenses           INT NOT NULL DEFAULT 0,  -- 実際に割当済の数
   available_licenses      INT GENERATED ALWAYS AS (total_licenses - used_licenses) STORED,
@@ -1006,6 +1094,16 @@ CREATE INDEX idx_org_license_user ON org_license_assignments(user_id, status);
 - DELETE: 不可 (履歴保持)
 
 **トリガー**: assignment 追加/削除時に `org_license_pools.used_licenses` を自動更新。
+
+**ステータス遷移**:
+```
+active
+  ├─→ revoked   (org_admin / HR Webhook / 90 日無ログイン自動)
+  └─→ expired   (バッチ: org_license_pools.ends_at 経過時に自動遷移)
+```
+- バッチ: 日次 (UTC 02:00) に `org_license_pools.ends_at < NOW()` のプールを検索 → 紐付く全 assignment の `status = 'expired'`、`expires_at = NOW()` をセット
+- `expired` 遷移時に紐付く `family_groups.source_org_assignment_id` を持つグループを §4.17 凍結フローへ
+- `expired` への手動遷移は不可 (期限経過のみ)
 
 #### 7.2.9 `org_license_audit_log`
 ```sql
@@ -1118,7 +1216,7 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 #### 8.4.5 `POST /api/org/invites/{id}/resend`
 **説明**: 再送
 
-#### 8.4.6 `GET /api/invite/{token}`
+#### 8.4.6 `GET /api/org/invites/{token}`
 **説明**: 招待トークン検証 (受諾画面用、認証不要)
 **レスポンス**:
 ```json
@@ -1130,8 +1228,13 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 }
 ```
 
-#### 8.4.7 `POST /api/invite/{token}/accept`
-**説明**: 招待受諾 (認証必須)
+#### 8.4.7 `POST /api/org/invites/{token}/accept`
+**説明**: 組織招待受諾 (認証必須)。家族招待 (`/api/family/invites/{token}/accept`) とは独立のエンドポイント。
+
+> **招待エンドポイント命名規則 (重要)**:
+> - 組織招待: `/api/org/invites/*`、UI URL: `/invite/org/{token}`、有効期限 **14 日** (人事承認の往復を考慮)
+> - 家族招待: `/api/family/invites/*`、UI URL: `/invite/family/{token}`、有効期限 **7 日** (家族間は短期想定)
+> - ルーティングは URL プレフィックスで完全分離。プレフィックスなしの共通 `/invite/{token}` は使用しない
 
 ### 8.5 チャレンジ
 
@@ -1324,7 +1427,7 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 - 「送信」ボタン → 進捗バー
 - 完了後、エラー件 CSV ダウンロード
 
-### 9.6 `/invite/{token}` (受諾画面、最重要)
+### 9.6 `/invite/org/{token}` (受諾画面、最重要)
 - 組織ロゴ + 組織名
 - 招待者、ロール、部署表示
 - 期限表示
@@ -1470,8 +1573,8 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 ## 11. 段階的実装計画
 
 ### Phase 1: 招待受諾フロー完成 (1 週間)
-- `/invite/{token}` 受諾画面
-- API: `GET /api/invite/{token}`, `POST /api/invite/{token}/accept`
+- `/invite/org/{token}` 受諾画面
+- API: `GET /api/org/invites/{token}`, `POST /api/org/invites/{token}/accept`
 - 招待メール自動送信 (Resend)
 - メンバー除名 API + UI
 

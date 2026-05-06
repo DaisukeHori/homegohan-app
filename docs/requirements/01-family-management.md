@@ -539,18 +539,31 @@
                        ├──拒否──→ [rejected]                              
                        │           └→ 別案を依頼 or 自分で決める          
                        │                                                  
-                       └──キャンセル (依頼者)──→ [cancelled]              
+                       ├──キャンセル (依頼者)──→ [cancelled]              
+                       │                                                  
+                       └──expires_at 経過 (バッチ自動)──→ [expired]      
 ```
+
+**`expired` 遷移の仕様**:
+- 日次バッチ (毎時 00 分) で `status IN ('pending', 'proposed') AND expires_at < NOW()` を検索 → `status = 'expired'` に更新
+- 期限切れ時に依頼者へ通知: 「夫が応答しなかったため期限切れになりました。自分で決めるか別の人にリクエストしますか?」
+- 個別献立がないまま当日を迎えた場合は共有献立 (`original_shared_menu_id`) を自動採用
 
 ##### 通知一覧
 
-| イベント | 通知先 | 内容 |
-|---------|-------|------|
-| リクエスト送信 | assignee | 「妻から献立リクエストが届きました」 |
-| 提案完了 | requester | 「夫から代替献立の提案が届きました」 |
-| 承認 | assignee | 「妻が提案を承認しました」 |
-| 拒否 | assignee | 「妻が拒否しました (理由: ○○)」 |
-| キャンセル | assignee | 「妻がリクエストを取り消しました」 |
+| イベント | 通知先 | 内容 | アプリ内バッジ |
+|---------|-------|------|--------------|
+| リクエスト送信 | assignee | 「妻から献立リクエストが届きました」 | +1 (タブ: 家族) |
+| 提案完了 | requester | 「夫から代替献立の提案が届きました」 | +1 (タブ: 家族) |
+| 承認 | assignee | 「妻が提案を承認しました」 | +1 |
+| 拒否 | assignee | 「妻が拒否しました (理由: ○○)」 | +1 |
+| キャンセル | assignee | 「妻がリクエストを取り消しました」 | - (静音) |
+| 期限切れ | requester | 「夫が応答しなかったため期限切れです」 | +1 |
+
+**アプリ内バッジカウントの仕様**:
+- 家族タブの未対応リクエスト数を `family_meal_requests` で算出 (`assignee_id = me AND status = 'pending'` の件数 + `requester_id = me AND status = 'proposed'` の件数 + 期限切れ未読)
+- ユーザーが対象画面を表示した時点でカウント減算 (該当行 SELECT 時に既読化)
+- iOS / Android のアプリアイコンバッジは Push 通知ペイロードの `badge` フィールドに上記計算値を載せる
 
 ##### UI 設計 (例)
 
@@ -696,9 +709,21 @@ CREATE TABLE family_groups (
   description   TEXT,
   icon_url      TEXT,
   owner_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  plan          VARCHAR(50) NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'family_basic', 'family_pro')),
+  -- プラン: 03-operator-admin.md §7.2.7 subscription_plans で運営が定義する plan_key を参照
+  -- 想定 plan_key: 'free' / 'family_basic' / 'family_pro' / 'family_addon' (組織同梱)
+  -- 02-organization-management.md §5.12 の家族プラン同梱で配布される場合は 'family_addon'
+  plan_key      VARCHAR(100) NOT NULL DEFAULT 'free' REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE,
+  -- 同梱配布の場合の元ライセンス参照 (個人加入なら NULL)
+  source_org_assignment_id UUID REFERENCES org_license_assignments(id) ON DELETE SET NULL,
   member_limit  INT NOT NULL DEFAULT 4,
   settings      JSONB NOT NULL DEFAULT '{}',
+  -- ライフサイクル状態 (5.12 退職時の凍結フローで使用)
+  status        VARCHAR(20) NOT NULL DEFAULT 'active'
+                  CHECK (status IN ('active', 'frozen', 'archived')),
+  -- frozen への遷移時刻 (組織ライセンス revoke 時等)。猶予期間管理に利用
+  frozen_at     TIMESTAMP WITH TIME ZONE,
+  -- 凍結後 N 日で archived へ自動遷移する期限 (NULL = 即時)
+  freeze_grace_until TIMESTAMP WITH TIME ZONE,
   archived_at   TIMESTAMP WITH TIME ZONE,
   created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -904,7 +929,9 @@ CREATE TABLE family_meal_requests (
   rejection_reason         TEXT,
   -- 状態
   status                   VARCHAR(20) NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'proposed', 'accepted', 'rejected', 'cancelled')),
+    CHECK (status IN ('pending', 'proposed', 'accepted', 'rejected', 'cancelled', 'expired')),
+  -- 期限切れ管理 (担当者放置時の自動 expired 遷移)
+  expires_at               TIMESTAMP WITH TIME ZONE,  -- デフォルト: 対象食事日 24h 前 or リクエスト作成 + 3 日のうち早い方
   -- メタ
   created_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   updated_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
