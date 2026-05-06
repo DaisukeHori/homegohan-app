@@ -712,7 +712,10 @@ CREATE TABLE family_groups (
   -- プラン: 03-operator-admin.md §7.2.7 subscription_plans で運営が定義する plan_key を参照
   -- 想定 plan_key: 'free' / 'family_basic' / 'family_pro' / 'family_addon' (組織同梱)
   -- 02-organization-management.md §5.12 の家族プラン同梱で配布される場合は 'family_addon'
-  plan_key      VARCHAR(100) NOT NULL DEFAULT 'free' REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE,
+  -- ON UPDATE CASCADE: plan_key リネーム時に追従
+  -- ON DELETE RESTRICT: 既存契約のあるプランは物理削除不可。deprecated → ends_at 後の自動 archive で対応 (03 §5.15.5)
+  plan_key      VARCHAR(100) NOT NULL DEFAULT 'free'
+                  REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE ON DELETE RESTRICT,
   -- 同梱配布の場合の元ライセンス参照 (個人加入なら NULL)
   source_org_assignment_id UUID REFERENCES org_license_assignments(id) ON DELETE SET NULL,
   member_limit  INT NOT NULL DEFAULT 4,
@@ -721,12 +724,12 @@ CREATE TABLE family_groups (
   status        VARCHAR(20) NOT NULL DEFAULT 'active'
                   CHECK (status IN ('active', 'frozen', 'archived')),
   -- frozen への遷移時刻 (組織ライセンス revoke 時等)。猶予期間管理に利用
-  frozen_at     TIMESTAMP WITH TIME ZONE,
+  frozen_at     TIMESTAMPTZ,
   -- 凍結後 N 日で archived へ自動遷移する期限 (NULL = 即時)
-  freeze_grace_until TIMESTAMP WITH TIME ZONE,
-  archived_at   TIMESTAMP WITH TIME ZONE,
-  created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  freeze_grace_until TIMESTAMPTZ,
+  archived_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (owner_id)  -- 1 ユーザー 1 オーナーグループ
 );
 
@@ -772,8 +775,8 @@ CREATE TABLE family_members (
   is_active           BOOLEAN NOT NULL DEFAULT TRUE,
   privacy_settings    JSONB NOT NULL DEFAULT '{"share_meals": false, "share_health": false}',
   -- メタ
-  created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   -- user_id がある場合は 1 グループ 1 メンバー
   UNIQUE (family_group_id, user_id) WHERE (user_id IS NOT NULL)
 );
@@ -799,12 +802,12 @@ CREATE TABLE family_invites (
   role              VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
   nickname          VARCHAR(50),
   token             VARCHAR(64) NOT NULL UNIQUE,
-  expires_at        TIMESTAMP WITH TIME ZONE NOT NULL,
-  accepted_at       TIMESTAMP WITH TIME ZONE,
+  expires_at        TIMESTAMPTZ NOT NULL,
+  accepted_at       TIMESTAMPTZ,
   accepted_by       UUID REFERENCES auth.users(id),
-  cancelled_at      TIMESTAMP WITH TIME ZONE,
+  cancelled_at      TIMESTAMPTZ,
   created_by        UUID NOT NULL REFERENCES auth.users(id),
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_family_invites_token ON family_invites(token);
@@ -812,11 +815,48 @@ CREATE INDEX idx_family_invites_email ON family_invites(email);
 CREATE INDEX idx_family_invites_pending ON family_invites(family_group_id) WHERE accepted_at IS NULL AND cancelled_at IS NULL;
 ```
 
-**RLS ポリシー**:
-- SELECT (オーナー/管理者): family_group オーナー or 管理者
-- SELECT (受諾用): 認証なし許可、token で個別アクセス (Server Action 経由)
-- UPDATE: 受諾時のみ (Server Action 内)
-- DELETE: オーナー or 作成者
+**RLS ポリシー** (具体的 SQL):
+
+```sql
+-- anon ロールに対しては RLS を有効化したまま、SELECT は service_role 経由でのみ
+-- (匿名ユーザーがクライアントから token を知っているだけで全 invites を列挙できる事故を防止)
+ALTER TABLE family_invites ENABLE ROW LEVEL SECURITY;
+
+-- 認証済みオーナー / 管理者は同グループの招待を閲覧可
+CREATE POLICY family_invites_select_owner ON family_invites
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_invites.family_group_id
+        AND fm.user_id = auth.uid()
+        AND fm.role IN ('owner', 'admin')
+    )
+  );
+
+-- INSERT: 同グループの owner/admin のみ
+CREATE POLICY family_invites_insert ON family_invites
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_invites.family_group_id
+        AND fm.user_id = auth.uid()
+        AND fm.role IN ('owner', 'admin')
+    )
+  );
+
+-- DELETE: オーナー or 作成者
+CREATE POLICY family_invites_delete ON family_invites
+  FOR DELETE USING (
+    invited_by = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM family_groups fg
+      WHERE fg.id = family_invites.family_group_id
+        AND fg.owner_id = auth.uid()
+    )
+  );
+```
+
+> **anon (受諾用) アクセスは API 層で完結**: `GET /api/family/invites/{token}` および `POST .../accept` は server-side で `service_role` キーを使い `family_invites` を検索する (RLS バイパス)。クライアント Supabase SDK から `family_invites` テーブルを直接 SELECT することは禁止。同様の方針を `organization_invites` にも適用。
 
 #### 7.1.4 `family_activity_log`
 
@@ -828,7 +868,7 @@ CREATE TABLE family_activity_log (
   action_type       VARCHAR(50) NOT NULL,  -- 'group_created', 'member_added', 'member_left', 'member_removed', 'role_changed', 'shared_menu_generated', etc.
   target_id         UUID,
   details           JSONB DEFAULT '{}',
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_family_activity_group ON family_activity_log(family_group_id, created_at DESC);
@@ -847,7 +887,7 @@ CREATE TABLE family_shared_menus (
   servings_total    NUMERIC(4,2) NOT NULL DEFAULT 1.0,
   notes             TEXT,
   created_by        UUID NOT NULL REFERENCES auth.users(id),
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (family_group_id, date, meal_type, dish_name)
 );
 ```
@@ -870,13 +910,19 @@ CREATE TABLE family_member_servings (
 ```sql
 CREATE TABLE family_shopping_lists (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_group_id   UUID NOT NULL UNIQUE REFERENCES family_groups(id) ON DELETE CASCADE,
+  family_group_id   UUID NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
   start_date        DATE NOT NULL,
   end_date          DATE NOT NULL,
   status            VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'archived')),
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 1 グループあたり active な買い物リストは 1 件のみ。completed/archived は履歴として保持
+-- (個人 shopping_lists の 20260109 マイグレーションと同じパターン)
+CREATE UNIQUE INDEX idx_family_shopping_lists_active
+  ON family_shopping_lists(family_group_id)
+  WHERE status = 'active';
 
 CREATE TABLE family_shopping_items (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -889,9 +935,9 @@ CREATE TABLE family_shopping_items (
   assignee_id              UUID REFERENCES auth.users(id),  -- 誰が買うか
   added_by                 UUID NOT NULL REFERENCES auth.users(id),
   checked_by               UUID REFERENCES auth.users(id),
-  checked_at               TIMESTAMP WITH TIME ZONE,
-  created_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  checked_at               TIMESTAMPTZ,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_family_shopping_items_list ON family_shopping_items(family_shopping_list_id);
@@ -923,18 +969,18 @@ CREATE TABLE family_meal_requests (
   -- 提案
   proposed_dish_name       VARCHAR(200),
   proposed_recipe          JSONB,
-  proposed_at              TIMESTAMP WITH TIME ZONE,
+  proposed_at              TIMESTAMPTZ,
   -- 承認・拒否
-  responded_at             TIMESTAMP WITH TIME ZONE,
+  responded_at             TIMESTAMPTZ,
   rejection_reason         TEXT,
   -- 状態
   status                   VARCHAR(20) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'proposed', 'accepted', 'rejected', 'cancelled', 'expired')),
   -- 期限切れ管理 (担当者放置時の自動 expired 遷移)
-  expires_at               TIMESTAMP WITH TIME ZONE,  -- デフォルト: 対象食事日 24h 前 or リクエスト作成 + 3 日のうち早い方
+  expires_at               TIMESTAMPTZ,  -- デフォルト: 対象食事日 24h 前 or リクエスト作成 + 3 日のうち早い方
   -- メタ
-  created_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_family_meal_requests_group ON family_meal_requests(family_group_id, status, date);
@@ -943,13 +989,62 @@ CREATE INDEX idx_family_meal_requests_assignee ON family_meal_requests(assignee_
 CREATE INDEX idx_family_meal_requests_pending ON family_meal_requests(family_group_id) WHERE status = 'pending';
 ```
 
-**RLS ポリシー**:
-- SELECT: 同グループメンバー全員 (リクエスト透明性のため)
-- INSERT: 同グループメンバー or 子供代理時はオーナー / 管理者
-- UPDATE (proposed_*): assignee_id = auth.uid()
-- UPDATE (status='accepted'/'rejected'): requester_id = auth.uid()
-- UPDATE (status='cancelled'): requester_id = auth.uid()
-- DELETE: 不可 (履歴保持)
+**RLS ポリシー** (具体的 SQL 式):
+
+```sql
+-- SELECT: 同グループメンバー全員 (target_member が child のリクエストも、グループメンバーなら閲覧可)
+CREATE POLICY family_meal_requests_select ON family_meal_requests
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_meal_requests.family_group_id
+        AND fm.user_id = auth.uid()  -- child (user_id=NULL) は自分で SELECT しないため問題なし
+    )
+  );
+
+-- INSERT: 同グループの実ユーザーメンバー (user_id IS NOT NULL) のみ
+-- 子供代理リクエストの場合: requester_id は親 (auth.uid())、target_member_id は子 (family_members.id with user_id=NULL)
+CREATE POLICY family_meal_requests_insert ON family_meal_requests
+  FOR INSERT WITH CHECK (
+    requester_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_meal_requests.family_group_id
+        AND fm.user_id = auth.uid()
+        AND fm.role IN ('owner', 'admin', 'member')
+    )
+    AND EXISTS (  -- target_member は同グループに存在
+      SELECT 1 FROM family_members tgt
+      WHERE tgt.id = family_meal_requests.target_member_id
+        AND tgt.family_group_id = family_meal_requests.family_group_id
+    )
+    -- 子供代理 (target が child): owner / admin のみ可
+    AND (
+      (SELECT user_id FROM family_members WHERE id = target_member_id) IS NOT NULL
+      OR EXISTS (
+        SELECT 1 FROM family_members fm
+        WHERE fm.family_group_id = family_meal_requests.family_group_id
+          AND fm.user_id = auth.uid()
+          AND fm.role IN ('owner', 'admin')
+      )
+    )
+  );
+
+-- UPDATE (proposed_*): assignee_id = auth.uid()
+CREATE POLICY family_meal_requests_propose ON family_meal_requests
+  FOR UPDATE USING (assignee_id = auth.uid())
+  WITH CHECK (assignee_id = auth.uid());
+
+-- UPDATE (status accept/reject/cancel): requester_id = auth.uid()
+-- (子供代理リクエストは requester=親 なので、親が承認・キャンセル可能)
+CREATE POLICY family_meal_requests_decide ON family_meal_requests
+  FOR UPDATE USING (requester_id = auth.uid())
+  WITH CHECK (requester_id = auth.uid());
+
+-- DELETE: 不可 (履歴保持)
+CREATE POLICY family_meal_requests_no_delete ON family_meal_requests
+  FOR DELETE USING (false);
+```
 
 #### 7.1.9 `planned_meals` 拡張 (家族連携)
 
@@ -966,6 +1061,42 @@ ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS source_request_id UUID
 CREATE INDEX idx_planned_meals_shared ON planned_meals(family_shared_menu_id) WHERE family_shared_menu_id IS NOT NULL;
 CREATE INDEX idx_planned_meals_request ON planned_meals(source_request_id) WHERE source_request_id IS NOT NULL;
 ```
+
+**RLS 拡張ポリシー** (家族メンバー代理 INSERT 対応):
+
+既存 `planned_meals` の RLS は `auth.uid() = user_daily_meals.user_id` で自己所有のみ。家族リクエスト承認・共有献立展開で他メンバーの planned_meals を作成する必要があるため、family-aware ポリシーを追加:
+
+```sql
+-- 既存 SELECT/INSERT/UPDATE/DELETE ポリシーは保持しつつ、家族系のみ追加
+
+-- INSERT: 家族グループの owner / admin が、同グループ child の planned_meals を作成可
+CREATE POLICY planned_meals_family_proxy_insert ON planned_meals
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_daily_meals udm
+      JOIN family_members tgt ON tgt.user_id = udm.user_id
+        OR (tgt.user_id IS NULL AND tgt.id = udm.proxy_member_id)  -- child 用の proxy 列前提
+      JOIN family_members caller ON caller.family_group_id = tgt.family_group_id
+      WHERE udm.id = planned_meals.daily_meal_id
+        AND caller.user_id = auth.uid()
+        AND caller.role IN ('owner', 'admin')
+    )
+  );
+
+-- INSERT: 家族リクエスト accepted フローで本人が承認した場合 (source_request_id 経由)
+CREATE POLICY planned_meals_family_request_insert ON planned_meals
+  FOR INSERT WITH CHECK (
+    source_request_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM family_meal_requests req
+      WHERE req.id = planned_meals.source_request_id
+        AND req.requester_id = auth.uid()
+        AND req.status = 'accepted'
+    )
+  );
+```
+
+> **注**: child member (`user_id IS NULL`) の `user_daily_meals` を生成するには `user_daily_meals` に `proxy_family_member_id UUID REFERENCES family_members(id)` 列を追加する必要がある (既存スキーマ拡張、§15 移行ガイド参照)。
 
 | 列 | 役割 |
 |----|------|
@@ -986,6 +1117,93 @@ source_request_id 設定 → 個別リクエストフローで作られた代替
 -- migration: 2026MMDDHHMMSS_create_family_management.sql
 -- 上記テーブル定義をすべて含む
 -- 既存 family_groups / family_members は ALTER TABLE で拡張
+```
+
+### 7.3 既存テーブルの RLS 拡張 (家族閲覧)
+
+既存 `meals` テーブルの RLS は `auth.uid() = user_id` で厳格な自己参照のみ。家族間の食事記録閲覧 (§5.4 一覧、§5.5 共有献立) を実現するため、以下の拡張ポリシーを追加:
+
+```sql
+-- 既存 meals_select_own ポリシーは保持。同グループメンバーの meals 閲覧を別ポリシーで許可
+-- 公開設定: family_groups.settings->>'share_meal_records' = 'true' の場合のみ
+CREATE POLICY meals_family_select ON meals
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members caller
+      JOIN family_members target ON target.family_group_id = caller.family_group_id
+      JOIN family_groups grp ON grp.id = caller.family_group_id
+      WHERE caller.user_id = auth.uid()
+        AND target.user_id = meals.user_id
+        AND grp.status = 'active'  -- frozen/archived グループは閲覧不可
+        AND COALESCE(grp.settings->>'share_meal_records', 'true') = 'true'
+    )
+  );
+```
+
+**産業医ロール用ポリシー** (組織側、`org_industrial_doctor` から個人 meals への限定アクセス):
+
+```sql
+-- 同意済みかつ同組織のメンバーの meals 集計閲覧用
+-- ただし家族領域 (family_groups 配下のデータ) は別途 RLS で完全遮断 (§5.10.2)
+CREATE POLICY meals_industrial_doctor_select ON meals
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles caller_profile
+      JOIN user_profiles target_profile ON target_profile.id = meals.user_id
+      WHERE caller_profile.id = auth.uid()
+        AND 'org_industrial_doctor' = ANY(caller_profile.roles)
+        AND caller_profile.organization_id = target_profile.organization_id
+        AND target_profile.consent_org_health_data = TRUE
+        AND target_profile.is_active_in_org = TRUE  -- 退職後は閲覧不可
+    )
+  );
+```
+
+### 7.4.5 プラン制限の RLS 二重防御
+
+要件全体で「Pro プランのみ」「Family プランのみ」等の制限が機能フラグ (アプリ層) で実装されるが、API 直叩きでバイパスされないよう **RLS 層でも防御** する:
+
+```sql
+-- 例: family_groups の作成は Family プラン以上を持つユーザーのみ
+CREATE POLICY family_groups_insert_paid_only ON family_groups
+  FOR INSERT WITH CHECK (
+    owner_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM personal_subscriptions ps
+      WHERE ps.user_id = auth.uid()
+        AND ps.status IN ('active', 'trialing')
+        AND ps.plan_key IN ('family_basic', 'family_pro')
+    )
+    -- または組織同梱経由
+    OR EXISTS (
+      SELECT 1 FROM org_license_assignments ola
+      JOIN org_license_pools olp ON olp.id = ola.license_pool_id
+      WHERE ola.user_id = auth.uid()
+        AND ola.status = 'active'
+        AND olp.family_addon_seats > 0
+    )
+  );
+
+-- AI 解析 RPC (knowledge-gpt 等) は呼び出し時に getUserActivePlan() の features に
+-- 'ai_analysis' が含まれることを確認。RLS というよりサーバー側関数で gate。
+```
+
+> **責務分担**: アプリ層 feature flag は **UX のため** (機能ボタンを非表示にする等)。RLS / サーバーサイド関数は **セキュリティのため** (API 直叩き防御)。両方実装する。
+
+### 7.4 family_groups / family_members の状態制限 RLS (frozen/archived)
+
+```sql
+-- frozen 状態では新規記録不可、閲覧のみ可
+CREATE POLICY family_meal_requests_no_insert_when_frozen ON family_meal_requests
+  FOR INSERT WITH CHECK (
+    NOT EXISTS (
+      SELECT 1 FROM family_groups fg
+      WHERE fg.id = family_meal_requests.family_group_id
+        AND fg.status IN ('frozen', 'archived')
+    )
+  );
+
+-- 同様のポリシーを family_shared_menus, family_shopping_lists にも適用
 ```
 
 ---

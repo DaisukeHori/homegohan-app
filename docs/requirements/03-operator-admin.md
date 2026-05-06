@@ -1082,6 +1082,27 @@ ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS severity VARCHAR(20) NOT N
 -- 不可逆性: UPDATE/DELETE 禁止
 CREATE POLICY "audit_logs_immutable" ON admin_audit_logs FOR UPDATE USING (false);
 CREATE POLICY "audit_logs_immutable_delete" ON admin_audit_logs FOR DELETE USING (false);
+
+-- SELECT: super_admin のみ (admin が自分の操作を消せないことを担保するため、admin にも閲覧権限を与えない設計)
+-- support / sales / finance は閲覧不可。事案調査が必要な場合は super_admin に依頼
+CREATE POLICY "audit_logs_select_super_admin" ON admin_audit_logs
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND 'super_admin' = ANY(roles)
+    )
+  );
+
+-- INSERT: 全 admin 系ロールから可 (操作の事実を残すため)
+CREATE POLICY "audit_logs_insert_admins" ON admin_audit_logs
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND ARRAY['admin', 'super_admin', 'support', 'sales', 'finance', 'content_moderator']::TEXT[] && roles
+    )
+  );
 ```
 
 ### 7.2 新規テーブル
@@ -1384,7 +1405,9 @@ CREATE TABLE revenue_snapshots (
 CREATE TABLE personal_subscriptions (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                  UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  plan_key                 VARCHAR(100) NOT NULL REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE,
+  plan_key                 VARCHAR(100) NOT NULL
+                              REFERENCES subscription_plans(plan_key)
+                              ON UPDATE CASCADE ON DELETE RESTRICT,
   -- ステータス
   status                   VARCHAR(20) NOT NULL DEFAULT 'trialing'
     CHECK (status IN ('trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due')),

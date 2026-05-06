@@ -327,7 +327,7 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 2. 1 メンバー選択 → 「ライセンス割当」
 3. 確認 → API `POST /api/org/licenses/assign`
 4. `org_license_assignments` に新規行 (status=active)
-5. プール: `used_licenses += 1`、`available_licenses -= 1`
+5. プール: トリガーで `used_licenses += 1` を実行 (`available_licenses` は GENERATED ALWAYS 列なので自動再計算、直接 UPDATE 不可)
 6. 該当メンバーに通知「Pro 機能が解放されました」
 7. メンバーアプリで Pro 機能解放
 
@@ -493,6 +493,15 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 | ダッシュボード (集計) | ✅ | ✅ | △ (自部署のみ) | ✅ | ✅ |
 | 個別ユーザーデータ | ❌ | ❌ | ❌ | ❌ | ✅ (同意者のみ) |
 | 月次レポート PDF | ✅ | ✅ | ❌ | ✅ | ❌ |
+| 自分の食事記録 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 自分の家族グループ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 同組織メンバーの個別食事 | ❌ | ❌ | ❌ | ❌ | ✅ (同意者のみ、家族領域は不可) |
+| 別組織メンバーのデータ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| ライセンス購入 | ✅ | ❌ | ❌ | ❌ | ❌ |
+| ライセンス割当 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| ライセンス閲覧 | ✅ | ✅ | ❌ | ✅ | ❌ |
+
+> **`org_viewer` の典型ユースケース**: 人事・労務担当者が組織契約状況・利用率レポート等を「読むだけ」で済む役割。個人データ (食事生データ・健康スコアの個別値) には一切アクセス不可。
 
 ### 5.4 F-ORG-004: 招待機能
 
@@ -1040,7 +1049,9 @@ CREATE TABLE department_history (
 CREATE TABLE org_license_pools (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  plan_key                VARCHAR(100) NOT NULL REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE,  -- 03 §7.2.7 で運営が定義した plan_key を参照 (例: 'org_starter' / 'org_standard' / 'org_pro' / 'org_enterprise' / 'family_addon')
+  plan_key                VARCHAR(100) NOT NULL
+                            REFERENCES subscription_plans(plan_key)
+                            ON UPDATE CASCADE ON DELETE RESTRICT,  -- 03 §7.2.7 参照、'org_*' / 'family_addon' 限定 (アプリ層 + CHECK でバリデーション)
   total_licenses          INT NOT NULL DEFAULT 0,
   used_licenses           INT NOT NULL DEFAULT 0,  -- 実際に割当済の数
   available_licenses      INT GENERATED ALWAYS AS (total_licenses - used_licenses) STORED,
@@ -1069,6 +1080,9 @@ CREATE INDEX idx_org_license_pools_active ON org_license_pools(organization_id) 
 CREATE TABLE org_license_assignments (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   license_pool_id         UUID NOT NULL REFERENCES org_license_pools(id) ON DELETE CASCADE,
+  -- organization_id は license_pool_id 経由でも辿れるが、RLS ポリシーと §5.11.7 getUserActivePlan の効率化のため denormalize
+  -- INSERT 時にトリガーで org_license_pools.organization_id を自動コピー、UPDATE 不可
+  organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   user_id                 UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   assigned_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   assigned_by             UUID REFERENCES auth.users(id),
@@ -1095,13 +1109,81 @@ CREATE INDEX idx_org_license_pool ON org_license_assignments(license_pool_id, st
 CREATE INDEX idx_org_license_user ON org_license_assignments(user_id, status);
 ```
 
-**RLS ポリシー**:
-- SELECT: 本人 (`user_id = auth.uid()`) or org_admin / org_manager (同組織)
-- INSERT: org_admin / org_manager
-- UPDATE (revoke): org_admin / org_manager
-- DELETE: 不可 (履歴保持)
+**RLS ポリシー** (具体的 SQL、`organization_id` denormalize 列を活用):
 
-**トリガー**: assignment 追加/削除時に `org_license_pools.used_licenses` を自動更新。
+```sql
+-- SELECT: 本人 or 同組織の org_admin/org_manager/org_viewer
+CREATE POLICY org_license_assignments_select ON org_license_assignments
+  FOR SELECT USING (
+    user_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = auth.uid()
+        AND up.organization_id = org_license_assignments.organization_id
+        AND ARRAY['org_admin', 'org_manager', 'org_viewer']::TEXT[] && up.roles
+    )
+  );
+
+-- INSERT: 同組織の org_admin/org_manager のみ
+CREATE POLICY org_license_assignments_insert ON org_license_assignments
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = auth.uid()
+        AND up.organization_id = org_license_assignments.organization_id
+        AND ARRAY['org_admin', 'org_manager']::TEXT[] && up.roles
+    )
+  );
+
+-- UPDATE (revoke 等): 同組織の org_admin/org_manager のみ
+CREATE POLICY org_license_assignments_update ON org_license_assignments
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = auth.uid()
+        AND up.organization_id = org_license_assignments.organization_id
+        AND ARRAY['org_admin', 'org_manager']::TEXT[] && up.roles
+    )
+  );
+
+-- DELETE: 不可 (履歴保持)
+CREATE POLICY org_license_assignments_no_delete ON org_license_assignments
+  FOR DELETE USING (false);
+```
+
+**トリガー** (具体的 SQL):
+
+```sql
+-- assignment 追加時に license_pool.used_licenses += 1 (available_licenses は GENERATED で自動計算)
+CREATE OR REPLACE FUNCTION sync_org_license_pool_usage()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- INSERT 時 (status = 'active' 前提)
+  IF (TG_OP = 'INSERT' AND NEW.status = 'active') THEN
+    UPDATE org_license_pools
+      SET used_licenses = used_licenses + 1, updated_at = NOW()
+      WHERE id = NEW.license_pool_id;
+    -- organization_id 自動コピー (denormalize)
+    IF NEW.organization_id IS NULL THEN
+      SELECT organization_id INTO NEW.organization_id
+        FROM org_license_pools WHERE id = NEW.license_pool_id;
+    END IF;
+  -- UPDATE: active → revoked/expired で減算
+  ELSIF (TG_OP = 'UPDATE'
+         AND OLD.status = 'active'
+         AND NEW.status IN ('revoked', 'expired')) THEN
+    UPDATE org_license_pools
+      SET used_licenses = GREATEST(used_licenses - 1, 0), updated_at = NOW()
+      WHERE id = NEW.license_pool_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE TRIGGER trg_org_license_pool_usage
+  BEFORE INSERT OR UPDATE ON org_license_assignments
+  FOR EACH ROW EXECUTE FUNCTION sync_org_license_pool_usage();
+```
 
 **ステータス遷移**:
 ```
@@ -1826,6 +1908,219 @@ ALTER TABLE org_subscriptions ADD CONSTRAINT fk_org_subscriptions_plan_key
 - `user_profiles.roles[]` のロールチェックパターン (`admin/users/route.ts` 等)
 - `GET /api/admin/users`, `GET /api/admin/organizations` の super_admin / admin 認可
 - `organization_invites` テーブルとその基本 CRUD API
+
+### 15.12 Stripe Webhook 受信エンドポイント (新規実装必須)
+
+要件 03 §7.2.12 `personal_subscriptions` は Stripe Subscription を真の source-of-truth とする。Stripe からの状態変化を受信する webhook が **既存に存在しない** ため新規実装必須:
+
+```
+POST /api/webhooks/stripe   (新規)
+- Stripe-Signature ヘッダ検証 (STRIPE_WEBHOOK_SECRET)
+- 受信イベント:
+  - customer.subscription.created     → personal_subscriptions に INSERT
+  - customer.subscription.updated     → status / current_period_end 更新
+  - customer.subscription.deleted     → status = 'cancelled'
+  - invoice.paid                      → 課金成功ログ
+  - invoice.payment_failed            → status = 'past_due' + リマインダー通知
+  - customer.subscription.trial_will_end → 試用終了 3 日前通知
+- Stripe Cron でテストフックを送り integrity を確保
+- service_role キーで personal_subscriptions を更新 (RLS バイパス)
+```
+
+組織側 (`org_license_pools.stripe_subscription_id`) も同 webhook で更新可能。
+
+### 15.13 Storage バケット分離戦略
+
+既存は `fridge-images` バケットに食事写真・冷蔵庫写真・健診結果 PDF を全て保存。要件で扱う情報の機微度が異なるため **バケット分離が必須**:
+
+| バケット | 用途 | RLS |
+|---------|------|------|
+| `fridge-images` | 冷蔵庫写真 (既存継続) | 本人のみ |
+| `meal-photos` (新規) | 食事写真 (個人 / 家族共有) | 本人 + 同 family_group メンバー |
+| `health-checkups` (新規) | 健診結果 PDF (`health_checkups`) | 本人 + 同意済みなら産業医 |
+| `org-logos` (新規) | 組織ロゴ画像 | 同組織メンバー全員 |
+| `user-avatars` (既存 or 新規) | プロフィール画像 | public read, 本人のみ write |
+
+各バケット個別の RLS ポリシーを `storage.objects` テーブルに `CREATE POLICY` で定義。
+
+### 15.14 camelCase / snake_case 規約 (要件側で確定)
+
+**確定規約**:
+- **DB**: snake_case (PostgreSQL 慣例)
+- **API レスポンス**: snake_case (要件書記述に合わせる、Mobile App 互換性向上)
+- **TypeScript 型**: snake_case を直接使う (変換層を削除し、Supabase 生成型をそのまま利用)
+- **既存 API のレスポンス変換 (camelCase) は段階的に snake_case に移行**
+
+既存 camelCase レスポンスを返している route (例: `family/groups/route.ts` の `createdAt`) は v2 として `created_at` を返す新エンドポイントを並走させ、v1 は 6 ヶ月後に廃止。
+
+### 15.15 役職別 API 認可の実装規約 (org_manager / org_viewer 等)
+
+既存 route は `org_admin` のみチェック。要件 §5.3.2 の権限マトリクスを実装するためのヘルパー関数を新規作成:
+
+```typescript
+// src/lib/auth-helpers.ts (新規)
+export async function requireOrgRole(
+  userId: string,
+  organizationId: string,
+  allowedRoles: ('org_admin' | 'org_manager' | 'org_member' | 'org_viewer' | 'org_industrial_doctor')[]
+): Promise<boolean>;
+
+// 使用例 (各 route で)
+if (!await requireOrgRole(user.id, orgId, ['org_admin', 'org_manager'])) {
+  return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+}
+```
+
+複数組織所属対応: `requireOrgRole` は `user_profiles.organization_id` だけでなく、`org_license_assignments.organization_id` (active のみ) も検索する。
+
+### 15.16 export API の完全リファクタ (account/delete も)
+
+既存 `/api/account/export/route.ts` は 20260109 で DROP 済みの `meal_plans` を参照しており **本番で壊れている**。完全に書き直す必要がある:
+
+新方針:
+1. `user_daily_meals` → `planned_meals` 経由に切り替え (`daily_meal_id` 結合)
+2. `family_shared_menu_id`, `source_request_id` を含める
+3. 家族グループ owner の場合、家族メンバー (`user_id IS NULL` の child 含む) のデータも含める option を追加
+4. 組織所属者の場合、組織同梱由来データを export 対象に明示する option
+
+`/api/account/delete/route.ts` の修正:
+1. 削除対象が `family_groups.owner_id` の場合は **削除不可**、先にオーナー譲渡か解散を要求 (UC-ORG-17 と同方針)
+2. `org_license_assignments.user_id` を持つ場合は organization へ通知 (削除日時を記録)
+
+### 15.17 cron バッチ戦略の確定
+
+要件全体で多数の日次/時次バッチが必要だが、既存は `process-menu-queue` のみ。
+
+**採用方針**:
+- **重い DB 操作 (license expired 一斉遷移、freeze_grace_until 経過、archive 物理削除)** → `pg_cron` で SQL 直接実行 (Supabase 内で完結、Edge 60s 制約なし)
+- **外部 API 呼び出しを伴う通知 (trial 終了 3 日前、deprecate 90 日前等)** → Vercel Cron (`/api/cron/*`) で Resend / Push 経由
+- **Stripe 同期 (整合性チェック)** → Vercel Cron 日次
+
+実装すべき新規 cron job:
+```
+pg_cron (Supabase):
+- daily 02:00 UTC: license_expire_batch        (org_license_assignments.status=expired)
+- daily 03:00 UTC: family_freeze_grace_batch   (family_groups freeze_grace_until 経過)
+- daily 04:00 UTC: family_archive_purge_batch  (90 日経過後物理削除、GDPR 配慮)
+- hourly :00     : meal_request_expire_batch  (family_meal_requests expires_at 経過)
+
+Vercel Cron:
+- daily 09:00 JST: trial_ending_reminder       (trial_ends_at まで 3 日 / 1 日)
+- daily 10:00 JST: license_renewal_reminder    (org_license_pools.ends_at まで 30 日)
+- daily 11:00 JST: deprecate_plan_notice       (subscription_plans deprecated 適用組織)
+- daily 12:00 JST: stripe_integrity_check      (personal_subscriptions と Stripe API 比較)
+```
+
+### 15.18 LLM 使用量の組織帰属 (新規列追加)
+
+既存 `llm_usage_logs` は user 単位のみ集計。要件 §5.5 の組織別クォータを実現するため:
+
+```sql
+ALTER TABLE llm_usage_logs ADD COLUMN IF NOT EXISTS organization_id UUID
+  REFERENCES organizations(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_llm_usage_logs_org ON llm_usage_logs(organization_id, created_at)
+  WHERE organization_id IS NOT NULL;
+```
+
+`/supabase/functions/_shared/llm-usage.ts` の `LLMUsageContext` に `organization_id?: string` を追加。Edge Function 呼び出し時に `getUserActivePlan(userId)` で組織判定し、組織ライセンス由来のリクエストは organization_id を記録。
+
+### 15.19 通知配信ジョブの新規実装
+
+既存は `user_push_tokens` (Expo Token 登録) のみ。実際に Push を送信する仕組みなし。新規実装:
+
+```
+supabase/functions/notify-push/index.ts  (Edge Function、新規)
+- input: user_id[], title, body, data, badge?
+- Expo Push API (https://exp.host/--/api/v2/push/send) へ POST
+- service_role で user_push_tokens から token 取得
+```
+
+```
+supabase/functions/notify-email/index.ts (Edge Function、新規)
+- input: user_id, subject, html_body
+- Resend API 経由
+```
+
+これらは:
+- 個別献立リクエスト通知 (§5.5.5)
+- 退職猶予通知 (UC-ORG-17 Step 4)
+- 家族凍結通知 (UC-ORG-17 Step 5)
+- プラン deprecate 通知 (03 §5.15.5)
+- 試用期間リマインダー (03 §5.15.6.5)
+
+すべての送信元から呼び出される共通基盤。
+
+### 15.20 user_daily_meals に proxy_family_member_id 列追加
+
+子供メンバー (`user_id IS NULL`) の planned_meals を作成するには、`user_daily_meals` にも child を識別する列が必要:
+
+```sql
+ALTER TABLE user_daily_meals
+  ADD COLUMN IF NOT EXISTS proxy_family_member_id UUID
+    REFERENCES family_members(id) ON DELETE CASCADE;
+
+-- 既存の UNIQUE(user_id, day_date) は user_id NOT NULL 前提だったので、partial index で再定義
+DROP INDEX IF EXISTS user_daily_meals_user_id_day_date_key;
+CREATE UNIQUE INDEX user_daily_meals_user_or_proxy_per_day
+  ON user_daily_meals(COALESCE(user_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                      COALESCE(proxy_family_member_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                      day_date);
+```
+
+### 15.21 既存 RLS の本番ハードニング (P2)
+
+セキュリティ的に問題のある既存設定を是正:
+
+| テーブル | 既存ポリシー | 問題 | 是正 |
+|---------|-------------|------|------|
+| `iroca_measurements` | `FOR ALL USING (true)` | 匿名ユーザーが書き込み可 | 本番から DROP TABLE、または admin / super_admin のみに制限 |
+| `iroca_sample_summary` | 同上 | 同上 | 同上 |
+| `iroca_experiment_plan` | 同上 | 同上 | 同上 |
+| `meals` | `auth.uid() = user_id` | 家族閲覧不可 | §7.3 の追加ポリシー (家族 + 産業医) |
+| `user_performance_checkins` | `auth.uid() = user_id` | 産業医アクセス不可 | 産業医同意済みのみ追加ポリシー |
+| `family_groups` (本番直接適用) | RLS 不在の可能性 | テーブル自体のマイグレーション登録なし | §15.1 の align マイグレーションで RLS も再定義 |
+
+### 15.22 マイグレーション順序の最終確定
+
+03 §11.0 の依存順序 + 既存テーブル align を統合した実装順序:
+
+```
+[Phase 4.5 開始]
+1. supabase/migrations/2026XXXX_align_existing_tables.sql
+   - organizations / departments / family_groups / family_members 等の本番直接適用テーブルを
+     CREATE TABLE IF NOT EXISTS で同期登録 (既存データはそのまま)
+
+2. supabase/migrations/2026XXXX_create_subscription_plans.sql
+   - subscription_plans / feature_packages / plan_price_history / coupons 等
+   - 9 種の plan_key を seed INSERT (free, pro, family_basic, ...)
+
+3. supabase/migrations/2026XXXX_create_personal_subscriptions.sql
+   - personal_subscriptions テーブル + RLS
+
+4. supabase/migrations/2026XXXX_alter_existing_for_plans.sql
+   - family_groups に plan_key 列 + status 列 + source_org_assignment_id 列追加
+   - user_profiles に organization_id 列追加
+   - llm_usage_logs に organization_id 列追加
+   - user_daily_meals に proxy_family_member_id 列追加
+
+5. supabase/migrations/2026XXXX_create_org_licenses.sql
+   - org_license_pools / org_license_assignments / org_license_audit_log
+   - トリガー sync_org_license_pool_usage
+
+6. supabase/migrations/2026XXXX_create_family_meal_requests.sql
+   - family_meal_requests + family_shared_menus (まだなら) + family_shopping_lists
+   - planned_meals に拡張列 ALTER
+
+7. supabase/migrations/2026XXXX_rls_hardening.sql
+   - iroca_* の権限制限
+   - meals 家族閲覧 / 産業医ポリシー追加
+   - admin_audit_logs SELECT ポリシー
+   - frozen/archived 制限ポリシー
+
+8. supabase/migrations/2026XXXX_cron_setup.sql
+   - pg_cron で license_expire_batch / family_freeze_grace_batch 等を schedule
+```
 
 ---
 
