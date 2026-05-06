@@ -538,14 +538,28 @@ for (const job of pendingJobs ?? []) {
 ### 5.7 `grace_period_check` (09:30 JST)
 
 ```typescript
-// 支払失敗から 7 日経過 → status='cancelled'
-const { data: overdueSubs } = await supabase
+// === Stage 1: past_due (支払失敗) から 7 日経過 → status='grace' (機能制限開始) ===
+const { data: pastDueSubs } = await supabase
+  .from('personal_subscriptions')
+  .select('id, user_id, stripe_subscription_id, past_due_since')
+  .eq('status', 'past_due')
+  .lte('past_due_since', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+
+for (const sub of pastDueSubs ?? []) {
+  await supabase.from('personal_subscriptions')
+    .update({ status: 'grace', grace_started_at: new Date() })
+    .eq('id', sub.id);
+  await sendEmail({ to: sub.user_id, subject: 'AI 解析等の機能を制限しました', /* ... */ });
+}
+
+// === Stage 2: grace (機能制限) から 23 日経過 (合計 30 日) → status='cancelled' ===
+const { data: graceSubs } = await supabase
   .from('personal_subscriptions')
   .select('id, user_id, stripe_subscription_id')
-  .eq('status', 'past_due')
-  .lte('updated_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  .eq('status', 'grace')
+  .lte('grace_started_at', new Date(Date.now() - 23 * 24 * 60 * 60 * 1000).toISOString());
 
-for (const sub of overdueSubs ?? []) {
+for (const sub of graceSubs ?? []) {
   await supabase.from('personal_subscriptions')
     .update({ status: 'cancelled', cancelled_at: new Date() })
     .eq('id', sub.id);

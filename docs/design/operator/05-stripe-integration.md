@@ -137,15 +137,24 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   const subscriptionId = invoice.subscription as string;
 
-  // status を past_due に変更
+  // 対象 subscription を取得 (user_id 等を使うため)
+  const { data: subscription } = await supabase
+    .from('personal_subscriptions')
+    .select('id, user_id')
+    .eq('stripe_subscription_id', subscriptionId)
+    .single();
+  if (!subscription) return;
+
+  // status を past_due に変更 + past_due_since 記録 (cron で 7 日後に grace へ遷移)
   await supabase.from('personal_subscriptions').update({
     status: 'past_due',
-  }).eq('stripe_subscription_id', subscriptionId);
+    past_due_since: new Date(),
+  }).eq('id', subscription.id);
 
-  // グレースペリオド開始 (7 日間)
-  // Vercel Cron の grace-period-check が毎日状態確認
-  // 7 日以内に invoice.paid → status='active' に戻す
-  // 7 日超過 → status='cancelled' に更新
+  // グレースペリオド遷移 (3 段階):
+  // - past_due (Stripe Smart Retries で支払回復チャンス)
+  // - 7 日経過 → grace (cron grace_period_check で遷移、AI 解析等の機能制限開始)
+  // - 合計 30 日経過 → cancelled (cron で遷移、アクセス停止 + データ 90 日保持)
 
   // リマインダーメール送信
   await sendPaymentFailedEmail(subscription.user_id);
@@ -204,7 +213,7 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
 ```typescript
 import { stripe } from '../_shared/stripe.ts';
 
-interface PriceChangInput {
+interface PriceChangeInput {
   plan_id: string;
   plan_key: string;
   stripe_product_id: string;
@@ -216,7 +225,7 @@ interface PriceChangInput {
 }
 
 Deno.serve(async (req) => {
-  const input: PriceChangInput = await req.json();
+  const input: PriceChangeInput = await req.json();
   const supabase = createSupabaseServiceClient();
 
   // 1. 新 Stripe Price (月額) を作成
@@ -516,7 +525,7 @@ Day 0: invoice.payment_failed webhook 受信
   → personal_subscriptions.status = 'past_due'
   → メール: 「お支払いに失敗しました。カード情報をご確認ください」
 
-Day 1-6: 毎日リマインダーメール (Vercel Cron: grace-period-check 09:00 JST)
+Day 1-6: 毎日リマインダーメール (Vercel Cron: grace-period-check 09:30 JST、operator/08 §3.2 と整合)
   → SELECT WHERE status='past_due' AND updated_at <= NOW() - INTERVAL '1 day'
 
 Day 7: グレースペリオド終了バッチ

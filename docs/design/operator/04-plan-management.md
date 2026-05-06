@@ -326,8 +326,10 @@ stateDiagram-v2
   trialing --> active : 試用終了 → 自動課金 (Stripe webhook: invoice.paid)
   trialing --> expired : 試用終了 → カード未登録 or 解約
   active --> past_due : 支払失敗 (Stripe webhook: invoice.payment_failed)
-  past_due --> active : 支払回復 (グレースペリオド内)
-  past_due --> cancelled : グレースペリオド超過
+  past_due --> active : 支払回復 (Stripe Smart Retries)
+  past_due --> grace : 7 日経過 (機能制限開始: AI 解析停止、家族共有制限)
+  grace --> active : 支払回復
+  grace --> cancelled : 合計 30 日経過 (アクセス停止、データ 90 日保持)
   active --> paused : 組織ライセンス受領 (重複請求防止)
   paused --> active : 組織ライセンス失効
   active --> cancelled : ユーザー解約

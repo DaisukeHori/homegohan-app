@@ -24,6 +24,8 @@
 
 ```sql
 -- 運営側が既存に作成している base テーブルに対して追加列を付与する
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20) NOT NULL DEFAULT 'trialing'
+  CHECK (subscription_status IN ('trialing', 'active', 'past_due', 'suspended', 'cancelled'));
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS billing_email       VARCHAR(255);
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS primary_color       VARCHAR(7);          -- '#FF6B6B'
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS member_limit        INT NOT NULL DEFAULT 30;
