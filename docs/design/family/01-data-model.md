@@ -340,6 +340,15 @@ ALTER TABLE user_daily_meals
 
 -- proxy_family_member_id IS NOT NULL: child メンバー (user_id=NULL) の代理食事記録
 -- proxy_family_member_id IS NULL:     本人の通常記録
+
+ALTER TABLE user_daily_meals ADD COLUMN IF NOT EXISTS source_family_group_id UUID
+  REFERENCES family_groups(id) ON DELETE SET NULL;
+
+-- source_family_group_id IS NULL:     個人専用の食事記録
+-- source_family_group_id IS NOT NULL: 家族共有献立由来の食事記録
+
+CREATE INDEX idx_user_daily_meals_source_family ON user_daily_meals(source_family_group_id)
+  WHERE source_family_group_id IS NOT NULL;
 ```
 
 ## 5. インデックス一覧

@@ -193,13 +193,13 @@ sequenceDiagram
 
 ### 6.3 organizations テーブル追加列
 
-```sql
-ALTER TABLE organizations
-  ADD COLUMN sso_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN sso_provider      VARCHAR(50),          -- 'azure_ad' | 'google_ws' | 'okta' | 'oidc'
-  ADD COLUMN sso_metadata      JSONB,                -- IdP メタデータ (entityID / cert / ACS URL)
-  ADD COLUMN scim_token        VARCHAR(255);         -- SCIM API 用 Bearer token (Vault 暗号化)
-```
+// SSO 関連カラムの canonical 定義は org/01-data-model.md §3 (organizations テーブル) を参照。
+// 以下は参照用の列名概要のみ記載する:
+// - sso_enabled BOOLEAN
+// - sso_provider VARCHAR(50)          -- 'azure_ad' | 'google_ws' | 'okta' | 'oidc'
+// - sso_metadata_url TEXT             -- IdP メタデータ URL
+// - sso_metadata_xml TEXT             -- IdP メタデータ XML (直接貼り付け)
+// - scim_token_hash TEXT              -- SCIM API 用トークンハッシュ (Vault 暗号化)
 
 ---
 
@@ -380,35 +380,8 @@ CREATE POLICY "password_history_no_direct_access"
 
 ### 13.2 parental_consents
 
-```sql
-CREATE TABLE parental_consents (
-  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_member_id UUID        NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
-  parent_user_id   UUID        NOT NULL REFERENCES auth.users(id),
-  signed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ip_address       INET,
-  user_agent       TEXT,
-  consent_version  VARCHAR(20) NOT NULL  -- 同意文書バージョン (例: "v2026.1")
-);
-
-ALTER TABLE parental_consents ENABLE ROW LEVEL SECURITY;
-
--- 家族 owner (= 保護者) のみ読み取り可
-CREATE POLICY "parental_consents_parent_read"
-  ON parental_consents FOR SELECT
-  USING (auth.uid() = parent_user_id);
-
--- INSERT は本人のみ
-CREATE POLICY "parental_consents_parent_insert"
-  ON parental_consents FOR INSERT
-  WITH CHECK (auth.uid() = parent_user_id);
-
--- UPDATE / DELETE 禁止 (immutable)
-CREATE POLICY "parental_consents_immutable"
-  ON parental_consents FOR UPDATE USING (false);
-CREATE POLICY "parental_consents_no_delete"
-  ON parental_consents FOR DELETE USING (false);
-```
+// parental_consents の DDL は family/01-data-model.md §4.13 を参照
+// RLS ポリシーも family/01-data-model.md §4.13 に集約
 
 ### 13.3 user_sessions_metadata
 
@@ -497,15 +470,16 @@ export async function requireRole(
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('*')
-    .eq('user_id', user.id)
+    .select('roles')
+    .eq('id', user.id)
     .single();
 
   if (!profile) throw new AuthError('AUTH_PROFILE_NOT_FOUND');
-  if (!roles.includes(profile.role as UserRole)) {
+  const userRoles = (profile?.roles ?? []) as UserRole[];
+  if (!userRoles.some(r => roles.includes(r))) {
     throw new PermError('PERM_DENIED', `Requires one of: ${roles.join(', ')}`);
   }
-  return profile;
+  return { ...user, roles: userRoles };
 }
 ```
 

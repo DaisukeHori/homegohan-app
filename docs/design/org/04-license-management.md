@@ -259,7 +259,7 @@ BEGIN
       SELECT COUNT(*) FROM family_members fm
         JOIN family_groups fg ON fm.family_group_id = fg.id
         WHERE fg.source_org_assignment_id = org_license_assignments.id
-          AND fm.status = 'active'
+          AND fm.is_active = TRUE
     ),
     updated_at = NOW()
     WHERE id = (

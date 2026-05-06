@@ -33,7 +33,7 @@
   "error": {
     "code": "FAM_GROUP_NOT_FOUND",
     "message": "指定された家族グループが見つかりません",
-    "details": {}
+    "request_id": "req_..."
   }
 }
 ```
@@ -104,7 +104,7 @@
 ```
 
 **エラー**:
-- `400 VALIDATION_ERROR`: バリデーション失敗
+- `422 VALID_REQUIRED_FIELD`: バリデーション失敗
 - `409 FAM_USER_ALREADY_IN_GROUP`: 既に所属
 
 ---

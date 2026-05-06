@@ -304,7 +304,7 @@ If-Unmodified-Since: 2026-05-07T12:34:56Z   # 直前 GET の updated_at
 ```typescript
 async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedSince: string) {
   // 1. advisory lock (同一 family_group への並行操作を直列化)
-  await supabase.rpc('advisory_lock_family_group', { family_group_id: groupId });
+  await supabase.rpc('acquire_family_group_lock', { family_group_id: groupId });
 
   // 2. 最新状態取得
   const { data: group } = await supabase
@@ -373,7 +373,7 @@ await supabase.rpc('acquire_family_group_lock', {
 -- pg_cron 日次 (UTC 03:00)
 -- 責務: frozen → archived 遷移のみ (90日後物理削除は operator/08 の process_family_archive_purge)
 SELECT cron.schedule(
-  'family_freeze_grace_expire',
+  'family_freeze_grace_batch',
   '0 3 * * *',
   $$SELECT process_family_freeze_grace_to_archive()$$
 );

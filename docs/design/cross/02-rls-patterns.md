@@ -167,7 +167,7 @@ CREATE POLICY "{table}_insert"
   ON {table_name} FOR INSERT
   WITH CHECK (
     actor_id = auth.uid()
-    OR (auth.jwt() ->> 'role') = 'service_role'
+    OR auth.role() = 'service_role'
   );
 
 -- SELECT: 運営者 (admin+) または自分に関する操作のみ
@@ -179,7 +179,7 @@ CREATE POLICY "{table}_admin_read"
       WHERE id = auth.uid()
         AND ARRAY['admin', 'super_admin']::TEXT[] && roles
     )
-    OR (auth.jwt() ->> 'role') = 'service_role'
+    OR auth.role() = 'service_role'
   );
 
 -- UPDATE / DELETE: 完全禁止
@@ -224,7 +224,7 @@ CREATE POLICY "{table}_industrial_doctor_read"
       SELECT 1 FROM user_profiles doc
       JOIN user_profiles target ON target.user_id = {table_name}.user_id
       WHERE doc.user_id = auth.uid()
-        AND doc.role = 'org_industrial_doctor'
+        AND 'org_industrial_doctor' = ANY(doc.roles)
         AND doc.organization_id = target.organization_id
     )
     -- または 運営 admin (user_profiles.roles[] で判定)
@@ -524,7 +524,7 @@ CREATE POLICY "audit_logs_insert"
   ON admin_audit_logs FOR INSERT
   WITH CHECK (
     actor_id = auth.uid()
-    OR (auth.jwt() ->> 'role') = 'service_role'
+    OR auth.role() = 'service_role'
   );
 
 CREATE POLICY "audit_logs_admin_select"
@@ -535,7 +535,7 @@ CREATE POLICY "audit_logs_admin_select"
       WHERE id = auth.uid()
         AND ARRAY['admin', 'super_admin']::TEXT[] && roles
     )
-    OR (auth.jwt() ->> 'role') = 'service_role'
+    OR auth.role() = 'service_role'
   );
 
 CREATE POLICY "audit_logs_no_update"

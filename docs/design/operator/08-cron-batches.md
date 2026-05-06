@@ -23,6 +23,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 | `data_integrity_check` | daily 03:30 UTC | データ整合性確認 |
 | `license_used_count_reconcile` | monthly 01 04:00 UTC | ライセンス使用数照合 |
 | `infra_metrics_cleanup` | daily 05:00 UTC | 30 日超の infra_metrics 削除 |
+| `stripe_event_stuck_check` | daily 05:00 UTC | Stripe webhook の processing 状態スタック検出 |
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
 
 ### 3.2 Vercel Cron ジョブ (HTTP)
@@ -58,7 +59,7 @@ SELECT cron.schedule('license_expire_batch', '0 2 * * *', $$
 $$);
 
 SELECT cron.schedule('family_freeze_grace_batch', '0 3 * * *', $$
-  SELECT process_family_freeze_grace();
+  SELECT process_family_freeze_grace_to_archive();
 $$);
 
 SELECT cron.schedule('family_archive_purge_batch', '0 4 * * *', $$
@@ -145,7 +146,7 @@ $$ LANGUAGE plpgsql;
 ### 4.3 `family_freeze_grace_batch` — 家族グループ凍結猶予チェック
 
 ```sql
-CREATE OR REPLACE FUNCTION process_family_freeze_grace()
+CREATE OR REPLACE FUNCTION process_family_freeze_grace_to_archive()
 RETURNS void
 SECURITY DEFINER
 SET search_path = public
@@ -153,7 +154,7 @@ AS $$
 DECLARE
   rows_affected INT;
 BEGIN
-  -- 凍結猶予 (freeze_grace_until) が切れた family_groups を archived に変更
+  -- 凍結猶予 (freeze_grace_until) が切れた family_groups を archived に変更 (frozen → archived 遷移のみ)
   UPDATE family_groups
   SET status = 'archived', archived_at = NOW()
   WHERE status = 'frozen'
@@ -478,7 +479,7 @@ for (const user of targets ?? []) {
 const { data: pendingJobs } = await supabase
   .from('hr_revoke_jobs')
   .select('*')
-  .in('status', ['pending', 'retry'])
+  .in('status', ['pending'])
   .lte('next_attempt_at', new Date().toISOString())
   .order('next_attempt_at', { ascending: true })
   .limit(100);
@@ -497,10 +498,10 @@ for (const job of pendingJobs ?? []) {
       }).eq('id', job.id);
       await notifySlack({ channel: '#hr-alerts', message: `HR revoke job dead letter: ${job.id}` });
     } else {
-      // 指数バックオフで再スケジュール
+      // 指数バックオフで再スケジュール (pending に戻して next_attempt_at をセット)
       const nextSchedule = new Date(Date.now() + Math.pow(2, newAttempts) * 60 * 1000);
       await supabase.from('hr_revoke_jobs').update({
-        status: 'retry',
+        status: 'pending',
         attempts: newAttempts,
         last_error: String(err),
         next_attempt_at: nextSchedule.toISOString(),
@@ -723,8 +724,8 @@ sequenceDiagram
   - `grace_period_check` の 7 日判定
 - **Integration** (Supabase Local):
   - `process_license_expire()` の動作確認
-  - `process_family_freeze_grace()` のステータス遷移
-  - `reconcile_license_used_count()` の used_count 修正
+  - `process_family_freeze_grace_to_archive()` のステータス遷移
+  - `reconcile_license_used_count()` の used_licenses 同期確認
 - **E2E** (Playwright):
   - `/super-admin/cron-jobs` で手動実行 → 監査ログに記録されることを確認
 

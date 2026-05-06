@@ -9,7 +9,7 @@
 - レスポンス body は snake_case JSON
 - 認証: Supabase Auth セッション Cookie (+ Bearer token for webhook)
 - ロール検証: `requireOrgRole(uid, orgId, [...])` ヘルパー使用
-- `organization_id` は body から信頼せず `resolveOrganizationId(uid)` で server-side 解決
+- `organization_id` は body から信頼せず `resolveOrganizationId(user, body.organization_id)` で server-side 解決 (canonical シグネチャは cross/01-auth-session.md §14.3 参照)
 
 ## 2. 関連要件
 
