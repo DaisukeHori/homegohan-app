@@ -613,7 +613,7 @@ API 呼び出し中はボタンを disabled にして 2 重送信防止。
 
 ネットワークエラー: `ErrorBoundary` でキャッチ + 「再試行」ボタン
 権限エラー (403): 「このページを閲覧する権限がありません」
-グループ凍結 (INSERT 失敗): `FAMILY_GROUP_NOT_ACTIVE` → FrozenGroupBanner 表示
+グループ凍結 (INSERT 失敗): `FAM_GROUP_NOT_ACTIVE` → FrozenGroupBanner 表示
 
 ### 7.4 Realtime 切断
 

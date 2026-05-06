@@ -121,6 +121,19 @@ BEGIN
         AND sp.status = 'deprecated'
     ) <= NOW();
 
+  -- 4. expired になった assignment に紐付く family_groups を frozen へ
+  -- 要件 02 §7.2.8: expired 遷移時に family_groups.source_org_assignment_id を持つグループを凍結フローへ
+  UPDATE family_groups
+  SET status = 'frozen',
+      frozen_at = NOW(),
+      freeze_grace_until = NOW() + INTERVAL '30 days'
+  WHERE source_org_assignment_id IN (
+    SELECT id FROM org_license_assignments
+    WHERE status = 'expired'
+      AND expires_at >= NOW() - INTERVAL '24 hours'
+  )
+  AND status = 'active';
+
   RAISE NOTICE 'license_expire_batch completed at %', NOW();
 END;
 $$ LANGUAGE plpgsql;

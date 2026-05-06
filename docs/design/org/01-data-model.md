@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS org_health_notes (
   category        VARCHAR(50)
                     CHECK (category IN ('consultation', 'guidance', 'follow_up', 'ai_advice')),
   is_ai_generated BOOLEAN NOT NULL DEFAULT FALSE,   -- AI 提案フラグ
-  ai_model        VARCHAR(100),                      -- 'claude-sonnet-4-5' 等
+  ai_model        VARCHAR(100),                      -- 'claude-3-5-sonnet-20241022' 等
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
   -- 5 年保管

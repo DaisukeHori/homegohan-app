@@ -195,7 +195,7 @@ BEGIN
         SELECT * INTO v_family_group
           FROM family_groups
           WHERE source_org_assignment_id = v_assignment.id
-            AND status IN ('active', 'pending');
+            AND status = 'active';
 
         IF FOUND THEN
           -- 凍結 (grace period は organizations.settings.freeze_grace_days で設定可能)
@@ -210,7 +210,7 @@ BEGIN
             'family_group_frozen',
             json_build_object(
               'family_group_id', v_family_group.id,
-              'owner_user_id', v_family_group.owner_user_id,
+              'owner_id', v_family_group.owner_id,
               'freeze_grace_until', (NOW() + INTERVAL '30 days')
             )::TEXT
           );
@@ -309,7 +309,7 @@ async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedS
   // 2. 最新状態取得
   const { data: group } = await supabase
     .from('family_groups')
-    .select('id, status, updated_at, owner_user_id, source_org_assignment_id')
+    .select('id, status, updated_at, owner_id, source_org_assignment_id')
     .eq('id', groupId)
     .single();
 
@@ -325,7 +325,7 @@ async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedS
   if (group.status !== 'frozen') {
     return Response.json({ error: 'ORG_OFFBOARD_INVALID_STATUS' }, { status: 409 });
   }
-  if (group.owner_user_id !== actorId) {
+  if (group.owner_id !== actorId) {
     return Response.json({ error: 'ORG_PERMISSION_DENIED' }, { status: 403 });
   }
 
@@ -371,14 +371,14 @@ $$;
 ## 8. Grace Period 期限経過後のバッチ処理
 
 ```sql
--- pg_cron 日次 (UTC 02:00)
+-- pg_cron 日次 (UTC 03:00)
 SELECT cron.schedule(
   'family_freeze_grace_expire',
-  '0 2 * * *',
-  $$SELECT process_expired_frozen_groups()$$
+  '0 3 * * *',
+  $$SELECT process_family_archive_purge()$$
 );
 
-CREATE OR REPLACE FUNCTION process_expired_frozen_groups()
+CREATE OR REPLACE FUNCTION process_family_archive_purge()
 RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   -- grace_until 経過した凍結グループを archived に遷移

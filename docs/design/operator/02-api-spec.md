@@ -1175,18 +1175,18 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
 
-## 7. テスト方針
+## 24. テスト方針
 
 - **Unit**: Stripe Webhook 署名検証 / idempotency ロジック / クーポン適用計算
 - **Integration**: Supabase Local + Stripe Test Mode での webhook 受信テスト
 - **E2E**: Playwright で super_admin によるプラン作成 → 公開 → ユーザー購入 → webhook 受信 → DB 更新確認
 
-## 8. 既存実装との関連
+## 25. 既存実装との関連
 
 - `/api/admin/*`, `/api/super-admin/*` は commit `32d13e1` で全削除済み → 完全新規実装
 - Stripe webhook ハンドラも新規 (`/api/webhooks/stripe`)
 
-## 9. 未解決事項
+## 26. 未解決事項
 
 - `POST /api/super-admin/plans/{id}/deprecate` の通知ジョブは Vercel Queue (Phase 2) か Supabase Edge Function か → 08-cron-batches.md で決定
 - `GET /api/admin/finance/revenue/forecast` の ML モデルは Phase 4 実装、現在は線形外挿のみ

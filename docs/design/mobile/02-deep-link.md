@@ -269,7 +269,7 @@ POST /api/org/invites/{token}/accept
 -- id, family_group_id, token, invitee_email, status, expires_at, created_by
 
 -- 参照: org/01-data-model.md
--- org_invites テーブル (org ドメインで定義)
+-- organization_invites テーブル (org ドメインで定義)
 -- id, organization_id, token, invitee_email, role, status, expires_at, created_by
 ```
 
@@ -328,7 +328,7 @@ sequenceDiagram
 | `INVITE_EXPIRED` | 有効期限切れ | 「招待の有効期限が切れています」+ 招待者に連絡を促す |
 | `INVITE_ALREADY_ACCEPTED` | 既に受諾済み | 「既に家族グループに参加しています」+ ホームへ |
 | `INVITE_REVOKED` | 招待が取り消された | 「この招待は無効です」+ ホームへ |
-| `FAMILY_MEMBER_LIMIT_EXCEEDED` | 家族グループ上限超過 | 「グループのメンバー上限に達しています」|
+| `FAM_MEMBER_LIMIT_EXCEEDED` | 家族グループ上限超過 | 「グループのメンバー上限に達しています」|
 | `ALREADY_IN_FAMILY` | 別の家族グループ所属済み | 「既に別の家族グループに参加しています」|
 | `NETWORK_ERROR` | ネットワーク不通 | 「接続を確認してください」+ 再試行ボタン |
 | `UNKNOWN` | 予期せぬエラー | 「エラーが発生しました (サポートに連絡)」|

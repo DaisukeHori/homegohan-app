@@ -92,7 +92,7 @@ CREATE POLICY "{table}_family_member_read"
       SELECT 1 FROM family_members fm
       WHERE fm.user_id = auth.uid()
         AND fm.family_group_id = {table_name}.family_group_id
-        AND fm.left_at IS NULL
+        AND fm.is_active = TRUE
     )
   );
 
@@ -103,7 +103,7 @@ CREATE POLICY "{table}_family_member_insert"
       SELECT 1 FROM family_members fm
       WHERE fm.user_id = auth.uid()
         AND fm.family_group_id = {table_name}.family_group_id
-        AND fm.left_at IS NULL
+        AND fm.is_active = TRUE
     )
   );
 
@@ -116,7 +116,7 @@ CREATE POLICY "{table}_family_owner_update"
       WHERE fm.user_id = auth.uid()
         AND fm.family_group_id = {table_name}.family_group_id
         AND fm.role IN ('owner', 'admin')
-        AND fm.left_at IS NULL
+        AND fm.is_active = TRUE
     )
   );
 ```
@@ -500,15 +500,15 @@ CREATE POLICY "audit_logs_no_delete"
   ON admin_audit_logs FOR DELETE USING (false);
 
 -- ============================================================
--- 4. password_history (本人 SELECT のみ)
+-- 4. password_history (service_role のみ)
 -- ============================================================
 ALTER TABLE password_history ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "password_history_self_select"
-  ON password_history FOR SELECT
-  USING (auth.uid() = user_id);
+CREATE POLICY "password_history_no_direct_access"
+  ON password_history FOR ALL
+  USING (false);
 
--- INSERT / DELETE は service_role のみ (パスワード変更 Edge Function)
+-- service_role のみアクセス可 (パスワード変更 Edge Function 経由)
 
 COMMIT;
 ```

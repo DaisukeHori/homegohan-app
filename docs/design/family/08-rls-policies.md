@@ -33,7 +33,7 @@
 ALTER TABLE family_groups ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: 同グループメンバー全員
-CREATE POLICY family_groups_select ON family_groups
+CREATE POLICY "family_groups_select" ON family_groups
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -47,7 +47,7 @@ CREATE POLICY family_groups_select ON family_groups
 
 -- INSERT: 認証済みユーザー。ただし family_basic/pro 以上のプランを持つか、
 --         組織同梱ライセンスを持つユーザーのみ (プラン制限二重防御)
-CREATE POLICY family_groups_insert ON family_groups
+CREATE POLICY "family_groups_insert" ON family_groups
   FOR INSERT WITH CHECK (
     owner_id = auth.uid()
     AND (
@@ -72,12 +72,12 @@ CREATE POLICY family_groups_insert ON family_groups
   );
 
 -- UPDATE: オーナーのみ
-CREATE POLICY family_groups_update ON family_groups
+CREATE POLICY "family_groups_update" ON family_groups
   FOR UPDATE USING (owner_id = auth.uid())
   WITH CHECK (owner_id = auth.uid());
 
 -- DELETE: 不可 (物理削除禁止。archived 状態への遷移のみ許可)
-CREATE POLICY family_groups_no_delete ON family_groups
+CREATE POLICY "family_groups_no_delete" ON family_groups
   FOR DELETE USING (false);
 ```
 
@@ -89,7 +89,7 @@ CREATE POLICY family_groups_no_delete ON family_groups
 ALTER TABLE family_members ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: 同グループメンバー全員 (非アクティブメンバーも履歴として閲覧可)
-CREATE POLICY family_members_select ON family_members
+CREATE POLICY "family_members_select" ON family_members
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members caller
@@ -99,7 +99,7 @@ CREATE POLICY family_members_select ON family_members
   );
 
 -- INSERT: owner / admin のみ。frozen/archived グループへは不可
-CREATE POLICY family_members_insert ON family_members
+CREATE POLICY "family_members_insert" ON family_members
   FOR INSERT WITH CHECK (
     EXISTS (
       SELECT 1 FROM family_members caller
@@ -114,14 +114,14 @@ CREATE POLICY family_members_insert ON family_members
 -- UPDATE: 本人 or owner or admin
 --   ただし role の変更は owner のみ
 --   proxy_required / proxy_reason の変更は owner/admin のみ
-CREATE POLICY family_members_update_self ON family_members
+CREATE POLICY "family_members_update_self" ON family_members
   FOR UPDATE USING (user_id = auth.uid())
   WITH CHECK (
     user_id = auth.uid()
     -- self UPDATE では role / proxy_required 変更不可 (アプリ層で制御)
   );
 
-CREATE POLICY family_members_update_admin ON family_members
+CREATE POLICY "family_members_update_admin" ON family_members
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM family_members caller
@@ -140,7 +140,7 @@ CREATE POLICY family_members_update_admin ON family_members
   );
 
 -- DELETE: owner / admin のみ (実際は is_active = false に更新するが、物理削除用に念のため)
-CREATE POLICY family_members_delete ON family_members
+CREATE POLICY "family_members_delete" ON family_members
   FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM family_members caller
@@ -162,7 +162,7 @@ ALTER TABLE family_invites ENABLE ROW LEVEL SECURITY;
 -- GET /api/family/invites/{token} は API 層で service_role 経由アクセス
 
 -- SELECT: 同グループの owner / admin のみ
-CREATE POLICY family_invites_select ON family_invites
+CREATE POLICY "family_invites_select" ON family_invites
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -173,7 +173,7 @@ CREATE POLICY family_invites_select ON family_invites
   );
 
 -- INSERT: 同グループの owner / admin のみ。frozen グループは不可
-CREATE POLICY family_invites_insert ON family_invites
+CREATE POLICY "family_invites_insert" ON family_invites
   FOR INSERT WITH CHECK (
     created_by = auth.uid()
     AND EXISTS (
@@ -188,7 +188,7 @@ CREATE POLICY family_invites_insert ON family_invites
 
 -- UPDATE: キャンセル操作のみ (accepted_at, cancelled_at の更新)
 --         API 層では service_role 経由で実行するため、ここは念のためのポリシー
-CREATE POLICY family_invites_update ON family_invites
+CREATE POLICY "family_invites_update" ON family_invites
   FOR UPDATE USING (
     created_by = auth.uid()
     OR EXISTS (
@@ -199,7 +199,7 @@ CREATE POLICY family_invites_update ON family_invites
   );
 
 -- DELETE: owner or 作成者 (取消 = 物理削除ではなく cancelled_at セットが推奨)
-CREATE POLICY family_invites_delete ON family_invites
+CREATE POLICY "family_invites_delete" ON family_invites
   FOR DELETE USING (
     created_by = auth.uid()
     OR EXISTS (
@@ -218,7 +218,7 @@ CREATE POLICY family_invites_delete ON family_invites
 ALTER TABLE family_shared_menus ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: 同グループメンバー全員 (閲覧のみ frozen も可)
-CREATE POLICY family_shared_menus_select ON family_shared_menus
+CREATE POLICY "family_shared_menus_select" ON family_shared_menus
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -228,7 +228,7 @@ CREATE POLICY family_shared_menus_select ON family_shared_menus
   );
 
 -- INSERT: owner / admin のみ。frozen/archived グループは不可
-CREATE POLICY family_shared_menus_insert ON family_shared_menus
+CREATE POLICY "family_shared_menus_insert" ON family_shared_menus
   FOR INSERT WITH CHECK (
     created_by = auth.uid()
     AND EXISTS (
@@ -242,7 +242,7 @@ CREATE POLICY family_shared_menus_insert ON family_shared_menus
   );
 
 -- UPDATE: owner / admin のみ
-CREATE POLICY family_shared_menus_update ON family_shared_menus
+CREATE POLICY "family_shared_menus_update" ON family_shared_menus
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -263,7 +263,7 @@ CREATE POLICY family_shared_menus_update ON family_shared_menus
   );
 
 -- DELETE: owner / admin のみ
-CREATE POLICY family_shared_menus_delete ON family_shared_menus
+CREATE POLICY "family_shared_menus_delete" ON family_shared_menus
   FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -282,7 +282,7 @@ CREATE POLICY family_shared_menus_delete ON family_shared_menus
 ALTER TABLE family_member_servings ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: 同グループメンバー全員
-CREATE POLICY family_member_servings_select ON family_member_servings
+CREATE POLICY "family_member_servings_select" ON family_member_servings
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_shared_menus fsm
@@ -293,7 +293,7 @@ CREATE POLICY family_member_servings_select ON family_member_servings
   );
 
 -- INSERT / UPDATE: owner / admin のみ
-CREATE POLICY family_member_servings_write ON family_member_servings
+CREATE POLICY "family_member_servings_write" ON family_member_servings
   FOR ALL USING (
     EXISTS (
       SELECT 1 FROM family_shared_menus fsm
@@ -314,7 +314,7 @@ ALTER TABLE family_shopping_lists ENABLE ROW LEVEL SECURITY;
 ALTER TABLE family_shopping_items ENABLE ROW LEVEL SECURITY;
 
 -- family_shopping_lists SELECT: 同グループメンバー全員 (frozen も閲覧可)
-CREATE POLICY family_shopping_lists_select ON family_shopping_lists
+CREATE POLICY "family_shopping_lists_select" ON family_shopping_lists
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -324,7 +324,7 @@ CREATE POLICY family_shopping_lists_select ON family_shopping_lists
   );
 
 -- family_shopping_lists INSERT: owner / admin のみ。frozen は不可
-CREATE POLICY family_shopping_lists_insert ON family_shopping_lists
+CREATE POLICY "family_shopping_lists_insert" ON family_shopping_lists
   FOR INSERT WITH CHECK (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -337,7 +337,7 @@ CREATE POLICY family_shopping_lists_insert ON family_shopping_lists
   );
 
 -- family_shopping_lists UPDATE (status 変更): owner / admin のみ
-CREATE POLICY family_shopping_lists_update ON family_shopping_lists
+CREATE POLICY "family_shopping_lists_update" ON family_shopping_lists
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -358,7 +358,7 @@ CREATE POLICY family_shopping_lists_update ON family_shopping_lists
   );
 
 -- family_shopping_items SELECT: 同グループメンバー全員
-CREATE POLICY family_shopping_items_select ON family_shopping_items
+CREATE POLICY "family_shopping_items_select" ON family_shopping_items
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_shopping_lists fsl
@@ -369,7 +369,7 @@ CREATE POLICY family_shopping_items_select ON family_shopping_items
   );
 
 -- family_shopping_items INSERT: 全メンバー可 (owner/admin/member)。frozen は不可
-CREATE POLICY family_shopping_items_insert ON family_shopping_items
+CREATE POLICY "family_shopping_items_insert" ON family_shopping_items
   FOR INSERT WITH CHECK (
     added_by = auth.uid()
     AND EXISTS (
@@ -383,7 +383,7 @@ CREATE POLICY family_shopping_items_insert ON family_shopping_items
   );
 
 -- family_shopping_items UPDATE (チェック・担当者変更): 全メンバー可
-CREATE POLICY family_shopping_items_update ON family_shopping_items
+CREATE POLICY "family_shopping_items_update" ON family_shopping_items
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM family_shopping_lists fsl
@@ -404,7 +404,7 @@ CREATE POLICY family_shopping_items_update ON family_shopping_items
   );
 
 -- family_shopping_items DELETE: owner / admin のみ
-CREATE POLICY family_shopping_items_delete ON family_shopping_items
+CREATE POLICY "family_shopping_items_delete" ON family_shopping_items
   FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM family_shopping_lists fsl
@@ -424,7 +424,7 @@ CREATE POLICY family_shopping_items_delete ON family_shopping_items
 ALTER TABLE family_meal_requests ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: 同グループメンバー全員
-CREATE POLICY family_meal_requests_select ON family_meal_requests
+CREATE POLICY "family_meal_requests_select" ON family_meal_requests
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -435,7 +435,7 @@ CREATE POLICY family_meal_requests_select ON family_meal_requests
 
 -- INSERT: 同グループの実ユーザーメンバーのみ。frozen/archived グループは不可
 --         子供代理リクエスト: target が child (user_id IS NULL) の場合は owner/admin のみ
-CREATE POLICY family_meal_requests_insert ON family_meal_requests
+CREATE POLICY "family_meal_requests_insert" ON family_meal_requests
   FOR INSERT WITH CHECK (
     requester_id = auth.uid()
     -- 呼び出し元は同グループの owner/admin/member
@@ -484,7 +484,7 @@ CREATE POLICY family_meal_requests_insert ON family_meal_requests
   );
 
 -- UPDATE (propose): assignee_id = auth.uid() のみ
-CREATE POLICY family_meal_requests_propose ON family_meal_requests
+CREATE POLICY "family_meal_requests_propose" ON family_meal_requests
   FOR UPDATE USING (
     assignee_id = auth.uid()
     AND status IN ('pending')
@@ -495,7 +495,7 @@ CREATE POLICY family_meal_requests_propose ON family_meal_requests
   );
 
 -- UPDATE (accept/reject/cancel): requester_id = auth.uid() のみ
-CREATE POLICY family_meal_requests_decide ON family_meal_requests
+CREATE POLICY "family_meal_requests_decide" ON family_meal_requests
   FOR UPDATE USING (
     requester_id = auth.uid()
     AND status IN ('proposed', 'pending')
@@ -506,7 +506,7 @@ CREATE POLICY family_meal_requests_decide ON family_meal_requests
   );
 
 -- DELETE: 不可 (履歴保持)
-CREATE POLICY family_meal_requests_no_delete ON family_meal_requests
+CREATE POLICY "family_meal_requests_no_delete" ON family_meal_requests
   FOR DELETE USING (false);
 ```
 
@@ -518,7 +518,7 @@ CREATE POLICY family_meal_requests_no_delete ON family_meal_requests
 ALTER TABLE family_activity_log ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: 同グループメンバー全員 (透明性のため全員閲覧可)
-CREATE POLICY family_activity_log_select ON family_activity_log
+CREATE POLICY "family_activity_log_select" ON family_activity_log
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members fm
@@ -529,7 +529,7 @@ CREATE POLICY family_activity_log_select ON family_activity_log
 
 -- INSERT: 同グループメンバー (actor_id = auth.uid() を強制)
 --         システム/バッチ操作は service_role 経由 (actor_id = NULL 許可)
-CREATE POLICY family_activity_log_insert ON family_activity_log
+CREATE POLICY "family_activity_log_insert" ON family_activity_log
   FOR INSERT WITH CHECK (
     (
       actor_id = auth.uid()
@@ -544,11 +544,11 @@ CREATE POLICY family_activity_log_insert ON family_activity_log
   );
 
 -- UPDATE: 不可 (監査ログ不可逆)
-CREATE POLICY family_activity_log_no_update ON family_activity_log
+CREATE POLICY "family_activity_log_no_update" ON family_activity_log
   FOR UPDATE USING (false);
 
 -- DELETE: 不可 (監査ログ不可逆)
-CREATE POLICY family_activity_log_no_delete ON family_activity_log
+CREATE POLICY "family_activity_log_no_delete" ON family_activity_log
   FOR DELETE USING (false);
 ```
 
@@ -561,7 +561,7 @@ CREATE POLICY family_activity_log_no_delete ON family_activity_log
 -- 以下を追加
 
 -- INSERT: 家族グループの owner/admin が、同グループ child (user_id IS NULL) の planned_meals を作成可
-CREATE POLICY planned_meals_family_child_proxy_insert ON planned_meals
+CREATE POLICY "planned_meals_family_child_proxy_insert" ON planned_meals
   FOR INSERT WITH CHECK (
     EXISTS (
       SELECT 1 FROM user_daily_meals udm
@@ -575,7 +575,7 @@ CREATE POLICY planned_meals_family_child_proxy_insert ON planned_meals
   );
 
 -- INSERT: proxy_required = TRUE の大人メンバーの planned_meals を owner/admin が作成可
-CREATE POLICY planned_meals_family_adult_proxy_insert ON planned_meals
+CREATE POLICY "planned_meals_family_adult_proxy_insert" ON planned_meals
   FOR INSERT WITH CHECK (
     EXISTS (
       SELECT 1 FROM user_daily_meals udm
@@ -589,7 +589,7 @@ CREATE POLICY planned_meals_family_adult_proxy_insert ON planned_meals
   );
 
 -- INSERT: 家族リクエスト accepted フローで requester が承認 → INSERT
-CREATE POLICY planned_meals_family_request_insert ON planned_meals
+CREATE POLICY "planned_meals_family_request_insert" ON planned_meals
   FOR INSERT WITH CHECK (
     source_request_id IS NOT NULL
     AND EXISTS (
@@ -609,7 +609,7 @@ CREATE POLICY planned_meals_family_request_insert ON planned_meals
 -- 既存 meals の SELECT ポリシー (meals_select_own) は保持
 -- 同グループメンバーの meals 閲覧ポリシーを追加
 
-CREATE POLICY meals_family_select ON meals
+CREATE POLICY "meals_family_select" ON meals
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM family_members caller
@@ -639,7 +639,7 @@ CREATE POLICY meals_family_select ON meals
 
 -- 産業医の組織内 meals 閲覧は meals_industrial_doctor_select ポリシーで管理
 -- (要件 §7.3 記載の既存ポリシー、本書では再掲のみ)
-CREATE POLICY meals_industrial_doctor_select ON meals
+CREATE POLICY "meals_industrial_doctor_select" ON meals
   FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM user_profiles caller_profile
@@ -699,7 +699,7 @@ BEGIN
   ) >= (
     SELECT member_limit FROM family_groups WHERE id = NEW.family_group_id
   ) THEN
-    RAISE EXCEPTION 'FAMILY_GROUP_FULL: メンバー上限に達しました'
+    RAISE EXCEPTION 'FAM_GROUP_FULL: メンバー上限に達しました'
       USING ERRCODE = 'P0001';
   END IF;
   RETURN NEW;
@@ -740,7 +740,7 @@ sequenceDiagram
   else RLS 失敗
     DB-->>API: 0 行更新 (エラーではなく 0 件)
     API->>API: 0 件を 403 または 404 に変換
-    API-->>Client: 403 FAMILY_PERMISSION_DENIED
+    API-->>Client: 403 FAM_PERMISSION_DENIED
   end
 ```
 

@@ -716,7 +716,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 {
   "advice": "今月は塩分摂取量が目標を上回っています...",
   "note_id": "uuid",
-  "model": "claude-sonnet-4-5",
+  "model": "claude-3-5-sonnet-20241022",
   "token_usage": { "input": 1200, "output": 450 }
 }
 ```

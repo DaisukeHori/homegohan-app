@@ -31,7 +31,7 @@
 ```json
 {
   "error": {
-    "code": "FAMILY_GROUP_NOT_FOUND",
+    "code": "FAM_GROUP_NOT_FOUND",
     "message": "指定された家族グループが見つかりません",
     "details": {}
   }
@@ -42,24 +42,24 @@
 
 | コード | HTTP | 意味 |
 |--------|------|------|
-| `FAMILY_GROUP_NOT_FOUND` | 404 | グループが存在しない |
-| `FAMILY_GROUP_FULL` | 422 | メンバー数上限到達 |
-| `FAMILY_GROUP_NOT_ACTIVE` | 422 | グループが frozen / archived 状態 |
-| `FAMILY_USER_ALREADY_IN_GROUP` | 409 | 既に他グループ所属 |
-| `FAMILY_INVITE_EXPIRED` | 410 | 招待期限切れ |
-| `FAMILY_INVITE_USED` | 409 | 既に受諾済 |
-| `FAMILY_INVITE_CANCELLED` | 410 | キャンセル済 |
-| `FAMILY_PERMISSION_DENIED` | 403 | 権限不足 |
-| `FAMILY_OWNER_CANNOT_LEAVE` | 422 | オーナーは脱退不可 |
-| `FAMILY_NEED_ADMIN_FOR_TRANSFER` | 422 | 譲渡先管理者なし |
-| `FAMILY_INVALID_LOCK` | 412 | 楽観的ロック不一致 |
-| `FAMILY_SPLIT_CONSENT_TIMEOUT` | 422 | メンバー同意タイムアウト |
-| `FAMILY_CHILD_PROMOTE_AUTH_REQUIRED` | 403 | 親の再認証が必要 |
-| `FAMILY_REQUEST_NOT_FOUND` | 404 | リクエストが存在しない |
-| `FAMILY_REQUEST_INVALID_STATUS` | 422 | 状態遷移が不正 |
-| `FAMILY_AI_GENERATION_FAILED` | 502 | AI 生成失敗 (3 回リトライ後) |
-| `FAMILY_ALLERGEN_CONFLICT` | 422 | アレルゲン突合失敗 (3 回リトライ後) |
-| `FAMILY_SHOPPING_LIST_NOT_FOUND` | 404 | 買い物リストが存在しない |
+| `FAM_GROUP_NOT_FOUND` | 404 | グループが存在しない |
+| `FAM_GROUP_FULL` | 422 | メンバー数上限到達 |
+| `FAM_GROUP_NOT_ACTIVE` | 422 | グループが frozen / archived 状態 |
+| `FAM_USER_ALREADY_IN_GROUP` | 409 | 既に他グループ所属 |
+| `FAM_INVITE_EXPIRED` | 410 | 招待期限切れ |
+| `FAM_INVITE_USED` | 409 | 既に受諾済 |
+| `FAM_INVITE_CANCELLED` | 410 | キャンセル済 |
+| `FAM_PERMISSION_DENIED` | 403 | 権限不足 |
+| `FAM_OWNER_CANNOT_LEAVE` | 422 | オーナーは脱退不可 |
+| `FAM_NEED_ADMIN_FOR_TRANSFER` | 422 | 譲渡先管理者なし |
+| `FAM_INVALID_LOCK` | 412 | 楽観的ロック不一致 |
+| `FAM_SPLIT_CONSENT_TIMEOUT` | 422 | メンバー同意タイムアウト |
+| `FAM_CHILD_PROMOTE_AUTH_REQUIRED` | 403 | 親の再認証が必要 |
+| `FAM_REQUEST_NOT_FOUND` | 404 | リクエストが存在しない |
+| `FAM_REQUEST_INVALID_STATUS` | 422 | 状態遷移が不正 |
+| `FAM_AI_GENERATION_FAILED` | 502 | AI 生成失敗 (3 回リトライ後) |
+| `FAM_ALLERGEN_CONFLICT` | 422 | アレルゲン突合失敗 (3 回リトライ後) |
+| `FAM_SHOPPING_LIST_NOT_FOUND` | 404 | 買い物リストが存在しない |
 
 ---
 
@@ -105,7 +105,7 @@
 
 **エラー**:
 - `400 VALIDATION_ERROR`: バリデーション失敗
-- `409 FAMILY_USER_ALREADY_IN_GROUP`: 既に所属
+- `409 FAM_USER_ALREADY_IN_GROUP`: 既に所属
 
 ---
 
@@ -167,8 +167,8 @@
 ```
 
 **エラー**:
-- `403 FAMILY_PERMISSION_DENIED`: 非メンバー
-- `404 FAMILY_GROUP_NOT_FOUND`
+- `403 FAM_PERMISSION_DENIED`: 非メンバー
+- `404 FAM_GROUP_NOT_FOUND`
 
 ---
 
@@ -191,8 +191,8 @@
 **レスポンス 200**: 更新後の group オブジェクト
 
 **エラー**:
-- `403 FAMILY_PERMISSION_DENIED`: owner 以外
-- `404 FAMILY_GROUP_NOT_FOUND`
+- `403 FAM_PERMISSION_DENIED`: owner 以外
+- `404 FAM_GROUP_NOT_FOUND`
 
 ---
 
@@ -218,8 +218,8 @@
 
 **エラー**:
 - `401 AUTH_REAUTH_REQUIRED`: パスワード不一致
-- `403 FAMILY_PERMISSION_DENIED`
-- `422 FAMILY_NEED_ADMIN_FOR_TRANSFER`: (owner が child の親権者で分割不可の場合の警告)
+- `403 FAM_PERMISSION_DENIED`
+- `422 FAM_NEED_ADMIN_FOR_TRANSFER`: (owner が child の親権者で分割不可の場合の警告)
 
 ---
 
@@ -247,8 +247,8 @@
 **レスポンス 200**: 更新後 group
 
 **エラー**:
-- `412 FAMILY_INVALID_LOCK`
-- `422 FAMILY_NEED_ADMIN_FOR_TRANSFER`: 新 owner がメンバーに存在しない
+- `412 FAM_INVALID_LOCK`
+- `422 FAM_NEED_ADMIN_FOR_TRANSFER`: 新 owner がメンバーに存在しない
 
 ---
 
@@ -277,8 +277,8 @@ UC-ORG-17 シナリオ。
 **レスポンス 200**: 更新後 group
 
 **エラー**:
-- `412 FAMILY_INVALID_LOCK`
-- `422 FAMILY_GROUP_NOT_ACTIVE`: frozen 以外のグループに対して呼ぶと失敗
+- `412 FAM_INVALID_LOCK`
+- `422 FAM_GROUP_NOT_ACTIVE`: frozen 以外のグループに対して呼ぶと失敗
 
 ---
 
@@ -356,8 +356,8 @@ UC-ORG-17 シナリオ。
 **同意完了時**: Realtime で `family_split_completed` イベントをブロードキャスト
 
 **エラー**:
-- `412 FAMILY_INVALID_LOCK`
-- `422 FAMILY_SPLIT_CONSENT_TIMEOUT`: 24h 以内に未応答
+- `412 FAM_INVALID_LOCK`
+- `422 FAM_SPLIT_CONSENT_TIMEOUT`: 24h 以内に未応答
 
 ---
 
@@ -422,8 +422,8 @@ UC-ORG-17 シナリオ。
 **レスポンス 201**: 作成後の member オブジェクト
 
 **エラー**:
-- `403 FAMILY_PERMISSION_DENIED`
-- `422 FAMILY_GROUP_FULL`: member_limit 超過
+- `403 FAM_PERMISSION_DENIED`
+- `422 FAM_GROUP_FULL`: member_limit 超過
 
 ---
 
@@ -468,7 +468,7 @@ UC-ORG-17 シナリオ。
 **認証**: 必須
 
 **動作**:
-1. owner は不可 (422 `FAMILY_OWNER_CANNOT_LEAVE`)
+1. owner は不可 (422 `FAM_OWNER_CANNOT_LEAVE`)
 2. `family_members.is_active = false`
 3. owner に通知
 4. `family_activity_log` に `member_left` 記録
@@ -613,9 +613,9 @@ UC-ORG-17 シナリオ。
 ```
 
 **エラー**:
-- `410 FAMILY_INVITE_EXPIRED`
-- `409 FAMILY_INVITE_USED`
-- `410 FAMILY_INVITE_CANCELLED`
+- `410 FAM_INVITE_EXPIRED`
+- `409 FAM_INVITE_USED`
+- `410 FAM_INVITE_CANCELLED`
 - `404`: トークン不存在
 
 ---
@@ -643,8 +643,8 @@ UC-ORG-17 シナリオ。
 ```
 
 **エラー**:
-- `409 FAMILY_USER_ALREADY_IN_GROUP`
-- `410 FAMILY_INVITE_EXPIRED`
+- `409 FAM_USER_ALREADY_IN_GROUP`
+- `410 FAM_INVITE_EXPIRED`
 
 ---
 
@@ -1042,8 +1042,8 @@ Edge Function `family-meal-ai-propose` を呼び出し、結果を `proposed_dis
 ```
 
 **エラー**:
-- `502 FAMILY_AI_GENERATION_FAILED`: 3 回リトライ後も失敗
-- `422 FAMILY_ALLERGEN_CONFLICT`: アレルゲン突合失敗
+- `502 FAM_AI_GENERATION_FAILED`: 3 回リトライ後も失敗
+- `422 FAM_ALLERGEN_CONFLICT`: アレルゲン突合失敗
 
 ---
 

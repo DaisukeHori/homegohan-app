@@ -115,7 +115,7 @@ async function executeWithLifecycleLock<T>(
     .single();
 
   if (group.updated_at !== expectedUpdatedAt) {
-    throw new ApiError(412, 'FAMILY_INVALID_LOCK',
+    throw new ApiError(412, 'FAM_INVALID_LOCK',
       '他の操作が先に完了しました。ページを更新してください。'
     );
   }
@@ -144,7 +144,7 @@ sequenceDiagram
   Note over DB: A がコミット → ロック解放
 
   B->>DB: 楽観的ロック検証 NG (updated_at が変わっている)
-  DB-->>B: 412 FAMILY_INVALID_LOCK
+  DB-->>B: 412 FAM_INVALID_LOCK
 ```
 
 ---
@@ -428,10 +428,10 @@ sequenceDiagram
 
 | エラー | 原因 | 対応 |
 |--------|------|------|
-| `FAMILY_INVALID_LOCK` (412) | 楽観的ロック不一致 | ページ更新を促す |
-| `FAMILY_GROUP_NOT_ACTIVE` (422) | archived グループへの操作 | 対応不可旨を表示 |
-| `FAMILY_SPLIT_CONSENT_TIMEOUT` (422) | 同意タイムアウト | 分割中止、再実行を案内 |
-| `FAMILY_CHILD_PROMOTE_AUTH_REQUIRED` (403) | 親のパスワード未確認 | 再認証画面にリダイレクト |
+| `FAM_INVALID_LOCK` (412) | 楽観的ロック不一致 | ページ更新を促す |
+| `FAM_GROUP_NOT_ACTIVE` (422) | archived グループへの操作 | 対応不可旨を表示 |
+| `FAM_SPLIT_CONSENT_TIMEOUT` (422) | 同意タイムアウト | 分割中止、再実行を案内 |
+| `FAM_CHILD_PROMOTE_AUTH_REQUIRED` (403) | 親のパスワード未確認 | 再認証画面にリダイレクト |
 | Stripe 失敗 (migrate) | カード拒否等 | Stripe エラーをユーザーに表示、retry 可能 |
 
 ---

@@ -367,14 +367,15 @@ CREATE TABLE password_history (
   PRIMARY KEY (user_id, changed_at)
 );
 
--- RLS: SELECT は本人のみ、INSERT は本人のみ (Edge Function 経由)
+-- RLS: service_role のみ (パスワードハッシュは本人にも見せない、API 経由で履歴チェックは service_role 経由)
+-- 正とする定義は operator/01-data-model.md §3.23
 ALTER TABLE password_history ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "password_history_self_read"
-  ON password_history FOR SELECT
-  USING (auth.uid() = user_id);
+CREATE POLICY "password_history_no_direct_access"
+  ON password_history FOR ALL
+  USING (false);
 
--- INSERT / UPDATE / DELETE は service_role のみ (Edge Function)
+-- INSERT / UPDATE / DELETE は service_role のみ (パスワード変更 Edge Function)
 ```
 
 ### 13.2 parental_consents
@@ -438,20 +439,35 @@ CREATE POLICY "sessions_self_update"
 
 ### 13.4 failed_invite_lookups
 
-招待トークンの総当たり対策用カウンターテーブル。
+招待トークンの総当たり攻撃の検知・レート制限用イベントログテーブル。
+正とする定義は `operator/01-data-model.md §3.24`。
 
 ```sql
+-- 招待トークン総当たり攻撃の検知・レート制限用
 CREATE TABLE failed_invite_lookups (
-  token_prefix VARCHAR(10) NOT NULL,   -- トークン先頭 10 文字 (ハッシュ化)
-  ip_address   INET        NOT NULL,
-  attempt_count INT        NOT NULL DEFAULT 1,
-  last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (token_prefix, ip_address)
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ip_address  INET NOT NULL,
+  token_hint  VARCHAR(10),  -- トークン最初の 10 文字 (診断用)
+  invite_type VARCHAR(20) CHECK (invite_type IN ('family','org')),
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 1 時間ごとに pg_cron でクリーンアップ
--- SELECT cron.schedule('cleanup_failed_invites', '0 * * * *',
---   'DELETE FROM failed_invite_lookups WHERE last_attempt_at < NOW() - INTERVAL ''1 hour''');
+CREATE INDEX idx_failed_invites_ip ON failed_invite_lookups(ip_address, attempted_at DESC);
+
+-- 7 日以上古いレコードは pg_cron で削除
+ALTER TABLE failed_invite_lookups ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "failed_invites_no_access" ON failed_invite_lookups
+  FOR ALL USING (false);
+-- service_role のみ (middleware 経由)
+```
+
+IP 単位の集計クエリ例 (レート制限判定用):
+```sql
+SELECT COUNT(*) AS attempt_count
+FROM failed_invite_lookups
+WHERE ip_address = $1
+  AND attempted_at > NOW() - INTERVAL '1 hour';
+-- attempt_count >= 閾値 → レート制限を適用
 ```
 
 ---
@@ -512,7 +528,7 @@ export async function requireOrgRole(
   const supabase = createServerClient();
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('role, organization_id')
+    .select('roles, organization_id')
     .eq('user_id', userId)
     .single();
 
@@ -520,7 +536,7 @@ export async function requireOrgRole(
   if (profile.organization_id !== orgId) {
     throw new PermError('PERM_ORG_MISMATCH');
   }
-  if (!roles.includes(profile.role as OrgRole)) {
+  if (!(profile.roles as OrgRole[]).some(r => roles.includes(r))) {
     throw new PermError('PERM_DENIED');
   }
 }
@@ -542,7 +558,7 @@ export function resolveOrganizationId(
   user: UserProfile,
   reqOrgId?: string
 ): string {
-  const isAdmin = ['admin', 'super_admin'].includes(user.role);
+  const isAdmin = (user.roles as string[]).some(r => ['admin', 'super_admin'].includes(r));
   if (isAdmin && reqOrgId) return reqOrgId;
   if (!user.organization_id) throw new PermError('PERM_NO_ORG');
   return user.organization_id;

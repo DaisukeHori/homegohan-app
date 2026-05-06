@@ -661,7 +661,7 @@ Step 3: スケジュール
 
 ---
 
-## 5. シーケンス — プラン廃止フロー
+## 35. シーケンス — プラン廃止フロー
 
 ```mermaid
 sequenceDiagram
@@ -683,7 +683,7 @@ sequenceDiagram
   UI->>SA: 「廃止処理を開始しました」トースト
 ```
 
-## 6. エラーハンドリング
+## 36. エラーハンドリング
 
 | シナリオ | UI の対応 |
 |---------|---------|
@@ -693,7 +693,7 @@ sequenceDiagram
 | Stripe 連携失敗 | 「Stripe との同期に失敗しました。管理者に連絡してください」|
 | 監査ログ取得エラー | 「閲覧は super_admin のみ可能です」|
 
-## 7. テスト方針
+## 37. テスト方針
 
 - **a11y**: `@axe-core/playwright` で全ページ violations = 0
 - **Keyboard**: Tab キーで全インタラクティブ要素にフォーカス到達
@@ -703,12 +703,12 @@ sequenceDiagram
   - `op/07-mrr-dashboard.spec.ts`
   - `op/plan-deprecate.spec.ts`
 
-## 8. 既存実装との関連
+## 38. 既存実装との関連
 
 - `src/app/(admin)/` および `src/app/(super-admin)/` は commit `32d13e1` で全削除済み → 完全新規実装
 - 既存の UI パーツ (`components/ui/*`) は活用する
 
-## 9. 未解決事項
+## 39. 未解決事項
 
 - `/super-admin/database` の直接 SQL 実行機能 (将来要件) は Phase 3 以降で検討
 - `/admin/sales/leads` のカンバン vs テーブルビューはユーザビリティテスト後に決定

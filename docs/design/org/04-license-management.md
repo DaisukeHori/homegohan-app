@@ -278,7 +278,7 @@ $$;
 | オプション | 処理 |
 |-----------|------|
 | **個人プランへ移行** | `family_groups.source_org_assignment_id = NULL`、`status = 'active'` に戻す + Stripe 個人プラン開始 |
-| **オーナー譲渡** | `family_groups.owner_user_id` を変更 (譲渡先が個人プランで課金) |
+| **オーナー譲渡** | `family_groups.owner_id` を変更 (譲渡先が個人プランで課金) |
 | **解散** | `family_groups.status = 'dissolved'` + 全メンバーへ通知 + 90 日後物理削除 |
 
 30 日猶予期間中は:

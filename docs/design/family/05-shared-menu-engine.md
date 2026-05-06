@@ -146,7 +146,7 @@ export const FamilySharedMenuGenerateInputSchema = z.object({
     use_fridge_first: z.boolean().default(false),
     max_cooking_time_min: z.number().int().min(10).max(120).optional(),
     cuisine_preferences: z.array(z.string()).default([]),
-    budget_per_meal_yen: z.number().int().min(100).max(5000).optional(),
+    budget_per_meal_jpy: z.number().int().min(100).max(5000).optional(),
   }).default({}),
   meal_types: z.array(
     z.enum(['breakfast', 'lunch', 'dinner', 'snack'])
@@ -367,10 +367,10 @@ SharedMenuCalendar (Server Component)
 
 | エラー | 原因 | 対応 |
 |--------|------|------|
-| `FAMILY_AI_GENERATION_FAILED` | Edge Function 3 回リトライ後失敗 | 502 返却, UI で「後で試してください」 |
-| `FAMILY_ALLERGEN_CONFLICT` | 全員制約を満たすメニューが生成不可 | 422, 制約を緩める提案 UI 表示 |
+| `FAM_AI_GENERATION_FAILED` | Edge Function 3 回リトライ後失敗 | 502 返却, UI で「後で試してください」 |
+| `FAM_ALLERGEN_CONFLICT` | 全員制約を満たすメニューが生成不可 | 422, 制約を緩める提案 UI 表示 |
 | Edge Function タイムアウト (30s) | AI 生成に時間がかかりすぎ | 504, ポーリング or Realtime で完了通知 |
-| `FAMILY_GROUP_NOT_ACTIVE` | frozen/archived グループ | 422 |
+| `FAM_GROUP_NOT_ACTIVE` | frozen/archived グループ | 422 |
 
 ### 8.1 長時間実行への対応
 

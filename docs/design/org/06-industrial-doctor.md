@@ -198,7 +198,7 @@ Deno.serve(async (req) => {
   const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') });
 
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: 'claude-3-5-sonnet-20241022',
     max_tokens: 1024,
     messages: [
       {
@@ -229,7 +229,7 @@ Deno.serve(async (req) => {
       note: adviceText,
       category: 'ai_advice',
       is_ai_generated: true,
-      ai_model: 'claude-sonnet-4-5',
+      ai_model: 'claude-3-5-sonnet-20241022',
     })
     .select()
     .single();
@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
   return Response.json({
     advice: adviceText,
     note_id: note.id,
-    model: 'claude-sonnet-4-5',
+    model: 'claude-3-5-sonnet-20241022',
     token_usage: {
       input: message.usage.input_tokens,
       output: message.usage.output_tokens,
@@ -265,7 +265,7 @@ const INDUSTRIAL_DOCTOR_SYSTEM_PROMPT = `
 await supabase.from('llm_usage_logs').insert({
   organization_id: body.organization_id,
   user_id: body.doctor_id,
-  model: 'claude-sonnet-4-5',
+  model: 'claude-3-5-sonnet-20241022',
   feature: 'industrial_doctor_ai',
   input_tokens: message.usage.input_tokens,
   output_tokens: message.usage.output_tokens,
@@ -365,7 +365,7 @@ sequenceDiagram
   API->>DB: INSERT org_health_access_logs (ai_advice)
   API->>EF: industrial-doctor-advice (service_role)
   EF->>DB: SELECT 栄養・健診データ
-  EF->>Claude: Messages API (claude-sonnet-4-5)
+  EF->>Claude: Messages API (claude-3-5-sonnet-20241022)
   Claude-->>EF: アドバイステキスト
   EF->>DB: INSERT org_health_notes (is_ai_generated=true)
   EF-->>API: { advice, note_id, token_usage }

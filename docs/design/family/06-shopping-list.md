@@ -393,7 +393,7 @@ sequenceDiagram
 
 | エラー | 原因 | 対応 |
 |--------|------|------|
-| `FAMILY_SHOPPING_LIST_NOT_FOUND` | active リストが存在しない | 新規作成を促す |
+| `FAM_SHOPPING_LIST_NOT_FOUND` | active リストが存在しない | 新規作成を促す |
 | `UNIQUE_VIOLATION` (active index) | 同時 active 作成競合 | 409, 既存 active リストを使用するよう案内 |
 | Realtime 切断 | ネットワーク断 | バナー表示 + ポーリングフォールバック (5s interval) |
 | チェック API タイムアウト | ネットワーク遅延 | 楽観的更新をキープ、再試行 3 回後にロールバック |

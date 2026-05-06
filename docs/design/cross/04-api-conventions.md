@@ -177,6 +177,7 @@ POST   /api/v1/webhooks/stripe                   # Stripe Webhook
 | `ORG_LICENSE_NOT_FOUND` | ライセンスが見つからない | 404 |
 | `ORG_INACTIVE` | 組織が非アクティブ | 403 |
 | `ORG_SSO_REQUIRED` | SSO ログインが必要 | 403 |
+| `ORG_OFFBOARD_INVALID_STATUS` | オフボーディング操作の対象グループが不正なステータス | 409 |
 
 #### OP 系
 

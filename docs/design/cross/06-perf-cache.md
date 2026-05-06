@@ -316,8 +316,8 @@ ALTER SYSTEM SET log_min_duration_statement = '200';
 ```sql
 -- 推奨インデックスパターン
 -- 1. 頻繁な WHERE 条件のカラム
-CREATE INDEX CONCURRENTLY ON family_members (family_group_id, left_at)
-  WHERE left_at IS NULL;  -- 部分インデックスでサイズ削減
+CREATE INDEX CONCURRENTLY ON family_members (family_group_id, is_active)
+  WHERE is_active = TRUE;  -- 部分インデックスでサイズ削減
 
 -- 2. JOIN キー
 CREATE INDEX CONCURRENTLY ON user_profiles (organization_id)

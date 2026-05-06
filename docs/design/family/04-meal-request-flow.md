@@ -119,7 +119,7 @@ stateDiagram-v2
   ai_generating --> ai_retry : アレルゲン突合失敗 (1〜2回目)
   ai_retry --> ai_generating : 再生成
   ai_retry --> error_422 : 3回全て失敗
-  error_422 --> [*] : 422 FAMILY_ALLERGEN_CONFLICT を返却
+  error_422 --> [*] : 422 FAM_ALLERGEN_CONFLICT を返却
   accepted --> [*]
 ```
 
@@ -265,7 +265,7 @@ target_member の allergies リストと突合
   ↓
 ヒット → 再生成フラグ (最大 3 回)
 ヒットなし → OK、accepted
-3 回全てヒット → 422 FAMILY_ALLERGEN_CONFLICT
+3 回全てヒット → 422 FAM_ALLERGEN_CONFLICT
 ```
 
 ### 7.2 突合アルゴリズム
@@ -358,7 +358,7 @@ export type ProposedRecipe = z.infer<typeof ProposedRecipeSchema>;
 AI 出力が `ProposedRecipeSchema` に合わない場合 (構造不正、型ミスマッチ等):
 - 軽微なエラー (number が string で来た等): `z.coerce.number()` で自動変換
 - 構造エラー: 再生成カウントを消費せずにリトライ (pure format error)
-- 3 回全て構造エラー: `502 FAMILY_AI_GENERATION_FAILED`
+- 3 回全て構造エラー: `502 FAM_AI_GENERATION_FAILED`
 
 ---
 
@@ -424,12 +424,12 @@ sequenceDiagram
 
 | エラー | 原因 | 対応 |
 |--------|------|------|
-| `FAMILY_REQUEST_NOT_FOUND` | {id} が存在しないか他グループ | 404 返却 |
-| `FAMILY_REQUEST_INVALID_STATUS` | 状態遷移が不正 (例: accepted → proposed) | 422 返却 |
-| `FAMILY_PERMISSION_DENIED` | propose を requester が呼んだ場合等 | 403 返却 |
-| `FAMILY_AI_GENERATION_FAILED` | Edge Function 3 回全て失敗 | 502 返却、UI でフォールバック案内 |
-| `FAMILY_ALLERGEN_CONFLICT` | 3 回全てアレルゲン突合失敗 | 422 返却、手動入力を促す |
-| `FAMILY_GROUP_NOT_ACTIVE` | frozen/archived グループへのリクエスト | 422 返却、FrozenGroupBanner 表示 |
+| `FAM_REQUEST_NOT_FOUND` | {id} が存在しないか他グループ | 404 返却 |
+| `FAM_REQUEST_INVALID_STATUS` | 状態遷移が不正 (例: accepted → proposed) | 422 返却 |
+| `FAM_PERMISSION_DENIED` | propose を requester が呼んだ場合等 | 403 返却 |
+| `FAM_AI_GENERATION_FAILED` | Edge Function 3 回全て失敗 | 502 返却、UI でフォールバック案内 |
+| `FAM_ALLERGEN_CONFLICT` | 3 回全てアレルゲン突合失敗 | 422 返却、手動入力を促す |
+| `FAM_GROUP_NOT_ACTIVE` | frozen/archived グループへのリクエスト | 422 返却、FrozenGroupBanner 表示 |
 
 ---
 

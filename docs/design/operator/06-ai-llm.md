@@ -33,7 +33,7 @@
 | `family-shared-menu-generate` (共有献立生成) | xAI Grok-4 | xAI | 高品質 (複数制約の最適化) | $150 |
 | `generate-week-menu` (週次献立生成) | xAI Grok-4-1-fast | xAI | バランス型 | $100 |
 | `generate-day-menu` / `generate-single-meal` | xAI Grok-4-1-fast-non-reasoning | xAI | 高速 | $50 |
-| `industrial-doctor-advice` (産業医 AI アドバイス) | Claude 3.5 Sonnet | Anthropic | 健康指導の専門性・安全性 | $80 |
+| `industrial-doctor-advice` (産業医 AI アドバイス) | claude-3-5-sonnet-20241022 | Anthropic | 健康指導の専門性・安全性 | $80 |
 | `image/generate` (献立画像生成) | Gemini Imagen | Google | コスト・品質バランス | $30 |
 
 **選定基準**:
@@ -118,7 +118,7 @@ function calculateCost(tokens: number, model: string): number {
     'grok-4': 0.000005,
     'gemini-2.0-flash': 0.0000003,
     'gemini-2.0-flash-lite': 0.00000015,
-    'claude-3-5-sonnet': 0.000015,
+    'claude-3-5-sonnet-20241022': 0.000015,
   };
   return tokens * (rates[model] ?? 0.000005);
 }
@@ -415,7 +415,7 @@ supabase/functions/
 |--------------|-------|-----|-----------|------|
 | `family-meal-ai-propose` | xAI Grok-4-1-fast-non-reasoning | JWT | ✓ | 個別献立 AI 提案 + アレルゲン突合 |
 | `family-shared-menu-generate` | xAI Grok-4 | JWT | ✓ | 家族全員制約和集合での献立生成 |
-| `industrial-doctor-advice` | Claude 3.5 Sonnet | JWT (org_industrial_doctor) | ✓ | 産業医向け AI アドバイス |
+| `industrial-doctor-advice` | claude-3-5-sonnet-20241022 | JWT (org_industrial_doctor) | ✓ | 産業医向け AI アドバイス |
 | `knowledge-gpt` | xAI Grok-4-1-fast-non-reasoning | JWT | ✓ | 一般質問・栄養アドバイス |
 | `generate-week-menu` | xAI Grok-4-1-fast | JWT | ✓ | 週次献立生成 |
 | `generate-day-menu` | xAI Grok-4-1-fast-non-reasoning | JWT | ✓ | 日次献立生成 |
@@ -535,7 +535,7 @@ Deno.serve(async (req) => {
     userId: doctorUser.id,
     organizationId: doctorProfile.organization_id,
     functionName: 'industrial-doctor-advice',
-    model: 'claude-3-5-sonnet',
+    model: 'claude-3-5-sonnet-20241022',
   }, response.usage, Date.now() - startTime);
 
   return new Response(JSON.stringify(response.content));
