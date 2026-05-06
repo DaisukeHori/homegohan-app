@@ -23,15 +23,14 @@ export async function GET(request: Request) {
       .select('id, status, error_message, updated_at, mode, start_date, target_meal_id, progress')
       .eq('id', requestId)
       .eq('user_id', user.id)
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
 
     if (!request) {
       return NextResponse.json({
-        status: 'failed',
-        errorMessage: 'Request not found',
-        updatedAt: new Date().toISOString(),
+        status: 'not_found',
+        requestId,
       });
     }
 

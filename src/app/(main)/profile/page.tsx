@@ -320,7 +320,7 @@ function ProfilePageContent() {
   // 旧: 全画面スピナーで LCP 要素が隠れていた → 削除
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-40">
+    <div className="min-h-screen bg-gray-50 pb-40 overflow-x-hidden">
 
       {/* ヘッダーエリア (#188: 常に即時レンダリング → LCP 改善) */}
       {/* 他ページ (home 等) と同じ薄いグラデーション背景に統一 */}

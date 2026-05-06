@@ -74,9 +74,9 @@ export async function POST(request: Request) {
         calories_kcal,
         protein_g,
         is_completed,
-        user_daily_meals!inner(day_date)
+        user_daily_meals!inner(day_date, user_id)
       `)
-      .eq('user_id', user.id)
+      .eq('user_daily_meals.user_id', user.id)
       .gte('user_daily_meals.day_date', sevenDaysAgo.toISOString().split('T')[0])
       .limit(30);
 
