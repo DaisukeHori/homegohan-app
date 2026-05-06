@@ -394,7 +394,17 @@ Deno.serve(async (req) => {
     const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-    if (token !== serviceRoleKey) {
+    // サービスロールキーかどうかを確認（文字列比較 + JWTペイロードのroleチェック）
+    const isServiceRole = token === serviceRoleKey || (() => {
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        return payload?.role === "service_role";
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!isServiceRole) {
       const supabaseAuth = createClient(
         Deno.env.get("SUPABASE_URL") ?? "",
         Deno.env.get("SUPABASE_ANON_KEY") ?? "",
