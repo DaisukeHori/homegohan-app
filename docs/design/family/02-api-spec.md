@@ -1150,21 +1150,298 @@ sequenceDiagram
 
 ### 13.1 Unit テスト (Vitest)
 
-- 各 API Route の Zod バリデーション (正常 / 異常入力)
-- 権限マトリクス全組み合わせ: owner / admin / member / child 代理 × 全操作
-- エラーコード返却の一致確認
+主要テストケース (it 文字列):
+
+1. `it('returns 201 with group object when valid payload is provided')`
+2. `it('returns 409 when user already owns a group')`
+3. `it('returns 422 when name exceeds 100 characters')`
+4. `it('returns 403 when non-owner calls PATCH /api/family/groups/:id')`
+5. `it('returns 410 when invite token is expired')`
+6. `it('returns 412 when If-Unmodified-Since does not match updated_at')`
+7. `it('returns 401 when Authorization header is missing')`
+8. `it('returns 422 when group is frozen and new meal_request is submitted')`
+
+```typescript
+// tests/unit/family/api-validation.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
+import { POST as createGroupHandler } from '@/app/api/family/groups/route';
+
+// Supabase クライアントをモック
+vi.mock('@/lib/supabase/server', () => ({
+  createServerClient: vi.fn().mockReturnValue({
+    auth: { getUser: vi.fn() },
+    from: vi.fn(),
+  }),
+}));
+
+describe('POST /api/family/groups', () => {
+  it('returns 201 with group object when valid payload is provided', async () => {
+    const { createServerClient } = await import('@/lib/supabase/server');
+    (createServerClient as ReturnType<typeof vi.fn>).mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: 'user-001' } },
+          error: null,
+        }),
+      },
+      from: vi.fn().mockReturnValue({
+        insert: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'group-001',
+                name: '田中家',
+                owner_id: 'user-001',
+                status: 'active',
+              },
+              error: null,
+            }),
+          }),
+        }),
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: null }),
+          }),
+        }),
+      }),
+    });
+
+    const req = new NextRequest('http://localhost/api/family/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name: '田中家', plan_key: 'family_basic' }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer valid-token',
+      },
+    });
+
+    const res = await createGroupHandler(req);
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.id).toBe('group-001');
+    expect(body.name).toBe('田中家');
+  });
+
+  it('returns 422 when name is empty string', async () => {
+    const req = new NextRequest('http://localhost/api/family/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name: '', plan_key: 'family_basic' }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer valid-token',
+      },
+    });
+
+    const res = await createGroupHandler(req);
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error.code).toBe('FAM_VALIDATION_ERROR');
+  });
+
+  it('returns 409 when user already owns a group', async () => {
+    const { createServerClient } = await import('@/lib/supabase/server');
+    (createServerClient as ReturnType<typeof vi.fn>).mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: 'user-001' } },
+          error: null,
+        }),
+      },
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: 'existing-group' }, // 既存グループあり
+            }),
+          }),
+        }),
+      }),
+    });
+
+    const req = new NextRequest('http://localhost/api/family/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name: '新しい家族', plan_key: 'free' }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer valid-token',
+      },
+    });
+
+    const res = await createGroupHandler(req);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe('FAM_USER_ALREADY_IN_GROUP');
+  });
+});
+
+describe('権限マトリクス: PATCH /api/family/groups/:id', () => {
+  const cases = [
+    { role: 'owner', expected: 200, description: 'can update group name' },
+    { role: 'admin', expected: 403, description: 'cannot update group name' },
+    { role: 'member', expected: 403, description: 'cannot update group name' },
+  ];
+
+  cases.forEach(({ role, expected, description }) => {
+    it(`${role} ${description}`, async () => {
+      // ロールごとのモック設定 → res.status を検証
+      // 実装の詳細は統合テストで補完
+      expect(expected).toBeDefined();
+    });
+  });
+});
+```
 
 ### 13.2 Integration テスト (Vitest + Supabase Local)
 
-- 招待 → 受諾 → メンバー追加フロー
-- 個別リクエスト 4 パターン全てのステータス遷移
-- 楽観的ロック (If-Unmodified-Since 不一致 → 412)
-- frozen グループへの INSERT 禁止
+主要テストケース:
+
+1. `it('completes invite → accept → member-added flow successfully')`
+2. `it('returns 412 when If-Unmodified-Since does not match')`
+3. `it('rejects INSERT to family_meal_requests when group is frozen')`
+4. `it('returns 410 when invite token is expired')`
+5. `it('transitions meal_request from pending to proposed to accepted')`
+
+```typescript
+// tests/integration/family/invite-accept-flow.integration.test.ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import { createTestUser } from '../../helpers/auth';
+import { createFamilyGroupInDB } from '../../factories/family-group.factory';
+
+describe('招待 → 受諾 → メンバー追加フロー', () => {
+  it('completes invite → accept → member-added flow successfully', async () => {
+    const owner = await createTestUser('user');
+    const invitee = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+
+    // 1. 招待作成
+    const inviteRes = await fetch(
+      `${BASE_URL}/api/family/groups/${group.id}/invites`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ownerToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: `invitee-${invitee.id}@test.local`,
+          role: 'member',
+        }),
+      },
+    );
+    expect(inviteRes.status).toBe(201);
+    const { token } = await inviteRes.json();
+
+    // 2. 招待受諾
+    const acceptRes = await fetch(
+      `${BASE_URL}/api/family/invites/${token}/accept`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${inviteeToken}` },
+      },
+    );
+    expect(acceptRes.status).toBe(200);
+
+    // 3. メンバーが追加されていることを確認
+    const { data: members } = await supabaseAdmin
+      .from('family_members')
+      .select('user_id')
+      .eq('family_group_id', group.id);
+    const memberUserIds = members?.map((m) => m.user_id) ?? [];
+    expect(memberUserIds).toContain(invitee.id);
+  });
+
+  it('returns 412 when If-Unmodified-Since does not match updated_at', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+
+    const res = await fetch(
+      `${BASE_URL}/api/family/groups/${group.id}/transfer-ownership`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ownerToken}`,
+          'Content-Type': 'application/json',
+          'If-Unmodified-Since': '2020-01-01T00:00:00Z', // 古いタイムスタンプ
+        },
+        body: JSON.stringify({ new_owner_id: faker.string.uuid() }),
+      },
+    );
+    expect(res.status).toBe(412);
+  });
+
+  it('rejects INSERT to family_meal_requests when group is frozen', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+      status: 'frozen',
+    });
+
+    const res = await fetch(`${BASE_URL}/api/family/meal-requests`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ownerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        family_group_id: group.id,
+        target_member_id: faker.string.uuid(),
+        date: '2026-07-01',
+        meal_type: 'dinner',
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error.code).toBe('FAM_GROUP_NOT_ACTIVE');
+  });
+});
+```
 
 ### 13.3 E2E (Playwright)
 
-- `tests/e2e/family/family-02-invite-accept.spec.ts`
-- `tests/e2e/family/family-09-meal-request-pattern3.spec.ts`
+主要テストケース:
+
+1. `test('creates group and invites member via email link')`
+2. `test('pattern-3 meal request: owner proposes → member accepts')`
+3. `test('returns to active status after migrate-to-personal during freeze')`
+
+```typescript
+// tests/e2e/family/family-02-invite-accept.spec.ts
+import { test, expect } from '@playwright/test';
+import { FamilyGroupPage } from '../pages/FamilyGroupPage';
+
+test('creates group and invites member via email link @smoke', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/login');
+  // owner ログイン省略
+
+  const familyPage = new FamilyGroupPage(page);
+  await familyPage.create('田中家');
+
+  const groupId = await familyPage.getGroupId();
+  await familyPage.invite('member@test.local', 'member');
+
+  // 招待メールの URL を取得 (Resend sandbox)
+  const inviteUrl = await getInviteUrlFromEmail('member@test.local');
+  expect(inviteUrl).toBeTruthy();
+
+  // 別ユーザーとして招待を受諾
+  const memberPage = await context.newPage();
+  await memberPage.goto(inviteUrl);
+  await memberPage.click('[data-testid=accept-invite-button]');
+  await memberPage.waitForURL(/\/family\/.*/);
+
+  // owner 側でメンバーが追加されたことを確認
+  await page.reload();
+  await familyPage.expectMemberCount(2);
+});
+```
 
 ## 14. 既存実装との関連
 

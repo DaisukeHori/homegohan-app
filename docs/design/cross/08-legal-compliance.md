@@ -515,12 +515,13 @@ SELECT cron.schedule('check_grace_period', '0 * * * *', $$
   WHERE status = 'past_due'
     AND past_due_since < NOW() - INTERVAL '7 days';
 
-  -- grace → cancelled (30日経過)
+  -- grace → cancelled (grace_started_at から 23 日経過 = 合計 30 日)
+  -- operator/08-cron-batches.md §5.7 Stage 2 と整合
   UPDATE personal_subscriptions
   SET status = 'cancelled',
       cancelled_at = NOW()
   WHERE status = 'grace'
-    AND past_due_since < NOW() - INTERVAL '30 days';
+    AND grace_started_at < NOW() - INTERVAL '23 days';
 $$);
 ```
 

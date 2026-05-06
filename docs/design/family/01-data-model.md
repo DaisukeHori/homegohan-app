@@ -557,28 +557,189 @@ erDiagram
 
 ### 7.2 制約テスト (Vitest + Supabase Local)
 
-| テストケース | 検証内容 |
-|------------|---------|
-| `family_groups` UNIQUE (owner_id) | 同ユーザーが 2 グループ作成で 409 |
-| `family_members` partial UNIQUE | 同グループに同 user_id で 409 |
-| `family_shopping_lists` partial UNIQUE | active リストが 2 件で 409 |
-| `family_invites` CHECK token_len | 63 文字トークンで INSERT 失敗 |
-| `family_shopping_items` CHECK checked | is_checked=true / checked_at=NULL で INSERT 失敗 |
-| FK CASCADE | family_groups 削除 → 子レコード全 CASCADE |
-| FK SET NULL | org_license_assignments 削除 → family_groups.source_org_assignment_id = NULL |
+主要テストケース:
+
+1. `it('returns 409 when user already owns a family group')`
+2. `it('returns 409 when same user_id is inserted into same group twice')`
+3. `it('returns 409 when second active shopping list is inserted for same group')`
+4. `it('throws check violation when family_invites token length is 63 chars')`
+5. `it('throws check violation when is_checked=true but checked_at is null')`
+6. `it('cascades deletion of all child records when family_groups row is deleted')`
+7. `it('sets source_org_assignment_id to null when org_license_assignments row is deleted')`
+
+```typescript
+// tests/integration/family/data-model-constraints.integration.test.ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { faker } from '@faker-js/faker/locale/ja';
+import { createTestUser } from '../../helpers/auth';
+import { createFamilyGroupInDB } from '../../factories/family-group.factory';
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+);
+
+describe('family_groups 制約テスト', () => {
+  it('returns unique violation when user already owns a family group', async () => {
+    const owner = await createTestUser('user');
+    await createFamilyGroupInDB(supabaseAdmin, { owner_id: owner.id });
+
+    // 2 グループ目の INSERT
+    const { error } = await supabaseAdmin.from('family_groups').insert({
+      name: '2つ目のグループ',
+      owner_id: owner.id,
+      plan_key: 'free',
+    });
+
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23505'); // unique_violation
+  });
+
+  it('returns unique violation when same user_id inserted into same group twice', async () => {
+    const owner = await createTestUser('user');
+    const member = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+
+    await supabaseAdmin.from('family_members').insert({
+      family_group_id: group.id,
+      user_id: member.id,
+      name: 'メンバー1',
+      relation: 'spouse',
+    });
+
+    const { error } = await supabaseAdmin.from('family_members').insert({
+      family_group_id: group.id,
+      user_id: member.id,
+      name: 'メンバー1重複',
+      relation: 'parent',
+    });
+
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23505'); // unique_violation (partial unique)
+  });
+
+  it('returns unique violation when second active shopping list is inserted', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+
+    await supabaseAdmin.from('family_shopping_lists').insert({
+      family_group_id: group.id,
+      start_date: '2026-06-01',
+      end_date: '2026-06-07',
+      status: 'active',
+    });
+
+    const { error } = await supabaseAdmin.from('family_shopping_lists').insert({
+      family_group_id: group.id,
+      start_date: '2026-06-08',
+      end_date: '2026-06-14',
+      status: 'active',
+    });
+
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23505'); // partial unique index
+  });
+
+  it('throws check violation when token length is 63 chars', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+
+    const { error } = await supabaseAdmin.from('family_invites').insert({
+      family_group_id: group.id,
+      email: 'invite@example.com',
+      token: 'a'.repeat(63), // 63 文字 (正常は 64 文字)
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      created_by: owner.id,
+    });
+
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23514'); // check_violation
+  });
+
+  it('throws check violation when is_checked=true but checked_at is null', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+    const list = await supabaseAdmin
+      .from('family_shopping_lists')
+      .insert({
+        family_group_id: group.id,
+        start_date: '2026-06-01',
+        end_date: '2026-06-07',
+      })
+      .select()
+      .single();
+
+    const { error } = await supabaseAdmin.from('family_shopping_items').insert({
+      family_shopping_list_id: list.data!.id,
+      ingredient_name: '卵',
+      is_checked: true,
+      checked_at: null, // CHECK 違反
+      added_by: owner.id,
+    });
+
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('23514'); // check_violation
+  });
+
+  it('cascades deletion of child records when family_groups row is deleted', async () => {
+    const owner = await createTestUser('user');
+    const group = await createFamilyGroupInDB(supabaseAdmin, {
+      owner_id: owner.id,
+    });
+
+    await supabaseAdmin.from('family_members').insert({
+      family_group_id: group.id,
+      name: 'メンバー',
+      relation: 'child',
+      user_id: null,
+    });
+
+    await supabaseAdmin
+      .from('family_groups')
+      .delete()
+      .eq('id', group.id);
+
+    const { data } = await supabaseAdmin
+      .from('family_members')
+      .select('id')
+      .eq('family_group_id', group.id);
+
+    expect(data).toHaveLength(0); // CASCADE で削除済み
+  });
+});
+```
 
 ### 7.3 インデックス効果確認
 
 ```sql
--- 期限切れバッチのクエリ計画確認
+-- 期限切れバッチのクエリ計画確認 (Seq Scan でなく Index Scan になること)
 EXPLAIN ANALYZE
 SELECT id FROM family_meal_requests
 WHERE status IN ('pending', 'proposed') AND expires_at < NOW();
+-- 期待: Index Scan on idx_family_meal_requests_expires
 
 -- 買い物リスト Realtime 購読クエリ
 EXPLAIN ANALYZE
 SELECT * FROM family_shopping_items
 WHERE family_shopping_list_id = $1 AND is_checked = FALSE;
+-- 期待: Index Scan on idx_family_shopping_items_unchecked
+
+-- 18 歳到達バッチクエリ
+EXPLAIN ANALYZE
+SELECT id, birth_date FROM family_members
+WHERE user_id IS NULL
+  AND birth_date BETWEEN CURRENT_DATE - INTERVAL '18 years 1 month'
+                     AND CURRENT_DATE - INTERVAL '18 years';
+-- 期待: Index Scan on idx_family_members_birthdate
 ```
 
 ## 8. 既存実装との関連
