@@ -701,10 +701,9 @@ describe('org_license_pools 同時 INSERT テスト', () => {
     // 100 件を同時に試みる (10 枠しかない)
     const promises = Array.from({ length: 100 }, () =>
       supabaseAdmin.from('org_license_assignments').insert({
-        pool_id: pool.id,
+        license_pool_id: pool.id,
         organization_id: pool.organization_id,
         user_id: faker.string.uuid(),
-        plan_key: pool.plan_key,
       }),
     );
     await Promise.allSettled(promises);
@@ -726,17 +725,15 @@ describe('org_license_pools 同時 INSERT テスト', () => {
     const userId = faker.string.uuid();
 
     await supabaseAdmin.from('org_license_assignments').insert({
-      pool_id: pool.id,
+      license_pool_id: pool.id,
       organization_id: pool.organization_id,
       user_id: userId,
-      plan_key: pool.plan_key,
     });
 
     const { error } = await supabaseAdmin.from('org_license_assignments').insert({
-      pool_id: pool.id,
+      license_pool_id: pool.id,
       organization_id: pool.organization_id,
       user_id: userId, // 重複
-      plan_key: pool.plan_key,
     });
 
     expect(error).not.toBeNull();

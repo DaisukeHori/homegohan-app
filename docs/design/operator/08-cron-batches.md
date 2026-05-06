@@ -453,12 +453,12 @@ export async function POST(request: Request) {
       });
     }
 
-    // 影響組織の org_admin を抽出
+    // 影響組織の org_admin を抽出 (org_license_pools に status 列はなく、ends_at で active 判定)
     const { data: affectedOrgs } = await supabase
       .from('org_license_pools')
       .select('organization_id')
       .eq('plan_key', plan.plan_key)
-      .eq('status', 'active');
+      .gt('ends_at', new Date().toISOString());
 
     for (const org of affectedOrgs ?? []) {
       await notifyOrgAdmins(org.organization_id, {
