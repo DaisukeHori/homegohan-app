@@ -61,12 +61,16 @@ async function getOrCreateActiveShoppingList(supabase: any, userId: string): Pro
   if (shoppingList) return shoppingList;
 
   // なければ新規作成
+  const today = new Date().toISOString().slice(0, 10);
+  const weekLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const { data: newList, error: createError } = await supabase
     .from('shopping_lists')
     .insert({
       user_id: userId,
       status: 'active',
       name: '買い物リスト',
+      start_date: today,
+      end_date: weekLater,
     })
     .select('id')
     .single();
@@ -431,20 +435,21 @@ export async function POST(
           break;
         }
         
-        // セキュリティ: 自分の献立のみ更新可能
+        // セキュリティ: 自分の献立のみ更新可能 (user_daily_meals JOIN 経由でユーザー確認)
         const { data: meal, error: mealFetchError } = await supabase
           .from('planned_meals')
-          .select('id, dish_name, user_id, dishes, image_url')
+          .select('id, dish_name, dishes, image_url, user_daily_meals!inner(user_id)')
           .eq('id', mealId)
-          .single();
+          .eq('user_daily_meals.user_id', user.id)
+          .maybeSingle();
 
         if (mealFetchError) {
           console.error('Failed to fetch meal for update:', mealFetchError);
           result = { error: `食事の取得に失敗: ${mealFetchError.message}` };
           break;
         }
-        
-        if (!meal || meal.user_id !== user.id) {
+
+        if (!meal) {
           result = { error: '権限がありません' };
           break;
         }
@@ -521,14 +526,15 @@ export async function POST(
 
       case 'delete_meal': {
         const { mealId } = action.action_params;
-        // セキュリティチェック - planned_meals の user_id を直接確認
+        // セキュリティチェック - user_daily_meals JOIN 経由でユーザー確認
         const { data: meal } = await supabase
           .from('planned_meals')
-          .select('id, user_id')
+          .select('id, user_daily_meals!inner(user_id)')
           .eq('id', mealId)
-          .single();
+          .eq('user_daily_meals.user_id', user.id)
+          .maybeSingle();
 
-        if (!meal || meal.user_id !== user.id) {
+        if (!meal) {
           result = { error: '権限がありません' };
           break;
         }
@@ -550,14 +556,15 @@ export async function POST(
 
       case 'complete_meal': {
         const { mealId, isCompleted } = action.action_params;
-        // セキュリティチェック - planned_meals の user_id を直接確認
+        // セキュリティチェック - user_daily_meals JOIN 経由でユーザー確認
         const { data: meal } = await supabase
           .from('planned_meals')
-          .select('id, user_id')
+          .select('id, user_daily_meals!inner(user_id)')
           .eq('id', mealId)
-          .single();
+          .eq('user_daily_meals.user_id', user.id)
+          .maybeSingle();
 
-        if (!meal || meal.user_id !== user.id) {
+        if (!meal) {
           result = { error: '権限がありません' };
           break;
         }
