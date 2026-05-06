@@ -1,0 +1,8 @@
+# Supabase local dev / CLI config
+# https://supabase.com/docs/reference/cli/config
+
+[functions.knowledge-gpt]
+verify_jwt = false
+
+[functions.generate-hint]
+verify_jwt = false
