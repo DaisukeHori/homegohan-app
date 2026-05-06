@@ -1515,10 +1515,59 @@ CREATE POLICY family_meal_requests_no_insert_when_frozen ON family_meal_requests
 
 #### 8.6.8 `POST /api/family/meal-requests/{id}/ai-propose`
 **説明**: assignee の代わりに AI が代替メニューを生成 (補助)
+
+**呼び出し先 Edge Function**: `supabase/functions/family-meal-ai-propose/index.ts` (新規実装)
+- 内部的に xAI Grok API を呼び出し (03 §5.5.4 のモデル選定参照)
+- 既存 `knowledge-gpt` の RAG パターンを流用、新規 system prompt + JSON mode
+
+**入力スキーマ**:
+```typescript
+{
+  meal_request_id: UUID,           // 対象リクエスト
+  constraints: {                    // family_meal_requests.constraints から自動展開
+    calorie_max?: number,
+    excluded_ingredients?: string[],  // アレルギー / 嗜好
+    cuisine_type?: string,            // '和食' / '洋食' / '中華' 等
+    cooking_time_max_minutes?: number,
+  },
+  member_context: {                 // target_member_id から自動展開
+    dietary_restrictions: string[],   // アレルギー
+    age_group: string,                // 子供向けは難易度低く
+    activity_level?: string,
+  },
+  family_recent_history: string[],  // 最近 7 日の家族献立 (重複回避)
+}
+```
+
+**出力**: `proposed_recipe` JSONB (03 §5.5.6 `ProposedRecipeSchema` に準拠)
+- 失敗時 (バリデーション or アレルゲンヒット) は max 3 回リトライ → 失敗で 422 返却
+
 **動作**:
 - `constraints` を考慮して AI 生成
+- 出力を Zod で構造検証 + アレルゲン検証 (03 §5.5.7)
 - `proposed_dish_name`, `proposed_recipe`, `proposed_by_ai = true` 設定
 - assignee がそれを採用するなら `propose` API へ進む
+
+**LLM 使用量計測**: `withLLMUsageContext({ userId, organizationId, functionName: 'family-meal-ai-propose', ... })` で wrap
+
+#### 8.6.9 `POST /api/family/shared-menus/generate`
+**説明**: 家族全員の制約を考慮した共有献立 (週 21 食) を AI 生成
+
+**呼び出し先 Edge Function**: `supabase/functions/family-shared-menu-generate/index.ts` (新規)
+- 既存 `generate-menu-v5` を **家族対応モード** で呼び出すラッパー
+- 全 `family_members` の `dietary_restrictions` の **和集合** を constraints として注入
+
+**入力**:
+```typescript
+{
+  family_group_id: UUID,
+  start_date: DATE,         // 通常は来週月曜
+  meal_count: number,       // 21 (3 食 × 7 日)
+  member_ids: UUID[],       // 共有対象メンバー (子供除外もあり)
+}
+```
+
+**出力**: `family_shared_menus` への bulk INSERT 後、ID 一覧を返す
 
 ### 8.7 通知設定
 
@@ -1794,6 +1843,127 @@ type FamilyNotificationPayload =
 - 「家族グループ」 = システム用語、`family_groups` テーブル
 - 「メンバー」 = `family_members` テーブルレコード
 - 「ユーザー」 = `auth.users` テーブルレコード (アカウント保持者)
+
+---
+
+## 15. モバイル App 実装要件 (React Native + Expo)
+
+WebView ハイブリッド構成だが、**ネイティブ実装が必須** な機能を明記。
+
+### 15.1 ディープリンク (招待受諾)
+
+```
+homegohan://invite/family/{token}
+homegohan://invite/org/{token}
+```
+
+**新規実装ファイル**:
+- `apps/mobile/app/family/invite-accept.tsx` (新規)
+- `apps/mobile/app/org/invite-accept.tsx` (新規)
+
+**ハンドラー**:
+- `apps/mobile/app/_layout.tsx` に `Linking.addEventListener('url', ...)` を追加
+- アプリ未起動時の対応: `Linking.getInitialURL()` を起動時に呼び、deep link をキャッチ
+- 起動済み時の対応: `addEventListener` でキャッチ
+
+**フロー**:
+1. ディープリンク受信 → token を抽出
+2. `Linking.canOpenURL` で OS 互換性確認
+3. native session があれば直接 `POST /api/family/invites/{token}/accept` (or org)
+4. 未ログインなら `/login?next=/invite/family/{token}` にリダイレクト
+5. Apple Configurator 2 配布環境でも `homegohan://` カスタムスキームは機能する (Universal Links は不要)
+
+### 15.2 食事写真アップロード (`meal-photos` バケット)
+
+**ネイティブ ImagePicker 経由必須**:
+- `apps/mobile/src/lib/storage.ts` に `uploadMealPhoto(file, familyGroupId?)` 新規関数
+- WebView 内 `<input type="file">` は iOS 18 でカメラ dismiss バグあり、使用不可
+- `expo-image-picker` でカメラ起動 → ローカル URI を取得 → Supabase Storage `meal-photos` バケットへ direct upload (multipart/form-data)
+
+**家族共有ロジック**:
+- アップロード時に `family_group_id` パラメータを渡せば、その家族グループメンバーに閲覧権を付与する metadata 設定
+
+### 15.3 Push 通知バッジカウント
+
+**実装ファイル**:
+- `apps/mobile/src/lib/pushNotifications.ts` に `setNotificationBadge(count)` 関数追加
+- `Notifications.setBadgeCountAsync(count)` (iOS / Android 両対応)
+
+**バッジ更新タイミング**:
+- Push 受信時 (`Notifications.setNotificationHandler` で payload 内 `badge` フィールドを反映)
+- 該当画面 (家族タブ等) を閲覧した時に自動デクリメント
+- ユーザーが手動で「すべて既読」操作した時
+
+**通知種別ごとのバッジ寄与**:
+| 通知種別 | バッジ加算 | カテゴリ ID |
+|---------|----------|----------|
+| 個別献立リクエスト | +1 | `family_meal_request` |
+| 提案完了 | +1 | `family_meal_proposed` |
+| 退職猶予通知 | +1 | `family_freeze_warning` |
+| 家族凍結通知 | +1 | `family_frozen` |
+| プラン deprecated 通知 | +1 | `plan_deprecated` |
+| 試用期間リマインダー | +1 | `trial_ending` |
+
+### 15.4 通知種別の on/off (UI + API)
+
+**既存問題**: `apps/mobile/app/(tabs)/settings.tsx` の `notifications_enabled` は単一 boolean のみ。要件は種別ごとの細かい制御が必要。
+
+**API 拡張** (`/api/notification-preferences`):
+```sql
+ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS preferences JSONB
+  NOT NULL DEFAULT '{
+    "family_meal_request": true,
+    "family_meal_proposed": true,
+    "family_shared_menu": true,
+    "family_shopping_list": true,
+    "family_freeze_warning": true,
+    "plan_deprecated": true,
+    "trial_ending": true,
+    "license_renewal": true
+  }';
+```
+
+**UI**:
+- `settings.tsx` に「通知設定」リンクを追加 → 専用画面で各種別を toggle
+
+### 15.5 アプリバージョン強制更新
+
+破壊的 API 変更 (snake_case 統一等) で旧アプリが動作不能になる可能性があるため:
+
+- `app.json` の `expo.version` を毎リリース更新
+- 新規 API: `GET /api/app/version-check?platform=ios&version=1.2.3`
+  - レスポンス: `{ minimum_supported: "1.0.0", current: "1.2.3", force_update: false }`
+- 起動時に呼び出し → `force_update: true` なら App Store / Play Store へ誘導モーダル
+
+### 15.6 既存テスト破壊への対応
+
+**修正必須テスト**:
+| テスト | 修正内容 |
+|--------|---------|
+| `apps/mobile/__tests__/meals/nutrition-input.test.ts` | `family_members.height_cm` リネーム後の入力検証 |
+| `apps/mobile/__tests__/health/profile-edit.test.tsx` | 同上 |
+| `tests/e2e/r10-org-pantry-deep.spec.ts` | `/api/org/users` → `/api/org/members` パス更新 |
+| `tests/e2e/w5-13-new-features-adversarial.spec.ts` | 同上 + `/api/org/settings` → `/api/org/me` |
+| `tests/e2e/wave5-w56-settings-account-profile-adversarial.spec.ts` | `plan-limits.ts` リファクタ後の export 経路検証 |
+| `tests/e2e/w5-12-admin-adversarial.spec.ts` | `plan: "standard"` → `plan_key: "org_standard"` |
+
+**新規追加テスト**:
+- `__tests__/lib/plan-limits.test.ts` (unit、複数組織+plan_key 体系)
+- `tests/e2e/family-invite-deeplink.spec.ts` (E2E、`/invite/family/{token}` 受諾フロー)
+- `tests/e2e/org-license-purchase.spec.ts` (E2E、UC-ORG-11)
+- `tests/e2e/family-meal-request.spec.ts` (E2E、UC-FAM-12 個別献立リクエスト)
+- `tests/integration/subscription-plans-seed.spec.ts` (マイグレーション後 9 種 plan_key seed 確認)
+
+### 15.7 Android FCM / iOS APNs 対応
+
+**確認事項**:
+- 既存稼働: iOS のみ Apple Configurator 2 + TestFlight (`hori@hori.tech` アカウント)
+- Android: 未確認 → `notify-push` Edge Function 実装前に確認必要
+- Expo Push Token は両 OS 対応するが、内部的には APNs / FCM へ振り分け
+
+**新規 EAS Secret 設定**:
+- iOS: APNs キー (.p8) は EAS Build に登録済み
+- Android: FCM Server Key を `EXPO_FCM_SERVER_KEY` として EAS Secret に追加が必要
 
 ---
 

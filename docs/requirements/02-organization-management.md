@@ -1378,6 +1378,37 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 #### 8.8.3 `POST /api/org/health/patients/{userId}/notes`
 **説明**: 産業医メモ追加
 
+#### 8.8.4 `POST /api/org/health/patients/{userId}/ai-advice` ⭐ (Org Pro 以上)
+**説明**: 同意済メンバーの食事+健康データを基に Claude 3.5 Sonnet で個別アドバイス生成
+
+**アクセス制御**:
+- 呼び出し元: `org_industrial_doctor` ロール
+- 対象: `consent_org_health_data = TRUE` のメンバーのみ
+- 別組織のメンバーは 403
+
+**呼び出し先 Edge Function**: `supabase/functions/industrial-doctor-advice/index.ts` (新規実装)
+
+**入力**:
+```typescript
+{
+  user_id: UUID,
+  period_start: DATE,
+  period_end: DATE,
+  focus_areas?: ('nutrition' | 'sleep' | 'stress' | 'weight' | 'lifestyle')[]
+}
+```
+
+**処理**:
+1. 対象期間の `meals` 集計 (栄養素 / 食事パターン)
+2. `health_checkups` の最新数値 (HbA1c / BMI / 血圧)
+3. `user_performance_checkins` の睡眠・疲労・心拍 (※ 産業医ポリシー §7.4 拡張前提)
+4. Claude 3.5 Sonnet API へ食事改善提案 + 生活習慣指導文を生成依頼
+5. 結果を `org_health_notes` に AI 提案として記録 (`note_type = 'ai_advice'`)
+
+**LLM 使用量計測**: organization_id 必須付与 (組織 quota 消費)
+
+**プラン制限**: `subscription_plans.feature_packages` に `industrial_doctor_ai` パッケージが含まれる組織のみ。`org_pro` / `org_enterprise` で利用可。
+
 ### 8.9 課金・契約
 
 #### 8.9.1 `GET /api/org/subscription`

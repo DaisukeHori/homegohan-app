@@ -665,12 +665,98 @@ SSO           |      |     |             |           |              |           
 - 時系列推移: 時間 / 日別
 
 #### 5.5.3 クォータ
-| プラン | 1 日上限 | 1 ヶ月上限 |
-|--------|---------|----------|
-| `free` | 50 リクエスト | 1,000 リクエスト |
-| `pro` (個人) | 500 リクエスト | 10,000 リクエスト |
-| `family_basic` / `family_pro` | 1,000 リクエスト | 30,000 リクエスト |
-| `org_*` | 組織単位で設定 | 組織単位で設定 |
+| プラン | 1 日上限 | 1 ヶ月上限 | 試用期間中の上限 |
+|--------|---------|----------|---------------|
+| `free` | 50 リクエスト | 1,000 リクエスト | - |
+| `pro` (個人) | 500 リクエスト | 10,000 リクエスト | 50/日 (= Free 相当) |
+| `family_basic` | 800 リクエスト | 20,000 リクエスト | 100/日 |
+| `family_pro` | 1,500 リクエスト | 50,000 リクエスト | 100/日 |
+| `org_starter` | 200/seat | 5,000/seat | - |
+| `org_standard` | 500/seat | 10,000/seat | - |
+| `org_pro` | 1,000/seat | 30,000/seat | - |
+| `org_enterprise` | カスタム | カスタム | - |
+
+> **試用期間中の制限 (重要)**: 試用中は本契約と同じ機能を解放するが、AI quota は **試用専用上限** を適用 (本契約の約 1/10)。これにより `7 日 × 1000 リクエスト = 7000 リクエスト` の無料消費を防ぐ (`personal_subscriptions.status = 'trialing'` の場合は試用 quota を返す)。
+
+#### 5.5.4 AI モデル選定 (機能別)
+
+| 機能 | モデル | プロバイダー | 月コスト想定 (1000 ユーザー) |
+|------|-------|------------|---------------------------|
+| `food-recognition` (写真→食材) | Gemini 2.0 Flash | Google | $50 |
+| `classify-photo` | Gemini 2.0 Flash Lite | Google | $20 |
+| `analyze-fridge` | Gemini 2.0 Flash | Google | $30 |
+| `analyze-health-checkup` (PDF→数値) | Gemini 2.0 Flash | Google | $10 |
+| `knowledge-gpt` (一般質問・献立提案) | xAI Grok-4-1-fast-non-reasoning | xAI | $200 |
+| `family-meal-ai-propose` (個別献立) ⭐新規 | xAI Grok-4-1-fast-non-reasoning | xAI | $100 |
+| `family-shared-menu-generate` ⭐新規 | xAI Grok-4 (高品質) | xAI | $150 |
+| `industrial-doctor-advice` (Org Pro) ⭐新規 | Claude 3.5 Sonnet (専門性必要) | Anthropic | $80 |
+| `generate-week-menu` | xAI Grok-4-1-fast | xAI | $100 |
+
+**選定基準**:
+- 画像認識: Gemini (コスト最安、品質十分)
+- チャット・献立提案: xAI Grok (latency 最速、コスト中)
+- 健康指導 (産業医向け): Claude Sonnet (専門性、安全性)
+- 速度重視 (リアルタイム判定): Gemini Flash Lite
+
+#### 5.5.5 ストリーミング応答時の usage 計測
+
+`knowledge-gpt` 等のストリーミングパス (SSE) は完了時に `llm_usage_logs` への INSERT が必要:
+
+```typescript
+// supabase/functions/_shared/llm-usage.ts への追加
+async function logStreamingUsage(ctx: LLMUsageContext, response: Response) {
+  const reader = response.body!.getReader();
+  let totalTokens = 0;
+  // ... ストリーミング処理 ...
+  // ストリーム完了時に最終トークン数を記録
+  await supabase.from('llm_usage_logs').insert({
+    user_id: ctx.userId,
+    organization_id: ctx.organizationId,  // §15.18 で追加
+    function_name: ctx.functionName,
+    model: ctx.model,
+    total_tokens: totalTokens,
+    cost_usd: calculateCost(totalTokens, ctx.model),
+    is_streaming: true,
+  });
+}
+```
+
+#### 5.5.6 AI 出力 JSONB スキーマ (`proposed_recipe`)
+
+`family_meal_requests.proposed_recipe` の JSONB スキーマを Zod で定義:
+
+```typescript
+// shared/schemas/proposed-recipe.ts
+export const ProposedRecipeSchema = z.object({
+  dish_name: z.string().min(1).max(200),
+  description: z.string().max(500).optional(),
+  ingredients: z.array(z.object({
+    name: z.string(),
+    quantity: z.number().positive().optional(),
+    unit: z.string().optional(),
+  })).min(1).max(30),
+  steps: z.array(z.string()).min(1).max(20),
+  nutrition: z.object({
+    calories_kcal: z.number().nonnegative(),
+    protein_g: z.number().nonnegative(),
+    fat_g: z.number().nonnegative(),
+    carb_g: z.number().nonnegative(),
+    salt_g: z.number().nonnegative(),
+  }),
+  prep_time_minutes: z.number().int().positive().optional(),
+  difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+});
+```
+
+Edge Function 出力時に validate、失敗したら fallback (人間が決める UI に分岐)。
+
+#### 5.5.7 ハルシネーション・アレルギー検証
+
+`_shared/allergy.ts` の `detectAllergenHits()` を呼び出し、提案レシピに対象メンバーのアレルギー食材が含まれないか自動検証:
+
+1. 提案完了 → `ProposedRecipeSchema.parse()` で構造検証
+2. `family_members.dietary_restrictions` (アレルギー / 制限) と `proposed_recipe.ingredients` を突合
+3. ヒットあり → 自動再生成 (max 3 回) → 失敗時は「AI が安全な提案を作れませんでした」と人間提案へフォールバック
 
 #### 5.5.4 異常検知
 - 1 ユーザーが 1 日 5,000 リクエスト超 → アラート + 一時クォータ削減
@@ -1977,6 +2063,246 @@ support@homegohan.com
 - 「管理者 / admin」: 管理コンソール ロール名
 - 「管理コンソール」: `/admin` `/super-admin` `/support` を含む UI 全体
 - 「管理画面」: 個別の画面 (例: ユーザー管理画面)
+
+---
+
+## 15. 運用手順書 (Runbook)
+
+実装着手後、本番運用で必ず必要となる手順を要件として明記する。詳細手順書は別ドキュメント (`docs/operations/*.md`) に切り出すが、要件としての網羅性を保証する。
+
+### 15.1 Stripe 整合性チェック (日次 reconciliation)
+
+**目的**: Stripe 側 (source of truth) と DB の課金状態を毎日照合し、Webhook 取りこぼし等の不整合を検出。
+
+```
+新規 cron: /api/cron/stripe-reconcile (Vercel Cron, 日次 04:00 JST)
+- Stripe API: GET /v1/subscriptions?status=all&limit=100 (paginate)
+- 各 subscription を personal_subscriptions と比較
+- 不一致 → admin_audit_logs に記録 + Slack アラート
+- 自動修復は禁止 (手動確認後に super_admin が修正)
+```
+
+### 15.2 HR Webhook 部分失敗の冪等化
+
+**問題**: 100 人退職 Webhook で 50 人だけ revoke 成功するケース。
+
+**設計**:
+- Webhook ペイロードを `hr_webhook_events` テーブルに raw 保存 (`status: pending/processing/completed/failed`)
+- 各退職者を **個別ジョブ** として queue 投入 (`hr_revoke_jobs` テーブル)
+- ジョブは冪等 (同じ employee_id を 2 回処理しても問題なし)
+- 失敗ジョブはエクスポネンシャルバックオフで最大 5 回リトライ
+- 5 回失敗 → デッドレター (`hr_revoke_jobs.status = 'dead_letter'`) → 管理者へアラート
+
+```sql
+CREATE TABLE hr_webhook_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL,
+  payload JSONB NOT NULL,
+  signature VARCHAR(500),
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE hr_revoke_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  webhook_event_id UUID NOT NULL REFERENCES hr_webhook_events(id),
+  employee_id VARCHAR(50) NOT NULL,
+  retry_count INT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 15.3 pg_cron 失敗時の対応
+
+**監視**:
+- pg_cron は Supabase の `cron.job_run_details` テーブルでステータス記録
+- 別 cron で `cron.job_run_details WHERE status = 'failed' AND start_time > NOW() - INTERVAL '24h'` を検索 → アラート
+- 連続 3 回失敗で運営に Slack 通知
+
+**手動実行手順**:
+- super_admin が `/super-admin/cron-jobs` UI から個別 job を `RUN NOW`
+- 全 cron job 名と説明を UI に列挙
+
+### 15.4 deprecated プランのロールバック手順
+
+**シナリオ**: 誤って `super_admin` が `org_pro` を deprecated にしてしまった
+
+**手順**:
+1. `super_admin` のみ `POST /api/super-admin/plans/{id}/un-deprecate` を呼び出せる
+2. ステータスを `private` に戻す (`public` には戻さない、誤操作判別のため)
+3. `org_license_pools.auto_renew` を強制 FALSE にした分を取り消し (`UPDATE ... SET auto_renew = TRUE WHERE plan_key = ? AND auto_renew_was_force_disabled_at IS NOT NULL`)
+4. 影響組織管理者へ「誤操作のため更新有効化を戻しました」通知
+5. `admin_audit_logs` に severity = critical で記録
+
+```sql
+ALTER TABLE org_license_pools ADD COLUMN IF NOT EXISTS
+  auto_renew_was_force_disabled_at TIMESTAMPTZ;
+```
+
+### 15.5 誤大量 CSV 割当の緊急 revoke
+
+**シナリオ**: org_admin が 10000 人 CSV 割当 → 数千人が誤配布
+
+**手順**:
+1. `POST /api/org/licenses/assignments/bulk-revoke`
+   - body: `{ pool_id, criteria: { assigned_after: TIMESTAMPTZ } }` または `{ user_ids: [...] }`
+2. 確認モーダル: 「N 人のライセンスを取消します」 (人数表示必須)
+3. パスワード再認証必須
+4. 一括 revoke → `org_license_audit_log` に bulk_revoke_event_id でグルーピング記録
+5. 該当ユーザー (`family_groups.source_org_assignment_id`) に凍結フローを適用 (UC-ORG-17)
+
+### 15.6 `org_admin` ゼロ状態の緊急復旧
+
+**シナリオ**: 唯一の org_admin が退職 (HR Webhook で revoke) → 組織管理者不在
+
+**設計**:
+- `revoke` 直前にチェック: 「この操作で `org_admin` が 0 になる場合は **revoke を保留**」
+- 保留時に `super_admin` に通知 → 後継者を任命するまで操作待機
+
+**super_admin 緊急介入**:
+- `POST /api/super-admin/organizations/{orgId}/transfer-admin`
+- body: `{ new_admin_user_id: UUID, reason: TEXT }`
+- 監査ログに記録、新 org_admin に通知
+
+### 15.7 GDPR / 個人情報削除要求フロー
+
+**API**: `POST /api/account/gdpr-delete-request`
+
+**フロー**:
+1. ユーザーから削除要求受信 (本人 or サポート経由)
+2. `gdpr_deletion_requests` テーブルに記録
+3. 30 日の cooling period (本人取消可能、誤操作対策)
+4. cooling 終了後、自動削除バッチ実行:
+   - `meals` / `planned_meals` / `family_members` / `health_checkups` 等を物理削除
+   - `auth.users` を匿名化 (`email = 'deleted+{uuid}@example.com'`、その他 PII 列を NULL or HASH)
+   - `admin_audit_logs` / `org_health_access_logs` 等の監査系は **保持** (法的要件、user_id を NULL に)
+5. 削除完了証明書 (PDF) を本人メールに送信
+6. `admin_audit_logs` に severity=critical で記録
+
+```sql
+CREATE TABLE gdpr_deletion_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  cooling_until TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+  cancelled_at TIMESTAMPTZ,
+  executed_at TIMESTAMPTZ,
+  certificate_url TEXT
+);
+```
+
+### 15.8 監査ログ対象操作の網羅リスト (admin_audit_logs)
+
+要件として **全リスト** を確定:
+
+```
+[admin 系]
+- admin.user.ban / unban / role_change / impersonate
+- admin.organization.create / suspend / restore / delete
+- admin.coupon.create / pause / activate / retroactive_apply
+- admin.refund.issue
+- admin.export.request
+
+[super_admin 系]
+- super_admin.plan.create / update / publish / deprecate / un_deprecate / price_change
+- super_admin.feature_package.create / update / delete
+- super_admin.feature_flag.toggle / rollout
+- super_admin.cron.run_now / pause
+- super_admin.organization.transfer_admin
+- super_admin.gdpr_delete.execute
+
+[finance 系]
+- finance.invoice.regenerate / cancel
+- finance.refund.approve
+
+[support 系]
+- support.ticket.escalate
+- support.user.password_reset
+```
+
+### 15.9 監査ログ保持期間 (法令対応)
+
+| ログテーブル | 保持期間 | 根拠 |
+|------------|---------|------|
+| `admin_audit_logs` | 7 年 | 個人情報保護法、SOC2 |
+| `organization_audit_logs` | 7 年 | 法人契約の監査要件 |
+| `org_license_audit_log` | 7 年 | 同上 |
+| `org_health_access_logs` | 10 年 | 産業医記録、医療法準拠 |
+| `family_activity_log` | 3 年 | プライバシーバランス |
+| `gdpr_deletion_requests` | 永久 | 削除証明 |
+
+### 15.10 SLA 規定
+
+| プラン | 月次稼働率 | メンテナンスウィンドウ | 障害対応 |
+|--------|----------|--------------------|---------|
+| `free` | best effort | 制限なし | コミュニティサポート |
+| `pro` (個人) | 99.0% | 月 4 時間まで | Email 24h 以内 |
+| `family_basic` / `family_pro` | 99.5% | 月 2 時間まで (告知 7 日前) | Email 12h 以内 |
+| `org_starter` / `org_standard` | 99.5% | 月 2 時間まで (告知 14 日前) | Email + チャット 6h 以内 |
+| `org_pro` | 99.9% | 月 1 時間まで (告知 30 日前) | 専任サポート 4h 以内 |
+| `org_enterprise` | 99.99% | 個別協議 | 24/7 専任 1h 以内 + 月次レビュー |
+
+### 15.11 試用期間の AI quota 制限 (コスト流出防止)
+
+03 §5.5.3 の表で「試用期間中の上限」を本契約の 1/10 程度に設定 (具体値は §5.5.3 表参照)。
+
+`personal_subscriptions.status = 'trialing'` の場合、`getUserActivePlan()` は `trial_quota` を返し、Edge Function 側でこれを参照する。
+
+### 15.12 Stripe 手数料の価格設計
+
+**手数料**: 3.6% + 40 円/件 (Stripe Japan)
+
+**価格設計の原則**:
+- 月額 980 円 (Pro): 手数料 = 35.28 + 40 = 75.28 円 → 粗利 904.72 円 (92.3%)
+- 月額 1,480 円 (Family Basic): 粗利 = 1,386 円 (93.6%)
+- クーポン適用時: 80% OFF クーポンで 200 円課金 → 手数料 47.2 円 → 粗利 153 円 (76.5%)
+- **0 円課金 (100% OFF クーポン)**: Stripe では 0 円契約不可、代わりに Free プランへ自動移行する設計
+- **1 円課金は禁止**: 固定費 40 円が手数料超え
+
+クーポン管理 UI に「実質粗利」プレビュー表示を必須化。
+
+### 15.13 健診結果 PDF Storage コスト試算
+
+**前提**:
+- 1 法人 5,000 名 × 年 1 回 × PDF 平均 2 MB = 10 GB/年/法人
+- 100 法人で 1 TB/年
+- 保管期間 10 年 (医療法準拠) → 累積 10 TB
+
+**試算**:
+- Supabase Storage: $0.021/GB/月 → 10 TB = $215/月 (年 $2,580)
+- 法人プラン価格に転嫁: Org Pro 1,980 円/seat × 5000 = 990 万円/月 → 充分カバー可能
+
+**実装**:
+- 古い PDF は自動的に Cloudflare R2 / S3 Glacier に移動 (30 日 → 1 年 → 10 年で段階的に Cold Storage)
+
+### 15.14 法務文書の更新点
+
+**利用規約 (Terms of Service)**:
+- 個別献立リクエスト機能の利用条件
+- 産業医データアクセス同意条項
+- ライセンス同梱配布の取扱い (「組織契約の一部として家族プランを提供」明記)
+
+**プライバシーポリシー**:
+- 健診結果 PDF の保管期間と削除手順
+- 産業医による閲覧範囲と監査記録
+- GDPR / 個人情報保護法対応
+
+**クーポン規約**:
+- 重複適用不可
+- 既存契約への遡及不可
+- 譲渡禁止
+
+### 15.15 デプロイ手順 (本番マイグレーション)
+
+03 §11.0 のマイグレーション順序を本番に適用する具体手順は別ドキュメント (`docs/operations/migration-runbook.md`) に切り出すが、要件として以下を明記:
+
+1. **メンテナンスウィンドウ**: SLA に従い告知 (Pro 7 日前、Org 14-30 日前)
+2. **ダウンタイム**: 30 分以内 (`RENAME COLUMN` は instant、ALTER ADD NOT NULL DEFAULT も PostgreSQL 11+ instant)
+3. **Blue-Green 不要**: スキーマ変更が backward compatible になるよう段階適用
+4. **ロールバック**: 各マイグレーションは `BEGIN; ... COMMIT;` でトランザクション化、失敗時は自動 ROLLBACK
+5. **検証**: マイグレーション直後に staging で smoke test 実施、本番反映前に必ず通す
 
 ---
 
