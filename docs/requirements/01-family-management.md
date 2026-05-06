@@ -303,6 +303,50 @@
 2. 確認 → API `PATCH /api/family/members/{id}` with `role`
 3. 通知: 対象メンバーに「○○家の管理者に任命されました」
 
+### 4.10a UC-FAM-11: 共有献立から自分で離脱 (パターン①)
+**アクター**: 任意のメンバー (子供以外)
+**事前条件**: 共有献立が存在
+**フロー**:
+1. メンバーが「月曜夕食 カレー」を長押し → 「離脱して別の物にする」
+2. 「自分で決める」を選択
+3. 料理名 + レシピ入力 (任意)
+4. `planned_meals` に追加 (`family_shared_menu_id = NULL`、`source_request_id = NULL`)
+5. 共有献立側ではこのメンバーは「離脱中」表示
+
+### 4.10b UC-FAM-12: AI で代替献立を生成 (パターン②)
+**フロー**:
+1. メンバーが「離脱」 → 「AI に提案して」を選択
+2. 自動的に本人の制約 (アレルギー・カロリー目標・好み) を取得
+3. 追加制約入力 (任意、「ダイエット中で 600kcal 以下」等)
+4. AI が代替献立を生成 → プレビュー表示
+5. 「OK」 → `family_meal_requests` に記録 (status=accepted、proposed_by_ai=true) + `planned_meals` 追加
+6. 「別の」 → 再生成
+7. 「キャンセル」 → 元の共有献立に戻る
+
+### 4.10c UC-FAM-13: 家族メンバーに代替献立をリクエスト (パターン③)
+**フロー**:
+1. メンバーが「離脱」 → 「夫 (オーナー) に頼む」
+2. 理由 (「ダイエット中」)、制約 (任意) を入力
+3. 確定 → `family_meal_requests` 作成 (status=pending、assignee_id=夫)
+4. 夫に Push 通知「妻から代替献立リクエスト」
+5. 夫がリクエスト詳細画面を開く
+6. 夫が「AI に提案させる」 or 「自分で考える」を選択
+7. 提案を作成 → `propose` API 呼び出し → status=proposed
+8. 妻に Push 通知「夫から提案が届きました」
+9. 妻が確認:
+   - 「承認」 → status=accepted、`planned_meals` に追加
+   - 「拒否」 → status=rejected、理由を返信、夫が再提案 or 妻が自分で決める
+   - 「キャンセル」 → status=cancelled
+
+### 4.10d UC-FAM-14: 子供メンバーの代替献立を代行 (パターン④)
+**アクター**: オーナー or 管理者
+**事前条件**: 子供メンバー (`user_id IS NULL`) が存在
+**フロー**:
+1. 親が「次男だけ別メニュー」をしたい
+2. 共有献立画面で次男を選択 → 「離脱して別メニュー」
+3. パターン①〜③のいずれかを選択 (ただし requester = 親、target_member = 子供)
+4. 完了後、次男の `planned_meals` に追加 (子供メンバーに紐付く `daily_meal_id` を経由)
+
 ### 4.10 UC-FAM-10: オーナー権限の譲渡
 
 **アクター**: オーナー
@@ -459,6 +503,103 @@
 - メンバーの体重・年齢・栄養目標から自動配分
 - 手動上書きも可
 
+#### 5.5.5 共有献立から個人離脱・個別献立リクエストフロー
+
+ある日の共有献立 (例: 月曜夕食 カレー) から、特定のメンバーだけ別メニューを食べたいケースを扱う。
+代替メニューの作成方法を **4 パターン** で柔軟に対応:
+
+##### パターン ①: 自分で決める (即時)
+妻自身が「離脱」 → 「自分で決める」を選択 → 料理名・レシピを直接入力 → `planned_meals` に追加。
+リクエストテーブル不要、最速で完了。
+`source_request_id = NULL`、`family_shared_menu_id = NULL`。
+
+##### パターン ②: AI に提案させる (即時)
+妻が「離脱」 → 「AI に提案して」を選択 → 妻の制約 (ダイエット中・カロリー上限等) を自動取得 → AI 生成 → 候補表示 → 「OK」で `planned_meals` に追加。
+リクエストテーブルに記録するが status は即 `accepted` で `proposed_by_ai = true`。
+
+##### パターン ③: 家族メンバー (オーナー / 管理者) に頼む (非同期)
+妻が「離脱」 → 「夫に頼む」を選択 → 理由 (ダイエット中)・制約を入力 → リクエスト送信。
+- `family_meal_requests` 作成 (`status = pending`、`assignee_id = 夫`)
+- 夫に Push 通知「妻から代替献立リクエスト」
+- 夫が見る → AI 補助 or 手動で代替案を考える → 提案
+- `status = proposed`、`proposed_dish_name`、`proposed_recipe` 設定
+- 妻に Push 通知「夫から提案が届きました」
+- 妻が確認 → **承認 (accepted)** で `planned_meals` に追加 (`source_request_id` で紐付け) / **拒否 (rejected)** で別案を依頼 or 自分で決める
+
+##### パターン ④: 子供 (アカウント無し) の代替献立
+- 子供メンバーは自分で操作不可 → オーナー or 管理者が代行
+- `requester_id = オーナー`、`target_member_id = 子供メンバー (user_id NULL)`
+- 共有献立からの離脱操作も代行
+- 「次男だけ別メニュー」のようなケースをスムーズに処理
+
+##### 状態遷移
+```
+[pending] ──提案──→ [proposed] ──承認──→ [accepted] → planned_meals に反映
+                       │                                                  
+                       ├──拒否──→ [rejected]                              
+                       │           └→ 別案を依頼 or 自分で決める          
+                       │                                                  
+                       └──キャンセル (依頼者)──→ [cancelled]              
+```
+
+##### 通知一覧
+
+| イベント | 通知先 | 内容 |
+|---------|-------|------|
+| リクエスト送信 | assignee | 「妻から献立リクエストが届きました」 |
+| 提案完了 | requester | 「夫から代替献立の提案が届きました」 |
+| 承認 | assignee | 「妻が提案を承認しました」 |
+| 拒否 | assignee | 「妻が拒否しました (理由: ○○)」 |
+| キャンセル | assignee | 「妻がリクエストを取り消しました」 |
+
+##### UI 設計 (例)
+
+**離脱モーダル (妻側)**:
+```
+┌─────────────────────────────────┐
+│  月曜の夕食: カレー              │
+│  食べないで別のにする?            │
+│                                  │
+│  代替メニューはどうしますか?      │
+│   ◯ 自分で決める                │
+│   ◯ AI に提案してもらう         │
+│   ◯ 夫 (オーナー) に頼む       │
+│   ◯ 母 (管理者) に頼む         │
+│                                  │
+│  理由 (任意): [ダイエット中    ] │
+│  制約 (任意): [600 kcal 以下   ] │
+│                                  │
+│  [ キャンセル ]    [ 確定 ]      │
+└─────────────────────────────────┘
+```
+
+**リクエスト受信画面 (夫側)**:
+```
+┌──────────────────────────────────────┐
+│  📬 妻からの献立リクエスト             │
+│                                       │
+│  日付: 5/13 月曜 夕食                 │
+│  理由: ダイエット中                    │
+│  制約: 600 kcal 以下、低糖質           │
+│                                       │
+│  代替メニューを考えますか?             │
+│   [ AI に提案させる ]                 │
+│   [ 自分で考える ]                    │
+│                                       │
+│  AI 提案結果: 鶏胸肉のサラダ          │
+│  500 kcal / タンパク質 35g            │
+│                                       │
+│  [ 別の案 ]   [ これで提案する ]      │
+└──────────────────────────────────────┘
+```
+
+##### 受け入れ基準
+- ✅ 共有献立離脱時に 4 パターンから選択できる
+- ✅ AI 提案は妻の制約を自動取得して反映
+- ✅ 家族リクエストは非同期で push 通知 → 提案 → 承認のフロー
+- ✅ 子供メンバーの代替献立は オーナー / 管理者が代理操作可能
+- ✅ 全状態遷移がアクティビティログ (`family_activity_log`) に記録される
+
 ### 5.6 F-FAM-006: 共有買い物リスト
 
 #### 5.6.1 概要
@@ -486,6 +627,11 @@
 | 共有献立が生成された | グループ全員 | Push (任意設定) |
 | 買い物リストに追加された | グループ全員 | Push (任意設定) |
 | 緊急通知 (アレルギー誤食警告) | グループ全員 | Push + 強制表示 |
+| **個別献立リクエスト送信** | assignee | Push (即時) |
+| **個別献立提案完了** | requester | Push (即時) |
+| **個別献立リクエスト承認** | assignee | Push |
+| **個別献立リクエスト拒否** | assignee | Push (理由付き) |
+| **個別献立リクエストキャンセル** | assignee | Push |
 
 #### 5.7.2 通知設定
 - ユーザー個別に ON/OFF 可能
@@ -727,6 +873,86 @@ CREATE INDEX idx_family_shopping_items_list ON family_shopping_items(family_shop
 CREATE INDEX idx_family_shopping_items_unchecked ON family_shopping_items(family_shopping_list_id) WHERE is_checked = FALSE;
 ```
 
+#### 7.1.8 `family_meal_requests` (個別献立リクエスト)
+
+共有献立から離脱して個別メニューを作成するリクエスト管理。
+パターン ① (自分で決める) はこのテーブルを使わず `planned_meals` 直接追加で完結。
+パターン ②③④ はこのテーブルでフロー管理。
+
+```sql
+CREATE TABLE family_meal_requests (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_group_id          UUID NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+  -- 依頼者・対象者・担当者
+  requester_id             UUID NOT NULL REFERENCES auth.users(id),       -- 依頼した人
+  target_member_id         UUID NOT NULL REFERENCES family_members(id),    -- 食べる人 (子供メンバーなら user_id NULL)
+  assignee_id              UUID REFERENCES auth.users(id),                 -- 提案する担当 (NULL = AI)
+  proposed_by_ai           BOOLEAN NOT NULL DEFAULT FALSE,
+  -- 対象食事
+  date                     DATE NOT NULL,
+  meal_type                VARCHAR(20) NOT NULL CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
+  original_shared_menu_id  UUID REFERENCES family_shared_menus(id) ON DELETE SET NULL,  -- 離脱した共有献立
+  -- リクエスト内容
+  reason                   TEXT,                                            -- 「ダイエット中」「アレルギー対応」等
+  constraints              JSONB DEFAULT '{}',                              -- カロリー上限・除外食材等
+  -- 提案
+  proposed_dish_name       VARCHAR(200),
+  proposed_recipe          JSONB,
+  proposed_at              TIMESTAMP WITH TIME ZONE,
+  -- 承認・拒否
+  responded_at             TIMESTAMP WITH TIME ZONE,
+  rejection_reason         TEXT,
+  -- 状態
+  status                   VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'proposed', 'accepted', 'rejected', 'cancelled')),
+  -- メタ
+  created_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_family_meal_requests_group ON family_meal_requests(family_group_id, status, date);
+CREATE INDEX idx_family_meal_requests_requester ON family_meal_requests(requester_id, status);
+CREATE INDEX idx_family_meal_requests_assignee ON family_meal_requests(assignee_id, status) WHERE status IN ('pending', 'proposed');
+CREATE INDEX idx_family_meal_requests_pending ON family_meal_requests(family_group_id) WHERE status = 'pending';
+```
+
+**RLS ポリシー**:
+- SELECT: 同グループメンバー全員 (リクエスト透明性のため)
+- INSERT: 同グループメンバー or 子供代理時はオーナー / 管理者
+- UPDATE (proposed_*): assignee_id = auth.uid()
+- UPDATE (status='accepted'/'rejected'): requester_id = auth.uid()
+- UPDATE (status='cancelled'): requester_id = auth.uid()
+- DELETE: 不可 (履歴保持)
+
+#### 7.1.9 `planned_meals` 拡張 (家族連携)
+
+既存 `planned_meals` テーブルに **家族連携用カラム** を追加:
+
+```sql
+-- 既存 planned_meals テーブル拡張
+ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS family_shared_menu_id UUID
+  REFERENCES family_shared_menus(id) ON DELETE SET NULL;
+
+ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS source_request_id UUID
+  REFERENCES family_meal_requests(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_planned_meals_shared ON planned_meals(family_shared_menu_id) WHERE family_shared_menu_id IS NOT NULL;
+CREATE INDEX idx_planned_meals_request ON planned_meals(source_request_id) WHERE source_request_id IS NOT NULL;
+```
+
+| 列 | 役割 |
+|----|------|
+| `family_shared_menu_id` | NULL=個別献立、UUID=共有献立由来 (家族で同じ料理) |
+| `source_request_id` | NULL=直接追加、UUID=個別リクエストフロー由来 |
+
+**個人献立 / 共有献立 / リクエスト経由の判別**:
+```
+both NULL              → 純粋な個人献立 (普通の自分用メニュー)
+shared_menu_id 設定   → 共有献立 (家族と同じ料理)
+source_request_id 設定 → 個別リクエストフローで作られた代替メニュー
+両方設定               → 共有献立から離脱して、リクエスト経由で代替を入れた状態
+```
+
 ### 7.2 マイグレーション
 
 ```sql
@@ -912,7 +1138,109 @@ CREATE INDEX idx_family_shopping_items_unchecked ON family_shopping_items(family
 #### 8.5.4 `POST /api/family/shopping-list/regenerate`
 **説明**: 共有献立から再生成
 
-### 8.6 通知設定
+### 8.6 個別献立リクエスト (Meal Requests)
+
+#### 8.6.1 `POST /api/family/meal-requests`
+**説明**: 共有献立から離脱して個別メニューをリクエスト
+**リクエスト**:
+```json
+{
+  "target_member_id": "uuid",
+  "date": "2026-05-13",
+  "meal_type": "dinner",
+  "original_shared_menu_id": "uuid (任意、共有献立から離脱の場合)",
+  "reason": "ダイエット中",
+  "constraints": {
+    "max_calories": 600,
+    "low_carb": true,
+    "exclude_ingredients": ["米"]
+  },
+  "assignee_id": "uuid (NULL = AI、UUID = 家族メンバー)",
+  "self_decide_dish": "鶏胸肉のサラダ (任意、パターン①: 自分で決める場合のみ)"
+}
+```
+
+**動作分岐**:
+- `assignee_id = null` AND `self_decide_dish` あり → パターン①: 即時 `planned_meals` 追加 + status=`accepted`
+- `assignee_id = null` AND `self_decide_dish` なし → パターン②: AI 自動生成 → 即 `proposed` → 自動 `accepted`
+- `assignee_id = 自分以外のメンバー` → パターン③: `pending` で作成、相手に通知
+- 子供メンバー (`target_member_id` の `user_id IS NULL`) → パターン④: 同上、ただし requester がオーナー / 管理者必須
+
+**レスポンス 201**:
+```json
+{
+  "id": "uuid",
+  "status": "pending|proposed|accepted",
+  "assignee_id": "uuid|null",
+  "proposed_dish_name": "...",
+  "planned_meal_id": "uuid (status=accepted の場合)"
+}
+```
+
+#### 8.6.2 `GET /api/family/meal-requests`
+**クエリ**: `?status=pending|proposed|accepted|rejected|cancelled&assignee_id=me&requester_id=me`
+**説明**: リクエスト一覧 (担当中・自分が依頼したもの・全件)
+
+#### 8.6.3 `GET /api/family/meal-requests/{id}`
+**説明**: 個別リクエスト詳細
+
+#### 8.6.4 `POST /api/family/meal-requests/{id}/propose`
+**説明**: パターン③で assignee が代替メニューを提案
+**認証**: assignee_id = auth.uid() のみ
+**リクエスト**:
+```json
+{
+  "dish_name": "鶏胸肉のサラダ",
+  "recipe": {
+    "ingredients": [...],
+    "steps": [...]
+  },
+  "use_ai_suggestion": true,
+  "ai_constraints": { /* 必要時のみ */ }
+}
+```
+**動作**:
+- `use_ai_suggestion: true` → AI で生成して `proposed_dish_name` セット
+- 手動入力時はそのまま反映
+- status を `pending` → `proposed` に遷移
+- requester に push 通知
+
+#### 8.6.5 `POST /api/family/meal-requests/{id}/accept`
+**説明**: requester が提案を承認
+**認証**: requester_id = auth.uid() のみ
+**動作**:
+- status を `proposed` → `accepted`
+- `planned_meals` に新規行作成 (`source_request_id` 紐付け、target member の daily_meal_id へ)
+- もし `original_shared_menu_id` があれば、共有献立側からは離脱状態にする (UI の表示制御)
+- assignee に push 通知
+
+#### 8.6.6 `POST /api/family/meal-requests/{id}/reject`
+**説明**: requester が提案を拒否
+**リクエスト**:
+```json
+{
+  "rejection_reason": "もっと低カロリーな案がほしい"
+}
+```
+**動作**:
+- status を `proposed` → `rejected`
+- assignee に push 通知 (理由付き)
+- requester は同 `original_shared_menu_id` で再リクエストするか、自分で決めるか選択可能
+
+#### 8.6.7 `POST /api/family/meal-requests/{id}/cancel`
+**説明**: requester がリクエスト取消
+**動作**:
+- status を `pending` / `proposed` → `cancelled`
+- assignee に push 通知
+
+#### 8.6.8 `POST /api/family/meal-requests/{id}/ai-propose`
+**説明**: assignee の代わりに AI が代替メニューを生成 (補助)
+**動作**:
+- `constraints` を考慮して AI 生成
+- `proposed_dish_name`, `proposed_recipe`, `proposed_by_ai = true` 設定
+- assignee がそれを採用するなら `propose` API へ進む
+
+### 8.7 通知設定
 
 #### 8.6.1 `GET /api/family/notification-preferences`
 

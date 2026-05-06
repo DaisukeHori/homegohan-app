@@ -301,6 +301,98 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 3. データは個人アカウントとして残る
 4. メンバーには「○○組織から除名されました」通知
 
+### 4.11 UC-ORG-11: ライセンス購入
+
+**アクター**: org_admin
+**事前条件**: 組織契約済
+**事後条件**: ライセンスプール (`org_license_pools`) に枚数追加
+
+**フロー**:
+1. `/org/licenses` を開く → 「ライセンス追加」ボタン
+2. 購入数量を入力 (例: 100 名分)
+3. プラン選択 (現在の組織プランがデフォルト、追加で家族プラン同梱オプション可)
+4. 期間選択 (月額 / 年額、年額は 10% 割引)
+5. 金額確認 (例: 980 円 × 100 = 月額 98,000 円)
+6. Stripe で決済
+7. `org_license_pools.total_licenses += 100`
+8. メール: 「100 ライセンス追加完了」 + 領収書 PDF
+9. 監査ログ記録
+
+### 4.12 UC-ORG-12: ライセンス個別割当
+
+**アクター**: org_admin or org_manager
+**事前条件**: 空きライセンスあり (`available_licenses > 0`)
+**フロー**:
+1. `/org/licenses` で「未割当メンバー」一覧表示
+2. 1 メンバー選択 → 「ライセンス割当」
+3. 確認 → API `POST /api/org/licenses/assign`
+4. `org_license_assignments` に新規行 (status=active)
+5. プール: `used_licenses += 1`、`available_licenses -= 1`
+6. 該当メンバーに通知「Pro 機能が解放されました」
+7. メンバーアプリで Pro 機能解放
+
+### 4.13 UC-ORG-13: ライセンス CSV 一括割当
+
+**フロー**:
+1. `/org/licenses/bulk-assign` で CSV アップロード
+2. CSV: `email,license_plan,assignment_note`
+3. プレビュー → 残ライセンス数チェック (足りなければ「+追加購入」リンク)
+4. 確定 → 非同期で 1 件ずつ割当
+5. 進捗: 「85/100 件割当完了」
+6. 完了: 結果 CSV ダウンロード
+
+### 4.14 UC-ORG-14: ライセンス回収・再割当
+
+**フロー (回収)**:
+1. メンバー除名 or 退職時に自動回収 (HR Webhook 連携 Pro 以上)
+2. または手動: `/org/licenses` でメンバー選択 → 「ライセンス回収」
+3. `org_license_assignments.revoked_at` セット、status=revoked
+4. プール: `used_licenses -= 1`、`available_licenses += 1`
+5. メンバーアプリで Pro 機能ロック (Free 状態に戻る)
+6. ただし個人プランで Pro 課金していたら継続
+
+**フロー (再割当)**:
+1. プールに戻ったライセンスを別社員に再割当
+2. 上記 UC-ORG-12 と同じ流れ
+
+### 4.15 UC-ORG-15: ライセンス追加購入 (オーバーフロー時)
+
+**フロー**:
+1. メンバー招待時にプール残量 0 → モーダル「ライセンスが不足しています」
+2. オプション:
+   - 「+10 ライセンスを追加購入」 → 即時購入フロー
+   - 「招待を取消」
+   - 「他のメンバーから回収」
+3. 追加購入完了後、招待を継続
+
+### 4.16 UC-ORG-16: 家族プラン同梱配布 (組織が社員家族にも提供)
+
+**アクター**: org_admin
+**事前条件**: 組織プランが「家族プラン同梱可」のもの (Org Pro / Enterprise)
+**シナリオ**: 福利厚生で社員本人だけでなく社員の家族 (配偶者・子供) にも家族管理機能を提供
+
+**フロー**:
+1. ライセンス購入時に「家族プランを同梱」オプション選択
+2. 同梱内容:
+   - 各社員に Org 機能 + 家族プラン (4 名まで or 8 名まで)
+   - 家族プランの月額単価が組織契約価格に統合 (社員あたり +280 円等)
+3. 社員にライセンス割当 → Org 機能 + 家族機能両方解放
+4. 社員が家族グループを作成 → 配偶者・子供を招待 → 家族全員が Pro 機能
+5. ただし家族メンバーは社員のライセンスに紐付くので、社員退職時に家族グループも凍結される (再契約 or 個人プランへ移行のオプション提示)
+
+### 4.17 UC-ORG-17: ライセンス使用状況レポート
+
+**アクター**: org_admin / finance
+**フロー**:
+1. `/org/licenses/report` を開く
+2. 表示:
+   - 月別購入推移
+   - 月別使用率 (peaked usage / available)
+   - メンバー別利用状況 (最終ログイン・機能使用回数)
+   - 未使用ライセンスの自動回収候補 (90 日無ログインユーザー)
+3. CSV / PDF 出力 (経理用)
+4. 使用率低下時にアラート (例: 80% 以下が 3 ヶ月続いたら「ダウングレード提案」通知)
+
 ---
 
 ## 5. 機能要件
@@ -501,10 +593,124 @@ email,role,department,nickname,employee_id,joined_at
 - 自動更新 / キャンセル
 - 未払い時: 7 日後に組織を `suspended` 状態へ (機能制限)
 
-#### 5.9.3 ライセンス管理
+#### 5.9.3 ライセンス管理 (基本)
 - プランごとのメンバー上限
 - 上限超過時: 招待不可 + アラート
 - メンバー追加で従量課金 (オプション)
+
+### 5.11 F-ORG-011: ライセンス管理 (詳細・拡張)
+
+#### 5.11.1 ライセンスプール
+- 組織が購入したライセンスを「プール」で管理
+- プール属性: 総数、使用数、空き数、有効期限、プラン種別
+- 1 組織が複数プール所持可能 (例: Org Standard 50 枚 + Org Pro 20 枚 + 家族同梱 30 枚)
+
+#### 5.11.2 割当方法
+- **手動個別**: 1 メンバーずつ選択して割当
+- **CSV 一括**: 100 名分を CSV で一括割当
+- **招待時自動付与**: 招待受諾時に空きライセンスから自動付与 (オプション)
+- **ロール連動**: 部長以上は Org Pro、一般社員は Org Standard 等のルール設定
+
+#### 5.11.3 回収・再割当
+- **手動回収**: org_admin が任意のタイミングで回収
+- **自動回収**:
+  - メンバー除名時 (即時)
+  - 90 日無ログイン (アラート → 30 日後自動回収、設定可)
+  - 退職 HR Webhook 連携 (Pro 以上)
+- **再割当**: 回収したライセンスをプールに戻し、別メンバーに付与
+
+#### 5.11.4 アップグレード・ダウングレード
+- 組織全体: Standard 全員 → Pro 全員へ一括変更
+- 個別メンバー: 部分的にプラン変更
+- 価格差は日割り精算
+
+#### 5.11.5 残量アラート
+- 残ライセンス < 10 でアラート
+- 残ライセンス = 0 で招待ブロック + 「+追加購入」UI 表示
+- 月末に未使用ライセンス分を自動返金 or 翌月繰越 (プラン契約による)
+
+#### 5.11.6 個人プランとの併用ルール
+- 組織から離脱したら組織ライセンス即無効化
+- ただし個人で別途課金していた場合は個人プラン継続
+- 組織復帰時は両方有効、組織ライセンス優先
+
+#### 5.11.7 機能解放判定ロジック
+```typescript
+function getUserActivePlan(userId: string): PlanInfo {
+  // 1. 組織ライセンス (優先)
+  const orgLicense = getActiveOrgLicense(userId);
+  if (orgLicense) {
+    return {
+      plan_key: orgLicense.plan_key,
+      source: 'organization',
+      organization_id: orgLicense.organization_id,
+      expires_at: orgLicense.expires_at,
+    };
+  }
+  // 2. 個人プラン
+  const personalPlan = getUserPersonalPlan(userId);
+  if (personalPlan) {
+    return {
+      plan_key: personalPlan.plan_key,
+      source: 'personal',
+      expires_at: personalPlan.expires_at,
+    };
+  }
+  // 3. デフォルト Free
+  return { plan_key: 'free', source: 'default', expires_at: null };
+}
+```
+
+### 5.12 F-ORG-012: 家族プラン同梱配布
+
+#### 5.12.1 概要
+組織契約で社員本人だけでなく **社員の家族 (配偶者・子供)** にも家族管理機能を提供する福利厚生オプション。Org Pro / Enterprise プランで利用可能。
+
+#### 5.12.2 同梱パターン
+- **完全同梱**: 全社員に家族プラン (4 名まで) 自動付与
+- **オプション同梱**: 各社員が自分で「家族プラン申請」 → org_admin 承認 → 付与
+- **段階的拡張**: 基本 4 名、組織拠出で 8 名へ拡張も可
+
+#### 5.12.3 ライセンス紐付け
+```
+Org License Pool (org_pro)
+    ↓ 個別社員に割当
+Member License (org_pro + family_addon)
+    ↓ 家族グループ作成
+Family Group (社員 + 配偶者 + 子供 2 名)
+    ↓ 全員 Pro 機能解放
+```
+
+家族メンバーは組織ライセンスを **間接的に消費** する。社員退職で家族グループも凍結される (個人プランへ移行可能)。
+
+#### 5.12.4 家族メンバー数の管理
+- 各社員のライセンスに `family_addon_seats` 属性を持つ (4 / 8 / 12 等)
+- 家族グループの `member_limit` がこれに連動
+- 社員自身は 1 シート消費しない (ベースライセンスに含まれる)
+
+#### 5.12.5 退職時の家族グループ
+3 つのオプション (退職時にユーザーが選択):
+- **凍結**: データは保持、家族プランは無効化
+- **個人プランへ移行**: 個人で家族プラン (480 円/月) 契約 → 機能継続
+- **解散**: 家族グループを完全削除
+
+### 5.13 F-ORG-013: ライセンス使用状況分析
+
+#### 5.13.1 使用率レポート
+- 月別購入推移
+- 月別使用率 (peak / available)
+- メンバー別最終ログイン
+- 未使用ライセンス候補リスト
+- 使用率低下時のアラート
+
+#### 5.13.2 ROI レポート (Pro 以上)
+- 1 ライセンスあたりの利用率
+- ライセンス費用 vs 健康改善効果
+- 経営層向けダッシュボード
+
+#### 5.13.3 監査出力
+- ライセンス操作履歴 CSV (経理用)
+- 未使用ライセンスの返金処理データ
 
 ### 5.10 F-ORG-010: 産業医・保健師連携
 
@@ -737,6 +943,86 @@ CREATE TABLE department_history (
   reason                  TEXT
 );
 
+#### 7.2.7 `org_license_pools` (ライセンスプール)
+```sql
+CREATE TABLE org_license_pools (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  plan_key                VARCHAR(50) NOT NULL,  -- 'org_starter' / 'org_standard' / 'org_pro' / 'org_enterprise' / 'family_addon'
+  total_licenses          INT NOT NULL DEFAULT 0,
+  used_licenses           INT NOT NULL DEFAULT 0,  -- 実際に割当済の数
+  available_licenses      INT GENERATED ALWAYS AS (total_licenses - used_licenses) STORED,
+  family_addon_seats      INT NOT NULL DEFAULT 0,  -- 家族プラン同梱時の家族メンバー上限 (0 = 同梱なし)
+  starts_at               TIMESTAMPTZ NOT NULL,
+  ends_at                 TIMESTAMPTZ NOT NULL,
+  auto_renew              BOOLEAN NOT NULL DEFAULT TRUE,
+  unit_price_jpy          INT NOT NULL,  -- 1 ライセンスあたり月額/年額
+  billing_cycle           VARCHAR(20) NOT NULL CHECK (billing_cycle IN ('monthly', 'yearly')),
+  stripe_subscription_id  VARCHAR(255),
+  notes                   TEXT,
+  created_by              UUID REFERENCES auth.users(id),
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (total_licenses >= used_licenses),
+  CHECK (total_licenses >= 0),
+  CHECK (used_licenses >= 0)
+);
+
+CREATE INDEX idx_org_license_pools_org ON org_license_pools(organization_id);
+CREATE INDEX idx_org_license_pools_active ON org_license_pools(organization_id) WHERE ends_at > NOW();
+```
+
+#### 7.2.8 `org_license_assignments` (ライセンス割当)
+```sql
+CREATE TABLE org_license_assignments (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  license_pool_id         UUID NOT NULL REFERENCES org_license_pools(id) ON DELETE CASCADE,
+  user_id                 UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  assigned_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  assigned_by             UUID REFERENCES auth.users(id),
+  revoked_at              TIMESTAMPTZ,
+  revoked_by              UUID REFERENCES auth.users(id),
+  revoke_reason           VARCHAR(50),  -- 'manual', 'inactive_90d', 'left_org', 'auto_revoke', 'plan_change'
+  expires_at              TIMESTAMPTZ,  -- ライセンスプールの ends_at と同じ or それより早い
+  status                  VARCHAR(20) NOT NULL DEFAULT 'active' 
+    CHECK (status IN ('active', 'revoked', 'expired')),
+  -- 家族同梱の場合の使用状況
+  family_seats_used       INT NOT NULL DEFAULT 0,  -- このライセンスから派生する家族メンバー数
+  -- メタ
+  notes                   TEXT,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_org_license_active_per_user ON org_license_assignments(user_id) WHERE status = 'active';
+CREATE INDEX idx_org_license_pool ON org_license_assignments(license_pool_id, status);
+CREATE INDEX idx_org_license_user ON org_license_assignments(user_id, status);
+```
+
+**RLS ポリシー**:
+- SELECT: 本人 (`user_id = auth.uid()`) or org_admin / org_manager (同組織)
+- INSERT: org_admin / org_manager
+- UPDATE (revoke): org_admin / org_manager
+- DELETE: 不可 (履歴保持)
+
+**トリガー**: assignment 追加/削除時に `org_license_pools.used_licenses` を自動更新。
+
+#### 7.2.9 `org_license_audit_log`
+```sql
+CREATE TABLE org_license_audit_log (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  pool_id                 UUID REFERENCES org_license_pools(id),
+  assignment_id           UUID REFERENCES org_license_assignments(id),
+  actor_id                UUID REFERENCES auth.users(id),
+  action_type             VARCHAR(50) NOT NULL,  -- 'pool_purchased', 'pool_extended', 'license_assigned', 'license_revoked', 'pool_expired'
+  details                 JSONB DEFAULT '{}',
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_org_license_audit_org ON org_license_audit_log(organization_id, created_at DESC);
+```
+
 CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DESC);
 ```
 
@@ -908,6 +1194,100 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 #### 8.10.1 `GET /api/org/audit-logs`
 **クエリ**: `?action_type=...&actor_id=...&limit=50&offset=0`
 
+### 8.11 ライセンス管理
+
+#### 8.11.1 `GET /api/org/licenses`
+**説明**: 組織のライセンスプール一覧 (有効・期限切れ・全件)
+**レスポンス**:
+```json
+{
+  "pools": [
+    {
+      "id": "uuid",
+      "plan_key": "org_pro",
+      "total_licenses": 100,
+      "used_licenses": 67,
+      "available_licenses": 33,
+      "family_addon_seats": 4,
+      "ends_at": "2026-12-31T23:59:59Z"
+    }
+  ],
+  "total_active": 67
+}
+```
+
+#### 8.11.2 `POST /api/org/licenses/purchase`
+**説明**: ライセンス追加購入
+**リクエスト**:
+```json
+{
+  "plan_key": "org_pro",
+  "quantity": 100,
+  "billing_cycle": "monthly",
+  "include_family_addon": true,
+  "family_seats_per_member": 4
+}
+```
+→ Stripe 決済 → `org_license_pools` に新規行 or 既存プールに増枠
+
+#### 8.11.3 `POST /api/org/licenses/extend`
+**説明**: 既存プールの期間延長 (更新)
+
+#### 8.11.4 `GET /api/org/licenses/assignments`
+**クエリ**: `?status=active&pool_id=...&user_id=...`
+
+#### 8.11.5 `POST /api/org/licenses/assign`
+**説明**: 個別割当
+```json
+{
+  "pool_id": "uuid",
+  "user_id": "uuid",
+  "notes": "優先順位高"
+}
+```
+
+#### 8.11.6 `POST /api/org/licenses/bulk-assign`
+**説明**: CSV 一括割当
+**リクエスト**: `multipart/form-data` with CSV
+**CSV**: `email,plan_key,assignment_note`
+
+#### 8.11.7 `POST /api/org/licenses/auto-assign`
+**説明**: 未割当の組織メンバー全員に空きライセンスを自動割当
+
+#### 8.11.8 `DELETE /api/org/licenses/assignments/{id}`
+**説明**: ライセンス回収 (revoke)
+**リクエスト**:
+```json
+{
+  "reason": "manual",
+  "notify_user": true
+}
+```
+
+#### 8.11.9 `POST /api/org/licenses/auto-revoke-inactive`
+**説明**: 90 日無ログインユーザーから自動回収
+
+#### 8.11.10 `GET /api/org/licenses/usage-report`
+**クエリ**: `?period=30d|90d|1y`
+**レスポンス**: 利用率推移、未使用候補リスト、ROI 指標
+
+#### 8.11.11 `GET /api/org/licenses/audit-log`
+**説明**: ライセンス操作履歴
+
+### 8.12 家族プラン同梱管理
+
+#### 8.12.1 `GET /api/org/family-addon`
+**説明**: 家族プラン同梱の状態と利用状況
+
+#### 8.12.2 `POST /api/org/family-addon/enable`
+**説明**: 組織契約に家族プラン同梱を追加
+
+#### 8.12.3 `GET /api/org/family-addon/usage`
+**説明**: 各社員の家族グループ利用状況 (匿名化集計、家族の食事記録は閲覧不可)
+
+#### 8.12.4 `POST /api/org/family-addon/expand-seats`
+**説明**: 家族メンバー上限を増やす (4 → 8 等)
+
 ---
 
 ## 9. UI 画面仕様
@@ -1001,6 +1381,59 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 - 自分が所属する組織情報
 - 部署内ランキング (匿名)
 - 進行中のチャレンジ
+
+### 9.16 `/org/licenses` (ライセンス管理、新規)
+レイアウト:
+```
+┌──────────────────────────────────────────────────┐
+│ ライセンス管理                                     │
+├──────────────────────────────────────────────────┤
+│ 現在保有                                           │
+│ ┌────────────────┐ ┌────────────────┐           │
+│ │ Org Pro        │ │ Family Addon   │           │
+│ │ 100 / 100 枠   │ │ 同梱 (4 名 / 人) │           │
+│ │ 使用 67 / 残 33 │ │ 使用 268 名     │           │
+│ │ 期限: 2026-12-31│ │                 │           │
+│ └────────────────┘ └────────────────┘           │
+│                                                   │
+│ [ + ライセンス追加 ]  [ プラン変更 ]               │
+│                                                   │
+├──────────────────────────────────────────────────┤
+│ 割当状況                                           │
+│ ┌────────────────────────────────────────────┐  │
+│ │ ✓ 田中太郎       Org Pro   2024-04-01 ~       │ │
+│ │ ✓ 佐藤花子       Org Pro   2024-04-15 ~       │ │
+│ │ ✗ 山田次郎       回収済   2026-03-31 退職     │ │
+│ │ ⚠ 未割当 33 名                                │ │
+│ │   [ 自動割当 ]  [ CSV 一括割当 ]              │ │
+│ └────────────────────────────────────────────┘  │
+│                                                   │
+│ [ 利用状況レポート ]  [ 監査ログ ]                  │
+└──────────────────────────────────────────────────┘
+```
+
+機能:
+- プール一覧 (プラン別、残数表示)
+- 割当 / 回収 (個別 / 一括)
+- 90 日無ログイン候補リスト
+- 家族プラン同梱状況
+- ROI レポート
+
+### 9.17 `/org/licenses/purchase` (購入フロー)
+- ステップ 1: プラン選択 (Org Standard / Pro / Enterprise)
+- ステップ 2: 数量入力
+- ステップ 3: 家族プラン同梱オプション
+- ステップ 4: 期間 (月額 / 年額)
+- ステップ 5: 金額確認 + Stripe 決済
+- ステップ 6: 完了 (自動でプール更新)
+
+### 9.18 `/org/licenses/usage-report` (利用状況レポート)
+- 月別購入推移 (折れ線)
+- 月別使用率
+- 未使用候補リスト (90 日無ログイン)
+- 「自動回収」「手動回収」ボタン
+- ROI 指標 (Pro)
+- CSV / PDF 出力
 - お知らせ一覧
 
 ---

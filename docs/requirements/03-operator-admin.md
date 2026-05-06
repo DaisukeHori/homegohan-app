@@ -418,6 +418,105 @@
    - サブグループ別 (年代 / プラン)
 5. 採用 / 却下を決定
 
+### 4.16 UC-OP-16: プラン定義・販売プラン管理 (新規)
+
+**アクター**: super_admin
+**目的**: ほめゴハンの全プラン (個人 / 家族 / 組織) を運営側で定義し、機能パッケージ・価格・有効期限・条件を一元管理する。
+
+**フロー**:
+1. `/super-admin/plans` を開く
+2. 既存プラン一覧 (個人プラン / 家族プラン / 組織プラン)
+3. 「新規プラン」を作成:
+   - プラン key (例: `org_pro_2026`)
+   - プラン名 (表示用、例: 「組織プロ 2026 春版」)
+   - 種別 (個人 / 家族 / 組織)
+   - 機能パッケージ (含まれる feature flag のセット)
+   - 価格: 月額 / 年額
+   - 期間: 最低契約期間、自動更新有無
+   - 上限: メンバー数、家族メンバー数等
+   - 条件: 業種限定、地域限定 (将来)
+   - 公開ステータス (draft / public / private / deprecated)
+4. プレビュー: 顧客に見える形で表示確認
+5. 公開 → 個人ユーザー / 組織が選択可能に
+6. 監査ログ + 価格変更履歴
+
+### 4.17 UC-OP-17: 機能パッケージ管理
+
+**フロー**:
+1. `/super-admin/feature-packages` を開く
+2. 機能パッケージ一覧:
+   - 「基本機能」 (全プラン共通)
+   - 「AI 解析」 (Pro 以上)
+   - 「家族機能」 (家族プラン以上)
+   - 「組織管理」 (組織プラン以上)
+   - 「産業医連携」 (組織 Pro 以上)
+   - 「カスタムカラー」 (組織 Pro 以上)
+3. 各パッケージに含まれる feature flag を編集:
+   - `family_groups_enabled`
+   - `meal_photo_recognition`
+   - `ai_consultation_streaming`
+   - `org_dashboard_advanced`
+   - 等
+4. プランとパッケージの対応マトリクス:
+```
+              | Free | Pro | Family | Org Std | Org Pro | Org Ent |
+基本機能      |  ✓   |  ✓  |   ✓    |    ✓    |    ✓    |    ✓    |
+AI 解析       |      |  ✓  |   ✓    |    ✓    |    ✓    |    ✓    |
+家族機能      |      |     |   ✓    |         |    ✓    |    ✓    |
+組織管理      |      |     |        |    ✓    |    ✓    |    ✓    |
+産業医連携    |      |     |        |         |    ✓    |    ✓    |
+SSO           |      |     |        |         |         |    ✓    |
+```
+5. 一括変更 → 全プラン即反映
+
+### 4.18 UC-OP-18: ライセンス販売管理 (運営側ビュー)
+
+**フロー**:
+1. `/admin/finance/licenses` で全組織のライセンス契約状況
+2. 表示:
+   - 組織別: プラン / 数量 / 有効期限 / 売上
+   - 月別: 売上推移、解約数
+   - 期限切れ予告: 30 / 14 / 7 日前のリスト
+3. アクション:
+   - 個別組織のライセンス詳細を確認
+   - 期限延長・追加販売 (営業経由)
+   - 強制終了 (未払い等)
+4. レポート出力 (経理連携)
+
+### 4.19 UC-OP-19: クーポン・割引管理 (新規)
+
+**アクター**: super_admin / sales
+**用途**: 法人営業時の割引、キャンペーン、紹介プログラム
+
+**フロー**:
+1. `/admin/coupons` で クーポン一覧
+2. 「新規クーポン」:
+   - コード (例: `ENTERPRISE2026`)
+   - 種別: 固定額 / パーセント
+   - 値: 10000 円 OFF / 20%
+   - 適用対象: 個人 / 組織 / プラン指定
+   - 利用上限: 1 回 / N 回 / 無制限
+   - 有効期限
+3. 営業先に共有 → 顧客が決済時に入力 → 自動適用
+4. 利用統計レポート
+
+### 4.20 UC-OP-20: アップグレード分析
+
+**フロー**:
+1. `/admin/finance/upgrade-funnel` でファネル分析
+2. Free → Pro 転換率
+3. 個人 Pro → 家族プラン アップグレード率
+4. 組織 Standard → Pro / Enterprise アップグレード率
+5. 各ステップの離脱要因分析 (キャンセル理由集計)
+
+### 4.21 UC-OP-21: 家族プラン同梱組織の管理
+
+**フロー**:
+1. `/admin/finance/family-addon-orgs` で組織別利用状況
+2. 各組織の家族メンバー消費数
+3. 「家族プラン同梱は ROI 高い」分析データ
+4. 営業向け資料作成
+
 ---
 
 ## 5. 機能要件
@@ -729,6 +828,89 @@
 - 月次売上計上 (Stripe データと内部 DB 照合)
 - 会計ソフト連携 (freee / マネーフォワード)
 
+### 5.15 F-OP-015: プラン定義・販売管理ツール
+
+#### 5.15.1 プラン定義
+プラン (`subscription_plans` テーブル) は運営側で完全管理。
+- プラン key (英数字、unique)
+- 表示名 (ユーザー表示用)
+- 種別 (`personal` / `family` / `org`)
+- 価格 (月額 / 年額、JPY / USD)
+- 機能パッケージ (1 つ以上の `feature_packages` を紐付け)
+- 上限値 (家族メンバー数、組織メンバー数等)
+- 公開ステータス (`draft` / `public` / `private` / `deprecated`)
+- 表示順
+- 説明文 (Markdown)
+- バナー画像
+
+#### 5.15.2 機能パッケージ
+- パッケージ key (例: `ai_analysis`, `family_management`, `org_dashboard`)
+- 含まれる feature flag のリスト
+- 説明文
+- バージョン管理 (改訂履歴)
+
+#### 5.15.3 プラン × パッケージ マトリクス
+- Web UI で視覚的に編集
+- 例: 「Org Pro に AI 解析パッケージを追加」 → ワンクリック反映
+- 反映後はリアルタイムで全ユーザーに適用
+
+#### 5.15.4 価格変更
+- 既存契約への影響をシミュレーション
+- 新規契約のみ新価格 / 既存契約も次回更新時に変更 / 全契約即時変更 (要再認証)
+- 価格変更履歴 (`plan_price_history`) で全変更を追跡
+
+#### 5.15.5 プランのライフサイクル
+```
+draft (作成中)
+  ↓ 公開
+public (新規申込受付中)
+  ↓ 非公開化
+private (既存契約のみ継続)
+  ↓ 廃止
+deprecated (新規も継続も不可、移行促進)
+```
+
+#### 5.15.6 顧客への影響シミュレーション
+- 価格変更 → 影響を受ける契約数、影響金額
+- プラン廃止 → 影響顧客リスト、移行先プラン推奨
+
+### 5.16 F-OP-016: 販売・収益管理
+
+#### 5.16.1 ライセンス販売管理
+組織向けライセンスの全体ビュー:
+- 組織別販売状況 (プラン / 数量 / 期限 / 売上)
+- 月別販売推移
+- 期限切れ予告
+- 強制終了管理 (未払い等)
+
+#### 5.16.2 クーポン・割引管理
+- クーポンコード生成
+- 適用条件 (プラン / 期間 / 組織別 / 紹介プログラム)
+- 利用統計
+- 営業向けクーポン配布管理
+
+#### 5.16.3 アップグレード分析
+- ファネル: Free → Pro → Family → 法人
+- 各ステップの転換率
+- 離脱理由分析
+
+#### 5.16.4 収益予測
+- MRR 予測 (3 / 6 / 12 ヶ月)
+- 解約予測 (機械学習、Phase 4)
+- シナリオ分析 (価格変更時の予測)
+
+### 5.17 F-OP-017: 個人課金管理
+
+#### 5.17.1 個人プラン
+- Free / Pro / Premium / Family Personal
+- Stripe Subscription
+- カード変更 / キャンセル / 一時停止
+
+#### 5.17.2 個人ユーザー課金状況
+- `/admin/finance/personal` で個人課金者リスト
+- 検索・フィルタ
+- 個別キャンセル対応 (顧客対応用)
+
 ### 5.13 F-OP-013: A/B テスト基盤
 
 #### 5.13.1 実験設計
@@ -941,6 +1123,134 @@ CREATE TABLE sales_lead_activities (
 );
 ```
 
+#### 7.2.7 `subscription_plans` (プラン定義、運営側マスター)
+```sql
+CREATE TABLE subscription_plans (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_key                VARCHAR(100) NOT NULL UNIQUE,  -- 'free', 'pro', 'family_basic', 'org_pro', etc.
+  display_name            VARCHAR(200) NOT NULL,
+  plan_type               VARCHAR(20) NOT NULL CHECK (plan_type IN ('personal', 'family', 'org')),
+  description             TEXT,
+  -- 価格
+  monthly_price_jpy       INT,  -- NULL = 無料 or カスタム
+  yearly_price_jpy        INT,
+  currency                VARCHAR(3) NOT NULL DEFAULT 'JPY',
+  -- 上限値
+  max_members             INT,  -- 家族: 4/8、組織: メンバー上限
+  max_family_seats        INT,  -- 組織プランで家族同梱時の家族メンバー数
+  -- 機能
+  feature_packages        UUID[] NOT NULL DEFAULT '{}',  -- feature_packages の id 配列
+  -- 公開ステータス
+  status                  VARCHAR(20) NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'public', 'private', 'deprecated')),
+  display_order           INT NOT NULL DEFAULT 0,
+  -- メタ
+  banner_url              TEXT,
+  trial_days              INT NOT NULL DEFAULT 0,
+  min_contract_months     INT NOT NULL DEFAULT 1,
+  auto_renew_default      BOOLEAN NOT NULL DEFAULT TRUE,
+  -- バージョン管理
+  version                 INT NOT NULL DEFAULT 1,
+  superseded_by_plan_id   UUID REFERENCES subscription_plans(id),  -- 後継プラン
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_subscription_plans_status ON subscription_plans(status, display_order);
+CREATE INDEX idx_subscription_plans_type ON subscription_plans(plan_type, status);
+```
+
+#### 7.2.8 `feature_packages` (機能パッケージ)
+```sql
+CREATE TABLE feature_packages (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_key         VARCHAR(100) NOT NULL UNIQUE,  -- 'ai_analysis', 'family_management', etc.
+  display_name        VARCHAR(200) NOT NULL,
+  description         TEXT,
+  feature_flags       VARCHAR(100)[] NOT NULL DEFAULT '{}',  -- 含まれる feature flag のキー
+  display_order       INT NOT NULL DEFAULT 0,
+  status              VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deprecated')),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### 7.2.9 `plan_price_history` (価格変更履歴)
+```sql
+CREATE TABLE plan_price_history (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id               UUID NOT NULL REFERENCES subscription_plans(id) ON DELETE CASCADE,
+  old_monthly_price_jpy INT,
+  new_monthly_price_jpy INT,
+  old_yearly_price_jpy  INT,
+  new_yearly_price_jpy  INT,
+  changed_by            UUID NOT NULL REFERENCES auth.users(id),
+  reason                TEXT,
+  effective_at          TIMESTAMPTZ NOT NULL,
+  applies_to            VARCHAR(30) NOT NULL CHECK (applies_to IN ('new_only', 'on_renewal', 'immediately')),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### 7.2.10 `coupons` (クーポン・割引コード)
+```sql
+CREATE TABLE coupons (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code                VARCHAR(50) NOT NULL UNIQUE,
+  display_name        VARCHAR(200),
+  discount_type       VARCHAR(20) NOT NULL CHECK (discount_type IN ('fixed', 'percentage')),
+  discount_value      NUMERIC NOT NULL,  -- fixed: JPY、percentage: 0-100
+  applicable_plans    UUID[] NOT NULL DEFAULT '{}',  -- 適用可能なプラン id (空 = 全プラン)
+  applicable_to       VARCHAR(20) NOT NULL DEFAULT 'all' CHECK (applicable_to IN ('all', 'personal', 'family', 'org')),
+  valid_from          TIMESTAMPTZ NOT NULL,
+  valid_until         TIMESTAMPTZ NOT NULL,
+  max_uses            INT,  -- NULL = 無制限
+  uses_count          INT NOT NULL DEFAULT 0,
+  per_user_limit      INT NOT NULL DEFAULT 1,
+  duration_months     INT,  -- 何ヶ月間割引適用 (NULL = ずっと)
+  status              VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'expired')),
+  created_by          UUID NOT NULL REFERENCES auth.users(id),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE coupon_redemptions (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  coupon_id       UUID NOT NULL REFERENCES coupons(id),
+  user_id         UUID REFERENCES auth.users(id),
+  organization_id UUID REFERENCES organizations(id),
+  applied_to_subscription_id UUID,  -- 個人 / 組織契約 のどちらか
+  discount_amount_jpy INT NOT NULL,
+  redeemed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### 7.2.11 `revenue_snapshots` (収益スナップショット、日次)
+```sql
+CREATE TABLE revenue_snapshots (
+  date                    DATE PRIMARY KEY,
+  -- 個人プラン
+  personal_active_users   INT NOT NULL DEFAULT 0,
+  personal_mrr_jpy        INT NOT NULL DEFAULT 0,
+  -- 家族プラン
+  family_active_groups    INT NOT NULL DEFAULT 0,
+  family_mrr_jpy          INT NOT NULL DEFAULT 0,
+  -- 組織プラン
+  org_active_orgs         INT NOT NULL DEFAULT 0,
+  org_active_seats        INT NOT NULL DEFAULT 0,
+  org_mrr_jpy             INT NOT NULL DEFAULT 0,
+  -- 集計
+  total_mrr_jpy           INT NOT NULL DEFAULT 0,
+  total_arr_jpy           INT NOT NULL DEFAULT 0,
+  -- 解約・新規
+  new_signups             INT NOT NULL DEFAULT 0,
+  cancellations           INT NOT NULL DEFAULT 0,
+  upgrade_count           INT NOT NULL DEFAULT 0,
+  downgrade_count         INT NOT NULL DEFAULT 0,
+  -- メタ
+  computed_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
 #### 7.2.6 `infra_metrics`
 ```sql
 CREATE TABLE infra_metrics (
@@ -1053,6 +1363,38 @@ CREATE TABLE infra_alerts (
 - `GET /api/super-admin/exports/{id}` (ステータス確認)
 - `GET /api/super-admin/exports/{id}/download`
 
+### 8.14 プラン定義 (super_admin)
+- `GET /api/super-admin/plans` — プラン一覧
+- `POST /api/super-admin/plans` — プラン新規作成 (draft)
+- `GET /api/super-admin/plans/{id}` — プラン詳細
+- `PATCH /api/super-admin/plans/{id}` — プラン編集
+- `POST /api/super-admin/plans/{id}/publish` — draft → public
+- `POST /api/super-admin/plans/{id}/unpublish` — public → private
+- `POST /api/super-admin/plans/{id}/deprecate` — 廃止
+- `POST /api/super-admin/plans/{id}/price-change` — 価格変更 (適用範囲指定)
+- `GET /api/super-admin/plans/{id}/impact` — 価格変更影響シミュレーション
+- `GET /api/super-admin/plans/{id}/price-history` — 価格変更履歴
+
+### 8.15 機能パッケージ
+- `GET /api/super-admin/feature-packages`
+- `POST /api/super-admin/feature-packages`
+- `PATCH /api/super-admin/feature-packages/{id}`
+- `DELETE /api/super-admin/feature-packages/{id}`
+
+### 8.16 クーポン管理
+- `GET /api/admin/coupons` — クーポン一覧
+- `POST /api/admin/coupons` — クーポン作成
+- `PATCH /api/admin/coupons/{id}` — 編集
+- `POST /api/admin/coupons/{id}/pause` — 一時停止
+- `GET /api/admin/coupons/{id}/redemptions` — 利用統計
+
+### 8.17 収益管理
+- `GET /api/admin/finance/revenue/snapshot` — 最新スナップショット
+- `GET /api/admin/finance/revenue/timeseries` — 期間指定で MRR / ARR 推移
+- `GET /api/admin/finance/revenue/forecast` — 予測 (3/6/12 ヶ月)
+- `GET /api/admin/finance/licenses` — 組織ライセンス販売一覧
+- `GET /api/admin/finance/personal` — 個人課金者リスト
+
 ---
 
 ## 9. UI 画面仕様
@@ -1148,6 +1490,59 @@ CREATE TABLE infra_alerts (
 - データエクスポート要求
 - ダウンロード
 
+#### 9.4.5 `/super-admin/plans` (新規) ⭐
+プラン定義・販売管理ツール:
+- プラン一覧 (テーブル)
+  - カラム: key / 表示名 / 種別 / 月額 / 年額 / 含まれるパッケージ数 / ステータス / 表示順
+  - 行クリックで詳細編集
+  - Status badge (draft / public / private / deprecated)
+- フィルタ: 種別 (personal / family / org)、ステータス
+- アクション: 「+ 新規プラン作成」ボタン
+
+#### 9.4.6 `/super-admin/plans/{id}` (プラン編集)
+- 基本情報 (key、表示名、説明、銘柄画像)
+- 種別 / 上限値
+- 価格設定 (月額・年額)
+- 機能パッケージ選択 (チェックボックスマトリクス)
+- Stripe Price ID (連携時のみ)
+- ステータス変更ボタン (Publish / Unpublish / Deprecate)
+- 「価格変更」ボタン → モーダル (新価格 + 適用範囲: 新規のみ / 更新時 / 即時)
+  - 影響シミュレーションを表示 (影響契約数、影響金額)
+- 価格変更履歴タブ
+
+#### 9.4.7 `/super-admin/feature-packages` (新規) ⭐
+機能パッケージ管理:
+- パッケージ一覧 (key / 表示名 / 含まれる feature flag 数 / 利用プラン数)
+- 編集モーダル: パッケージに含める feature flag をチェックボックスで選択
+- マトリクスビュー: プラン × パッケージの俯瞰
+
+#### 9.4.8 `/admin/coupons` (新規) ⭐
+クーポン管理:
+- クーポン一覧 (code / 割引 / 有効期限 / 利用数 / ステータス)
+- 「+ 新規クーポン」モーダル (固定額 / %、対象プラン、期限、回数制限)
+- 個別クーポン詳細: 利用統計グラフ、利用者リスト
+- 一時停止ボタン
+
+#### 9.4.9 `/admin/finance/licenses` (新規) ⭐
+組織ライセンス販売管理:
+- 組織別販売状況テーブル (組織 / プラン / 数量 / 期限 / 売上 / 状態)
+- 期限切れ予告アラート (30 日以内)
+- 月別販売推移グラフ
+- 詳細クリックで組織別ライセンスプール詳細へ
+
+#### 9.4.10 `/admin/finance/personal` (新規)
+個人課金者管理:
+- 個人課金者リスト (ユーザー / プラン / 開始日 / 次回更新日 / MRR)
+- 検索・フィルタ
+- 個別キャンセル対応 (顧客対応用)
+
+#### 9.4.11 `/admin/finance/dashboard` 拡張
+- 日次・月次 MRR / ARR
+- セグメント別: personal / family / org
+- 解約予測カード
+- アップグレードファネル
+- 価格変更影響レポート
+
 ---
 
 ## 10. エラーハンドリング・バリデーション
@@ -1195,6 +1590,16 @@ CREATE TABLE infra_alerts (
 - Stripe 連携完了
 - ダッシュボード
 - コホート分析
+
+### Phase 4.5: プラン管理ツール (3 週間) ⭐
+- `subscription_plans` / `feature_packages` / `plan_price_history` / `coupons` / `revenue_snapshots` テーブル
+- super_admin プラン管理 UI (`/super-admin/plans`、`/super-admin/feature-packages`)
+- ライセンス販売ダッシュボード (`/admin/finance/licenses`)
+- クーポン管理 UI
+- プラン × 機能パッケージ マトリクス UI
+- 価格変更影響シミュレーション
+- 02-organization-management `org_license_pools` との連携 (プラン参照)
+- 01-family-management の `family_groups.plan_key` との整合性
 
 ### Phase 5: 不正検知 (2 週間)
 - ルールエンジン
