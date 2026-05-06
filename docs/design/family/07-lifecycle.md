@@ -53,26 +53,8 @@ WHERE
 
 ### 3.3 猶予期間バッチ (frozen → archived)
 
-```sql
--- cron_setup.sql
-SELECT cron.schedule(
-  'archive_frozen_family_groups',
-  '0 3 * * *',  -- 毎日 3 時
-  $$
-    WITH expired AS (
-      UPDATE family_groups
-      SET status = 'archived', archived_at = NOW(), updated_at = NOW()
-      WHERE status = 'frozen'
-        AND freeze_grace_until < NOW()
-      RETURNING id, owner_id
-    )
-    INSERT INTO family_activity_log (family_group_id, actor_id, action_type, details)
-    SELECT id, NULL, 'group_archived',
-           '{"reason": "freeze_grace_expired"}'::jsonb
-    FROM expired;
-  $$
-);
-```
+cron 登録は **operator/08-cron-batches.md §3** で集約しています (`family_freeze_grace_batch`)。
+実装の詳細は **operator/08-cron-batches.md §4.3** の `process_family_freeze_grace_to_archive()` を参照してください。
 
 ### 3.4 凍結状態でのアクセス制限
 

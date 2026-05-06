@@ -188,8 +188,7 @@ ALTER TABLE org_license_pools ENABLE ROW LEVEL SECURITY;
 -- SELECT: 本人の割当があるプール or 同組織 admin/manager/viewer
 CREATE POLICY "org_license_pools_select" ON org_license_pools
   FOR SELECT USING (
-    organization_id = get_user_org_id()
-    AND has_org_role(ARRAY['org_admin', 'org_manager', 'org_viewer'])
+    (organization_id = get_user_org_id() AND has_org_role(ARRAY['org_admin', 'org_manager', 'org_viewer']))
     OR EXISTS (
       SELECT 1 FROM org_license_assignments
       WHERE license_pool_id = org_license_pools.id

@@ -338,8 +338,9 @@ CREATE TABLE personal_subscriptions (
     REFERENCES subscription_plans(plan_key)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   -- ステータス
+  -- past_due → grace (7日経過) → cancelled (30日経過) の段階的遷移
   status                      VARCHAR(20) NOT NULL DEFAULT 'trialing'
-    CHECK (status IN ('trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due')),
+    CHECK (status IN ('trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due', 'grace')),
   -- 試用
   trial_started_at            TIMESTAMPTZ,
   trial_ends_at               TIMESTAMPTZ,
@@ -356,6 +357,9 @@ CREATE TABLE personal_subscriptions (
   current_period_end          TIMESTAMPTZ,
   cancel_at                   TIMESTAMPTZ,
   cancelled_at                TIMESTAMPTZ,
+  -- グレースペリオド (past_due → grace → cancelled 遷移)
+  past_due_since              TIMESTAMPTZ,  -- status が past_due になった時刻
+  grace_started_at            TIMESTAMPTZ,  -- status が grace になった時刻 (past_due から 7 日後)
   -- Stripe
   stripe_customer_id          VARCHAR(255),
   stripe_subscription_id      VARCHAR(255) UNIQUE,
@@ -370,11 +374,11 @@ CREATE TABLE personal_subscriptions (
     CHECK (NOT (status = 'paused' AND paused_until IS NULL))
 );
 
--- 1 ユーザーに対し active/trialing/paused/past_due は最大 1 件
+-- 1 ユーザーに対し active/trialing/paused/past_due/grace は最大 1 件
 -- (cancelled/expired は履歴として複数残せる)
 CREATE UNIQUE INDEX idx_personal_subscriptions_active_per_user
   ON personal_subscriptions(user_id)
-  WHERE status IN ('trialing', 'active', 'paused', 'past_due');
+  WHERE status IN ('trialing', 'active', 'paused', 'past_due', 'grace');
 
 CREATE INDEX idx_personal_subscriptions_status
   ON personal_subscriptions(status);

@@ -248,12 +248,13 @@ Org License Pool (org_pro)
 ### 4.2 家族メンバー数管理
 
 ```sql
--- 家族シート使用数を org_license_assignments に反映するトリガー
+-- 家族シート使用数を org_license_assignments に反映するトリガー関数
 -- family/07-lifecycle.md と連携 (family ドメインからの更新)
 CREATE OR REPLACE FUNCTION update_family_seats_used()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
-  -- family_members に変化があったとき、source_org_assignment_id を持つ group の seat 数を更新
+  -- AFTER トリガーのため RETURN 値は無視されるが、慣習で COALESCE(NEW, OLD) を返す
+  -- INSERT/UPDATE 時は NEW、DELETE 時は OLD を使用して対象グループを特定する
   UPDATE org_license_assignments
     SET family_seats_used = (
       SELECT COUNT(*) FROM family_members fm
@@ -269,6 +270,12 @@ BEGIN
   RETURN COALESCE(NEW, OLD);
 END;
 $$;
+
+-- トリガー登録: AFTER INSERT OR UPDATE OR DELETE ON family_members
+CREATE TRIGGER trg_update_family_seats_used
+  AFTER INSERT OR UPDATE OR DELETE ON family_members
+  FOR EACH ROW
+  EXECUTE FUNCTION update_family_seats_used();
 ```
 
 ### 4.3 退職時の家族グループ処理

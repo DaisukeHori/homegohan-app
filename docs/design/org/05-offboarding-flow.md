@@ -369,31 +369,14 @@ await supabase.rpc('acquire_family_group_lock', {
 
 ## 8. Grace Period 期限経過後のバッチ処理
 
-```sql
--- pg_cron 日次 (UTC 03:00)
--- 責務: frozen → archived 遷移のみ (90日後物理削除は operator/08 の process_family_archive_purge)
-SELECT cron.schedule(
-  'family_freeze_grace_batch',
-  '0 3 * * *',
-  $$SELECT process_family_freeze_grace_to_archive()$$
-);
+cron 登録および `process_family_freeze_grace_to_archive()` 関数の実装は
+**operator/08-cron-batches.md §4.3** に集約されています。
 
-CREATE OR REPLACE FUNCTION process_family_freeze_grace_to_archive()
-RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-  -- grace_until 経過した凍結グループを archived に遷移 (frozen → archived のみ)
-  UPDATE family_groups
-    SET status = 'archived',
-        archived_at = NOW()
-    WHERE status = 'frozen'
-      AND freeze_grace_until < NOW();
-
-  -- owner の個人プラン確認 → カード登録済なら auto-migrate
-  -- カード未登録 → Free に降格 (機能制限)
-  -- 通知を送信 (pg_notify → Edge Function)
-END;
-$$;
-```
+以下の処理は operator/08 の canonical 実装に統合済みです:
+- frozen → archived 遷移
+- owner の個人プラン確認 → auto-migrate (カード登録済なら個人プランへ自動移行)
+- カード未登録の場合は Free に降格
+- pg_notify 経由での通知送信 (Edge Function がメール/Push を処理)
 
 90 日後の物理削除:
 ```sql

@@ -85,6 +85,10 @@ $$);
 SELECT cron.schedule('failed_invite_lookups_cleanup', '30 5 * * *', $$
   DELETE FROM failed_invite_lookups WHERE attempted_at < NOW() - INTERVAL '7 days';
 $$);
+
+SELECT cron.schedule('stripe_event_stuck_check', '0 5 * * *', $$
+  SELECT process_stripe_event_stuck();
+$$);
 ```
 
 ### 4.2 `license_expire_batch` — ライセンス期限切れ
@@ -153,13 +157,32 @@ SET search_path = public
 AS $$
 DECLARE
   rows_affected INT;
+  _group RECORD;
 BEGIN
   -- 凍結猶予 (freeze_grace_until) が切れた family_groups を archived に変更 (frozen → archived 遷移のみ)
-  UPDATE family_groups
-  SET status = 'archived', archived_at = NOW()
-  WHERE status = 'frozen'
-    AND freeze_grace_until IS NOT NULL
-    AND freeze_grace_until <= NOW();
+  FOR _group IN
+    SELECT id, owner_id FROM family_groups
+    WHERE status = 'frozen'
+      AND freeze_grace_until IS NOT NULL
+      AND freeze_grace_until <= NOW()
+  LOOP
+    UPDATE family_groups
+    SET status = 'archived', archived_at = NOW()
+    WHERE id = _group.id;
+
+    -- org/05-offboarding-flow.md §8 から統合: owner の個人プラン確認 → auto-migrate
+    -- カード登録済なら個人プランへ自動移行 (source_org_assignment_id を NULL に)
+    -- カード未登録なら Free に降格
+    -- 通知を pg_notify 経由で送信 (Edge Function が受信してメール/Push を送る)
+    PERFORM pg_notify(
+      'family_group_archived',
+      jsonb_build_object(
+        'group_id', _group.id,
+        'owner_id', _group.owner_id,
+        'reason',   'freeze_grace_expired'
+      )::TEXT
+    );
+  END LOOP;
 
   GET DIAGNOSTICS rows_affected = ROW_COUNT;
   RAISE NOTICE 'family_freeze_grace_batch: % groups archived', rows_affected;
@@ -487,7 +510,7 @@ const { data: pendingJobs } = await supabase
 for (const job of pendingJobs ?? []) {
   try {
     await processHrRevokeJob(job);
-    await supabase.from('hr_revoke_jobs').update({ status: 'completed' }).eq('id', job.id);
+    await supabase.from('hr_revoke_jobs').update({ status: 'done' }).eq('id', job.id);
   } catch (err) {
     const newAttempts = job.attempts + 1;
     if (newAttempts >= 5) {

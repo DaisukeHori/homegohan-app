@@ -205,8 +205,25 @@ interface AuditLogParams {
 export async function insertAuditLog(params: AuditLogParams): Promise<void> {
   const supabase = createSupabaseServiceClient();  // service_role で RLS バイパス (INSERT のみ)
 
+  // actor の email / roles をスナップショットとして取得 (GDPR 削除後も逆引き可能にする)
+  let actorEmailSnapshot: string | null = null;
+  let actorRoleSnapshot: string | null = null;
+  if (params.actorId) {
+    const { data: authUser } = await supabase.auth.admin.getUserById(params.actorId);
+    actorEmailSnapshot = authUser?.user?.email ?? null;
+
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('roles')
+      .eq('id', params.actorId)
+      .single();
+    actorRoleSnapshot = (profile?.roles ?? []).join(',') || null;
+  }
+
   await supabase.from('admin_audit_logs').insert({
     actor_id: params.actorId,
+    actor_email_snapshot: actorEmailSnapshot,
+    actor_role_snapshot: actorRoleSnapshot,
     action_type: params.actionType,
     target_id: params.targetId ?? null,
     target_type: params.targetType ?? null,
@@ -219,7 +236,9 @@ export async function insertAuditLog(params: AuditLogParams): Promise<void> {
 }
 ```
 
-**注意**: `actor_id` は RLS の WITH CHECK で `auth.uid()` と一致することを強制するが、`service_role` を使う場合は RLS をバイパスするため、アプリ層で `actorId = await getCurrentUserId()` を必ず取得して渡すこと。
+**注意**:
+- `actor_id` は RLS の WITH CHECK で `auth.uid()` と一致することを強制するが、`service_role` を使う場合は RLS をバイパスするため、アプリ層で `actorId = await getCurrentUserId()` を必ず取得して渡すこと。
+- `actor_email_snapshot` / `actor_role_snapshot` は GDPR 削除により `actor_id` が NULL になった後も actor を特定するために使用する。これらはスナップショット列であり、後から変更されない。
 
 ## 5. 7 年保管とアーカイブ
 

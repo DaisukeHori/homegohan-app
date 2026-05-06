@@ -364,39 +364,43 @@ COMMENT ON FUNCTION acquire_family_group_lock(UUID) IS
 
 ### 6.3 実装例
 
+```sql
+-- supabase/migrations/xxxx_advisory_lock_helper.sql
+-- pg_advisory_xact_lock を直接 RPC 呼び出しすることはできないため、
+-- ラッパー関数 acquire_advisory_lock を用意する
+CREATE OR REPLACE FUNCTION acquire_advisory_lock(lock_key TEXT)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext(lock_key));
+END;
+$$;
+```
+
 ```typescript
 // src/lib/advisory-lock.ts
 
 /**
- * pg_advisory_xact_lock を使ったトランザクション内ロック
+ * acquire_advisory_lock RPC 経由でトランザクション内ロックを取得
  * トランザクション終了時に自動解放される
+ * 注意: pg_advisory_xact_lock は Supabase RPC から直接呼び出せないため
+ *       必ず acquire_advisory_lock ラッパーを経由すること
  */
 export async function withAdvisoryLock<T>(
   key: string,
   fn: () => Promise<T>
 ): Promise<T> {
   const supabase = createServiceRoleClient(); // Edge Function 内のみ
-  
-  await supabase.rpc('pg_advisory_xact_lock', {
-    key: hashText(key),
+
+  await supabase.rpc('acquire_advisory_lock', {
+    lock_key: key,
   });
 
   return fn();
 }
-
-// PostgreSQL 関数として定義 (SECURITY DEFINER)
-// supabase/migrations/xxxx_advisory_lock_helper.sql:
-/*
-CREATE OR REPLACE FUNCTION acquire_advisory_lock(lock_key TEXT)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext(lock_key));
-END;
-$$;
-*/
 ```
 
 ### 6.4 行ロック (SELECT FOR UPDATE)

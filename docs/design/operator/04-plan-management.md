@@ -96,12 +96,14 @@ export async function syncPriceChange(input: PriceChangeInput) {
   });
 
   // 2. DB 更新 (トランザクション内)
+  // 引数名は operator/05-stripe-integration.md §5.2 の apply_price_change RPC 定義に合わせて p_ プレフィックスを使用
   await supabase.rpc('apply_price_change', {
-    plan_id: input.plan_id,
-    new_price_id: newPrice.id,
-    new_monthly_price: input.new_monthly_price_jpy,
-    applies_to: input.applies_to,
-    changed_by: input.actor_id,
+    p_plan_id: input.plan_id,
+    p_new_stripe_price_id: newPrice.id,
+    p_new_monthly_price_jpy: input.new_monthly_price_jpy,
+    p_applies_to: input.applies_to,
+    p_changed_by: input.actor_id,
+    p_reason: input.reason ?? '',
   });
 
   // 3. on_renewal / immediately の場合は既存サブスクリプションを更新

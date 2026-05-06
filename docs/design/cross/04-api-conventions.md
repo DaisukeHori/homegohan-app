@@ -165,12 +165,12 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `FAM_GROUP_FROZEN` | 家族グループが凍結中 | 403 |
 | `FAM_GROUP_ARCHIVED` | 家族グループがアーカイブ済み | 404 |
 | `FAM_INVITE_EXPIRED` | 招待が期限切れ | 410 |
-| `FAM_INVITE_ALREADY_ACCEPTED` | 招待が受諾済み | 409 |
 | `FAM_INVITE_USED` | 招待は既に受諾済み | 409 |
 | `FAM_INVITE_CANCELLED` | 招待は取り消されている | 410 |
 | `FAM_MEAL_REQUEST_INVALID_STATUS` | メールリクエストのステータス遷移エラー | 422 |
 | `FAM_CHILD_NO_AUTH_USER` | 子供メンバーは auth.users 不可 | 422 |
 | `FAM_PARENTAL_CONSENT_REQUIRED` | 保護者同意が必要 | 403 |
+| `FAM_CHILD_PROMOTE_AUTH_REQUIRED` | 子供アカウント独立化には親の再認証が必要 | 401 |
 
 #### ORG 系
 
@@ -181,6 +181,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `ORG_INACTIVE` | 組織が非アクティブ | 403 |
 | `ORG_SSO_REQUIRED` | SSO ログインが必要 | 403 |
 | `ORG_OFFBOARD_INVALID_STATUS` | オフボーディング操作の対象グループが不正なステータス | 409 |
+| `ORG_LICENSE_ALREADY_REVOKED` | ライセンスは既に取り消されている | 410 |
+| `ORG_LICENSE_POOL_EXPIRED` | ライセンスプールが期限切れ | 410 |
 
 #### OP 系
 

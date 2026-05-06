@@ -468,12 +468,8 @@ SELECT cron.schedule(
 `processing_status = 'processing'` のまま 15 分以上経過したレコードを日次で検出し、ステータスをリセットする。
 
 ```sql
--- Supabase pg_cron で日次実行
-SELECT cron.schedule(
-  'stripe-event-stuck-check',
-  '0 5 * * *',  -- 毎日 05:00 UTC
-  $$SELECT process_stripe_event_stuck()$$
-);
+-- cron 登録は operator/08-cron-batches.md §4.1 で集約
+-- (stripe_event_stuck_check は operator/08 の pg_cron ジョブ一覧を参照)
 
 CREATE OR REPLACE FUNCTION process_stripe_event_stuck()
 RETURNS void
