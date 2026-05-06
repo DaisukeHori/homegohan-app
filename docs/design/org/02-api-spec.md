@@ -1102,7 +1102,7 @@ describe('POST /api/org/licenses - ライセンス枯渇テスト', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        pool_id: pool.id,
+        license_pool_id: pool.id,
         user_id: faker.string.uuid(),
       }),
     });

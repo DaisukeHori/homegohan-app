@@ -1059,10 +1059,9 @@ describe('License pool capacity (concurrency)', () => {
     // 10 件を同時にリクエスト
     const promises = Array.from({ length: 10 }, (_, i) =>
       supabaseAdmin.from('org_license_assignments').insert({
-        pool_id: pool.id,
+        license_pool_id: pool.id,
         organization_id: pool.organization_id,
         user_id: faker.string.uuid(),
-        plan_key: pool.plan_key,
       }),
     );
 
@@ -1092,10 +1091,9 @@ describe('License pool capacity (concurrency)', () => {
 
     const promises = Array.from({ length: 5 }, () =>
       supabaseAdmin.from('org_license_assignments').insert({
-        pool_id: pool.id,
+        license_pool_id: pool.id,
         organization_id: pool.organization_id,
         user_id: faker.string.uuid(),
-        plan_key: pool.plan_key,
       }),
     );
 
@@ -2318,7 +2316,7 @@ describe('ライセンスプール容量制限', () => {
         Authorization: `Bearer ${orgAdminToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ pool_id: pool.id, user_id: faker.string.uuid() }),
+      body: JSON.stringify({ license_pool_id: pool.id, user_id: faker.string.uuid() }),
     });
     expect(res.status).toBe(409);
     const body = await res.json();

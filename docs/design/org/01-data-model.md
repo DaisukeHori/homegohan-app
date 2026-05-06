@@ -556,7 +556,7 @@ erDiagram
   org_license_audit_log {
     uuid id PK
     uuid organization_id FK
-    uuid pool_id FK
+    uuid license_pool_id FK
     uuid assignment_id FK
     varchar action_type
     timestamptz created_at

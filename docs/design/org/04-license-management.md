@@ -622,10 +622,9 @@ describe('ライセンスプール操作', () => {
       const { data } = await supabaseAdmin
         .from('org_license_assignments')
         .insert({
-          pool_id: pool.id,
+          license_pool_id: pool.id,
           organization_id: pool.organization_id,
           user_id: faker.string.uuid(),
-          plan_key: pool.plan_key,
         })
         .select()
         .single();
