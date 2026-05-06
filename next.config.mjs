@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
+const isDev = process.env.NODE_ENV === 'development';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -35,9 +36,10 @@ const nextConfig = {
           {
             key: 'Content-Security-Policy',
             // #275: 'unsafe-eval' を削除。'unsafe-inline' は nonce ベース移行が大規模なため別 issue で対応予定
+            // dev モードでは Next.js webpack HMR が unsafe-eval を必要とするため条件付きで追加
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' *.vercel-scripts.com",
+              `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} *.vercel-scripts.com`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: *.supabase.co images.unsplash.com",
               "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co",
