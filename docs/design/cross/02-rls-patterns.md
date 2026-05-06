@@ -134,7 +134,7 @@ CREATE POLICY "{table}_same_org_read"
   USING (
     EXISTS (
       SELECT 1 FROM user_profiles up
-      WHERE up.user_id = auth.uid()
+      WHERE up.id = auth.uid()
         AND up.organization_id = {table_name}.organization_id
     )
   );
@@ -145,7 +145,7 @@ CREATE POLICY "{table}_org_admin_insert"
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM user_profiles up
-      WHERE up.user_id = auth.uid()
+      WHERE up.id = auth.uid()
         AND up.organization_id = {table_name}.organization_id
         AND up.role IN ('org_admin', 'org_manager', 'admin', 'super_admin')
     )
@@ -161,16 +161,25 @@ CREATE POLICY "{table}_org_admin_insert"
 -- 用途: admin_audit_logs, family_activity_log, org_license_audit_log 等
 
 -- INSERT: actor_id を WITH CHECK で auth.uid() に固定
+-- NOTE: Supabase JWT の 'role' クレームは anon / authenticated / service_role のみ。
+--       アプリレベルのロール (admin, super_admin 等) は user_profiles.roles[] で管理する。
 CREATE POLICY "{table}_insert"
   ON {table_name} FOR INSERT
-  WITH CHECK (actor_id = auth.uid() OR auth.jwt() ->> 'role' = 'service_role');
+  WITH CHECK (
+    actor_id = auth.uid()
+    OR (auth.jwt() ->> 'role') = 'service_role'
+  );
 
 -- SELECT: 運営者 (admin+) または自分に関する操作のみ
 CREATE POLICY "{table}_admin_read"
   ON {table_name} FOR SELECT
   USING (
-    auth.jwt() ->> 'role' IN ('admin', 'super_admin')
-    OR auth.jwt() ->> 'role' = 'service_role'
+    EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND ARRAY['admin', 'super_admin']::TEXT[] && roles
+    )
+    OR (auth.jwt() ->> 'role') = 'service_role'
   );
 
 -- UPDATE / DELETE: 完全禁止
@@ -218,8 +227,12 @@ CREATE POLICY "{table}_industrial_doctor_read"
         AND doc.role = 'org_industrial_doctor'
         AND doc.organization_id = target.organization_id
     )
-    -- または 運営 admin
-    OR auth.jwt() ->> 'role' IN ('admin', 'super_admin')
+    -- または 運営 admin (user_profiles.roles[] で判定)
+    OR EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND ARRAY['admin', 'super_admin']::TEXT[] && roles
+    )
   );
 ```
 
@@ -315,12 +328,39 @@ RETURNING *;
 
 ### 6.2 使用場面
 
+ロックキーの命名は以下のプレフィックス + UUID 形式で統一する。
+
 | 操作 | ロックキー生成 |
 |------|-------------|
-| ライセンス一括割当 | `hashtext('license_pool:' || pool_id)` |
-| 家族グループ owner 移譲 | `hashtext('family_owner:' || group_id)` |
-| 退職時 family 凍結 | `hashtext('family_freeze:' || user_id)` |
-| Stripe webhook 二重処理防止 | `hashtext('stripe:' || event_id)` |
+| ライセンス一括割当 | `hashtext('license_pool:' || pool_id::TEXT)` |
+| 家族グループ owner 移譲 | `hashtext('family-group:' || group_id::TEXT)` |
+| 退職時 family 凍結 | `hashtext('family-group:' || group_id::TEXT)` |
+| Stripe webhook 二重処理防止 | `hashtext('stripe:' || event_id::TEXT)` |
+
+**命名規則**: `{ドメイン}-{エンティティ}:{UUID}` 形式（ハイフン区切り）
+
+### 6.2.1 `acquire_family_group_lock` ヘルパー関数
+
+家族グループ操作 (migrate-to-personal / transfer-ownership / dissolve → archived) に統一して使用するロック取得ヘルパー。
+
+```sql
+-- supabase/migrations/2026MMDD012_advisory_lock_helpers.sql
+
+CREATE OR REPLACE FUNCTION acquire_family_group_lock(family_group_id UUID)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('family-group:' || family_group_id::TEXT));
+END;
+$$;
+
+COMMENT ON FUNCTION acquire_family_group_lock(UUID) IS
+  '家族グループへの排他操作 (凍結/移行/譲渡/解散) 前に呼び出すアドバイザリロック。
+   トランザクション終了時に自動解放。プレフィックス: family-group:{UUID}';
+```
 
 ### 6.3 実装例
 
@@ -490,7 +530,12 @@ CREATE POLICY "audit_logs_insert"
 CREATE POLICY "audit_logs_admin_select"
   ON admin_audit_logs FOR SELECT
   USING (
-    (auth.jwt() ->> 'role') IN ('admin', 'super_admin', 'service_role')
+    EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND ARRAY['admin', 'super_admin']::TEXT[] && roles
+    )
+    OR (auth.jwt() ->> 'role') = 'service_role'
   );
 
 CREATE POLICY "audit_logs_no_update"

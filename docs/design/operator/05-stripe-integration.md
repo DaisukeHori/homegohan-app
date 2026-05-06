@@ -449,18 +449,66 @@ SELECT cron.schedule(
   'license-used-count-reconcile',
   '0 4 1 * *',  -- 毎月1日 04:00 UTC
   $$
-  -- org_license_pools.used_count と実際の assignments 数を照合
+  -- org_license_pools.used_licenses と実際の assignments 数を照合
   UPDATE org_license_pools p
-  SET used_count = (
+  SET used_licenses = (
     SELECT COUNT(*) FROM org_license_assignments a
-    WHERE a.pool_id = p.id AND a.status = 'active'
+    WHERE a.license_pool_id = p.id AND a.status = 'active'
   )
-  WHERE used_count != (
+  WHERE used_licenses != (
     SELECT COUNT(*) FROM org_license_assignments a
-    WHERE a.pool_id = p.id AND a.status = 'active'
+    WHERE a.license_pool_id = p.id AND a.status = 'active'
   );
   $$
 );
+```
+
+### 8.3 Stripe webhook 処理スタック検出
+
+`processing_status = 'processing'` のまま 15 分以上経過したレコードを日次で検出し、ステータスをリセットする。
+
+```sql
+-- Supabase pg_cron で日次実行
+SELECT cron.schedule(
+  'stripe-event-stuck-check',
+  '0 5 * * *',  -- 毎日 05:00 UTC
+  $$SELECT process_stripe_event_stuck()$$
+);
+
+CREATE OR REPLACE FUNCTION process_stripe_event_stuck()
+RETURNS void
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  stuck_count INT;
+BEGIN
+  -- 15 分以上 processing のまま止まっているイベントを検出
+  UPDATE stripe_webhook_events
+  SET processing_status = 'pending'
+  WHERE processing_status = 'processing'
+    AND received_at < NOW() - INTERVAL '15 minutes';
+
+  GET DIAGNOSTICS stuck_count = ROW_COUNT;
+
+  IF stuck_count > 0 THEN
+    INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
+    VALUES (
+      '00000000-0000-0000-0000-000000000000',
+      'system.stripe.stuck_events_reset',
+      'warn',
+      jsonb_build_object('reset_count', stuck_count, 'executed_at', NOW())
+    );
+    -- pg_notify で Slack 通知
+    PERFORM pg_notify('admin_alerts', jsonb_build_object(
+      'type', 'stripe_stuck_events',
+      'count', stuck_count
+    )::TEXT);
+  END IF;
+
+  RAISE NOTICE 'stripe_event_stuck_check: % events reset', stuck_count;
+END;
+$$ LANGUAGE plpgsql;
 ```
 
 ## 9. グレースペリオド詳細 (§18.7)

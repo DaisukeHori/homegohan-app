@@ -90,15 +90,18 @@ $$);
 
 ```sql
 CREATE OR REPLACE FUNCTION process_license_expire()
-RETURNS void AS $$
+RETURNS void
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
   -- 1. 期限切れ org_license_pools の関連 assignments を expired に変更
   UPDATE org_license_assignments ola
   SET status = 'expired', revoked_at = NOW()
   FROM org_license_pools olp
-  WHERE ola.pool_id = olp.id
+  WHERE ola.license_pool_id = olp.id
     AND ola.status = 'active'
-    AND olp.expires_at <= NOW()
+    AND olp.ends_at <= NOW()
     AND olp.auto_renew = FALSE;
 
   -- 2. 期限切れ personal_subscriptions を expired に変更
@@ -110,12 +113,12 @@ BEGIN
 
   -- 3. deprecated プランで ends_at 経過したプールを処理
   UPDATE org_license_pools
-  SET expires_at = NOW()
+  SET ends_at = NOW()
   WHERE plan_key IN (
     SELECT plan_key FROM subscription_plans WHERE status = 'deprecated'
-  ) AND (expires_at IS NULL OR expires_at > NOW())
+  ) AND ends_at > NOW()
     AND (
-      -- ends_at が設定されていて、既に経過している場合
+      -- subscription_plans.ends_at が設定されていて、既に経過している場合
       SELECT ends_at FROM subscription_plans sp
       WHERE sp.plan_key = org_license_pools.plan_key
         AND sp.status = 'deprecated'
@@ -143,7 +146,12 @@ $$ LANGUAGE plpgsql;
 
 ```sql
 CREATE OR REPLACE FUNCTION process_family_freeze_grace()
-RETURNS void AS $$
+RETURNS void
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  rows_affected INT;
 BEGIN
   -- 凍結猶予 (freeze_grace_until) が切れた family_groups を archived に変更
   UPDATE family_groups
@@ -152,20 +160,28 @@ BEGIN
     AND freeze_grace_until IS NOT NULL
     AND freeze_grace_until <= NOW();
 
-  RAISE NOTICE 'family_freeze_grace_batch: % groups archived', ROW_COUNT;
+  GET DIAGNOSTICS rows_affected = ROW_COUNT;
+  RAISE NOTICE 'family_freeze_grace_batch: % groups archived', rows_affected;
 END;
 $$ LANGUAGE plpgsql;
 ```
 
 ### 4.4 `family_archive_purge_batch` — 解散グループの物理削除 (90 日後)
 
+-- 責務の分離:
+-- - process_family_freeze_grace_to_archive (org/05): frozen → archived 遷移のみ
+-- - process_family_archive_purge (本関数): archived から 90 日後の物理削除のみ
+
 ```sql
 CREATE OR REPLACE FUNCTION process_family_archive_purge()
-RETURNS void AS $$
+RETURNS void
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   purge_count INT;
 BEGIN
-  -- archived_at から 90 日経過した family_groups を物理削除
+  -- archived_at から 90 日経過した family_groups を物理削除 (frozen → archived 遷移は行わない)
   -- CASCADE で関連テーブルも削除される
   DELETE FROM family_groups
   WHERE status = 'archived'
@@ -190,11 +206,14 @@ $$ LANGUAGE plpgsql;
 
 ```sql
 CREATE OR REPLACE FUNCTION process_meal_request_expire()
-RETURNS void AS $$
+RETURNS void
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
   UPDATE family_meal_requests
   SET status = 'expired'
-  WHERE status = 'pending'
+  WHERE status IN ('pending', 'proposed')
     AND expires_at IS NOT NULL
     AND expires_at <= NOW();
 END;
@@ -205,7 +224,10 @@ $$ LANGUAGE plpgsql;
 
 ```sql
 CREATE OR REPLACE FUNCTION run_data_integrity_check()
-RETURNS void AS $$
+RETURNS void
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   orphan_count INT;
 BEGIN
@@ -255,20 +277,23 @@ $$ LANGUAGE plpgsql;
 
 ```sql
 CREATE OR REPLACE FUNCTION reconcile_license_used_count()
-RETURNS void AS $$
+RETURNS void
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   mismatch_count INT := 0;
 BEGIN
   UPDATE org_license_pools p
-  SET used_count = (
+  SET used_licenses = (
     SELECT COUNT(*)
     FROM org_license_assignments a
-    WHERE a.pool_id = p.id AND a.status = 'active'
+    WHERE a.license_pool_id = p.id AND a.status = 'active'
   )
-  WHERE p.used_count != (
+  WHERE p.used_licenses != (
     SELECT COUNT(*)
     FROM org_license_assignments a
-    WHERE a.pool_id = p.id AND a.status = 'active'
+    WHERE a.license_pool_id = p.id AND a.status = 'active'
   );
 
   GET DIAGNOSTICS mismatch_count = ROW_COUNT;
@@ -301,7 +326,7 @@ $$ LANGUAGE plpgsql;
     { "path": "/api/cron/stripe-reconcile",         "schedule": "0 3 * * *" },
     { "path": "/api/cron/re-engagement-email",      "schedule": "0 4 * * *" },
     { "path": "/api/cron/nps-survey-sender",        "schedule": "0 5 * * *" },
-    { "path": "/api/cron/grace-period-check",       "schedule": "0 0 30 * *" },
+    { "path": "/api/cron/grace-period-check",       "schedule": "30 0 * * *" },
     { "path": "/api/cron/revenue-snapshot",         "schedule": "0 16 * * *" },
     { "path": "/api/cron/dau-snapshot",             "schedule": "30 16 * * *" },
     { "path": "/api/cron/logical-backup",           "schedule": "0 17 * * *" },
@@ -454,8 +479,8 @@ const { data: pendingJobs } = await supabase
   .from('hr_revoke_jobs')
   .select('*')
   .in('status', ['pending', 'retry'])
-  .lte('scheduled_at', new Date().toISOString())
-  .order('scheduled_at', { ascending: true })
+  .lte('next_attempt_at', new Date().toISOString())
+  .order('next_attempt_at', { ascending: true })
   .limit(100);
 
 for (const job of pendingJobs ?? []) {
@@ -463,8 +488,8 @@ for (const job of pendingJobs ?? []) {
     await processHrRevokeJob(job);
     await supabase.from('hr_revoke_jobs').update({ status: 'completed' }).eq('id', job.id);
   } catch (err) {
-    const newRetryCount = job.retry_count + 1;
-    if (newRetryCount >= 5) {
+    const newAttempts = job.attempts + 1;
+    if (newAttempts >= 5) {
       // デッドレター
       await supabase.from('hr_revoke_jobs').update({
         status: 'dead_letter',
@@ -473,12 +498,12 @@ for (const job of pendingJobs ?? []) {
       await notifySlack({ channel: '#hr-alerts', message: `HR revoke job dead letter: ${job.id}` });
     } else {
       // 指数バックオフで再スケジュール
-      const nextSchedule = new Date(Date.now() + Math.pow(2, newRetryCount) * 60 * 1000);
+      const nextSchedule = new Date(Date.now() + Math.pow(2, newAttempts) * 60 * 1000);
       await supabase.from('hr_revoke_jobs').update({
         status: 'retry',
-        retry_count: newRetryCount,
+        attempts: newAttempts,
         last_error: String(err),
-        scheduled_at: nextSchedule.toISOString(),
+        next_attempt_at: nextSchedule.toISOString(),
       }).eq('id', job.id);
     }
   }

@@ -107,6 +107,10 @@ CREATE INDEX IF NOT EXISTS idx_dept_history_org  ON department_history(organizat
 
 ```sql
 -- マテリアライズドビューとして定義 (5 分ごと REFRESH)
+-- IMPORTANT: Materialized View には RLS を適用できない。
+-- このビューは service_role 専用。直接クエリでの RLS 適用が必要な場合は
+-- ベーステーブル (user_profiles) に直接クエリすること。
+-- Edge Function 内での service_role 使用時は admin_audit_logs に記録必須。
 CREATE MATERIALIZED VIEW IF NOT EXISTS org_members AS
 SELECT
   up.id             AS user_id,
@@ -124,6 +128,8 @@ WHERE up.organization_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_uid ON org_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(organization_id);
+-- NOTE: org_members MV は service_role 専用。RLS 不可。
+-- 一般ユーザーへの公開には user_profiles への直接クエリ + RLS を使用すること。
 ```
 
 #### `org_subscriptions`
@@ -203,8 +209,9 @@ CREATE TABLE IF NOT EXISTS org_license_pools (
 );
 
 CREATE INDEX IF NOT EXISTS idx_org_license_pools_org    ON org_license_pools(organization_id);
-CREATE INDEX IF NOT EXISTS idx_org_license_pools_active ON org_license_pools(organization_id)
-  WHERE ends_at > NOW();
+CREATE INDEX IF NOT EXISTS idx_org_license_pools_active ON org_license_pools(organization_id, ends_at);
+-- NOTE: partial INDEX の WHERE 句に NOW() などの VOLATILE 関数は使用不可。
+-- アプリ層で ends_at > NOW() のフィルタを適用すること。
 ```
 
 #### `org_license_assignments`

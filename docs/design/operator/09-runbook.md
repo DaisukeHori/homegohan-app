@@ -28,7 +28,7 @@
     ├── subscription_plans         ← 'free' レコードを必ず seed
     ├── feature_packages
     ├── plan_price_history
-    ├── coupons / coupon_redemptions
+    ├── coupons / coupon_redemptions  ← organization_id FK は DEFERRABLE INITIALLY DEFERRED (organizations より先に作成)
     ├── personal_subscriptions
     └── revenue_snapshots
 
@@ -53,7 +53,7 @@
 8.  experiments / assignments
 9.  consent 系 (cookie_consents / terms_acceptances 等)
 10. gdpr_deletion_requests
-11. parental_consents
+11. parental_consents  ← family/01-data-model.md で定義 (family/ ドメイン適用後)
 12. password_history
 13. user_sessions_metadata
 14. pg_cron setup (08-cron-batches.md 参照)
@@ -239,7 +239,7 @@ Step 6: 監査ログ確認
 Step 1: 被害範囲の特定
   SELECT COUNT(*), MIN(created_at), MAX(created_at)
   FROM org_license_assignments
-  WHERE pool_id = '{pool_id}'
+  WHERE license_pool_id = '{pool_id}'
     AND created_at BETWEEN '{誤操作開始時刻}' AND '{誤操作終了時刻}';
 
 Step 2: bulk-revoke 実行 (API)
@@ -265,7 +265,7 @@ Step 3: 確認モーダルで人数を確認
 
 Step 4: 実行後の確認
   SELECT COUNT(*) FROM org_license_assignments
-  WHERE pool_id = '{pool_id}' AND status = 'revoked'
+  WHERE license_pool_id = '{pool_id}' AND status = 'revoked'
     AND revoked_at > NOW() - INTERVAL '1h';
 
 Step 5: 影響ユーザーへの通知

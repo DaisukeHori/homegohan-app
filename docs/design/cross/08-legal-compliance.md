@@ -304,11 +304,15 @@ CREATE POLICY "org_invoices_org_read"
   USING (
     EXISTS (
       SELECT 1 FROM user_profiles up
-      WHERE up.user_id = auth.uid()
+      WHERE up.id = auth.uid()
         AND up.organization_id = org_invoices.organization_id
         AND up.role IN ('org_admin', 'org_manager')
     )
-    OR (auth.jwt() ->> 'role') IN ('admin', 'super_admin', 'finance')
+    OR EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND ARRAY['admin', 'super_admin', 'finance']::TEXT[] && roles
+    )
   );
 ```
 
@@ -586,8 +590,8 @@ SELECT cron.schedule('anonymize_retired_health_notes', '0 3 * * *', $$
     content = '[匿名化済み - 保管期間: ' || TO_CHAR(created_at + INTERVAL '5 years', 'YYYY-MM-DD') || ']',
     updated_at = NOW()
   WHERE user_id IN (
-    SELECT up.user_id FROM user_profiles up
-    JOIN org_license_assignments ola ON ola.user_id = up.user_id
+    SELECT up.id FROM user_profiles up
+    JOIN org_license_assignments ola ON ola.user_id = up.id
     WHERE ola.revoked_at < NOW() - INTERVAL '5 years'
   )
   AND anonymized_at IS NULL;

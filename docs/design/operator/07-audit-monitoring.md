@@ -19,19 +19,23 @@
 ```sql
 -- 既存テーブルへの ALTER (01-data-model.md で定義済み、ここは補足)
 CREATE TABLE IF NOT EXISTS admin_audit_logs (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  actor_id        UUID NOT NULL REFERENCES auth.users(id),
-  action_type     VARCHAR(100) NOT NULL,
-  target_id       UUID,
-  target_type     VARCHAR(30),
-  details         JSONB NOT NULL DEFAULT '{}',
-  severity        VARCHAR(20) NOT NULL DEFAULT 'info'
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_id                UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  -- GDPR 削除対応: actor が削除された場合 NULL にして履歴を保持
+  -- 削除前スナップショット (削除後の参照用)
+  actor_email_snapshot    VARCHAR(255),   -- 削除前の email を保持
+  actor_role_snapshot     VARCHAR(50),    -- 削除前の主ロールを保持
+  action_type             VARCHAR(100) NOT NULL,
+  target_id               UUID,
+  target_type             VARCHAR(30),
+  details                 JSONB NOT NULL DEFAULT '{}',
+  severity                VARCHAR(20) NOT NULL DEFAULT 'info'
     CHECK (severity IN ('info', 'warn', 'critical')),
-  ip_address      INET,
-  user_agent      TEXT,
-  session_id      VARCHAR(255),
-  impersonated_by UUID REFERENCES auth.users(id),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  ip_address              INET,
+  user_agent              TEXT,
+  session_id              VARCHAR(255),
+  impersonated_by         UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- インデックス

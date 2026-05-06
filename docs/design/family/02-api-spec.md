@@ -211,7 +211,7 @@
 1. パスワード再認証 (Supabase Auth `signInWithPassword` で検証)
 2. `family_groups.status = 'archived'`、`archived_at = NOW()`
 3. 全メンバーに push + email 通知
-4. `family_activity_log` に `group_dissolved` 記録
+4. `family_activity_log` に `group_archived` 記録 (dissolved は archived に統一)
 5. 関連リソース (invites / shared_menus / shopping_lists) は CASCADE 削除
 
 **レスポンス 204**: No Content
@@ -1062,7 +1062,7 @@ Edge Function `family-meal-ai-propose` を呼び出し、結果を `proposed_dis
     "member_joined":        { "email": false, "push": true },
     "member_left":          { "email": false, "push": true },
     "member_removed":       { "email": true, "push": true },
-    "group_dissolved":      { "email": true, "push": true },
+    "group_archived":       { "email": true, "push": true },
     "shared_menu_generated": { "email": false, "push": false },
     "shopping_item_added":  { "email": false, "push": false },
     "meal_request_received": { "email": false, "push": true },

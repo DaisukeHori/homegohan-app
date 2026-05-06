@@ -352,36 +352,36 @@ async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedS
 ### 7.3 `POST /api/family/groups/{id}/dissolve`
 
 - パスワード再認証必須
-- `status = 'dissolved'`
+- `status = 'archived'` に変更 (dissolved は archived に統一)
 - さらに 90 日後に物理削除 (pg_cron)
 
 ### 7.4 advisory lock の実装
 
-```sql
--- pg_advisory_xact_lock: トランザクション終了で自動解放
--- 同一 family_id への並行 UPDATE を直列化
-CREATE OR REPLACE FUNCTION advisory_lock_family_group(p_family_group_id UUID)
-RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('family-group:' || p_family_group_id::TEXT));
-END;
-$$;
+ロック取得には `cross/02-rls-patterns.md §6.2.1` で定義した共通ヘルパーを使用する。
+ロックキーは `'family-group:{UUID}'` 形式で統一。
+
+```typescript
+// org/05 でのロック使用例
+await supabase.rpc('acquire_family_group_lock', {
+  family_group_id: groupId,
+});
 ```
 
 ## 8. Grace Period 期限経過後のバッチ処理
 
 ```sql
 -- pg_cron 日次 (UTC 03:00)
+-- 責務: frozen → archived 遷移のみ (90日後物理削除は operator/08 の process_family_archive_purge)
 SELECT cron.schedule(
   'family_freeze_grace_expire',
   '0 3 * * *',
-  $$SELECT process_family_archive_purge()$$
+  $$SELECT process_family_freeze_grace_to_archive()$$
 );
 
-CREATE OR REPLACE FUNCTION process_family_archive_purge()
+CREATE OR REPLACE FUNCTION process_family_freeze_grace_to_archive()
 RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
-  -- grace_until 経過した凍結グループを archived に遷移
+  -- grace_until 経過した凍結グループを archived に遷移 (frozen → archived のみ)
   UPDATE family_groups
     SET status = 'archived',
         archived_at = NOW()
@@ -411,10 +411,9 @@ stateDiagram-v2
   active --> frozen: org_license 回収 (HR Webhook / 手動)
   frozen --> active: migrate-to-personal 完了
   frozen --> active: transfer-ownership 完了 (新オーナーが課金)
-  frozen --> dissolved: dissolve API
+  frozen --> archived: dissolve API (dissolved は archived に統一)
   frozen --> archived: freeze_grace_until 経過 (バッチ)
   archived --> [*]: 90 日後物理削除
-  dissolved --> [*]: 90 日後物理削除
 ```
 
 ## 10. エラーハンドリング

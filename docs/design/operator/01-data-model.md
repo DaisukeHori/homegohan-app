@@ -49,7 +49,7 @@
 23. external_data_consents
 24. terms_acceptances
 25. gdpr_deletion_requests
-26. parental_consents
+26. parental_consents  ← family/01-data-model.md で定義 (family_members FK のため family/ ドメイン適用後)
 27. password_history
 28. failed_invite_lookups
 29. user_sessions_metadata
@@ -86,6 +86,9 @@ CREATE TABLE subscription_plans (
   trial_days              INT NOT NULL DEFAULT 0,
   min_contract_months     INT NOT NULL DEFAULT 1,
   auto_renew_default      BOOLEAN NOT NULL DEFAULT TRUE,
+  -- deprecated 状態管理
+  ends_at                 TIMESTAMPTZ,    -- プランの提供終了日 (deprecated プランのみ設定)
+                                          -- NULL = 提供継続中 or 未設定
   -- バージョン管理
   version                 INT NOT NULL DEFAULT 1,
   superseded_by_plan_id   UUID REFERENCES subscription_plans(id),
@@ -286,7 +289,9 @@ CREATE TABLE coupon_redemptions (
   id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   coupon_id                   UUID NOT NULL REFERENCES coupons(id),
   user_id                     UUID REFERENCES auth.users(id),
-  organization_id             UUID REFERENCES organizations(id),
+  organization_id             UUID REFERENCES organizations(id) DEFERRABLE INITIALLY DEFERRED,
+  -- NOTE: organizations テーブルは org/ ドメイン (02-organization-management) で作成される。
+  -- coupon_redemptions は 01-operator-admin で先に作成されるため DEFERRABLE INITIALLY DEFERRED を付与。
   subscription_target         VARCHAR(20) NOT NULL
     CHECK (subscription_target IN ('personal', 'org')),
   applied_to_subscription_id  UUID NOT NULL,
@@ -462,13 +467,23 @@ CREATE POLICY "revenue_snapshots_select" ON revenue_snapshots
 ```sql
 -- 既存テーブル拡張
 ALTER TABLE admin_audit_logs
-  ADD COLUMN IF NOT EXISTS target_type  VARCHAR(30),
-  ADD COLUMN IF NOT EXISTS severity     VARCHAR(20) NOT NULL DEFAULT 'info'
+  ADD COLUMN IF NOT EXISTS target_type          VARCHAR(30),
+  ADD COLUMN IF NOT EXISTS severity             VARCHAR(20) NOT NULL DEFAULT 'info'
     CHECK (severity IN ('info', 'warn', 'critical')),
-  ADD COLUMN IF NOT EXISTS impersonated_by UUID REFERENCES auth.users(id),
-  ADD COLUMN IF NOT EXISTS session_id   VARCHAR(255),
-  ADD COLUMN IF NOT EXISTS ip_address   INET,
-  ADD COLUMN IF NOT EXISTS user_agent   TEXT;
+  ADD COLUMN IF NOT EXISTS impersonated_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS session_id           VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS ip_address           INET,
+  ADD COLUMN IF NOT EXISTS user_agent           TEXT,
+  ADD COLUMN IF NOT EXISTS actor_email_snapshot VARCHAR(255),  -- GDPR 削除後の actor 特定用
+  ADD COLUMN IF NOT EXISTS actor_role_snapshot  VARCHAR(50);   -- GDPR 削除後の actor ロール保持
+
+-- actor_id を NOT NULL → NULL 許容に変更 (GDPR 削除対応)
+ALTER TABLE admin_audit_logs ALTER COLUMN actor_id DROP NOT NULL;
+ALTER TABLE admin_audit_logs
+  DROP CONSTRAINT IF EXISTS admin_audit_logs_actor_id_fkey;
+ALTER TABLE admin_audit_logs
+  ADD CONSTRAINT admin_audit_logs_actor_id_fkey
+    FOREIGN KEY (actor_id) REFERENCES auth.users(id) ON DELETE SET NULL;
 
 -- インデックス
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON admin_audit_logs(actor_id, created_at DESC);
@@ -509,6 +524,20 @@ CREATE POLICY "audit_logs_no_delete" ON admin_audit_logs
 -- 7 年保管: 運用ポリシーで pg_cron による Cold Storage 移行を実施
 -- (physical DELETE は永遠に禁止、アーカイブテーブルへの COPY + DELETE は super_admin が手動)
 COMMENT ON TABLE admin_audit_logs IS '監査ログ。RLS により UPDATE/DELETE 完全禁止。保持期間7年(個人情報保護法/SOC2)';
+```
+
+### 3.9.1 `user_profiles` 拡張 (operator 連携用)
+
+re_engagement バッチ (operator/08-cron-batches.md §5.5) が参照する列を追加する。
+
+```sql
+-- マイグレーション: 2026MMDD011_alter_user_profiles_operator.sql
+
+ALTER TABLE user_profiles
+  ADD COLUMN IF NOT EXISTS last_login_at    TIMESTAMPTZ,
+  -- 最終ログイン日時 (auth.users.last_sign_in_at を Edge Function が同期)
+  ADD COLUMN IF NOT EXISTS plan_key_cached  VARCHAR(100);
+  -- personal_subscriptions の現在有効な plan_key キャッシュ (Edge Function が同期、常に最新とは限らない)
 ```
 
 ### 3.10 `support_tickets` / `support_ticket_messages`
@@ -789,12 +818,15 @@ CREATE POLICY "csat_access" ON csat_feedbacks
 CREATE TABLE daily_active_users (
   date          DATE NOT NULL,
   plan_type     VARCHAR(20) NOT NULL CHECK (plan_type IN ('personal','family','org','all')),
-  plan_key      VARCHAR(100),
+  plan_key      VARCHAR(100) NOT NULL DEFAULT '',
+  -- plan_key: 集計対象の plan_key。全体集計行は '' (空文字) を使用
   dau           INT NOT NULL DEFAULT 0,
   wau           INT NOT NULL DEFAULT 0,
   mau           INT NOT NULL DEFAULT 0,
   computed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (date, plan_type, COALESCE(plan_key, ''))
+  PRIMARY KEY (date, plan_type, plan_key)
+  -- NOTE: PostgreSQL の PRIMARY KEY に COALESCE 等の関数式は使用不可。
+  -- plan_key を NOT NULL DEFAULT '' に変更し、全体集計行は '' で代替する。
 );
 
 ALTER TABLE daily_active_users ENABLE ROW LEVEL SECURITY;
@@ -1034,28 +1066,10 @@ CREATE POLICY "gdpr_update" ON gdpr_deletion_requests
 
 ### 3.22 `parental_consents`
 
-```sql
-CREATE TABLE parental_consents (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_member_id  UUID NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
-  parent_user_id    UUID NOT NULL REFERENCES auth.users(id),
-  signed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ip_address        INET,
-  user_agent        TEXT,
-  consent_version   VARCHAR(20) NOT NULL
-);
-
-ALTER TABLE parental_consents ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "parental_consents_select" ON parental_consents
-  FOR SELECT USING (
-    parent_user_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM user_profiles
-      WHERE id = auth.uid() AND ARRAY['admin','super_admin']::TEXT[] && roles
-    )
-  );
-```
+> **NOTE: DDL は family/01-data-model.md に移動済み。**
+> `parental_consents` は `family_members(id)` を FK 参照するため、
+> family/ ドメイン (02-organization-management の後) で定義する。
+> マイグレーション適用順序については §3.1 と 09-runbook.md §3.2 を参照。
 
 ### 3.23 `password_history`
 
@@ -1258,7 +1272,7 @@ sequenceDiagram
 
 - `admin_audit_logs`: 既存テーブルに `target_type`, `severity`, `impersonated_by` 等を ALTER で追加
 - `organizations`: `coupon_redemptions` が FK 参照 — org/ ドメインの `organizations` テーブルが先に存在すること
-- `family_members`: `parental_consents` が FK 参照 — family/ ドメインの `family_members` テーブルが先に存在すること
+- `family_members`: `parental_consents` が FK 参照 — DDL は family/01-data-model.md に移動済み。family/ ドメイン適用後に作成されること
 
 ## 9. 未解決事項
 

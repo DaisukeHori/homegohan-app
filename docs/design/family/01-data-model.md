@@ -269,12 +269,15 @@ CREATE TABLE family_meal_requests (
 
 ```sql
 CREATE TABLE family_activity_log (
-  id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_group_id   UUID        NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
-  actor_id          UUID        REFERENCES auth.users(id),  -- NULL = システム/バッチ
-  action_type       VARCHAR(50) NOT NULL,
+  id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_group_id       UUID        NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+  actor_id              UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
+  -- NULL = システム/バッチ、または GDPR 削除済みユーザー
+  actor_email_snapshot  VARCHAR(255),  -- GDPR 削除前の email スナップショット
+  action_type           VARCHAR(50) NOT NULL,
   -- action_type 一覧:
-  --   group_created / group_updated / group_dissolved / group_frozen / group_archived
+  --   group_created / group_updated / group_frozen / group_archived
+  --   (dissolved は archived に統一: family_groups.status CHECK に 'dissolved' なし)
   --   member_added / member_removed / member_left / role_changed
   --   owner_transferred / group_split
   --   invite_sent / invite_accepted / invite_cancelled
@@ -283,9 +286,9 @@ CREATE TABLE family_activity_log (
   --   meal_request_created / meal_request_proposed / meal_request_accepted
   --   meal_request_rejected / meal_request_cancelled / meal_request_expired
   --   child_promoted / proxy_enabled / proxy_disabled
-  target_id         UUID,                                  -- 操作対象のレコード ID
-  details           JSONB       NOT NULL DEFAULT '{}',
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  target_id             UUID,                                  -- 操作対象のレコード ID
+  details               JSONB       NOT NULL DEFAULT '{}',
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
   -- UPDATE / DELETE は RLS で禁止 (§08-rls-policies.md 参照)
 );
 ```
@@ -587,6 +590,41 @@ WHERE family_shopping_list_id = $1 AND is_checked = FALSE;
 - 全 8 テーブル + 2 ALTER は `2026MMDD005_create_family_management.sql`
 - `planned_meals` ALTER は `2026MMDD008_alter_planned_meals.sql`
 - `user_daily_meals` ALTER は `2026MMDD009_alter_user_daily_meals.sql`
+
+## 4.13 `parental_consents` (子供同意記録)
+
+> **NOTE: operator/01-data-model.md から移動。**
+> `family_members(id)` を FK 参照するため family/ ドメインで定義する。
+> マイグレーション適用は family_members 作成後。
+
+```sql
+-- マイグレーション: 2026MMDD010_create_parental_consents.sql
+-- ※ family_members (family/ ドメイン) 適用後に実行すること
+
+CREATE TABLE parental_consents (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_member_id  UUID NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
+  parent_user_id    UUID NOT NULL REFERENCES auth.users(id),
+  signed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip_address        INET,
+  user_agent        TEXT,
+  consent_version   VARCHAR(20) NOT NULL
+);
+
+ALTER TABLE parental_consents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "parental_consents_select" ON parental_consents
+  FOR SELECT USING (
+    parent_user_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid() AND ARRAY['admin','super_admin']::TEXT[] && roles
+    )
+  );
+
+CREATE INDEX idx_parental_consents_member ON parental_consents(family_member_id);
+CREATE INDEX idx_parental_consents_parent ON parental_consents(parent_user_id);
+```
 
 ## 9. 未解決事項
 

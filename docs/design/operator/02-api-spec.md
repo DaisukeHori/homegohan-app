@@ -62,7 +62,7 @@ await supabase.from('admin_audit_logs').insert({
 
 ---
 
-## 4. 8.1 ユーザー管理 API
+## 4. ユーザー管理 API
 
 ### GET /api/admin/users
 ユーザー一覧・検索
@@ -221,7 +221,7 @@ BAN 解除
 
 ---
 
-## 5. 8.2 モデレーション API
+## 5. モデレーション API
 
 ### GET /api/admin/moderation/{type}
 モデレーション対象一覧
@@ -271,7 +271,7 @@ BAN 解除
 
 ---
 
-## 6. 8.3 監査ログ API
+## 6. 監査ログ API
 
 ### GET /api/admin/audit-logs
 監査ログ一覧
@@ -303,7 +303,7 @@ BAN 解除
 
 ---
 
-## 7. 8.4 機能フラグ API
+## 7. 機能フラグ API
 
 ### GET /api/super-admin/feature-flags
 フラグ一覧
@@ -351,7 +351,7 @@ BAN 解除
 
 ---
 
-## 8. 8.5 LLM 使用量 API
+## 8. LLM 使用量 API
 
 ### GET /api/super-admin/llm-usage
 LLM 使用量ダッシュボード
@@ -404,7 +404,7 @@ LLM 使用量ダッシュボード
 
 ---
 
-## 9. 8.6 売上・経理 API
+## 9. 売上・経理 API
 
 ### GET /api/admin/finance/dashboard
 売上ダッシュボード
@@ -462,7 +462,7 @@ MRR 時系列
 
 ---
 
-## 10. 8.7 サポート API
+## 10. サポート API
 
 ### GET /api/support/tickets
 チケット一覧
@@ -514,7 +514,7 @@ MRR 時系列
 
 ---
 
-## 11. 8.8 通知配信 API
+## 11. 通知配信 API
 
 ### GET /api/admin/notifications/campaigns
 キャンペーン一覧
@@ -575,7 +575,7 @@ MRR 時系列
 
 ---
 
-## 12. 8.9 不正検知 API
+## 12. 不正検知 API
 
 ### GET /api/super-admin/abuse/rules
 ルール一覧
@@ -615,7 +615,7 @@ MRR 時系列
 
 ---
 
-## 13. 8.10 インフラ監視 API
+## 13. インフラ監視 API
 
 ### GET /api/super-admin/infra/dashboard
 統合監視ダッシュボード
@@ -655,7 +655,7 @@ MRR 時系列
 
 ---
 
-## 14. 8.11 営業 CRM API
+## 14. 営業 CRM API
 
 ### GET /api/admin/sales/leads
 見込み客一覧
@@ -714,7 +714,7 @@ MRR 時系列
 
 ---
 
-## 15. 8.12 A/B テスト API
+## 15. A/B テスト API
 
 ### GET /api/super-admin/experiments
 実験一覧
@@ -752,7 +752,7 @@ MRR 時系列
 
 ---
 
-## 16. 8.13 データエクスポート API
+## 16. データエクスポート API
 
 ### POST /api/super-admin/exports
 エクスポートリクエスト
@@ -779,7 +779,7 @@ MRR 時系列
 
 ---
 
-## 17. 8.14 プラン定義 API
+## 17. プラン定義 API
 
 ### GET /api/super-admin/plans
 プラン一覧
@@ -923,7 +923,7 @@ deprecated → private にロールバック (緊急用)
 
 ---
 
-## 18. 8.15 機能パッケージ API
+## 18. 機能パッケージ API
 
 ### GET /api/super-admin/feature-packages
 パッケージ一覧
@@ -955,7 +955,7 @@ deprecated → private にロールバック (緊急用)
 
 ---
 
-## 19. 8.16 クーポン管理 API
+## 19. クーポン管理 API
 
 ### GET /api/admin/coupons
 クーポン一覧
@@ -1014,7 +1014,7 @@ deprecated → private にロールバック (緊急用)
 
 ---
 
-## 20. 8.17 収益管理 API
+## 20. 収益管理 API
 
 ### GET /api/admin/finance/revenue/snapshot
 最新収益スナップショット

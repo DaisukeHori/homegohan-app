@@ -261,7 +261,7 @@ POST /api/org/invites/{token}/accept
 ## 4. データモデル
 
 ディープリンク処理自体は DB スキーマ変更不要。
-招待トークンは `family_invites` / `org_invites` テーブルに格納される (family/org ドメイン定義)。
+招待トークンは `family_invites` / `organization_invites` テーブルに格納される (family/org ドメイン定義)。
 
 ```sql
 -- 参照: family/01-data-model.md

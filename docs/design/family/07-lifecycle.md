@@ -102,9 +102,10 @@ async function executeWithLifecycleLock<T>(
   operation: (supabase: SupabaseClient) => Promise<T>,
   supabase: SupabaseClient
 ): Promise<T> {
-  // 1. advisory lock 取得
-  await supabase.rpc('pg_advisory_xact_lock', {
-    key: hashGroupId(groupId)
+  // 1. advisory lock 取得 (cross/02-rls-patterns.md §6.2.1 のヘルパー使用)
+  // ロックキー: 'family-group:{UUID}' 形式に統一
+  await supabase.rpc('acquire_family_group_lock', {
+    family_group_id: groupId,
   });
 
   // 2. 楽観的ロック検証
