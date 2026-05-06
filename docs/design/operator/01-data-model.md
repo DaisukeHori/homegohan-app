@@ -1392,7 +1392,7 @@ describe('subscription_plans seed', () => {
       'family_addon',
       'org_starter',
       'org_standard',
-      'org_premium',
+      'org_pro',
       'org_enterprise',
     ];
     for (const key of expectedKeys) {

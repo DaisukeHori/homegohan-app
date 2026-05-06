@@ -481,7 +481,7 @@ describe('validatePlanCreate', () => {
     const result = validatePlanCreate({
       plan_key: 'test_plan_001',
       display_name: 'テストプラン',
-      plan_type: 'individual',
+      plan_type: 'personal',  // CHECK 制約値: personal / family / org
       monthly_price_jpy: 980,
       trial_days: 14,
     });

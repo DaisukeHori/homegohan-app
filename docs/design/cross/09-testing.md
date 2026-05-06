@@ -569,10 +569,10 @@ export const subscriptionPlanFactory = (
   display_name: faker.commerce.productName(),
   plan_type: 'personal' as const,  // CHECK 制約値: personal / family / org (operator/01)
   monthly_price_jpy: 980,
-  annual_price_jpy: 9800,
-  features: { ai_analysis: true, family_sharing: false },
-  max_family_members: null,
-  max_org_members: null,
+  yearly_price_jpy: 9800,  // DDL は yearly_price_jpy (annual ではない)
+  feature_packages: [] as string[],  // UUID[] (operator/01 §3.x)、features ではない
+  max_members: null,  // 家族: 4-8、組織: メンバー上限
+  max_family_seats: null,  // 組織同梱の家族 seat 数
   trial_days: 14,
   status: 'public' as const,
   ...overrides,
