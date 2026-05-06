@@ -147,7 +147,7 @@ CREATE POLICY "{table}_org_admin_insert"
       SELECT 1 FROM user_profiles up
       WHERE up.id = auth.uid()
         AND up.organization_id = {table_name}.organization_id
-        AND up.role IN ('org_admin', 'org_manager', 'admin', 'super_admin')
+        AND ARRAY['org_admin', 'org_manager', 'admin', 'super_admin']::TEXT[] && up.roles
     )
   );
 ```

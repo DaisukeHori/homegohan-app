@@ -274,47 +274,19 @@ ALTER TABLE organizations
 
 ### 6.3 org_invoices テーブル
 
-```sql
-CREATE TABLE org_invoices (
-  id                         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id            UUID        NOT NULL REFERENCES organizations(id),
-  stripe_invoice_id          VARCHAR(255) UNIQUE,
-  invoice_number             VARCHAR(50),
-  issuer_invoice_number      VARCHAR(14), -- 発行元 (運営側) の T番号
-  issued_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  due_at                     TIMESTAMPTZ,
-  -- 税率別集計
-  subtotal_standard_jpy      INT NOT NULL DEFAULT 0,  -- 標準税率 (10%) 対象額
-  tax_standard_jpy           INT NOT NULL DEFAULT 0,  -- 標準消費税額
-  subtotal_reduced_jpy       INT NOT NULL DEFAULT 0,  -- 軽減税率 (8%) 対象額
-  tax_reduced_jpy            INT NOT NULL DEFAULT 0,  -- 軽減消費税額
-  total_jpy                  INT NOT NULL,
-  -- 電子保存法
-  pdf_url                    TEXT,
-  timestamp_token            TEXT,        -- タイムスタンプ局のトークン
-  status                     VARCHAR(20) NOT NULL DEFAULT 'draft'
-    CHECK (status IN ('draft', 'sent', 'paid', 'overdue', 'cancelled')),
-  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+DDL/RLS は **`org/01-data-model.md §3.x org_invoices`** を参照 (canonical)。
 
-ALTER TABLE org_invoices ENABLE ROW LEVEL SECURITY;
+インボイス制度対応の必須列 (canonical 側に追記要):
+- `issuer_invoice_number VARCHAR(14)` — 発行元 (運営側) の T 番号
+- `subtotal_standard_jpy / tax_standard_jpy` — 標準税率 (10%) 対象額・税額
+- `subtotal_reduced_jpy / tax_reduced_jpy` — 軽減税率 (8%) 対象額・税額
+- `pdf_url`, `timestamp_token` — 電子保存法対応 (タイムスタンプ局トークン)
 
-CREATE POLICY "org_invoices_org_read"
-  ON org_invoices FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM user_profiles up
-      WHERE up.id = auth.uid()
-        AND up.organization_id = org_invoices.organization_id
-        AND up.role IN ('org_admin', 'org_manager')
-    )
-    OR EXISTS (
-      SELECT 1 FROM user_profiles
-      WHERE id = auth.uid()
-        AND ARRAY['admin', 'super_admin', 'finance']::TEXT[] && roles
-    )
-  );
-```
+canonical 定義に上記列が無い場合は org/01 で ALTER TABLE 追加すること。
+
+RLS (canonical = org/09-rls-policies.md):
+- 同組織 `org_admin` / `org_manager` の SELECT 許可
+- 運営 `admin` / `super_admin` / `finance` の SELECT 許可
 
 ---
 
