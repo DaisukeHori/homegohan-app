@@ -1,277 +1,231 @@
 # 17 — セキュリティ
 
-> 関連: [09-api-spec](./09-api-spec.md) / [08-state-db](./08-state-db.md) / cross/02-rls-patterns.md / cross/04-api-conventions.md
+> 関連: [09-api-spec](./09-api-spec.md) / [08-state-db](./08-state-db.md) / [21-migration-sql](./21-migration-sql.md)
 
 ---
 
 ## 1. 脅威モデル
 
-### 1.1 攻撃シナリオ
+### 1.1 想定される攻撃
 
-| 攻撃 | 影響 | 対策 |
+| 脅威 | 影響 | 重大度 |
 |---|---|---|
-| 悪意ユーザーが `sandbox: true` を偽装 → meal_logs に sandbox 行を量産 | DB 汚染、KPI 計測歪み | サーバー側で偽装防止チェック (§2) |
-| admin が誤って一般ユーザー扱いで sandbox 行を作成 | データ整合性 | ロール check (§2.2) |
-| 第三者が他人の `handson_tour_completed_at` を読み取り | プライバシー | RLS で防御 (§5) |
-| 第三者が他人の user_badges に INSERT | バッジ偽装 | RLS で防御 (server_role 専用 INSERT) |
-| Bot が `/api/handson-tour/complete` を連打 | リソース消費 | Rate limit (§3) |
-| sandbox 中にユーザーが ipa を逆解析して mock を改変 | 体験崩壊のみ | クライアント mock の信頼性は問わない (実害なし) |
-| force=1 で何度も卒業して analytics を歪める | KPI 信頼性低下 | already_completed: true で実バッジは付与しない、analytics 側で entry_source='settings_force' を除外集計 (§4) |
+| sandbox=true 偽装でバッジ不正獲得 | 既存ユーザーが容易に first_bite/planner/tutorial_complete を再取得 | 中 |
+| `/api/handson-tour/complete` を無制限連打 | DB UPDATE 連打で性能影響 | 低 |
+| 他人の handson_tour 状態を読む | プライバシー漏洩 | 中 |
+| 他人の user_badges に INSERT | バッジ偽造 | 中 |
+| CSRF (web) | 状態改変 | 低 |
+| force=1 を悪用してバッジ複数回獲得 | バッジ count を膨らませる | 低 (ON CONFLICT で防御) |
+| Tour 中の sandbox_meal_log を unlimited INSERT | DB 容量肥大化 | 低 |
+| 中断で API リトライ攻撃 | meal_logs に大量 INSERT | 中 |
 
-### 1.2 脅威の重要度
+### 1.2 防御方針
 
-| 脅威 | 確率 | 影響度 | 重要度 |
-|---|---|---|---|
-| sandbox 偽装 (一般ユーザーから) | 中 | 中 (DB 汚染) | **高** |
-| admin role での sandbox 作成 | 低 | 低 | 中 |
-| 他人データ閲覧 | 低 | 高 (プライバシー) | **高** |
-| バッジ偽装 INSERT | 中 | 中 (報酬の信頼性) | **高** |
-| /complete 連打 | 中 | 低 (rate limit で防御) | 中 |
-| KPI 歪曲 (force=1 連打) | 低 | 低 | 低 |
+- 多層防御 (defense in depth):
+  - クライアント側 validation
+  - API レイヤー認証 + 認可
+  - サーバー側 sandbox 偽装防止
+  - DB RLS
+  - DB CHECK 制約
 
 ---
 
 ## 2. sandbox=true 偽装防止
 
-### 2.1 攻撃方法
+### 2.1 攻撃シナリオ
 
-```bash
-# 通常の保存リクエスト
-curl -X POST https://homegohan.app/api/meal-plans/add-from-photo?source=handson_tour \
-  -H "Authorization: Bearer $JWT" \
-  -d '{"dishName":"任意の料理","calories":1000,"sandbox":true}'
-```
+通常ユーザー (handson_tour 完了済) が:
+1. `/api/meal-plans/add-from-photo?source=handson_tour` に `sandbox: true` を含む POST
+2. 期待: 拒否 (sandbox_not_eligible)、`is_sandbox=true` で INSERT されない
 
-通常ユーザーが既に何度もハンズオン経験 → completed_at セット済 → でも sandbox=true を送って `is_sandbox=true` で挿入できると DB が汚れる。
+### 2.2 サーバー側防御 (3 段階)
 
-### 2.2 サーバー側防御
-
-`sandbox: true` リクエスト受信時、以下を全部 check:
+#### 段階 1: 完了/スキップ済 ユーザーの拒否
 
 ```ts
-async function validateSandboxEligibility(userId: string): Promise<{ ok: true } | { ok: false; reason: string; status: number }> {
+if (body.sandbox) {
   const profile = await getProfile(userId);
-  if (!profile) return { ok: false, reason: 'profile_not_found', status: 404 };
-
-  // (a) 完了済 → sandbox 不要
-  if (profile.handson_tour_completed_at) {
-    return { ok: false, reason: 'already_completed', status: 409 };
-  }
-
-  // (b) 明示スキップ済
-  if (profile.handson_tour_skipped_at) {
-    return { ok: false, reason: 'already_skipped', status: 409 };
-  }
-
-  // (c) 特権ロール
-  const adminRoles = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'];
-  if (profile.roles?.some(r => adminRoles.includes(r))) {
-    return { ok: false, reason: 'admin_role', status: 403 };
-  }
-
-  // (d) condition C: 既存 non-sandbox 活動
-  const hasActivity = await rpcUserHasNonSandboxActivity(userId);
-  if (hasActivity) {
-    return { ok: false, reason: 'existing_user', status: 409 };
-  }
-
-  return { ok: true };
-}
-
-// API ハンドラ内
-if (body.sandbox === true) {
-  const validation = await validateSandboxEligibility(userId);
-  if (!validation.ok) {
-    return Response.json({
-      error: 'sandbox_not_eligible',
-      reason: validation.reason,
-    }, { status: validation.status });
+  if (profile.handson_tour_completed_at || profile.handson_tour_skipped_at) {
+    return Response.json(
+      { error: { code: 'sandbox_not_eligible', reason: 'already_finished' } },
+      { status: 409 }
+    );
   }
 }
 ```
 
-### 2.3 中断時の二重 INSERT 対策
-
-§08-state-db.md §4.2 の「Step 1 完了後の中断」シナリオ:
+#### 段階 2: 特権ロールの拒否
 
 ```ts
-// クライアント: Step 1 サブステップ 1.6 で API 呼び出し前に check
-const recent = await fetch('/api/meal-logs?recent=5min&sandbox=true').then(r => r.json());
-if (recent.length > 0) {
-  fireAnalytics('handson_tour_step_skipped_due_to_existing_sandbox', { step: 1 });
-  advanceToStep2();  // 二重 INSERT せずに進む
+const adminRoles = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'];
+if (profile.roles?.some(r => adminRoles.includes(r))) {
+  return Response.json(
+    { error: { code: 'sandbox_not_eligible', reason: 'admin_role' } },
+    { status: 403 }
+  );
+}
+```
+
+#### 段階 3: 既存ユーザー (condition C) の拒否
+
+```ts
+const { data: hasActivity } = await supabase.rpc('user_has_non_sandbox_activity', {
+  p_user_id: userId,
+});
+if (hasActivity) {
+  return Response.json(
+    { error: { code: 'sandbox_not_eligible', reason: 'existing_user' } },
+    { status: 409 }
+  );
+}
+```
+
+### 2.3 DB トリガー (defense in depth、optional)
+
+API バイパスへの保険として DB トリガー:
+
+```sql
+CREATE OR REPLACE FUNCTION check_meal_logs_sandbox_eligibility()
+RETURNS trigger AS $$
+DECLARE
+  v_completed timestamptz;
+  v_skipped timestamptz;
+  v_has_admin boolean;
+BEGIN
+  IF NEW.is_sandbox = true THEN
+    SELECT handson_tour_completed_at, handson_tour_skipped_at,
+           (roles && ARRAY['admin','super_admin','org_admin','org_industrial_doctor']::text[])
+    INTO v_completed, v_skipped, v_has_admin
+    FROM user_profiles WHERE user_id = NEW.user_id;
+
+    IF v_completed IS NOT NULL OR v_skipped IS NOT NULL OR v_has_admin THEN
+      RAISE EXCEPTION 'sandbox not eligible for this user';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER meal_logs_sandbox_check
+  BEFORE INSERT ON meal_logs
+  FOR EACH ROW
+  EXECUTE FUNCTION check_meal_logs_sandbox_eligibility();
+```
+
+v1 ではトリガー実装は **任意** (API レベルで十分)。v2 で攻撃事例が出たら追加検討。
+
+---
+
+## 3. 中断時の二重 INSERT 防止
+
+### 3.1 攻撃 / 事故シナリオ
+
+ユーザーが Step 1 で【保存】タップ → API 成功 → アプリ kill → 再起動 → ハンズオン Step 0 から再開 → Step 1 で再度【保存】
+
+問題:
+- `meal_logs` に sandbox=true で 2 件目 INSERT
+- `first_bite` バッジは ON CONFLICT で 1 件のみ (これは OK)
+- ただし sandbox 行が増える (DB 容量、UI 表示混乱)
+
+### 3.2 クライアント側防御
+
+Step 1 のサブステップ 1.6 で API 呼び出し前にチェック:
+
+```ts
+async function handleSaveSandbox() {
+  // 直近 5 分以内に sandbox meal_log があれば skip
+  const recent = await fetch('/api/meal-logs?limit=5&user_only=true&since=5min&is_sandbox=true');
+  const data = await recent.json();
+  if (data.length > 0) {
+    fireAnalytics('handson_tour_step_skipped_due_to_existing_sandbox', { step: 1 });
+    advanceToStep2();
+    return;
+  }
+  // 通常の保存 API
+  await fetch('/api/meal-plans/add-from-photo?source=handson_tour', { method: 'POST', body: ... });
+  advanceToStep2();
+}
+```
+
+ただし、同じ機構の API (`/api/meal-logs?since=5min&is_sandbox=true`) を新規追加する必要がある。
+
+### 3.3 シンプル代替案 (v1)
+
+5 分チェックを実装せず、**unique 制約で防ぐ**:
+
+```sql
+-- meal_logs に partial unique index
+CREATE UNIQUE INDEX uniq_user_sandbox_meal
+  ON meal_logs (user_id, is_sandbox)
+  WHERE is_sandbox = true;
+```
+
+これで `(user_id, is_sandbox=true)` の組み合わせは 1 行のみ。Step 1 で 2 回呼んでも 2 件目は ON CONFLICT で reject。
+
+ただし、Step 1 の API は今 ON CONFLICT 句なし。実装で:
+
+```ts
+const { error } = await supabase.from('meal_logs').insert({
+  user_id, is_sandbox: true, ...
+});
+if (error?.code === '23505') {  // unique violation
+  // 既存あり、無視して advance
   return;
 }
-// 通常の保存フロー
 ```
 
-これは攻撃ではなく UX 整合性の問題だが、サーバー側でも追加チェック:
+ただ unique 制約は `weekly_menus` にも追加する必要があり、メニュー側はもう少し複雑。
 
-```ts
-// サーバー側: sandbox=true で 5 分以内に同 user の sandbox 行があれば warn (拒否はしない)
-if (body.sandbox === true) {
-  const recentSandbox = await db.query(`
-    SELECT id FROM meal_logs
-    WHERE user_id = $1 AND is_sandbox = true AND created_at > now() - INTERVAL '5 minutes'
-    LIMIT 1
-  `, [userId]);
-  if (recentSandbox.length > 0) {
-    // 二重作成は許容 (UX を壊さない) が ログに残す
-    logSandboxDoubleCreation(userId);
-  }
-}
-```
+#### v1 推奨方針
+
+- Step 1: meal_logs unique 制約 (`user_id, is_sandbox=true` で 1 行)
+- Step 2: weekly_menus unique 制約 (同上)
+- 中断後再起動時、Step 0 から再開 → Step 1 で API 呼ぶが unique violation → クライアント catch して advance
+
+§21 の migration SQL に unique 制約も含める。
 
 ---
 
-## 3. Rate Limiting
+## 4. 認証 / 認可
 
-### 3.1 制限値
+### 4.1 全 API でJWT 必須
 
-| Endpoint | user 単位 | IP 単位 |
-|---|---|---|
-| `/api/handson-tour/status` | 60 / 60 s | 600 / 60 s |
-| `/api/handson-tour/complete` | 6 / 60 s | 60 / 60 s |
-| `/api/handson-tour/skip` | 12 / 60 s | 120 / 60 s |
-| `/api/meal-plans/add-from-photo?source=handson_tour` | 既存制限 (10 / 60 s) | 既存 |
-| `/api/menu-plans/add?source=handson_tour` | 既存制限 (10 / 60 s) | 既存 |
-
-### 3.2 実装
-
-cross/04 既存の Upstash Redis ベース rate limit を流用:
+すべての /api/handson-tour/* API は `Authorization: Bearer <jwt>` 必須。
 
 ```ts
-import { rateLimit } from '@/lib/rate-limit';
-
-export async function POST(req: Request) {
-  const userId = await getAuthUserId(req);
-  const limited = await rateLimit({
-    identifier: `handson-tour-complete:${userId}`,
-    limit: 6,
-    window: '60 s',
-  });
-  if (!limited.success) {
-    return Response.json({ error: 'rate_limited' }, { status: 429, headers: {
-      'X-RateLimit-Limit': '6',
-      'X-RateLimit-Remaining': String(limited.remaining),
-      'X-RateLimit-Reset': String(limited.reset),
-    }});
-  }
-  // 通常処理
-}
-```
-
-### 3.3 IP-based bot 防御
-
-ハンズオン関連 API は認証必須なので、IP 制限は緩め (= 大きなオフィスから複数ユーザーがアクセス可能)。
-`Cloudflare Turnstile` が必要なら 100 req / 60 s / IP で発動 (cross/04 既存 mechanism)。
-
----
-
-## 4. CSRF / 認証
-
-### 4.1 認証
-
-すべてのハンズオン API は **Supabase Auth Bearer token 必須**。
-
-```ts
+const supabase = await getSupabaseServerClient();
 const { data: { user } } = await supabase.auth.getUser();
 if (!user) return new Response('Unauthorized', { status: 401 });
 ```
 
-JWT 検証は Supabase が自動。失効した token は 401 で reject。
+### 4.2 認可 (role-based)
 
-### 4.2 CSRF
+| API | admin | super_admin | org_admin | org_industrial_doctor | user (一般) |
+|---|---|---|---|---|---|
+| GET /status | OK (false 返す) | OK | OK | OK | OK |
+| POST /complete | 403 | 403 | 403 | 403 | OK |
+| POST /skip | OK (但し effect 限定) | OK | OK | OK | OK |
+| POST /meal-plans/add-from-photo (sandbox=true) | 403 | 403 | 403 | 403 | OK |
+| POST /meal-plans/add-from-photo (sandbox=false) | OK | OK | OK | OK | OK |
 
-- HTTP method: POST / DELETE のみ書込み
-- SameSite=Lax cookie (既定)
-- Bearer token を Header に置く (Cookie でない)
-- web の CSRF リスクは低い
-
-mobile は Bearer token のみで認証、CSRF 問題なし。
-
-### 4.3 CORS
-
-```
-Access-Control-Allow-Origin: https://homegohan.app, exp://192.168.x.x:8081 (dev)
-Access-Control-Allow-Methods: GET, POST, OPTIONS
-Access-Control-Allow-Headers: Authorization, Content-Type, X-Idempotency-Key
-Access-Control-Allow-Credentials: false
-```
-
-production では `https://homegohan.app` のみ。
+特権ロールは sandbox 経由の動作不可、通常 API は使用可。
 
 ---
 
 ## 5. RLS (Row Level Security)
 
-### 5.1 既存 RLS の流用
-
-`user_profiles` の既存 RLS で新規列も保護:
+### 5.1 user_profiles
 
 ```sql
--- 既存 (推測)
+-- 既存
 CREATE POLICY user_profiles_owner_rw ON user_profiles
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
-```
 
-新規 2 列 (`handson_tour_completed_at`, `handson_tour_skipped_at`) は既存 RLS で:
-- 自分のみ SELECT 可
-- 自分のみ UPDATE 可 (ただし API 経由のみ、direct UPDATE は API 側で防ぐ)
-
-`meal_logs` / `weekly_menus` の `is_sandbox` 列も同様。
-
-### 5.2 user_badges の INSERT 制限
-
-```sql
--- 既存 (推測)
-CREATE POLICY user_badges_owner_r ON user_badges
-  FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY user_badges_server_only_w ON user_badges
-  FOR INSERT WITH CHECK (false);  -- クライアント直接 INSERT 不可
-```
-
-これにより:
-- クライアントは badges を直接 INSERT できない (= バッジ偽装防止)
-- サーバー (service_role JWT) のみ INSERT 可能
-- API ハンドラで service_role を使って挿入
-
-### 5.3 service_role 使用箇所
-
-| API | service_role 使用 | 理由 |
-|---|---|---|
-| `/api/handson-tour/complete` | YES | tutorial_complete バッジ INSERT |
-| `/api/meal-plans/add-from-photo` | YES (バッジ付与時) | first_bite |
-| `/api/menu-plans/add` | YES (バッジ付与時) | planner |
-| `/api/handson-tour/status` | NO (read only、user JWT で OK) | - |
-| `/api/handson-tour/skip` | NO (user_profiles の自己 UPDATE は user JWT で可) | - |
-
-### 5.4 service_role の保護
-
-service_role の secret key は **環境変数のみ**:
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `.env.example` に記載 (値は空)
-- Vercel / Expo の secret 設定で本番値配布
-- リポにコミットしない (既存運用)
-
----
-
-## 6. データ閲覧制限 (admin 含む)
-
-### 6.1 admin が他人のハンズオン状態を閲覧する正当性
-
-- 顧客サポートで「ハンズオン進捗確認」が必要な場合あり
-- ただしユーザーの体重・栄養目標等は別 RLS で保護
-
-### 6.2 RLS 拡張案 (family/08-rls-policies.md 既存があれば併存)
-
-```sql
+-- admin / super_admin の閲覧 (family/08 既存)
 CREATE POLICY user_profiles_admin_r ON user_profiles
   FOR SELECT USING (
-    auth.uid() = user_id
-    OR EXISTS (
+    auth.uid() = user_id OR EXISTS (
       SELECT 1 FROM user_profiles up
       WHERE up.user_id = auth.uid()
       AND up.roles && ARRAY['admin','super_admin']::text[]
@@ -279,222 +233,329 @@ CREATE POLICY user_profiles_admin_r ON user_profiles
   );
 ```
 
-これは family/08 既存の RLS とコンフリクトしないよう実装時に確認。
+新規 2 列もこれで保護。
 
-### 6.3 監査ログ
+### 5.2 meal_logs / weekly_menus
 
-admin が他人の profile を閲覧した場合、`audit_logs` に記録:
+既存 RLS:
 
 ```sql
-INSERT INTO audit_logs (actor_user_id, action, target_user_id, payload)
-VALUES (auth.uid(), 'admin_view_user_profile', $target_user_id, jsonb_build_object('source', 'handson-tour-status'));
+CREATE POLICY meal_logs_owner_rw ON meal_logs
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 ```
 
-実装は operator/07-audit-monitoring.md で canonical 化。
+`is_sandbox` 列も同 RLS で保護される。クライアントは自分の sandbox 行しか読み書きできない。
 
----
+### 5.3 user_badges
 
-## 7. PII (個人情報) 保護
+```sql
+-- 読み取り: 本人のみ
+CREATE POLICY user_badges_owner_r ON user_badges
+  FOR SELECT USING (auth.uid() = user_id);
 
-### 7.1 ハンズオン中で扱う PII
+-- INSERT: クライアント直接禁止
+CREATE POLICY user_badges_no_client_insert ON user_badges
+  FOR INSERT WITH CHECK (false);
+```
 
-| データ | 保管場所 | 保護方法 |
-|---|---|---|
-| nickname | profile (DB) | RLS で保護 |
-| weight_kg / height_cm / age | profile (DB) | 同上 |
-| target_kcal_per_day (計算結果) | profile (DB) | 同上 |
-| allergies / dislikes | profile (DB) | 同上 |
-| ハンズオン中の表示テキスト | クライアント memory | DOM 上に出るが他人は見えない |
-| Analytics events | external | user_id (UUID) のみ、PII 含めない (§22) |
+`POST /api/handson-tour/complete` は service_role キーで INSERT (RLS bypass)。
 
-### 7.2 PII を含めないルール
-
-| 場所 | ルール |
-|---|---|
-| Analytics events | PII 含めない (= nickname 等を properties に入れない) |
-| Sentry / Bugsnag | PII 含めない (error_message に nickname 等を含めない) |
-| サーバーログ | PII を含む場合はマスキング (例: `nickname: "***"`) |
-| URL クエリ | PII 含めない (= `?nickname=...` はダメ) |
-| 共有可能な link | PII 含めない |
-
-### 7.3 GDPR / 個人情報保護法対応
-
-- ユーザーの「アカウント削除」リクエスト時、`user_profiles` の `handson_tour_*` 列も削除される (既存 cascade delete) → 追加対応不要
-- 30 日 cooling period (操作可能性) は既存運用に従う
-
----
-
-## 8. SQL Injection 対策
-
-### 8.1 prepared statement
-
-すべての DB クエリは prepared statement / parameterized query:
+### 5.4 RLS テスト
 
 ```ts
-// ✅ OK
-await db.query('SELECT * FROM user_profiles WHERE user_id = $1', [userId]);
+// __tests__/rls/handson-tour-rls.test.ts
+describe('Handson Tour RLS', () => {
+  it('User A cannot read User B handson_tour_completed_at', async () => {
+    const userB = await createUser({});
+    await setHandsonTourCompleted(userB.id);
 
-// ❌ NG
-await db.query(`SELECT * FROM user_profiles WHERE user_id = '${userId}'`);
-```
+    const supabaseA = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { ... } // userA jwt
+    });
+    const { data, error } = await supabaseA
+      .from('user_profiles')
+      .select('handson_tour_completed_at')
+      .eq('user_id', userB.id);
+    expect(data).toEqual([]);  // RLS でフィルタ
+  });
 
-Supabase JS client は自動的に prepared statement 使用。
-
-### 8.2 RPC 関数
-
-`SECURITY DEFINER` の RPC 関数は `search_path` を固定:
-
-```sql
-CREATE OR REPLACE FUNCTION complete_handson_tour(p_user_id uuid)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public  -- ← 重要 (search_path 攻撃防止)
-AS $$ ... $$;
+  it('User A cannot insert into user_badges directly', async () => {
+    const supabaseA = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { /* userA jwt */ }
+    });
+    const { error } = await supabaseA.from('user_badges').insert({
+      user_id: userA.id,
+      badge_id: 'tutorial_complete-badge-id',
+      obtained_at: new Date().toISOString(),
+    });
+    expect(error).toBeTruthy();  // RLS で reject
+  });
+});
 ```
 
 ---
 
-## 9. XSS 対策
+## 6. CSRF / XSS
 
-### 9.1 nickname 等の DOM 表示
+### 6.1 CSRF (web)
 
-React の自動エスケープに依存:
+#### 防御
+- SameSite=Lax cookie + Bearer token (cross/04 既定)
+- 重要操作は必ず POST + Authorization header
+- GET は状態変更しない
+
+#### テスト
+- 別オリジンから fetch で CSRF トークンなしで POST → 401 (or CORS reject)
+
+### 6.2 XSS
+
+#### 入力箇所
+- ハンズオン中はユーザー入力なし (ほぼ tap 操作のみ)
+- 例外: Step 2 の `v4-note-textarea` (= 自由メモ)
+  - mock 完結なので入力値は破棄
+  - 実 API には送らない
+  - 表示もしない (= XSS リスクなし)
+
+#### nickname
+- profile から取得
+- 表示時は React の自動 escape で HTML タグ無効化
+- innerHTML や dangerouslySetInnerHTML は **使わない**
 
 ```tsx
-// ✅ OK (React が自動エスケープ)
+// OK
 <h1>{nickname} さん、ようこそ!</h1>
 
-// ❌ NG (dangerouslySetInnerHTML 使用)
-<h1 dangerouslySetInnerHTML={{ __html: `${nickname} さん、ようこそ!` }} />
+// NG (使わない)
+<h1 dangerouslySetInnerHTML={{ __html: `${nickname} さん` }} />
 ```
-
-ハンズオンでは `dangerouslySetInnerHTML` は **一切使わない**。
-
-### 9.2 メーカー側 HTML escape (mock データ含む)
-
-`MOCK_PHOTO_RESPONSE.dishName` 等の固定値は静的なので XSS リスクなし。
-ただし将来 mock データを動的取得する場合は要検証。
 
 ---
 
-## 10. クライアント側 mock の扱い
+## 7. force=1 の悪用防止
 
-### 10.1 信頼性のレベル
+### 7.1 シナリオ
+ユーザーが /handson-tour?force=1 を何度も実行 → tutorial_complete バッジを複数回獲得?
 
-クライアント側 mock データ (`MOCK_PHOTO_RESPONSE`, `MOCK_MENU_RESPONSE`) は **信頼境界の外**。
+### 7.2 防御
 
-ユーザーが ipa を逆解析してデバッグツールで値を改変しても、サーバー側で何も起きない (= mock は表示用のみ)。
+`POST /api/handson-tour/complete` で:
+- `user_badges` の ON CONFLICT DO NOTHING で重複 INSERT を防ぐ
+- `already_completed: true` を返す
+- バッジ count は 1 個のまま
 
-### 10.2 サーバー側で受け取る値
+```sql
+INSERT INTO user_badges (user_id, badge_id, obtained_at)
+SELECT $1, b.id, now() FROM badges b WHERE b.code = 'tutorial_complete'
+ON CONFLICT (user_id, badge_id) DO NOTHING;
+```
 
-`/api/meal-plans/add-from-photo` 呼び出し時、クライアントから送られる:
-- dishName / calories / etc
+### 7.3 first_bite / planner も同様
+- 最初の sandbox 投稿で付与、2 回目以降は ON CONFLICT で skip
 
-これらは **必ず Zod schema で検証**:
+### 7.4 Rate limit
+`/api/handson-tour/complete`: 6 req / 60s / user で過度な連打を防ぐ。
+
+---
+
+## 8. データ漏洩防止
+
+### 8.1 Analytics events に PII を含めない
+
+**禁止**:
+- nickname / weight / age / height / 個人情報そのもの
+- email / phone / address
+
+**許可**:
+- user_id (UUID、内部 identifier)
+- step (0-4)
+- duration (numeric)
+- error_code (enum)
+
+### 8.2 Server logs に PII を含めない
 
 ```ts
-const RequestSchema = z.object({
-  dishName: z.string().min(1).max(100),
-  calories: z.number().int().min(0).max(10000),
-  // ...
-});
+// NG
+logger.info(`User ${nickname} completed tour`);
 
-const parsed = RequestSchema.safeParse(await req.json());
-if (!parsed.success) {
-  return Response.json({ error: 'validation_error', details: parsed.error }, { status: 400 });
-}
+// OK
+logger.info(`User ${userId} completed tour`);
 ```
 
-仮にユーザーが `calories: 999999999` を送っても、Zod で 弾かれる。
+### 8.3 Client logs (Sentry / Bugsnag)
+- breadcrumb: step / sub-step / error_code
+- user.id: user_id (UUID) のみ
+- user.email: 設定しない
 
 ---
 
-## 11. ログとモニタリング
+## 9. dependency セキュリティ
 
-### 11.1 ログイベント
+### 9.1 新規 dependency
 
-| event | level |
+| package | 用途 | リスク |
+|---|---|---|
+| `@homegohan/handson-tour-shared` | 共通 type / mock | 内部 package、リスク低 |
+| `react-confetti` (web) | 紙吹雪 | npm audit で脆弱性 0 確認 |
+| `@react-native-masked-view/masked-view` (mobile) | Spotlight | 公式 React Native コミュニティ管理 |
+
+### 9.2 dependency audit
+
+CI で:
+```bash
+npm audit --audit-level=high  # high 以上で fail
+```
+
+### 9.3 lockfile commit
+- `package-lock.json` を commit
+- yarn 使ってる場合は `yarn.lock`
+
+---
+
+## 10. テストデータ・シークレット管理
+
+### 10.1 E2E テストユーザー
+
+`tests/e2e/fixtures/test-users.ts` に user 一覧:
+- `e2e-tour-new-user-{timestamp}@homegohan.test`
+- `e2e-tour-completed@homegohan.test`
+- `e2e-tour-admin@homegohan.test`
+
+パスワードはローカル + CI Secret から取得 (cross/04 既定)。
+
+### 10.2 シークレット管理
+
+- ハンズオン専用シークレットは無し (既存の SUPABASE_URL 等を使用)
+- 新規追加なら GitHub Actions Secret + .env.example 反映 (Apple TestFlight 等は別件)
+
+### 10.3 ローカル開発で安全に試す
+
+```bash
+# .env.local に E2E user の credentials
+E2E_USER_TOUR_NEW=...
+E2E_USER_TOUR_COMPLETED=...
+```
+
+`.env.local` は .gitignore 済。
+
+---
+
+## 11. テストケース (セキュリティ)
+
+### 11.1 sandbox 偽装
+
+```ts
+describe('sandbox=true 偽装防止', () => {
+  it('完了済ユーザーが sandbox=true → 409', async () => {
+    await markHandsonTourCompleted(userId);
+    const res = await postMealPhoto(userId, { sandbox: true, ... });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: { code: 'sandbox_not_eligible', reason: 'already_finished' },
+    });
+  });
+
+  it('admin が sandbox=true → 403', async () => {
+    await setUserRoles(userId, ['user', 'admin']);
+    const res = await postMealPhoto(userId, { sandbox: true, ... });
+    expect(res.status).toBe(403);
+  });
+
+  it('既存ユーザー (meal_logs あり) が sandbox=true → 409', async () => {
+    await insertMealLog(userId, { is_sandbox: false });
+    const res = await postMealPhoto(userId, { sandbox: true, ... });
+    expect(res.status).toBe(409);
+  });
+
+  it('通常新規ユーザー sandbox=true → 200', async () => {
+    const res = await postMealPhoto(userId, { sandbox: true, ... });
+    expect(res.status).toBe(200);
+  });
+});
+```
+
+### 11.2 中断後の二重 INSERT 防止
+
+```ts
+it('連続 2 回 sandbox=true POST → unique 制約で 2 回目失敗', async () => {
+  await postMealPhoto(userId, { sandbox: true, dishName: 'A', ... });
+  const res2 = await postMealPhoto(userId, { sandbox: true, dishName: 'B', ... });
+  // unique violation 検出
+  expect(res2.status).toBe(409);
+});
+```
+
+### 11.3 RLS
+
+```ts
+it('User A cannot read User B handson_tour_completed_at', async () => {
+  // §5.4 に詳述
+});
+```
+
+### 11.4 force=1 連打
+
+```ts
+it('force=1 で 5 回 complete API 呼出 → user_badges 1 行のみ', async () => {
+  for (let i = 0; i < 5; i++) {
+    await fetch('/api/handson-tour/complete', { method: 'POST', ... });
+  }
+  const badges = await getUserBadges(userId);
+  expect(badges.filter(b => b.code === 'tutorial_complete')).toHaveLength(1);
+});
+```
+
+---
+
+## 12. 監査 (operator/07-audit-monitoring 連携)
+
+### 12.1 audit_logs に記録するイベント
+
+| event | trigger |
 |---|---|
-| `sandbox_eligibility_failed` | warn (admin / 既存ユーザーが sandbox=true 試行) |
-| `complete_api_invoked_already_completed` | info (force=1 再実行) |
-| `complete_api_500` | error (DB 異常) |
-| `bbadge_insert_conflict_unexpected` | warn (重複付与試行、本来 ON CONFLICT で吸収) |
-| `rate_limit_exceeded` | warn |
+| `handson_tour_completed_server` | API 成功時 |
+| `handson_tour_skipped_server` | skip API 成功時 |
+| `sandbox_not_eligible_attempt` | 偽装試行検出 (warn level) |
+| `force_replay_attempted` | force=1 で再実行 |
 
-### 11.2 アラート
-
-| 条件 | 通知先 |
-|---|---|
-| sandbox_eligibility_failed が 5 分以内に 10 件以上 | Slack #app-alerts |
-| complete_api_500 が 1 件以上 | Slack #app-alerts |
-| sandbox=true で is_sandbox=false の行が紛れ込む (= バグ) | PagerDuty |
+### 12.2 不正検出 alert
+- `sandbox_not_eligible_attempt` が 1 user で 5 回 / 60s 超 → Slack #security-alerts
+- `force_replay_attempted` が 50 回 / day 超 (= 異常) → 同上
 
 ---
 
-## 12. 監査チェックリスト
+## 13. インシデント対応
 
-リリース前に以下を確認:
+### 13.1 sandbox 行の不正大量増殖
 
-- [ ] `/api/handson-tour/*` のすべてに認証チェック (Bearer token 必須)
-- [ ] sandbox=true 偽装防止が機能 (admin / 既存ユーザーで 403/409 返す integration テスト)
-- [ ] Rate limit が動作 (連打で 429 返す)
-- [ ] RLS で他人データ閲覧不可 (テスト)
-- [ ] user_badges の direct INSERT 不可 (RLS テスト)
-- [ ] Analytics events に PII 含まれていない (Code review)
-- [ ] Sentry breadcrumb に PII 含まれていない (Code review)
-- [ ] dangerouslySetInnerHTML 使用なし (grep)
-- [ ] Zod schema で全 request 検証
-- [ ] SQL injection 防止 (prepared statement のみ、grep で文字列結合 DB クエリチェック)
-- [ ] XSS 防止 (React 自動エスケープのみ依存、unsafe な innerHTML なし)
+#### 検出
+- 監視: meal_logs WHERE is_sandbox=true のレコード数を 1 hour 毎に集計
+- 閾値: 通常の 100 倍超で alert
 
----
+#### 対応
+- 該当 user_id の sandbox 行を一括削除 (operator/09-runbook 経由):
+  ```sql
+  DELETE FROM meal_logs WHERE user_id = $1 AND is_sandbox = true;
+  ```
 
-## 13. ペネトレーションテスト
+### 13.2 バッジ不正獲得
 
-v1 リリース前に外部セキュリティチームによる pen test を **任意で** 実施:
+#### 検出
+- audit_logs で `tutorial_complete` バッジ取得時刻と handson_tour_completed_at の整合性チェック
+- 不一致 → 不正の可能性
 
-- sandbox=true 偽装の各種パターン
-- Rate limit 回避試行 (異なる JWT / 異なる IP)
-- RLS 抜け穴
-- SQL injection 試行 (calories=`-1` 等)
-- XSS payload 試行 (nickname に `<script>alert(1)</script>` 入力)
-
-外部チーム雇用は v2 で検討。v1 は内部監査のみ。
+#### 対応
+- 該当 user_badges 行を削除
+- ハンズオンを reset (skipped_at と completed_at を NULL に)
+- audit_logs に対応記録
 
 ---
 
-## 14. インシデント対応
+## 14. 残不確実性 (§99 連携)
 
-万が一のセキュリティインシデント発生時の手順 (operator/09-runbook と連携):
-
-### 14.1 sandbox 偽装による DB 汚染
-
-1. `meal_logs` から `is_sandbox=true AND user_id IN (admin_users)` を SELECT
-2. 該当行を SOFT-DELETE (`is_deleted=true` 列がある場合) or hard-delete
-3. KPI ダッシュボードを再計算
-4. 再発防止: API 側のロジック確認
-
-### 14.2 バッジ偽装
-
-1. `user_badges` に不正な行があるか SELECT
-2. 該当行を DELETE
-3. ユーザーに通知 (慎重に、過敏反応を避ける)
-4. RLS 設定を再確認
-
-### 14.3 機密漏洩
-
-1. 即座に該当 API を 503 で stop
-2. JWT 全件 invalidate (Supabase で `auth.signOut()` 全 user)
-3. 影響ユーザーに通知
-4. CTO + 法務に escalation
-
----
-
-## 15. 残不確実性 (§99 連携)
-
-- [ ] family/08-rls-policies.md の既存 admin 閲覧 RLS の確認
-- [ ] cross/04-api-conventions.md の rate limit デフォルト値の確認
-- [ ] Cloudflare Turnstile が現状運用されているか (cross/04 確認)
-- [ ] `audit_logs` テーブルが既存か新規作成か (operator/07 確認)
-- [ ] PagerDuty / Slack alert チャネルの命名規約 (cross/07 / operator/07 確認)
+- [ ] DB トリガー (defense in depth) を v1 で実装するか、API 層のみで止めるか
+- [ ] `meal_logs.is_sandbox` の partial unique index で v1 の二重 INSERT 防止が十分か
+- [ ] `weekly_menus.is_sandbox` も同様 unique 制約か (= Step 2 の sandbox 二重 INSERT 防止)
+- [ ] force=1 連打の rate limit 値 (6/60s が適切か)
+- [ ] sandbox=true 偽装試行の alert 閾値 (5 回 / 60s が適切か)
+- [ ] PII 含めないログ実装の確認 (既存ログコードにユーザーが何箇所 PII 入れているか grep)
