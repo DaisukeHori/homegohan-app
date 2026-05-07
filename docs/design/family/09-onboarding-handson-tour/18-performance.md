@@ -1,512 +1,473 @@
 # 18 — パフォーマンス
 
-> 関連: [07-components](./07-components.md) / [11-testing](./11-testing.md) / [20-observability](./20-observability.md)
+> 関連: [07-components](./07-components.md) / [15-design-tokens](./15-design-tokens.md) / [20-observability](./20-observability.md)
 
 ---
 
 ## 1. パフォーマンス目標値
 
-### 1.1 Web (Lighthouse + Web Vitals)
+### 1.1 Web
 
-| 指標 | 目標 | 測定方法 |
+| 指標 | 目標 | 計測 |
 |---|---|---|
-| Performance Score | > 90 | Lighthouse CI |
-| First Contentful Paint (FCP) | < 1.5 s | Web Vitals |
-| Largest Contentful Paint (LCP) | < 2.5 s | Web Vitals |
-| Cumulative Layout Shift (CLS) | < 0.1 | Web Vitals |
-| Total Blocking Time (TBT) | < 200 ms | Lighthouse |
-| Time to Interactive (TTI) | < 3.5 s | Lighthouse |
-| First Input Delay (FID) | < 100 ms | Web Vitals |
-| Interaction to Next Paint (INP) | < 200 ms | Web Vitals (新指標) |
+| First Contentful Paint (FCP) | < 1.5s | Lighthouse |
+| Largest Contentful Paint (LCP) | < 2.5s | Lighthouse |
+| Time to Interactive (TTI) | < 3.0s | Lighthouse |
+| Total Blocking Time (TBT) | < 200ms | Lighthouse |
+| Cumulative Layout Shift (CLS) | < 0.1 | Lighthouse |
+| Performance Score | > 90 | Lighthouse |
 
-### 1.2 Mobile (Reanimated)
+### 1.2 Mobile
 
-| 指標 | 目標 |
-|---|---|
-| FPS (アニメーション中) | 60 fps 維持 |
-| Spotlight 移動時の jank | 0 dropped frames |
-| Step 4 紙吹雪 (300 paritcle) | 60 fps 維持 |
-| 起動時から /handson-tour 表示まで | < 1.5 s |
-
-### 1.3 API レイテンシ
-
-| Endpoint | p50 目標 | p95 目標 |
+| 指標 | 目標 | 計測 |
 |---|---|---|
-| `/api/handson-tour/status` | < 100 ms | < 300 ms |
-| `/api/handson-tour/complete` | < 200 ms | < 500 ms |
-| `/api/handson-tour/skip` | < 100 ms | < 300 ms |
-| `/api/meal-plans/add-from-photo?source=handson_tour` | < 300 ms | < 800 ms |
-| `/api/menu-plans/add?source=handson_tour` | < 300 ms | < 800 ms |
+| アプリ起動 → /handson-tour 表示 | < 1.5s (新規 signup 直後) | 実機計測 (Reanimated frame callback) |
+| Step 0 → Step 1 遷移 | < 500ms | 同上 |
+| Step 1 結果画面表示まで | mock 1.5s + UI ~200ms = < 2.0s | 同上 |
+| Step 4 紙吹雪アニメーション中 | 60fps 維持 | useFrameCallback |
+| Spotlight 移動 | < 250ms (アニメ duration) | 同上 |
+| Tour 完了後 /home 遷移 | < 1.0s | 同上 |
+
+### 1.3 API
+
+| エンドポイント | p95 目標 | 計測 |
+|---|---|---|
+| GET /api/handson-tour/status | < 100ms | OpenTelemetry |
+| POST /api/handson-tour/complete | < 500ms | 同上 |
+| POST /api/handson-tour/skip | < 200ms | 同上 |
+| POST /api/meal-plans/add-from-photo (sandbox) | < 500ms | 同上 |
+| POST /api/menu-plans/add (sandbox) | < 500ms | 同上 |
 
 ---
 
 ## 2. ボトルネック分析
 
-### 2.1 想定ボトルネック
+### 2.1 想定されるボトルネック
 
-| 箇所 | 影響 | 対策 |
+| 箇所 | 原因 | 対策 |
 |---|---|---|
-| Spotlight 用の要素位置計算 (`measureInWindow` / `getBoundingClientRect`) | 100ms 間隔で実行、CPU 負荷 | RAF (requestAnimationFrame) 利用 + ResizeObserver |
-| 紙吹雪パーティクル 300 個 | Mobile で fps 低下 | パーティクル数調整 (低スペック端末で 150 個に減) |
-| サンプル画像 (1MB+) | 初期 load 遅延 | webp 変換 + 200KB 以下に圧縮 |
-| 共通 package のインポート | bundle size 膨張 | tree shaking 確実化 (`sideEffects: false`) |
-| Animation Reanimated 多重起動 | mobile fps 低下 | アニメ同時実行 3 つまでに制限 |
+| 起動時の status API call | ネットワーク | プリフェッチ (onboarding/complete のレスポンスに含める) |
+| サンプル画像読込 | 画像サイズ | webp 化 + preload |
+| Spotlight 計測 (measureTarget) | 100ms 間隔の polling | Polling は Tour 表示中のみ、不要時は止める |
+| 紙吹雪 | 300 paritcle 描画 | Reanimated worklet で UI thread 外で実行 |
+| 卒業 API | DB トランザクション | RPC 関数化、index 最適化 |
 
-### 2.2 計測ポイント
+### 2.2 ボトルネック解消の優先度
 
-| ポイント | 計測方法 |
-|---|---|
-| `/handson-tour` ページ load 時間 | Web Vitals (LCP) |
-| Spotlight 表示までの時間 | カスタム performance.mark / measure |
-| API 応答時間 | OpenTelemetry trace |
-| Reanimated FPS | `useFrameCallback` (mobile dev only) |
-| Memory 使用量 | Sentry / Bugsnag |
+1. (高) サンプル画像 preload + webp 化
+2. (高) status API のキャッシュ (短期 5 分)
+3. (中) measureTarget polling 最適化
+4. (低) 紙吹雪 fps 監視 → 必要なら particle 数削減
 
 ---
 
 ## 3. 画像最適化
 
-### 3.1 sample-meal.jpg
-
-#### 3.1.1 元ファイル
-- パス: `tests/e2e/fixtures/karaage.jpg`
-- 推定サイズ: ~500 KB-1 MB (元写真依存)
-
-#### 3.1.2 配置先 (圧縮後)
-
-| パス | フォーマット | 目標サイズ |
-|---|---|---|
-| `apps/mobile/assets/handson-tour/sample-meal.jpg` | JPEG | < 200 KB |
-| `apps/mobile/assets/handson-tour/sample-meal.webp` | WebP (option) | < 80 KB |
-| `public/handson-tour/sample-meal.jpg` | JPEG | < 200 KB |
-| `public/handson-tour/sample-meal.webp` | WebP | < 80 KB |
-
-#### 3.1.3 圧縮コマンド (Phase 2)
+### 3.1 sample-meal.jpg → sample-meal.webp
 
 ```bash
-# JPEG quality 85
-cjpeg -quality 85 -outfile public/handson-tour/sample-meal.jpg tests/e2e/fixtures/karaage.jpg
-
-# WebP quality 85
-cwebp -q 85 tests/e2e/fixtures/karaage.jpg -o public/handson-tour/sample-meal.webp
-
-# Mobile assets も同様に
+cwebp -q 85 sample-meal.jpg -o sample-meal.webp
+# 元 jpg 200KB → webp ~80KB (60% 削減)
 ```
 
-または `sharp` package を使ってビルド時に動的圧縮 (Next.js Image component)。
-
-#### 3.1.4 Web での画像配信
+### 3.2 picture タグで配信 (web)
 
 ```tsx
-import Image from 'next/image';
-
-<Image
-  src="/handson-tour/sample-meal.jpg"
-  alt="唐揚げ定食 (ご飯・味噌汁・キャベツ千切り付き)"
-  width={1024}
-  height={768}
-  priority  // Step 1 で重要、preload
-  placeholder="blur"  // base64 placeholder
-  blurDataURL="..."
-/>
+<picture>
+  <source srcSet="/handson-tour/sample-meal.webp" type="image/webp" />
+  <img src="/handson-tour/sample-meal.jpg" alt="..." width={1024} height={768} />
+</picture>
 ```
 
-`priority` で preload、`placeholder="blur"` で UX 改善。
-
-#### 3.1.5 Mobile での配信
-
-```tsx
-import { Image } from 'react-native';
-
-<Image
-  source={require('../../../apps/mobile/assets/handson-tour/sample-meal.jpg')}
-  style={{ width: 300, height: 225 }}
-  accessibilityLabel="唐揚げ定食"
-/>
-```
-
-Expo の `expo-image` を使う場合:
-
-```tsx
-import { Image } from 'expo-image';
-
-<Image
-  source={require('...sample-meal.jpg')}
-  contentFit="cover"
-  cachePolicy="memory-disk"  // キャッシュ
-/>
-```
-
-### 3.2 Step 1 表示前の preload
+### 3.3 preload (web)
 
 Step 0 マウント時に Step 1 で使う画像を preload:
 
-```ts
-// Step 0 useEffect
+```tsx
 useEffect(() => {
-  if (typeof window !== 'undefined') {
-    const img = new window.Image();
-    img.src = '/handson-tour/sample-meal.jpg';
-  }
-  // mobile
-  Image.prefetch(require('../assets/handson-tour/sample-meal.jpg'));
+  // Step 0 マウント時、Step 1 画像を pre-fetch
+  const link = document.createElement('link');
+  link.rel = 'preload';
+  link.as = 'image';
+  link.href = '/handson-tour/sample-meal.webp';
+  document.head.appendChild(link);
+  return () => document.head.removeChild(link);
 }, []);
 ```
 
-これで Step 1 到達時には既にキャッシュされており、即時表示。
+### 3.4 mobile (Expo)
+
+```tsx
+import { Image } from 'expo-image';
+import { Asset } from 'expo-asset';
+
+// プリロード
+useEffect(() => {
+  Asset.fromModule(require('../../../apps/mobile/assets/handson-tour/sample-meal.jpg')).downloadAsync();
+}, []);
+```
 
 ---
 
-## 4. Bundle サイズ管理
+## 4. status API キャッシュ
 
-### 4.1 共通 package のサイズ
+### 4.1 キャッシュ戦略
 
-`packages/handson-tour-shared/` の bundle 影響:
+ハンズオン状態は 1 度確定したら変わりにくい (= completed_at セット後、同じ user で skip にならない)。短期キャッシュで API 負荷削減:
 
-| 項目 | 想定サイズ (gzipped) |
-|---|---|
-| types.ts (typescript only、bundle に出ない) | 0 KB |
-| mocks.ts | ~2 KB |
-| analytics.ts (Zod schema) | ~3 KB |
-| i18n.ts (81 keys) | ~5 KB |
-| personalize.ts | ~1 KB |
-| その他 | ~2 KB |
+#### サーバー側 (HTTP Cache-Control)
 
-合計: ~13 KB gzipped (許容範囲)
+```
+Cache-Control: private, max-age=300  // 5 分
+```
 
-### 4.2 tree shaking
+ただし `should_show: true` の場合のみキャッシュ (= 完了したら即時無効化したい)。
 
-```json
-// packages/handson-tour-shared/package.json
-{
-  "sideEffects": false,
-  "main": "./dist/index.js",
-  "module": "./dist/index.esm.js",
-  "types": "./dist/index.d.ts"
+#### クライアント側 (in-memory)
+
+```ts
+const statusCache = new Map<string, { value: HandsonTourStatusResponse; expiresAt: number }>();
+
+async function getStatus() {
+  const userId = getUserId();
+  const cached = statusCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const value = await fetch('/api/handson-tour/status').then(r => r.json());
+  statusCache.set(userId, { value, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return value;
+}
+
+// 完了/スキップ後にキャッシュ無効化
+function invalidateCache() {
+  statusCache.clear();
 }
 ```
 
-未使用の export は webpack / rollup で削除される。
+### 4.2 onboarding/complete レスポンスから直接取得
 
-### 4.3 動的 import (web)
+ベストパフォーマンス: status API を呼ばずに、onboarding/complete のレスポンスから `next_route` を直接取得。
 
-`/handson-tour/*` ページは別 bundle に分離 (Next.js App Router で自動 code splitting)。
-通常 home / settings 利用時にハンズオン関連コードを load しない。
-
-```tsx
-// Next.js App Router で自動 split されるが、念のため
-const HandsonTourLayout = dynamic(() => import('./layout'), { ssr: false });
+```ts
+const onboardingResult = await fetch('/api/onboarding/complete', { method: 'POST' }).then(r => r.json());
+router.replace(onboardingResult.next_route);  // status API 呼ばない
 ```
 
-### 4.4 react-confetti の bundle 影響
-
-| package | gzipped size |
-|---|---|
-| react-confetti | ~10 KB |
-
-許容範囲。
-
-mobile は自前実装で react-confetti を使わない (= 共通 package に依存させない)。
+これで status API 呼び出しを省略 (Step 0 への遷移時)。/home 直接アクセス時のみ status を呼ぶ。
 
 ---
 
-## 5. クライアント側パフォーマンス最適化
+## 5. measureTarget の最適化
 
-### 5.1 Spotlight 計算の頻度
+### 5.1 現状 (§07 §7.1)
 
-#### 100ms 間隔の妥当性
-- 60 fps = 16.6 ms/frame
-- 100ms 間隔 = 6 frames に 1 回計算
-- ResizeObserver / MutationObserver で trigger された場合は即時計算
-- → 実用上は 100ms で十分
+100ms 間隔で `getBoundingClientRect` (web) / `measureInWindow` (mobile)。10Hz polling。
 
-```ts
-const measureInterval = useMemo(() => {
-  return prefersReducedMotion ? 500 : 100;  // reduce-motion なら頻度落とす
-}, [prefersReducedMotion]);
-```
+### 5.2 改善案
 
-### 5.2 React 再 render 抑制
-
-```tsx
-// useMemo / useCallback で props の変化を最小化
-const overlayProps = useMemo(() => ({
-  targetTestId,
-  bubble: { body: bubbleBody, position: 'auto' },
-  primaryAction: { label: '次へ', onPress: handleNext },
-}), [targetTestId, bubbleBody, handleNext]);
-
-<HandsonTourOverlay {...overlayProps} />
-```
-
-### 5.3 Reanimated worklet
-
-mobile では shared value + worklet で UI thread でアニメーション実行 (JS thread bypass):
+#### 案 A: 必要時のみ計測
 
 ```ts
-const opacity = useSharedValue(0);
-const animatedStyle = useAnimatedStyle(() => ({
-  opacity: opacity.value,
-}));
+useEffect(() => {
+  if (!isVisible || !targetTestId) return;
+
+  measureTarget();
+
+  // ResizeObserver (web) や Layout 変化検出 (mobile) で代替
+  const observer = new ResizeObserver(measureTarget);
+  observer.observe(document.querySelector(`[data-testid="${targetTestId}"]`));
+
+  // scroll 監視
+  const onScroll = () => measureTarget();
+  window.addEventListener('scroll', onScroll);
+
+  return () => {
+    observer.disconnect();
+    window.removeEventListener('scroll', onScroll);
+  };
+}, [isVisible, targetTestId]);
 ```
 
-これで JS thread blocking でもアニメは継続。
+→ polling やめて event-driven。CPU 負荷削減。
 
-### 5.4 紙吹雪のパフォーマンス調整
-
-mobile (低スペック端末対応):
+#### 案 B: requestAnimationFrame
 
 ```ts
-const particleCount = useMemo(() => {
-  // 端末性能を判定 (簡易: bundle 内の deviceMemory 等)
-  if (DeviceInfo.getDeviceType() === 'Tablet' || DeviceInfo.getTotalMemory() > 4_000_000_000) {
-    return 300;
-  }
-  return 150;  // 低スペック
+let rafId: number | null = null;
+function tick() {
+  measureTarget();
+  rafId = requestAnimationFrame(tick);
+}
+
+useEffect(() => {
+  if (!isVisible) return;
+  tick();
+  return () => rafId && cancelAnimationFrame(rafId);
+}, [isVisible]);
+```
+
+→ ブラウザ標準で最適化、scroll/resize に追従。
+
+→ **推奨は案 A** (必要時のみ + ResizeObserver)。
+
+---
+
+## 6. Reanimated worklet (mobile)
+
+### 6.1 spring アニメーション
+
+```ts
+const scale = useSharedValue(0.5);
+useEffect(() => {
+  scale.value = withSpring(1, { damping: 10, stiffness: 100 });
 }, []);
 ```
 
-または、Reanimated v3 の `runOnUI` でメインスレッド負荷を最小化。
+UI thread 外で実行、JS thread に影響しない (60fps 維持)。
+
+### 6.2 紙吹雪 worklet
+
+```ts
+import { useFrameCallback } from 'react-native-reanimated';
+
+const particles = useSharedValue<Particle[]>([]);
+
+const frameCallback = useFrameCallback((info) => {
+  'worklet';
+  const dt = info.timeSincePreviousFrame ?? 16;
+  particles.value = particles.value.map(p => ({
+    ...p,
+    y: p.y + p.vy * dt / 1000,
+    rotation: p.rotation + p.vr * dt / 1000,
+    opacity: Math.max(0, p.opacity - dt / 3000),
+  }));
+}, true);
+```
+
+worklet は UI thread で実行。JS スレッドのブロッキングなし。
 
 ---
 
-## 6. サーバーサイドパフォーマンス
+## 7. Bundle サイズ削減
 
-### 6.1 SQL クエリ最適化
-
-§08-state-db.md の partial index で:
-
-```sql
--- 部分インデックス (pending な user のみ)
-CREATE INDEX idx_user_profiles_handson_tour_pending
-  ON user_profiles (user_id)
-  WHERE handson_tour_completed_at IS NULL AND handson_tour_skipped_at IS NULL;
-```
-
-`should_show` 判定の SELECT が高速化 (= pending user のみ index に乗る、typically <1% of total)。
-
-### 6.2 RPC 関数のパフォーマンス
-
-`complete_handson_tour` RPC は:
-- UPDATE 1 回 + INSERT 1 回 + SELECT 1 回 = 3 SQL
-- TX 内で完結
-- p95 < 500 ms (目標)
-
-EXPLAIN ANALYZE で:
-
-```sql
-EXPLAIN ANALYZE
-WITH updated AS (
-  UPDATE user_profiles
-  SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
-  WHERE user_id = '...'
-  RETURNING handson_tour_completed_at
-), inserted AS (
-  INSERT INTO user_badges ... ON CONFLICT DO NOTHING RETURNING ...
-)
-SELECT * FROM updated, inserted;
-```
-
-PRIMARY KEY index 利用で sub-millisecond で完了するはず。
-
-### 6.3 Connection pooling
-
-Supabase の connection pool (PgBouncer) を使う (既存設定)。
-
-API route は serverless (Vercel Edge or Node Lambda) で多重接続が分散される。
-
-### 6.4 キャッシュ
-
-`/api/handson-tour/status` は user 単位で頻繁に呼ばれる可能性 (= /home マウントごと)。
-
-#### 6.4.1 キャッシュ戦略
-
-| 戦略 | TTL | 適用 |
-|---|---|---|
-| memo (ブラウザ tab 単位) | 60 s | クライアント側 fetch cache |
-| Redis user cache | 300 s | サーバー側 (Upstash) |
-| CDN edge cache | なし | user-specific のため適用不可 |
-
-#### 6.4.2 実装
+### 7.1 共通 package のツリーシェイキング
 
 ```ts
-// クライアント側 SWR / React Query で 60s stale time
-const { data: status } = useSWR('/api/handson-tour/status', fetcher, {
-  dedupingInterval: 60_000,
-  revalidateOnFocus: false,
+// 個別 import (推奨)
+import { MOCK_PHOTO_RESPONSE } from '@homegohan/handson-tour-shared/mocks';
+
+// vs 一括 import (未使用も含む)
+import * as Tour from '@homegohan/handson-tour-shared';
+```
+
+`package.json` で `"sideEffects": false` を指定:
+
+```json
+{
+  "name": "@homegohan/handson-tour-shared",
+  "sideEffects": false,
+  ...
+}
+```
+
+### 7.2 dynamic import
+
+ハンズオンルートは初回 visit 時のみ load:
+
+```tsx
+// src/app/handson-tour/layout.tsx
+import dynamic from 'next/dynamic';
+
+const TourOverlay = dynamic(() => import('@/components/handson-tour/TourOverlay'), {
+  ssr: false,  // overlay は client only
+  loading: () => <Spinner />,
 });
 ```
 
-```ts
-// サーバー側 Redis cache
-const cached = await redis.get(`handson-tour-status:${userId}`);
-if (cached) return cached;
-const result = await computeStatus(userId);
-await redis.set(`handson-tour-status:${userId}`, result, { ex: 300 });
-return result;
-```
+→ 通常ユーザーの bundle に Tour コードが含まれない。
 
-### 6.5 cache invalidation
+### 7.3 react-confetti の dynamic import
 
-ユーザーが `complete` / `skip` API を呼んだ時、Redis cache を invalidate:
+```tsx
+const Confetti = dynamic(() => import('react-confetti'), { ssr: false });
 
-```ts
-await redis.del(`handson-tour-status:${userId}`);
+// Step 4 でのみ render
+{showConfetti && <Confetti ... />}
 ```
 
 ---
 
-## 7. ネットワーク最適化
+## 8. レンダリング最適化
 
-### 7.1 HTTP/2 / HTTP/3
-- Vercel + Cloudflare で HTTP/2 / HTTP/3 自動有効
-- Mobile は OS 任せ
+### 8.1 React.memo
 
-### 7.2 圧縮
-- gzip / br 自動 (Vercel default)
-- API レスポンス JSON サイズ < 1 KB (typical)
+```tsx
+export const HandsonTourBubble = React.memo(function HandsonTourBubble(props: HandsonTourBubbleProps) {
+  // ...
+}, (prev, next) => {
+  return prev.targetTestId === next.targetTestId
+    && prev.bubble.body === next.bubble.body
+    && prev.bubble.title === next.bubble.title;
+});
+```
 
-### 7.3 CDN
-- 静的 asset (sample-meal.jpg) は Vercel CDN edge cache
-- max-age=31536000 (1 年、長期キャッシュ)
+target が変わらない限り re-render しない。
 
-```http
-Cache-Control: public, max-age=31536000, immutable
+### 8.2 useMemo for personalize
+
+```tsx
+const personalizedBody = useMemo(
+  () => personalize(bodyTemplate, { nickname, target_kcal, percent }),
+  [bodyTemplate, nickname, target_kcal, percent]
+);
+```
+
+### 8.3 useCallback for handlers
+
+```tsx
+const handleNext = useCallback(() => {
+  setSubStep(getNextSubStep(subStep));
+}, [subStep]);
 ```
 
 ---
 
-## 8. パフォーマンステスト
+## 9. データフェッチ最適化
 
-### 8.1 Lighthouse CI
+### 9.1 GET /api/badges 並列化
+
+Step 3 で /api/badges を呼ぶ際、Tour Layout で **prefetch** しておく:
+
+```tsx
+// src/app/handson-tour/layout.tsx
+useEffect(() => {
+  // Step 3 で使う badges を prefetch
+  fetch('/api/badges').then(/* キャッシュに保存 */);
+}, []);
+```
+
+→ Step 3 マウント時には既にキャッシュ済 → 即表示。
+
+### 9.2 並列 API call
+
+Step 4 卒業 API + Analytics event は並列:
+
+```ts
+const [completeResult, _] = await Promise.all([
+  fetch('/api/handson-tour/complete', { method: 'POST', ... }),
+  fireAnalytics('handson_tour_completed', { ... }),
+]);
+```
+
+---
+
+## 10. CI でのパフォーマンス監視
+
+### 10.1 Lighthouse CI
 
 ```yaml
 # .github/workflows/lighthouse.yml
-name: Lighthouse
-on:
-  pull_request:
-    paths: ['src/app/handson-tour/**']
+name: Lighthouse Performance
+on: pull_request
 jobs:
   lighthouse:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: treosh/lighthouse-ci-action@v10
+      - uses: actions/setup-node@v4
+      - run: npm ci
+      - run: npm run build
+      - run: |
+          npx lighthouse https://preview.homegohan.app/handson-tour \
+            --output html --output-path ./lighthouse-tour.html \
+            --chrome-flags="--headless"
+      - uses: actions/upload-artifact@v4
         with:
-          urls: |
-            https://${VERCEL_PREVIEW_URL}/handson-tour
-          uploadArtifacts: true
-          temporaryPublicStorage: true
-          configPath: ./lighthouserc.json
+          name: lighthouse-tour
+          path: lighthouse-tour.html
+      - run: |
+          # Performance Score < 90 で fail
+          score=$(jq -r '.categories.performance.score' lighthouse-tour.json)
+          [ $(echo "$score < 0.9" | bc -l) -eq 1 ] && exit 1 || exit 0
 ```
 
-```json
-// lighthouserc.json
-{
-  "ci": {
-    "assert": {
-      "preset": "lighthouse:recommended",
-      "assertions": {
-        "categories:performance": ["error", { "minScore": 0.9 }],
-        "first-contentful-paint": ["error", { "maxNumericValue": 1500 }],
-        "largest-contentful-paint": ["error", { "maxNumericValue": 2500 }]
-      }
-    }
-  }
-}
-```
+### 10.2 mobile FPS 監視
 
-### 8.2 Reanimated FPS テスト (mobile)
-
-実機 + Maestro で 60fps 維持を計測:
-
-```yaml
-# 13-step4-fps.yaml (Maestro)
-appId: com.homegohan.app
----
-- runFlow: 08-step4-graduation.yaml  # Step 4 まで
-- # 紙吹雪表示中の fps を計測
-- assertVisible:
-    id: tour-step-4-graduate
-- # Maestro fps assertion (要 plugin)
-```
-
-または、開発中に React Native Performance Monitor で目視確認。
-
-### 8.3 API レイテンシテスト
+`tests/perf/handson-tour-fps.test.ts`:
 
 ```ts
-// integration test
-it('complete API responds within 500ms p95', async () => {
-  const times: number[] = [];
-  for (let i = 0; i < 100; i++) {
-    const start = Date.now();
-    await fetch('/api/handson-tour/complete', { method: 'POST', ... });
-    times.push(Date.now() - start);
-  }
-  const p95 = times.sort()[94];
-  expect(p95).toBeLessThan(500);
+import { useFrameCallback } from 'react-native-reanimated';
+
+test('Step 4 紙吹雪 60fps 維持', async () => {
+  const frames: number[] = [];
+  // Step 4 を render
+  // useFrameCallback で 各 frame の経過時間を記録
+  // 平均 16.67ms (= 60fps) を維持
+  const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
+  expect(avg).toBeLessThan(17);  // < 17ms = 約 60fps
 });
 ```
 
----
-
-## 9. メモリ使用量
-
-### 9.1 Web (Chrome DevTools Performance Memory)
-
-- 通常状態: ~50 MB
-- ハンズオン中: +10 MB (overlay + 紙吹雪)
-- Step 4 終了後: 元に戻る (-10 MB)
-
-メモリリーク監視:
-- TourProvider unmount で context 破棄
-- setTimeout / setInterval cleanup
-- Reanimated / Framer Motion アニメーションの完了確認
-
-### 9.2 Mobile (Hermes JS engine)
-
-- Hermes の小さいフットプリント (= ハンズオン追加で +5-10 MB 程度)
-- Reanimated worklets は別スレッド、JS heap への影響少
+実機計測は難しいため、シミュレーターで近似値。低スペック端末は手動 QA。
 
 ---
 
-## 10. パフォーマンスバジェット
+## 11. 監視 (operator/07 連携)
 
-| バジェット | 値 |
-|---|---|
-| `/handson-tour` ページの JS bundle (gzipped) | < 200 KB |
-| ハンズオン関連 image asset 合計 | < 500 KB |
-| API レスポンス (各 endpoint) | < 5 KB JSON |
-| `/handson-tour` の HTML | < 50 KB |
+### 11.1 Datadog / Sentry ダッシュボード
 
-これを超えたらビルドで warn / fail (webpack-bundle-analyzer 等で検出)。
+| メトリクス | 計測値 | 表示 |
+|---|---|---|
+| status API レイテンシ p95 | (毎リクエスト記録) | グラフ |
+| complete API レイテンシ p95 | 同上 | グラフ |
+| Tour 完了率 | 完了 / 開始 | 数値 + トレンド |
+| Tour 平均所要時間 | total_duration_ms 平均 | 数値 + トレンド |
+| エラー率 | step_error / step_viewed | 数値 + アラート閾値 |
 
----
+### 11.2 アラート
 
-## 11. パフォーマンス監視 (本番)
-
-### 11.1 Real User Monitoring (RUM)
-
-- Web Vitals を Vercel Analytics or Google Analytics に送信
-- Mobile は Sentry / Bugsnag の performance tab
-
-### 11.2 alerting
-
-| 条件 | 通知 |
-|---|---|
-| LCP p75 > 3.0 s | Slack #app-alerts |
-| API p95 > 1.0 s | 同上 |
-| FPS < 50 (mobile) | 同上 |
-| Memory leak 検出 (heap > 100 MB on mobile) | PagerDuty |
+- complete API p95 > 1s で 5 分継続 → Slack #app-alerts
+- エラー率 > 5% で 10 分継続 → 同上
+- Tour 完了率 < 60% で 1 日継続 → 同上
 
 ---
 
-## 12. 残不確実性 (§99 連携)
+## 12. 容量・データベース
 
-- [ ] sample-meal.jpg を Phase 2 で webp 変換するか、JPEG のみでスタートするか
-- [ ] react-confetti の bundle 影響が許容範囲か (gzipped < 10 KB と推定)
-- [ ] Mobile 低スペック端末で 60fps 維持できるかの実機検証
-- [ ] Redis cache の TTL 300s が UX 上問題ないか (status 変更 = signup 完了で max 5 分の遅延)
-- [ ] パフォーマンスバジェット 200 KB が現実的か (bundle 計測で確認)
-- [ ] Step 0 マウント時の image preload が効いているか (Lighthouse で確認)
+### 12.1 sandbox 行の容量見積もり
+
+- 1 行 ~500 bytes (meal_logs)
+- 新規ユーザー 1 人につき Step 1+Step 2 で 2 行 (total 1KB)
+- 月 1000 新規ユーザー → 1MB / 月
+
+→ DB 容量影響は軽微。
+
+### 12.2 sandbox 行の長期保存
+
+- v1 では削除しない (データ整合性、バッジ判定のため)
+- v2 で sandbox 行のクリーンアップ (90 日経過後削除等) を検討
+
+---
+
+## 13. テストケース (パフォーマンス)
+
+### 13.1 Lighthouse CI
+- `/handson-tour` で Performance Score > 90
+- LCP < 2.5s
+
+### 13.2 API レイテンシ
+- 各 API の p95 を計測 (load test or 本番 metrics)
+
+### 13.3 mobile FPS
+- Step 4 紙吹雪 60fps (シミュレーター)
+- 実機 (iPhone 14, Pixel 7) で手動 QA
+
+---
+
+## 14. 残不確実性 (§99 連携)
+
+- [ ] webp 採用範囲 (古いブラウザ Safari 13 以下は jpg fallback)
+- [ ] mobile sample-meal.jpg を Asset.fromModule 経由でロードする方法
+- [ ] Step 4 紙吹雪 300 paritcle で低スペック Android (Pixel 4a 等) で 60fps 維持できるか
+- [ ] Lighthouse CI を PR 必須にするか (= performance regression を blocking にするか)
+- [ ] 状態 API キャッシュ 5 分が適切か (= 完了直後に他端末で再ログインしても 5 分間古い状態が出る)
