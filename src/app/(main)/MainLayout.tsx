@@ -178,7 +178,7 @@ export default function MainLayout({
       <NativeAppTabRouter />
       
       {/* デスクトップ用サイドバー (Hidden on Mobile) */}
-      <aside className="hidden lg:flex flex-col w-64 fixed inset-y-0 left-0 bg-white border-r border-gray-100 z-50 shadow-sm">
+      <aside className={`${initialIsNativeApp ? 'hidden' : 'hidden lg:flex'} flex-col w-64 fixed inset-y-0 left-0 bg-white border-r border-gray-100 z-50 shadow-sm`}>
         <div className="p-8">
           <Link href="/home" className="flex items-center gap-3 group">
              <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold shadow-md group-hover:shadow-lg transition-shadow">H</div>
