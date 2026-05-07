@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs, Redirect, router } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 
 import { colors } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
@@ -38,8 +38,8 @@ export default function TabsLayout() {
           tabBarStyle: {
             backgroundColor: colors.card,
             borderTopColor: colors.border,
-            height: 88,
-            paddingBottom: 30,
+            height: Platform.OS === 'ios' ? 88 : 64,
+            paddingBottom: Platform.OS === 'ios' ? 30 : 8,
             paddingTop: 8,
           },
           tabBarActiveTintColor: colors.accent,
