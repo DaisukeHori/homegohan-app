@@ -158,9 +158,9 @@ stateDiagram-v2
   Step4Error --> Step4Posting: 【リトライ】
   Step4Error --> Skipped: 【あとで】 (※complete 失敗 = skipped マーク)
 
-  Step4Done --> Step5: 【ホームへ】
+  Step4Done --> Step5Home: 【ホームへ】
 
-  Step5 --> [*]: welcome toast 表示後 通常 home
+  Step5Home --> Done: welcome toast 表示後
 
   Hidden --> [*]
   Skipped --> [*]: handson_tour_skipped_at = now()

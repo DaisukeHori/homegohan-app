@@ -8,21 +8,23 @@
 
 | コンポーネント | 用途 | Web | Mobile |
 |---|---|---|---|
-| `<HandsonTourOverlay>` | 全体 overlay + Spotlight 描画 + 吹き出し配置 | `src/components/handson-tour/TourOverlay.tsx` | `apps/mobile/src/handson-tour/TourOverlay.tsx` |
-| `<HandsonTourBubble>` | 吹き出し (title / body / 進捗 / ボタン) | 同 dir / `TourBubble.tsx` | 同 dir / `TourBubble.tsx` |
-| `<HandsonTourProgress>` | 進捗ドット (◯ ● ◯ ...) | 同 dir / `TourProgress.tsx` | 同 dir / `TourProgress.tsx` |
+| `<TourOverlay>` | 全体 overlay + Spotlight 描画 + 吹き出し配置 | `src/components/handson-tour/TourOverlay.tsx` | `apps/mobile/src/handson-tour/TourOverlay.tsx` |
+| `<TourBubble>` | 吹き出し (title / body / 進捗 / ボタン) | 同 dir / `TourBubble.tsx` | 同 dir / `TourBubble.tsx` |
+| `<TourProgress>` | 進捗ドット (◯ ● ◯ ...) | 同 dir / `TourProgress.tsx` | 同 dir / `TourProgress.tsx` |
 | `<TourSandboxWrapper>` | 既存画面を sandbox モードでマウントする HOC | 同 dir / `TourSandboxWrapper.tsx` | 同 dir / `TourSandboxWrapper.tsx` |
+
+**コンポーネント名の確定** (§16 §5.2 と一致): v1 では短縮形 `<Tour*>` を採用。ファイル名と一致させる (`TourOverlay.tsx` → `<TourOverlay>`)。HandsonTour プレフィックスは長すぎるため不採用。
 
 加えて、既存画面 (`<MealNewScreen>`, `<V4GenerateModal>`, `<BadgesPage>`) に `mode='sandbox'` プロップを追加する変更がある (§13-integration.md)。
 
 ---
 
-## 2. `<HandsonTourOverlay>` 詳細
+## 2. `<TourOverlay>` 詳細
 
 ### 2.1 Props 完全 schema
 
 ```ts
-interface HandsonTourOverlayProps {
+interface TourOverlayProps {
   /** Spotlight ターゲットの testID。null ならフルスクリーン (target なし) */
   targetTestId: string | null;
 
@@ -163,7 +165,7 @@ const measureTarget = useCallback(() => {
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
-export function HandsonTourOverlay(props: HandsonTourOverlayProps) {
+export function TourOverlay(props: TourOverlayProps) {
   const { targetRect, isVisible, ... } = useTourOverlayLogic(props);
 
   if (!isVisible) return null;
@@ -191,7 +193,7 @@ export function HandsonTourOverlay(props: HandsonTourOverlayProps) {
 
         {/* 吹き出し */}
         {targetRect && (
-          <HandsonTourBubble
+          <TourBubble
             target={targetRect}
             bubble={props.bubble}
             position={props.bubble.position}
@@ -259,7 +261,7 @@ import MaskedView from '@react-native-masked-view/masked-view';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { View, Pressable } from 'react-native';
 
-export function HandsonTourOverlay(props: HandsonTourOverlayProps) {
+export function TourOverlay(props: TourOverlayProps) {
   const opacity = useSharedValue(0);
   const { targetRect } = useTourOverlayLogic(props);
 
@@ -303,7 +305,7 @@ export function HandsonTourOverlay(props: HandsonTourOverlayProps) {
       </MaskedView>
 
       {targetRect && (
-        <HandsonTourBubble
+        <TourBubble
           target={targetRect}
           bubble={props.bubble}
           position={props.bubble.position}
@@ -334,12 +336,12 @@ export function HandsonTourOverlay(props: HandsonTourOverlayProps) {
 
 ---
 
-## 3. `<HandsonTourBubble>` 詳細
+## 3. `<TourBubble>` 詳細
 
 ### 3.1 Props
 
 ```ts
-interface HandsonTourBubbleProps {
+interface TourBubbleProps {
   /** Spotlight ターゲットの矩形 (吹き出し配置の基準) */
   target: TargetRect | null;
   /** 吹き出し内容 */
@@ -444,7 +446,7 @@ function calculateBubblePosition(
 ### 3.4 内部レンダリング
 
 ```tsx
-function HandsonTourBubble(props: HandsonTourBubbleProps) {
+function TourBubble(props: TourBubbleProps) {
   const position = calculateBubblePosition(...);
 
   return (
@@ -468,7 +470,7 @@ function HandsonTourBubble(props: HandsonTourBubbleProps) {
 
       {/* 進捗 */}
       {props.progress && (
-        <HandsonTourProgress current={props.progress.current} total={props.progress.total} />
+        <TourProgress current={props.progress.current} total={props.progress.total} />
       )}
 
       {/* タイトル */}
@@ -511,12 +513,12 @@ mobile 版は `<View>` / `<Text>` / `<Pressable>` で同等構造。
 
 ---
 
-## 4. `<HandsonTourProgress>` 詳細
+## 4. `<TourProgress>` 詳細
 
 ### 4.1 Props
 
 ```ts
-interface HandsonTourProgressProps {
+interface TourProgressProps {
   /** 現在のステップ (1-based、1..total) */
   current: number;
   /** 全ステップ数 (= 5、Step 0-4) */
@@ -535,7 +537,7 @@ interface HandsonTourProgressProps {
 ### 4.2 実装
 
 ```tsx
-function HandsonTourProgress(props: HandsonTourProgressProps) {
+function TourProgress(props: TourProgressProps) {
   const { current, total, size = 8, spacing = 8, activeColor, inactiveColor } = props;
 
   return (
@@ -586,7 +588,7 @@ interface TourSandboxWrapperProps<T> {
   /** 現在のサブステップ (Spotlight 連動用) */
   subStep: string;
   /** Overlay 設定 */
-  overlay: Omit<HandsonTourOverlayProps, 'targetTestId' | 'targetTestIds'>;
+  overlay: Omit<TourOverlayProps, 'targetTestId' | 'targetTestIds'>;
   /** subStep ごとの target testID マッピング */
   subStepToTarget: Record<string, string | string[] | null>;
   /** sandbox 完了コールバック */
@@ -607,7 +609,7 @@ function TourSandboxWrapper<T>(props: TourSandboxWrapperProps<T>) {
         mode: 'sandbox',
         onSandboxComplete: props.onSandboxComplete,
       })}
-      <HandsonTourOverlay
+      <TourOverlay
         {...props.overlay}
         targetTestId={typeof target === 'string' ? target : null}
         targetTestIds={Array.isArray(target) ? target : undefined}
@@ -793,17 +795,17 @@ useEffect(() => {
 ## 8. テストケース (コンポーネント)
 
 ### 8.1 Unit
-- `<HandsonTourOverlay>`:
+- `<TourOverlay>`:
   - target 取得成功 → spotlight 表示
   - target NULL → フルスクリーン dim
   - autoAdvanceMs → タイマー発火 → onAutoAdvance 呼出
   - primaryAction.onPress → コールバック呼出
   - reduce-motion → アニメ短縮
-- `<HandsonTourBubble>`:
+- `<TourBubble>`:
   - position='auto' で target 上下空間に応じて切替
   - 矢印が正しい方向 (top/bottom/left/right)
   - title なしレイアウト
-- `<HandsonTourProgress>`:
+- `<TourProgress>`:
   - 5 ドット中 3 つ active で正しい色
 - `<TourSandboxWrapper>`:
   - children に mode='sandbox' プロップが渡る

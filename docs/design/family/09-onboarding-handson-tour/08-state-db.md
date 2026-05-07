@@ -202,13 +202,13 @@ RETURNING handson_tour_completed_at;
 - 1 秒以内なら新規完了、それ以前なら既存完了 (`already_completed: true`)
 
 ```sql
--- 厳密版
+-- canonical 実装版 (§21-migration-sql §6 と一致、INTERVAL は 1 second 採用)
 UPDATE user_profiles
 SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
 WHERE user_id = $1
 RETURNING
   handson_tour_completed_at,
-  (handson_tour_completed_at < now() - INTERVAL '500 milliseconds') AS already;
+  (handson_tour_completed_at < now() - INTERVAL '1 second') AS already;
 ```
 
 ### 3.2 バッジ INSERT の冪等性

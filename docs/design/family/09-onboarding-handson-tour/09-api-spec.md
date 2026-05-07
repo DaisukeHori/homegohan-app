@@ -53,6 +53,8 @@ export const HandsonTourStatusResponseSchema = z.object({
     'already_skipped',
     'admin_role',
     'existing_user_auto_skip',
+    'feature_disabled',   // §19-rollout: Feature flag OFF
+    'not_in_rollout',     // §19-rollout: 段階公開対象外
   ]),
 });
 
@@ -99,7 +101,7 @@ export async function GET(req: Request) {
     .single();
 
   if (error || !profile) {
-    return Response.json({ error: 'profile_not_found' }, { status: 404 });
+    return Response.json({ error: { code: 'profile_not_found' } }, { status: 404 });
   }
 
   // ロール判定 (D)
@@ -288,11 +290,11 @@ export async function POST(req: Request) {
     .select('roles, handson_tour_completed_at')
     .eq('user_id', user.id)
     .single();
-  if (!profile) return Response.json({ error: 'profile_not_found' }, { status: 404 });
+  if (!profile) return Response.json({ error: { code: 'profile_not_found' } }, { status: 404 });
 
   const adminRoles = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'];
   if (profile.roles?.some((r: string) => adminRoles.includes(r))) {
-    return Response.json({ error: 'not_eligible', reason: 'admin_role' }, { status: 403 });
+    return Response.json({ error: { code: 'not_eligible', reason: 'admin_role' } }, { status: 403 });
   }
 
   // condition C はオプショナル: 既存ユーザーが force=1 でハンズオンした場合は許容する判断もあり
@@ -300,7 +302,7 @@ export async function POST(req: Request) {
   const { data: existingActivity } = await supabase
     .rpc('user_has_non_sandbox_activity', { p_user_id: user.id });
   if (existingActivity && !profile.handson_tour_completed_at) {
-    return Response.json({ error: 'not_eligible', reason: 'existing_user' }, { status: 409 });
+    return Response.json({ error: { code: 'not_eligible', reason: 'existing_user' } }, { status: 409 });
   }
 
   // 一括トランザクション (RPC 関数で実装)
@@ -309,7 +311,7 @@ export async function POST(req: Request) {
   });
 
   if (error) {
-    return Response.json({ error: 'internal_error', message: error.message }, { status: 500 });
+    return Response.json({ error: { code: 'internal_error', message: error.message } }, { status: 500 });
   }
 
   return Response.json(result);

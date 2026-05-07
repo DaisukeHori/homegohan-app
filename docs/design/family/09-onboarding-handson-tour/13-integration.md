@@ -411,15 +411,15 @@ export async function POST(req: Request) {
   if (body.sandbox) {
     const profile = await getProfile(userId);
     if (profile.handson_tour_completed_at || profile.handson_tour_skipped_at) {
-      return Response.json({ error: 'sandbox_not_eligible' }, { status: 409 });
+      return Response.json({ error: { code: 'sandbox_not_eligible', reason: 'already_finished' } }, { status: 409 });
     }
     const adminRoles = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'];
     if (profile.roles?.some(r => adminRoles.includes(r))) {
-      return Response.json({ error: 'sandbox_not_eligible', reason: 'admin_role' }, { status: 403 });
+      return Response.json({ error: { code: 'sandbox_not_eligible', reason: 'admin_role' } }, { status: 403 });
     }
     const hasActivity = await rpcUserHasNonSandboxActivity(userId);
     if (hasActivity) {
-      return Response.json({ error: 'sandbox_not_eligible', reason: 'existing_user' }, { status: 409 });
+      return Response.json({ error: { code: 'sandbox_not_eligible', reason: 'existing_user' } }, { status: 409 });
     }
   }
 
@@ -433,7 +433,7 @@ export async function POST(req: Request) {
     source,  // 計測用
   }).select().single();
 
-  if (error) return Response.json({ error: 'internal_error', message: error.message }, { status: 500 });
+  if (error) return Response.json({ error: { code: 'internal_error', message: error.message } }, { status: 500 });
 
   // first_bite バッジ付与 (既存ロジック流用)
   const badgeResult = await tryAwardBadge(userId, 'first_bite');
