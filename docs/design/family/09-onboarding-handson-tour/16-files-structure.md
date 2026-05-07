@@ -397,7 +397,7 @@ homegohan/
 
 | ファイル名 | エクスポート名 |
 |---|---|
-| `TourOverlay.tsx` | `TourOverlay` (or `HandsonTourOverlay`、§99 で確定) |
+| `TourOverlay.tsx` | `TourOverlay` (確定、HandsonTour プレフィックスは不採用) |
 | `TourBubble.tsx` | `TourBubble` |
 | `TourProgress.tsx` | `TourProgress` |
 | `TourSandboxWrapper.tsx` | `TourSandboxWrapper` |
