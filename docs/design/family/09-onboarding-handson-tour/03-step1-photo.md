@@ -210,7 +210,7 @@ const handleSave = async () => {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({
         sandbox: true,
-        dishName: 'rocketo唐揚げ定食',
+        dishName: '鶏の唐揚げ定食',
         calories: 780,
         protein_g: 38,
         fat_g: 32,
@@ -380,27 +380,14 @@ function MealNewScreenSandbox(props: MealNewScreenSandboxProps) {
 
 ### 5.1 `MOCK_PHOTO_RESPONSE`
 
-```ts
-// packages/handson-tour-shared/src/mocks.ts
-export const MOCK_PHOTO_RESPONSE = {
-  dishName: '鶏の唐揚げ定食',
-  calories: 780,
-  protein_g: 38,
-  fat_g: 32,
-  carbs_g: 88,
-  confidence: 0.95,
-  detected_items: [
-    { name: '鶏の唐揚げ', portion_g: 200 },
-    { name: '白米', portion_g: 200 },
-    { name: '味噌汁', portion_g: 150 },
-    { name: 'キャベツ千切り', portion_g: 50 },
-  ],
-  ai_provider: 'gemini-2.0-flash',
-  detected_at: null,  // mock では null
-} as const;
+**Canonical 定義**: `14-mocks-i18n.md` §1.2 を参照 (重複定義を避けるため本ファイルでは省略)。
 
-export type MockPhotoResponse = typeof MOCK_PHOTO_RESPONSE;
-```
+主要フィールド (本 step で参照):
+- `dishName`: '鶏の唐揚げ定食'
+- `calories`: 780
+- `protein_g` / `fat_g` / `carbs_g`: 38 / 32 / 88
+
+完全な型定義 (`allergy_warnings`, `ai_comment`, `detected_items[]` 等を含む) は §14-mocks-i18n を canonical とする。
 
 ### 5.2 サンプル画像メタデータ
 

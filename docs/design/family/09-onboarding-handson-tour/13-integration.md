@@ -175,7 +175,10 @@ function MealNewScreenSandbox(props: MealNewSandboxProps) {
     try {
       const res = await fetch(`/api/meal-plans/add-from-photo?source=${props.apiOptions.source}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await getJwtToken()}`,  // 必須 (cross/04 既定)
+        },
         body: JSON.stringify({
           ...result,
           sandbox: props.apiOptions.sandbox,
@@ -252,6 +255,10 @@ function V4GenerateModalSandbox(props: V4GenerateSandboxProps) {
     try {
       const res = await fetch(`/api/menu-plans/add?source=${props.apiOptions.source}`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await getJwtToken()}`,  // 必須 (cross/04 既定)
+        },
         body: JSON.stringify({ ...result, sandbox: props.apiOptions.sandbox }),
       });
       if (!res.ok) throw new Error(`status_${res.status}`);

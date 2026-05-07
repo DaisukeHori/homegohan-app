@@ -340,7 +340,7 @@ WHERE table_name = 'weekly_menus' AND column_name = 'is_sandbox';
 -- 2. インデックスが追加されているか
 SELECT indexname FROM pg_indexes
 WHERE tablename IN ('user_profiles', 'meal_logs', 'weekly_menus')
-  AND indexname LIKE '%handson_tour%' OR indexname LIKE '%sandbox%';
+  AND (indexname LIKE '%handson_tour%' OR indexname LIKE '%sandbox%');
 -- 期待: 4 件 (idx_user_profiles_handson_tour_pending, idx_meal_logs_user_non_sandbox, uniq_user_sandbox_meal, uniq_user_sandbox_menu)
 
 -- 3. tutorial_complete バッジが seed されているか

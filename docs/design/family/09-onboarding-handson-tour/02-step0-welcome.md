@@ -31,7 +31,7 @@
 │       一緒に試してみましょう              │   line-height 1.5
 │       (約 90 秒)                       │
 │                                      │
-│              ● ○ ○                    │ ← 進捗ドット (active=primary, inactive=gray)
+│         ● ○ ○ ○ ○                   │ ← 進捗ドット 5 個 (Step 0-4、active=primary, inactive=gray)
 │                                      │
 │        ┌────────────────┐              │
 │        │   はじめる      │              │ ← primary button
@@ -54,7 +54,7 @@
 | アプリアイコン | 96px | 96px | top: 25% (≒ 200pt on iPhone 14) |
 | title | max 320px | auto | margin-top: 32px from icon |
 | subtitle | max 280px | auto | margin-top: 16px from title |
-| 進捗ドット | 8px × 3 + 8px × 2 spacing = 40px | 8px | margin-top: 40px from subtitle |
+| 進捗ドット | 8px × 5 + 8px × 4 spacing = 72px | 8px | margin-top: 40px from subtitle (Step 0-4 の 5 個) |
 | 【はじめる】ボタン | 80% (max 320px) | 56px | margin-top: 40px from dots |
 | 【あとで】ボタン | auto (テキスト幅) | 44px | margin-top: 16px from primary |
 
