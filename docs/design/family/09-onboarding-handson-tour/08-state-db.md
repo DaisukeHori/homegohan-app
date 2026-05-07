@@ -167,7 +167,7 @@ stateDiagram-v2
 | Step 4 完了 | `user_profiles.handson_tour_completed_at` UPDATE + `user_badges` INSERT (`tutorial_complete`) |
 | Skipped | `user_profiles.handson_tour_skipped_at` UPDATE |
 | ExistingUserAutoSkip | 同上 |
-| AdminAutoSkip | 同上 (roles に admin 含むときも skipped_at をセット) |
+| AdminAutoSkip | **副作用なし** (§2.2.1 参照、ロール変更時に再判定したいため skipped_at セットしない) |
 
 注: AdminAutoSkip での skipped_at セットは v1 仕様検討中。setting して permanent skip にすると、後でロール変わったら再表示できなくなる。**設定しない方針** に変更:
 

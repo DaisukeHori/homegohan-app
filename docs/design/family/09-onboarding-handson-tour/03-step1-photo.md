@@ -504,7 +504,7 @@ useEffect(() => {
 
 ### 10.3 サブステップごとの testID 連動
 
-`<HandsonTourOverlay>` の `targetTestId` は subStep に応じて切り替え:
+`<TourOverlay>` の `targetTestId` は subStep に応じて切り替え:
 
 ```ts
 const targetTestId = useMemo(() => {

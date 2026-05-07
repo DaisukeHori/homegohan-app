@@ -147,26 +147,26 @@ describe('shouldShowHandsonTour', () => {
 
 ### 2.3 コンポーネントテスト
 
-#### 2.3.1 `<HandsonTourOverlay>`
+#### 2.3.1 `<TourOverlay>`
 
 ```ts
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-describe('<HandsonTourOverlay>', () => {
+describe('<TourOverlay>', () => {
   it('targetTestId 指定時に Spotlight 表示', () => {
-    render(<HandsonTourOverlay targetTestId="some-element" bubble={{ body: 'test' }} ... />);
+    render(<TourOverlay targetTestId="some-element" bubble={{ body: 'test' }} ... />);
     expect(screen.getByTestId('tour-overlay')).toBeInTheDocument();
   });
 
   it('autoAdvanceMs で onAutoAdvance 発火', async () => {
     const onAdvance = jest.fn();
-    render(<HandsonTourOverlay autoAdvanceMs={1000} onAutoAdvance={onAdvance} ... />);
+    render(<TourOverlay autoAdvanceMs={1000} onAutoAdvance={onAdvance} ... />);
     await waitFor(() => expect(onAdvance).toHaveBeenCalled(), { timeout: 1500 });
   });
 
   it('primaryAction.onPress で発火', () => {
     const onPress = jest.fn();
-    render(<HandsonTourOverlay primaryAction={{ label: '次へ', onPress }} ... />);
+    render(<TourOverlay primaryAction={{ label: '次へ', onPress }} ... />);
     fireEvent.click(screen.getByTestId('tour-next-button'));
     expect(onPress).toHaveBeenCalled();
   });
@@ -174,16 +174,16 @@ describe('<HandsonTourOverlay>', () => {
   it('reduce-motion で アニメ duration 0', () => {
     // mock matchMedia
     window.matchMedia = jest.fn().mockReturnValue({ matches: true });
-    const { container } = render(<HandsonTourOverlay ... />);
+    const { container } = render(<TourOverlay ... />);
     // アニメ duration を内部 prop or class name で確認
   });
 });
 ```
 
-#### 2.3.2 `<HandsonTourBubble>` 配置ロジック
+#### 2.3.2 `<TourBubble>` 配置ロジック
 
 ```ts
-describe('<HandsonTourBubble> position calculation', () => {
+describe('<TourBubble> position calculation', () => {
   it('position=auto + target が画面下なら top に表示', () => {
     const target = { x: 100, y: 700, width: 80, height: 40 };  // 画面下
     const bubble = { width: 280, height: 100 };

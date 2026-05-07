@@ -226,7 +226,7 @@ function useTutorialMode() {
 }
 ```
 
-`<BadgesPage>` 内で `tutorialMode` が true なら通常 UI に加えて `<HandsonTourOverlay>` を重ねる。
+`<BadgesPage>` 内で `tutorialMode` が true なら通常 UI に加えて `<TourOverlay>` を重ねる。
 
 ---
 

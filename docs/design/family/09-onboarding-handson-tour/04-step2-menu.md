@@ -295,42 +295,7 @@ function V4GenerateModal(props: V4GenerateModalProps) {
 - `cooking_time_minutes`: 20, `servings`: 2
 - `ingredients`: 8 件 / `instructions`: 6 ステップ
 
-(以下 旧定義は削除、参照のみ)
-
-```ts
-// 旧定義 (§14 を canonical とするため削除)
-// export const MOCK_MENU_RESPONSE = {
-//   date_offset_days: 1,  // 明日
-//   meal_type: 'dinner' as const,
-//   dish_name: '豚肉と野菜の生姜焼き',
-  calories: 620,
-  protein_g: 35,
-  fat_g: 22,
-  carbs_g: 70,
-  cooking_time_minutes: 20,
-  ingredients: [
-    { name: '豚ロース薄切り', quantity_g: 200, unit: 'g' },
-    { name: '玉ねぎ', quantity_g: 80, unit: 'g' },
-    { name: 'ピーマン', quantity_g: 60, unit: 'g' },
-    { name: 'しょうが', quantity_g: 10, unit: 'g' },
-    { name: '醤油', quantity_g: 15, unit: 'ml' },
-    { name: 'みりん', quantity_g: 15, unit: 'ml' },
-    { name: '砂糖', quantity_g: 5, unit: 'g' },
-  ],
-  instructions: [
-    '豚肉に塩こしょうし、軽く片栗粉をまぶす',
-    '野菜を一口大に切る (玉ねぎ・ピーマン)',
-    'しょうがをすりおろす',
-    'フライパンで豚肉を中火で焼き、野菜を加える',
-    '醤油・みりん・砂糖・しょうがを混ぜたタレを加える',
-    '全体に火が通ったら盛り付けて完成',
-  ],
-  ai_provider: 'gemini-2.0-flash',
-  generated_at: null,  // mock では null
-} as const;
-
-export type MockMenuResponse = typeof MOCK_MENU_RESPONSE;
-```
+(旧コードブロックは削除完了。canonical は §14-mocks-i18n.md §1.3 のみ。)
 
 ---
 
