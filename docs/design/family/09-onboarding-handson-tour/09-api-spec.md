@@ -335,13 +335,17 @@ DECLARE
   v_badge_icon_url text;
   v_badge_name text;
 BEGIN
+  -- 0. UPDATE 前に既存値を取得 (already_completed 判定の確実性のため、§21 §6 と一致)
+  SELECT handson_tour_completed_at INTO v_existing_completed_at
+  FROM user_profiles WHERE user_id = p_user_id;
+
+  v_was_already := (v_existing_completed_at IS NOT NULL);
+
   -- 1. profile UPDATE (冪等)
   UPDATE user_profiles
   SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
   WHERE user_id = p_user_id
   RETURNING handson_tour_completed_at INTO v_completed_at;
-
-  v_was_already := (v_completed_at < now() - INTERVAL '1 second');
 
   -- 2. badge INSERT (冪等)
   SELECT id, name, icon_url INTO v_badge_id, v_badge_name, v_badge_icon_url

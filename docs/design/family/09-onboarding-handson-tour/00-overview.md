@@ -91,8 +91,8 @@
 - サーバー側集計 SQL (§22 KPI 集計クエリ例): audit_logs join meal_logs
 
 ### 3.4 KPI 監視 (§19, §20 連携)
-- §27 KPI モニタリング: Looker Studio / Metabase ダッシュボード
-- §27 アラート: 完了率 < 60% で Slack #app-alerts 通知
+- §19-rollout §6 KPI モニタリング: Looker Studio / Metabase ダッシュボード
+- §20-observability §8 アラート: 完了率 < 60% で Slack #app-alerts 通知
 
 ---
 

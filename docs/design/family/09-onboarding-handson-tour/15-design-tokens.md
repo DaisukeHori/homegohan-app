@@ -314,8 +314,8 @@ const tourColors = useMemo(() => ({
 ### 9.2 新規コンポーネント
 
 cross/03 に追加するコンポーネント:
-- `<Coachmark>` (= `<HandsonTourOverlay>`)
-- `<TourBubble>` (= `<HandsonTourBubble>`)
+- `<Coachmark>` (= `<TourOverlay>`)
+- `<TourBubble>` (= `<TourBubble>`)
 
 §13-integration.md のとおり、Phase 1 で cross/03 への追記、Phase 2 で実装。
 

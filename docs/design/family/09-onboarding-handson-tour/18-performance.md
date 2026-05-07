@@ -302,7 +302,7 @@ const Confetti = dynamic(() => import('react-confetti'), { ssr: false });
 ### 8.1 React.memo
 
 ```tsx
-export const HandsonTourBubble = React.memo(function HandsonTourBubble(props: HandsonTourBubbleProps) {
+export const TourBubble = React.memo(function TourBubble(props: TourBubbleProps) {
   // ...
 }, (prev, next) => {
   return prev.targetTestId === next.targetTestId

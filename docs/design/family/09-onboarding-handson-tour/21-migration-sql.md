@@ -132,6 +132,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_existing_completed_at timestamptz;
   v_completed_at timestamptz;
   v_was_already boolean;
   v_badge_id uuid;
@@ -139,18 +140,24 @@ DECLARE
   v_badge_icon_url text;
   v_badge_obtained_at timestamptz;
 BEGIN
-  -- 1. user_profiles UPDATE (冪等)
-  UPDATE user_profiles
-  SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
-  WHERE user_id = p_user_id
-  RETURNING handson_tour_completed_at INTO v_completed_at;
+  -- 0. UPDATE 前に既存値を取得 (already_completed 判定のため)
+  -- PL/pgSQL の now() は CURRENT_TIMESTAMP と同一でトランザクション開始時刻なので、
+  -- COALESCE で書き込んだ値と RETURNING 後の比較ではタイムスタンプが完全一致して
+  -- 判定が壊れる。先に SELECT して NULL チェックを確実に行う。
+  SELECT handson_tour_completed_at INTO v_existing_completed_at
+  FROM user_profiles WHERE user_id = p_user_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'profile_not_found';
   END IF;
 
-  -- 既に過去に完了済みかどうか (1 秒以前なら "already")
-  v_was_already := (v_completed_at < now() - INTERVAL '1 second');
+  v_was_already := (v_existing_completed_at IS NOT NULL);
+
+  -- 1. user_profiles UPDATE (冪等)
+  UPDATE user_profiles
+  SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
+  WHERE user_id = p_user_id
+  RETURNING handson_tour_completed_at INTO v_completed_at;
 
   -- 2. badges から tutorial_complete を取得
   SELECT id, name, icon_url INTO v_badge_id, v_badge_name, v_badge_icon_url
