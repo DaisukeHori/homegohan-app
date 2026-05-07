@@ -334,7 +334,7 @@ export default function BadgesPage() {
       </div>
 
       {tutorialMode && (
-        <HandsonTourBadgesOverlay highlight={highlight} />
+        <TourOverlay highlight={highlight} />
       )}
     </div>
   );

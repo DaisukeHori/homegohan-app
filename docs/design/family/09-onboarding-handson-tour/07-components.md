@@ -56,6 +56,9 @@ interface TourOverlayProps {
   /** 自動進行のタイムアウト ms (primaryAction なしのとき必須) */
   autoAdvanceMs?: number;
 
+  /** 自動進行コールバック (autoAdvanceMs 経過時に発火) */
+  onAutoAdvance?: () => void;
+
   /** 自動進行に対するキャンセル可否 (タップで進められるか) */
   autoAdvanceTappable?: boolean;
 
@@ -746,7 +749,7 @@ function BadgesPage() {
           />
         ))}
       </div>
-      {tutorialMode && <HandsonTourBadgesOverlay highlight={highlight} />}
+      {tutorialMode && <TourOverlay highlight={highlight} />}
     </div>
   );
 }

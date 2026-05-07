@@ -366,7 +366,7 @@ useEffect(() => {
 ```ts
 useEffect(() => {
   if (subStep === '3.1') {
-    const timer = setTimeout(() => setSubStep('3.2'), 2500);
+    const timer = setTimeout(() => setSubStep('3.2'), HANDSON_TOUR_CONSTANTS.STEP3_INTRO_AUTO_MS);  // = 2000ms (§14 canonical)
     return () => clearTimeout(timer);
   }
 }, [subStep]);

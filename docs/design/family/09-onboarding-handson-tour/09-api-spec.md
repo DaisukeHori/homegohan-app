@@ -328,12 +328,13 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_existing_completed_at timestamptz;
   v_completed_at timestamptz;
   v_was_already boolean;
   v_badge_id uuid;
-  v_badge_obtained_at timestamptz;
-  v_badge_icon_url text;
   v_badge_name text;
+  v_badge_icon_url text;
+  v_badge_obtained_at timestamptz;
 BEGIN
   -- 0. UPDATE 前に既存値を取得 (already_completed 判定の確実性のため、§21 §6 と一致)
   SELECT handson_tour_completed_at INTO v_existing_completed_at

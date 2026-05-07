@@ -202,14 +202,17 @@ RETURNING handson_tour_completed_at;
 - 1 秒以内なら新規完了、それ以前なら既存完了 (`already_completed: true`)
 
 ```sql
--- canonical 実装版 (§21-migration-sql §6 と一致、INTERVAL は 1 second 採用)
+-- canonical 実装は §21-migration-sql §6 を参照 (UPDATE 前 SELECT 方式で already 判定)
+-- 概念のみ:
+SELECT handson_tour_completed_at INTO v_existing FROM user_profiles WHERE user_id = $1;
+v_was_already := (v_existing IS NOT NULL);
 UPDATE user_profiles
 SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
 WHERE user_id = $1
-RETURNING
-  handson_tour_completed_at,
-  (handson_tour_completed_at < now() - INTERVAL '1 second') AS already;
+RETURNING handson_tour_completed_at INTO v_completed_at;
 ```
+
+詳細実装 (DECLARE / RAISE EXCEPTION 含む) は §21-migration-sql.md §6 の `complete_handson_tour` 関数参照。本ファイルは概念図のみ。
 
 ### 3.2 バッジ INSERT の冪等性
 

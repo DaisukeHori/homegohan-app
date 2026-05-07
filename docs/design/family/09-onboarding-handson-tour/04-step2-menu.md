@@ -293,7 +293,7 @@ function V4GenerateModal(props: V4GenerateModalProps) {
 - `dish_name`: '豚肉と野菜の生姜焼き'
 - `calories`: 620, `protein_g`: 35, `fat_g`: 22, `carbs_g`: 70
 - `cooking_time_minutes`: 20, `servings`: 2
-- `ingredients`: 8 件 / `instructions`: 6 ステップ
+- `ingredients`: 8 件 / `instructions`: 7 ステップ (canonical §14 §1.3)
 
 (旧コードブロックは削除完了。canonical は §14-mocks-i18n.md §1.3 のみ。)
 
