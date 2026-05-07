@@ -284,14 +284,24 @@ function V4GenerateModal(props: V4GenerateModalProps) {
 
 ## 5. mock データ完全定義
 
-### 5.1 `MOCK_MENU_RESPONSE`
+### 5.1 `MOCK_MENU_RESPONSE` (canonical 参照)
+
+**Canonical 定義**: `14-mocks-i18n.md` §1.3 を参照。重複定義を避けるため本ファイルでは省略。完全な型定義 (servings / difficulty / personalization 等を含む 8 件 ingredients) は §14 を参照。
+
+主要フィールド (本 step で参照):
+- `dish_name`: '豚肉と野菜の生姜焼き'
+- `calories`: 620, `protein_g`: 35, `fat_g`: 22, `carbs_g`: 70
+- `cooking_time_minutes`: 20, `servings`: 2
+- `ingredients`: 8 件 / `instructions`: 6 ステップ
+
+(以下 旧定義は削除、参照のみ)
 
 ```ts
-// packages/handson-tour-shared/src/mocks.ts
-export const MOCK_MENU_RESPONSE = {
-  date_offset_days: 1,  // 明日
-  meal_type: 'dinner' as const,
-  dish_name: '豚肉と野菜の生姜焼き',
+// 旧定義 (§14 を canonical とするため削除)
+// export const MOCK_MENU_RESPONSE = {
+//   date_offset_days: 1,  // 明日
+//   meal_type: 'dinner' as const,
+//   dish_name: '豚肉と野菜の生姜焼き',
   calories: 620,
   protein_g: 35,
   fat_g: 22,

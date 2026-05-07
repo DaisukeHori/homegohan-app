@@ -812,6 +812,118 @@ jobs:
 
 ---
 
+## 11.6 testID 完全一覧
+
+§16-files-structure §5.3 で命名規則を canonical 化、本セクションは E2E spec で参照する全 testID を一括掲載。
+
+### 共通 (overlay / 進捗ドット / ボタン)
+
+| testID | 用途 |
+|---|---|
+| `tour-overlay` | overlay 全体 |
+| `tour-bubble` | 吹き出しコンテナ |
+| `tour-bubble-title` | 吹き出しタイトル |
+| `tour-bubble-body` | 吹き出し本文 |
+| `tour-progress-dots` | 進捗ドット 5 個 |
+| `tour-next-button` | 【次へ】 (overlay 内、primaryAction で表示) |
+| `tour-skip-button` | 【あとで】 (Step 0 / 4 / エラー画面で表示) |
+
+### Step 0 (welcome)
+
+| testID | 用途 |
+|---|---|
+| `tour-step-0` | Step 0 全体 |
+| `tour-step-0-title` | "ようこそ!" タイトル |
+| `tour-step-0-subtitle` | サブタイトル |
+| `tour-step-0-start` | 【はじめる】 |
+| `tour-step-0-skip` | 【あとで】 |
+
+### Step 1 (写真追加)
+
+| testID | 用途 | 備考 |
+|---|---|---|
+| `tour-step-1-intro` | intro 吹き出し | 新規 |
+| `tour-step-1-intro-tap` | intro タップ領域 | 新規 |
+| `meal-camera-button` | カメラボタン (Spotlight target) | 既存 |
+| `meal-analyzing-view` | 解析中ビュー | 既存 |
+| `meal-result-screen` | 結果画面 | 既存 |
+| `meal-result-dish-name` | 料理名 | 既存 |
+| `meal-result-calories` | カロリー | 既存 |
+| `meal-save-button` | 【保存】 | 既存 |
+| `tour-step-1-saving` | 保存中 spinner | 新規 |
+| `tour-step-1-error` | エラー画面 | 新規 |
+| `tour-step-1-error-retry` | 【もう一度】 | 新規 |
+| `tour-step-1-error-skip` | 【あとで】 | 新規 |
+
+### Step 2 (AI 献立)
+
+| testID | 用途 | 備考 |
+|---|---|---|
+| `tour-step-2-intro` | intro 吹き出し | 新規 |
+| `tour-step-2-intro-tap` | intro タップ領域 | 新規 |
+| `v4-no-cook-toggle` | "調理しなくていい" フラグ | web 既存 / mobile 要追加 |
+| `v4-simple-only-toggle` | "簡単メニュー" フラグ | both 要追加 |
+| `v4-variety-emphasis-toggle` | "バリエーション重視" フラグ | both 要追加 |
+| `v4-note-textarea` | 自由メモ入力欄 | both 要追加 |
+| `v4-generate-button` | 【生成する】 | web 既存 / mobile 要追加 |
+| `v4-loading-spinner` | ローディング | both 要追加 |
+| `v4-result-card` | 結果カード全体 | both 要追加 |
+| `v4-result-dish-name` | 料理名 | both 要追加 |
+| `v4-result-calories` | カロリー | both 要追加 |
+| `v4-add-to-menu-button` | 【献立に追加】 | both 要追加 |
+| `tour-step-2-saving` | 追加中 spinner | 新規 |
+| `tour-step-2-error` | エラー画面 | 新規 |
+| `tour-step-2-error-retry` | 【もう一度】 | 新規 |
+| `tour-step-2-error-skip` | 【あとで】 | 新規 |
+
+### Step 3 (バッジ確認)
+
+| testID | 用途 | 備考 |
+|---|---|---|
+| `tour-step-3-loading` | バッジ読込中 | 新規 |
+| `tour-step-3-intro` | intro 吹き出し | 新規 |
+| `badge-card-first_bite` | first_bite バッジカード | web 動的化 / mobile 要追加 |
+| `badge-card-planner` | planner バッジカード | both 要追加 |
+| `badge-card-tutorial_complete` | tutorial_complete バッジカード | both 要追加 (新規バッジ) |
+| `tour-step-3-error` | エラー画面 | 新規 |
+| `tour-step-3-error-retry` | 【もう一度】 | 新規 |
+| `tour-step-3-error-skip` | 【あとで】 | 新規 |
+
+### Step 4 (卒業)
+
+| testID | 用途 |
+|---|---|
+| `tour-step-4-saving` | 4.0 完了処理中 spinner |
+| `tour-step-4-graduate` | 4.1 卒業画面全体 |
+| `tour-step-4-icon` | 🎓 アイコン |
+| `tour-step-4-title` | "卒業おめでとう!" |
+| `tour-step-4-subtitle` | サブタイトル |
+| `tour-step-4-badge-card` | バッジカード |
+| `tour-step-4-badge-icon` | バッジアイコン img |
+| `tour-step-4-badge-label` | バッジラベル |
+| `tour-step-4-go-home` | 【ホームへ】 |
+| `tour-step-4-error` | エラー画面 |
+| `tour-step-4-retry` | 【もう一度】 |
+| `tour-step-4-error-skip` | 【あとで】 |
+
+### Step 5 (通常 home + toast)
+
+| testID | 用途 |
+|---|---|
+| `tour-step-5-toast` | welcome toast |
+
+### settings 再開エントリ
+
+| testID | 用途 |
+|---|---|
+| `settings-replay-handson-tour` | 【使い方ガイドをもう一度見る】 |
+
+### 既存 testID の動的化変更
+
+`badge-card` (web 既存、単数形) → `badge-card-{code}` (動的) に変更。詳細は §13 §3.1 で「動的 testID に変更し、既存テストを fix する」案 A 採用。
+
+---
+
 ## 11. テスト実行時間目標
 
 | 種類 | 想定時間 |

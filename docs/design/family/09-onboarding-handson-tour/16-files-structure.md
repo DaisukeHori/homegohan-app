@@ -375,6 +375,82 @@ homegohan/
 
 ---
 
+## 5. コード規約
+
+### 5.1 ディレクトリ命名
+
+統一 prefix: `handson-tour` (kebab-case、英語のみ)。文書とコードで同一。
+
+| 場所 | パス |
+|---|---|
+| Web component | `src/components/handson-tour/` |
+| Mobile component | `apps/mobile/src/handson-tour/` |
+| Web ルート | `src/app/handson-tour/` |
+| Mobile ルート | `apps/mobile/app/handson-tour/` |
+| Web API | `src/app/api/handson-tour/` |
+| 共通 package | `packages/handson-tour-shared/` |
+| 設計書 | `docs/design/family/09-onboarding-handson-tour/` |
+
+### 5.2 コンポーネント命名
+
+ファイル名とコンポーネント名は一致させる:
+
+| ファイル名 | エクスポート名 |
+|---|---|
+| `TourOverlay.tsx` | `TourOverlay` (or `HandsonTourOverlay`、§99 で確定) |
+| `TourBubble.tsx` | `TourBubble` |
+| `TourProgress.tsx` | `TourProgress` |
+| `TourSandboxWrapper.tsx` | `TourSandboxWrapper` |
+
+v1 では **短縮形 (`Tour*`) を採用** することで Storybook / import 文の冗長性を避ける。
+
+### 5.3 testID 命名規則
+
+すべて kebab-case + `tour-*` プレフィックス。
+
+#### 共通 testID
+
+| testID | 役割 |
+|---|---|
+| `tour-overlay` | overlay 全体 |
+| `tour-bubble` | 吹き出しコンテナ |
+| `tour-bubble-title` | 吹き出しタイトル |
+| `tour-bubble-body` | 吹き出し本文 |
+| `tour-progress-dots` | 進捗ドット (5 個) |
+| `tour-next-button` | 共通【次へ】ボタン (overlay 内) |
+| `tour-skip-button` | 共通【あとで】ボタン (Step 0 / 4) |
+
+#### Step 別 testID
+
+| testID 接頭辞 | Step |
+|---|---|
+| `tour-step-0-*` | Step 0 ウェルカム (start, skip, title, subtitle) |
+| `tour-step-1-*` | Step 1 写真 (intro, intro-tap, saving, error, error-retry, error-skip) |
+| `tour-step-2-*` | Step 2 AI 献立 (同上) |
+| `tour-step-3-*` | Step 3 バッジ (同上 + loading) |
+| `tour-step-4-*` | Step 4 卒業 (saving, graduate, icon, title, subtitle, badge-card, badge-icon, badge-label, go-home, error, retry, error-skip) |
+| `tour-step-5-*` | Step 5 通常 home (toast) |
+
+#### 既存 testID 流用 (Spotlight ターゲット)
+
+| testID | 役割 |
+|---|---|
+| `meal-mode-select-meal`, `meal-camera-button`, `meal-analyzing-view`, `meal-result-screen`, `meal-result-dish-name`, `meal-result-calories`, `meal-save-button`, `meal-cancel-button` | Step 1 sandbox |
+| `v4-no-cook-toggle`, `v4-simple-only-toggle`, `v4-variety-emphasis-toggle`, `v4-note-textarea`, `v4-generate-button`, `v4-loading-spinner`, `v4-result-card`, `v4-result-dish-name`, `v4-result-calories`, `v4-add-to-menu-button` | Step 2 sandbox |
+| `badge-card-{code}` (動的) | Step 3 sandbox。`{code}` = `first_bite` / `planner` / `tutorial_complete` 等。既存 web の固定 testID `badge-card` を動的化 (§13 §3.1 案 A 採用) |
+
+### 5.4 i18n キー命名
+
+`tour.{section}.{element}` (snake_case)。詳細は §14-mocks-i18n §2.2。
+
+### 5.5 命名違反検出
+
+CI で:
+- testID が `tour-*` / `meal-*` / `v4-*` / `badge-*` のいずれかで始まることを確認
+- ファイル名と export 名の一致 (eslint-rule)
+
+---
+
 ## 7. 残不確実性 (§99 連携)
 
 - [ ] Mobile 版 V4GenerateModal の存在 (web 専用なら mobile 新規実装で行数増)

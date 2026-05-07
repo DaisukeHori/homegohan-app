@@ -149,10 +149,10 @@ stateDiagram-v2
   Step3 --> Step3Loading: マウント
   Step3Loading --> Step3Display: GET /api/badges 成功
   Step3Loading --> Step3Error: failure
-  Step3Display --> Step4: 【次へ】(全バッジカード閲覧後)
+  Step3Display --> Step4Graduation: 【次へ】×3 (Sub 3.2→3.3→3.4 で各カード閲覧後)
   Step3Error --> Step3Loading: 【リトライ】
 
-  Step4 --> Step4Posting: マウント
+  Step4Graduation --> Step4Posting: マウント
   Step4Posting --> Step4Done: complete API 200
   Step4Posting --> Step4Error: failure
   Step4Error --> Step4Posting: 【リトライ】

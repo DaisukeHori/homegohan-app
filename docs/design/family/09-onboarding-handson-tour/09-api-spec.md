@@ -451,6 +451,18 @@ export async function POST(req: Request) {
 12 req / 60 s / user
 ```
 
+### 4.6 Response 4xx / 5xx
+
+| status | code | 状況 |
+|---|---|---|
+| 401 | unauthorized | JWT 不正 |
+| 400 | validation_error | body schema 不正 (step / reason の値が範囲外等) |
+| 404 | profile_not_found | profile 未作成 |
+| 429 | rate_limited | rate limit 超過 |
+| 500 | internal_error | DB エラー等 |
+
+注: admin / org_admin 等の特権ロールでも skip API は呼べる (= UI 上の skip 動線は出さないが、サーバー側でのスキップ登録は許容)。403 を返さない。
+
 ---
 
 ## 5. 既存 API 拡張
@@ -581,11 +593,14 @@ cross/04-api-conventions §error-format に準拠 (canonical):
 | `validation_error` | body schema 不正 | 400 |
 
 `reason` フィールド (任意):
-- `admin_role`
-- `existing_user`
-- `onboarding_not_completed`
-- `already_completed`
-- `already_skipped`
+- `admin_role` (特権ロールで対象外)
+- `existing_user` (condition C 違反、既存 non-sandbox 活動あり)
+- `onboarding_not_completed` (onboarding 未完)
+- `already_completed` (既に完了済)
+- `already_skipped` (既にスキップ済)
+- `already_finished` (= already_completed OR already_skipped、sandbox=true 拒否時に使用)
+- `feature_disabled` (Feature flag OFF)
+- `not_in_rollout` (段階公開対象外)
 
 ---
 

@@ -149,8 +149,8 @@ stateDiagram-v2
 
   Step5Home --> Done: welcome toast 表示後
 
-  AdminAutoSkip --> NotEligible
-  ExistingUserAutoSkip --> NotEligible: skipped_at = now() (auto)
+  AdminAutoSkip --> NotEligible: 副作用なし (ロール変更時に再判定したいため)
+  ExistingUserAutoSkip --> NotEligible: skipped_at = now() (auto、condition C)
 
   NotEligible --> [*]: /home に遷移
   Skipped --> [*]: skipped_at = now()
