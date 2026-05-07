@@ -144,42 +144,10 @@ export default function SettingsPage() {
     }
   };
 
+  // TODO: /api/account/export は旧スキーマ依存のため削除済。新実装は設計フェーズ後。
   const [exporting, setExporting] = useState(false);
   const handleExportData = async () => {
-    if (exporting) return;
-    setExporting(true);
-    try {
-      const res = await fetch('/api/account/export', { method: 'GET' });
-      if (!res.ok) {
-        if (res.status === 401) {
-          router.push('/login');
-          return;
-        }
-        throw new Error(`Export failed: ${res.status}`);
-      }
-      const today = new Date().toISOString().slice(0, 10);
-      const filename = `homegohan-export-${today}.json`;
-      if (isNativeApp) {
-        // Fix 3: iOS WebView では Blob URL が使えないので RN へ転送
-        const text = await res.text();
-        postMessageDownload(filename, text, 'application/json');
-      } else {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('エクスポートに失敗しました。時間をおいて再度お試しください。');
-    } finally {
-      setExporting(false);
-    }
+    alert('データエクスポート機能は現在準備中です。');
   };
 
   const [exportingCsv, setExportingCsv] = useState(false);

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
-import { getUserPlan, checkHistoryLimit } from '@/lib/plan-limits';
 import { todayLocal } from '@/lib/date-utils';
 
 const RECORD_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -20,13 +19,6 @@ export async function GET(request: NextRequest) {
   const endDate = searchParams.get('end_date');
   // #265: limit に上限を設けて DoS を防ぐ
   const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '30'), 1), 200);
-
-  // フリープラン: 30 日より前のデータは閲覧不可
-  if (startDate) {
-    const plan = await getUserPlan(user.id);
-    const historyLimitError = checkHistoryLimit(startDate, plan);
-    if (historyLimitError) return historyLimitError;
-  }
 
   let query = supabase
     .from('health_records')

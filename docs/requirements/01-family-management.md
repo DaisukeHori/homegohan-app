@@ -170,7 +170,7 @@
 1. ユーザーが Web/Mobile の「家族管理」メニューを開く
 2. 「家族グループを作成」ボタンをタップ
 3. グループ名 (例: 「田中家」)、説明 (任意) を入力
-4. プラン選択 (無料 4 人まで / 家族プラン 8 人まで月額 480 円 等)
+4. プラン選択 (`free` 4 人まで / `family_basic` 4 人まで月額 1,480 円 / `family_pro` 8 人まで月額 2,480 円。詳細は 03 §7.2.7 公式 plan_key リスト)
 5. 「作成」ボタン → API `POST /api/family/groups`
 6. 作成完了画面に「家族メンバーを招待しよう!」のフォロー UI
 
@@ -303,6 +303,52 @@
 2. 確認 → API `PATCH /api/family/members/{id}` with `role`
 3. 通知: 対象メンバーに「○○家の管理者に任命されました」
 
+> **§4.10a〜§4.10d** は 4.10 (オーナー譲渡) より前に出現するが、これは **個別献立リクエスト 4 パターン** (UC-FAM-11〜14) を §5.5.5 と並列で読みやすくするための意図的配置。論理的には §4.10 (UC-FAM-10) の補足扱い。
+
+### 4.10a UC-FAM-11: 共有献立から自分で離脱 (パターン①)
+**アクター**: 任意のメンバー (子供以外)
+**事前条件**: 共有献立が存在
+**フロー**:
+1. メンバーが「月曜夕食 カレー」を長押し → 「離脱して別の物にする」
+2. 「自分で決める」を選択
+3. 料理名 + レシピ入力 (任意)
+4. `planned_meals` に追加 (`family_shared_menu_id = NULL`、`source_request_id = NULL`)
+5. 共有献立側ではこのメンバーは「離脱中」表示
+
+### 4.10b UC-FAM-12: AI で代替献立を生成 (パターン②)
+**フロー**:
+1. メンバーが「離脱」 → 「AI に提案して」を選択
+2. 自動的に本人の制約 (アレルギー・カロリー目標・好み) を取得
+3. 追加制約入力 (任意、「ダイエット中で 600kcal 以下」等)
+4. AI が代替献立を生成 → プレビュー表示
+5. 「OK」 → `family_meal_requests` に記録 (status=accepted、proposed_by_ai=true) + `planned_meals` 追加
+6. 「別の」 → 再生成
+7. 「キャンセル」 → 元の共有献立に戻る
+
+### 4.10c UC-FAM-13: 家族メンバーに代替献立をリクエスト (パターン③)
+**フロー**:
+1. メンバーが「離脱」 → 「夫 (オーナー) に頼む」
+2. 理由 (「ダイエット中」)、制約 (任意) を入力
+3. 確定 → `family_meal_requests` 作成 (status=pending、assignee_id=夫)
+4. 夫に Push 通知「妻から代替献立リクエスト」
+5. 夫がリクエスト詳細画面を開く
+6. 夫が「AI に提案させる」 or 「自分で考える」を選択
+7. 提案を作成 → `propose` API 呼び出し → status=proposed
+8. 妻に Push 通知「夫から提案が届きました」
+9. 妻が確認:
+   - 「承認」 → status=accepted、`planned_meals` に追加
+   - 「拒否」 → status=rejected、理由を返信、夫が再提案 or 妻が自分で決める
+   - 「キャンセル」 → status=cancelled
+
+### 4.10d UC-FAM-14: 子供メンバーの代替献立を代行 (パターン④)
+**アクター**: オーナー or 管理者
+**事前条件**: 子供メンバー (`user_id IS NULL`) が存在
+**フロー**:
+1. 親が「次男だけ別メニュー」をしたい
+2. 共有献立画面で次男を選択 → 「離脱して別メニュー」
+3. パターン①〜③のいずれかを選択 (ただし requester = 親、target_member = 子供)
+4. 完了後、次男の `planned_meals` に追加 (子供メンバーに紐付く `daily_meal_id` を経由)
+
 ### 4.10 UC-FAM-10: オーナー権限の譲渡
 
 **アクター**: オーナー
@@ -336,7 +382,7 @@
 **編集**
 - オーナーのみ
 - グループ名、説明、アイコン変更可
-- プラン変更は別フロー (UC-FAM-13、本書 Phase 2)
+- プラン変更は別フロー (`/account/billing` → `personal_subscriptions` 更新、03 §7.2.12 参照)
 
 **解散**
 - オーナーのみ
@@ -459,6 +505,116 @@
 - メンバーの体重・年齢・栄養目標から自動配分
 - 手動上書きも可
 
+#### 5.5.5 共有献立から個人離脱・個別献立リクエストフロー
+
+ある日の共有献立 (例: 月曜夕食 カレー) から、特定のメンバーだけ別メニューを食べたいケースを扱う。
+代替メニューの作成方法を **4 パターン** で柔軟に対応:
+
+##### パターン ①: 自分で決める (即時)
+妻自身が「離脱」 → 「自分で決める」を選択 → 料理名・レシピを直接入力 → `planned_meals` に追加。
+リクエストテーブル不要、最速で完了。
+`source_request_id = NULL`、`family_shared_menu_id = NULL`。
+
+##### パターン ②: AI に提案させる (即時)
+妻が「離脱」 → 「AI に提案して」を選択 → 妻の制約 (ダイエット中・カロリー上限等) を自動取得 → AI 生成 → 候補表示 → 「OK」で `planned_meals` に追加。
+リクエストテーブルに記録するが status は即 `accepted` で `proposed_by_ai = true`。
+
+##### パターン ③: 家族メンバー (オーナー / 管理者) に頼む (非同期)
+妻が「離脱」 → 「夫に頼む」を選択 → 理由 (ダイエット中)・制約を入力 → リクエスト送信。
+- `family_meal_requests` 作成 (`status = pending`、`assignee_id = 夫`)
+- 夫に Push 通知「妻から代替献立リクエスト」
+- 夫が見る → AI 補助 or 手動で代替案を考える → 提案
+- `status = proposed`、`proposed_dish_name`、`proposed_recipe` 設定
+- 妻に Push 通知「夫から提案が届きました」
+- 妻が確認 → **承認 (accepted)** で `planned_meals` に追加 (`source_request_id` で紐付け) / **拒否 (rejected)** で別案を依頼 or 自分で決める
+
+##### パターン ④: 子供 (アカウント無し) の代替献立
+- 子供メンバーは自分で操作不可 → オーナー or 管理者が代行
+- `requester_id = オーナー`、`target_member_id = 子供メンバー (user_id NULL)`
+- 共有献立からの離脱操作も代行
+- 「次男だけ別メニュー」のようなケースをスムーズに処理
+
+##### 状態遷移
+```
+[pending] ──提案──→ [proposed] ──承認──→ [accepted] → planned_meals に反映
+                       │                                                  
+                       ├──拒否──→ [rejected]                              
+                       │           └→ 別案を依頼 or 自分で決める          
+                       │                                                  
+                       ├──キャンセル (依頼者)──→ [cancelled]              
+                       │                                                  
+                       └──expires_at 経過 (バッチ自動)──→ [expired]      
+```
+
+**`expired` 遷移の仕様**:
+- 日次バッチ (毎時 00 分) で `status IN ('pending', 'proposed') AND expires_at < NOW()` を検索 → `status = 'expired'` に更新
+- 期限切れ時に依頼者へ通知: 「夫が応答しなかったため期限切れになりました。自分で決めるか別の人にリクエストしますか?」
+- 個別献立がないまま当日を迎えた場合は共有献立 (`original_shared_menu_id`) を自動採用
+
+##### 通知一覧
+
+| イベント | 通知先 | 内容 | アプリ内バッジ |
+|---------|-------|------|--------------|
+| リクエスト送信 | assignee | 「妻から献立リクエストが届きました」 | +1 (タブ: 家族) |
+| 提案完了 | requester | 「夫から代替献立の提案が届きました」 | +1 (タブ: 家族) |
+| 承認 | assignee | 「妻が提案を承認しました」 | +1 |
+| 拒否 | assignee | 「妻が拒否しました (理由: ○○)」 | +1 |
+| キャンセル | assignee | 「妻がリクエストを取り消しました」 | - (静音) |
+| 期限切れ | requester | 「夫が応答しなかったため期限切れです」 | +1 |
+
+**アプリ内バッジカウントの仕様**:
+- 家族タブの未対応リクエスト数を `family_meal_requests` で算出 (`assignee_id = me AND status = 'pending'` の件数 + `requester_id = me AND status = 'proposed'` の件数 + 期限切れ未読)
+- ユーザーが対象画面を表示した時点でカウント減算 (該当行 SELECT 時に既読化)
+- iOS / Android のアプリアイコンバッジは Push 通知ペイロードの `badge` フィールドに上記計算値を載せる
+
+##### UI 設計 (例)
+
+**離脱モーダル (妻側)**:
+```
+┌─────────────────────────────────┐
+│  月曜の夕食: カレー              │
+│  食べないで別のにする?            │
+│                                  │
+│  代替メニューはどうしますか?      │
+│   ◯ 自分で決める                │
+│   ◯ AI に提案してもらう         │
+│   ◯ 夫 (オーナー) に頼む       │
+│   ◯ 母 (管理者) に頼む         │
+│                                  │
+│  理由 (任意): [ダイエット中    ] │
+│  制約 (任意): [600 kcal 以下   ] │
+│                                  │
+│  [ キャンセル ]    [ 確定 ]      │
+└─────────────────────────────────┘
+```
+
+**リクエスト受信画面 (夫側)**:
+```
+┌──────────────────────────────────────┐
+│  📬 妻からの献立リクエスト             │
+│                                       │
+│  日付: 5/13 月曜 夕食                 │
+│  理由: ダイエット中                    │
+│  制約: 600 kcal 以下、低糖質           │
+│                                       │
+│  代替メニューを考えますか?             │
+│   [ AI に提案させる ]                 │
+│   [ 自分で考える ]                    │
+│                                       │
+│  AI 提案結果: 鶏胸肉のサラダ          │
+│  500 kcal / タンパク質 35g            │
+│                                       │
+│  [ 別の案 ]   [ これで提案する ]      │
+└──────────────────────────────────────┘
+```
+
+##### 受け入れ基準
+- ✅ 共有献立離脱時に 4 パターンから選択できる
+- ✅ AI 提案は妻の制約を自動取得して反映
+- ✅ 家族リクエストは非同期で push 通知 → 提案 → 承認のフロー
+- ✅ 子供メンバーの代替献立は オーナー / 管理者が代理操作可能
+- ✅ 全状態遷移がアクティビティログ (`family_activity_log`) に記録される
+
 ### 5.6 F-FAM-006: 共有買い物リスト
 
 #### 5.6.1 概要
@@ -486,6 +642,11 @@
 | 共有献立が生成された | グループ全員 | Push (任意設定) |
 | 買い物リストに追加された | グループ全員 | Push (任意設定) |
 | 緊急通知 (アレルギー誤食警告) | グループ全員 | Push + 強制表示 |
+| **個別献立リクエスト送信** | assignee | Push (即時) |
+| **個別献立提案完了** | requester | Push (即時) |
+| **個別献立リクエスト承認** | assignee | Push |
+| **個別献立リクエスト拒否** | assignee | Push (理由付き) |
+| **個別献立リクエストキャンセル** | assignee | Push |
 
 #### 5.7.2 通知設定
 - ユーザー個別に ON/OFF 可能
@@ -550,12 +711,27 @@ CREATE TABLE family_groups (
   description   TEXT,
   icon_url      TEXT,
   owner_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  plan          VARCHAR(50) NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'family_basic', 'family_pro')),
+  -- プラン: 03-operator-admin.md §7.2.7 subscription_plans で運営が定義する plan_key を参照
+  -- 想定 plan_key: 'free' / 'family_basic' / 'family_pro' / 'family_addon' (組織同梱)
+  -- 02-organization-management.md §5.12 の家族プラン同梱で配布される場合は 'family_addon'
+  -- ON UPDATE CASCADE: plan_key リネーム時に追従
+  -- ON DELETE RESTRICT: 既存契約のあるプランは物理削除不可。deprecated → ends_at 後の自動 archive で対応 (03 §5.15.5)
+  plan_key      VARCHAR(100) NOT NULL DEFAULT 'free'
+                  REFERENCES subscription_plans(plan_key) ON UPDATE CASCADE ON DELETE RESTRICT,
+  -- 同梱配布の場合の元ライセンス参照 (個人加入なら NULL)
+  source_org_assignment_id UUID REFERENCES org_license_assignments(id) ON DELETE SET NULL,
   member_limit  INT NOT NULL DEFAULT 4,
   settings      JSONB NOT NULL DEFAULT '{}',
-  archived_at   TIMESTAMP WITH TIME ZONE,
-  created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  -- ライフサイクル状態 (5.12 退職時の凍結フローで使用)
+  status        VARCHAR(20) NOT NULL DEFAULT 'active'
+                  CHECK (status IN ('active', 'frozen', 'archived')),
+  -- frozen への遷移時刻 (組織ライセンス revoke 時等)。猶予期間管理に利用
+  frozen_at     TIMESTAMPTZ,
+  -- 凍結後 N 日で archived へ自動遷移する期限 (NULL = 即時)
+  freeze_grace_until TIMESTAMPTZ,
+  archived_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (owner_id)  -- 1 ユーザー 1 オーナーグループ
 );
 
@@ -601,8 +777,8 @@ CREATE TABLE family_members (
   is_active           BOOLEAN NOT NULL DEFAULT TRUE,
   privacy_settings    JSONB NOT NULL DEFAULT '{"share_meals": false, "share_health": false}',
   -- メタ
-  created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   -- user_id がある場合は 1 グループ 1 メンバー
   UNIQUE (family_group_id, user_id) WHERE (user_id IS NOT NULL)
 );
@@ -628,12 +804,12 @@ CREATE TABLE family_invites (
   role              VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
   nickname          VARCHAR(50),
   token             VARCHAR(64) NOT NULL UNIQUE,
-  expires_at        TIMESTAMP WITH TIME ZONE NOT NULL,
-  accepted_at       TIMESTAMP WITH TIME ZONE,
+  expires_at        TIMESTAMPTZ NOT NULL,
+  accepted_at       TIMESTAMPTZ,
   accepted_by       UUID REFERENCES auth.users(id),
-  cancelled_at      TIMESTAMP WITH TIME ZONE,
+  cancelled_at      TIMESTAMPTZ,
   created_by        UUID NOT NULL REFERENCES auth.users(id),
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_family_invites_token ON family_invites(token);
@@ -641,11 +817,48 @@ CREATE INDEX idx_family_invites_email ON family_invites(email);
 CREATE INDEX idx_family_invites_pending ON family_invites(family_group_id) WHERE accepted_at IS NULL AND cancelled_at IS NULL;
 ```
 
-**RLS ポリシー**:
-- SELECT (オーナー/管理者): family_group オーナー or 管理者
-- SELECT (受諾用): 認証なし許可、token で個別アクセス (Server Action 経由)
-- UPDATE: 受諾時のみ (Server Action 内)
-- DELETE: オーナー or 作成者
+**RLS ポリシー** (具体的 SQL):
+
+```sql
+-- anon ロールに対しては RLS を有効化したまま、SELECT は service_role 経由でのみ
+-- (匿名ユーザーがクライアントから token を知っているだけで全 invites を列挙できる事故を防止)
+ALTER TABLE family_invites ENABLE ROW LEVEL SECURITY;
+
+-- 認証済みオーナー / 管理者は同グループの招待を閲覧可
+CREATE POLICY family_invites_select_owner ON family_invites
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_invites.family_group_id
+        AND fm.user_id = auth.uid()
+        AND fm.role IN ('owner', 'admin')
+    )
+  );
+
+-- INSERT: 同グループの owner/admin のみ
+CREATE POLICY family_invites_insert ON family_invites
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_invites.family_group_id
+        AND fm.user_id = auth.uid()
+        AND fm.role IN ('owner', 'admin')
+    )
+  );
+
+-- DELETE: オーナー or 作成者
+CREATE POLICY family_invites_delete ON family_invites
+  FOR DELETE USING (
+    invited_by = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM family_groups fg
+      WHERE fg.id = family_invites.family_group_id
+        AND fg.owner_id = auth.uid()
+    )
+  );
+```
+
+> **anon (受諾用) アクセスは API 層で完結**: `GET /api/family/invites/{token}` および `POST .../accept` は server-side で `service_role` キーを使い `family_invites` を検索する (RLS バイパス)。クライアント Supabase SDK から `family_invites` テーブルを直接 SELECT することは禁止。同様の方針を `organization_invites` にも適用。
 
 #### 7.1.4 `family_activity_log`
 
@@ -657,10 +870,43 @@ CREATE TABLE family_activity_log (
   action_type       VARCHAR(50) NOT NULL,  -- 'group_created', 'member_added', 'member_left', 'member_removed', 'role_changed', 'shared_menu_generated', etc.
   target_id         UUID,
   details           JSONB DEFAULT '{}',
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_family_activity_group ON family_activity_log(family_group_id, created_at DESC);
+```
+
+**RLS ポリシー** (監査ログ性質、不可逆):
+
+```sql
+ALTER TABLE family_activity_log ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: 同グループメンバー全員 (透明性のため)
+CREATE POLICY family_activity_log_select ON family_activity_log
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_activity_log.family_group_id
+        AND fm.user_id = auth.uid()
+    )
+  );
+
+-- INSERT: アプリ層 / トリガーから自動記録 (actor_id = auth.uid() を強制)
+CREATE POLICY family_activity_log_insert ON family_activity_log
+  FOR INSERT WITH CHECK (
+    actor_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_activity_log.family_group_id
+        AND fm.user_id = auth.uid()
+    )
+  );
+
+-- UPDATE / DELETE: 不可 (監査ログ不可逆)
+CREATE POLICY family_activity_log_immutable_update ON family_activity_log
+  FOR UPDATE USING (false);
+CREATE POLICY family_activity_log_immutable_delete ON family_activity_log
+  FOR DELETE USING (false);
 ```
 
 #### 7.1.5 `family_shared_menus`
@@ -676,7 +922,7 @@ CREATE TABLE family_shared_menus (
   servings_total    NUMERIC(4,2) NOT NULL DEFAULT 1.0,
   notes             TEXT,
   created_by        UUID NOT NULL REFERENCES auth.users(id),
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (family_group_id, date, meal_type, dish_name)
 );
 ```
@@ -699,13 +945,19 @@ CREATE TABLE family_member_servings (
 ```sql
 CREATE TABLE family_shopping_lists (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_group_id   UUID NOT NULL UNIQUE REFERENCES family_groups(id) ON DELETE CASCADE,
+  family_group_id   UUID NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
   start_date        DATE NOT NULL,
   end_date          DATE NOT NULL,
   status            VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'archived')),
-  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 1 グループあたり active な買い物リストは 1 件のみ。completed/archived は履歴として保持
+-- (個人 shopping_lists の 20260109 マイグレーションと同じパターン)
+CREATE UNIQUE INDEX idx_family_shopping_lists_active
+  ON family_shopping_lists(family_group_id)
+  WHERE status = 'active';
 
 CREATE TABLE family_shopping_items (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -718,13 +970,180 @@ CREATE TABLE family_shopping_items (
   assignee_id              UUID REFERENCES auth.users(id),  -- 誰が買うか
   added_by                 UUID NOT NULL REFERENCES auth.users(id),
   checked_by               UUID REFERENCES auth.users(id),
-  checked_at               TIMESTAMP WITH TIME ZONE,
-  created_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  updated_at               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  checked_at               TIMESTAMPTZ,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_family_shopping_items_list ON family_shopping_items(family_shopping_list_id);
 CREATE INDEX idx_family_shopping_items_unchecked ON family_shopping_items(family_shopping_list_id) WHERE is_checked = FALSE;
+```
+
+#### 7.1.8 `family_meal_requests` (個別献立リクエスト)
+
+共有献立から離脱して個別メニューを作成するリクエスト管理。
+パターン ① (自分で決める) はこのテーブルを使わず `planned_meals` 直接追加で完結。
+パターン ②③④ はこのテーブルでフロー管理。
+
+```sql
+CREATE TABLE family_meal_requests (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_group_id          UUID NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+  -- 依頼者・対象者・担当者
+  requester_id             UUID NOT NULL REFERENCES auth.users(id),       -- 依頼した人
+  target_member_id         UUID NOT NULL REFERENCES family_members(id),    -- 食べる人 (子供メンバーなら user_id NULL)
+  assignee_id              UUID REFERENCES auth.users(id),                 -- 提案する担当 (NULL = AI)
+  proposed_by_ai           BOOLEAN NOT NULL DEFAULT FALSE,
+  -- 対象食事
+  date                     DATE NOT NULL,
+  meal_type                VARCHAR(20) NOT NULL CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
+  original_shared_menu_id  UUID REFERENCES family_shared_menus(id) ON DELETE SET NULL,  -- 離脱した共有献立
+  -- リクエスト内容
+  reason                   TEXT,                                            -- 「ダイエット中」「アレルギー対応」等
+  constraints              JSONB DEFAULT '{}',                              -- カロリー上限・除外食材等
+  -- 提案
+  proposed_dish_name       VARCHAR(200),
+  proposed_recipe          JSONB,
+  proposed_at              TIMESTAMPTZ,
+  -- 承認・拒否
+  responded_at             TIMESTAMPTZ,
+  rejection_reason         TEXT,
+  -- 状態
+  status                   VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'proposed', 'accepted', 'rejected', 'cancelled', 'expired')),
+  -- 期限切れ管理 (担当者放置時の自動 expired 遷移)
+  expires_at               TIMESTAMPTZ,  -- デフォルト: 対象食事日 24h 前 or リクエスト作成 + 3 日のうち早い方
+  -- メタ
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_family_meal_requests_group ON family_meal_requests(family_group_id, status, date);
+CREATE INDEX idx_family_meal_requests_requester ON family_meal_requests(requester_id, status);
+CREATE INDEX idx_family_meal_requests_assignee ON family_meal_requests(assignee_id, status) WHERE status IN ('pending', 'proposed');
+CREATE INDEX idx_family_meal_requests_pending ON family_meal_requests(family_group_id) WHERE status = 'pending';
+```
+
+**RLS ポリシー** (具体的 SQL 式):
+
+```sql
+-- SELECT: 同グループメンバー全員 (target_member が child のリクエストも、グループメンバーなら閲覧可)
+CREATE POLICY family_meal_requests_select ON family_meal_requests
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_meal_requests.family_group_id
+        AND fm.user_id = auth.uid()  -- child (user_id=NULL) は自分で SELECT しないため問題なし
+    )
+  );
+
+-- INSERT: 同グループの実ユーザーメンバー (user_id IS NOT NULL) のみ
+-- 子供代理リクエストの場合: requester_id は親 (auth.uid())、target_member_id は子 (family_members.id with user_id=NULL)
+CREATE POLICY family_meal_requests_insert ON family_meal_requests
+  FOR INSERT WITH CHECK (
+    requester_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_group_id = family_meal_requests.family_group_id
+        AND fm.user_id = auth.uid()
+        AND fm.role IN ('owner', 'admin', 'member')
+    )
+    AND EXISTS (  -- target_member は同グループに存在
+      SELECT 1 FROM family_members tgt
+      WHERE tgt.id = family_meal_requests.target_member_id
+        AND tgt.family_group_id = family_meal_requests.family_group_id
+    )
+    -- 子供代理 (target が child): owner / admin のみ可
+    AND (
+      (SELECT user_id FROM family_members WHERE id = target_member_id) IS NOT NULL
+      OR EXISTS (
+        SELECT 1 FROM family_members fm
+        WHERE fm.family_group_id = family_meal_requests.family_group_id
+          AND fm.user_id = auth.uid()
+          AND fm.role IN ('owner', 'admin')
+      )
+    )
+  );
+
+-- UPDATE (proposed_*): assignee_id = auth.uid()
+CREATE POLICY family_meal_requests_propose ON family_meal_requests
+  FOR UPDATE USING (assignee_id = auth.uid())
+  WITH CHECK (assignee_id = auth.uid());
+
+-- UPDATE (status accept/reject/cancel): requester_id = auth.uid()
+-- (子供代理リクエストは requester=親 なので、親が承認・キャンセル可能)
+CREATE POLICY family_meal_requests_decide ON family_meal_requests
+  FOR UPDATE USING (requester_id = auth.uid())
+  WITH CHECK (requester_id = auth.uid());
+
+-- DELETE: 不可 (履歴保持)
+CREATE POLICY family_meal_requests_no_delete ON family_meal_requests
+  FOR DELETE USING (false);
+```
+
+#### 7.1.9 `planned_meals` 拡張 (家族連携)
+
+既存 `planned_meals` テーブルに **家族連携用カラム** を追加:
+
+```sql
+-- 既存 planned_meals テーブル拡張
+ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS family_shared_menu_id UUID
+  REFERENCES family_shared_menus(id) ON DELETE SET NULL;
+
+ALTER TABLE planned_meals ADD COLUMN IF NOT EXISTS source_request_id UUID
+  REFERENCES family_meal_requests(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_planned_meals_shared ON planned_meals(family_shared_menu_id) WHERE family_shared_menu_id IS NOT NULL;
+CREATE INDEX idx_planned_meals_request ON planned_meals(source_request_id) WHERE source_request_id IS NOT NULL;
+```
+
+**RLS 拡張ポリシー** (家族メンバー代理 INSERT 対応):
+
+既存 `planned_meals` の RLS は `auth.uid() = user_daily_meals.user_id` で自己所有のみ。家族リクエスト承認・共有献立展開で他メンバーの planned_meals を作成する必要があるため、family-aware ポリシーを追加:
+
+```sql
+-- 既存 SELECT/INSERT/UPDATE/DELETE ポリシーは保持しつつ、家族系のみ追加
+
+-- INSERT: 家族グループの owner / admin が、同グループ child の planned_meals を作成可
+CREATE POLICY planned_meals_family_proxy_insert ON planned_meals
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_daily_meals udm
+      JOIN family_members tgt ON tgt.user_id = udm.user_id
+        OR (tgt.user_id IS NULL AND tgt.id = udm.proxy_member_id)  -- child 用の proxy 列前提
+      JOIN family_members caller ON caller.family_group_id = tgt.family_group_id
+      WHERE udm.id = planned_meals.daily_meal_id
+        AND caller.user_id = auth.uid()
+        AND caller.role IN ('owner', 'admin')
+    )
+  );
+
+-- INSERT: 家族リクエスト accepted フローで本人が承認した場合 (source_request_id 経由)
+CREATE POLICY planned_meals_family_request_insert ON planned_meals
+  FOR INSERT WITH CHECK (
+    source_request_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM family_meal_requests req
+      WHERE req.id = planned_meals.source_request_id
+        AND req.requester_id = auth.uid()
+        AND req.status = 'accepted'
+    )
+  );
+```
+
+> **注**: child member (`user_id IS NULL`) の `user_daily_meals` を生成するには `user_daily_meals` に `proxy_family_member_id UUID REFERENCES family_members(id)` 列を追加する必要がある (既存スキーマ拡張、§15 移行ガイド参照)。
+
+| 列 | 役割 |
+|----|------|
+| `family_shared_menu_id` | NULL=個別献立、UUID=共有献立由来 (家族で同じ料理) |
+| `source_request_id` | NULL=直接追加、UUID=個別リクエストフロー由来 |
+
+**個人献立 / 共有献立 / リクエスト経由の判別**:
+```
+both NULL              → 純粋な個人献立 (普通の自分用メニュー)
+shared_menu_id 設定   → 共有献立 (家族と同じ料理)
+source_request_id 設定 → 個別リクエストフローで作られた代替メニュー
+両方設定               → 共有献立から離脱して、リクエスト経由で代替を入れた状態
 ```
 
 ### 7.2 マイグレーション
@@ -733,6 +1152,151 @@ CREATE INDEX idx_family_shopping_items_unchecked ON family_shopping_items(family
 -- migration: 2026MMDDHHMMSS_create_family_management.sql
 -- 上記テーブル定義をすべて含む
 -- 既存 family_groups / family_members は ALTER TABLE で拡張
+```
+
+### 7.3 既存テーブルの RLS 拡張 (家族閲覧)
+
+既存 `meals` テーブルの RLS は `auth.uid() = user_id` で厳格な自己参照のみ。家族間の食事記録閲覧 (§5.4 一覧、§5.5 共有献立) を実現するため、以下の拡張ポリシーを追加:
+
+```sql
+-- 既存 meals_select_own ポリシーは保持。同グループメンバーの meals 閲覧を別ポリシーで許可
+-- 公開設定: family_groups.settings->>'share_meal_records' = 'true' の場合のみ
+CREATE POLICY meals_family_select ON meals
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM family_members caller
+      JOIN family_members target ON target.family_group_id = caller.family_group_id
+      JOIN family_groups grp ON grp.id = caller.family_group_id
+      WHERE caller.user_id = auth.uid()
+        AND target.user_id = meals.user_id
+        AND grp.status = 'active'  -- frozen/archived グループは閲覧不可
+        AND COALESCE(grp.settings->>'share_meal_records', 'true') = 'true'
+    )
+  );
+```
+
+**産業医ロール用ポリシー** (組織側、`org_industrial_doctor` から個人 meals への限定アクセス):
+
+```sql
+-- 同意済みかつ同組織のメンバーの meals 集計閲覧用
+-- ただし家族領域 (family_groups 配下のデータ) は別途 RLS で完全遮断 (§5.10.2)
+CREATE POLICY meals_industrial_doctor_select ON meals
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles caller_profile
+      JOIN user_profiles target_profile ON target_profile.id = meals.user_id
+      WHERE caller_profile.id = auth.uid()
+        AND 'org_industrial_doctor' = ANY(caller_profile.roles)
+        AND caller_profile.organization_id = target_profile.organization_id
+        AND target_profile.consent_org_health_data = TRUE
+        AND target_profile.is_active_in_org = TRUE  -- 退職後は閲覧不可
+    )
+  );
+```
+
+### 7.5 プラン制限の RLS 二重防御
+
+要件全体で「Pro プランのみ」「Family プランのみ」等の制限が機能フラグ (アプリ層) で実装されるが、API 直叩きでバイパスされないよう **RLS 層でも防御** する:
+
+```sql
+-- 例: family_groups の作成は Family プラン以上を持つユーザーのみ
+CREATE POLICY family_groups_insert_paid_only ON family_groups
+  FOR INSERT WITH CHECK (
+    owner_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM personal_subscriptions ps
+      WHERE ps.user_id = auth.uid()
+        AND ps.status IN ('active', 'trialing')
+        AND ps.plan_key IN ('family_basic', 'family_pro')
+    )
+    -- または組織同梱経由
+    OR EXISTS (
+      SELECT 1 FROM org_license_assignments ola
+      JOIN org_license_pools olp ON olp.id = ola.license_pool_id
+      WHERE ola.user_id = auth.uid()
+        AND ola.status = 'active'
+        AND olp.family_addon_seats > 0
+    )
+  );
+
+-- AI 解析 RPC (knowledge-gpt 等) は呼び出し時に getUserActivePlan() の features に
+-- 'ai_analysis' が含まれることを確認。RLS というよりサーバー側関数で gate。
+```
+
+> **責務分担**: アプリ層 feature flag は **UX のため** (機能ボタンを非表示にする等)。RLS / サーバーサイド関数は **セキュリティのため** (API 直叩き防御)。両方実装する。
+
+### 7.6 子供メンバーのライフサイクル (P0、100-scenarios.md C7)
+
+**目的**: child member (`family_members.user_id IS NULL`) が 18 歳到達時に独立アカウントへ移行できるようにする。
+
+**自動検知バッチ** (pg_cron 月次):
+```sql
+-- 18 歳の誕生月に親へ通知 (移行を促す)
+SELECT user_id FROM family_members fm
+WHERE fm.birth_date IS NOT NULL
+  AND DATE_PART('year', AGE(fm.birth_date)) = 18
+  AND fm.user_id IS NULL
+  AND NOT EXISTS (SELECT 1 FROM child_promotion_notifications WHERE family_member_id = fm.id);
+-- → 通知 + child_promotion_notifications に記録
+```
+
+**移行 API**: `POST /api/family/members/{id}/promote-to-user`
+- リクエスト: `{ email, password, transfer_data: 'all' | 'history_only' | 'none' }`
+- 親 owner の承認必須 (パスワード再認証)
+- 子供本人の Email 確認 (新規アカウント認証)
+- 食事履歴・健康データの帰属を選択 (移管 / 共有継続 / 親側保持)
+- 完了後: `family_members.user_id` に新 auth.users.id をセット、`role` を `member` に変更
+
+**プラン継承**: 移行直後は **無料 30 日体験** + 個人 Pro 加入を促す UI
+
+### 7.7 家族グループ分割 (P0、100-scenarios.md C8)
+
+**目的**: 離婚・別居等で 1 グループを 2 つに分割。現状は解散 → 新規作成しか方法ないが、データ移行が手動になる。
+
+**API**: `POST /api/family/groups/{id}/split`
+- リクエスト: `{ split_members: [member_id1, member_id2, ...], new_group_name, new_owner_id }`
+- owner 限定、パスワード再認証必須
+- 全分割対象メンバーへ通知 + 同意取得 (24h 以内、未応答は分割中止)
+- 同意確定後:
+  1. 新 family_group 作成
+  2. 指定メンバーを移籍 (`family_members.family_group_id` 更新)
+  3. 食事履歴 (`meals` / `planned_meals`) は **両グループで共有 (read-only)** または完全分割 (選択可)
+  4. 共有献立・買い物リストは新オーナーが選択
+  5. 元グループのプランは継続、新グループのプランは新 owner が選択 (デフォルト `free`)
+
+**法的注意**: 子供メンバーがいる場合は親権者同意が必要 (家庭裁判所判断にかかる場合は Phase 2 で対応)。
+
+### 7.8 大人代理操作 (P1、100-scenarios.md H5)
+
+**目的**: 認知症・寝たきり等で本人が記録できない大人メンバーを、家族 owner / admin が代理操作する。
+
+**列追加**:
+```sql
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS proxy_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS proxy_reason VARCHAR(50);
+  -- 'dementia' / 'bedridden' / 'medical_treatment' / 'other'
+ALTER TABLE family_members ADD COLUMN IF NOT EXISTS proxy_legal_guardian_id UUID
+  REFERENCES auth.users(id);  -- 成年後見人等の登録 (Phase 2)
+```
+
+**RLS 拡張**: `proxy_required = TRUE` のメンバーに対しては `family_meal_requests` の child 代理ロジック (§7.1.8) を流用。
+
+**UI**: メンバー編集画面に「代理操作が必要」トグル + 理由選択。
+
+### 7.4 family_groups / family_members の状態制限 RLS (frozen/archived)
+
+```sql
+-- frozen 状態では新規記録不可、閲覧のみ可
+CREATE POLICY family_meal_requests_no_insert_when_frozen ON family_meal_requests
+  FOR INSERT WITH CHECK (
+    NOT EXISTS (
+      SELECT 1 FROM family_groups fg
+      WHERE fg.id = family_meal_requests.family_group_id
+        AND fg.status IN ('frozen', 'archived')
+    )
+  );
+
+-- 同様のポリシーを family_shared_menus, family_shopping_lists にも適用
 ```
 
 ---
@@ -750,7 +1314,7 @@ CREATE INDEX idx_family_shopping_items_unchecked ON family_shopping_items(family
   "name": "田中家",
   "description": "我が家の食事管理",
   "icon_url": null,
-  "plan": "free"
+  "plan_key": "free"
 }
 ```
 **レスポンス 201**:
@@ -759,7 +1323,9 @@ CREATE INDEX idx_family_shopping_items_unchecked ON family_shopping_items(family
   "id": "uuid",
   "name": "田中家",
   "owner_id": "uuid",
-  "plan": "free",
+  "plan_key": "free",
+  "status": "active",
+  "source_org_assignment_id": null,
   "member_limit": 4,
   "created_at": "2026-05-06T20:30:00Z"
 }
@@ -912,15 +1478,166 @@ CREATE INDEX idx_family_shopping_items_unchecked ON family_shopping_items(family
 #### 8.5.4 `POST /api/family/shopping-list/regenerate`
 **説明**: 共有献立から再生成
 
-### 8.6 通知設定
+### 8.6 個別献立リクエスト (Meal Requests)
 
-#### 8.6.1 `GET /api/family/notification-preferences`
+#### 8.6.1 `POST /api/family/meal-requests`
+**説明**: 共有献立から離脱して個別メニューをリクエスト
+**リクエスト**:
+```json
+{
+  "target_member_id": "uuid",
+  "date": "2026-05-13",
+  "meal_type": "dinner",
+  "original_shared_menu_id": "uuid (任意、共有献立から離脱の場合)",
+  "reason": "ダイエット中",
+  "constraints": {
+    "max_calories": 600,
+    "low_carb": true,
+    "exclude_ingredients": ["米"]
+  },
+  "assignee_id": "uuid (NULL = AI、UUID = 家族メンバー)",
+  "self_decide_dish": "鶏胸肉のサラダ (任意、パターン①: 自分で決める場合のみ)"
+}
+```
 
-#### 8.6.2 `PUT /api/family/notification-preferences`
+**動作分岐**:
+- `assignee_id = null` AND `self_decide_dish` あり → パターン①: 即時 `planned_meals` 追加 + status=`accepted`
+- `assignee_id = null` AND `self_decide_dish` なし → パターン②: AI 自動生成 → 即 `proposed` → 自動 `accepted`
+- `assignee_id = 自分以外のメンバー` → パターン③: `pending` で作成、相手に通知
+- 子供メンバー (`target_member_id` の `user_id IS NULL`) → パターン④: 同上、ただし requester がオーナー / 管理者必須
 
-### 8.7 アクティビティログ
+**レスポンス 201**:
+```json
+{
+  "id": "uuid",
+  "status": "pending|proposed|accepted",
+  "assignee_id": "uuid|null",
+  "proposed_dish_name": "...",
+  "planned_meal_id": "uuid (status=accepted の場合)"
+}
+```
 
-#### 8.7.1 `GET /api/family/activity`
+#### 8.6.2 `GET /api/family/meal-requests`
+**クエリ**: `?status=pending|proposed|accepted|rejected|cancelled&assignee_id=me&requester_id=me`
+**説明**: リクエスト一覧 (担当中・自分が依頼したもの・全件)
+
+#### 8.6.3 `GET /api/family/meal-requests/{id}`
+**説明**: 個別リクエスト詳細
+
+#### 8.6.4 `POST /api/family/meal-requests/{id}/propose`
+**説明**: パターン③で assignee が代替メニューを提案
+**認証**: assignee_id = auth.uid() のみ
+**リクエスト**:
+```json
+{
+  "dish_name": "鶏胸肉のサラダ",
+  "recipe": {
+    "ingredients": [...],
+    "steps": [...]
+  },
+  "use_ai_suggestion": true,
+  "ai_constraints": { /* 必要時のみ */ }
+}
+```
+**動作**:
+- `use_ai_suggestion: true` → AI で生成して `proposed_dish_name` セット
+- 手動入力時はそのまま反映
+- status を `pending` → `proposed` に遷移
+- requester に push 通知
+
+#### 8.6.5 `POST /api/family/meal-requests/{id}/accept`
+**説明**: requester が提案を承認
+**認証**: requester_id = auth.uid() のみ
+**動作**:
+- status を `proposed` → `accepted`
+- `planned_meals` に新規行作成 (`source_request_id` 紐付け、target member の daily_meal_id へ)
+- もし `original_shared_menu_id` があれば、共有献立側からは離脱状態にする (UI の表示制御)
+- assignee に push 通知
+
+#### 8.6.6 `POST /api/family/meal-requests/{id}/reject`
+**説明**: requester が提案を拒否
+**リクエスト**:
+```json
+{
+  "rejection_reason": "もっと低カロリーな案がほしい"
+}
+```
+**動作**:
+- status を `proposed` → `rejected`
+- assignee に push 通知 (理由付き)
+- requester は同 `original_shared_menu_id` で再リクエストするか、自分で決めるか選択可能
+
+#### 8.6.7 `POST /api/family/meal-requests/{id}/cancel`
+**説明**: requester がリクエスト取消
+**動作**:
+- status を `pending` / `proposed` → `cancelled`
+- assignee に push 通知
+
+#### 8.6.8 `POST /api/family/meal-requests/{id}/ai-propose`
+**説明**: assignee の代わりに AI が代替メニューを生成 (補助)
+
+**呼び出し先 Edge Function**: `supabase/functions/family-meal-ai-propose/index.ts` (新規実装)
+- 内部的に xAI Grok API を呼び出し (03 §5.5.4 のモデル選定参照)
+- 既存 `knowledge-gpt` の RAG パターンを流用、新規 system prompt + JSON mode
+
+**入力スキーマ**:
+```typescript
+{
+  meal_request_id: UUID,           // 対象リクエスト
+  constraints: {                    // family_meal_requests.constraints から自動展開
+    calorie_max?: number,
+    excluded_ingredients?: string[],  // アレルギー / 嗜好
+    cuisine_type?: string,            // '和食' / '洋食' / '中華' 等
+    cooking_time_max_minutes?: number,
+  },
+  member_context: {                 // target_member_id から自動展開
+    dietary_restrictions: string[],   // アレルギー
+    age_group: string,                // 子供向けは難易度低く
+    activity_level?: string,
+  },
+  family_recent_history: string[],  // 最近 7 日の家族献立 (重複回避)
+}
+```
+
+**出力**: `proposed_recipe` JSONB (03 §5.5.6 `ProposedRecipeSchema` に準拠)
+- 失敗時 (バリデーション or アレルゲンヒット) は max 3 回リトライ → 失敗で 422 返却
+
+**動作**:
+- `constraints` を考慮して AI 生成
+- 出力を Zod で構造検証 + アレルゲン検証 (03 §5.5.7)
+- `proposed_dish_name`, `proposed_recipe`, `proposed_by_ai = true` 設定
+- assignee がそれを採用するなら `propose` API へ進む
+
+**LLM 使用量計測**: `withLLMUsageContext({ userId, organizationId, functionName: 'family-meal-ai-propose', ... })` で wrap
+
+#### 8.6.9 `POST /api/family/shared-menus/generate`
+**説明**: 家族全員の制約を考慮した共有献立 (週 21 食) を AI 生成
+
+**呼び出し先 Edge Function**: `supabase/functions/family-shared-menu-generate/index.ts` (新規)
+- 既存 `generate-menu-v5` を **家族対応モード** で呼び出すラッパー
+- 全 `family_members` の `dietary_restrictions` の **和集合** を constraints として注入
+
+**入力**:
+```typescript
+{
+  family_group_id: UUID,
+  start_date: DATE,         // 通常は来週月曜
+  meal_count: number,       // 21 (3 食 × 7 日)
+  member_ids: UUID[],       // 共有対象メンバー (子供除外もあり)
+}
+```
+
+**出力**: `family_shared_menus` への bulk INSERT 後、ID 一覧を返す
+
+### 8.7 通知設定
+
+#### 8.7.1 `GET /api/family/notification-preferences`
+
+#### 8.7.2 `PUT /api/family/notification-preferences`
+
+### 8.8 アクティビティログ
+
+#### 8.8.1 `GET /api/family/activity`
 **クエリ**: `?limit=20&before={timestamp}`
 
 ---
@@ -1186,6 +1903,127 @@ type FamilyNotificationPayload =
 - 「家族グループ」 = システム用語、`family_groups` テーブル
 - 「メンバー」 = `family_members` テーブルレコード
 - 「ユーザー」 = `auth.users` テーブルレコード (アカウント保持者)
+
+---
+
+## 15. モバイル App 実装要件 (React Native + Expo)
+
+WebView ハイブリッド構成だが、**ネイティブ実装が必須** な機能を明記。
+
+### 15.1 ディープリンク (招待受諾)
+
+```
+homegohan://invite/family/{token}
+homegohan://invite/org/{token}
+```
+
+**新規実装ファイル**:
+- `apps/mobile/app/family/invite-accept.tsx` (新規)
+- `apps/mobile/app/org/invite-accept.tsx` (新規)
+
+**ハンドラー**:
+- `apps/mobile/app/_layout.tsx` に `Linking.addEventListener('url', ...)` を追加
+- アプリ未起動時の対応: `Linking.getInitialURL()` を起動時に呼び、deep link をキャッチ
+- 起動済み時の対応: `addEventListener` でキャッチ
+
+**フロー**:
+1. ディープリンク受信 → token を抽出
+2. `Linking.canOpenURL` で OS 互換性確認
+3. native session があれば直接 `POST /api/family/invites/{token}/accept` (or org)
+4. 未ログインなら `/login?next=/invite/family/{token}` にリダイレクト
+5. Apple Configurator 2 配布環境でも `homegohan://` カスタムスキームは機能する (Universal Links は不要)
+
+### 15.2 食事写真アップロード (`meal-photos` バケット)
+
+**ネイティブ ImagePicker 経由必須**:
+- `apps/mobile/src/lib/storage.ts` に `uploadMealPhoto(file, familyGroupId?)` 新規関数
+- WebView 内 `<input type="file">` は iOS 18 でカメラ dismiss バグあり、使用不可
+- `expo-image-picker` でカメラ起動 → ローカル URI を取得 → Supabase Storage `meal-photos` バケットへ direct upload (multipart/form-data)
+
+**家族共有ロジック**:
+- アップロード時に `family_group_id` パラメータを渡せば、その家族グループメンバーに閲覧権を付与する metadata 設定
+
+### 15.3 Push 通知バッジカウント
+
+**実装ファイル**:
+- `apps/mobile/src/lib/pushNotifications.ts` に `setNotificationBadge(count)` 関数追加
+- `Notifications.setBadgeCountAsync(count)` (iOS / Android 両対応)
+
+**バッジ更新タイミング**:
+- Push 受信時 (`Notifications.setNotificationHandler` で payload 内 `badge` フィールドを反映)
+- 該当画面 (家族タブ等) を閲覧した時に自動デクリメント
+- ユーザーが手動で「すべて既読」操作した時
+
+**通知種別ごとのバッジ寄与**:
+| 通知種別 | バッジ加算 | カテゴリ ID |
+|---------|----------|----------|
+| 個別献立リクエスト | +1 | `family_meal_requests` |
+| 提案完了 | +1 | `family_meal_proposed` |
+| 退職猶予通知 | +1 | `family_freeze_warning` |
+| 家族凍結通知 | +1 | `family_frozen` |
+| プラン deprecated 通知 | +1 | `plan_deprecated` |
+| 試用期間リマインダー | +1 | `trial_ending` |
+
+### 15.4 通知種別の on/off (UI + API)
+
+**既存問題**: `apps/mobile/app/(tabs)/settings.tsx` の `notifications_enabled` は単一 boolean のみ。要件は種別ごとの細かい制御が必要。
+
+**API 拡張** (`/api/notification-preferences`):
+```sql
+ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS preferences JSONB
+  NOT NULL DEFAULT '{
+    "family_meal_request": true,
+    "family_meal_proposed": true,
+    "family_shared_menu": true,
+    "family_shopping_list": true,
+    "family_freeze_warning": true,
+    "plan_deprecated": true,
+    "trial_ending": true,
+    "license_renewal": true
+  }';
+```
+
+**UI**:
+- `settings.tsx` に「通知設定」リンクを追加 → 専用画面で各種別を toggle
+
+### 15.5 アプリバージョン強制更新
+
+破壊的 API 変更 (snake_case 統一等) で旧アプリが動作不能になる可能性があるため:
+
+- `app.json` の `expo.version` を毎リリース更新
+- 新規 API: `GET /api/app/version-check?platform=ios&version=1.2.3`
+  - レスポンス: `{ minimum_supported: "1.0.0", current: "1.2.3", force_update: false }`
+- 起動時に呼び出し → `force_update: true` なら App Store / Play Store へ誘導モーダル
+
+### 15.6 既存テスト破壊への対応
+
+**修正必須テスト**:
+| テスト | 修正内容 |
+|--------|---------|
+| `apps/mobile/__tests__/meals/nutrition-input.test.ts` | `family_members.height_cm` リネーム後の入力検証 |
+| `apps/mobile/__tests__/health/profile-edit.test.tsx` | 同上 |
+| `tests/e2e/r10-org-pantry-deep.spec.ts` | `/api/org/users` → `/api/org/members` パス更新 |
+| `tests/e2e/w5-13-new-features-adversarial.spec.ts` | 同上 + `/api/org/settings` → `/api/org/me` |
+| `tests/e2e/wave5-w56-settings-account-profile-adversarial.spec.ts` | `plan-limits.ts` リファクタ後の export 経路検証 |
+| `tests/e2e/w5-12-admin-adversarial.spec.ts` | `plan: "standard"` → `plan_key: "org_standard"` |
+
+**新規追加テスト**:
+- `__tests__/lib/plan-limits.test.ts` (unit、複数組織+plan_key 体系)
+- `tests/e2e/family-invite-deeplink.spec.ts` (E2E、`/invite/family/{token}` 受諾フロー)
+- `tests/e2e/org-license-purchase.spec.ts` (E2E、UC-ORG-11)
+- `tests/e2e/family-meal-request.spec.ts` (E2E、UC-FAM-12 個別献立リクエスト)
+- `tests/integration/subscription-plans-seed.spec.ts` (マイグレーション後 9 種 plan_key seed 確認)
+
+### 15.7 Android FCM / iOS APNs 対応
+
+**確認事項**:
+- 既存稼働: iOS のみ Apple Configurator 2 + TestFlight (`hori@hori.tech` アカウント)
+- Android: 未確認 → `notify-push` Edge Function 実装前に確認必要
+- Expo Push Token は両 OS 対応するが、内部的には APNs / FCM へ振り分け
+
+**新規 EAS Secret 設定**:
+- iOS: APNs キー (.p8) は EAS Build に登録済み
+- Android: FCM Server Key を `EXPO_FCM_SERVER_KEY` として EAS Secret に追加が必要
 
 ---
 

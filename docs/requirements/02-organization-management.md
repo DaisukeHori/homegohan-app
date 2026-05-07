@@ -58,7 +58,7 @@
 | `organization_invites`, `organization_challenges` 等 | ✅ |
 | `/org/dashboard`, `/org/members` 等 UI | ✅ |
 | `/api/org/*` API | ✅ (基本機能) |
-| 招待受諾フロー (`/invite/{token}`) | **未実装** |
+| 招待受諾フロー (`/invite/org/{token}`) | **未実装** |
 | 招待メール自動送信 | **未実装** |
 | メンバー除名 API | **未実装** |
 | CSV 一括インポート | **未実装** |
@@ -211,7 +211,7 @@
 2. Email、ロール (org_admin / org_manager / org_member / org_viewer)、部署 (任意) を入力
 3. 「招待を送る」 → API `POST /api/org/invites`
 4. 招待メール自動送信 (Resend)
-5. 受信者が `/invite/{token}` で受諾
+5. 受信者が `/invite/org/{token}` で受諾
 6. 既存ユーザーならログイン、未登録なら新規登録
 7. `user_profiles.organization_id` が設定 + 部署紐付け
 
@@ -301,6 +301,159 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 3. データは個人アカウントとして残る
 4. メンバーには「○○組織から除名されました」通知
 
+### 4.11 UC-ORG-11: ライセンス購入
+
+**アクター**: org_admin
+**事前条件**: 組織契約済
+**事後条件**: ライセンスプール (`org_license_pools`) に枚数追加
+
+**フロー**:
+1. `/org/licenses` を開く → 「ライセンス追加」ボタン
+2. 購入数量を入力 (例: 100 名分)
+3. プラン選択 (現在の組織プランがデフォルト、追加で家族プラン同梱オプション可)
+4. 期間選択 (月額 / 年額、年額は 10% 割引)
+5. 金額確認 (例: 980 円 × 100 = 月額 98,000 円)
+6. Stripe で決済
+7. `org_license_pools.total_licenses += 100`
+8. メール: 「100 ライセンス追加完了」 + 領収書 PDF
+9. 監査ログ記録
+
+### 4.12 UC-ORG-12: ライセンス個別割当
+
+**アクター**: org_admin or org_manager
+**事前条件**: 空きライセンスあり (`available_licenses > 0`)
+**フロー**:
+1. `/org/licenses` で「未割当メンバー」一覧表示
+2. 1 メンバー選択 → 「ライセンス割当」
+3. 確認 → API `POST /api/org/licenses/assign`
+4. `org_license_assignments` に新規行 (status=active)
+5. プール: トリガーで `used_licenses += 1` を実行 (`available_licenses` は GENERATED ALWAYS 列なので自動再計算、直接 UPDATE 不可)
+6. 該当メンバーに通知「Pro 機能が解放されました」
+7. メンバーアプリで Pro 機能解放
+
+### 4.13 UC-ORG-13: ライセンス CSV 一括割当
+
+**フロー**:
+1. `/org/licenses/bulk-assign` で CSV アップロード
+2. CSV: `email,license_plan,assignment_note`
+3. プレビュー → 残ライセンス数チェック (足りなければ「+追加購入」リンク)
+4. 確定 → 非同期で 1 件ずつ割当
+5. 進捗: 「85/100 件割当完了」
+6. 完了: 結果 CSV ダウンロード
+
+### 4.14 UC-ORG-14: ライセンス回収・再割当
+
+**フロー (回収)**:
+1. メンバー除名 or 退職時に自動回収 (HR Webhook 連携 Pro 以上)
+2. または手動: `/org/licenses` でメンバー選択 → 「ライセンス回収」
+3. `org_license_assignments.revoked_at` セット、status=revoked
+4. プール: `used_licenses -= 1`、`available_licenses += 1`
+5. メンバーアプリで Pro 機能ロック (Free 状態に戻る)
+6. ただし個人プランで Pro 課金していたら継続
+
+**フロー (再割当)**:
+1. プールに戻ったライセンスを別社員に再割当
+2. 上記 UC-ORG-12 と同じ流れ
+
+### 4.15 UC-ORG-15: ライセンス追加購入 (オーバーフロー時)
+
+**フロー**:
+1. メンバー招待時にプール残量 0 → モーダル「ライセンスが不足しています」
+2. オプション:
+   - 「+10 ライセンスを追加購入」 → 即時購入フロー
+   - 「招待を取消」
+   - 「他のメンバーから回収」
+3. 追加購入完了後、招待を継続
+
+### 4.16 UC-ORG-16: 家族プラン同梱配布 (組織が社員家族にも提供)
+
+**アクター**: org_admin
+**事前条件**: 組織プランが「家族プラン同梱可」のもの (Org Pro / Enterprise)
+**シナリオ**: 福利厚生で社員本人だけでなく社員の家族 (配偶者・子供) にも家族管理機能を提供
+
+**フロー**:
+1. ライセンス購入時に「家族プランを同梱」オプション選択
+2. 同梱内容:
+   - 各社員に Org 機能 + 家族プラン (4 名まで or 8 名まで)
+   - 家族プランの月額単価が組織契約価格に統合 (社員あたり +280 円等)
+3. 社員にライセンス割当 → Org 機能 + 家族機能両方解放
+4. 社員が家族グループを作成 → 配偶者・子供を招待 → 家族全員が Pro 機能
+5. ただし家族メンバーは社員のライセンスに紐付くので、社員退職時に家族グループも凍結される (再契約 or 個人プランへ移行のオプション提示)
+
+### 4.17 UC-ORG-17: 退職時の家族グループ owner 処理 (重要シーケンス)
+
+**アクター**: System / 退職者本人 / org_admin
+**事前条件**: 退職者が家族グループの owner であり、当該グループが組織同梱ライセンス (`family_groups.source_org_assignment_id` が NOT NULL) で運用されていた
+
+**シナリオ**: 同梱ライセンスが revoke された後、家族グループを即座に解散せず、退職者本人に選択肢を提示する。
+
+**フロー**:
+1. HR Webhook または手動操作で `org_license_assignments.revoked_at` がセットされる
+2. システムが「revoked 割当に紐付く `family_groups.source_org_assignment_id`」を検索
+3. 該当家族グループに対し:
+   - `family_groups.status = 'frozen'`
+   - `family_groups.frozen_at = NOW()`
+   - `family_groups.freeze_grace_until = NOW() + INTERVAL '30 days'` (組織設定で 7-90 日カスタマイズ可)
+4. 退職者本人へ通知 (Push + Email):
+   - 「組織を退職されたため、家族グループ『◯◯ファミリー』が一時凍結されました」
+   - 「30 日以内に以下から選択してください」
+     - 個人プラン (Family Basic / Pro) へ移行 (Stripe 課金画面)
+     - オーナー権限を他のメンバーへ譲渡 (該当メンバーが個人プラン課金で引き継ぎ)
+     - 解散 (データを 90 日後に削除)
+5. 家族メンバー (妻・子) へ通知:
+   - 「家族グループが凍結中です。閲覧のみ可能、新規記録不可。30 日以内にオーナーが対応します」
+6. 凍結中の制限:
+   - 食事記録の新規作成・AI 解析: 不可
+   - 既存データの閲覧: 可
+   - 家族メンバーの追加招待: 不可
+7. `freeze_grace_until` 経過後、選択がなければ:
+   - `status = 'archived'`
+   - 個人プランへ自動移行を試みる (オーナーがクレジットカード未登録なら Free に降格)
+   - さらに 90 日後に物理削除 (GDPR 配慮)
+
+**API**:
+- `POST /api/family/groups/{id}/migrate-to-personal` (退職者: 個人プランへ移行)
+- `POST /api/family/groups/{id}/transfer-ownership` (退職者: 譲渡)
+- `POST /api/family/groups/{id}/dissolve` (退職者: 解散)
+
+**並行実行制御 (重要、競合防止)**:
+
+これらの 3 API は同一リソース (`family_groups`) に対する排他的状態遷移であり、同時実行で「オーナー 2 人」「個人プラン契約と解散の同時実行」等の不整合が起きうる。以下を **必須**:
+
+1. **楽観的ロック** (`updated_at` を if-match ヘッダで送信):
+   ```
+   POST /api/family/groups/{id}/transfer-ownership
+   If-Unmodified-Since: 2026-05-07T12:34:56Z   # 直前 GET で取得した updated_at
+   ```
+   - サーバー側: `UPDATE family_groups SET ... WHERE id = $1 AND updated_at = $2` で UPDATE 行数 = 0 なら 412 Precondition Failed
+   - 失敗時はクライアントに最新状態を返し、再取得後にリトライさせる
+
+2. **アプリ層 advisory lock**:
+   ```sql
+   SELECT pg_advisory_xact_lock(hashtext('family-group:' || $family_id));
+   -- ↑ トランザクション終了で自動解放、同一 family_id への並行 UPDATE を直列化
+   ```
+
+3. **状態の事前検証**:
+   - `migrate-to-personal`: `status = 'frozen' AND archived_at IS NULL` のみ可 (変換後は `status = 'active'`、`source_org_assignment_id = NULL` にセット)
+   - `transfer-ownership`: 同上 + 譲渡先が同グループの `family_members.role = 'admin'` のみ可
+   - `dissolve`: 同上 + 確認パスワード再認証
+
+これらが満たされない場合、**409 Conflict** または **412 Precondition Failed** を返す。
+
+### 4.18 UC-ORG-18: ライセンス使用状況レポート
+
+**アクター**: org_admin / finance
+**フロー**:
+1. `/org/licenses/report` を開く
+2. 表示:
+   - 月別購入推移
+   - 月別使用率 (peaked usage / available)
+   - メンバー別利用状況 (最終ログイン・機能使用回数)
+   - 未使用ライセンスの自動回収候補 (90 日無ログインユーザー)
+3. CSV / PDF 出力 (経理用)
+4. 使用率低下時にアラート (例: 80% 以下が 3 ヶ月続いたら「ダウングレード提案」通知)
+
 ---
 
 ## 5. 機能要件
@@ -308,7 +461,7 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 ### 5.1 F-ORG-001: 組織レコード管理
 
 #### 5.1.1 属性
-- `id`, `name`, `industry` (業種)、`employee_count`、`plan`
+- `id`, `name`, `industry` (業種)、`employee_count`、`plan_key` (`subscription_plans.plan_key` 参照、03 §7.2.7)
 - `subscription_status` (active / suspended / cancelled / trialing)
 - `subscription_expires_at`, `billing_email`
 - `logo_url`, `primary_color` (カラーカスタマイズ Pro 以上)
@@ -365,12 +518,21 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 | ダッシュボード (集計) | ✅ | ✅ | △ (自部署のみ) | ✅ | ✅ |
 | 個別ユーザーデータ | ❌ | ❌ | ❌ | ❌ | ✅ (同意者のみ) |
 | 月次レポート PDF | ✅ | ✅ | ❌ | ✅ | ❌ |
+| 自分の食事記録 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 自分の家族グループ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 同組織メンバーの個別食事 | ❌ | ❌ | ❌ | ❌ | ✅ (同意者のみ、家族領域は不可) |
+| 別組織メンバーのデータ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| ライセンス購入 | ✅ | ❌ | ❌ | ❌ | ❌ |
+| ライセンス割当 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| ライセンス閲覧 | ✅ | ✅ | ❌ | ✅ | ❌ |
+
+> **`org_viewer` の典型ユースケース**: 人事・労務担当者が組織契約状況・利用率レポート等を「読むだけ」で済む役割。個人データ (食事生データ・健康スコアの個別値) には一切アクセス不可。
 
 ### 5.4 F-ORG-004: 招待機能
 
 #### 5.4.1 個別招待
 - Email、ロール、部署、ニックネーム、社員番号 (任意)
-- 招待 URL: `/invite/{token}`
+- 招待 URL: `/invite/org/{token}`
 - 期限: 14 日
 - メール文面: 組織ロゴ + カスタムメッセージ (org_admin が事前設定)
 
@@ -389,7 +551,7 @@ email,role,department,nickname,employee_id,joined_at
 - 結果: エラー件は CSV ダウンロード可
 
 #### 5.4.3 受諾フロー (Phase 1 最重要)
-- `/invite/{token}` ページ作成 (現状未実装)
+- `/invite/org/{token}` ページ作成 (現状未実装)
 - 既存ユーザーならログイン → 紐付け
 - 未登録なら新規登録 (Email は招待 Email で自動入力、変更不可)
 - 受諾後 `user_profiles.organization_id` 設定
@@ -501,10 +663,162 @@ email,role,department,nickname,employee_id,joined_at
 - 自動更新 / キャンセル
 - 未払い時: 7 日後に組織を `suspended` 状態へ (機能制限)
 
-#### 5.9.3 ライセンス管理
+#### 5.9.3 ライセンス管理 (基本)
 - プランごとのメンバー上限
 - 上限超過時: 招待不可 + アラート
 - メンバー追加で従量課金 (オプション)
+
+### 5.11 F-ORG-011: ライセンス管理 (詳細・拡張)
+
+#### 5.11.1 ライセンスプール
+- 組織が購入したライセンスを「プール」で管理
+- プール属性: 総数、使用数、空き数、有効期限、プラン種別
+- 1 組織が複数プール所持可能 (例: Org Standard 50 枚 + Org Pro 20 枚 + 家族同梱 30 枚)
+
+#### 5.11.2 割当方法
+- **手動個別**: 1 メンバーずつ選択して割当
+- **CSV 一括**: 100 名分を CSV で一括割当
+- **招待時自動付与**: 招待受諾時に空きライセンスから自動付与 (オプション)
+- **ロール連動**: 部長以上は Org Pro、一般社員は Org Standard 等のルール設定
+
+#### 5.11.3 回収・再割当
+- **手動回収**: org_admin が任意のタイミングで回収
+- **自動回収**:
+  - メンバー除名時 (即時)
+  - 90 日無ログイン (アラート → 30 日後自動回収、設定可)
+  - 退職 HR Webhook 連携 (Pro 以上)
+- **再割当**: 回収したライセンスをプールに戻し、別メンバーに付与
+
+#### 5.11.4 アップグレード・ダウングレード
+- 組織全体: Standard 全員 → Pro 全員へ一括変更
+- 個別メンバー: 部分的にプラン変更
+- 価格差は日割り精算
+
+#### 5.11.5 残量アラート
+- 残ライセンス < 10 でアラート
+- 残ライセンス = 0 で招待ブロック + 「+追加購入」UI 表示
+- 月末に未使用ライセンス分を自動返金 or 翌月繰越 (プラン契約による)
+
+#### 5.11.6 個人プランとの併用ルール
+- 組織から離脱したら組織ライセンス即無効化
+- ただし個人で別途課金していた場合は個人プラン継続
+- 組織復帰時は両方有効、組織ライセンス優先
+
+#### 5.11.7 機能解放判定ロジック (複数組織所属対応)
+
+**前提**: 1 ユーザーが複数組織に同時所属することを許可する (副業・出向・兼任を想定)。同一ユーザーに対し `org_license_assignments.status = 'active'` のレコードが複数存在しうる。
+
+**プラン優先順位ルール**:
+1. ユーザーの全 active 組織ライセンスを取得
+2. 各ライセンスの `subscription_plans` を解決し、機能パッケージの**和集合**を「組織提供機能セット」とする (例: 組織 A の Org Standard + 組織 B の Org Pro → 両方の機能が解放される)
+3. プラン名表示は最上位プラン (`subscription_plans.display_order` の最大) を採用
+4. 個人プランがあれば、和集合にさらに加算 (個人 Pro 機能も使える)
+5. すべて無ければ Free
+
+```typescript
+function getUserActivePlan(userId: string): PlanInfo {
+  // 1. 全 active 組織ライセンス (複数所属対応)
+  const orgLicenses = getAllActiveOrgLicenses(userId);  // 配列を返す
+
+  // 2. 個人プラン (組織と並列で和集合形成)
+  const personalPlan = getUserPersonalPlan(userId);
+
+  if (orgLicenses.length === 0 && !personalPlan) {
+    return { plan_key: 'free', source: 'default', features: getFreeFeatures(), expires_at: null };
+  }
+
+  // 3. 機能の和集合
+  const featureSet = new Set<string>(getFreeFeatures());
+  for (const lic of orgLicenses) {
+    const plan = getSubscriptionPlan(lic.plan_key);
+    plan.feature_packages.flatMap(getPackageFeatures).forEach(f => featureSet.add(f));
+  }
+  if (personalPlan) {
+    const plan = getSubscriptionPlan(personalPlan.plan_key);
+    plan.feature_packages.flatMap(getPackageFeatures).forEach(f => featureSet.add(f));
+  }
+
+  // 4. 表示用プラン (display_order 最大の組織プラン優先、なければ個人)
+  const displayPlan = orgLicenses.length > 0
+    ? orgLicenses.map(l => getSubscriptionPlan(l.plan_key))
+        .sort((a, b) => b.display_order - a.display_order)[0]
+    : getSubscriptionPlan(personalPlan!.plan_key);
+
+  // 5. 期限は最も早い (どれか 1 つでも切れたら Free 寄りに再評価)
+  const allExpiries = [...orgLicenses.map(l => l.expires_at), personalPlan?.expires_at].filter(Boolean);
+  const earliestExpiry = allExpiries.length > 0 ? new Date(Math.min(...allExpiries.map(d => +new Date(d)))) : null;
+
+  return {
+    plan_key: displayPlan.plan_key,
+    source: orgLicenses.length > 0 ? 'organization' : 'personal',
+    organization_ids: orgLicenses.map(l => l.organization_id),  // 複数
+    features: Array.from(featureSet),
+    expires_at: earliestExpiry,
+  };
+}
+```
+
+**重複請求防止**:
+- 個人プランで Pro 課金中のユーザーが組織から Org Pro ライセンスを受領した場合、システムは個人プラン側の自動更新を一時停止する選択肢を UI で提示 (`/account/billing` に「組織が Pro を提供中です。個人プランを一時停止しますか?」)
+- 一時停止中の個人プランは `personal_subscriptions.paused_until = org_license.expires_at` をセット
+- 組織ライセンス失効時に自動で個人プラン再開 (Stripe Subscription を resume)
+
+**家族グループへの影響**:
+- ユーザーの所属する全組織のうち、家族同梱付きライセンス (`family_addon_seats > 0`) が **1 つでもあれば** 同梱配布対象になる
+- 複数同梱は不可 (家族グループは 1 ユーザー 1 つ)。最初に受領したものが `family_groups.source_org_assignment_id` に記録される
+
+### 5.12 F-ORG-012: 家族プラン同梱配布
+
+#### 5.12.1 概要
+組織契約で社員本人だけでなく **社員の家族 (配偶者・子供)** にも家族管理機能を提供する福利厚生オプション。Org Pro / Enterprise プランで利用可能。
+
+#### 5.12.2 同梱パターン
+- **完全同梱**: 全社員に家族プラン (4 名まで) 自動付与
+- **オプション同梱**: 各社員が自分で「家族プラン申請」 → org_admin 承認 → 付与
+- **段階的拡張**: 基本 4 名、組織拠出で 8 名へ拡張も可
+
+#### 5.12.3 ライセンス紐付け
+```
+Org License Pool (org_pro)
+    ↓ 個別社員に割当
+Member License (org_pro + family_addon)
+    ↓ 家族グループ作成
+Family Group (社員 + 配偶者 + 子供 2 名)
+    ↓ 全員 Pro 機能解放
+```
+
+家族メンバーは組織ライセンスを **間接的に消費** する。社員退職で家族グループも凍結される (個人プランへ移行可能)。
+
+#### 5.12.4 家族メンバー数の管理
+- 各社員のライセンスに `family_addon_seats` 属性を持つ (4 / 8 / 12 等)
+- 家族グループの `member_limit` がこれに連動
+- 社員自身は 1 シート消費しない (ベースライセンスに含まれる)
+
+#### 5.12.5 退職時の家族グループ
+3 つのオプション (退職時にユーザーが選択):
+- **凍結**: データは保持、家族プランは無効化
+- **個人プランへ移行**: 個人で家族プラン (`family_basic` 1,480 円/月 or `family_pro` 2,480 円/月、03 §7.2.7) 契約 → 機能継続
+- **解散**: 家族グループを完全削除
+
+### 5.13 F-ORG-013: ライセンス使用状況分析
+
+#### 5.13.1 使用率レポート
+- 月別購入推移
+- 月別使用率 (peak / available)
+- メンバー別最終ログイン
+- 未使用ライセンス候補リスト
+- 使用率低下時のアラート
+
+#### 5.13.2 ROI レポート (Pro 以上)
+- 1 ライセンスあたりの利用率
+- ライセンス費用 vs 健康改善効果
+- 経営層向けダッシュボード
+
+#### 5.13.3 監査出力
+- ライセンス操作履歴 CSV (経理用)
+- 未使用ライセンスの返金処理データ
+
+> **§5.10 / §5.11-5.13 の順序について**: §5.10 (F-ORG-010 産業医) は当初 §5.10 として書かれ、後追加の §5.11-5.13 (F-ORG-011〜013 ライセンス系) はライセンスフローを連続して読みやすくするため §5.10 の前に配置。番号 5.10 → 5.11 → 5.12 → 5.13 → 5.10 に読み戻る形だが、各セクションは独立に読めるよう自己完結している。
 
 ### 5.10 F-ORG-010: 産業医・保健師連携
 
@@ -512,10 +826,25 @@ email,role,department,nickname,employee_id,joined_at
 - `org_industrial_doctor`: 産業医
 - `org_health_nurse`: 保健師 (将来)
 
-#### 5.10.2 アクセス制御
+#### 5.10.2 アクセス制御 (閲覧範囲の境界)
 - 同意済メンバー (`user_profiles.consent_org_health_data = true`) のみ詳細閲覧
 - 閲覧履歴を `org_health_access_logs` に記録
 - 産業医メモ: `org_health_notes` (本人非公開、産業医のみ)
+
+**閲覧可能な情報** (同一組織の同意済メンバーに限る):
+- 食事記録の集計値 (週次・月次の栄養素、カロリー、PFC バランス)
+- 健康スコア (アプリ算出値)
+- 健診結果 (アップロードされたもの)
+- HbA1c / 血圧 / BMI 等の数値入力データ
+- 食事写真のサムネイル + AI 解析結果サマリ (個別の写真コンテンツ詳細は不可)
+
+**閲覧不可の情報** (組織契約に関わらず、家族領域とプライベートデータの保護):
+- **家族グループ内の食事記録** (`family_groups` 配下のデータ) — 組織同梱ライセンス経由でも不可。本人個人の食事記録のみ
+- 食事写真の原寸画像 (プライバシー保護のためサムネイルのみ)
+- 個別レシピの詳細 (健康指導に関係しない嗜好情報)
+- 同意していないメンバーの一切のデータ
+- 別組織のメンバーのデータ (複数組織所属者でも、産業医の所属組織のデータのみ閲覧可)
+- 退職済みメンバーのデータ (`org_license_assignments.status = 'revoked'` 以降は閲覧不可、ただし退職前の閲覧履歴は監査ログで保持)
 
 #### 5.10.3 連携機能
 - 健診結果 PDF アップロード (将来)
@@ -595,6 +924,10 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS suspended_reason TEXT;
 
 #### 7.1.2 `user_profiles` (department 正規化)
 ```sql
+-- 組織所属 (現状の本番 user_profiles に存在しない場合のみ追加)
+-- 複数組織所属対応 (§5.11.7) のため、メイン所属を表す。
+-- 副業・出向等で複数組織に所属する場合は org_license_assignments を真とし、ここはプライマリ表示用
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS department_id UUID REFERENCES departments(id) ON DELETE SET NULL;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50);
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS joined_org_at DATE;
@@ -695,7 +1028,11 @@ CREATE INDEX idx_org_health_notes_patient ON org_health_notes(patient_id, create
 CREATE TABLE org_subscriptions (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  plan                    VARCHAR(50) NOT NULL,
+  -- 03 §7.2.7 subscription_plans の plan_key を参照 (org_starter / org_standard / org_pro / org_enterprise 等)
+  -- 既存本番に `plan VARCHAR(50)` がある場合は §15.8 の RENAME 戦略で移行
+  plan_key                VARCHAR(100) NOT NULL
+                            REFERENCES subscription_plans(plan_key)
+                            ON UPDATE CASCADE ON DELETE RESTRICT,
   billing_cycle           VARCHAR(20) NOT NULL CHECK (billing_cycle IN ('monthly', 'yearly')),
   amount_jpy              INT NOT NULL,
   currency                VARCHAR(3) NOT NULL DEFAULT 'JPY',
@@ -736,6 +1073,195 @@ CREATE TABLE department_history (
   changed_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   reason                  TEXT
 );
+```
+
+#### 7.2.7 `org_license_pools` (ライセンスプール)
+```sql
+CREATE TABLE org_license_pools (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  plan_key                VARCHAR(100) NOT NULL
+                            REFERENCES subscription_plans(plan_key)
+                            ON UPDATE CASCADE ON DELETE RESTRICT,  -- 03 §7.2.7 参照、'org_*' / 'family_addon' 限定 (アプリ層 + CHECK でバリデーション)
+  total_licenses          INT NOT NULL DEFAULT 0,
+  used_licenses           INT NOT NULL DEFAULT 0,  -- 実際に割当済の数
+  available_licenses      INT GENERATED ALWAYS AS (total_licenses - used_licenses) STORED,
+  family_addon_seats      INT NOT NULL DEFAULT 0,  -- 家族プラン同梱時の家族メンバー上限 (0 = 同梱なし)
+  starts_at               TIMESTAMPTZ NOT NULL,
+  ends_at                 TIMESTAMPTZ NOT NULL,
+  auto_renew              BOOLEAN NOT NULL DEFAULT TRUE,
+  unit_price_jpy          INT NOT NULL,  -- 1 ライセンスあたり月額/年額
+  billing_cycle           VARCHAR(20) NOT NULL CHECK (billing_cycle IN ('monthly', 'yearly')),
+  stripe_subscription_id  VARCHAR(255),
+  notes                   TEXT,
+  created_by              UUID REFERENCES auth.users(id),
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (total_licenses >= used_licenses),
+  CHECK (total_licenses >= 0),
+  CHECK (used_licenses >= 0)
+);
+
+CREATE INDEX idx_org_license_pools_org ON org_license_pools(organization_id);
+CREATE INDEX idx_org_license_pools_active ON org_license_pools(organization_id) WHERE ends_at > NOW();
+```
+
+#### 7.2.8 `org_license_assignments` (ライセンス割当)
+```sql
+CREATE TABLE org_license_assignments (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  license_pool_id         UUID NOT NULL REFERENCES org_license_pools(id) ON DELETE CASCADE,
+  -- organization_id は license_pool_id 経由でも辿れるが、RLS ポリシーと §5.11.7 getUserActivePlan の効率化のため denormalize
+  -- INSERT 時にトリガーで org_license_pools.organization_id を自動コピー、UPDATE 不可
+  organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id                 UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  assigned_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  assigned_by             UUID REFERENCES auth.users(id),
+  revoked_at              TIMESTAMPTZ,
+  revoked_by              UUID REFERENCES auth.users(id),
+  revoke_reason           VARCHAR(50),  -- 'manual', 'inactive_90d', 'left_org', 'auto_revoke', 'plan_change'
+  expires_at              TIMESTAMPTZ,  -- ライセンスプールの ends_at と同じ or それより早い
+  status                  VARCHAR(20) NOT NULL DEFAULT 'active' 
+    CHECK (status IN ('active', 'revoked', 'expired')),
+  -- 家族同梱の場合の使用状況
+  family_seats_used       INT NOT NULL DEFAULT 0,  -- このライセンスから派生する家族メンバー数
+  -- メタ
+  notes                   TEXT,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 同一プールへの重複割当を防ぐ (1 プール 1 ユーザー 1 active のみ)
+-- 注: 1 ユーザーが複数組織の異なるプールから active 割当を受ける「複数組織所属」は許可される (§5.11.7 参照)
+CREATE UNIQUE INDEX idx_org_license_active_per_pool_user
+  ON org_license_assignments(license_pool_id, user_id)
+  WHERE status = 'active';
+CREATE INDEX idx_org_license_pool ON org_license_assignments(license_pool_id, status);
+CREATE INDEX idx_org_license_user ON org_license_assignments(user_id, status);
+```
+
+**RLS ポリシー** (具体的 SQL、`organization_id` denormalize 列を活用):
+
+```sql
+-- SELECT: 本人 or 同組織の org_admin/org_manager/org_viewer
+CREATE POLICY org_license_assignments_select ON org_license_assignments
+  FOR SELECT USING (
+    user_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = auth.uid()
+        AND up.organization_id = org_license_assignments.organization_id
+        AND ARRAY['org_admin', 'org_manager', 'org_viewer']::TEXT[] && up.roles
+    )
+  );
+
+-- INSERT: 同組織の org_admin/org_manager のみ
+CREATE POLICY org_license_assignments_insert ON org_license_assignments
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = auth.uid()
+        AND up.organization_id = org_license_assignments.organization_id
+        AND ARRAY['org_admin', 'org_manager']::TEXT[] && up.roles
+    )
+  );
+
+-- UPDATE (revoke 等): 同組織の org_admin/org_manager のみ
+CREATE POLICY org_license_assignments_update ON org_license_assignments
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = auth.uid()
+        AND up.organization_id = org_license_assignments.organization_id
+        AND ARRAY['org_admin', 'org_manager']::TEXT[] && up.roles
+    )
+  );
+
+-- DELETE: 不可 (履歴保持)
+CREATE POLICY org_license_assignments_no_delete ON org_license_assignments
+  FOR DELETE USING (false);
+```
+
+**トリガー + 行ロック** (具体的 SQL、同時 INSERT 競合対策):
+
+```sql
+-- assignment 追加時に license_pool.used_licenses += 1 (available_licenses は GENERATED で自動計算)
+-- 重要: SELECT ... FOR UPDATE で license_pool 行を排他ロックし、同時 INSERT で total を超過しないよう保証
+CREATE OR REPLACE FUNCTION sync_org_license_pool_usage()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_pool RECORD;
+BEGIN
+  -- INSERT 時 (status = 'active' 前提)
+  IF (TG_OP = 'INSERT' AND NEW.status = 'active') THEN
+    -- 行ロック取得 (同時 INSERT の直列化)
+    SELECT id, organization_id, total_licenses, used_licenses
+      INTO v_pool
+      FROM org_license_pools
+      WHERE id = NEW.license_pool_id
+      FOR UPDATE;
+
+    -- 容量チェック (CHECK 制約より早期に明示エラー)
+    IF v_pool.used_licenses >= v_pool.total_licenses THEN
+      RAISE EXCEPTION 'license_pool_exhausted'
+        USING HINT = 'Pool ' || v_pool.id || ' is full (' || v_pool.total_licenses || ' / ' || v_pool.total_licenses || ')',
+              ERRCODE = 'P0001';  -- アプリ層で 409 Conflict にマップ
+    END IF;
+
+    -- organization_id 自動コピー (denormalize)
+    IF NEW.organization_id IS NULL THEN
+      NEW.organization_id := v_pool.organization_id;
+    END IF;
+
+    -- 加算 (排他ロック中なので race なし)
+    UPDATE org_license_pools
+      SET used_licenses = used_licenses + 1, updated_at = NOW()
+      WHERE id = NEW.license_pool_id;
+
+  -- UPDATE: active → revoked/expired で減算
+  ELSIF (TG_OP = 'UPDATE'
+         AND OLD.status = 'active'
+         AND NEW.status IN ('revoked', 'expired')) THEN
+    -- 行ロック (整合性のため)
+    PERFORM 1 FROM org_license_pools WHERE id = NEW.license_pool_id FOR UPDATE;
+    UPDATE org_license_pools
+      SET used_licenses = GREATEST(used_licenses - 1, 0), updated_at = NOW()
+      WHERE id = NEW.license_pool_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE TRIGGER trg_org_license_pool_usage
+  BEFORE INSERT OR UPDATE ON org_license_assignments
+  FOR EACH ROW EXECUTE FUNCTION sync_org_license_pool_usage();
+```
+
+**ステータス遷移**:
+```
+active
+  ├─→ revoked   (org_admin / HR Webhook / 90 日無ログイン自動)
+  └─→ expired   (バッチ: org_license_pools.ends_at 経過時に自動遷移)
+```
+- バッチ: 日次 (UTC 02:00) に `org_license_pools.ends_at < NOW()` のプールを検索 → 紐付く全 assignment の `status = 'expired'`、`expires_at = NOW()` をセット
+- `expired` 遷移時に紐付く `family_groups.source_org_assignment_id` を持つグループを §4.17 凍結フローへ
+- `expired` への手動遷移は不可 (期限経過のみ)
+
+#### 7.2.9 `org_license_audit_log`
+```sql
+CREATE TABLE org_license_audit_log (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id         UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  pool_id                 UUID REFERENCES org_license_pools(id),
+  assignment_id           UUID REFERENCES org_license_assignments(id),
+  actor_id                UUID REFERENCES auth.users(id),
+  action_type             VARCHAR(50) NOT NULL,  -- 'pool_purchased', 'pool_extended', 'license_assigned', 'license_revoked', 'pool_expired'
+  details                 JSONB DEFAULT '{}',
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_org_license_audit_org ON org_license_audit_log(organization_id, created_at DESC);
+```
 
 CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DESC);
 ```
@@ -832,7 +1358,7 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 #### 8.4.5 `POST /api/org/invites/{id}/resend`
 **説明**: 再送
 
-#### 8.4.6 `GET /api/invite/{token}`
+#### 8.4.6 `GET /api/org/invites/{token}`
 **説明**: 招待トークン検証 (受諾画面用、認証不要)
 **レスポンス**:
 ```json
@@ -844,8 +1370,13 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 }
 ```
 
-#### 8.4.7 `POST /api/invite/{token}/accept`
-**説明**: 招待受諾 (認証必須)
+#### 8.4.7 `POST /api/org/invites/{token}/accept`
+**説明**: 組織招待受諾 (認証必須)。家族招待 (`/api/family/invites/{token}/accept`) とは独立のエンドポイント。
+
+> **招待エンドポイント命名規則 (重要)**:
+> - 組織招待: `/api/org/invites/*`、UI URL: `/invite/org/{token}`、有効期限 **14 日** (人事承認の往復を考慮)
+> - 家族招待: `/api/family/invites/*`、UI URL: `/invite/family/{token}`、有効期限 **7 日** (家族間は短期想定)
+> - ルーティングは URL プレフィックスで完全分離。プレフィックスなしの共通 `/invite/{token}` は使用しない
 
 ### 8.5 チャレンジ
 
@@ -895,6 +1426,61 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 #### 8.8.3 `POST /api/org/health/patients/{userId}/notes`
 **説明**: 産業医メモ追加
 
+#### 8.8.4 `POST /api/org/health/patients/{userId}/ai-advice` ⭐ (Org Pro 以上)
+**説明**: 同意済メンバーの食事+健康データを基に Claude 3.5 Sonnet で個別アドバイス生成
+
+**アクセス制御** (server-side 検証ロジック必須):
+```typescript
+// 1. 呼び出し元のロール検証
+const caller = await getUserProfile(auth.uid());
+if (!caller.roles.includes('org_industrial_doctor')) return 403;
+
+// 2. 対象ユーザーの取得 + 組織一致チェック
+const target = await getUserProfile(userId);
+if (!target) return 404;
+if (target.organization_id !== caller.organization_id) return 403;  // 別組織不可
+
+// 3. 同意確認
+if (!target.consent_org_health_data) return 403;
+
+// 4. 退職者は閲覧不可
+if (!target.is_active_in_org) return 403;
+
+// 5. プラン確認 (Org Pro 以上)
+const plan = await getOrgActivePlan(caller.organization_id);
+if (!['org_pro', 'org_enterprise'].includes(plan.plan_key)) return 402; // Payment Required
+
+// 6. アクセスログ記録 (org_health_access_logs)
+await logHealthAccess({ doctor_id: caller.id, target_id: userId, action: 'ai_advice' });
+
+// ... LLM 呼び出し
+```
+
+家族領域 (`family_groups` 配下) は本 API では一切閲覧不可 (RLS と Edge Function 両方でガード)。
+
+**呼び出し先 Edge Function**: `supabase/functions/industrial-doctor-advice/index.ts` (新規実装)
+
+**入力**:
+```typescript
+{
+  user_id: UUID,
+  period_start: DATE,
+  period_end: DATE,
+  focus_areas?: ('nutrition' | 'sleep' | 'stress' | 'weight' | 'lifestyle')[]
+}
+```
+
+**処理**:
+1. 対象期間の `meals` 集計 (栄養素 / 食事パターン)
+2. `health_checkups` の最新数値 (HbA1c / BMI / 血圧)
+3. `user_performance_checkins` の睡眠・疲労・心拍 (※ 産業医ポリシー §7.4 拡張前提)
+4. Claude 3.5 Sonnet API へ食事改善提案 + 生活習慣指導文を生成依頼
+5. 結果を `org_health_notes` に AI 提案として記録 (`note_type = 'ai_advice'`)
+
+**LLM 使用量計測**: organization_id 必須付与 (組織 quota 消費)
+
+**プラン制限**: `subscription_plans.feature_packages` に `industrial_doctor_ai` パッケージが含まれる組織のみ。`org_pro` / `org_enterprise` で利用可。
+
 ### 8.9 課金・契約
 
 #### 8.9.1 `GET /api/org/subscription`
@@ -907,6 +1493,100 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 
 #### 8.10.1 `GET /api/org/audit-logs`
 **クエリ**: `?action_type=...&actor_id=...&limit=50&offset=0`
+
+### 8.11 ライセンス管理
+
+#### 8.11.1 `GET /api/org/licenses`
+**説明**: 組織のライセンスプール一覧 (有効・期限切れ・全件)
+**レスポンス**:
+```json
+{
+  "pools": [
+    {
+      "id": "uuid",
+      "plan_key": "org_pro",
+      "total_licenses": 100,
+      "used_licenses": 67,
+      "available_licenses": 33,
+      "family_addon_seats": 4,
+      "ends_at": "2026-12-31T23:59:59Z"
+    }
+  ],
+  "total_active": 67
+}
+```
+
+#### 8.11.2 `POST /api/org/licenses/purchase`
+**説明**: ライセンス追加購入
+**リクエスト**:
+```json
+{
+  "plan_key": "org_pro",
+  "quantity": 100,
+  "billing_cycle": "monthly",
+  "include_family_addon": true,
+  "family_seats_per_member": 4
+}
+```
+→ Stripe 決済 → `org_license_pools` に新規行 or 既存プールに増枠
+
+#### 8.11.3 `POST /api/org/licenses/extend`
+**説明**: 既存プールの期間延長 (更新)
+
+#### 8.11.4 `GET /api/org/licenses/assignments`
+**クエリ**: `?status=active&pool_id=...&user_id=...`
+
+#### 8.11.5 `POST /api/org/licenses/assign`
+**説明**: 個別割当
+```json
+{
+  "pool_id": "uuid",
+  "user_id": "uuid",
+  "notes": "優先順位高"
+}
+```
+
+#### 8.11.6 `POST /api/org/licenses/bulk-assign`
+**説明**: CSV 一括割当
+**リクエスト**: `multipart/form-data` with CSV
+**CSV**: `email,plan_key,assignment_note`
+
+#### 8.11.7 `POST /api/org/licenses/auto-assign`
+**説明**: 未割当の組織メンバー全員に空きライセンスを自動割当
+
+#### 8.11.8 `DELETE /api/org/licenses/assignments/{id}`
+**説明**: ライセンス回収 (revoke)
+**リクエスト**:
+```json
+{
+  "reason": "manual",
+  "notify_user": true
+}
+```
+
+#### 8.11.9 `POST /api/org/licenses/auto-revoke-inactive`
+**説明**: 90 日無ログインユーザーから自動回収
+
+#### 8.11.10 `GET /api/org/licenses/usage-report`
+**クエリ**: `?period=30d|90d|1y`
+**レスポンス**: 利用率推移、未使用候補リスト、ROI 指標
+
+#### 8.11.11 `GET /api/org/licenses/audit-log`
+**説明**: ライセンス操作履歴
+
+### 8.12 家族プラン同梱管理
+
+#### 8.12.1 `GET /api/org/family-addon`
+**説明**: 家族プラン同梱の状態と利用状況
+
+#### 8.12.2 `POST /api/org/family-addon/enable`
+**説明**: 組織契約に家族プラン同梱を追加
+
+#### 8.12.3 `GET /api/org/family-addon/usage`
+**説明**: 各社員の家族グループ利用状況 (匿名化集計、家族の食事記録は閲覧不可)
+
+#### 8.12.4 `POST /api/org/family-addon/expand-seats`
+**説明**: 家族メンバー上限を増やす (4 → 8 等)
 
 ---
 
@@ -944,7 +1624,7 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 - 「送信」ボタン → 進捗バー
 - 完了後、エラー件 CSV ダウンロード
 
-### 9.6 `/invite/{token}` (受諾画面、最重要)
+### 9.6 `/invite/org/{token}` (受諾画面、最重要)
 - 組織ロゴ + 組織名
 - 招待者、ロール、部署表示
 - 期限表示
@@ -1001,6 +1681,59 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 - 自分が所属する組織情報
 - 部署内ランキング (匿名)
 - 進行中のチャレンジ
+
+### 9.16 `/org/licenses` (ライセンス管理、新規)
+レイアウト:
+```
+┌──────────────────────────────────────────────────┐
+│ ライセンス管理                                     │
+├──────────────────────────────────────────────────┤
+│ 現在保有                                           │
+│ ┌────────────────┐ ┌────────────────┐           │
+│ │ Org Pro        │ │ Family Addon   │           │
+│ │ 100 / 100 枠   │ │ 同梱 (4 名 / 人) │           │
+│ │ 使用 67 / 残 33 │ │ 使用 268 名     │           │
+│ │ 期限: 2026-12-31│ │                 │           │
+│ └────────────────┘ └────────────────┘           │
+│                                                   │
+│ [ + ライセンス追加 ]  [ プラン変更 ]               │
+│                                                   │
+├──────────────────────────────────────────────────┤
+│ 割当状況                                           │
+│ ┌────────────────────────────────────────────┐  │
+│ │ ✓ 田中太郎       Org Pro   2024-04-01 ~       │ │
+│ │ ✓ 佐藤花子       Org Pro   2024-04-15 ~       │ │
+│ │ ✗ 山田次郎       回収済   2026-03-31 退職     │ │
+│ │ ⚠ 未割当 33 名                                │ │
+│ │   [ 自動割当 ]  [ CSV 一括割当 ]              │ │
+│ └────────────────────────────────────────────┘  │
+│                                                   │
+│ [ 利用状況レポート ]  [ 監査ログ ]                  │
+└──────────────────────────────────────────────────┘
+```
+
+機能:
+- プール一覧 (プラン別、残数表示)
+- 割当 / 回収 (個別 / 一括)
+- 90 日無ログイン候補リスト
+- 家族プラン同梱状況
+- ROI レポート
+
+### 9.17 `/org/licenses/purchase` (購入フロー)
+- ステップ 1: プラン選択 (Org Standard / Pro / Enterprise)
+- ステップ 2: 数量入力
+- ステップ 3: 家族プラン同梱オプション
+- ステップ 4: 期間 (月額 / 年額)
+- ステップ 5: 金額確認 + Stripe 決済
+- ステップ 6: 完了 (自動でプール更新)
+
+### 9.18 `/org/licenses/usage-report` (利用状況レポート)
+- 月別購入推移 (折れ線)
+- 月別使用率
+- 未使用候補リスト (90 日無ログイン)
+- 「自動回収」「手動回収」ボタン
+- ROI 指標 (Pro)
+- CSV / PDF 出力
 - お知らせ一覧
 
 ---
@@ -1037,8 +1770,8 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 ## 11. 段階的実装計画
 
 ### Phase 1: 招待受諾フロー完成 (1 週間)
-- `/invite/{token}` 受諾画面
-- API: `GET /api/invite/{token}`, `POST /api/invite/{token}/accept`
+- `/invite/org/{token}` 受諾画面
+- API: `GET /api/org/invites/{token}`, `POST /api/org/invites/{token}/accept`
 - 招待メール自動送信 (Resend)
 - メンバー除名 API + UI
 
@@ -1062,8 +1795,21 @@ CREATE INDEX idx_dept_history_user ON department_history(user_id, changed_at DES
 - 請求書 PDF
 - プラン変更フロー
 
+### Phase 5.5: ライセンス管理・退職フロー (4 週間) ⭐
+- F-ORG-011 (`org_license_pools` / `org_license_assignments` / `org_license_audit_log`) 構築
+- ライセンス購入・配布・回収・再割当 API + UI
+- F-ORG-012 家族プラン同梱配布
+- UC-ORG-17 退職時 family owner 処理:
+  - 凍結バッチ (HR Webhook → revoke → `family_groups.status='frozen'`)
+  - `POST /api/family/groups/{id}/migrate-to-personal`
+  - `POST /api/family/groups/{id}/transfer-ownership`
+  - `POST /api/family/groups/{id}/dissolve`
+  - 猶予期間タイマー + 期限経過バッチ (`freeze_grace_until` → archived)
+- 複数組織所属対応 `getUserActivePlan()` 改訂 (機能の和集合)
+- 個人プランとの併用 (一時停止/再開ロジック、Stripe Subscription pause/resume)
+
 ### Phase 6: 産業医・SSO・SLA (6 週間)
-- 産業医ロール + アクセス制御
+- 産業医ロール + アクセス制御 (家族不可境界の RLS)
 - 同意フロー
 - SAML SSO (Enterprise)
 - 監査ログ強化
@@ -1147,6 +1893,43 @@ sato.hanako@example.com,org_manager,開発部,佐藤花子,E002,2023-04-01
 - `03-operator-admin.md`
 - `docs/architecture/multi-tenancy.md` (組織テナント分離設計)
 - `docs/security/rls-policies.md`
+
+---
+
+## 15. 保持資産リスト (clean-build 方針)
+
+実装は **`docs/design/00-existing-cleanup.md`** で確定した clean-build 方針に従う。実運用前のため、中途半端な既存実装を削除し要件通りに新規構築する。
+
+### 15.1 保持する Edge Functions
+- `knowledge-gpt`, `generate-menu-v5`, `food-recognition`, `generate-hint`
+- `analyze-meal-photo`, `analyze-fridge`, `analyze-health-checkup`, `classify-photo`
+- `_shared/llm-usage.ts`, `_shared/allergy.ts`
+
+### 15.2 保持する DB マスター・基盤テーブル
+- `dataset_recipes`, `dataset_ingredients`, `dataset_embeddings`
+- `ingredient_match_cache`, `embedding_jobs`
+- `meals`, `planned_meals`, `user_daily_meals`, `food_recognitions`, `meal_photos`
+- `health_checkups`, `user_performance_checkins`, `sport_presets`
+- `auth.users`, `user_profiles` (基本フィールドのみ、roles 列は新拡張)
+- `user_push_tokens`, `app_logs`
+
+### 15.3 保持する Web App ドメインロジック
+- `src/app/api/meals/`, `src/app/api/meal-plans/`
+- `src/app/api/food-recognition/`, `src/app/api/health/`, `src/app/api/nutrition/`
+- `src/app/api/recipes/`, `src/app/api/cron/`
+- `src/components/` の汎用 UI 部品
+
+### 15.4 保持する Mobile App
+- `apps/mobile/` の WebView ハイブリッド構成全体
+
+### 15.5 削除対象 (詳細は `docs/design/00-existing-cleanup.md`)
+- 既存 admin / super-admin UI 全 13 ページ → 要件 03 §9 で再構築
+- 既存 admin / super-admin API 全 13 系統 → 要件 03 §8 で再構築
+- 旧パス API (`/api/org/users`, `/api/org/settings`, `/api/org/stats`, `/api/org/departments` 旧形式)
+- family 既存実装 (`/api/family/groups`, `/api/family/members`) — 要件 01 と乖離
+- 壊れている `/api/account/export` (旧 `meal_plans` テーブル参照)
+- obsolete `src/lib/plan-limits.ts` (単一列依存)
+- 本番ダッシュボード直接適用された中途半端テーブル群 (`family_groups`, `organizations`, `org_members`, `departments`, `family_members`, `family_invites`, `organization_invites`, `organization_challenges`, `admin_audit_logs`)
 
 ---
 
