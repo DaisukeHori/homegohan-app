@@ -423,14 +423,15 @@ export async function POST(req: Request) {
     }
   }
 
-  // INSERT
-  const { data: log, error } = await supabase.from('meal_logs').insert({
+  // INSERT (実 meals テーブルは user_id / eaten_at / meal_type / photo_url / memo / is_sandbox 列、
+  // 栄養値は meal_nutrition_estimates 側で別途扱う)
+  const { data: meal, error } = await supabase.from('meals').insert({
     user_id: userId,
-    dish_name: body.dishName,
-    calories: body.calories,
-    // ...
+    eaten_at: body.eatenAt,
+    meal_type: body.mealType,
+    photo_url: body.photoUrl,
+    memo: body.memo,
     is_sandbox: body.sandbox,
-    source,  // 計測用
   }).select().single();
 
   if (error) return Response.json({ error: { code: 'internal_error', message: error.message } }, { status: 500 });
@@ -438,7 +439,7 @@ export async function POST(req: Request) {
   // first_bite バッジ付与 (既存ロジック流用)
   const badgeResult = await tryAwardBadge(userId, 'first_bite');
 
-  return Response.json({ meal_log_id: log.id, badge_awarded: badgeResult });
+  return Response.json({ meal_id: meal.id, badge_awarded: badgeResult });
 }
 ```
 

@@ -170,13 +170,14 @@ HANDSON_TOUR_ROLLOUT_PERCENTAGE=100
 ```sql
 BEGIN;
 DROP INDEX IF EXISTS idx_user_profiles_handson_tour_pending;
-DROP INDEX IF EXISTS idx_meal_logs_user_non_sandbox;
+DROP INDEX IF EXISTS idx_meals_user_non_sandbox;
 DROP INDEX IF EXISTS uniq_user_sandbox_meal;
+DROP INDEX IF EXISTS uniq_user_sandbox_daily_meal;
 ALTER TABLE user_profiles
   DROP COLUMN IF EXISTS handson_tour_completed_at,
   DROP COLUMN IF EXISTS handson_tour_skipped_at;
-ALTER TABLE meal_logs DROP COLUMN IF EXISTS is_sandbox;
-ALTER TABLE weekly_menus DROP COLUMN IF EXISTS is_sandbox;
+ALTER TABLE meals DROP COLUMN IF EXISTS is_sandbox;
+ALTER TABLE user_daily_meals DROP COLUMN IF EXISTS is_sandbox;
 DELETE FROM badges WHERE code = 'tutorial_complete';
 COMMIT;
 ```

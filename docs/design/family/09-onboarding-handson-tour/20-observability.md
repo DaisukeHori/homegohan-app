@@ -224,7 +224,7 @@ SELECT
   CASE WHEN c.completed_at > 'epoch' THEN 'completed' ELSE 'skipped' END AS group_,
   COUNT(*) AS users,
   COUNT(*) FILTER (WHERE EXISTS (
-    SELECT 1 FROM meal_logs ml
+    SELECT 1 FROM meals ml
     WHERE ml.user_id = c.user_id
     AND ml.eaten_at BETWEEN c.completed_at + INTERVAL '6 days' AND c.completed_at + INTERVAL '7 days'
     AND ml.is_sandbox = false
