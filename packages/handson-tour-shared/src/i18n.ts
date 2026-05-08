@@ -110,7 +110,7 @@ export const HANDSON_TOUR_I18N_JA = {
       a11y_title: 'ステップ 4 / 5、{nickname} さん、もう 2 つバッジを獲得しています',
     },
 
-    // ====== Step 4 卒業 (12 キー) ======
+    // ====== Step 4 卒業 (14 キー) ======
     step4: {
       // saving
       saving_text: '完了処理中...',
@@ -120,6 +120,10 @@ export const HANDSON_TOUR_I18N_JA = {
       subtitle: '{nickname} さん、これで homegohan を使いこなせます',
       badge_label: '獲得バッジ: 使い方マスター',
       home_button: 'ホームへ',
+
+      // badge disclaimer (app store 審査対策 / Q16 リスク低減策 #3)
+      badge_disclaimer_title: '',
+      badge_disclaimer_body: 'このバッジは「使い方を学んだ記念」として表示されます。\n課金や特典、商品購入には一切連動しません。',
 
       // error
       error_title: '電波が悪いみたい',

@@ -203,6 +203,16 @@ export default function HandsonTourGraduate() {
               <Text style={styles.badgeLabel}>{i18n.step4.badge_label}</Text>
             </View>
 
+            {/* バッジ disclaimer */}
+            <Text
+              style={styles.badgeDisclaimer}
+              testID="tour-step-4-badge-disclaimer"
+              accessibilityLabel="バッジの注意書き"
+              accessibilityRole="text"
+            >
+              {i18n.step4.badge_disclaimer_body}
+            </Text>
+
             {/* ホームへボタン */}
             <Pressable
               testID="tour-step-4-go-home"
@@ -322,6 +332,15 @@ const styles = StyleSheet.create({
     color: '#2563EB',
     fontWeight: '600',
     textAlign: 'center',
+  },
+  badgeDisclaimer: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 32,
+    maxWidth: 280,
+    paddingHorizontal: 8,
   },
   homeButton: {
     backgroundColor: '#2563EB',
