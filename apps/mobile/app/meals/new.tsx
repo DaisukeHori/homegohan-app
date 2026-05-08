@@ -187,7 +187,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
 };
 
 // ─── Sandbox asset ───────────────────────────────────
-const SANDBOX_SAMPLE_IMAGE = require("../../assets/handson-tour/sample-meal.jpg");
+const SANDBOX_SAMPLE_IMAGE = require("../../assets/handson-tour/sample-meal.webp");
 
 // ─── Component ───────────────────────────────────────
 export default function MealNewPage() {
