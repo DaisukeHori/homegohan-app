@@ -45,9 +45,10 @@ env:
     id: "login-screen"
 
 # Step 5: 既存ユーザーでログインして home 到達
-- clearText
+# clearText (引数なし) は Maestro 2.x で不正。eraseText に変更。 (#639)
 - tapOn:
     id: "email-input"
+- eraseText: 100
 - inputText: ${E2E_USER_EMAIL}
 - tapOn:
     id: "password-input"

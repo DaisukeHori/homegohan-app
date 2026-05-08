@@ -1,0 +1,10 @@
+appId: com.homegohan.app
+---
+# _shared/early-exit.yaml
+# mock サーバーなど特定環境でのみ実行すべき flow から呼ぶ「早期終了」共通フロー。
+# このファイルを runFlow で呼ぶと、以降のステップをスキップして flow を正常終了させる。
+# 使い方:
+#   - runFlow: ../_shared/early-exit.yaml
+# 上記呼び出し後のステップは実行されない (Maestro は flow ファイルの末尾まで実行したものとみなす)。
+
+# 何もせず正常終了 — ここに何もないことが「スキップ」を意味する
