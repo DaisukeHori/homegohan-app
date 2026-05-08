@@ -1,9 +1,12 @@
 // handson-tour/menu.tsx — Step 2 AI による献立追加
 // Canonical: docs/design/family/09-onboarding-handson-tour/04-step2-menu.md
+//
+// V4GenerateModal は React Native <Modal> を使うため、TourOverlay も別の <Modal> で
+// ラップして V4GenerateModal の上に重ねる必要がある (TourSandboxWrapper は非使用)。
 
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Modal, View } from 'react-native';
 
 import {
   HANDSON_TOUR_CONSTANTS,
@@ -15,8 +18,9 @@ import {
 } from '@homegohan/handson-tour-shared';
 import type { SubStepOfStep2 } from '@homegohan/handson-tour-shared';
 
+import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
+import { TourOverlay } from '../../src/handson-tour/TourOverlay';
 import { useProfile } from '../../src/providers/ProfileProvider';
-import { TourSandboxWrapper } from '../../src/handson-tour/TourSandboxWrapper';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
 
@@ -166,31 +170,44 @@ export default function HandsonTourMenu() {
     }
   };
 
+  const target = STEP2_SUB_STEP_TO_TARGET[subStep];
+  const targetTestId = typeof target === 'string' ? target : null;
+  const targetTestIds = Array.isArray(target) ? target : undefined;
+
   return (
     <View style={{ flex: 1 }} testID="tour-step-2">
-      <TourSandboxWrapper
-        subStep={subStep}
-        subStepToTarget={STEP2_SUB_STEP_TO_TARGET}
-        overlay={{
-          bubble: getBubble(),
-          progress: { current: 3, total: 5 },
-          primaryAction: getPrimaryAction(),
-          showSkip: false,
-          onSkip: handleSkip,
-          accessibilityLabel: i18n.step2.a11y_title,
+      {/* V4GenerateModal は内部で React Native <Modal> を使うため常時表示 */}
+      <V4GenerateModal
+        mode="sandbox"
+        visible={true}
+        onClose={() => {
+          // Tour 中は onClose を無効化 (TourOverlay のスキップで制御)
         }}
-        childProps={{
-          mode: 'sandbox',
-          initialFlags: { no_cook: true },
-          prefilled: MOCK_MENU_RESPONSE,
-          loadingDurationMs: HANDSON_TOUR_CONSTANTS.STEP2_LOADING_DURATION_MS,
-          apiOptions: { source: 'handson_tour', sandbox: true },
-        }}
+        prefilled={MOCK_MENU_RESPONSE}
+        loadingDurationMs={HANDSON_TOUR_CONSTANTS.STEP2_LOADING_DURATION_MS}
+        apiOptions={{ source: 'handson_tour', sandbox: true }}
         onSandboxComplete={handleSandboxComplete}
+      />
+
+      {/* TourOverlay を別 Modal でラップして V4GenerateModal の上に重ねる */}
+      <Modal
+        visible={true}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={handleSkip}
       >
-        {/* P3-B が V4GenerateModal に mode='sandbox' サポートを追加する。現在はプレースホルダー */}
-        <View style={{ flex: 1 }} />
-      </TourSandboxWrapper>
+        <TourOverlay
+          targetTestId={targetTestId}
+          targetTestIds={targetTestIds}
+          bubble={getBubble()}
+          progress={{ current: 3, total: 5 }}
+          primaryAction={getPrimaryAction()}
+          showSkip={false}
+          onSkip={handleSkip}
+          accessibilityLabel={i18n.step2.a11y_title}
+        />
+      </Modal>
     </View>
   );
 }
