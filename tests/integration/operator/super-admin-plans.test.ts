@@ -57,16 +57,16 @@ describe('GET /api/super-admin/plans', () => {
     expect(body).toHaveProperty('meta');
     expect(Array.isArray(body.data)).toBe(true);
 
-    // Canonical 9 plan_keys (cross/09 design)
+    // Canonical 9 plan_keys (operator/01-data-model.md §3.2 seed)
     const canonicalPlanKeys = [
       'free',
-      'personal_lite',
-      'personal_standard',
-      'personal_pro',
-      'family_standard',
+      'pro',
+      'family_basic',
       'family_pro',
+      'family_addon',
       'org_starter',
-      'org_growth',
+      'org_standard',
+      'org_pro',
       'org_enterprise',
     ];
 
