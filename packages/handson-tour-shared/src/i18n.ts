@@ -11,6 +11,174 @@
 //   {current}                - 例: "2"          - a11y progress
 //   {total}                  - 例: "5"          - a11y progress
 
+export const HANDSON_TOUR_I18N_EN = {
+  tour: {
+    // ====== Step 0 Welcome (8 keys) ======
+    step0: {
+      title: 'Welcome, {nickname}!',
+      subtitle: "Let's try 3 handy features together (about 90 seconds)",
+      start_button: 'Get started',
+      later_button: 'Maybe later',
+      a11y_title: 'Step 1 / 5, welcome screen for {nickname}',
+      a11y_start_hint: 'Tap to start the hands-on tour',
+      a11y_later_hint: 'Tap to exit the tutorial',
+    },
+
+    // ====== Step 1 Add a photo (14 keys) ======
+    step1: {
+      // intro
+      intro_title: 'Log meals with just one photo',
+      intro_hint: 'Tap to continue',
+
+      // sub-steps
+      camera_bubble: 'Take a photo or choose from your gallery',
+      result_title: 'AI auto-detection',
+      result_bubble_with_target:
+        "About {percent}% of {nickname}'s daily goal of {target_kcal} kcal",
+      result_bubble_no_target: 'AI automatically identified the dish and nutrition',
+      save_bubble: 'Just save — your daily log is complete',
+
+      // buttons
+      next_button: 'Next',
+      save_button: 'Save',
+
+      // error
+      error_title: 'Could not save',
+      error_subtitle: 'Check your connection and try again',
+      error_retry_button: 'Try again',
+      error_skip_button: 'Later',
+
+      // a11y
+      a11y_title: 'Step 2 / 5, add a meal from a photo',
+      a11y_result_announce:
+        "Chicken karaage set meal, 780 kcal. {percent}% of {nickname}'s goal of {target_kcal} kcal.",
+    },
+
+    // ====== Step 2 AI meal plan (14 keys) ======
+    step2: {
+      intro_title: "Plan tomorrow's meals with one tap",
+      intro_hint: 'Tap to continue',
+
+      flags_bubble: 'Choose your mood and conditions (currently "Skip cooking" is checked)',
+      note_bubble: 'You can add a free note (optional)',
+      generate_bubble: 'Tap to let AI create your meal plan',
+
+      result_title: "A meal plan tailored to {nickname}",
+      result_bubble_full: 'Excluding {exclude_list} — {cooking_experience_text} instructions',
+      result_bubble_no_exclude: '{cooking_experience_text} instructions',
+
+      add_bubble: 'Add to meal plan',
+
+      next_button: 'Next',
+      generate_button: 'Generate',
+      add_button: 'Add to meal plan',
+
+      // error
+      error_title: 'Could not add to meal plan',
+      error_subtitle: 'Check your connection and try again',
+      error_retry_button: 'Try again',
+      error_skip_button: 'Later',
+
+      // a11y
+      a11y_title: 'Step 3 / 5, create a meal plan with AI',
+      a11y_result_announce: 'Ginger pork stir-fry, 620 kcal, 20 min cooking time.',
+    },
+
+    // ====== Step 3 Badge check (13 keys) ======
+    step3: {
+      // loading
+      loading_text: 'Checking badges...',
+
+      // intro
+      intro_title: '{nickname}, you already earned 2 more!',
+      intro_hint: 'Tap to continue',
+
+      // badge-specific bubbles
+      first_bite_title: 'First bite',
+      first_bite_bubble: 'You logged a meal with a photo once',
+      planner_title: 'Planner',
+      planner_bubble: 'You created a meal plan once',
+      tutorial_complete_title: 'App Master',
+      tutorial_complete_bubble: "You'll receive it on the next screen",
+
+      next_button: 'Next',
+
+      // error
+      error_title: 'Could not load badge info',
+      error_retry_button: 'Try again',
+      error_skip_button: 'Later',
+
+      // a11y
+      a11y_title: 'Step 4 / 5, {nickname}, you already earned 2 badges',
+    },
+
+    // ====== Step 4 Graduate (13 keys) ======
+    step4: {
+      // saving
+      saving_text: 'Processing...',
+
+      // graduate
+      title: 'Congratulations! 🎉',
+      subtitle: '{nickname}, you are now a homegohan pro',
+      badge_label: 'Badge earned: App Master',
+      home_button: 'Go to Home',
+
+      // badge disclaimer (app store review / Q16 risk mitigation #3)
+      badge_disclaimer_title: '',
+      badge_disclaimer_body:
+        'This badge is displayed as a "memento for learning the app." It is not linked to any charges, benefits, or product purchases in any way.',
+
+      // error
+      error_title: 'Connection seems weak',
+      error_subtitle: 'Please wait a moment and try again',
+      retry_button: 'Try again',
+      error_later_button: 'Later',
+
+      // a11y
+      a11y_title: 'Step 5 / 5, graduation screen',
+      a11y_announce: 'Congratulations! You earned the App Master badge.',
+    },
+
+    // ====== Step 5 Normal home + welcome toast (2 keys) ======
+    step5: {
+      welcome_toast: 'Go at your own pace from here, {nickname}',
+      a11y_toast_announce: 'Go at your own pace from here, {nickname}.',
+    },
+
+    // ====== cooking_experience text (3 keys) ======
+    cooking_experience: {
+      beginner: 'Easy enough for beginners',
+      intermediate: 'Standard cooking steps',
+      advanced: 'For experienced cooks',
+    },
+
+    // ====== shared a11y (9 keys) ======
+    a11y: {
+      overlay_label: 'How-to guide',
+      progress_label: 'Step {current} / {total}',
+      next_label: 'Go to next step',
+      skip_label: 'Exit tutorial',
+      save_label: 'Save meal',
+      add_to_menu_label: 'Add to meal plan',
+      home_label: 'Go to home screen',
+      retry_label: 'Try again',
+      spotlight_target_hint: 'Description of highlighted element',
+    },
+
+    // ====== common text (6 keys) ======
+    common: {
+      next: 'Next',
+      back: 'Back',
+      cancel: 'Cancel',
+      ok: 'OK',
+      retry: 'Try again',
+      skip: 'Later',
+    },
+  },
+} as const;
+
+export type HandsonTourI18nEn = typeof HANDSON_TOUR_I18N_EN;
+
 export const HANDSON_TOUR_I18N_JA = {
   tour: {
     // ====== Step 0 ウェルカム (8 キー) ======
