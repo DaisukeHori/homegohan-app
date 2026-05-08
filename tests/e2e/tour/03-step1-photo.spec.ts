@@ -29,9 +29,26 @@ test.describe("Tour - Step 1: 写真追加", () => {
     }
   });
 
-  // TODO: testID tour-step-1-intro 未実装、別 PR で対応
-  test.skip("Step 1 intro 吹き出しが表示される (tour-step-1-intro)", () => {
-    // intro 吹き出し (tour-step-1-intro) が実装されたら有効化する
+  test("Step 1 intro マーカー (tour-step-1-intro) が DOM に存在する", async ({ page }) => {
+    const email = generateTestEmail("e2e-tour-s1-intro");
+    userId = await signupAsNewUser(page, email);
+
+    if (!userId) {
+      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
+      return;
+    }
+
+    // Step 0 表示確認
+    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
+
+    // 「はじめる」をクリックして Step 1 (photo ページ) へ
+    await page.getByTestId("tour-step-0-start").click();
+
+    // photo ページに遷移後、subStep 1.1 (intro) の間 tour-step-1-intro が DOM に存在する
+    // display:none のため isVisible() ではなく count() で DOM 存在を確認
+    const introLocator = page.getByTestId("tour-step-1-intro");
+    const count = await introLocator.count();
+    expect(count).toBe(1);
   });
 
   test("Step 1: meal-camera-button が Spotlight ターゲットとして表示される", async ({ page }) => {

@@ -51,6 +51,10 @@ jobs:
           PLAYWRIGHT_BASE_URL: ${{ github.event.inputs.base_url || 'https://homegohan-app.vercel.app' }}
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # tour/ の signupViaApi (admin API) と service_role DB 操作に必要
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         # PR では認証不要の smoke テストのみ実行する。
         # GitHub Actions の Egress IP から Supabase Auth へのログインが
         # rate limit / 遅延で失敗し 30 分 job timeout する問題を回避するため。

@@ -176,6 +176,10 @@ export default function HandsonTourMenu() {
 
   return (
     <View style={{ flex: 1 }} testID="tour-step-2">
+      {/* Step 2 intro マーカー: subStep 2.1 の間 DOM に存在 (E2E testID) */}
+      {subStep === '2.1' && (
+        <View testID="tour-step-2-intro" style={{ position: 'absolute', width: 0, height: 0 }} />
+      )}
       {/* V4GenerateModal は内部で React Native <Modal> を使うため常時表示 */}
       <V4GenerateModal
         mode="sandbox"

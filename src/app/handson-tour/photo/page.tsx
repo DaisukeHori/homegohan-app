@@ -371,6 +371,14 @@ export default function HandsonTourPhotoPage() {
 
   return (
     <div className="fixed inset-0 z-40">
+      {/* Step 1 intro マーカー: subStep 1.1 の間 DOM に存在 (E2E testID) */}
+      {subStep === '1.1' && (
+        <span
+          data-testid="tour-step-1-intro"
+          aria-hidden="true"
+          style={{ display: 'none' }}
+        />
+      )}
       <TourSandboxWrapper
         subStep={subStep}
         subStepToTarget={STEP1_SUB_STEP_TO_TARGET}

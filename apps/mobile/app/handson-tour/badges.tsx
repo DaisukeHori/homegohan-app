@@ -161,6 +161,10 @@ export default function HandsonTourBadges() {
 
   return (
     <View style={{ flex: 1 }} testID="tour-step-3">
+      {/* Step 3 intro マーカー: subStep 3.1 の間 DOM に存在 (E2E testID) */}
+      {subStep === '3.1' && (
+        <View testID="tour-step-3-intro" style={{ position: 'absolute', width: 0, height: 0 }} />
+      )}
       {/* P3-B が BadgesPage に tutorial-mode サポートを追加する。現在はプレースホルダー */}
       <View style={{ flex: 1, backgroundColor: '#F9FAFB' }} />
 

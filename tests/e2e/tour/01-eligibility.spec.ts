@@ -9,6 +9,7 @@
 
 import { test, expect } from "@playwright/test";
 import { cleanupTestUser, generateTestEmail, signupViaApi } from "./helpers";
+import { seedNonSandboxMeals, cleanupMeals } from "../helpers/seed-meals";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 
@@ -288,10 +289,44 @@ test.describe("Tour - Eligibility API", () => {
     }
   });
 
-  // TODO: 既存活動有り (non-sandbox meals あり) のテストは meal 挿入ヘルパーが必要なため
-  // 実装後に追加する。現状 reason=existing_user_auto_skip を返す条件の検証は別 PR で対応。
-  test.skip("既存活動有りユーザーは reason=existing_user_auto_skip (未実装)", async () => {
-    // TODO: service_role 経由で meals テーブルに is_sandbox=false の行を挿入してから
-    // status API を叩いて reason を検証する
+  test("既存活動有りユーザーは reason=existing_user_auto_skip", async ({ page }) => {
+    const email = generateTestEmail("e2e-tour-eligi-exist");
+    const userId = await signupViaApi(email, TEST_PASSWORD);
+    if (!userId) {
+      test.skip(true, "signup API が利用不可");
+      return;
+    }
+
+    try {
+      // onboarding 完了状態にする
+      await setOnboardingCompleted(userId, new Date().toISOString());
+
+      // is_sandbox=false の食事記録を挿入して「既存活動あり」状態を作る
+      const inserted = await seedNonSandboxMeals(userId, 1);
+      if (inserted === 0) {
+        test.skip(true, "meals 挿入ヘルパーが利用不可 (SUPABASE_SERVICE_ROLE_KEY 未設定)");
+        return;
+      }
+
+      const token = await getUserToken(email, TEST_PASSWORD);
+      if (!token) {
+        test.skip(true, "JWT 取得不可");
+        return;
+      }
+
+      const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+      const status = await fetchTourStatus(token, baseURL);
+
+      if (!status) {
+        test.skip(true, "/api/handson-tour/status が未実装の可能性あり");
+        return;
+      }
+
+      expect(status.should_show).toBe(false);
+      expect(status.reason).toBe("existing_user_auto_skip");
+    } finally {
+      await cleanupMeals(userId);
+      await cleanupTestUser(userId);
+    }
   });
 });

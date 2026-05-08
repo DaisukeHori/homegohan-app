@@ -132,6 +132,14 @@ export default function HandsonTourBadgesPage() {
 
   return (
     <div className="fixed inset-0 z-40 bg-white overflow-y-auto">
+      {/* Step 3 intro マーカー: subStep 3.1 の間 DOM に存在 (E2E testID) */}
+      {subStep === '3.1' && (
+        <span
+          data-testid="tour-step-3-intro"
+          aria-hidden="true"
+          style={{ display: 'none' }}
+        />
+      )}
       {isLoading && subStep === '3.0' && (
         <div data-testid="tour-step-3-loading" className="flex flex-col items-center justify-center h-full gap-4">
           <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />

@@ -42,33 +42,40 @@ export async function cleanupTestUser(userId: string): Promise<void> {
 }
 
 /**
- * Supabase Auth API で新規 signup する。
- * email_confirm が disabled 想定の E2E 環境用。
+ * Supabase service_role admin API で新規ユーザーを作成する。
+ * anon key の signup ではなく admin API を使うことで
+ * email_confirm (メール確認) を強制的にバイパスする。
  * 成功した場合は user_id を返す。
  */
 export async function signupViaApi(email: string, password: string): Promise<string | null> {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.warn("[tour/helpers] Supabase 環境変数が未設定");
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn("[tour/helpers] SUPABASE_SERVICE_ROLE_KEY が未設定 — admin API でのユーザー作成不可");
     return null;
   }
   try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    // service_role admin API: email_confirm をバイパスしてユーザー作成
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({
+        email,
+        password,
+        email_confirm: true, // メール確認をスキップして即時有効化
+      }),
     });
     if (!resp.ok) {
       const body = await resp.text();
-      console.warn(`[tour/helpers] signup API 失敗 (${resp.status}): ${body.substring(0, 200)}`);
+      console.warn(`[tour/helpers] admin/users 作成失敗 (${resp.status}): ${body.substring(0, 200)}`);
       return null;
     }
     const data = await resp.json() as Record<string, unknown>;
-    // signup レスポンスは { user: { id: ... }, session: { ... } } 形式
-    const user = data.user as { id?: string } | undefined;
-    return user?.id ?? null;
+    // admin API のレスポンスは { id: "...", email: "...", ... } 形式
+    const userId = (data.id as string | undefined) ?? null;
+    return userId;
   } catch (err) {
     console.warn(`[tour/helpers] signupViaApi error: ${err}`);
     return null;

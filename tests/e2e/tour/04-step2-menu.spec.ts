@@ -28,9 +28,43 @@ test.describe("Tour - Step 2: AI 献立生成", () => {
     }
   });
 
-  // TODO: testID tour-step-2-intro 未実装、別 PR で対応
-  test.skip("Step 2 intro 吹き出しが表示される (tour-step-2-intro)", () => {
-    // tour-step-2-intro が実装されたら有効化する
+  test("Step 2 intro マーカー (tour-step-2-intro) が DOM に存在する", async ({ page }) => {
+    const email = generateTestEmail("e2e-tour-s2-intro");
+    userId = await signupAsNewUser(page, email);
+
+    if (!userId) {
+      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
+      return;
+    }
+
+    // Step 0 表示確認
+    await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
+
+    // 「はじめる」をクリックして Step 1 へ
+    await page.getByTestId("tour-step-0-start").click();
+
+    // Step 1 完了: meal-camera-button → meal-save-button
+    const cameraVisible = await page.getByTestId("meal-camera-button").isVisible({ timeout: 20_000 }).catch(() => false);
+    if (!cameraVisible) {
+      test.skip(true, "Step 1 UI (meal-camera-button) が表示されない");
+      return;
+    }
+
+    const nextBtn = page.getByTestId("tour-next-button");
+    if (await nextBtn.isVisible()) { await nextBtn.click(); }
+
+    const saveBtn = page.getByTestId("meal-save-button");
+    const isSaveVisible = await saveBtn.isVisible({ timeout: 10_000 }).catch(() => false);
+    if (!isSaveVisible) {
+      test.skip(true, "Step 1 の meal-save-button が見つからない");
+      return;
+    }
+    await saveBtn.click();
+
+    // Step 2 (menu ページ) に遷移 → subStep 2.1 の間 tour-step-2-intro が DOM に存在
+    const introLocator = page.getByTestId("tour-step-2-intro");
+    const count = await introLocator.count();
+    expect(count).toBe(1);
   });
 
   test("Step 2: v4-no-cook-toggle が表示される", async ({ page }) => {

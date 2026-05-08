@@ -3,7 +3,12 @@ import * as fs from "fs";
 import { config as dotenvConfig } from "dotenv";
 
 // .env.local から環境変数を読み込む (E2E_USER_EMAIL / E2E_USER_PASSWORD など)
-dotenvConfig({ path: ".env.local" });
+// CI では環境変数が直接セットされるため override:false で既存値を上書きしない
+dotenvConfig({ path: ".env.local", override: false });
+// .env.test が存在する場合は追加で読み込む (CI シークレット代替用)
+if (fs.existsSync(".env.test")) {
+  dotenvConfig({ path: ".env.test", override: false });
+}
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 const isCI = !!process.env.CI;
