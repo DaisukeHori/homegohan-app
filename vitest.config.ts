@@ -46,6 +46,7 @@ export default defineConfig({
       "**/.next/**",
       "tests/e2e/**",
       "homegohan-app/**",
+      ".claude/**",
     ],
     environment: "jsdom",
   },

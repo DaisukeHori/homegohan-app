@@ -29,6 +29,7 @@ export default defineConfig({
       '**/.next/**',
       'tests/e2e/**',
       'homegohan-app/**',
+      '.claude/**',
     ],
     // Integration tests hit real Supabase — allow longer timeouts
     testTimeout: 30_000,
