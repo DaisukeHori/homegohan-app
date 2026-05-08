@@ -1,0 +1,32 @@
+appId: com.homegohan.app
+---
+# _shared/login-as-admin.yaml: admin ロールでログインして Admin Console まで遷移する共通フロー
+# 前提: env に E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD が設定されていること
+- launchApp
+- runFlow:
+    file: "./ensure-welcome.yaml"
+- tapOn:
+    text: "ログイン"
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_ADMIN_EMAIL}
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_ADMIN_PASSWORD}
+- tapOn:
+    id: "login-button"
+- extendedWaitUntil:
+    visible:
+      id: "admin-dashboard-screen"
+    timeout: 30000
+# Expo dev build の Console Error/Warning オーバーレイを閉じる
+- tapOn:
+    text: "Dismiss"
+    optional: true
+- tapOn:
+    text: "Minimize"
+    optional: true

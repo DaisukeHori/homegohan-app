@@ -1,0 +1,52 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 07: admin → Organizations 画面表示確認 + 組織作成フォーム操作
+- runFlow:
+    file: "../_shared/login-as-admin.yaml"
+
+# ダッシュボードから Organizations ナビゲーションをタップ
+- tapOn:
+    id: "admin-nav-organizations"
+- extendedWaitUntil:
+    visible:
+      id: "admin-organizations-screen"
+    timeout: 15000
+
+# Organizations 画面の表示確認
+- assertVisible:
+    text: "Organizations"
+
+# 作成フォームの表示確認
+- assertVisible:
+    id: "admin-organizations-create-form"
+
+# 主要操作: 組織名入力（実際の作成は副作用があるためフォーム入力まで）
+- tapOn:
+    id: "admin-organizations-name-input"
+- inputText: "E2E テスト組織"
+
+# スクロールして組織リスト確認
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# リフレッシュ操作
+- tapOn:
+    id: "admin-organizations-refresh"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# クリーンアップ: ダッシュボードに戻ってログアウト
+- tapOn:
+    point: "5%,7%"
+- extendedWaitUntil:
+    visible:
+      id: "admin-dashboard-screen"
+    timeout: 10000
+- runFlow:
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    file: "../_shared/logout.yaml"

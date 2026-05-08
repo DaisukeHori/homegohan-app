@@ -1,0 +1,69 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 06: admin → Inquiries 一覧表示確認 + ステータスフィルター + 詳細画面遷移
+- runFlow:
+    file: "../_shared/login-as-admin.yaml"
+
+# ダッシュボードから Inquiries ナビゲーションをタップ
+- tapOn:
+    id: "admin-nav-inquiries"
+- extendedWaitUntil:
+    visible:
+      id: "admin-inquiries-screen"
+    timeout: 15000
+
+# Inquiries 画面の表示確認
+- assertVisible:
+    text: "Inquiries"
+
+# 主要操作: ステータスフィルターで "In Progress" に切り替え
+- tapOn:
+    id: "admin-inquiries-status-in_progress"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# "Pending" フィルターに戻す
+- tapOn:
+    id: "admin-inquiries-status-pending"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# リスト表示確認（データがある場合は先頭アイテムをタップして詳細へ）
+- runFlow:
+    when:
+      visible:
+        id: "admin-inquiries-list"
+    commands:
+      - tapOn:
+          id: "admin-inquiries-list"
+      - waitForAnimationToEnd:
+          timeout: 3000
+      # 詳細画面が開いた場合は戻る
+      - runFlow:
+          when:
+            visible:
+              id: "admin-inquiry-detail-screen"
+          commands:
+            - assertVisible:
+                text: "Inquiry Detail"
+            - tapOn:
+                point: "5%,7%"
+            - extendedWaitUntil:
+                visible:
+                  id: "admin-inquiries-screen"
+                timeout: 10000
+
+# クリーンアップ: ダッシュボードに戻ってログアウト
+- tapOn:
+    point: "5%,7%"
+- extendedWaitUntil:
+    visible:
+      id: "admin-dashboard-screen"
+    timeout: 10000
+- runFlow:
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    file: "../_shared/logout.yaml"

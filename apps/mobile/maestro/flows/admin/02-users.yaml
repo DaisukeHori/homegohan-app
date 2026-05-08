@@ -1,0 +1,53 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 02: admin → Users 画面表示確認 + 検索操作
+- runFlow:
+    file: "../_shared/login-as-admin.yaml"
+
+# ダッシュボードから Users ナビゲーションをタップ
+- tapOn:
+    id: "admin-nav-users"
+- extendedWaitUntil:
+    visible:
+      id: "admin-users-screen"
+    timeout: 15000
+
+# Users 画面の表示確認
+- assertVisible:
+    text: "Users"
+
+# 主要操作: 検索フィルター入力 → 検索
+- tapOn:
+    id: "admin-users-search-input"
+- inputText: "test"
+- tapOn:
+    id: "admin-users-search-button"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# スクロールしてユーザーリスト表示確認
+- scroll
+
+# クリーンアップ: ダッシュボードに戻ってログアウト
+- tapOn:
+    text: "Admin Console"
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: "admin-dashboard-screen"
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    when:
+      visible:
+        id: "admin-users-screen"
+    commands:
+      - tapOn:
+          point: "5%,7%"
+- runFlow:
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    file: "../_shared/logout.yaml"

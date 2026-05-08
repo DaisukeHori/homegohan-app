@@ -1,0 +1,47 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 03: admin → Moderation 画面表示確認 + ステータスフィルター操作
+- runFlow:
+    file: "../_shared/login-as-admin.yaml"
+
+# ダッシュボードから Moderation ナビゲーションをタップ
+- tapOn:
+    id: "admin-nav-moderation"
+- extendedWaitUntil:
+    visible:
+      id: "admin-moderation-screen"
+    timeout: 15000
+
+# Moderation 画面の表示確認
+- assertVisible:
+    text: "Moderation"
+
+# 主要操作: ステータスフィルターで "Resolved" に切り替え
+- tapOn:
+    id: "admin-moderation-status-resolved"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# スクロールしてコンテンツ確認
+- scroll
+
+# "Pending" フィルターに戻す
+- tapOn:
+    id: "admin-moderation-status-pending"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# クリーンアップ: ダッシュボードに戻ってログアウト
+- tapOn:
+    point: "5%,7%"
+- extendedWaitUntil:
+    visible:
+      id: "admin-dashboard-screen"
+    timeout: 10000
+- runFlow:
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    file: "../_shared/logout.yaml"
