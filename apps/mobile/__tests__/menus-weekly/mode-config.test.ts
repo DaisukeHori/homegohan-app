@@ -33,9 +33,9 @@ describe('MODE_CONFIG', () => {
     expect(MODE_CONFIG.ai_creative.label).toBe('AI献立');
   });
 
-  it('ai_creative の color が colors.accent (#FF8A65)', () => {
+  it('ai_creative の color が colors.accent (#E07A5F)', () => {
     expect(MODE_CONFIG.ai_creative.color).toBe(colors.accent);
-    expect(colors.accent).toBe('#FF8A65');
+    expect(colors.accent).toBe('#E07A5F');
   });
 
   it('ai_creative の icon が "sparkles"', () => {

@@ -32,11 +32,11 @@ describe('spacing トークン', () => {
 });
 
 describe('radius トークン', () => {
-  it('sm は 8', () => {
-    expect(radius.sm).toBe(8);
+  it('sm は 4', () => {
+    expect(radius.sm).toBe(4);
   });
 
-  it('full は 999', () => {
-    expect(radius.full).toBe(999);
+  it('full は 9999', () => {
+    expect(radius.full).toBe(9999);
   });
 });

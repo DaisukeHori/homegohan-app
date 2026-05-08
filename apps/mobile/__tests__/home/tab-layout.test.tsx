@@ -8,7 +8,7 @@
  *    - home → icon: "home"
  *    - menus → icon: "book-outline"
  *    - meals → icon: "scan" (スキャン / 中央ボタン)
- *    - favorites → icon: "heart"
+ *    - favorites → href: null (タブバー非表示)
  *    - comparison → icon: "bar-chart"
  *    - profile → icon: "person"
  */
@@ -86,6 +86,14 @@ jest.mock('../../src/theme', () => ({
     text: '#111111',
     textMuted: '#888888',
   },
+  spacing: {
+    xs: 4, sm: 8, md: 12, lg: 16, xl: 20, '2xl': 24, '3xl': 32, '4xl': 40, '5xl': 48,
+  },
+  radius: {
+    sm: 4, md: 8, lg: 12, xl: 16, '2xl': 20, full: 9999,
+  },
+  typography: {},
+  shadows: { sm: {}, md: {}, lg: {} },
 }));
 
 import TabsLayout from '../../app/(tabs)/_layout';
@@ -195,10 +203,10 @@ describe('TabsLayout: タブ構成', () => {
     expect(meals?.options?.title).toBe('スキャン');
   });
 
-  it('favorites タブのタイトルが「お気に入り」', () => {
+  it('favorites タブは href: null (タブバー非表示)', () => {
     const configs = renderAndGetConfigs();
     const fav = configs.find((c) => c.name === 'favorites');
-    expect(fav?.options?.title).toBe('お気に入り');
+    expect(fav?.options?.href).toBeNull();
   });
 
   it('comparison タブのタイトルが「比較」', () => {
@@ -228,11 +236,10 @@ describe('TabsLayout: タブ構成', () => {
     expect(getByText('home')).toBeTruthy();
   });
 
-  it('favorites タブのアイコンが "heart"', () => {
+  it('favorites タブは tabBarIcon が未定義 (href: null で非表示)', () => {
     const configs = renderAndGetConfigs();
     const fav = configs.find((c) => c.name === 'favorites');
-    const { getByText } = render(fav?.options?.tabBarIcon({ color: '#000', size: 24 }));
-    expect(getByText('heart')).toBeTruthy();
+    expect(fav?.options?.tabBarIcon).toBeUndefined();
   });
 
   it('comparison タブのアイコンが "bar-chart"', () => {

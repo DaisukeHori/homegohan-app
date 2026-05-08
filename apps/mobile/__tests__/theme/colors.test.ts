@@ -6,8 +6,8 @@
 import { colors } from '../../src/theme/colors';
 
 describe('colors トークン', () => {
-  it('accent は #FF8A65', () => {
-    expect(colors.accent).toBe('#FF8A65');
+  it('accent は #E07A5F', () => {
+    expect(colors.accent).toBe('#E07A5F');
   });
 
   it('accentDark は #C4634C', () => {
@@ -18,31 +18,31 @@ describe('colors トークン', () => {
     expect(colors.danger).toBe('#D64545');
   });
 
-  it('bg は #FFFFFF', () => {
-    expect(colors.bg).toBe('#FFFFFF');
+  it('bg は #F7F6F3', () => {
+    expect(colors.bg).toBe('#F7F6F3');
   });
 
-  it('text は #1A1A1A', () => {
-    expect(colors.text).toBe('#1A1A1A');
+  it('text は #2D2D2D', () => {
+    expect(colors.text).toBe('#2D2D2D');
   });
 
-  it('success は #4CAF50', () => {
-    expect(colors.success).toBe('#4CAF50');
+  it('success は #6B9B6B', () => {
+    expect(colors.success).toBe('#6B9B6B');
   });
 
   it('error は #F44336', () => {
     expect(colors.error).toBe('#F44336');
   });
 
-  it('border は #EEEEEE', () => {
-    expect(colors.border).toBe('#EEEEEE');
+  it('border は #E8E8E8', () => {
+    expect(colors.border).toBe('#E8E8E8');
   });
 
   it('streak は #FF6B35', () => {
     expect(colors.streak).toBe('#FF6B35');
   });
 
-  it('purple は #7C4DFF', () => {
-    expect(colors.purple).toBe('#7C4DFF');
+  it('purple は #7C6BA0', () => {
+    expect(colors.purple).toBe('#7C6BA0');
   });
 });
