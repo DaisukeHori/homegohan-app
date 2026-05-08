@@ -1,6 +1,8 @@
 {
   "pageErrors": [],
-  "consoleErrors": [],
+  "consoleErrors": [
+    "Failed to fetch onboarding status: TypeError: Failed to fetch\n    at https://homegohan-app.vercel.app/_next/static/chunks/app/onboarding/resume/page-034784aa89556fab.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:521\n    at https://homegohan-app.vercel.app/_next/static/chunks/app/onboarding/resume/page-034784aa89556fab.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:924\n    at aW (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:73244)\n    at oe (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:84685)\n    at ol (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:85323)\n    at or (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:85207)\n    at ol (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:85303)\n    at or (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:85207)\n    at ol (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:86268)\n    at or (https://homegohan-app.vercel.app/_next/static/chunks/fd9d1056-08c28c1f39be9001.js?dpl=dpl_BcxxA9zEArsqLTv54XETRr98soyw:1:85207)"
+  ],
   "networkErrors": [],
   "clickCount": 0
 }
