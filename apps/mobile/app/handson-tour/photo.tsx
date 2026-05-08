@@ -30,7 +30,7 @@ import { useProfile } from '../../src/providers/ProfileProvider';
 import { TourSandboxWrapper } from '../../src/handson-tour/TourSandboxWrapper';
 import { registerTourTarget, unregisterTourTarget } from '../../src/handson-tour/useTourOverlayLogic';
 
-const SANDBOX_SAMPLE_IMAGE = require('../../assets/handson-tour/sample-meal.jpg');
+const SANDBOX_SAMPLE_IMAGE = require('../../assets/handson-tour/sample-meal.webp');
 
 // ─── Sandbox content component ────────────────────────────────
 // Accepts mode / onSandboxComplete injected by TourSandboxWrapper.cloneElement

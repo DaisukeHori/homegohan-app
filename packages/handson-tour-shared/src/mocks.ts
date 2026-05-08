@@ -79,9 +79,9 @@ export type MockMenuResponse = typeof MOCK_MENU_RESPONSE;
 // ============================================================
 
 export const SAMPLE_MEAL_IMAGE = {
-  webPath: '/handson-tour/sample-meal.jpg',
+  webPath: '/handson-tour/sample-meal.webp',
   webPathWebp: '/handson-tour/sample-meal.webp',
-  mobileAssetModule: () => require('../../../apps/mobile/assets/handson-tour/sample-meal.jpg'),
+  mobileAssetModule: () => require('../../../apps/mobile/assets/handson-tour/sample-meal.webp'),
   width: 1024,
   height: 768,
   fileSizeBytes: 200_000,
