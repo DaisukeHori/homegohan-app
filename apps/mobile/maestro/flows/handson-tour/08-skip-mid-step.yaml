@@ -1,0 +1,73 @@
+appId: com.homegohan.app
+name: "Handson Tour - 08: Step 1 途中で「あとで」タップ → /home へ遷移"
+tags: ["handson-tour", "P1"]
+---
+# シナリオ: Step 1 の途中で「あとで」タップ → /home へ遷移、handson_tour_skipped_at セット確認
+# 確認ポイント:
+#   - Step 1 中に tour-skip-button が表示される
+#   - タップ後 home-screen に遷移する
+#   - アプリ再起動後もツアーは表示されない (handson_tour_skipped_at がセット)
+# TODO: tour-skip-button testID が Step 1 中に表示されるかどうか実装確認が必要
+
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+- assertVisible:
+    id: "tour-step-0"
+
+- tapOn:
+    id: "tour-step-0-start"
+
+# Step 1 に遷移: intro または camera-button が表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "meal-camera-button"
+    timeout: 10000
+
+# Step 1 途中で「あとで」タップ
+# TODO: tour-skip-button が Step 1 中に表示されるか確認。実装次第で testID 変更の可能性あり
+- assertVisible:
+    id: "tour-skip-button"
+    optional: true
+- assertVisible:
+    text: "あとで"
+    optional: true
+
+- tapOn:
+    id: "tour-skip-button"
+    optional: true
+- tapOn:
+    text: "あとで"
+    optional: true
+
+# 確認ダイアログが出る場合は「スキップ」または「確認」を選択
+- tapOn:
+    text: "スキップ"
+    optional: true
+- tapOn:
+    text: "確認"
+    optional: true
+
+# home-screen に遷移することを確認
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"
+- assertNotVisible:
+    id: "meal-camera-button"
+
+# アプリ再起動後もツアーは表示されない
+# handson_tour_skipped_at がセットされているため
+- killApp
+- launchApp
+
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"

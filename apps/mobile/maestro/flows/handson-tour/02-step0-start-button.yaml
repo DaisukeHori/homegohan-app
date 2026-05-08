@@ -1,0 +1,38 @@
+appId: com.homegohan.app
+name: "Handson Tour - 02: Step 0「はじめる」タップ → Step 1 へ遷移"
+tags: ["handson-tour", "critical", "P1"]
+---
+# シナリオ: Step 0 で「はじめる」タップ → Step 1 へ遷移
+# 確認ポイント:
+#   - tour-step-0-start タップ後に tour-step-0 が非表示
+#   - Step 1 の intro または meal-camera-button が表示される
+#   - TODO: tour-step-1-intro testID 未実装、別 PR で fix
+
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+- assertVisible:
+    id: "tour-step-0"
+
+# 「はじめる」ボタンをタップ
+- tapOn:
+    id: "tour-step-0-start"
+
+# Step 0 が非表示になる
+- assertNotVisible:
+    id: "tour-step-0"
+
+# Step 1 intro または camera-button が表示される
+# TODO: testID tour-step-1-intro は未実装。別 PR で fix。暫定テキストマッチで代替
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "meal-camera-button"
+      - visible:
+          text: "カメラ"
+          optional: true
+    timeout: 10000
+
+# meal-camera-button が Spotlight で表示されることを確認
+- assertVisible:
+    id: "meal-camera-button"

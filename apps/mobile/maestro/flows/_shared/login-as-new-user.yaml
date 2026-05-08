@@ -1,0 +1,79 @@
+appId: com.homegohan.app
+env:
+  E2E_NEW_USER_EMAIL: ${E2E_TOUR_NEW_USER_EMAIL}
+  E2E_NEW_USER_PASSWORD: ${E2E_TOUR_NEW_USER_PASSWORD}
+---
+# _shared/login-as-new-user.yaml
+# 新規 signup → onboarding 完走 → /handson-tour 自動到達まで共通フロー
+# 前提: 環境変数 E2E_TOUR_NEW_USER_EMAIL / E2E_TOUR_NEW_USER_PASSWORD が設定済み
+#       E2E_TOUR_NEW_USER_EMAIL は signup 済みのアカウントであること
+#       (既存 auth/04 同様に事前に Supabase Auth でユーザーを作成しておく)
+
+# --- Step 1: 現在状態をリセットしてウェルカム画面へ ---
+- runFlow:
+    file: "./ensure-welcome.yaml"
+
+# --- Step 2: 新規登録 (ウェルカム画面から signup) ---
+- tapOn:
+    text: "新規登録"
+- extendedWaitUntil:
+    visible:
+      id: "signup-screen"
+    timeout: 10000
+- tapOn:
+    id: "signup-email-input"
+- eraseText: 100
+- inputText: ${E2E_NEW_USER_EMAIL}
+- tapOn:
+    id: "signup-password-input"
+- eraseText: 100
+- inputText: ${E2E_NEW_USER_PASSWORD}
+- tapOn:
+    id: "signup-button"
+
+# メール確認済み前提で onboarding 画面へ遷移
+# (テスト用アカウントはメール確認スキップ設定済み)
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-welcome-screen"
+    timeout: 15000
+
+# Expo dev build の LogBox を閉じる
+- runFlow:
+    file: "./dismiss-logbox.yaml"
+
+# --- Step 3: onboarding を最速で完走 (maintain ルート) ---
+# onboarding 最初の個人情報入力画面
+- extendedWaitUntil:
+    visible:
+      id: "onboarding-questions-screen"
+    timeout: 10000
+
+# onboarding-welcome を通過
+- runFlow:
+    when:
+      visible:
+        id: "onboarding-welcome-screen"
+    commands:
+      - tapOn:
+          id: "onboarding-start-button"
+          optional: true
+      - tapOn:
+          text: "はじめる"
+          optional: true
+
+# --- Step 4: onboarding 設問完走 (nutrition_goal=maintain) ---
+- runFlow:
+    file: "./complete-onboarding-maintain.yaml"
+
+# complete-onboarding-maintain.yaml の末尾で home-screen に到達する
+# しかし新規ユーザーは /handson-tour に自動遷移するため
+# tour-step-0 が表示されるまで待機
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-0"
+    timeout: 15000
+
+# Expo dev build の LogBox を閉じる
+- runFlow:
+    file: "./dismiss-logbox.yaml"

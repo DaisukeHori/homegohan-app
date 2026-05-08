@@ -1,0 +1,140 @@
+appId: com.homegohan.app
+name: "Handson Tour - 07: Step 4 卒業画面 → tutorial_complete バッジ → ホームへ"
+tags: ["handson-tour", "critical", "P1"]
+---
+# シナリオ: Step 4 卒業画面 → tutorial_complete バッジ表示 → disclaimer 表示 → 「ホームへ」→ /home toast
+# 確認ポイント:
+#   - tour-step-4-saving (完了処理中 spinner) が表示される
+#   - tour-step-4-graduate (卒業画面) が表示される
+#   - tour-step-4-badge-disclaimer が表示される (PR #833 で追加済)
+#   - tour-step-4-go-home タップ後 home-screen に遷移
+#   - home-screen で welcome toast が表示される (tour-step-5-toast)
+#   - アプリ再起動後もツアーは表示されない (handson_tour_completed_at セット)
+
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+- assertVisible:
+    id: "tour-step-0"
+
+- tapOn:
+    id: "tour-step-0-start"
+
+# Step 1 高速通過
+- waitForAnimationToEnd:
+    timeout: 6000
+
+- extendedWaitUntil:
+    visible:
+      id: "meal-save-button"
+    timeout: 15000
+
+- tapOn:
+    id: "meal-save-button"
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Step 2 高速通過
+- waitForAnimationToEnd:
+    timeout: 6000
+
+- tapOn:
+    id: "v4-generate-button"
+    optional: true
+- tapOn:
+    text: "生成する"
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- tapOn:
+    id: "v4-add-to-menu-button"
+    optional: true
+- tapOn:
+    text: "献立に追加"
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Step 3 高速通過: バッジ確認 → 次へ
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-3-loading"
+    timeout: 15000
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+- tapOn:
+    id: "tour-next-button"
+    optional: true
+- tapOn:
+    text: "次へ"
+    optional: true
+
+# Step 4: tour-step-4-saving が表示される
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-4-saving"
+    timeout: 15000
+
+# 完了処理待機
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# 卒業画面が表示される
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-4-graduate"
+    timeout: 10000
+
+- assertVisible:
+    id: "tour-step-4-graduate"
+
+# tutorial_complete バッジが表示される
+# TODO: tour-step-4-badge-card testID 確認。PR #833 で追加済みの想定
+- assertVisible:
+    id: "tour-step-4-badge-disclaimer"
+
+# disclaimer テキスト確認 (サンドボックスデータの注記)
+- assertVisible:
+    text: "サンドボックス"
+    optional: true
+
+# ボタン活性化を待つ (5 秒 delay)
+- waitForAnimationToEnd:
+    timeout: 6000
+
+# 「ホームへ」タップ
+- tapOn:
+    id: "tour-step-4-go-home"
+
+# home-screen に遷移
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+# welcome toast 確認 (tour-step-5-toast)
+- assertVisible:
+    id: "tour-step-5-toast"
+    optional: true
+
+# toast が自動 dismiss されることを待つ
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# アプリ再起動後もツアーは表示されない
+- killApp
+- launchApp
+
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"

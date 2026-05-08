@@ -1,0 +1,60 @@
+appId: com.homegohan.app
+name: "Handson Tour - 09: 既存 user (meals あり) → /handson-tour 直リンクで /home リダイレクト"
+tags: ["handson-tour", "P2"]
+---
+# シナリオ: 既存 user (meals 1 件あり) でログイン → /handson-tour 直リンク → /home へ即リダイレクト
+# 確認ポイント:
+#   - E2E_TOUR_EXISTING_USER_EMAIL (meals を持つ既存 user) でログイン
+#   - /handson-tour に deep link でアクセスしても tour-step-0 は表示されない
+#   - home-screen に即リダイレクトされる
+# 前提: E2E_TOUR_EXISTING_USER_EMAIL / E2E_TOUR_EXISTING_USER_PASSWORD に
+#        is_sandbox=false の meals を持つテストユーザーが設定済みであること
+# 備考: shouldShowHandsonTour() の condition C (既存 user auto skip) を確認するシナリオ
+
+# まず既存 user でログイン
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+
+- tapOn:
+    text: "ログイン"
+
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_TOUR_EXISTING_USER_EMAIL}
+
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_TOUR_EXISTING_USER_PASSWORD}
+
+- tapOn:
+    id: "login-button"
+
+# home-screen に遷移 (既存 user なのでツアーはスキップ)
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+# tour-step-0 は表示されない
+- assertNotVisible:
+    id: "tour-step-0"
+
+# /handson-tour に deep link でアクセス
+# (launchApp で URL scheme を指定)
+- launchApp:
+    arguments:
+      - "homegohan://handson-tour"
+
+# tour は表示されず home-screen に戻る
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"

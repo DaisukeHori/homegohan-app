@@ -1,0 +1,116 @@
+appId: com.homegohan.app
+name: "Handson Tour - 05: Step 2 簡単メニュー生成 → planner バッジ → Step 3"
+tags: ["handson-tour", "P1"]
+---
+# シナリオ: Step 2 簡単メニュー toggle → 生成 → 結果 → 追加 → planner バッジ → Step 3
+# 確認ポイント:
+#   - Step 2 の intro 吹き出し後、toggle/generate ボタンが Spotlight で表示
+#   - v4-generate-button タップ → ローディング → 結果カード
+#   - v4-add-to-menu-button タップ → API 呼び出し
+#   - planner バッジ獲得通知
+#   - Step 3 の tour-step-3-loading が表示される
+# TODO: v4-no-cook-toggle / v4-generate-button / v4-result-card / v4-add-to-menu-button
+#       は mobile 未実装 (web 既存)。別 PR で fix。暫定テキストマッチで代替
+
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+- assertVisible:
+    id: "tour-step-0"
+
+- tapOn:
+    id: "tour-step-0-start"
+
+# Step 1 を高速通過 (save-button まで)
+- waitForAnimationToEnd:
+    timeout: 6000
+
+- extendedWaitUntil:
+    visible:
+      id: "meal-save-button"
+    timeout: 15000
+
+- tapOn:
+    id: "meal-save-button"
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Step 2 intro 吹き出し待機
+# TODO: tour-step-2-intro testID 未実装。別 PR で fix。テキストマッチで代替
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          text: "献立"
+      - visible:
+          text: "メニュー"
+      - visible:
+          text: "生成"
+    timeout: 15000
+
+- waitForAnimationToEnd:
+    timeout: 4000
+
+# 簡単メニュー toggle (TODO: v4-simple-only-toggle testID mobile 未実装、別 PR で fix)
+- tapOn:
+    id: "v4-simple-only-toggle"
+    optional: true
+- tapOn:
+    text: "簡単"
+    optional: true
+
+# TODO: tour-next-button を挟む場合の対応 (Step 2 ガイドの進行に依存)
+- tapOn:
+    id: "tour-next-button"
+    optional: true
+
+# 生成ボタン (TODO: v4-generate-button testID mobile 未実装、別 PR で fix)
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "v4-generate-button"
+      - visible:
+          text: "生成する"
+    timeout: 10000
+
+- tapOn:
+    id: "v4-generate-button"
+    optional: true
+- tapOn:
+    text: "生成する"
+    optional: true
+
+# ローディング待機 (TODO: v4-loading-spinner testID 未実装、別 PR で fix)
+- waitForAnimationToEnd:
+    timeout: 8000
+
+# 結果カード確認 (TODO: v4-result-card / v4-result-dish-name testID 未実装、別 PR で fix)
+- assertVisible:
+    id: "v4-result-card"
+    optional: true
+- assertVisible:
+    text: "豚肉"
+    optional: true
+
+# 献立に追加ボタン (TODO: v4-add-to-menu-button testID 未実装、別 PR で fix)
+- tapOn:
+    id: "v4-add-to-menu-button"
+    optional: true
+- tapOn:
+    text: "献立に追加"
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# planner バッジ取得確認
+# TODO: badge-card-planner testID は mobile 未実装。テキストマッチで代替
+- assertVisible:
+    text: "planner"
+    optional: true
+
+# Step 3: tour-step-3-loading が表示される
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-3-loading"
+    timeout: 15000

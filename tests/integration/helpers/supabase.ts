@@ -1,15 +1,24 @@
 /**
  * Integration test helpers for Supabase operations.
  *
+ * Two API styles coexist (history: PR #839 + #840 が並列で同 helper を作成):
+ *   - 関数形式 `adminClient()` (PR #839 由来、handson-tour テスト)
+ *   - 定数形式 `supabaseAdmin` / `supabaseAnon` (PR #840 由来、operator テスト)
+ * 両方を維持し、新規テストはどちらを使っても OK。
+ *
  * Requires:
  *   NEXT_PUBLIC_SUPABASE_URL
  *   SUPABASE_SERVICE_ROLE_KEY
+ *   (optional) NEXT_PUBLIC_SUPABASE_ANON_KEY — supabaseAnon 用
  *
- * Safety: Only deletes test users created today (created_at >= today).
+ * Safety: cleanupTestUser は created_at >= today のユーザーのみ削除する。
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
+// ---------------------------------------------------------------
+// 関数形式 (PR #839 由来) — 各呼び出し時に env を読む。lazy 評価。
+// ---------------------------------------------------------------
 export function adminClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -23,6 +32,57 @@ export function adminClient(): SupabaseClient {
   });
 }
 
+// ---------------------------------------------------------------
+// 定数形式 (PR #840 由来) — モジュールロード時に env を読む。
+// SUPABASE_INTEGRATION_TEST=1 でテスト実行する前提のため、
+// env 不足は実行時 throw で OK。テスト未実行時は import 自体されない想定。
+// ---------------------------------------------------------------
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+
+/**
+ * Admin client (service_role) — RLS バイパス。テスト helper でのみ使用。
+ * lazy: 初回参照時に env チェック (起動時 throw を避ける)。
+ */
+let _supabaseAdmin: SupabaseClient | null = null;
+export const supabaseAdmin = new Proxy({} as SupabaseClient, {
+  get(_target, prop: string | symbol) {
+    if (!_supabaseAdmin) {
+      if (!supabaseUrl || !serviceRoleKey) {
+        throw new Error(
+          'Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local',
+        );
+      }
+      _supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+    }
+    return _supabaseAdmin[prop as keyof SupabaseClient];
+  },
+});
+
+/**
+ * Anon client — テストユーザーの sign-in 用 (RLS 適用)。
+ */
+let _supabaseAnon: SupabaseClient | null = null;
+export const supabaseAnon = new Proxy({} as SupabaseClient, {
+  get(_target, prop: string | symbol) {
+    if (!_supabaseAnon) {
+      if (!supabaseUrl) {
+        throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL');
+      }
+      _supabaseAnon = createClient(supabaseUrl, anonKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+    }
+    return _supabaseAnon[prop as keyof SupabaseClient];
+  },
+});
+
+// ---------------------------------------------------------------
+// Test user lifecycle
+// ---------------------------------------------------------------
 export interface CreateTestUserOptions {
   email?: string;
   password?: string;
