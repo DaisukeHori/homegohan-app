@@ -150,14 +150,19 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json()
-    
+    let body: Record<string, unknown> = {};
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
     // fromUserProfile を使用して camelCase -> snake_case 変換
     const updates = fromUserProfile(body);
-    
+
     // 年齢から年代を自動計算
     if (body.age && !body.ageGroup) {
-      const age = typeof body.age === 'number' ? body.age : parseInt(body.age);
+      const age = typeof body.age === 'number' ? body.age : parseInt(String(body.age));
       if (!isNaN(age)) {
         updates.age_group = `${Math.floor(age / 10) * 10}s`;
       }
