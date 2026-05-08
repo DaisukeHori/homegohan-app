@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/types/domain";
@@ -64,7 +65,11 @@ const RANKS = [
   { name: "食のレジェンド", min: 25, color: "bg-yellow-400" },
 ];
 
-export default function BadgesPage() {
+function BadgesPageInner() {
+  const searchParams = useSearchParams();
+  const tutorialMode = searchParams.get('tutorial-mode') === '1';
+  const highlightCodes = searchParams.get('highlight')?.split(',').filter(Boolean) ?? [];
+
   const [badges, setBadges] = useState<BadgeWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [earnedCount, setEarnedCount] = useState(0);
@@ -122,7 +127,14 @@ export default function BadgesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 relative overflow-hidden">
-      
+      {/* tutorial-mode: ヘッダーを非表示にするためのクラス制御はlayoutが担うため、
+          ここでは overlay スタイルの追加のみ実装 */}
+      {tutorialMode && (
+        <style jsx global>{`
+          [data-tutorial-hide="true"] { display: none !important; }
+        `}</style>
+      )}
+
       {/* お祝いエフェクト（新規獲得時） */}
       <AnimatePresence>
         {newEarned && (
@@ -184,13 +196,17 @@ export default function BadgesPage() {
         <div className="text-center text-gray-400 py-12">読み込み中...</div>
       ) : (
         <div className="px-6 grid grid-cols-2 md:grid-cols-3 gap-4">
-          {badges.map((badge, i) => (
+          {badges.map((badge, i) => {
+            const isHighlighted = tutorialMode && highlightCodes.includes(badge.code);
+            return (
             <motion.button
               key={badge.code}
               type="button"
               onClick={() => setSelectedBadge(badge)}
               aria-label={`${badge.name} の詳細を見る`}
               data-testid="badge-card"
+              data-badge-code={badge.code}
+              data-testid-dynamic={`badge-card-${badge.code}`}
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: i * 0.05 }}
@@ -198,7 +214,10 @@ export default function BadgesPage() {
                 badge.earned
                   ? 'bg-white shadow-md border border-gray-50 hover:shadow-lg hover:-translate-y-1'
                   : 'bg-gray-100 opacity-60 hover:opacity-80'
-              }`}
+              } ${isHighlighted ? 'ring-4 ring-[#FF8A65] ring-offset-2 animate-pulse' : ''}`}
+              style={isHighlighted ? {
+                boxShadow: '0 0 0 4px #FF8A65, 0 4px 12px rgba(255, 138, 101, 0.4)',
+              } : undefined}
             >
               {badge.earned && (
                  <div className="absolute inset-0 bg-gradient-to-tr from-orange-50 to-transparent opacity-50 pointer-events-none" />
@@ -218,7 +237,8 @@ export default function BadgesPage() {
                 </div>
               )}
             </motion.button>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -311,5 +331,13 @@ export default function BadgesPage() {
       </AnimatePresence>
 
     </div>
+  );
+}
+
+export default function BadgesPage() {
+  return (
+    <Suspense>
+      <BadgesPageInner />
+    </Suspense>
   );
 }
