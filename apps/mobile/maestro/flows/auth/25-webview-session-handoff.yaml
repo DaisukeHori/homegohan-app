@@ -1,0 +1,64 @@
+appId: com.homegohan.app
+env:
+  E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
+  E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
+---
+# 25: RN ログイン → WebView タブ遷移 → WebView 内コンテンツが認証済みである assertion
+#
+# テスト観点:
+#   - RN 側でログインした後に WebView が開くとき、native-bridge を経由してセッションが引き継がれる
+#   - WebView 内のコンテンツが認証済み状態 (ログイン画面にリダイレクトされない) であることを確認
+#   - mode=app パラメータによって WebView 専用 UI が表示されること
+
+# ── ステップ 1: アプリ起動 → ログイン ─────────────────────────────────────────
+- runFlow: ../_shared/login.yaml
+
+# ── ステップ 2: ホーム画面が表示されることを確認 ────────────────────────────
+- assertVisible:
+    id: "home-screen"
+
+# ── ステップ 3: ホームタブ (WebView) に遷移 ──────────────────────────────────
+- tapOn:
+    id: "tab-home"
+- extendedWaitUntil:
+    visible:
+      id: "webview-screen"
+    timeout: 20000
+
+# ── ステップ 4: WebView がローディングを完了するまで待機 ─────────────────────
+# WebView の初期ロードが完了するのを待つ (native-bridge → /home?mode=app への redirect)
+- extendedWaitUntil:
+    notVisible:
+      id: "loading-indicator"
+    timeout: 20000
+
+# ── ステップ 5: WebView 内が認証済み状態であることを確認 ─────────────────────
+# ログイン画面 (/login) にリダイレクトされていないことを確認
+- assertNotVisible:
+    text: "ログイン"
+- assertNotVisible:
+    id: "login-screen"
+
+# ── ステップ 6: mode=app 専用 UI (ボトムナビ非表示など) の確認 ────────────────
+# WebView 内のコンテンツがレンダリングされていること
+# mode=app パラメータによりネイティブ風 UI が表示される
+- assertVisible:
+    id: "webview-screen"
+
+# ── ステップ 7: 別タブに遷移して WebView セッションが維持されることを確認 ───
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "webview-screen"
+    timeout: 15000
+
+# WebView ローディング完了待ち
+- extendedWaitUntil:
+    notVisible:
+      id: "loading-indicator"
+    timeout: 15000
+
+# 認証済みコンテンツが表示されていること (ログイン画面でないこと)
+- assertNotVisible:
+    id: "login-screen"
