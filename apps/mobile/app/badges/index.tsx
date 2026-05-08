@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { useLocalSearchParams } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { Animated, ScrollView, Text, View } from "react-native";
 
 import { Card, EmptyState, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
@@ -15,7 +16,86 @@ type Badge = {
   obtainedAt: string | null;
 };
 
+// Highlight border + background animation for tutorial mode (§1.2 Q10)
+function HighlightedBadgeCard({ badge, isHighlighted }: { badge: Badge; isHighlighted: boolean }) {
+  const borderAnim = useRef(new Animated.Value(0)).current;
+  const bgAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!isHighlighted) return;
+    // Pulse the highlight on mount
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(borderAnim, { toValue: 1, duration: 600, useNativeDriver: false }),
+        Animated.timing(borderAnim, { toValue: 0.4, duration: 600, useNativeDriver: false }),
+      ]),
+    ).start();
+    Animated.timing(bgAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
+  }, [isHighlighted, borderAnim, bgAnim]);
+
+  const borderWidth = isHighlighted
+    ? borderAnim.interpolate({ inputRange: [0, 1], outputRange: [2, 4] })
+    : 1;
+  const borderColor = isHighlighted ? colors.accent : colors.border;
+  const backgroundColor = isHighlighted
+    ? bgAnim.interpolate({ inputRange: [0, 1], outputRange: [colors.card, colors.accentLight] })
+    : colors.card;
+
+  return (
+    <Animated.View
+      testID={`badge-card-${badge.code}`}
+      style={{
+        borderWidth,
+        borderColor,
+        borderRadius: 16,
+        backgroundColor,
+        overflow: "hidden",
+      }}
+    >
+      {/* legacy testID compatibility: inner View with the old testID pattern */}
+      <View testID={`badges-badge-${badge.code}`}>
+        <Card variant={badge.earned ? "success" : "default"}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: badge.earned ? colors.successLight : colors.bg,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons
+                name={badge.earned ? "checkmark-circle" : "ellipse-outline"}
+                size={24}
+                color={badge.earned ? colors.success : colors.textMuted}
+              />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{badge.name}</Text>
+              <Text style={{ fontSize: 13, color: colors.textLight }}>{badge.description}</Text>
+              {badge.obtainedAt ? (
+                <Text style={{ fontSize: 12, color: colors.textMuted }}>獲得: {badge.obtainedAt}</Text>
+              ) : null}
+            </View>
+            {isHighlighted && (
+              <View style={{ alignItems: "center" }}>
+                <Ionicons name="star" size={18} color={colors.accent} />
+              </View>
+            )}
+          </View>
+        </Card>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function BadgesPage() {
+  const params = useLocalSearchParams<{ "tutorial-mode"?: string; highlight?: string }>();
+  const tutorialMode = params["tutorial-mode"] === "1";
+  const highlightCode = params["highlight"] ?? null;
+
   const [badges, setBadges] = useState<Badge[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,17 +125,20 @@ export default function BadgesPage() {
 
   return (
     <View testID="badges-screen" style={{ flex: 1, backgroundColor: colors.bg }}>
-      <PageHeader
-        title="バッジ"
-        right={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-            <Ionicons name="trophy" size={20} color={colors.accent} />
-            <Text testID="badges-earned-count" style={{ fontSize: 13, fontWeight: "700", color: colors.textMuted }}>
-              {earnedCount}/{badges.length}
-            </Text>
-          </View>
-        }
-      />
+      {/* tutorialMode 時はヘッダー非表示 (Spotlight 連動のため) */}
+      {!tutorialMode && (
+        <PageHeader
+          title="バッジ"
+          right={
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <Ionicons name="trophy" size={20} color={colors.accent} />
+              <Text testID="badges-earned-count" style={{ fontSize: 13, fontWeight: "700", color: colors.textMuted }}>
+                {earnedCount}/{badges.length}
+              </Text>
+            </View>
+          }
+        />
+      )}
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
 
       {isLoading ? (
@@ -76,37 +159,11 @@ export default function BadgesPage() {
       ) : (
         <View style={{ gap: spacing.sm }}>
           {badges.map((b) => (
-            <Card
-              testID={`badges-badge-${b.code}`}
+            <HighlightedBadgeCard
               key={b.id}
-              variant={b.earned ? "success" : "default"}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-                <View
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    backgroundColor: b.earned ? colors.successLight : colors.bg,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Ionicons
-                    name={b.earned ? "checkmark-circle" : "ellipse-outline"}
-                    size={24}
-                    color={b.earned ? colors.success : colors.textMuted}
-                  />
-                </View>
-                <View style={{ flex: 1, gap: 2 }}>
-                  <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{b.name}</Text>
-                  <Text style={{ fontSize: 13, color: colors.textLight }}>{b.description}</Text>
-                  {b.obtainedAt ? (
-                    <Text style={{ fontSize: 12, color: colors.textMuted }}>獲得: {b.obtainedAt}</Text>
-                  ) : null}
-                </View>
-              </View>
-            </Card>
+              badge={b}
+              isHighlighted={tutorialMode && highlightCode === b.code}
+            />
           ))}
         </View>
       )}
