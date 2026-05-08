@@ -46,6 +46,7 @@ beforeAll(async () => {
       per_user_limit: 1,
       uses_count: 0,
       status: 'active',
+      created_by: superAdminUser.userId,
     })
     .select('id')
     .single();
@@ -137,6 +138,7 @@ describe('DELETE /api/super-admin/coupons/[id]', () => {
         valid_until: nextMonth,
         uses_count: 0,
         status: 'active',
+        created_by: superAdminUser.userId,
       })
       .select('id')
       .single();

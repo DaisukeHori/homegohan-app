@@ -111,7 +111,7 @@ describe('POST /api/admin/support/tickets', () => {
     const res = await apiCall('POST', '/api/admin/support/tickets', adminUser.jwt, {
       user_id: targetUser.userId,
       subject: `Admin integration test ticket ${TS}`,
-      category: 'general',
+      category: 'other',
       priority: 'low',
       body: 'Admin created ticket',
     });
@@ -129,7 +129,7 @@ describe('POST /api/admin/support/tickets', () => {
     const res = await apiCall('POST', '/api/admin/support/tickets', generalUser.jwt, {
       user_id: targetUser.userId,
       subject: 'Should fail',
-      category: 'general',
+      category: 'other',
       priority: 'low',
       body: 'Should not be created',
     });
@@ -140,7 +140,7 @@ describe('POST /api/admin/support/tickets', () => {
     const res = await apiCallNoAuth('POST', '/api/admin/support/tickets', {
       user_id: targetUser.userId,
       subject: 'No auth ticket',
-      category: 'general',
+      category: 'other',
       priority: 'low',
       body: 'Should not be created',
     });
