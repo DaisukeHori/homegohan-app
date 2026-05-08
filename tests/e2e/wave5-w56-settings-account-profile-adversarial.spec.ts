@@ -225,8 +225,8 @@ test.describe("[account][adversarial] A. アカウント削除", () => {
     const cancelBtn = page.getByRole("button", { name: /キャンセル/ });
 
     await confirmBtn.click();
-    // 「削除中…」表示とキャンセルの disabled を確認
-    await expect(page.getByText("削除中")).toBeVisible({ timeout: 5_000 });
+    // 「削除中…」表示とキャンセルの disabled を確認 (実装は「削除中…」なので正規表現で部分一致)
+    await expect(page.getByText(/削除中/)).toBeVisible({ timeout: 5_000 });
     await expect(cancelBtn).toBeDisabled();
   });
 });
@@ -1335,8 +1335,8 @@ test.describe("[settings][adversarial] F. 追加シナリオ", () => {
       .getByRole("button", { name: /アカウントを完全に削除する/ })
       .click();
 
-    // 削除中の表示を確認
-    await expect(page.getByText("削除中")).toBeVisible({ timeout: 5_000 });
+    // 削除中の表示を確認 (実装は「削除中…」なので正規表現で部分一致)
+    await expect(page.getByText(/削除中/)).toBeVisible({ timeout: 5_000 });
 
     // モーダルがまだ表示されている
     await expect(page.getByText("アカウントを削除しますか？")).toBeVisible();
