@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - 'supabase/migrations/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'supabase/migrations/**'
   workflow_dispatch:
 
 env:
@@ -30,7 +35,41 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
-      - name: Verify db diff (pre-apply)
+      - name: Lint migrations
+        id: db_lint
+        run: |
+          LINT_OUTPUT=$(npx --yes supabase@2.62.10 db lint --linked --schema public 2>&1 || true)
+          echo "lint_output<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$LINT_OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "## db lint 結果"
+            echo ""
+            echo "\`\`\`"
+            echo "$LINT_OUTPUT"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Apply migrations
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          npx --yes supabase@2.62.10 db push --linked --include-all
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Verify migration list
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          npx --yes supabase@2.62.10 migration list --linked
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Verify db diff (post-apply)
         id: db_diff
         run: |
           DIFF=$(npx --yes supabase@2.62.10 db diff --linked --schema public 2>&1 || true)
@@ -46,46 +85,30 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
-      - name: Post db diff warning to PR
-        if: steps.db_diff.outputs.has_diff == 'true'
+      - name: Report db diff to PR comment (PR CI)
+        if: steps.db_diff.outputs.has_diff == 'true' && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           DIFF_OUTPUT: ${{ steps.db_diff.outputs.diff_output }}
         run: |
-          PR_NUMBER=$(gh pr list --head "${{ github.ref_name }}" --json number --jq '.[0].number' 2>/dev/null || echo "")
-          if [ -n "$PR_NUMBER" ]; then
-            BODY="## Warning: supabase db diff が空でありません
+          printf '## Warning: supabase db diff が空でありません (post-apply)\n\nmigration 適用後に以下の残留差分があります:\n\n```sql\n%s\n```\n\n意図しない差分がある場合は migration ファイルを見直してください。' \
+            "$DIFF_OUTPUT" > /tmp/db_diff_comment.txt
+          gh pr comment "$PR_NUMBER" --body-file /tmp/db_diff_comment.txt
 
-          prod 適用前に以下の差分を確認してください:
-
-          \`\`\`sql
-          ${DIFF_OUTPUT}
-          \`\`\`
-
-          差分が意図したものであれば問題ありません。意図しない差分がある場合は migration ファイルを見直してください。"
-            gh pr comment "$PR_NUMBER" --body "$BODY"
-          else
-            echo "::warning::db diff が空でありません。PR が見つからないためコメントをスキップします。"
-            echo "$DIFF_OUTPUT"
-          fi
-
-      - name: Lint migrations
-        run: |
-          npx --yes supabase@2.62.10 db lint --linked --schema public || true
+      - name: Report db diff to Step Summary (main push)
+        if: steps.db_diff.outputs.has_diff == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-
-      - name: Apply migrations
+          DIFF_OUTPUT: ${{ steps.db_diff.outputs.diff_output }}
         run: |
-          npx --yes supabase@2.62.10 db push --linked --include-all
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-
-      - name: Verify migration list
-        run: |
-          npx --yes supabase@2.62.10 migration list --linked
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          {
+            echo "## Warning: supabase db diff が空でありません (post-apply)"
+            echo ""
+            echo "migration 適用後に以下の残留差分があります:"
+            echo ""
+            echo "\`\`\`sql"
+            printf '%s\n' "$DIFF_OUTPUT"
+            echo "\`\`\`"
+            echo ""
+            echo "意図しない差分がある場合は migration ファイルを見直してください。"
+          } >> "$GITHUB_STEP_SUMMARY"
