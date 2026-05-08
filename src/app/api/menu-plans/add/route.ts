@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { awardBadge } from '@/lib/badges/awardBadge';
 
 const ADMIN_ROLES = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'] as const;
 
@@ -86,7 +87,24 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, menuId: newMenu.id });
+    // バッジ付与(副次処理: 失敗しても主処理は成功)
+    let badgeAwarded: { code: string; name: string | null; obtained_at: string | null; icon_url: string | null } | null = null;
+    try {
+      const badgeResult = await awardBadge(supabase, user.id, 'planner');
+      if (badgeResult.awarded) {
+        console.info('planner badge awarded', { userId: user.id });
+        badgeAwarded = {
+          code: 'planner',
+          name: badgeResult.name,
+          obtained_at: badgeResult.obtained_at,
+          icon_url: badgeResult.icon_url,
+        };
+      }
+    } catch (badgeErr) {
+      console.error('planner badge award failed (non-fatal):', badgeErr);
+    }
+
+    return NextResponse.json({ success: true, menuId: newMenu.id, badge_awarded: badgeAwarded });
   } catch (err: unknown) {
     console.error('menu-plans/add error:', err);
     return NextResponse.json(
