@@ -544,7 +544,14 @@ ALTER TABLE admin_audit_logs
   ADD COLUMN IF NOT EXISTS actor_email_snapshot VARCHAR(255),
   ADD COLUMN IF NOT EXISTS actor_role_snapshot  VARCHAR(50);
 
--- severity の CHECK 制約を追加(既存カラムの場合は既に存在する可能性あり)
+-- 既存データの severity 値を canonical 3 値 (info / warn / critical) に正規化。
+-- 旧運用の 'high' は意味的に critical 相当。'warning' / 'error' / 'debug' 等の
+-- legacy 値が混入していた場合の保険として canonical 外の値を一律 'info' にフォールバック。
+UPDATE admin_audit_logs SET severity = 'critical' WHERE severity = 'high';
+UPDATE admin_audit_logs SET severity = 'warn'     WHERE severity IN ('warning', 'error');
+UPDATE admin_audit_logs SET severity = 'info'     WHERE severity NOT IN ('info', 'warn', 'critical');
+
+-- severity の CHECK 制約を追加 (既存制約があればスキップ)
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.table_constraints
