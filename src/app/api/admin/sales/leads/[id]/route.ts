@@ -16,7 +16,7 @@ type RouteContext = { params: { id: string } };
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
     await requireRole(['sales', 'admin', 'super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: lead, error } = await supabase
       .from('sales_leads')
@@ -91,7 +91,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const updates = parseResult.data;
 
     // 現在のステージを取得 (ステージ変更の監査用)

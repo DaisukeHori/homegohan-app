@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { status, priority, assignee_id, page, per_page } = queryResult.data;
-    const supabase = createClient();
+    const supabase = await createClient();
 
     let query = supabase
       .from('support_tickets')
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { user_id, subject, category, priority, body: messageBody } = parseResult.data;
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // トランザクション的に ticket + 最初のメッセージを作成
     const { data: ticket, error: ticketError } = await supabase

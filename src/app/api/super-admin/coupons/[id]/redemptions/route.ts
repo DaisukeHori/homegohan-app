@@ -16,7 +16,7 @@ type RouteContext = { params: { id: string } };
 export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
     await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // クーポン ID(UUID)で取得
     const { data: coupon, error: couponErr } = await supabase

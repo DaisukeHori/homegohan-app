@@ -26,7 +26,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     const { assignee_id } = parseResult.data;
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: ticket, error } = await supabase
       .from('support_tickets')

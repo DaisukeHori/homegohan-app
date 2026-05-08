@@ -16,7 +16,7 @@ type RouteContext = { params: { id: string } };
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
     await requireRole(['sales', 'admin', 'super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data, error } = await supabase
       .from('sales_lead_activities')
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     const { activity_type, details } = parseResult.data;
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // リード存在確認
     const { data: lead, error: leadError } = await supabase
