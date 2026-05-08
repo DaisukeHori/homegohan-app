@@ -181,53 +181,189 @@ export default function HandsonTourMenuPage() {
     return undefined;
   })();
 
-  const V4GenerateModalPlaceholder = () => (
-    <div className="w-full h-full bg-gray-50 flex flex-col items-center justify-center p-8" data-testid="v4-generate-modal">
-      <div className="w-full max-w-md">
-        <div className="mb-4 flex items-center gap-2">
-          <div data-testid="v4-no-cook-toggle" className="flex items-center gap-2 p-3 rounded-lg border border-blue-600 bg-blue-50 cursor-pointer">
-            <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center">
-              <span className="text-white text-xs">✓</span>
-            </div>
-            <span className="text-sm font-medium">調理しなくていい</span>
-          </div>
+  // sandbox 用インライン UI — data-testid が TourOverlay の spotlight と連動する
+  const MenuSandboxInline = () => (
+    <div
+      className="w-full min-h-screen flex flex-col"
+      style={{ background: '#F7F6F3' }}
+      data-testid="v4-generate-modal"
+    >
+      {/* ヘッダー */}
+      <div
+        className="sticky top-0 z-10 px-4 py-3 flex items-center gap-2"
+        style={{ background: '#FFFFFF', borderBottom: '1px solid #E8E8E8' }}
+      >
+        <span style={{ fontSize: 18, color: '#E07A5F' }}>✨</span>
+        <span style={{ fontSize: 16, fontWeight: 700, color: '#2D2D2D' }}>AIアシスタント（体験）</span>
+      </div>
+
+      <div className="flex-1 p-4 overflow-auto">
+        {/* 体験モードバナー */}
+        <div className="mb-4 p-3 rounded-xl" style={{ background: '#FDF0ED' }}>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#E07A5F', margin: '0 0 4px 0' }}>
+            ハンズオン体験モード
+          </p>
+          <p style={{ fontSize: 12, color: '#6B6B6B', margin: 0 }}>
+            サンプル献立でAIアシスタントを体験できます
+          </p>
         </div>
-        <div className="mb-4">
-          <textarea
-            data-testid="v4-note-textarea"
-            className="w-full p-3 border rounded-lg text-sm"
-            placeholder="自由メモ (任意)"
-            rows={3}
-          />
-        </div>
-        <button
-          data-testid="v4-generate-button"
-          className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold"
-        >
-          AI で献立を生成
-        </button>
-        {(subStep === '2.5' || subStep === '2.6' || subStep === '2.7') && (
-          <div className="mt-4">
-            {subStep === '2.5' && (
-              <div data-testid="v4-loading-spinner" className="flex flex-col items-center">
-                <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                <p className="mt-2 text-gray-600 text-sm">AI が考え中...</p>
-              </div>
-            )}
-            {(subStep === '2.6' || subStep === '2.7') && (
-              <div data-testid="v4-result-card" className="p-4 border rounded-lg bg-white shadow">
-                <div data-testid="v4-result-dish-name" className="text-lg font-bold">{MOCK_MENU_RESPONSE.dish_name}</div>
-                <div data-testid="v4-result-calories" className="text-gray-600">{MOCK_MENU_RESPONSE.calories} kcal</div>
-                <div className="mt-2 text-sm text-gray-500">調理時間: {MOCK_MENU_RESPONSE.cooking_time_minutes}分</div>
-                {subStep === '2.7' && (
-                  <button
-                    data-testid="v4-add-to-menu-button"
-                    className="mt-3 w-full bg-green-600 text-white py-2 rounded-lg font-medium"
+
+        {/* 入力フォーム (2.1〜2.4) */}
+        {subStep <= '2.4' && (
+          <>
+            {/* 条件フラグ */}
+            <div className="mb-4">
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6B6B', marginBottom: 8 }}>生成条件</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  data-testid="v4-no-cook-toggle"
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg border"
+                  style={{
+                    borderColor: '#E07A5F',
+                    background: '#FDF0ED',
+                    cursor: 'default',
+                  }}
+                  aria-pressed="true"
+                >
+                  <span
+                    className="w-5 h-5 rounded flex items-center justify-center"
+                    style={{ background: '#E07A5F' }}
                   >
-                    献立に追加
-                  </button>
-                )}
+                    <span style={{ color: '#fff', fontSize: 12 }}>✓</span>
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: '#E07A5F' }}>
+                    調理しなくていい
+                  </span>
+                </button>
               </div>
+            </div>
+
+            {/* 自由メモ */}
+            <div className="mb-4">
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6B6B', marginBottom: 8 }}>
+                自由メモ（任意）
+              </p>
+              <textarea
+                data-testid="v4-note-textarea"
+                className="w-full p-3 rounded-xl text-sm resize-none"
+                style={{
+                  border: '1px solid #E8E8E8',
+                  background: '#FFFFFF',
+                  color: '#2D2D2D',
+                  outline: 'none',
+                  fontSize: 13,
+                }}
+                placeholder="例: 野菜多め、辛くない、15分以内で作れる..."
+                rows={3}
+                readOnly
+              />
+            </div>
+
+            {/* 生成ボタン */}
+            <button
+              data-testid="v4-generate-button"
+              className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+              style={{ background: '#E07A5F' }}
+              aria-label="AI で献立を生成"
+            >
+              <span style={{ fontSize: 16, color: '#fff' }}>✨</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>AI で献立を生成</span>
+            </button>
+          </>
+        )}
+
+        {/* ローディング (2.5) */}
+        {subStep === '2.5' && (
+          <div
+            className="flex flex-col items-center justify-center py-16"
+            data-testid="v4-loading-spinner"
+          >
+            <div
+              className="w-12 h-12 border-4 rounded-full animate-spin mb-4"
+              style={{ borderColor: '#E07A5F', borderTopColor: 'transparent' }}
+            />
+            <p style={{ fontSize: 16, fontWeight: 600, color: '#2D2D2D' }}>AI が考え中...</p>
+            <p style={{ fontSize: 13, color: '#A0A0A0', marginTop: 8 }}>最適な献立を生成しています</p>
+          </div>
+        )}
+
+        {/* 生成結果 (2.6〜2.7) */}
+        {(subStep === '2.6' || subStep === '2.7') && (
+          <div
+            data-testid="v4-result-card"
+            className="p-4 rounded-2xl"
+            style={{ background: '#FFFFFF', border: '1px solid #E8E8E8' }}
+          >
+            <p style={{ fontSize: 12, fontWeight: 700, color: '#A0A0A0', marginBottom: 8 }}>
+              生成された献立（サンプル）
+            </p>
+            <p
+              style={{ fontSize: 18, fontWeight: 700, color: '#2D2D2D', marginBottom: 4 }}
+              data-testid="v4-result-dish-name"
+            >
+              {MOCK_MENU_RESPONSE.dish_name}
+            </p>
+            <div className="flex gap-3 text-sm" style={{ color: '#6B6B6B', marginBottom: 8 }}>
+              <span data-testid="v4-result-calories">{MOCK_MENU_RESPONSE.calories} kcal</span>
+              <span>P: {MOCK_MENU_RESPONSE.protein_g}g</span>
+              <span>F: {MOCK_MENU_RESPONSE.fat_g}g</span>
+              <span>C: {MOCK_MENU_RESPONSE.carbs_g}g</span>
+            </div>
+            <div className="flex gap-2 flex-wrap mb-4">
+              <span
+                className="text-xs px-2 py-1 rounded-full"
+                style={{ background: '#FDF0ED', color: '#E07A5F' }}
+              >
+                {MOCK_MENU_RESPONSE.cooking_time_minutes}分
+              </span>
+              <span
+                className="text-xs px-2 py-1 rounded-full"
+                style={{ background: '#EDF5ED', color: '#6B9B6B' }}
+              >
+                {MOCK_MENU_RESPONSE.difficulty === 'easy' ? '簡単' : MOCK_MENU_RESPONSE.difficulty === 'medium' ? '普通' : '本格'}
+              </span>
+              <span
+                className="text-xs px-2 py-1 rounded-full"
+                style={{ background: '#EEF4FB', color: '#5B8BC7' }}
+              >
+                {MOCK_MENU_RESPONSE.servings}人分
+              </span>
+            </div>
+
+            {/* 材料一覧 */}
+            <p style={{ fontSize: 12, fontWeight: 700, color: '#A0A0A0', marginBottom: 6 }}>材料</p>
+            <div className="grid grid-cols-2 gap-1 mb-4">
+              {MOCK_MENU_RESPONSE.ingredients.slice(0, 4).map((ing, i) => (
+                <div key={i} style={{ fontSize: 12, color: '#2D2D2D' }}>
+                  {ing.name} {ing.quantity_g}{ing.unit}
+                </div>
+              ))}
+            </div>
+
+            {/* 献立に追加ボタン */}
+            {subStep === '2.7' && (
+              <button
+                data-testid="v4-add-to-menu-button"
+                onClick={handleSandboxComplete}
+                disabled={isSaving}
+                className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+                style={{
+                  background: isSaving ? '#A0A0A0' : '#E07A5F',
+                  opacity: isSaving ? 0.8 : 1,
+                }}
+                aria-label="献立に追加"
+              >
+                {isSaving ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>追加中...</span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>献立に追加</span>
+                  </>
+                )}
+              </button>
             )}
           </div>
         )}
@@ -257,7 +393,7 @@ export default function HandsonTourMenuPage() {
         }}
         onSandboxComplete={handleSandboxComplete}
       >
-        <V4GenerateModalPlaceholder />
+        <MenuSandboxInline />
       </TourSandboxWrapper>
     </div>
   );

@@ -204,9 +204,8 @@ function BadgesPageInner() {
               type="button"
               onClick={() => setSelectedBadge(badge)}
               aria-label={`${badge.name} の詳細を見る`}
-              data-testid="badge-card"
+              data-testid={tutorialMode ? `badge-card-${badge.code}` : 'badge-card'}
               data-badge-code={badge.code}
-              data-testid-dynamic={`badge-card-${badge.code}`}
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: i * 0.05 }}

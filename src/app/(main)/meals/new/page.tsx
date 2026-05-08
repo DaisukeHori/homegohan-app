@@ -1215,6 +1215,7 @@ export default function MealCaptureModal() {
             {photoPreviews.length === 0 && (
               <div className="flex gap-4 mb-6">
                 <button
+                  data-testid="meal-camera-button"
                   onClick={() => cameraInputRef.current?.click()}
                   className="flex-1 p-8 rounded-2xl flex flex-col items-center gap-3"
                   style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
@@ -1388,7 +1389,7 @@ export default function MealCaptureModal() {
             {/* 栄養素グリッド */}
             <div className="grid grid-cols-5 gap-2 mb-4">
               {[
-                { label: 'カロリー', value: totalCalories, unit: 'kcal', color: colors.accent },
+                { label: 'カロリー', value: totalCalories, unit: 'kcal', color: colors.accent, testId: 'meal-result-calories' },
                 { label: 'タンパク質', value: totalProtein, unit: 'g', color: colors.blue },
                 { label: '炭水化物', value: totalCarbs, unit: 'g', color: colors.warning },
                 { label: '脂質', value: totalFat, unit: 'g', color: colors.purple },
@@ -1396,7 +1397,7 @@ export default function MealCaptureModal() {
               ].map((n, i) => (
                 <div key={i} className="p-2 rounded-xl text-center" style={{ background: colors.bg }}>
                   <p style={{ fontSize: 9, color: colors.textMuted, margin: '0 0 2px 0' }}>{n.label}</p>
-                  <p style={{ fontSize: 14, fontWeight: 700, color: n.color, margin: 0 }}>{n.value}</p>
+                  <p data-testid={(n as { testId?: string }).testId} style={{ fontSize: 14, fontWeight: 700, color: n.color, margin: 0 }}>{n.value}</p>
                   <p style={{ fontSize: 9, color: colors.textMuted, margin: 0 }}>{n.unit}</p>
                 </div>
               ))}
@@ -1417,10 +1418,11 @@ export default function MealCaptureModal() {
               <p style={{ fontSize: 13, fontWeight: 600, color: colors.textLight, marginBottom: 8 }}>検出された料理</p>
               <div className="space-y-2">
                 {analyzedDishes.map((dish, idx) => (
-                  <div 
-                    key={idx} 
+                  <div
+                    key={idx}
                     className="p-3 rounded-xl flex items-center justify-between"
                     style={{ background: colors.card }}
+                    data-testid={idx === 0 ? 'meal-result-dish-name' : undefined}
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: colors.successLight }}>
@@ -1486,6 +1488,7 @@ export default function MealCaptureModal() {
             )}
             
             <button
+              data-testid="meal-save-button"
               onClick={() => setStep('select-date')}
               className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
               style={{ background: colors.accent }}
