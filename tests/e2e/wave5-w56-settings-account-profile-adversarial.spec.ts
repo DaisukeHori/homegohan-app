@@ -464,7 +464,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const ageInput = page.locator("#profile-age-input");
     const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!visible) {
-      test.skip();
+      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
+      // T04 で profile モーダルの testID が確立された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -508,7 +510,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const ageInput = page.locator("#profile-age-input");
     const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!visible) {
-      test.skip();
+      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
+      // T04 で profile モーダルの testID が確立された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -548,7 +552,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const ageInput = page.locator("#profile-age-input");
     const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!visible) {
-      test.skip();
+      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
+      // T04 で profile モーダルの testID が確立された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -586,7 +592,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const ageInput = page.locator("#profile-age-input");
     const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!visible) {
-      test.skip();
+      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
+      // T04 で profile モーダルの testID が確立された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -637,7 +645,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       .isVisible({ timeout: 5_000 })
       .catch(() => false);
     if (!visible) {
-      test.skip();
+      // fixme: プロフィール編集モーダルの #profile-height-input が未表示。
+      // T04 で profile モーダルの testID が確立された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -684,7 +694,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
     const ageInput = page.locator("#profile-age-input");
     const visible = await ageInput.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!visible) {
-      test.skip();
+      // fixme: プロフィール編集モーダルの #profile-age-input が未表示。
+      // T04 で profile モーダルの testID が確立された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -742,7 +754,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       .isVisible({ timeout: 5_000 })
       .catch(() => false);
     if (!dateVisible) {
-      test.skip();
+      // fixme: 目標設定タブの date input が未表示。
+      // プロフィールモーダルの目標タブ実装が変更された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -786,7 +800,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       .isVisible({ timeout: 5_000 })
       .catch(() => false);
     if (!dateVisible) {
-      test.skip();
+      // fixme: 目標設定タブの date input が未表示。
+      // プロフィールモーダルの目標タブ実装が変更された後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -826,7 +842,9 @@ test.describe("[profile][adversarial] C. プロフィール編集", () => {
       .isVisible({ timeout: 5_000 })
       .catch(() => false);
     if (!genderVisible) {
-      test.skip();
+      // fixme: プロフィール編集モーダルの gender select が未表示。
+      // T04 で profile モーダルの testID が確立された後に有効化する。
+      test.fixme();
       return;
     }
 

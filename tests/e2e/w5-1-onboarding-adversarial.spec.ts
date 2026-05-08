@@ -432,7 +432,10 @@ test.describe("B. 中断 / 再開", () => {
         completeApiCalled || afterUrl.includes("/menus");
       expect(apiOrRedirect).toBe(true);
     } else {
-      test.skip();
+      // fixme: オンボーディングの「スキップ」ボタンが表示されなかった。
+      // questions ページの初期表示に nickname ステップが必要で、その後のスキップボタンが
+      // 見えるまでのフロー到達が不安定なため。T04 のフロー整備後に有効化する。
+      test.fixme();
     }
   });
 
@@ -476,7 +479,10 @@ test.describe("B. 中断 / 再開", () => {
       // ページがクラッシュしていないことを確認
       await expect(page.locator("body")).toBeVisible();
     } else {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
     }
   });
 
@@ -593,7 +599,10 @@ test.describe("C. 異常入力", () => {
     // nickname を入力して body_stats ステップへ進む
     const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
     if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
       return;
     }
     await nicknameInput.fill("テスト");
@@ -610,7 +619,10 @@ test.describe("C. 異常入力", () => {
     // body_stats ステップ
     const weightInput = page.locator('input[placeholder="60"]').first();
     if (!(await weightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: body_stats ステップの体重 input (placeholder="60") が表示されなかった。
+      // nickname → gender → body_stats の順でステップが進む必要があり、
+      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -645,7 +657,10 @@ test.describe("C. 異常入力", () => {
 
     const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
     if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
       return;
     }
     await nicknameInput.fill("テスト");
@@ -660,7 +675,10 @@ test.describe("C. 異常入力", () => {
 
     const weightInput = page.locator('input[placeholder="60"]').first();
     if (!(await weightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: body_stats ステップの体重 input (placeholder="60") が表示されなかった。
+      // nickname → gender → body_stats の順でステップが進む必要があり、
+      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -697,7 +715,10 @@ test.describe("C. 異常入力", () => {
 
     const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
     if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
       return;
     }
     await nicknameInput.fill("テスト");
@@ -712,7 +733,10 @@ test.describe("C. 異常入力", () => {
 
     const weightInput = page.locator('input[placeholder="60"]').first();
     if (!(await weightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: body_stats ステップの体重 input (placeholder="60") が表示されなかった。
+      // nickname → gender → body_stats の順でステップが進む必要があり、
+      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -748,7 +772,10 @@ test.describe("C. 異常入力", () => {
 
     const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
     if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -779,7 +806,10 @@ test.describe("C. 異常入力", () => {
 
     const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
     if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
       return;
     }
     await nicknameInput.fill("テスト");
@@ -794,7 +824,10 @@ test.describe("C. 異常入力", () => {
 
     const heightInput = page.locator('input[placeholder="170"]').first();
     if (!(await heightInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: body_stats ステップの身長 input (placeholder="170") が表示されなかった。
+      // nickname → gender → body_stats の順でステップが進む必要があり、
+      // 各ステップへの到達がフロー実装の変更に依存する。T04 整備後に有効化する。
+      test.fixme();
       return;
     }
 
@@ -997,7 +1030,10 @@ test.describe("C. 異常入力", () => {
         await expect(nextOrSubmitBtn).toBeDisabled({ timeout: 3_000 });
       }
     } else {
-      test.skip();
+      // fixme: progress API で target_weight ステップに移動しても number input が表示されなかった。
+      // currentStep=4 + nutrition_goal=lose_weight の状態から target_weight フィールドが
+      // 表示されるかどうかはフロー実装に依存する。T04 整備後に有効化する。
+      test.fixme();
     }
   });
 
@@ -1018,7 +1054,10 @@ test.describe("C. 異常入力", () => {
     // exercise_types ステップ (multi_choice) まで進む
     const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
     if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
       return;
     }
     await nicknameInput.fill("テスト");
@@ -1180,7 +1219,10 @@ test.describe("D. 並列 / 競合", () => {
 
     const nicknameInput = page.locator('input[placeholder*="たろう"]').first();
     if (!(await nicknameInput.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.skip();
+      // fixme: onboarding/questions ページで nicknameInput (placeholder="たろう") が表示されなかった。
+      // E2E 環境の認証状態またはオンボーディング初期状態が不安定なため。
+      // T04 のグローバルセットアップ整備後に有効化する。
+      test.fixme();
       return;
     }
     await nicknameInput.fill("テスト");
@@ -1199,7 +1241,10 @@ test.describe("D. 並列 / 競合", () => {
       // ページがクラッシュしていないこと
       await expect(page.locator("body")).toBeVisible();
     } else {
-      test.skip();
+      // fixme: gender 選択の「男性」ボタンが表示されなかった。
+      // nickname 回答後に gender ステップに進む必要があり、
+      // アニメーションやフロー状態によって表示タイミングが変動する。T04 整備後に有効化する。
+      test.fixme();
     }
   });
 
