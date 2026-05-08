@@ -416,7 +416,7 @@ WITH cohort AS (
   SELECT c.user_id,
     CASE WHEN c.completed_at IS NOT NULL THEN 'completed' ELSE 'skipped' END AS group_,
     EXISTS (
-      SELECT 1 FROM meal_logs ml
+      SELECT 1 FROM meals ml
       WHERE ml.user_id = c.user_id
         AND ml.eaten_at BETWEEN COALESCE(c.completed_at, c.skipped_at) + INTERVAL '6 days'
                             AND COALESCE(c.completed_at, c.skipped_at) + INTERVAL '7 days'

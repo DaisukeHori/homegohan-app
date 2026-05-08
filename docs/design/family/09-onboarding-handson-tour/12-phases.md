@@ -57,7 +57,7 @@ memory: feedback-modular-monolith-parallel に従い、30+ ファイル規模の
 | implementer-A | Unit テスト (API + personalize) | `__tests__/handson-tour/` | 全テスト pass |
 
 ### 2.2 完了基準
-- migration 適用後、`user_profiles` に 2 列、`meal_logs` / `weekly_menus` に `is_sandbox` 列追加
+- migration 適用後、`user_profiles` に 2 列、`meals` / `user_daily_meals` に `is_sandbox` 列追加
 - `tutorial_complete` バッジ seed 完了
 - 4 つの API ハンドラがレスポンスを返す (Postman / curl 確認)
 - 共通 package が `import { MOCK_PHOTO_RESPONSE } from '@homegohan/handson-tour-shared';` で使える

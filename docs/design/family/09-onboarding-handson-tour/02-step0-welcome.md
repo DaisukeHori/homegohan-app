@@ -420,7 +420,7 @@ web は `aria-live="polite"` の自動読み上げに任せる。
 
 ### 9.2 不要な data
 
-- meal_logs / weekly_menus (Step 0 では不要、Step 1 で初めて発火)
+- meals / user_daily_meals (Step 0 では不要、Step 1 で初めて発火)
 - badges (Step 3 で初めて取得)
 - target_kcal_per_day (Step 1 から使用)
 

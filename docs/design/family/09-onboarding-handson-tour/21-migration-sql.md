@@ -1,6 +1,8 @@
 # 21 — Migration SQL 完全形
 
 > 関連: [08-state-db](./08-state-db.md) / [17-security](./17-security.md) / operator/01-data-model.md (canonical)
+>
+> **テーブル名・列名の根拠**: `user_profiles` の PK は `id`(`auth.users(id)` への FK)で `user_id` 列は存在しない。食事記録の実テーブルは `meals` (`db_audit_fixes` 由来)、献立の実テーブルは `user_daily_meals` (`date_based_model_migration` 由来)。本ファイルはそれらに合わせている (2026-05-08 修正)。
 
 ---
 
@@ -43,44 +45,44 @@ COMMENT ON COLUMN user_profiles.handson_tour_skipped_at IS
 
 -- 部分インデックス: 表示判定の高速化 (pending な user のみ index に乗る)
 CREATE INDEX IF NOT EXISTS idx_user_profiles_handson_tour_pending
-  ON user_profiles (user_id)
+  ON user_profiles (id)
   WHERE handson_tour_completed_at IS NULL AND handson_tour_skipped_at IS NULL;
 
 
 -- =========================================
--- 2. meal_logs 拡張: is_sandbox 列追加
+-- 2. meals 拡張: is_sandbox 列追加
 -- =========================================
 
-ALTER TABLE meal_logs
+ALTER TABLE meals
   ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
 
-COMMENT ON COLUMN meal_logs.is_sandbox IS
+COMMENT ON COLUMN meals.is_sandbox IS
   'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
 
 -- 部分インデックス: 通常 UI のクエリ高速化
-CREATE INDEX IF NOT EXISTS idx_meal_logs_user_non_sandbox
-  ON meal_logs (user_id, eaten_at DESC)
+CREATE INDEX IF NOT EXISTS idx_meals_user_non_sandbox
+  ON meals (user_id, eaten_at DESC)
   WHERE is_sandbox = false;
 
 -- 部分 UNIQUE 制約: ハンズオン中の二重 INSERT 防止
 -- (user_id, is_sandbox=true) の組合せは 1 行のみ
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
-  ON meal_logs (user_id)
+  ON meals (user_id)
   WHERE is_sandbox = true;
 
 
 -- =========================================
--- 3. weekly_menus 拡張: is_sandbox 列追加
+-- 3. user_daily_meals 拡張: is_sandbox 列追加
 -- =========================================
 
-ALTER TABLE weekly_menus
+ALTER TABLE user_daily_meals
   ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
 
-COMMENT ON COLUMN weekly_menus.is_sandbox IS
+COMMENT ON COLUMN user_daily_meals.is_sandbox IS
   'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_menu
-  ON weekly_menus (user_id)
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_daily_meal
+  ON user_daily_meals (user_id)
   WHERE is_sandbox = true;
 
 
@@ -110,9 +112,9 @@ SET search_path = public
 AS $$
 BEGIN
   RETURN EXISTS (
-    SELECT 1 FROM meal_logs WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   ) OR EXISTS (
-    SELECT 1 FROM weekly_menus WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM user_daily_meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   );
 END;
 $$;
@@ -145,7 +147,7 @@ BEGIN
   -- COALESCE で書き込んだ値と RETURNING 後の比較ではタイムスタンプが完全一致して
   -- 判定が壊れる。先に SELECT して NULL チェックを確実に行う。
   SELECT handson_tour_completed_at INTO v_existing_completed_at
-  FROM user_profiles WHERE user_id = p_user_id;
+  FROM user_profiles WHERE id = p_user_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'profile_not_found';
@@ -156,7 +158,7 @@ BEGIN
   -- 1. user_profiles UPDATE (冪等)
   UPDATE user_profiles
   SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
-  WHERE user_id = p_user_id
+  WHERE id = p_user_id
   RETURNING handson_tour_completed_at INTO v_completed_at;
 
   -- 2. badges から tutorial_complete を取得
@@ -199,7 +201,7 @@ COMMENT ON FUNCTION complete_handson_tour IS
 -- =========================================
 
 -- v1 では実装せず、コメントアウト。v2 で必要なら有効化。
--- CREATE OR REPLACE FUNCTION check_meal_logs_sandbox_eligibility() ... 略
+-- CREATE OR REPLACE FUNCTION check_meals_sandbox_eligibility() ... 略
 
 COMMIT;
 
@@ -225,9 +227,9 @@ DROP FUNCTION IF EXISTS complete_handson_tour(uuid);
 DROP FUNCTION IF EXISTS user_has_non_sandbox_activity(uuid);
 
 -- 2. インデックスを DROP
-DROP INDEX IF EXISTS uniq_user_sandbox_menu;
+DROP INDEX IF EXISTS uniq_user_sandbox_daily_meal;
 DROP INDEX IF EXISTS uniq_user_sandbox_meal;
-DROP INDEX IF EXISTS idx_meal_logs_user_non_sandbox;
+DROP INDEX IF EXISTS idx_meals_user_non_sandbox;
 DROP INDEX IF EXISTS idx_user_profiles_handson_tour_pending;
 
 -- 3. 既存 user_badges から tutorial_complete を削除 (existence check 後)
@@ -237,11 +239,11 @@ WHERE badge_id IN (SELECT id FROM badges WHERE code = 'tutorial_complete');
 -- 4. badges から tutorial_complete を削除
 DELETE FROM badges WHERE code = 'tutorial_complete';
 
--- 5. weekly_menus から is_sandbox 列を削除
-ALTER TABLE weekly_menus DROP COLUMN IF EXISTS is_sandbox;
+-- 5. user_daily_meals から is_sandbox 列を削除
+ALTER TABLE user_daily_meals DROP COLUMN IF EXISTS is_sandbox;
 
--- 6. meal_logs から is_sandbox 列を削除
-ALTER TABLE meal_logs DROP COLUMN IF EXISTS is_sandbox;
+-- 6. meals から is_sandbox 列を削除
+ALTER TABLE meals DROP COLUMN IF EXISTS is_sandbox;
 
 -- 7. user_profiles から 2 列を削除
 ALTER TABLE user_profiles
@@ -267,44 +269,45 @@ INSERT INTO users (id, email) VALUES
   ('11111111-1111-1111-1111-111111111111', 'e2e-tour-new-user@homegohan.test')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO user_profiles (user_id, nickname, gender, age, height_cm, weight_kg, nutrition_goal, onboarding_completed_at, roles) VALUES (
+-- 注: user_profiles の実列名は age (整数) / height (NUMERIC) / weight (NUMERIC)
+--     (height_cm / weight_kg / nutrition_goal は不存在、operator/01 §3.26.8 参照)
+INSERT INTO user_profiles (id, nickname, gender, age, height, weight, onboarding_completed_at, roles) VALUES (
   '11111111-1111-1111-1111-111111111111',
   'テスト 太郎',
   'male',
   30,
   170,
   65,
-  'maintain',
   now() - INTERVAL '5 minutes',
   ARRAY['user']::text[]
 )
-ON CONFLICT (user_id) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
 
 -- ハンズオン完了済ユーザー (force=1 シナリオ用)
 INSERT INTO users (id, email) VALUES
   ('22222222-2222-2222-2222-222222222222', 'e2e-tour-completed@homegohan.test')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO user_profiles (user_id, nickname, ..., handson_tour_completed_at) VALUES (
+INSERT INTO user_profiles (id, nickname, ..., handson_tour_completed_at) VALUES (
   '22222222-2222-2222-2222-222222222222',
   'テスト 花子',
   ...,
   now() - INTERVAL '7 days'
 )
-ON CONFLICT (user_id) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
 
 -- admin ロールユーザー
 INSERT INTO users (id, email) VALUES
   ('33333333-3333-3333-3333-333333333333', 'e2e-tour-admin@homegohan.test')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO user_profiles (user_id, nickname, ..., roles) VALUES (
+INSERT INTO user_profiles (id, nickname, ..., roles) VALUES (
   '33333333-3333-3333-3333-333333333333',
   'テスト 管理者',
   ...,
   ARRAY['user', 'admin']::text[]
 )
-ON CONFLICT (user_id) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
 ```
 
 ---
@@ -313,15 +316,15 @@ ON CONFLICT (user_id) DO NOTHING;
 
 ```sql
 -- 自分の handson_tour_completed_at を読める
-SELECT handson_tour_completed_at FROM user_profiles WHERE user_id = auth.uid();
+SELECT handson_tour_completed_at FROM user_profiles WHERE id = auth.uid();
 
 -- 他人のは読めない (RLS で空)
 SELECT handson_tour_completed_at FROM user_profiles
-WHERE user_id != auth.uid()
+WHERE id != auth.uid()
 LIMIT 5;
 
 -- admin ロールなら他人も読める
-SELECT user_id, handson_tour_completed_at FROM user_profiles
+SELECT id, handson_tour_completed_at FROM user_profiles
 WHERE handson_tour_completed_at IS NOT NULL
 LIMIT 10;
 ```
@@ -337,18 +340,18 @@ WHERE table_name = 'user_profiles' AND column_name LIKE 'handson_tour%';
 -- 期待: 2 行
 
 SELECT column_name FROM information_schema.columns
-WHERE table_name = 'meal_logs' AND column_name = 'is_sandbox';
+WHERE table_name = 'meals' AND column_name = 'is_sandbox';
 -- 期待: 1 行
 
 SELECT column_name FROM information_schema.columns
-WHERE table_name = 'weekly_menus' AND column_name = 'is_sandbox';
+WHERE table_name = 'user_daily_meals' AND column_name = 'is_sandbox';
 -- 期待: 1 行
 
 -- 2. インデックスが追加されているか
 SELECT indexname FROM pg_indexes
-WHERE tablename IN ('user_profiles', 'meal_logs', 'weekly_menus')
+WHERE tablename IN ('user_profiles', 'meals', 'user_daily_meals')
   AND (indexname LIKE '%handson_tour%' OR indexname LIKE '%sandbox%');
--- 期待: 4 件 (idx_user_profiles_handson_tour_pending, idx_meal_logs_user_non_sandbox, uniq_user_sandbox_meal, uniq_user_sandbox_menu)
+-- 期待: 4 件 (idx_user_profiles_handson_tour_pending, idx_meals_user_non_sandbox, uniq_user_sandbox_meal, uniq_user_sandbox_daily_meal)
 
 -- 3. tutorial_complete バッジが seed されているか
 SELECT code, name FROM badges WHERE code = 'tutorial_complete';
@@ -366,17 +369,17 @@ SELECT user_has_non_sandbox_activity('11111111-1111-1111-1111-111111111111'::uui
 ```sql
 -- インデックスを使うか (EXPLAIN)
 EXPLAIN ANALYZE
-SELECT user_id FROM user_profiles
+SELECT id FROM user_profiles
 WHERE handson_tour_completed_at IS NULL AND handson_tour_skipped_at IS NULL
 LIMIT 100;
 -- 期待: Index Scan using idx_user_profiles_handson_tour_pending
 
 EXPLAIN ANALYZE
-SELECT * FROM meal_logs
+SELECT * FROM meals
 WHERE user_id = '11111111-1111-1111-1111-111111111111'
 ORDER BY eaten_at DESC
 LIMIT 20;
--- 期待: Index Scan using idx_meal_logs_user_non_sandbox (or 既存 PK)
+-- 期待: Index Scan using idx_meals_user_non_sandbox (or 既存 PK)
 ```
 
 ---
@@ -406,14 +409,14 @@ WHERE table_name='user_profiles' AND column_name='handson_tour_completed_at';
 
 ```sql
 -- 重複検出
-SELECT user_id, COUNT(*) FROM meal_logs
+SELECT user_id, COUNT(*) FROM meals
 WHERE is_sandbox = true GROUP BY user_id HAVING COUNT(*) > 1;
 
 -- 重複削除 (古い方を残す)
-DELETE FROM meal_logs ml
+DELETE FROM meals ml
 WHERE is_sandbox = true
 AND id NOT IN (
-  SELECT MIN(id) FROM meal_logs
+  SELECT MIN(id) FROM meals
   WHERE is_sandbox = true
   GROUP BY user_id
 );
@@ -438,7 +441,7 @@ GRANT EXECUTE ON FUNCTION user_has_non_sandbox_activity(uuid) TO service_role;
 ### 9.2 既存データへの影響
 
 - 既存ユーザーの user_profiles 行は影響なし (新規列は NULL default)
-- 既存 meal_logs / weekly_menus 行の `is_sandbox` は false (DEFAULT)
+- 既存 meals / user_daily_meals 行の `is_sandbox` は false (DEFAULT)
 - 既存 user_badges / badges に新規 1 行追加のみ (重複なし)
 
 ### 9.3 デプロイタイミング

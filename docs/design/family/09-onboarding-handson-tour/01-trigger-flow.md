@@ -14,7 +14,7 @@
 
 - **A**: `user_profiles.onboarding_completed_at IS NOT NULL` (= onboarding 完了済)
 - **B**: `user_profiles.handson_tour_completed_at IS NULL` AND `handson_tour_skipped_at IS NULL` (= ハンズオン未完了かつ未スキップ)
-- **C**: ユーザーが既に non-sandbox の `meal_logs` または `weekly_menus` を 1 件以上保有 (= 既存ユーザーが事故的に初回扱いされない安全弁)
+- **C**: ユーザーが既に non-sandbox の `meals` または `user_daily_meals` を 1 件以上保有 (= 既存ユーザーが事故的に初回扱いされない安全弁)
 - **D**: ユーザーが admin / super_admin / org_admin / org_industrial_doctor の **いずれか** ロールを保有 (= 業務利用ユーザーは個人向けハンズオンを受けない)
 
 ### 1.2 Rule of priority
@@ -30,7 +30,7 @@
 // src/app/api/onboarding/complete/route.ts (既存)
 async function handler(req) {
   // 既存ロジック ...
-  await db.query(`UPDATE user_profiles SET onboarding_completed_at = now() WHERE user_id = $1`, [userId]);
+  await db.query(`UPDATE user_profiles SET onboarding_completed_at = now() WHERE id = $1`, [userId]);
 
   const tourStatus = await getHandsonTourStatus(userId);
   return {
@@ -100,18 +100,18 @@ async function getHandsonTourStatus(userId: string): Promise<{
   if (profile.handson_tour_completed_at) return { should_show: false, completed_at: profile.handson_tour_completed_at, skipped_at: null };
   if (profile.handson_tour_skipped_at) return { should_show: false, completed_at: null, skipped_at: profile.handson_tour_skipped_at };
 
-  // C: 既存活動あり (non-sandbox の meal_logs or weekly_menus)
+  // C: 既存活動あり (non-sandbox の meals or user_daily_meals)
   const hasActivity = await db.queryOne(`
     SELECT 1 FROM (
-      SELECT 1 FROM meal_logs WHERE user_id = $1 AND is_sandbox = false LIMIT 1
+      SELECT 1 FROM meals WHERE user_id = $1 AND is_sandbox = false LIMIT 1
       UNION ALL
-      SELECT 1 FROM weekly_menus WHERE user_id = $1 AND is_sandbox = false LIMIT 1
+      SELECT 1 FROM user_daily_meals WHERE user_id = $1 AND is_sandbox = false LIMIT 1
     ) t LIMIT 1
   `, [userId]);
 
   if (hasActivity) {
     // 安全弁: 既存ユーザーには表示しない、自動スキップでマーク
-    await db.query(`UPDATE user_profiles SET handson_tour_skipped_at = now() WHERE user_id = $1 AND handson_tour_skipped_at IS NULL`, [userId]);
+    await db.query(`UPDATE user_profiles SET handson_tour_skipped_at = now() WHERE id = $1 AND handson_tour_skipped_at IS NULL`, [userId]);
     return { should_show: false, completed_at: null, skipped_at: new Date().toISOString() };
   }
 
@@ -281,7 +281,7 @@ stateDiagram-v2
 
 ### 5.3 利用規約改訂時のスキップ
 - 利用規約改訂通知が出ているユーザーは onboarding 完了から時間が経っており、既存ユーザーの可能性が高い
-- 但し condition C (meal_logs 既存) で auto-skip されるはず → 二重防御
+- 但し condition C (meals 既存) で auto-skip されるはず → 二重防御
 
 ---
 
@@ -376,7 +376,7 @@ v2 で計測し、Step 1 / 2 で離脱率が高ければ途中再開を検討。
 - onboarding 未完 → false
 - 完了済 → false
 - スキップ済 → false
-- meal_logs 既存 → false (& auto-skip 副作用)
+- meals 既存 → false (& auto-skip 副作用)
 - admin role → false (& auto-skip しない、ロール変更可能性のため)
 - 通常新規 → true
 

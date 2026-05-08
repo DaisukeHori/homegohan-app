@@ -436,7 +436,7 @@ test('Step 4 紙吹雪 60fps 維持', async () => {
 
 ### 12.1 sandbox 行の容量見積もり
 
-- 1 行 ~500 bytes (meal_logs)
+- 1 行 ~500 bytes (meals)
 - 新規ユーザー 1 人につき Step 1+Step 2 で 2 行 (total 1KB)
 - 月 1000 新規ユーザー → 1MB / 月
 

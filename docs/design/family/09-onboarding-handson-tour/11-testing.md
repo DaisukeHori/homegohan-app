@@ -127,7 +127,7 @@ describe('shouldShowHandsonTour', () => {
     expect(/* DB の skipped_at */).toBeNull();
   });
 
-  it('C:true (既存 meal_logs) → false (skipped_at auto-set)', async () => {
+  it('C:true (既存 meals) → false (skipped_at auto-set)', async () => {
     // mock: hasNonSandboxActivity → true
     const result = await shouldShowHandsonTour(baseProfile, { hasActivity: true });
     expect(result.should_show).toBe(false);
@@ -283,7 +283,7 @@ describe('POST /api/handson-tour/complete', () => {
 
 ```ts
 describe('POST /api/meal-plans/add-from-photo with sandbox', () => {
-  it('通常ユーザー sandbox=true: meal_logs に is_sandbox=true で挿入', async () => {
+  it('通常ユーザー sandbox=true: meals に is_sandbox=true で挿入', async () => {
     const res = await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
       method: 'POST',
       headers: { ... },
@@ -291,8 +291,8 @@ describe('POST /api/meal-plans/add-from-photo with sandbox', () => {
     });
     expect(res.status).toBe(200);
 
-    const logs = await getMealLogs(testUserId);
-    expect(logs[0].is_sandbox).toBe(true);
+    const meals = await getMeals(testUserId);
+    expect(meals[0].is_sandbox).toBe(true);
   });
 
   it('admin sandbox=true: 403', async () => {
@@ -725,8 +725,8 @@ describe('sandbox=true 偽装防止', () => {
     expect(res.status).toBe(403);
   });
 
-  it('既存ユーザー (non-sandbox meal_logs あり) が sandbox=true → 409', async () => {
-    await insertMealLog(testUserId, { is_sandbox: false });
+  it('既存ユーザー (non-sandbox meals あり) が sandbox=true → 409', async () => {
+    await insertMeal(testUserId, { is_sandbox: false });
     const res = await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
       method: 'POST', body: JSON.stringify({ sandbox: true, ... }),
     });
@@ -749,7 +749,7 @@ SameSite=Lax cookie + Bearer token で防御済。CSRF テストは cross/04 で
 - `e2e-tour-new-user-{timestamp}@homegohan.test`: signup から始める新規 user
 - `e2e-tour-completed@homegohan.test`: ハンズオン完了済 (force=1 シナリオ用)
 - `e2e-tour-admin@homegohan.test`: admin ロール
-- `e2e-tour-existing-user@homegohan.test`: meal_logs を持つ既存 user
+- `e2e-tour-existing-user@homegohan.test`: meals を持つ既存 user
 
 ### 9.2 画像
 - `tests/e2e/fixtures/karaage.jpg` (既存、再利用)

@@ -18,7 +18,7 @@ Step 1 は **「写真 1 枚で食事が記録できる」体験を提供する*
 | AI 解析 | 固定 mock レスポンスを 1.5 秒ローディング後表示 | mock (実 Gemini API は呼ばない) |
 | 結果表示 | mock データを既存 result 画面に流し込む | mock |
 | 保存 | 実 API `POST /api/meal-plans/add-from-photo?source=handson_tour` を呼ぶ + body に `sandbox: true` | **実 API** |
-| バッジ判定 | サーバー側で `first_bite` バッジを実際に付与 (条件: meal_logs INSERT したので発火) | **実 API** |
+| バッジ判定 | サーバー側で `first_bite` バッジを実際に付与 (条件: meals INSERT したので発火) | **実 API** |
 
 → ユーザー体験は完全 mock (90 秒で完走可能) + バッジは実獲得 (既存システムと整合)。
 
@@ -258,11 +258,12 @@ const handleSave = async () => {
 サーバー側で:
 
 ```sql
--- meal_logs INSERT
-INSERT INTO meal_logs (
-  user_id, dish_name, calories, protein_g, fat_g, carbs_g,
-  eaten_at, meal_type, source, is_sandbox, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'photo', true, now())
+-- meals INSERT (sandbox 行)
+-- 既存 meals テーブル (db_audit_fixes 由来) は user_id / eaten_at / meal_type / photo_url / memo 列を持つ。
+-- 栄養値は meal_nutrition_estimates 子テーブル側で保持するため、ここでは meal 本体のみ INSERT する想定。
+INSERT INTO meals (
+  user_id, eaten_at, meal_type, photo_url, memo, is_sandbox, created_at
+) VALUES ($1, $2, $3, $4, $5, true, now())
 RETURNING id;
 
 -- first_bite バッジ付与 (既存ロジック流用、ただし sandbox 行もカウントする方針)
@@ -585,7 +586,7 @@ env:
 ```
 
 ### 11.3 Integration
-- 保存後、`meal_logs` に `is_sandbox=true` の行が追加されている
+- 保存後、`meals` に `is_sandbox=true` の行が追加されている
 - `user_badges` に `first_bite` が追加されている (新規ユーザーの場合)
 - `force=1` で再表示時、すでに first_bite を持つユーザーには重複 INSERT されない
 
