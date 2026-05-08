@@ -6,7 +6,7 @@ const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 20;
 
 export async function GET(request: Request) {
-  const supabase = createClient();
+  const supabase = await createClient();
 
   try {
     const {

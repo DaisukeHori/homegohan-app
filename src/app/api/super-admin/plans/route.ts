@@ -18,7 +18,7 @@ import {
 export async function GET(request: NextRequest) {
   try {
     const user = await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { searchParams } = request.nextUrl;
     const queryResult = PlansQuerySchema.safeParse({
@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const body = await request.json();
     const parseResult = PlanCreateSchema.safeParse(body);

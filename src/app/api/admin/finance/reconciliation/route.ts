@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     const user = await requireRole(['admin', 'super_admin', 'finance']);
     const isAdminOrSuperAdmin = user.roles.some((r) => ['admin', 'super_admin'].includes(r));
 
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // admin_audit_logs から reconciliation discrepancy を取得
     const { searchParams } = new URL(request.url);

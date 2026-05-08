@@ -16,7 +16,7 @@ type RouteContext = { params: { id: string } };
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: ticket, error } = await supabase
       .from('support_tickets')
@@ -99,7 +99,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const updates = parseResult.data;
 
     // resolved 状態に変更する場合は resolved_at を設定

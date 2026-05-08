@@ -18,7 +18,7 @@ import {
 export async function GET(request: NextRequest) {
   try {
     await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { searchParams } = request.nextUrl;
     const queryResult = FeaturePackagesQuerySchema.safeParse({
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const body = await request.json();
     const parseResult = FeaturePackageCreateSchema.safeParse(body);

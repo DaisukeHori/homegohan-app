@@ -16,7 +16,7 @@ type RouteContext = { params: { id: string } };
 export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const isInternalAllowed = currentUser.roles.some((r) =>
       ['support', 'admin', 'super_admin'].includes(r),
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       }
     }
 
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // チケット存在確認
     const { data: ticket, error: ticketError } = await supabase
@@ -179,7 +179,7 @@ async function sendEmailToUser(
   }
 
   try {
-    const supabase = createClient();
+    const supabase = await createClient();
     const { data: profile } = await supabase
       .from('user_profiles')
       .select('id')

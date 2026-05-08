@@ -20,7 +20,7 @@ type RouteContext = { params: { id: string } };
 export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     const user = await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const body = await request.json();
     const parseResult = PriceChangeSchema.safeParse(body);

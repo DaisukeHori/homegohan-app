@@ -13,7 +13,7 @@ export async function GET(
     return NextResponse.json({ error: "invalid_id" }, { status: 400 });
   }
 
-  const supabase = createClient();
+  const supabase = await createClient();
 
   try {
     const {
