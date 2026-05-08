@@ -1,0 +1,190 @@
+/**
+ * tests/e2e/tour/helpers.ts
+ *
+ * Playwright E2E ハンズオンツアー共通ヘルパー
+ */
+
+import type { Page, Locator } from "@playwright/test";
+import { expect } from "@playwright/test";
+import * as path from "path";
+import { config as dotenvConfig } from "dotenv";
+
+dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+/** テストユーザーのパスワード (固定値) */
+const TEST_USER_PASSWORD = "E2eTourUser2026!";
+
+/** Supabase service_role 経由でテストユーザーを削除する */
+export async function cleanupTestUser(userId: string): Promise<void> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn("[tour/helpers] SUPABASE_SERVICE_ROLE_KEY が未設定のためユーザー削除をスキップ");
+    return;
+  }
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+      method: "DELETE",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    });
+    if (!resp.ok && resp.status !== 404) {
+      const body = await resp.text();
+      console.warn(`[tour/helpers] ユーザー削除失敗 (${resp.status}): ${body.substring(0, 200)}`);
+    }
+  } catch (err) {
+    console.warn(`[tour/helpers] cleanupTestUser error: ${err}`);
+  }
+}
+
+/**
+ * Supabase Auth API で新規 signup する。
+ * email_confirm が disabled 想定の E2E 環境用。
+ * 成功した場合は user_id を返す。
+ */
+export async function signupViaApi(email: string, password: string): Promise<string | null> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.warn("[tour/helpers] Supabase 環境変数が未設定");
+    return null;
+  }
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      console.warn(`[tour/helpers] signup API 失敗 (${resp.status}): ${body.substring(0, 200)}`);
+      return null;
+    }
+    const data = await resp.json() as Record<string, unknown>;
+    // signup レスポンスは { user: { id: ... }, session: { ... } } 形式
+    const user = data.user as { id?: string } | undefined;
+    return user?.id ?? null;
+  } catch (err) {
+    console.warn(`[tour/helpers] signupViaApi error: ${err}`);
+    return null;
+  }
+}
+
+/**
+ * Supabase Cookie を page context に注入してログイン状態を作る。
+ * @supabase/ssr は Cookie ベース認証を使用する。
+ */
+async function injectSession(page: Page, email: string, password: string): Promise<boolean> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!resp.ok) return false;
+    const session = await resp.json() as Record<string, unknown>;
+    if (!session.access_token) return false;
+
+    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
+    const cookieName = `sb-${supabaseRef}-auth-token`;
+    const baseURL = (page.context() as unknown as { _options?: { baseURL?: string } })._options?.baseURL ?? "http://localhost:3000";
+    const domain = new URL(baseURL).hostname;
+    const cookieValue = encodeURIComponent(JSON.stringify(session));
+    const expiresAt = (session.expires_at as number) ?? (Date.now() / 1000 + 3600);
+
+    await page.context().clearCookies();
+    await page.context().addCookies([
+      {
+        name: cookieName,
+        value: cookieValue,
+        domain,
+        path: "/",
+        expires: expiresAt,
+        httpOnly: false,
+        secure: baseURL.startsWith("https"),
+        sameSite: "Lax",
+      },
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 新規ユーザーとして signup → onboarding 完了 → /handson-tour 自動到達。
+ *
+ * - email はテスト内でユニークである必要がある
+ * - UI signup フォームを通さず API でユーザーを作成し Cookie を注入する
+ * - onboarding は /api/onboarding/complete で一括完了させてから
+ *   /handson-tour に直接遷移する
+ *
+ * @returns userId (afterEach での cleanupTestUser 用)
+ */
+export async function signupAsNewUser(page: Page, email: string): Promise<string | null> {
+  // 1. Supabase API で新規 signup
+  const userId = await signupViaApi(email, TEST_USER_PASSWORD);
+  if (!userId) {
+    console.warn(`[tour/helpers] signupAsNewUser: signup 失敗 (${email})`);
+    return null;
+  }
+
+  // 2. Cookie セッション注入
+  const injected = await injectSession(page, email, TEST_USER_PASSWORD);
+  if (!injected) {
+    console.warn("[tour/helpers] signupAsNewUser: セッション注入失敗");
+    return userId;
+  }
+
+  // 3. onboarding を API で一括完了
+  await page.goto("/home");
+  await page.waitForLoadState("domcontentloaded");
+
+  // /onboarding にリダイレクトされた場合は API で完了させる
+  if (page.url().includes("/onboarding")) {
+    await page.evaluate(async () => {
+      await fetch("/api/onboarding/complete", {
+        method: "POST",
+        credentials: "include",
+      }).catch(() => {/* ignore */});
+    });
+    await page.goto("/home");
+    await page.waitForLoadState("domcontentloaded");
+  }
+
+  // 4. /handson-tour へ遷移 (status API が eligible を返す前提)
+  await page.goto("/handson-tour");
+  await page.waitForLoadState("domcontentloaded");
+
+  return userId;
+}
+
+/**
+ * testID による要素の表示を確認するラッパー。
+ * タイムアウトなど共通オプションを統一する。
+ */
+export async function expectTestId(
+  page: Page,
+  testId: string,
+  options?: { timeout?: number; visible?: boolean },
+): Promise<Locator> {
+  const locator = page.getByTestId(testId);
+  if (options?.visible !== false) {
+    await expect(locator).toBeVisible({ timeout: options?.timeout ?? 10_000 });
+  }
+  return locator;
+}
+
+/** ユニークなテストメールを生成する */
+export function generateTestEmail(prefix = "e2e-tour"): string {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}@homegohan.test`;
+}
