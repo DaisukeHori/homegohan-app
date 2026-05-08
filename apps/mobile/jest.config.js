@@ -23,6 +23,9 @@ module.exports = {
     '^react-native/(.*)$': path.join(worktreeNodeModules, 'react-native', '$1'),
     '^react-test-renderer$': path.join(worktreeNodeModules, 'react-test-renderer'),
     '^react-test-renderer/(.*)$': path.join(worktreeNodeModules, 'react-test-renderer', '$1'),
+    // react-native-webview はネイティブモジュール (RNCWebViewModule) を必要とするため
+    // Jest 環境では stub モックに差し替える。
+    '^react-native-webview$': '<rootDir>/__mocks__/react-native-webview.js',
   },
   setupFiles: [
     '<rootDir>/jest.env.setup.js',
