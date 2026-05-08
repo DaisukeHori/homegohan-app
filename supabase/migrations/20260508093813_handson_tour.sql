@@ -3,6 +3,11 @@
 -- Source: docs/design/operator/01-data-model.md §3.26
 -- Phase: family/09 Phase 1-A
 -- Idempotent: yes (IF NOT EXISTS / ON CONFLICT)
+--
+-- Schema correction (2026-05-08):
+--   - user_profiles の PK は `id` (auth.users(id) 参照) で `user_id` 列は存在しない
+--   - 設計書 §3.26 が `meal_logs` / `weekly_menus` と記述していたが、実テーブル名は
+--     `meals` / `user_daily_meals`。実体に揃える
 -- =====================================================
 
 BEGIN;
@@ -20,45 +25,45 @@ COMMENT ON COLUMN user_profiles.handson_tour_completed_at IS
 COMMENT ON COLUMN user_profiles.handson_tour_skipped_at IS
   '初回ハンズオンチュートリアル明示スキップ or auto-skip 日時 (family/09)';
 
--- 部分インデックス: 表示判定 (should_show) 高速化、pending な user_id だけ index に乗る
+-- 部分インデックス: 表示判定 (should_show) 高速化、pending な user だけ index に乗る
 CREATE INDEX IF NOT EXISTS idx_user_profiles_handson_tour_pending
-  ON user_profiles (user_id)
+  ON user_profiles (id)
   WHERE handson_tour_completed_at IS NULL AND handson_tour_skipped_at IS NULL;
 
 
 -- =========================================
--- §3.26.2 meal_logs 拡張 (sandbox 識別子)
+-- §3.26.2 meals 拡張 (sandbox 識別子)
 -- =========================================
 
-ALTER TABLE meal_logs
+ALTER TABLE meals
   ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
 
-COMMENT ON COLUMN meal_logs.is_sandbox IS
+COMMENT ON COLUMN meals.is_sandbox IS
   'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
 
 -- 通常 UI のクエリ高速化(WHERE is_sandbox=false で index pruning)
-CREATE INDEX IF NOT EXISTS idx_meal_logs_user_non_sandbox
-  ON meal_logs (user_id, eaten_at DESC)
+CREATE INDEX IF NOT EXISTS idx_meals_user_non_sandbox
+  ON meals (user_id, eaten_at DESC)
   WHERE is_sandbox = false;
 
 -- 部分 UNIQUE: ハンズオン中の二重 INSERT 防止 (user_id, is_sandbox=true) は 1 行のみ
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
-  ON meal_logs (user_id)
+  ON meals (user_id)
   WHERE is_sandbox = true;
 
 
 -- =========================================
--- §3.26.3 weekly_menus 拡張 (sandbox 識別子)
+-- §3.26.3 user_daily_meals 拡張 (sandbox 識別子)
 -- =========================================
 
-ALTER TABLE weekly_menus
+ALTER TABLE user_daily_meals
   ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
 
-COMMENT ON COLUMN weekly_menus.is_sandbox IS
+COMMENT ON COLUMN user_daily_meals.is_sandbox IS
   'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_menu
-  ON weekly_menus (user_id)
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_daily_meal
+  ON user_daily_meals (user_id)
   WHERE is_sandbox = true;
 
 
@@ -88,9 +93,9 @@ SET search_path = public
 AS $$
 BEGIN
   RETURN EXISTS (
-    SELECT 1 FROM meal_logs WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   ) OR EXISTS (
-    SELECT 1 FROM weekly_menus WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM user_daily_meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   );
 END;
 $$;
@@ -125,7 +130,7 @@ BEGIN
   -- now() はトランザクション開始時刻で固定なので、COALESCE 後の RETURNING と完全一致して
   -- 判定が壊れる。先に SELECT NULL チェックすることで防ぐ。
   SELECT handson_tour_completed_at INTO v_existing_completed_at
-  FROM user_profiles WHERE user_id = p_user_id;
+  FROM user_profiles WHERE id = p_user_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'profile_not_found';
@@ -135,7 +140,7 @@ BEGIN
 
   UPDATE user_profiles
   SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
-  WHERE user_id = p_user_id
+  WHERE id = p_user_id
   RETURNING handson_tour_completed_at INTO v_completed_at;
 
   SELECT id, name, icon_url INTO v_badge_id, v_badge_name, v_badge_icon_url

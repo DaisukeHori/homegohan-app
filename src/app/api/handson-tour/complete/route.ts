@@ -18,7 +18,7 @@ export async function POST() {
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
       .select('roles, handson_tour_completed_at')
-      .eq('user_id', user.id)
+      .eq('id', user.id)
       .single();
 
     if (profileError || !profile) {

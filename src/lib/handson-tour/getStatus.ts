@@ -27,7 +27,7 @@ export async function getHandsonTourStatusInternal(userId: string): Promise<Hand
   const { data: profile, error } = await supabase
     .from('user_profiles')
     .select('onboarding_completed_at, handson_tour_completed_at, handson_tour_skipped_at, roles')
-    .eq('user_id', userId)
+    .eq('id', userId)
     .single();
 
   if (error || !profile) {
@@ -81,7 +81,7 @@ export async function getHandsonTourStatusInternal(userId: string): Promise<Hand
     await supabase
       .from('user_profiles')
       .update({ handson_tour_skipped_at: skippedAt })
-      .eq('user_id', userId)
+      .eq('id', userId)
       .is('handson_tour_skipped_at', null);
 
     return {

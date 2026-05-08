@@ -30,8 +30,8 @@ export async function POST(request: Request) {
 
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('user_id')
-      .eq('user_id', user.id)
+      .select('id')
+      .eq('id', user.id)
       .single();
 
     if (profileError || !profile) {
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     await supabase
       .from('user_profiles')
       .update({ handson_tour_skipped_at: skippedAt })
-      .eq('user_id', user.id)
+      .eq('id', user.id)
       .is('handson_tour_skipped_at', null)
       .is('handson_tour_completed_at', null);
 
