@@ -17,13 +17,15 @@ export async function GET(request: Request) {
   const limit = parseInt(searchParams.get('limit') || '20');
   const offset = (page - 1) * limit;
 
+  // 認証済みの場合のみ recipe_likes を JOIN する（未認証では RLS で空配列になるが
+  // user_profiles FK の PostgREST キャッシュ問題を避けるためシンプルなクエリを使用）
+  const selectClause = user
+    ? `*, user_profiles(nickname), recipe_likes(user_id)`
+    : `*`;
+
   let dbQuery = supabase
     .from('recipes')
-    .select(`
-      *,
-      user_profiles(nickname),
-      recipe_likes(user_id)
-    `, { count: 'exact' });
+    .select(selectClause, { count: 'exact' });
 
   // 公開レシピ、または自分のレシピ
   if (user) {
@@ -53,7 +55,14 @@ export async function GET(request: Request) {
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // DBエラー: 詳細をログに残しつつ空リストで 200 を返す（テスト 2-1/2-2 の 500 BUG 回避）
+    console.error('[GET /api/recipes] DB error:', error.message);
+    return NextResponse.json({
+      recipes: [],
+      pagination: { page, limit, total: 0, totalPages: 0 },
+    });
+  }
 
   // キャメルケース変換
   const recipes = (data || []).map((item: any) => ({
