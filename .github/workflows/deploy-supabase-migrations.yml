@@ -30,6 +30,52 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
+      - name: Verify db diff (pre-apply)
+        id: db_diff
+        run: |
+          DIFF=$(npx --yes supabase@2.62.10 db diff --linked --schema public 2>&1 || true)
+          echo "diff_output<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$DIFF" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          if [ -n "$DIFF" ]; then
+            echo "has_diff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_diff=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Post db diff warning to PR
+        if: steps.db_diff.outputs.has_diff == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIFF_OUTPUT: ${{ steps.db_diff.outputs.diff_output }}
+        run: |
+          PR_NUMBER=$(gh pr list --head "${{ github.ref_name }}" --json number --jq '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$PR_NUMBER" ]; then
+            BODY="## Warning: supabase db diff が空でありません
+
+          prod 適用前に以下の差分を確認してください:
+
+          \`\`\`sql
+          ${DIFF_OUTPUT}
+          \`\`\`
+
+          差分が意図したものであれば問題ありません。意図しない差分がある場合は migration ファイルを見直してください。"
+            gh pr comment "$PR_NUMBER" --body "$BODY"
+          else
+            echo "::warning::db diff が空でありません。PR が見つからないためコメントをスキップします。"
+            echo "$DIFF_OUTPUT"
+          fi
+
+      - name: Lint migrations
+        run: |
+          npx --yes supabase@2.62.10 db lint --linked --schema public || true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
       - name: Apply migrations
         run: |
           npx --yes supabase@2.62.10 db push --linked --include-all
