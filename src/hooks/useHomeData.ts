@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
+import { formatLocalDate } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 
 // 今日の献立データ
@@ -36,14 +37,6 @@ interface MonthlyStats {
   totalMeals: number;
   cookRate: number;
 }
-
-// Helper: ローカル日付文字列
-const formatLocalDate = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
 
 // Helper: 曜日を取得
 const getDayOfWeek = (dateStr: string): string => {

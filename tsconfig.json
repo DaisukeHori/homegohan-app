@@ -33,6 +33,12 @@
       "@homegohan/shared/*": [
         "./packages/shared/src/*"
       ],
+      "@homegohan/core": [
+        "./packages/core/src/index.ts"
+      ],
+      "@homegohan/core/*": [
+        "./packages/core/src/*"
+      ],
       "@homegohan/handson-tour-shared": [
         "./packages/handson-tour-shared/src/index.ts"
       ],

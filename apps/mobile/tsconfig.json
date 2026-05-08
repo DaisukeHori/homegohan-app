@@ -6,7 +6,9 @@
       "@homegohan/handson-tour-shared": ["../../packages/handson-tour-shared/src/index.ts"],
       "@homegohan/handson-tour-shared/*": ["../../packages/handson-tour-shared/src/*"],
       "@homegohan/shared": ["../../packages/shared/src/index.ts"],
-      "@homegohan/shared/*": ["../../packages/shared/src/*"]
+      "@homegohan/shared/*": ["../../packages/shared/src/*"],
+      "@homegohan/core": ["../../packages/core/src/index.ts"],
+      "@homegohan/core/*": ["../../packages/core/src/*"]
     }
   },
   "include": [

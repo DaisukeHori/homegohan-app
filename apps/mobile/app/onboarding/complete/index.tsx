@@ -17,6 +17,7 @@ import { Card, SectionHeader } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
 import { supabase } from "../../../src/lib/supabase";
 import { colors, radius, shadows, spacing } from "../../../src/theme";
+import { deriveMacroTargets } from "@homegohan/shared";
 
 // ------------------------------------------------------------
 // 型定義
@@ -45,19 +46,6 @@ interface CalculationBasis {
   macros?: {
     ratios?: { protein: number; fat: number; carbs: number };
   };
-}
-
-// PFC 比率から g を再計算するミニ関数（web 版 deriveMacroTargets と同等）
-function deriveMacros(
-  dailyCalories: number,
-  ratios: { protein: number; fat: number; carbs: number },
-): { proteinG: number; fatG: number; carbsG: number } {
-  const r1 = (v: number) => Math.round(v * 10) / 10;
-  const total = Math.max(0, dailyCalories);
-  const proteinG = r1((total * ratios.protein) / 4);
-  const fatG = r1((total * ratios.fat) / 9);
-  const carbsG = r1(Math.max(0, total - proteinG * 4 - fatG * 9) / 4);
-  return { proteinG, fatG, carbsG };
 }
 
 function getRatios(targets: NutritionTargets): { protein: number; fat: number; carbs: number } {
@@ -125,7 +113,7 @@ export default function OnboardingComplete() {
   // PFC プレビュー
   const previewMacros = useMemo(() => {
     if (!targets) return null;
-    return deriveMacros(previewCalories, getRatios(targets));
+    return deriveMacroTargets({ dailyCalories: previewCalories, ratios: getRatios(targets) });
   }, [previewCalories, targets]);
 
   // BMR / TDEE 情報
