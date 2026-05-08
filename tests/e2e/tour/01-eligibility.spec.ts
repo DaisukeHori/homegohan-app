@@ -41,7 +41,7 @@ async function getUserToken(email: string, password: string): Promise<string | n
 /** service_role 経由でユーザーの onboarding_completed_at を設定する */
 async function setOnboardingCompleted(userId: string, value: string | null): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${userId}`, {
+  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -56,7 +56,7 @@ async function setOnboardingCompleted(userId: string, value: string | null): Pro
 /** service_role 経由でユーザーの handson_tour_skipped_at を設定する */
 async function setTourSkipped(userId: string, value: string | null): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${userId}`, {
+  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -71,7 +71,7 @@ async function setTourSkipped(userId: string, value: string | null): Promise<voi
 /** service_role 経由でユーザーの handson_tour_completed_at を設定する */
 async function setTourCompleted(userId: string, value: string | null): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${userId}`, {
+  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -86,7 +86,7 @@ async function setTourCompleted(userId: string, value: string | null): Promise<v
 /** service_role 経由でユーザーの roles を設定する */
 async function setUserRoles(userId: string, roles: string[]): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${userId}`, {
+  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
