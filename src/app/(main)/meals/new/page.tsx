@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { resolveClassifyPhotoType } from "@/lib/ai/image-recognition";
 import { logToServer } from "@/lib/db-logger";
+import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -193,14 +194,6 @@ const IMAGE_PAYLOAD_CONFIG: Record<PhotoMode | 'classify', ImagePayloadConfig> =
   fridge: { maxWidth: 1600, maxHeight: 1600, quality: 0.8, maxBytes: 900 * 1024 },
   health_checkup: { maxWidth: 1800, maxHeight: 2400, quality: 0.88, maxBytes: 1400 * 1024 },
   weight_scale: { maxWidth: 1600, maxHeight: 1600, quality: 0.86, maxBytes: 900 * 1024 },
-};
-
-// Helper: ローカル日付文字列
-const formatLocalDate = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 };
 
 // Helper: 週の日付を取得

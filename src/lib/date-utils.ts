@@ -1,14 +1,7 @@
 /**
- * 現地時刻(Asia/Tokyo)の YYYY-MM-DD を返す。
- * UTC 偏移によるズレを防ぐ。
+ * 日付ユーティリティ — @homegohan/shared からの再エクスポート。
+ *
+ * 既存のインポートパス "@/lib/date-utils" を維持しつつ、
+ * 実装の canonical ソースを packages/shared に一本化する。
  */
-export function formatLocalDate(date: Date = new Date(), timeZone = 'Asia/Tokyo'): string {
-  return date.toLocaleDateString('sv-SE', { timeZone });
-}
-
-/**
- * 現地時刻の今日(YYYY-MM-DD)
- */
-export function todayLocal(timeZone = 'Asia/Tokyo'): string {
-  return formatLocalDate(new Date(), timeZone);
-}
+export { formatLocalDate, todayLocal, parseLocalDate, addDays } from '@homegohan/shared';
