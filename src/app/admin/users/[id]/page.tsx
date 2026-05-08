@@ -84,11 +84,11 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
           ユーザー管理
         </Link>
         {' / '}
-        <span className="text-gray-900">{profile.display_name ?? id.slice(0, 8)}</span>
+        <span className="text-gray-900">{profile.nickname ?? id.slice(0, 8)}</span>
       </nav>
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">
-        {profile.display_name ?? '(名前なし)'}
+        {profile.nickname ?? '(名前なし)'}
       </h1>
 
       {/* 基本情報セクション */}

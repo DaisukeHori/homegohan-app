@@ -31,7 +31,7 @@ export default async function AdminUserFreezePage({ params }: PageProps) {
 
   const { data: profile, error } = await supabase
     .from('user_profiles')
-    .select('id, display_name, roles, frozen_at')
+    .select('id, nickname, roles, frozen_at')
     .eq('id', id)
     .single();
 
@@ -52,7 +52,7 @@ export default async function AdminUserFreezePage({ params }: PageProps) {
         </Link>
         {' / '}
         <Link href={`/admin/users/${id}`} className="hover:text-orange-500 transition-colors">
-          {profile.display_name ?? id.slice(0, 8)}
+          {profile.nickname ?? id.slice(0, 8)}
         </Link>
         {' / '}
         <span className="text-gray-900">{isBanned ? '凍結解除' : '凍結'}</span>
@@ -62,7 +62,7 @@ export default async function AdminUserFreezePage({ params }: PageProps) {
         {isBanned ? '凍結解除' : 'ユーザー凍結 (BAN)'}
       </h1>
       <p className="text-sm text-gray-500 mb-6">
-        対象: <span className="font-medium text-gray-800">{profile.display_name ?? '(名前なし)'}</span>
+        対象: <span className="font-medium text-gray-800">{profile.nickname ?? '(名前なし)'}</span>
       </p>
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">

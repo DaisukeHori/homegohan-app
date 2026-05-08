@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     .select(
       `
       id,
-      display_name,
+      nickname,
       roles,
       organization_id,
       plan_key_cached,
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
   // 全文検索 (email/name/id)
   if (params.q) {
     query = query.or(
-      `display_name.ilike.%${params.q}%,id.eq.${params.q.match(/^[0-9a-f-]{36}$/) ? params.q : '00000000-0000-0000-0000-000000000000'}`,
+      `nickname.ilike.%${params.q}%,id.eq.${params.q.match(/^[0-9a-f-]{36}$/) ? params.q : '00000000-0000-0000-0000-000000000000'}`,
     );
   }
 
@@ -118,7 +118,7 @@ export async function GET(request: Request) {
   const users = (data ?? []).map((u) => ({
     id: u.id,
     email: null, // email は auth.users から取得が必要 (service_role キー使用不可のため省略)
-    display_name: u.display_name,
+    nickname: u.nickname,
     plan_key: u.plan_key_cached ?? 'free',
     roles: u.roles ?? ['user'],
     is_banned: (u as { frozen_at?: string | null }).frozen_at != null,
