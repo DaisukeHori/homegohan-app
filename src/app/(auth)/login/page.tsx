@@ -78,26 +78,29 @@ function LoginContent() {
 
       if (error) {
         // エラーコードに応じたメッセージ
-        if (
-          error.message.includes('Invalid login credentials') ||
+        const isRateLimit =
+          error.code === 'over_email_send_rate_limit' ||
+          error.code === 'over_request_rate_limit' ||
+          error.status === 429 ||
           error.message.includes('over_email_send_rate_limit') ||
           error.message.includes('For security purposes') ||
-          error.message.includes('too many requests') ||
-          error.status === 429
-        ) {
+          error.message.includes('too many requests');
+        const isInvalidCredentials =
+          error.code === 'invalid_credentials' ||
+          error.message.includes('Invalid login credentials');
+        const isEmailNotConfirmed =
+          error.code === 'email_not_confirmed' ||
+          error.message.includes('Email not confirmed');
+
+        if (isRateLimit || isInvalidCredentials) {
           // #287: rate limit または認証失敗 → 最終失敗時刻を記録
           localStorage.setItem(RATE_LIMIT_KEY, String(Date.now()));
-          if (
-            error.status === 429 ||
-            error.message.includes('over_email_send_rate_limit') ||
-            error.message.includes('For security purposes') ||
-            error.message.includes('too many requests')
-          ) {
+          if (isRateLimit) {
             setError('しばらくしてから再度お試しください。');
           } else {
             setError('メールアドレスまたはパスワードが正しくありません。');
           }
-        } else if (error.message.includes('Email not confirmed')) {
+        } else if (isEmailNotConfirmed) {
           setError('メールアドレスが確認されていません。確認メールをご確認ください。');
         } else {
           setError('ログインに失敗しました。入力内容をご確認ください。');
@@ -156,7 +159,7 @@ function LoginContent() {
 
       {/* エラーメッセージ表示 */}
       {error && (
-        <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 border border-red-200 animate-shake">
+        <div role="alert" className="flex items-start gap-3 p-4 rounded-xl bg-red-50 border border-red-200 animate-shake">
           <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="text-sm font-medium text-red-800">{error}</p>
