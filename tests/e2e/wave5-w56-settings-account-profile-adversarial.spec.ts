@@ -23,7 +23,8 @@ import { login } from "./fixtures/auth";
 async function openDeleteModal(page: Page) {
   await page.goto("/settings");
   await page.waitForLoadState("networkidle");
-  await page.getByRole("button", { name: /アカウントを削除する/ }).click();
+  // exact: true を使い「アカウントを完全に削除する」(確認ボタンの aria-label) にマッチしないようにする
+  await page.getByRole("button", { name: "アカウントを削除する", exact: true }).click();
   await expect(page.getByText("アカウントを削除しますか？")).toBeVisible({
     timeout: 5_000,
   });
@@ -134,8 +135,8 @@ test.describe("[account][adversarial] A. アカウント削除", () => {
       timeout: 3_000,
     });
 
-    // 再オープン
-    await page.getByRole("button", { name: /アカウントを削除する/ }).click();
+    // 再オープン (exact: true で確認ボタンとの誤マッチを防ぐ)
+    await page.getByRole("button", { name: "アカウントを削除する", exact: true }).click();
     await expect(page.getByText("アカウントを削除しますか？")).toBeVisible();
 
     const input = page.getByRole("textbox", { name: /削除確認テキスト入力/ });
@@ -244,6 +245,9 @@ test.describe("[settings][adversarial] B. 設定 toggle", () => {
     page,
   }) => {
     await login(page);
+    // 通知パーミッションをあらかじめ許可しておくことで headless 環境でも
+    // toggle → PATCH が正常に実行されるようにする
+    await page.context().grantPermissions(["notifications"]);
     await page.goto("/settings");
     await page.waitForLoadState("networkidle");
 
@@ -328,6 +332,9 @@ test.describe("[settings][adversarial] B. 設定 toggle", () => {
     page,
   }) => {
     await login(page);
+    // 通知パーミッションを許可しておくことで ON 方向への toggle でも
+    // requestNotificationPermission が "granted" を返し PATCH まで到達する
+    await page.context().grantPermissions(["notifications"]);
     await page.goto("/settings");
     await page.waitForLoadState("networkidle");
 
@@ -401,6 +408,8 @@ test.describe("[settings][adversarial] B. 設定 toggle", () => {
     page,
   }) => {
     await login(page);
+    // 通知パーミッションを許可しておくことで ON 方向への toggle でも PATCH まで到達する
+    await page.context().grantPermissions(["notifications"]);
     await page.goto("/settings");
     await page.waitForLoadState("networkidle");
 
