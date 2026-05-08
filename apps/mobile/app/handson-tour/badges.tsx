@@ -17,6 +17,7 @@ import {
   HANDSON_TOUR_ROUTES,
   STEP3_SUB_STEP_TO_TARGET,
   personalize,
+  fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 import type { SubStepOfStep3 } from '@homegohan/handson-tour-shared';
 
@@ -42,10 +43,23 @@ export default function HandsonTourBadges() {
   const [subStep, setSubStep] = useState<SubStepOfStep3>('3.0');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
+  const mountTimeRef = React.useRef(Date.now());
 
   const advanceSubStep = (next: SubStepOfStep3) => {
     setSubStep(next);
   };
+
+  // mount 時に step_viewed (step=3) を発火
+  useEffect(() => {
+    if (!profile?.id) return;
+    fireAnalytics('handson_tour_step_viewed', {
+      user_id: profile.id,
+      timestamp: new Date().toISOString(),
+      platform: 'ios' as const,
+      app_version: '1.0.0',
+      step: 3,
+    });
+  }, [profile?.id]);
 
   // バッジ情報の取得
   useEffect(() => {
@@ -93,6 +107,17 @@ export default function HandsonTourBadges() {
         advanceSubStep('3.4');
         break;
       case '3.4':
+        if (profile?.id) {
+          const dwell_ms = Date.now() - mountTimeRef.current;
+          fireAnalytics('handson_tour_step_completed', {
+            user_id: profile.id,
+            timestamp: new Date().toISOString(),
+            platform: 'ios' as const,
+            app_version: '1.0.0',
+            step: 3,
+            dwell_ms,
+          });
+        }
         router.push(HANDSON_TOUR_ROUTES.step4 as never);
         break;
       default:

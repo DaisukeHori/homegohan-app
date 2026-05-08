@@ -8,6 +8,7 @@ import {
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_CONSTANTS,
   personalize,
+  fireAnalytics,
   type SubStepOfStep4,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
@@ -31,6 +32,8 @@ export default function HandsonTourGraduatePage() {
   const [isCompleteError, setIsCompleteError] = useState(false);
   const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
   const buttonActivationRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const tourStartTimeRef = useRef(Date.now());
 
   const i18n = HANDSON_TOUR_I18N_JA.tour.step4;
 
@@ -45,6 +48,15 @@ export default function HandsonTourGraduatePage() {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
+      setUserId(user.id);
+      // step_viewed for step 4
+      fireAnalytics('handson_tour_step_viewed', {
+        user_id: user.id,
+        timestamp: new Date().toISOString(),
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 4,
+      });
       supabase
         .from('user_profiles')
         .select('nickname')
@@ -62,13 +74,60 @@ export default function HandsonTourGraduatePage() {
           headers: { 'Content-Type': 'application/json' },
         });
         if (!res.ok) throw new Error('complete_failed');
+        const completeBody = await res.json() as {
+          completed_at?: string;
+          badge_awarded?: { code: string };
+          already_completed?: boolean;
+          total_duration_ms?: number;
+        };
         setSubStep('4.1');
+
+        // handson_tour_completed イベント発火
+        // userId は state の最新値を参照できないため supabase から再取得
+        const supabase = createClient();
+        supabase.auth.getUser().then(({ data: { user } }) => {
+          if (!user) return;
+          const now = new Date().toISOString();
+          const total_duration_ms = completeBody.total_duration_ms ?? (Date.now() - tourStartTimeRef.current);
+          fireAnalytics('handson_tour_completed', {
+            user_id: user.id,
+            timestamp: now,
+            platform: 'web' as const,
+            app_version: '1.0.0',
+            total_duration_ms,
+            step_skipped_count: 0,
+            badge_awarded: 'tutorial_complete' as const,
+            already_completed: completeBody.already_completed ?? false,
+          });
+          fireAnalytics('handson_tour_step_completed', {
+            user_id: user.id,
+            timestamp: now,
+            platform: 'web' as const,
+            app_version: '1.0.0',
+            step: 4,
+            dwell_ms: Date.now() - tourStartTimeRef.current,
+          });
+        });
 
         buttonActivationRef.current = setTimeout(() => {
           setSubStep('4.2');
         }, HANDSON_TOUR_CONSTANTS.STEP4_BUTTON_ACTIVATION_MS);
       } catch {
         setIsCompleteError(true);
+        // step_error イベント発火
+        const supabase = createClient();
+        supabase.auth.getUser().then(({ data: { user } }) => {
+          if (!user) return;
+          fireAnalytics('handson_tour_step_error', {
+            user_id: user.id,
+            timestamp: new Date().toISOString(),
+            platform: 'web' as const,
+            app_version: '1.0.0',
+            step: 4,
+            error_code: 'complete_api_failed',
+            error_message: 'POST /api/handson-tour/complete failed',
+          });
+        });
       }
     }, HANDSON_TOUR_CONSTANTS.STEP4_SAVING_DELAY_MS);
 
@@ -85,6 +144,16 @@ export default function HandsonTourGraduatePage() {
   const handleRetry = () => {
     setIsCompleteError(false);
     setSubStep('4.0');
+
+    if (userId) {
+      fireAnalytics('handson_tour_force_replayed', {
+        user_id: userId,
+        timestamp: new Date().toISOString(),
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        previous_completed_at: null,
+      });
+    }
 
     const delay = setTimeout(async () => {
       try {

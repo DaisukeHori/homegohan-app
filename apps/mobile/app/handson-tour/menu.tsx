@@ -15,6 +15,7 @@ import {
   MOCK_MENU_RESPONSE,
   STEP2_SUB_STEP_TO_TARGET,
   personalize,
+  fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 import type { SubStepOfStep2 } from '@homegohan/handson-tour-shared';
 
@@ -38,10 +39,24 @@ export default function HandsonTourMenu() {
   const nickname = safeNickname(profile?.nickname);
 
   const [subStep, setSubStep] = useState<SubStepOfStep2>('2.1');
+  const mountTimeRef = React.useRef(Date.now());
 
   const advanceSubStep = (next: SubStepOfStep2) => {
     setSubStep(next);
   };
+
+  // mount 時に step_viewed (step=2) を発火
+  useEffect(() => {
+    if (!profile?.id) return;
+    fireAnalytics('handson_tour_step_viewed', {
+      user_id: profile.id,
+      timestamp: new Date().toISOString(),
+      platform: 'ios' as const,
+      app_version: '1.0.0',
+      step: 2,
+      sub_step: '2.1',
+    });
+  }, [profile?.id]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -77,6 +92,17 @@ export default function HandsonTourMenu() {
   };
 
   const handleSandboxComplete = () => {
+    if (profile?.id) {
+      const dwell_ms = Date.now() - mountTimeRef.current;
+      fireAnalytics('handson_tour_step_completed', {
+        user_id: profile.id,
+        timestamp: new Date().toISOString(),
+        platform: 'ios' as const,
+        app_version: '1.0.0',
+        step: 2,
+        dwell_ms,
+      });
+    }
     advanceSubStep('2.8');
     setTimeout(() => advanceSubStep('2.9'), 500);
   };

@@ -23,6 +23,7 @@ import {
   HANDSON_TOUR_CONSTANTS,
   HANDSON_TOUR_I18N_JA,
   personalize,
+  fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 
 import { useProfile } from '../../src/providers/ProfileProvider';
@@ -72,8 +73,21 @@ export default function HandsonTourGraduate() {
     opacity: contentOpacity.value,
   }));
 
+  // mount 時に step_viewed (step=4) を発火
+  useEffect(() => {
+    if (!profile?.id) return;
+    fireAnalytics('handson_tour_step_viewed', {
+      user_id: profile.id,
+      timestamp: new Date().toISOString(),
+      platform: 'ios' as const,
+      app_version: '1.0.0',
+      step: 4,
+    });
+  }, [profile?.id]);
+
   // POST /api/handson-tour/complete (マウント直後 100ms 後)
   useEffect(() => {
+    const tourStartMs = Date.now();
     const timer = setTimeout(async () => {
       try {
         const res = await getApi().post<CompleteResponse>('/api/handson-tour/complete', {});
@@ -81,9 +95,46 @@ export default function HandsonTourGraduate() {
         setIsLoading(false);
         setSubStep('4.1');
         startGraduateAnimation();
+
+        // handson_tour_completed + step_completed を発火
+        if (profile?.id) {
+          const now = new Date().toISOString();
+          const total_duration_ms = Date.now() - tourStartMs;
+          fireAnalytics('handson_tour_completed', {
+            user_id: profile.id,
+            timestamp: now,
+            platform: 'ios' as const,
+            app_version: '1.0.0',
+            total_duration_ms,
+            step_skipped_count: 0,
+            badge_awarded: 'tutorial_complete' as const,
+            already_completed: res.already_completed,
+          });
+          fireAnalytics('handson_tour_step_completed', {
+            user_id: profile.id,
+            timestamp: now,
+            platform: 'ios' as const,
+            app_version: '1.0.0',
+            step: 4,
+            dwell_ms: total_duration_ms,
+          });
+        }
       } catch {
         setError(true);
         setIsLoading(false);
+
+        // handson_tour_step_error を発火
+        if (profile?.id) {
+          fireAnalytics('handson_tour_step_error', {
+            user_id: profile.id,
+            timestamp: new Date().toISOString(),
+            platform: 'ios' as const,
+            app_version: '1.0.0',
+            step: 4,
+            error_code: 'complete_api_failed',
+            error_message: 'POST /api/handson-tour/complete failed',
+          });
+        }
       }
     }, HANDSON_TOUR_CONSTANTS.STEP4_SAVING_DELAY_MS);
 
@@ -139,6 +190,15 @@ export default function HandsonTourGraduate() {
           onPress={() => {
             setError(false);
             setIsLoading(true);
+            if (profile?.id) {
+              fireAnalytics('handson_tour_force_replayed', {
+                user_id: profile.id,
+                timestamp: new Date().toISOString(),
+                platform: 'ios' as const,
+                app_version: '1.0.0',
+                previous_completed_at: null,
+              });
+            }
             // リトライ
             getApi()
               .post<CompleteResponse>('/api/handson-tour/complete', {})
