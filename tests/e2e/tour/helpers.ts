@@ -78,8 +78,10 @@ export async function signupViaApi(email: string, password: string): Promise<str
     const userId = (data.id as string | undefined) ?? null;
     if (!userId) return null;
 
-    // user_profiles に最低限の初期レコードを insert する。
-    // オンボーディング未完了のテスト用途なので onboarding_completed_at は null のまま。
+    // user_profiles に onboarding 完了済みの初期レコードを insert する。
+    // onboarding_completed_at を設定することで getHandsonTourStatusInternal が
+    // 'eligible' を返し、/handson-tour に正しくリダイレクトされる。
+    const now = new Date().toISOString();
     const profileResp = await fetch(`${SUPABASE_URL}/rest/v1/user_profiles`, {
       method: "POST",
       headers: {
@@ -93,6 +95,7 @@ export async function signupViaApi(email: string, password: string): Promise<str
         nickname: "E2E Test User",
         age_group: "30s",
         gender: "unspecified",
+        onboarding_completed_at: now,
       }),
     });
     if (!profileResp.ok) {
@@ -158,13 +161,14 @@ async function injectSession(page: Page, email: string, password: string): Promi
  *
  * - email はテスト内でユニークである必要がある
  * - UI signup フォームを通さず API でユーザーを作成し Cookie を注入する
- * - onboarding は /api/onboarding/complete で一括完了させてから
- *   /handson-tour に直接遷移する
+ * - signupViaApi で user_profiles.onboarding_completed_at を設定済みのため
+ *   onboarding ページへのリダイレクトは発生しない
+ * - /handson-tour/layout.tsx が status API で eligible を確認して表示する
  *
  * @returns userId (afterEach での cleanupTestUser 用)
  */
 export async function signupAsNewUser(page: Page, email: string): Promise<string | null> {
-  // 1. Supabase API で新規 signup
+  // 1. Supabase API で新規 signup (onboarding_completed_at を同時に設定)
   const userId = await signupViaApi(email, TEST_USER_PASSWORD);
   if (!userId) {
     console.warn(`[tour/helpers] signupAsNewUser: signup 失敗 (${email})`);
@@ -178,23 +182,7 @@ export async function signupAsNewUser(page: Page, email: string): Promise<string
     return userId;
   }
 
-  // 3. onboarding を API で一括完了
-  await page.goto("/home");
-  await page.waitForLoadState("domcontentloaded");
-
-  // /onboarding にリダイレクトされた場合は API で完了させる
-  if (page.url().includes("/onboarding")) {
-    await page.evaluate(async () => {
-      await fetch("/api/onboarding/complete", {
-        method: "POST",
-        credentials: "include",
-      }).catch(() => {/* ignore */});
-    });
-    await page.goto("/home");
-    await page.waitForLoadState("domcontentloaded");
-  }
-
-  // 4. /handson-tour へ遷移 (status API が eligible を返す前提)
+  // 3. /handson-tour へ直接遷移 (onboarding_completed_at 設定済み + 新規なので eligible)
   await page.goto("/handson-tour");
   await page.waitForLoadState("domcontentloaded");
 
