@@ -190,7 +190,7 @@ export default function HandsonTourGraduatePage() {
 
             <div
               data-testid="tour-step-4-badge-card"
-              className="flex flex-col items-center p-4 border-2 border-blue-300 bg-blue-50 rounded-xl mb-8"
+              className="flex flex-col items-center p-4 border-2 border-blue-300 bg-blue-50 rounded-xl mb-4"
               style={{ maxWidth: 240, width: '100%' }}
             >
               <div
@@ -206,6 +206,15 @@ export default function HandsonTourGraduatePage() {
                 {i18n.badge_label}
               </span>
             </div>
+
+            <p
+              data-testid="tour-step-4-badge-disclaimer"
+              aria-label="バッジの注意書き"
+              className="text-xs text-gray-500 mb-8 leading-relaxed text-center whitespace-pre-line"
+              style={{ maxWidth: 280 }}
+            >
+              {i18n.badge_disclaimer_body}
+            </p>
 
             <button
               data-testid="tour-step-4-go-home"
