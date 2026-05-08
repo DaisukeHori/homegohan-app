@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -11,6 +11,7 @@ import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
+import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 
 // Inlined from lib/meal-image to avoid importing server-side code
 interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
@@ -193,6 +194,28 @@ export default function MealNewPage() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ source?: string; sandbox?: string }>();
   const isSandboxMode = params.source === "handson_tour" && params.sandbox === "true";
+
+  // Sandbox Tour Spotlight target refs
+  const cameraButtonRef = useRef<View>(null);
+  const resultDishNameRef = useRef<View>(null);
+  const resultCaloriesRef = useRef<View>(null);
+  const saveButtonRef = useRef<View>(null);
+
+  // Tour target 登録 (sandbox モード時のみ)
+  useEffect(() => {
+    if (!isSandboxMode) return;
+    if (cameraButtonRef.current) registerTourTarget("meal-camera-button", cameraButtonRef.current);
+    if (resultDishNameRef.current) registerTourTarget("meal-result-dish-name", resultDishNameRef.current);
+    if (resultCaloriesRef.current) registerTourTarget("meal-result-calories", resultCaloriesRef.current);
+    if (saveButtonRef.current) registerTourTarget("meal-save-button", saveButtonRef.current);
+    return () => {
+      unregisterTourTarget("meal-camera-button");
+      unregisterTourTarget("meal-result-dish-name");
+      unregisterTourTarget("meal-result-calories");
+      unregisterTourTarget("meal-save-button");
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSandboxMode]);
 
   // Step & mode
   const [step, setStep] = useState<Step>("mode-select");
@@ -692,21 +715,23 @@ export default function MealNewPage() {
         </View>
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
-          {/* Sample image */}
-          <Image
-            source={SANDBOX_SAMPLE_IMAGE}
-            style={{ width: "100%", height: 220, borderRadius: 12 }}
-            resizeMode="cover"
-          />
+          {/* Sample image — testID: meal-camera-button (Step 1 sub-step 1.2 Spotlight target) */}
+          <View ref={cameraButtonRef} testID="meal-camera-button">
+            <Image
+              source={SANDBOX_SAMPLE_IMAGE}
+              style={{ width: "100%", height: 220, borderRadius: 12 }}
+              resizeMode="cover"
+            />
+          </View>
 
-          {/* Mock result card */}
+          {/* Mock result card — testIDs for sub-steps 1.5 Spotlight targets */}
           <Card>
             <View style={{ gap: spacing.sm }}>
-              <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
+              <Text ref={resultDishNameRef as any} testID="meal-result-dish-name" style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
                 {MOCK_PHOTO_RESPONSE.dishName}
               </Text>
               <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
-                <Text style={{ fontSize: 13, color: colors.textLight }}>
+                <Text ref={resultCaloriesRef as any} testID="meal-result-calories" style={{ fontSize: 13, color: colors.textLight }}>
                   {MOCK_PHOTO_RESPONSE.calories} kcal
                 </Text>
                 <Text style={{ fontSize: 13, color: colors.textLight }}>
@@ -735,9 +760,10 @@ export default function MealNewPage() {
             ))}
           </View>
 
-          {/* Save button */}
+          {/* Save button — testID: meal-save-button (Step 1 sub-step 1.6 Spotlight target) */}
           <Pressable
-            testID="meal-sandbox-save-btn"
+            ref={saveButtonRef as any}
+            testID="meal-save-button"
             onPress={saveSandboxMeal}
             disabled={isSaving}
             style={({ pressed }) => ({

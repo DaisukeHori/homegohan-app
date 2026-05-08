@@ -6,6 +6,7 @@ import { Animated, ScrollView, Text, View } from "react-native";
 import { Card, EmptyState, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { colors, spacing } from "../../src/theme";
+import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 
 type Badge = {
   id: string;
@@ -17,9 +18,10 @@ type Badge = {
 };
 
 // Highlight border + background animation for tutorial mode (§1.2 Q10)
-function HighlightedBadgeCard({ badge, isHighlighted }: { badge: Badge; isHighlighted: boolean }) {
+function HighlightedBadgeCard({ badge, isHighlighted, inTutorialMode }: { badge: Badge; isHighlighted: boolean; inTutorialMode: boolean }) {
   const borderAnim = useRef(new Animated.Value(0)).current;
   const bgAnim = useRef(new Animated.Value(0)).current;
+  const viewRef = useRef<View>(null);
 
   useEffect(() => {
     if (!isHighlighted) return;
@@ -33,6 +35,18 @@ function HighlightedBadgeCard({ badge, isHighlighted }: { badge: Badge; isHighli
     Animated.timing(bgAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
   }, [isHighlighted, borderAnim, bgAnim]);
 
+  // Tour Spotlight target ref 登録 (tutorial-mode=1 のときのみ)
+  useEffect(() => {
+    if (!inTutorialMode) return;
+    const testId = `badge-card-${badge.code}`;
+    if (viewRef.current) {
+      registerTourTarget(testId, viewRef.current);
+    }
+    return () => {
+      unregisterTourTarget(testId);
+    };
+  }, [inTutorialMode, badge.code]);
+
   const borderWidth = isHighlighted
     ? borderAnim.interpolate({ inputRange: [0, 1], outputRange: [2, 4] })
     : 1;
@@ -43,6 +57,7 @@ function HighlightedBadgeCard({ badge, isHighlighted }: { badge: Badge; isHighli
 
   return (
     <Animated.View
+      ref={viewRef as any}
       testID={`badge-card-${badge.code}`}
       style={{
         borderWidth,
@@ -163,6 +178,7 @@ export default function BadgesPage() {
               key={b.id}
               badge={b}
               isHighlighted={tutorialMode && highlightCode === b.code}
+              inTutorialMode={tutorialMode}
             />
           ))}
         </View>
