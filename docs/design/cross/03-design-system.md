@@ -734,7 +734,130 @@ stateDiagram-v2
 
 ---
 
-## 21. 未解決事項
+## 21. Coachmark コンポーネント (family/09 連携)
+
+family/09 初回オンボーディングハンズオンチュートリアルが導入する Coachmark コンポーネント群の canonical 仕様。実装サンプル(Web の `createPortal` + CSS mask、Mobile の `MaskedView` + Reanimated)は family/09 §07-components.md 参照。
+
+### 21.1 提供コンポーネント
+
+`packages/handson-tour-shared/`(workspace package)で型・mock・i18n を Web/Mobile 共通化、各プラットフォーム実装は別ファイル(family/09 §16 参照)。
+
+| コンポーネント | 役割 | testID |
+|---|---|---|
+| `<TourOverlay>` | dim 背景 + Spotlight (穴抜き) + 吹き出し配置 + skip ボタン | `tour-overlay` |
+| `<TourBubble>` | 吹き出し UI(矢印・本文・進捗・primary action) | `tour-bubble`, 内側 `tour-bubble-title` `tour-bubble-body` `tour-next-button` |
+| `<TourProgress>` | 進捗ドット (Step 0〜4 の 5 個固定、§99 §1.2) | `tour-progress-dots` |
+| `<TourSandboxWrapper>` | 既存画面を sandbox モードでマウントする HOC | (wrapper、testID なし) |
+
+### 21.2 主要 props (canonical)
+
+`<TourOverlay>` の主要 props(完全 schema は family/09 §07 §2.1):
+
+| prop | 型 | 用途 |
+|---|---|---|
+| `targetTestId` / `targetTestIds` | `string \| null` / `string[]` | Spotlight 対象。null フルスクリーン dim |
+| `bubble` | `{ title?; body; position: 'top'\|'bottom'\|'left'\|'right'\|'auto'; maxWidth? }` | 吹き出し内容 |
+| `primaryAction` | `{ label; onPress; disabled?; showSpinner? }` | 進行ボタン |
+| `autoAdvanceMs` / `onAutoAdvance` | `number` / `() => void` | 自動進行(primaryAction 不在時) |
+| `showSkip` / `onSkip` | `boolean` / `() => void` | スキップ動線(Step 0/4 のみ true) |
+| `progress` | `{ current; total }` | 進捗ドット連動 |
+| `dimOpacity` | `number` (default 0.6) | 背景 dim 透過度 |
+| `spotlightPadding` | `number` (default 8) | 穴抜き padding |
+| `bubbleOffset` | `number` (default 12) | target との距離 |
+| `accessibilityLabel` | `string` (default '使い方ガイド') | スクリーンリーダー読み上げ |
+
+`<TourProgress>` の主要 props:
+
+| prop | 型 | default |
+|---|---|---|
+| `current` / `total` | `number` | (必須) |
+| `size` / `spacing` | `number` | 8 / 8 (px) |
+| `activeColor` / `inactiveColor` | `string` | `--color-primary-600` / `--color-gray-300` |
+
+### 21.3 デザイントークン連携
+
+| 要素 | token |
+|---|---|
+| 吹き出し背景 | `--color-surface` (light) / `--color-surface-dark` (dark) |
+| 吹き出し本文 | `--color-text-secondary` |
+| 吹き出しタイトル | `--color-text-primary` |
+| primary action 背景 | `--color-primary-600` |
+| primary action テキスト | `white` |
+| dim 背景 | `rgba(0,0,0,var(--dim-opacity))`、`--dim-opacity` default 0.6 |
+| spotlight border-radius | `--radius-md` (12px) |
+| 吹き出し border-radius | `--radius-md` (12px) |
+| 吹き出し shadow | `--shadow-floating` (0 8px 16px rgba(0,0,0,0.12)) |
+
+新規 token として `--dim-opacity` `--shadow-floating` を §3-§5 のいずれか適切なセクションに追記する場合は v1.1 で実装(本セクションでは値を直接指定で OK)。
+
+### 21.4 アニメーション (§14 連携)
+
+- 入場: `opacity 0 → 1` を 200ms。Web は Framer Motion、Mobile は Reanimated v3
+- 退場: 逆方向 200ms
+- target 切り替え時の crossfade: `targetTestId` 変更で 150ms フェード
+- 紙吹雪 (Step 4 卒業): Web `react-confetti`、Mobile Reanimated 自前(family/09 §06)
+- `prefers-reduced-motion` 対応: §14.2 のロジックを流用、アニメーション継続時間を 0 に置換(Mobile は `AccessibilityInfo.isReduceMotionEnabled()`)
+
+### 21.5 配置ロジック (`position: 'auto'`)
+
+target の上下空間に応じて bottom / top を自動選択。詳細は family/09 §07 §3.2 の `calculateBubblePosition()` 関数を実装。両方とも空間不足時は bottom にフォールバック。フルスクリーン時(target null)は viewport 中央配置。
+
+### 21.6 スクロール / リサイズ追従
+
+- Web: `getBoundingClientRect` を 100ms 間隔でポーリング + `ResizeObserver`(`MutationObserver` 併用)
+- Mobile: `measureInWindow()` を 100ms 間隔 or `onLayout` イベント連動
+- target が viewport 外にスクロールアウトしたら吹き出しを画面端に固定 + 矢印で位置を示唆(v1 では未実装、Phase 4 検討)
+
+### 21.7 アクセシビリティ最小要件
+
+詳細は cross/05-i18n-a11y §<tour>。Coachmark に関わる最小要件:
+
+- `<TourOverlay>` に `role="dialog"` + `aria-modal="true"` + `aria-live="polite"` + `aria-label`
+- `<TourBubble>` に `role="status"` + `aria-live="polite"`
+- `<TourProgress>` に `role="progressbar"` + `aria-valuenow` / `aria-valuemin=1` / `aria-valuemax=total` + `aria-valuetext="ステップ N / total"`
+- ドット個別は `aria-hidden="true"`
+- スキップボタンは `aria-label="チュートリアルを終了する"`
+- Web は Tab で primary action / skip にフォーカス、Esc で skip 発火(focus trap 必須)
+- iOS Dynamic Type AX5(2.85x)で吹き出しがはみ出ないこと(§99 Q17 open、Phase 4 で実機検証)
+
+### 21.8 既存画面への `mode='sandbox'` prop
+
+family/09 が既存コンポーネントに加える共通拡張パターン(canonical):
+
+| 既存コンポーネント | prop 追加 | family/09 詳細 |
+|---|---|---|
+| `<MealNewScreen>` (Web + Mobile) | `mode: 'sandbox'` + `prefilled` + `apiOptions` + `onSandboxComplete` | §03 |
+| `<V4GenerateModal>` (Web `src/components/ai-assistant/`、Mobile `apps/mobile/src/components/menu/`) | `mode: 'sandbox'` + `initialFlags` + `prefilled` + `loadingDurationMs` + `apiOptions` + `onSandboxComplete` | §04 |
+| `<BadgesPage>` (Web `src/app/(main)/badges/page.tsx`、Mobile `apps/mobile/app/badges/index.tsx`) | URL クエリ `?tutorial-mode=1&highlight=first_bite,planner,tutorial_complete` + `data-testid="badge-card-{code}"` 動的化 | §05 |
+
+`mode='sandbox'` は discriminated union で型分岐(family/09 §07 §6.1 参照)。
+
+### 21.9 ファイル配置
+
+```
+packages/handson-tour-shared/
+├── src/types/                  (TourOverlayProps 等)
+├── src/mocks/                  (MOCK_PHOTO_RESPONSE 等)
+└── src/i18n/ja/tour.json       (cross/05 i18n key 連携)
+
+src/components/handson-tour/    (Web)
+├── TourOverlay.tsx
+├── TourBubble.tsx
+├── TourProgress.tsx
+├── TourSandboxWrapper.tsx
+├── useTourOverlayLogic.ts
+└── index.ts
+
+apps/mobile/src/handson-tour/   (Mobile)
+├── TourOverlay.tsx
+├── TourBubble.tsx
+├── TourProgress.tsx
+├── TourSandboxWrapper.tsx
+├── useTourOverlayLogic.ts
+└── index.ts
+```
+
+## 22. 未解決事項
 
 | 項目 | 状態 | 期限 |
 |------|------|------|
@@ -743,3 +866,5 @@ stateDiagram-v2
 | 動物アイコン 8 種の確定 (Lucide の対応状況確認) | TODO | family 実装前 |
 | `plaiceholder` の Edge Runtime 互換性確認 | TODO | Phase 1 リリース前 |
 | Figma デザインファイルとの同期体制 | TODO | デザイナー参加時 |
+| `--dim-opacity` `--shadow-floating` token を §3-§5 に追記 | TODO | v1.1 (Coachmark v1 はインライン値で実装) |
+| iOS Dynamic Type AX5 で TourBubble はみ出し確認 (family/09 §99 Q17) | TODO | Phase 4 a11y QA |

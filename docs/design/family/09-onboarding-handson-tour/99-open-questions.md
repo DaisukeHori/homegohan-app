@@ -4,7 +4,9 @@
 
 ---
 
-## 1. 確定済 (v3 時点、2026-05-07)
+## 1. 確定済
+
+### 1.1 v3 時点 (2026-05-07)
 
 §00-overview §1 + §14 で確定:
 - ✅ サンプル写真: 唐揚げ定食 (`tests/e2e/fixtures/karaage.jpg`)
@@ -13,27 +15,33 @@
 - ✅ 中断リカバリ: 最初から再開
 - ✅ Analytics 計測: 最初から仕込む (10 event 種類)
 
+### 1.2 Phase 1 着手前確認の確定 (2026-05-08)
+
+8 項目中 7 項目を確定。残 1 項目 (Q16) のみ堀さん最終確認待ち。
+
+- ✅ **Q1 バッジアイコン**: 🎓 絵文字採用 (案 A)。v1 リリース遅延ゼロ優先。SVG 発注は v2 検討
+- ✅ **Q2 Step 0 キャッチコピー**: "3 つの便利機能を一緒に試してみましょう (約 90 秒)" を採用
+- ✅ **Q3 スキップ後再開 UI**: `/settings` の「使い方ガイドをもう一度見る」項目で確定
+- ✅ **Q7 target_kcal_per_day**: カラム不存在を確認。実装は既存 `src/lib/build-nutrition-input.ts:26-50` の `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` を流用。新規 helper 不要。実カラム名は `age`(整数) / `height`(NUMERIC) / `weight`(NUMERIC) を使う (`birth_date` / `height_cm` / `weight_kg` は不存在)
+- ✅ **Q9 Mobile V4GenerateModal**: 実装済 (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行)。Web (`src/components/ai-assistant/V4GenerateModal.tsx` 556 行) と独立した実装。両方に `mode='sandbox'` prop を追加する
+- ✅ **Q10 Mobile BadgesPage**: 実装済 (`apps/mobile/app/badges/index.tsx` 109 行、Expo Router `/badges` 対応)。Web (`src/app/(main)/badges/page.tsx` 294 行) と独立。両方を改修。Mobile 版はフィルタ/ハイライト/アニメーション機能が Web 比で簡素なため、`tutorialMode` prop と `badge-card-{code}` testID 追加に加えハイライト演出を Mobile 側にも追加
+- ✅ **Q8 Analytics 配信先**: PostHog で確定。既存 SDK 未導入、設計書 §22-analytics.md §4 は既に PostHog 前提のコードサンプル(`posthog-js` + `posthog-react-native`)を持つ。導入物 / 環境変数:
+  - `posthog-js` (Web、`NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`)
+  - `posthog-react-native` (Mobile、`EXPO_PUBLIC_POSTHOG_KEY`)
+  - 設定: `person_profiles: 'identified_only'` + `autocapture: false`(Cookie 同意 + PII 要件適合、cross/08-legal-compliance §13)
+  - Mixpanel は React Native SDK の Expo 実績不足と MTU 課金の家族単位読みにくさで不採用
+
 ---
 
 ## 2. 残不確実性 (Phase 1 開始までに堀さん確認)
 
 ### 2.1 デザイン決定
 
-#### Q1. tutorial_complete バッジのアイコンデザイン
-- **選択肢 A**: 🎓 絵文字 (フォールバック、v1 これで OK) ← 推奨
-- **選択肢 B**: 専用 SVG icon (v1 で発注、デザイナーアサイン必要)
-- **影響**: v1 リリーススケジュール、A なら遅延なし
+#### ~~Q1. tutorial_complete バッジのアイコンデザイン~~ → §1.2 で確定 (🎓 絵文字、案 A)
 
-#### Q2. Step 0 のキャッチコピー文言確定
-- 現状案: "3 つの便利機能を一緒に試してみましょう (約 90 秒)"
-- 代替案 1: "3 つの機能を試して、homegohan を使いこなしましょう"
-- 代替案 2: "{nickname} さんに合った機能を 90 秒で体験"
-- **影響**: ハンズオン開始率に直結
+#### ~~Q2. Step 0 のキャッチコピー文言確定~~ → §1.2 で確定 ("3 つの便利機能を一緒に試してみましょう (約 90 秒)")
 
-#### Q3. スキップ後の再開 UI 位置
-- 現状案: `/settings` の「使い方ガイドをもう一度見る」項目
-- 代替案: profile タブ内、または home の右上アイコン
-- **影響**: 再開到達率
+#### ~~Q3. スキップ後の再開 UI 位置~~ → §1.2 で確定 (`/settings` の「使い方ガイドをもう一度見る」)
 
 #### Q4. 進捗ドットの数
 - 現状: 5 個 (Step 0-4)
@@ -55,24 +63,13 @@
 
 ### 2.3 技術決定
 
-#### Q7. `user_profiles.target_kcal_per_day` カラムの存在
-- operator/01-data-model 確認が必要
-- 存在しない場合は計算 helper 関数を新規実装
-- **影響**: Step 1 の "目標 kcal の X%" 表示
+#### ~~Q7. `user_profiles.target_kcal_per_day` カラムの存在~~ → §1.2 で確定 (カラム不存在、既存 `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` 流用)
 
-#### Q8. Analytics 配信先 (PostHog or Mixpanel)
-- operator/07 で確定が必要
-- 既存の analytics 基盤がない場合、v1 で導入決定
-- **影響**: SDK 選定、コスト
+#### ~~Q8. Analytics 配信先 (PostHog or Mixpanel)~~ → §1.2 で確定 (PostHog、既存基盤なし、設計書 §22 が既に PostHog 前提)
 
-#### Q9. Mobile 版 V4GenerateModal の実装場所
-- researcher: web 中心の確認、mobile は未確認
-- 存在しない場合: web 流用 or mobile 新規実装
-- **影響**: §03/§13 の sandbox prop 仕様、Phase 3B 工数
+#### ~~Q9. Mobile 版 V4GenerateModal の実装場所~~ → §1.2 で確定 (Mobile 独立実装あり、両方に `mode='sandbox'` prop 追加)
 
-#### Q10. Mobile 版 BadgesPage の実装場所
-- 同上
-- **影響**: Phase 3B
+#### ~~Q10. Mobile 版 BadgesPage の実装場所~~ → §1.2 で確定 (Mobile 独立実装あり、両方改修。Mobile 側は機能補完あり)
 
 ### 2.4 セキュリティ
 
@@ -176,18 +173,20 @@
 
 ## 4. 確認チェックリスト (Phase 1 開始前)
 
-堀さんから以下の回答を得てから Phase 1 着手:
+2026-05-08 時点で 8 項目中 6 項目確定。残 2 項目のみ堀さん最終確認待ち。
 
-- [ ] Q1: バッジアイコン (🎓 絵文字 OK か / 専用 SVG 発注か)
-- [ ] Q2: Step 0 キャッチコピー確定
-- [ ] Q3: スキップ後再開 UI 位置 (`/settings` で OK か)
-- [ ] Q7: target_kcal_per_day カラム or 計算式
-- [ ] Q8: Analytics 配信先 (PostHog / Mixpanel / その他)
-- [ ] Q9: Mobile V4GenerateModal の存在確認
-- [ ] Q10: Mobile BadgesPage の存在確認
-- [ ] Q16: アプリストア審査の事前確認 (sandbox 行で実バッジ付与の合法性)
+- [x] Q1: バッジアイコン → 🎓 絵文字採用 (案 A)
+- [x] Q2: Step 0 キャッチコピー → "3 つの便利機能を一緒に試してみましょう (約 90 秒)"
+- [x] Q3: スキップ後再開 UI 位置 → `/settings` の「使い方ガイドをもう一度見る」
+- [x] Q7: target_kcal_per_day → カラム不存在、既存 `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` 流用
+- [x] Q8: Analytics 配信先 → PostHog 採用 (既存基盤なし、設計書 §22 が既に PostHog 前提)
+- [x] Q9: Mobile V4GenerateModal → 実装済 (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行)
+- [x] Q10: Mobile BadgesPage → 実装済 (`apps/mobile/app/badges/index.tsx` 109 行)
+- [ ] **Q16: アプリストア審査 (sandbox 行で実バッジ付与の合法性) — 法務/堀さん判断**
 
-これら 8 項目で Phase 1 着手判断。
+残 Q16 の 1 項目で Phase 1 着手判断。
+
+**Q16 補記 (2026-05-08)**: Phase 1-3 (DB + API + UI 実装) は技術タスクで合法性影響なし。Phase 4 (a11y + Analytics 仕込み) ・ Phase 5 (E2E + rollout) 開始前に法務確認を完了させる運用に切り出すことで Phase 1 着手は可能。堀さんに最終確認のうえ運用方針確定。
 
 ---
 
@@ -255,6 +254,13 @@
 | 2026-05-07 | プラットフォーム範囲 | Web/Mobile 同時 (workspace package) |
 | 2026-05-07 | 中断リカバリ | v1 では最初から (途中再開なし) |
 | 2026-05-07 | Analytics 計測 | 最初から仕込む |
+| 2026-05-08 | Q1 バッジアイコン | 🎓 絵文字採用 (案 A、設計書推奨) |
+| 2026-05-08 | Q2 Step 0 キャッチコピー | 現状案 "3 つの便利機能を一緒に試してみましょう (約 90 秒)" |
+| 2026-05-08 | Q3 スキップ後再開 UI | `/settings` の「使い方ガイドをもう一度見る」 |
+| 2026-05-08 | Q7 target_kcal カラム | 不存在 → 既存 `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` 流用 |
+| 2026-05-08 | Q9 Mobile V4GenerateModal | 実装済 → Web/Mobile 両方に `mode='sandbox'` prop 追加 |
+| 2026-05-08 | Q10 Mobile BadgesPage | 実装済 → Web/Mobile 両方改修 |
+| 2026-05-08 | Q8 Analytics 配信先 | PostHog 採用 (既存基盤なし、設計書 §22 既に PostHog 前提) |
 
 ---
 

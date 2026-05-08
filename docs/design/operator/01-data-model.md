@@ -53,6 +53,7 @@
 27. password_history
 28. failed_invite_lookups
 29. user_sessions_metadata
+30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meal_logs.is_sandbox + weekly_menus.is_sandbox + badges seed + RPC 2 本
 ```
 
 ### 3.2 `subscription_plans` — プラン定義マスター
@@ -1096,6 +1097,233 @@ CREATE POLICY "sessions_self" ON user_sessions_metadata
 CREATE POLICY "sessions_revoke_self" ON user_sessions_metadata
   FOR UPDATE USING (user_id = auth.uid());
 ```
+
+### 3.26 `handson_tour` 連携 — family/09 ハンズオンチュートリアル拡張
+
+family/09(初回オンボーディングハンズオンツアー)が利用する DB 拡張をここに集約する。本セクションが canonical、family/09 配下の §08-state-db / §21-migration-sql は proposal 扱い。
+
+#### 3.26.1 `user_profiles` 拡張 (handson_tour 状態)
+
+```sql
+-- マイグレーション: 2026MMDD030_handson_tour.sql
+
+ALTER TABLE user_profiles
+  ADD COLUMN IF NOT EXISTS handson_tour_completed_at TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS handson_tour_skipped_at   TIMESTAMPTZ NULL;
+
+COMMENT ON COLUMN user_profiles.handson_tour_completed_at IS
+  '初回ハンズオンチュートリアル完了日時 (family/09)。NULL = 未完走';
+COMMENT ON COLUMN user_profiles.handson_tour_skipped_at IS
+  '初回ハンズオンチュートリアル明示スキップ or auto-skip 日時 (family/09)';
+
+-- 部分インデックス: 表示判定 (should_show) 高速化、pending な user_id だけ index に乗る
+CREATE INDEX IF NOT EXISTS idx_user_profiles_handson_tour_pending
+  ON user_profiles (user_id)
+  WHERE handson_tour_completed_at IS NULL AND handson_tour_skipped_at IS NULL;
+```
+
+不変条件(CHECK 不要、API 層で保証):
+- 同時に両方 NOT NULL は v1 では発生しない(force=1 で再表示後の skip ボタン非表示のため)
+- `handson_tour_completed_at IS NOT NULL` の場合、表示判定で `handson_tour_skipped_at` は無視
+
+RLS は既存 `user_profiles_owner_rw`(`auth.uid() = user_id`)で保護される。新規列追加のみで RLS 変更は不要。
+
+#### 3.26.2 `meal_logs` 拡張 (sandbox 識別子)
+
+`meal_logs` 本体は既存実装(`docs/design/00-existing-cleanup.md` 保持リスト)。本拡張は ALTER のみを管理する。
+
+```sql
+ALTER TABLE meal_logs
+  ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN meal_logs.is_sandbox IS
+  'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
+
+-- 通常 UI のクエリ高速化(WHERE is_sandbox=false で index pruning)
+CREATE INDEX IF NOT EXISTS idx_meal_logs_user_non_sandbox
+  ON meal_logs (user_id, eaten_at DESC)
+  WHERE is_sandbox = false;
+
+-- 部分 UNIQUE: ハンズオン中の二重 INSERT 防止 (user_id, is_sandbox=true) は 1 行のみ
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
+  ON meal_logs (user_id)
+  WHERE is_sandbox = true;
+```
+
+利用方針:
+- 通常 UI(週間献立 / 食事一覧)は `WHERE is_sandbox = false` を必ず付与
+- バッジ判定(`first_bite` 等)は `is_sandbox=true` も対象に含める(設計書 §03-step1-photo §03)
+
+#### 3.26.3 `weekly_menus` 拡張 (sandbox 識別子)
+
+```sql
+ALTER TABLE weekly_menus
+  ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN weekly_menus.is_sandbox IS
+  'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_menu
+  ON weekly_menus (user_id)
+  WHERE is_sandbox = true;
+```
+
+#### 3.26.4 `badges` seed (`tutorial_complete`)
+
+```sql
+INSERT INTO badges (code, name, description, condition_json)
+VALUES (
+  'tutorial_complete',
+  '使い方マスター',
+  'はじめての使い方ガイドを最後まで完走',
+  '{"type":"event","event":"handson_tour_completed"}'::jsonb
+)
+ON CONFLICT (code) DO NOTHING;
+```
+
+`icon_url` は v1 では NULL のまま(クライアントが 🎓 絵文字をフォールバック表示。§99 §1.2 Q1 確定事項)。将来カスタムアイコンを発注した場合は `UPDATE badges SET icon_url = '...' WHERE code = 'tutorial_complete'` で差し替え。
+
+`condition_json` は将来の自動判定エンジン向け。v1 では使用せず、`POST /api/handson-tour/complete`(family/02 §handson_tour)が明示 INSERT。
+
+#### 3.26.5 RPC: `user_has_non_sandbox_activity`
+
+ハンズオンチュートリアル `should_show` 判定の condition C(既存ユーザー判定)で使用。
+
+```sql
+CREATE OR REPLACE FUNCTION user_has_non_sandbox_activity(p_user_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM meal_logs WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+  ) OR EXISTS (
+    SELECT 1 FROM weekly_menus WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+  );
+END;
+$$;
+
+COMMENT ON FUNCTION user_has_non_sandbox_activity IS
+  'family/09 condition C 判定: ユーザーが既に non-sandbox の食事記録 or 献立を持つか';
+
+REVOKE EXECUTE ON FUNCTION user_has_non_sandbox_activity(uuid) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION user_has_non_sandbox_activity(uuid) TO service_role;
+```
+
+#### 3.26.6 RPC: `complete_handson_tour`(atomic 卒業処理)
+
+`POST /api/handson-tour/complete` が呼び出す。`user_profiles` 更新 + `tutorial_complete` バッジ INSERT を atomic に実行し、`already_completed` 判定も返す。
+
+```sql
+CREATE OR REPLACE FUNCTION complete_handson_tour(p_user_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_existing_completed_at timestamptz;
+  v_completed_at timestamptz;
+  v_was_already boolean;
+  v_badge_id uuid;
+  v_badge_name text;
+  v_badge_icon_url text;
+  v_badge_obtained_at timestamptz;
+BEGIN
+  -- UPDATE 前に既存値を取得 (already_completed 判定のため)
+  -- now() はトランザクション開始時刻で固定なので、COALESCE 後の RETURNING と完全一致して
+  -- 判定が壊れる。先に SELECT NULL チェックすることで防ぐ。
+  SELECT handson_tour_completed_at INTO v_existing_completed_at
+  FROM user_profiles WHERE user_id = p_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'profile_not_found';
+  END IF;
+
+  v_was_already := (v_existing_completed_at IS NOT NULL);
+
+  UPDATE user_profiles
+  SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
+  WHERE user_id = p_user_id
+  RETURNING handson_tour_completed_at INTO v_completed_at;
+
+  SELECT id, name, icon_url INTO v_badge_id, v_badge_name, v_badge_icon_url
+  FROM badges WHERE code = 'tutorial_complete';
+
+  IF v_badge_id IS NULL THEN
+    RAISE EXCEPTION 'badge_not_found';
+  END IF;
+
+  INSERT INTO user_badges (user_id, badge_id, obtained_at)
+  VALUES (p_user_id, v_badge_id, now())
+  ON CONFLICT (user_id, badge_id) DO NOTHING;
+
+  SELECT obtained_at INTO v_badge_obtained_at
+  FROM user_badges WHERE user_id = p_user_id AND badge_id = v_badge_id;
+
+  RETURN jsonb_build_object(
+    'completed_at', v_completed_at,
+    'badge_awarded', jsonb_build_object(
+      'code', 'tutorial_complete',
+      'name', v_badge_name,
+      'obtained_at', v_badge_obtained_at,
+      'icon_url', v_badge_icon_url
+    ),
+    'already_completed', v_was_already
+  );
+END;
+$$;
+
+COMMENT ON FUNCTION complete_handson_tour IS
+  'family/09 卒業処理: profile UPDATE + tutorial_complete バッジ INSERT を atomic に実行';
+
+REVOKE EXECUTE ON FUNCTION complete_handson_tour(uuid) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION complete_handson_tour(uuid) TO service_role;
+```
+
+#### 3.26.7 ロールバック SQL
+
+family/09/§21-migration-sql.md §3 を canonical 化。逆順で:
+
+```sql
+BEGIN;
+
+DROP FUNCTION IF EXISTS complete_handson_tour(uuid);
+DROP FUNCTION IF EXISTS user_has_non_sandbox_activity(uuid);
+
+DROP INDEX IF EXISTS uniq_user_sandbox_menu;
+DROP INDEX IF EXISTS uniq_user_sandbox_meal;
+DROP INDEX IF EXISTS idx_meal_logs_user_non_sandbox;
+DROP INDEX IF EXISTS idx_user_profiles_handson_tour_pending;
+
+DELETE FROM user_badges
+  WHERE badge_id IN (SELECT id FROM badges WHERE code = 'tutorial_complete');
+DELETE FROM badges WHERE code = 'tutorial_complete';
+
+ALTER TABLE weekly_menus DROP COLUMN IF EXISTS is_sandbox;
+ALTER TABLE meal_logs   DROP COLUMN IF EXISTS is_sandbox;
+ALTER TABLE user_profiles
+  DROP COLUMN IF EXISTS handson_tour_skipped_at,
+  DROP COLUMN IF EXISTS handson_tour_completed_at;
+
+COMMIT;
+```
+
+#### 3.26.8 既存目標 kcal 計算との関係 (Q7 確定事項)
+
+Step 1 「目標 kcal の X%」表示は新規 helper を追加せず、既存 `src/lib/build-nutrition-input.ts:26-50` の `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` を流用する(§99 §1.2 Q7)。`user_profiles.target_kcal_per_day` カラムは追加しない。
+
+実カラム名は `age`(整数) / `height`(NUMERIC) / `weight`(NUMERIC) を参照(`birth_date` / `height_cm` / `weight_kg` は不存在)。
+
+#### 3.26.9 デプロイ順序
+
+1. 本 migration 適用(DB スキーマ更新)
+2. API デプロイ(family/02 §handson_tour 章の 4 API)
+3. UI デプロイ(Web/Mobile のハンズオン画面群)
+
+ロールバック時は逆順。
 
 ## 4. ER 図
 

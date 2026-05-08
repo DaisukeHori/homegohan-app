@@ -708,7 +708,134 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
 - Better Stack: 新規追加 (`@logtail/node`)
 - Status Page: Better Stack の Status Page 機能を利用
 
-## 15. 未解決事項
+## 15. プロダクト Analytics イベント (PostHog)
+
+### 15.1 配信基盤の確定 (2026-05-08)
+
+PostHog を採用(family/09 §99 §1.2 Q8 確定)。既存基盤なし、設計書 22-analytics.md §4 が既に PostHog 前提。
+
+| 環境変数 | 用途 |
+|---|---|
+| `NEXT_PUBLIC_POSTHOG_KEY` | Web 公開鍵 |
+| `NEXT_PUBLIC_POSTHOG_HOST` | Web 配信先 |
+| `EXPO_PUBLIC_POSTHOG_KEY` | Mobile 公開鍵 |
+
+導入物:
+- Web: `posthog-js`
+- Mobile: `posthog-react-native`
+
+設定:
+- `person_profiles: 'identified_only'`(認証ユーザーのみプロファイル化)
+- `autocapture: false`(手動 capture のみ)
+- `capture_pageview: false`(手動制御)
+- `sanitize_properties` で PII フィルタ(§15.7)
+
+`admin_audit_logs`(本ファイル §3-4)とは別系統。admin_audit_logs は破壊的・課金的・セキュリティ操作の監査ログ(7 年保管)、PostHog はプロダクト UX のイベント計測。混同しない。
+
+### 15.2 Analytics ヘルパー実装
+
+```
+packages/handson-tour-shared/src/analytics.ts
+```
+
+`fireAnalytics<T>(eventName, payload)` ラッパーが PostHog SDK を抽象化。dev mode では Zod で payload schema を検証する。詳細は family/09 §22 §4 参照。
+
+### 15.3 ハンズオンチュートリアル 10 イベント (canonical)
+
+family/09 が新規追加するイベント。
+
+| event_name | カテゴリ | 発火タイミング | 主要プロパティ |
+|---|---|---|---|
+| `handson_tour_eligible` | trigger | `/api/handson-tour/status` が `should_show=true` | `entry_source: 'auto'\|'settings_force'` |
+| `handson_tour_started` | progression | Step 0 で【はじめる】タップ | `entry_source` |
+| `handson_tour_step_viewed` | progression | 各 Step マウント | `step: 0..5`, `sub_step?: string` |
+| `handson_tour_step_completed` | progression | 各 Step 進行 | `step`, `dwell_ms` |
+| `handson_tour_skipped` | progression | スキップ動作(明示 / hard_back / auto-skip) | `step: -1..4`, `reason: 'user_action'\|'hard_back'\|'admin_role'\|'existing_user'\|'feature_disabled'\|'not_in_rollout'` |
+| `handson_tour_completed` | completion | Step 4 卒業 API 成功 | `total_duration_ms`, `step_skipped_count`, `badge_awarded: 'tutorial_complete'`, `already_completed` |
+| `handson_tour_step_error` | error | API エラー / mock 失敗 / 想定外状態 | `step`, `error_code`, `error_message` (max 500, PII 不可), `http_status?` |
+| `handson_tour_force_replayed` | re-engagement | `/handson-tour?force=1` 再表示 | `previous_completed_at` |
+| `web_vitals_lcp` / `web_vitals_cls` / `web_vitals_fid` | performance | Web Vitals 計測(Web のみ) | `value` / `value_ms`, `page` |
+
+数えるとハンズオン固有 8 + Web Vitals 3 = 11 イベント、family/09 設計書では「10 イベント種類」と表記される(Web Vitals 3 種を「performance」で 1 グループ扱い)。本表では明示的に 11 行を canonical 化。
+
+### 15.4 共通プロパティ (全イベント)
+
+```ts
+const CommonPropertiesSchema = z.object({
+  user_id: z.string().uuid(),
+  timestamp: z.string().datetime(),
+  platform: z.enum(['web', 'ios', 'android']),
+  app_version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  session_id: z.string().uuid().optional(),
+  trace_id: z.string().optional(),
+});
+```
+
+各イベントの完全 Zod schema は family/09 §22 §2.3 参照。型定義は `packages/handson-tour-shared/src/analytics.ts` で `HandsonTourEventName` / `HandsonTourEventPayload<T>` として export。
+
+### 15.5 user identify ポリシー
+
+認証後 `posthog.identify(userId, props)` を呼ぶ。`props` に含めて良いのはコホート分析用の **PII でない** 属性のみ:
+
+| 含めて良い | 含めない |
+|---|---|
+| `signup_at`(profile.created_at) | `nickname` |
+| `platform`(`'web'`/`'ios'`/`'android'`) | `email` |
+| `plan_key_cached`(粗いプラン区分) | `weight_kg` / `height_cm` / `age` / `gender` |
+| | `allergies` / `dietary_preferences` / `nutrition_goal` |
+| | `password` / JWT / session token |
+| | GPS / 詳細 IP |
+
+### 15.6 KPI 集計クエリ
+
+PostHog Insights で実装。詳細 SQL は family/09 §22 §5(開始率 / 完了率 / 漏斗 / 7 日継続率 / 平均所要時間 / エラー率)を参照。本セクションは KPI 一覧のみ:
+
+| KPI | 算出 | 目標値 |
+|---|---|---|
+| 開始率 | `started / signed_up` (30 日コホート) | (Phase 4 で確定) |
+| 完了率 | `completed / started` (7 日窓) | 80% (family/09 §00 §6) |
+| 平均所要時間 | `AVG(total_duration_ms)` | 90 秒前後 |
+| Step 別離脱率 | 漏斗(`step_viewed: 0→4`) | 各ステップ 5% 以内 |
+| 7 日継続率 | 完了群 vs スキップ群の `non-sandbox meal_logs` 7 日後存在率 | (Phase 4 で確定) |
+| エラー率 | `step_error / step_viewed` 1 時間粒度 | < 1% |
+
+### 15.7 PII フィルタ (cross/08-legal-compliance §13 連携)
+
+```ts
+sanitize_properties: (props) => {
+  const FORBIDDEN_KEYS = [
+    'nickname', 'email', 'phone', 'address',
+    'weight_kg', 'height_cm', 'age', 'gender',
+    'allergies', 'dietary_preferences', 'nutrition_goal',
+    'password', 'jwt', 'token',
+  ];
+  for (const key of FORBIDDEN_KEYS) {
+    if (key in props) delete props[key];
+  }
+  return props;
+};
+```
+
+`error_message` は max 500 文字 + PII 含まない実装(個人名や食事名のような UGC は含めず、`'api_500'` `'network_timeout'` 等の error_code を主軸にする)。
+
+### 15.8 ダッシュボード公開タイミング
+
+- Phase 4(a11y + Analytics 実装)完了時に PostHog Insights ダッシュボード作成
+- Phase 6(canary 段階公開)で本格モニタリング開始
+- Looker Studio などへの転載は v2 検討
+
+### 15.9 Cookie 同意との連携
+
+cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「計測 Cookie」の opt-in が取得されたユーザーのみ PostHog `init` を呼ぶ(Web)。同意取消し時は `posthog.opt_out_capturing()` を呼ぶ。Mobile は同様に EXPO_PUBLIC キーの初期化を遅延。
+
+### 15.10 残不確実性
+
+- [ ] sub_step の粒度(1.5 / 1.6 を全部送るか、step のみで十分か) — Phase 4 で決定
+- [ ] event sampling(高頻度 event は 10% 等) — Phase 6 でコスト確認後
+- [ ] PII フィルタの null チェック(nullable な PII フィールドの処理) — Phase 4 実装時
+- [ ] Analytics 配信失敗時のリトライ(PostHog SDK 内蔵で十分か) — Phase 4 検証
+
+## 16. 既存未解決事項
 
 - 監査ログの 1 年後コールドストレージ移行: S3 Glacier への転送ジョブは別途実装 (Phase 3)
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
