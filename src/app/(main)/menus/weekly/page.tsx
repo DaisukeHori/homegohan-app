@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } from "react";
@@ -1209,7 +1208,8 @@ export default function WeeklyMenuPage() {
       // #120: restoreGeneration 完了後に checkPendingRequests を許可
       isRestoringRef.current = false;
     });
-  }, []);  // マウント時のみ実行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  // マウント時のみ実行。refreshMealPlan / v4Generation は mount 後に安定するが deps に入れると再実行されるため個別 disable
 
   // V4 生成ハンドラー
   const handleV4Generate = async (params: {
@@ -1676,7 +1676,8 @@ export default function WeeklyMenuPage() {
     };
     
     checkPendingRequests();
-  }, [weekStart, weekDates, isGenerating, generatingMeal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart, weekDates, isGenerating, generatingMeal]);  // subscribeToRequestStatus / subscribeToRegenerateStatus はファイル後方で定義されるため前方参照エラーになる。両関数は useCallback で安定参照のため再実行は発生しない
   
   
   // 復元用フラグ（購読開始時に使用）→ uiFlagReducer 管理
@@ -1800,7 +1801,8 @@ export default function WeeklyMenuPage() {
     });
     
     return sortedEntries;
-  }, [shoppingList]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shoppingList]);  // CATEGORY_ORDER はコンポーネント内定数配列のため deps に含めるとメモ化が無効になる。本来はモジュールスコープに移動すべきだが挙動変更を避けるため個別 disable
   
   // Add fridge/shopping form (Phase B-3 で formDraftStore 予定、今は useState 維持)
   const [newFridgeName, setNewFridgeName] = useState("");
@@ -1996,7 +1998,8 @@ export default function WeeklyMenuPage() {
       }
     };
     fetchPlan();
-  }, [weekStart, weekStartDayLoaded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart, weekStartDayLoaded]);  // autoExpandNextMeal / weekDates / subscribeToRequestStatus を除外: 追加すると不要な再フェッチが発生するため
   
   // Fetch servings config and radar chart nutrients from user profile
   useEffect(() => {
@@ -2328,7 +2331,7 @@ export default function WeeklyMenuPage() {
     poll();
     // 3秒ごとにポーリング
     pollingIntervalRef.current = setInterval(poll, 3000);
-  }, [cleanupPolling, cleanupRealtime, convertV4ProgressToUIFormat]);
+  }, [cleanupPolling, cleanupRealtime, convertV4ProgressToUIFormat, updateCalendarMealDatesFromDailyMeals]);
 
   // Realtime で生成完了を監視（常にポーリングも並行実行）
   const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string) => {
@@ -2445,7 +2448,7 @@ export default function WeeklyMenuPage() {
         startPolling(targetDate, requestId);
       }
     }, 5000);
-  }, [cleanupRealtime, cleanupPolling, startPolling, convertV4ProgressToUIFormat]);
+  }, [cleanupRealtime, cleanupPolling, startPolling, convertV4ProgressToUIFormat, updateCalendarMealDatesFromDailyMeals]);
 
   // ポーリングのクリーンアップ（アンマウント時）
   useEffect(() => {
@@ -2475,7 +2478,7 @@ export default function WeeklyMenuPage() {
     const todayStr = formatLocalDate(new Date());
     const idx = weekDates.findIndex(d => d.dateStr === todayStr);
     if (idx !== -1) setSelectedDayIndex(idx);
-  }, [weekStart]);
+  }, [weekStart, weekDates]);
 
   // Bug-5 (#21): Publish currently displayed date so the AI chat bubble's
   // "1日献立変更" modal can default to it instead of always defaulting to today
@@ -2498,7 +2501,8 @@ export default function WeeklyMenuPage() {
     if (currentPlan?.days && currentPlan.days.length > 0) {
       fetchAiHint();
     }
-  }, [currentPlan?.days?.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPlan?.days?.length]);  // fetchAiHint は通常関数のため deps に含めると無限ループになる可能性があるため個別 disable
   
   const fetchAiHint = async () => {
     setIsLoadingHint(true);
@@ -2730,7 +2734,8 @@ export default function WeeklyMenuPage() {
         feedbackChannelRef.current = null;
       }
     };
-  }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
   
   // サマリーモーダルを開いた時も今日のフィードバックを取得
   useEffect(() => {
@@ -2742,7 +2747,8 @@ export default function WeeklyMenuPage() {
         fetchNutritionFeedback(todayStr);
       }
     }
-  }, [activeModal, weeklySummaryTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeModal, weeklySummaryTab, lastFeedbackDate]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
   
   // Week Navigation
   const goToPreviousWeek = () => {
@@ -3744,8 +3750,8 @@ export default function WeeklyMenuPage() {
       });
     
     realtimeChannelRef.current = channel;
-  }, [cleanupRealtime]);
-  
+  }, [cleanupRealtime, updateCalendarMealDatesFromDailyMeals]);
+
   // Edit meal (legacy - keep for simple edits)
   const openEditMeal = (meal: PlannedMeal) => {
     setEditingMeal(meal);
