@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
@@ -15,6 +15,7 @@ import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 // ProfileReminderBanner は dynamic import で lazy load (#322)
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED } from "@homegohan/shared";
+import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
@@ -577,11 +578,15 @@ const isDateInWeek = (date: Date, weekStartDate: Date): boolean => {
 
 export default function WeeklyMenuPage() {
   const router = useRouter();
-  
+  const searchParams = useSearchParams();
+
+  // ハンズオンツアー sandbox モード: ?tour=1 クエリで V4GenerateModal を sandbox モードで開く
+  const tourMode = searchParams.get('tour') === '1';
+
   const [currentPlan, setCurrentPlan] = useState<WeekPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
-  
+
   // V4 AIアシスタントモーダル
   const [showV4Modal, setShowV4Modal] = useState(false);
 
@@ -592,6 +597,14 @@ export default function WeeklyMenuPage() {
   const [weekStart, setWeekStart] = useState<Date>(getWeekStart(new Date()));
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
+
+  // ハンズオンツアー: ?tour=1 クエリで V4GenerateModal を自動オープン
+  useEffect(() => {
+    if (tourMode) {
+      setShowV4Modal(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourMode]);
 
   // Calendar expansion state
   const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
@@ -7804,15 +7817,28 @@ export default function WeeklyMenuPage() {
       </AnimatePresence>
 
       {/* V4 AI Generation Modal */}
-      <V4GenerateModal
-        isOpen={showV4Modal}
-        onClose={() => setShowV4Modal(false)}
-        mealPlanDays={currentPlan?.days || []}
-        weekStartDate={weekDates[0]?.dateStr || formatLocalDate(weekStart)}
-        weekEndDate={weekDates[6]?.dateStr || addDaysStr(formatLocalDate(weekStart), 6)}
-        onGenerate={handleV4Generate}
-        isGenerating={isGenerating}
-      />
+      {tourMode ? (
+        <V4GenerateModal
+          mode="sandbox"
+          isOpen={showV4Modal}
+          onClose={() => { setShowV4Modal(false); }}
+          prefilled={MOCK_MENU_RESPONSE}
+          loadingDurationMs={HANDSON_TOUR_CONSTANTS.STEP2_LOADING_DURATION_MS}
+          apiOptions={{ source: 'handson_tour', sandbox: true }}
+          onSandboxComplete={() => { setShowV4Modal(false); }}
+          onSandboxError={(err) => { console.error('[tour] sandbox error:', err); setShowV4Modal(false); }}
+        />
+      ) : (
+        <V4GenerateModal
+          isOpen={showV4Modal}
+          onClose={() => setShowV4Modal(false)}
+          mealPlanDays={currentPlan?.days || []}
+          weekStartDate={weekDates[0]?.dateStr || formatLocalDate(weekStart)}
+          weekEndDate={weekDates[6]?.dateStr || addDaysStr(formatLocalDate(weekStart), 6)}
+          onGenerate={handleV4Generate}
+          isGenerating={isGenerating}
+        />
+      )}
 
       {/* 栄養詳細モーダル */}
       <AnimatePresence>
