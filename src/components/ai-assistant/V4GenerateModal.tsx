@@ -110,22 +110,29 @@ function V4GenerateModalSandbox({
   onSandboxComplete,
   onSandboxError,
 }: Omit<V4GenerateModalSandboxProps, 'mode'>) {
-  const [isSandboxLoading, setIsSandboxLoading] = useState(false);
-  const [sandboxLoaded, setSandboxLoaded] = useState(false);
+  // step: 'input' → 'loading' → 'result'
+  const [sandboxStep, setSandboxStep] = useState<'input' | 'loading' | 'result'>('input');
+  const [noCook, setNoCook] = useState(initialFlags.no_cook ?? false);
+  const [note, setNote] = useState('');
 
   // Reset state when modal opens
   useEffect(() => {
     if (isOpen) {
-      setIsSandboxLoading(false);
-      setSandboxLoaded(false);
+      setSandboxStep('input');
+      setNoCook(initialFlags.no_cook ?? false);
+      setNote('');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  const handleSandboxSave = async () => {
-    if (isSandboxLoading) return;
-    setIsSandboxLoading(true);
-    // Simulate loading for STEP2_LOADING_DURATION_MS
-    await new Promise(resolve => setTimeout(resolve, loadingDurationMs));
+  const handleGenerate = () => {
+    setSandboxStep('loading');
+    setTimeout(() => {
+      setSandboxStep('result');
+    }, loadingDurationMs);
+  };
+
+  const handleAddToMenu = async () => {
     try {
       const res = await fetch('/api/menu-plans/add', {
         method: 'POST',
@@ -144,8 +151,6 @@ function V4GenerateModalSandbox({
       }
     } catch (error) {
       onSandboxError?.(error);
-    } finally {
-      setIsSandboxLoading(false);
     }
   };
 
@@ -196,64 +201,136 @@ function V4GenerateModalSandbox({
               </p>
             </div>
 
-            {/* Prefilled menu preview */}
-            <div className="mb-4 p-4 rounded-xl border" style={{ borderColor: colors.border, backgroundColor: colors.bg }}>
-              <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>生成された献立（サンプル）</p>
-              <p className="font-bold text-lg mb-1" style={{ color: colors.text }}>{dish.dish_name}</p>
-              <div className="flex gap-3 text-sm" style={{ color: colors.textLight }}>
-                <span>{dish.calories} kcal</span>
-                <span>P: {dish.protein_g}g</span>
-                <span>F: {dish.fat_g}g</span>
-                <span>C: {dish.carbs_g}g</span>
-              </div>
-              <div className="mt-2 flex gap-2 flex-wrap">
-                <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.accentLight, color: colors.accent }}>
-                  {dish.cooking_time_minutes}分
-                </span>
-                <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.successLight, color: colors.success }}>
-                  {dish.difficulty === 'easy' ? '簡単' : dish.difficulty === 'medium' ? '普通' : '本格'}
-                </span>
-                <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.blueLight, color: colors.blue }}>
-                  {dish.servings}人分
-                </span>
-              </div>
-            </div>
-
-            {/* Ingredients */}
-            <div className="mb-4">
-              <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>材料</p>
-              <div className="grid grid-cols-2 gap-1">
-                {dish.ingredients.map((ing, i) => (
-                  <div key={i} className="text-sm" style={{ color: colors.text }}>
-                    {ing.name} {ing.quantity_g}{ing.unit}
+            {/* Input step */}
+            {sandboxStep === 'input' && (
+              <>
+                {/* 条件フラグ */}
+                <div className="mb-4">
+                  <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>生成条件</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      data-testid="v4-no-cook-toggle"
+                      onClick={() => setNoCook(v => !v)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border transition-all"
+                      style={{
+                        borderColor: noCook ? colors.accent : colors.border,
+                        backgroundColor: noCook ? colors.accentLight : colors.bg,
+                      }}
+                      aria-pressed={noCook}
+                    >
+                      <span
+                        className="w-4 h-4 rounded flex items-center justify-center"
+                        style={{ background: noCook ? colors.accent : colors.border }}
+                      >
+                        {noCook && <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>}
+                      </span>
+                      <span className="text-sm" style={{ color: noCook ? colors.accent : colors.textLight }}>
+                        調理しなくていい
+                      </span>
+                    </button>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            {/* Save button */}
-            <button
-              data-testid="v4-sandbox-save-button"
-              onClick={handleSandboxSave}
-              disabled={isSandboxLoading}
-              className="w-full py-4 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2"
-              style={{
-                backgroundColor: isSandboxLoading ? colors.purple : colors.accent,
-                opacity: isSandboxLoading ? 0.8 : 1,
-              }}
-            >
-              {isSandboxLoading ? (
-                <>
-                  <Loader2 size={18} className="animate-spin" />
-                  献立を登録中...
-                </>
-              ) : (
-                <>
+                {/* 自由メモ */}
+                <div className="mb-4">
+                  <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>自由メモ（任意）</p>
+                  <textarea
+                    data-testid="v4-note-textarea"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    className="w-full p-3 rounded-xl resize-none text-sm"
+                    style={{
+                      border: `1px solid ${colors.border}`,
+                      backgroundColor: colors.bg,
+                      color: colors.text,
+                      outline: 'none',
+                    }}
+                    placeholder="例: 野菜多め、辛くない..."
+                    rows={3}
+                  />
+                </div>
+
+                {/* 生成ボタン */}
+                <button
+                  data-testid="v4-generate-button"
+                  onClick={handleGenerate}
+                  className="w-full py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2"
+                  style={{ backgroundColor: colors.accent }}
+                >
                   <Sparkles size={18} />
-                  この献立を登録する
-                </>
-              )}
-            </button>
+                  AI で献立を生成
+                </button>
+              </>
+            )}
+
+            {/* Loading step */}
+            {sandboxStep === 'loading' && (
+              <div className="flex flex-col items-center justify-center py-12" data-testid="v4-loading-spinner">
+                <Loader2 size={36} className="animate-spin mb-4" style={{ color: colors.accent }} />
+                <p className="font-bold" style={{ color: colors.text }}>AI が考え中...</p>
+                <p className="text-sm mt-1" style={{ color: colors.textLight }}>最適な献立を生成しています</p>
+              </div>
+            )}
+
+            {/* Result step */}
+            {sandboxStep === 'result' && (
+              <>
+                <div
+                  className="mb-4 p-4 rounded-xl border"
+                  style={{ borderColor: colors.border, backgroundColor: colors.bg }}
+                  data-testid="v4-result-card"
+                >
+                  <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>生成された献立（サンプル）</p>
+                  <p
+                    className="font-bold text-lg mb-1"
+                    style={{ color: colors.text }}
+                    data-testid="v4-result-dish-name"
+                  >
+                    {dish.dish_name}
+                  </p>
+                  <div className="flex gap-3 text-sm" style={{ color: colors.textLight }}>
+                    <span data-testid="v4-result-calories">{dish.calories} kcal</span>
+                    <span>P: {dish.protein_g}g</span>
+                    <span>F: {dish.fat_g}g</span>
+                    <span>C: {dish.carbs_g}g</span>
+                  </div>
+                  <div className="mt-2 flex gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.accentLight, color: colors.accent }}>
+                      {dish.cooking_time_minutes}分
+                    </span>
+                    <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.successLight, color: colors.success }}>
+                      {dish.difficulty === 'easy' ? '簡単' : dish.difficulty === 'medium' ? '普通' : '本格'}
+                    </span>
+                    <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.blueLight, color: colors.blue }}>
+                      {dish.servings}人分
+                    </span>
+                  </div>
+                </div>
+
+                {/* Ingredients */}
+                <div className="mb-4">
+                  <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>材料</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {dish.ingredients.map((ing, i) => (
+                      <div key={i} className="text-sm" style={{ color: colors.text }}>
+                        {ing.name} {ing.quantity_g}{ing.unit}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Add to menu button */}
+                <button
+                  data-testid="v4-add-to-menu-button"
+                  onClick={handleAddToMenu}
+                  className="w-full py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2"
+                  style={{ backgroundColor: colors.accent }}
+                >
+                  <Sparkles size={18} />
+                  献立に追加する
+                </button>
+              </>
+            )}
           </div>
         </motion.div>
       </motion.div>

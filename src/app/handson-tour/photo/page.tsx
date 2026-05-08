@@ -177,23 +177,192 @@ export default function HandsonTourPhotoPage() {
     return undefined;
   })();
 
-  const MealNewScreenPlaceholder = () => (
-    <div className="w-full h-full bg-gray-50 flex items-center justify-center" data-testid="meal-new-screen">
-      <div className="text-center p-8">
-        <div data-testid="meal-camera-button" className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-          <span className="text-white text-2xl">📸</span>
-        </div>
-        {subStep >= '1.3' && (
-          <div data-testid="meal-analyzing-view" className="mt-4">
-            <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="mt-2 text-gray-600 text-sm">解析中...</p>
+  // sandbox 用インライン UI — data-testid が TourOverlay の spotlight と連動する
+  const MealNewSandboxInline = () => (
+    <div
+      className="w-full h-full min-h-screen flex flex-col"
+      style={{ background: '#F7F6F3' }}
+      data-testid="meal-new-screen"
+    >
+      {/* ヘッダー */}
+      <div
+        className="sticky top-0 z-10 px-4 py-3 flex items-center justify-between"
+        style={{ background: '#FFFFFF', borderBottom: '1px solid #E8E8E8' }}
+      >
+        <div className="w-10" />
+        <span style={{ fontSize: 16, fontWeight: 600, color: '#2D2D2D' }}>
+          {subStep <= '1.2' ? '食事を撮影' : subStep <= '1.3' ? '解析中...' : '解析結果'}
+        </span>
+        <div className="w-10" />
+      </div>
+
+      <div className="flex-1 p-4 overflow-auto">
+        {/* Step 1.2 以前: カメラボタン表示 */}
+        {subStep <= '1.2' && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <p style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 24, textAlign: 'center' }}>
+              食事の写真を撮影してください。AIが料理を認識して栄養を推定します。
+            </p>
+            <div className="flex gap-4 w-full">
+              <button
+                data-testid="meal-camera-button"
+                className="flex-1 p-8 rounded-2xl flex flex-col items-center gap-3"
+                style={{ background: '#FFFFFF', border: '2px dashed #E8E8E8' }}
+                aria-label="食事を撮影"
+              >
+                <div
+                  className="w-16 h-16 rounded-full flex items-center justify-center"
+                  style={{ background: '#FDF0ED' }}
+                >
+                  <span style={{ fontSize: 32 }}>📸</span>
+                </div>
+                <span style={{ fontSize: 14, fontWeight: 500, color: '#2D2D2D' }}>食事を撮影</span>
+              </button>
+              <button
+                className="flex-1 p-8 rounded-2xl flex flex-col items-center gap-3"
+                style={{ background: '#FFFFFF', border: '2px dashed #E8E8E8' }}
+                aria-label="写真を選ぶ"
+              >
+                <div
+                  className="w-16 h-16 rounded-full flex items-center justify-center"
+                  style={{ background: '#EEF4FB' }}
+                >
+                  <span style={{ fontSize: 32 }}>🖼️</span>
+                </div>
+                <span style={{ fontSize: 14, fontWeight: 500, color: '#2D2D2D' }}>写真を選ぶ</span>
+              </button>
+            </div>
           </div>
         )}
+
+        {/* Step 1.3: 解析中スピナー */}
+        {subStep === '1.3' && (
+          <div
+            className="flex flex-col items-center justify-center py-16"
+            data-testid="meal-analyzing-view"
+          >
+            <div
+              className="w-12 h-12 border-4 rounded-full animate-spin mb-4"
+              style={{ borderColor: '#E07A5F', borderTopColor: 'transparent' }}
+            />
+            <p style={{ fontSize: 16, fontWeight: 600, color: '#2D2D2D' }}>AIが食事を解析中...</p>
+            <p style={{ fontSize: 13, color: '#A0A0A0', marginTop: 8 }}>料理を認識して栄養素を推定しています</p>
+          </div>
+        )}
+
+        {/* Step 1.4以降: 解析結果 */}
         {subStep >= '1.4' && (
-          <div data-testid="meal-result-screen" className="mt-4">
-            <div data-testid="meal-result-dish-name" className="text-lg font-bold">{MOCK_PHOTO_RESPONSE.dishName}</div>
-            <div data-testid="meal-result-calories" className="text-gray-600">{MOCK_PHOTO_RESPONSE.calories} kcal</div>
-            <div data-testid="meal-save-button" className="mt-4 bg-blue-600 text-white px-6 py-3 rounded-lg">保存</div>
+          <div data-testid="meal-result-screen">
+            {/* 料理写真プレビュー (サンプル) */}
+            <div
+              className="w-full h-40 rounded-2xl mb-4 flex items-center justify-center"
+              style={{ background: '#E8E8E8' }}
+            >
+              <span style={{ fontSize: 48 }}>🍱</span>
+            </div>
+
+            {/* スコア */}
+            <div className="flex items-center gap-4 mb-4 p-4 rounded-2xl" style={{ background: '#EDF5ED' }}>
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold text-white"
+                style={{ background: '#6B9B6B' }}
+              >
+                80
+              </div>
+              <div>
+                <p style={{ fontSize: 16, fontWeight: 700, color: '#6B9B6B', margin: 0 }}>いいね！👍</p>
+                <p style={{ fontSize: 13, color: '#6B6B6B', margin: 0 }}>{MOCK_PHOTO_RESPONSE.dishName}</p>
+              </div>
+            </div>
+
+            {/* 栄養素 */}
+            <div className="grid grid-cols-5 gap-2 mb-4">
+              {[
+                { label: 'カロリー', value: MOCK_PHOTO_RESPONSE.calories, unit: 'kcal', color: '#E07A5F' },
+                { label: 'タンパク質', value: MOCK_PHOTO_RESPONSE.protein_g, unit: 'g', color: '#5B8BC7' },
+                { label: '炭水化物', value: MOCK_PHOTO_RESPONSE.carbs_g, unit: 'g', color: '#E5A84B' },
+                { label: '脂質', value: MOCK_PHOTO_RESPONSE.fat_g, unit: 'g', color: '#7C6BA0' },
+                { label: '野菜', value: 60, unit: '点', color: '#6B9B6B' },
+              ].map((n, i) => (
+                <div key={i} className="p-2 rounded-xl text-center" style={{ background: '#F7F6F3' }}>
+                  <p style={{ fontSize: 9, color: '#A0A0A0', margin: '0 0 2px 0' }}>{n.label}</p>
+                  <p
+                    style={{ fontSize: 14, fontWeight: 700, color: n.color, margin: 0 }}
+                    data-testid={i === 0 ? 'meal-result-calories' : undefined}
+                  >
+                    {n.value}
+                  </p>
+                  <p style={{ fontSize: 9, color: '#A0A0A0', margin: 0 }}>{n.unit}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 料理名 */}
+            <div className="mb-4">
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6B6B', marginBottom: 8 }}>検出された料理</p>
+              <div
+                className="p-3 rounded-xl flex items-center gap-3"
+                style={{ background: '#FFFFFF' }}
+                data-testid="meal-result-dish-name"
+              >
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                  style={{ background: '#EDF5ED' }}
+                >
+                  <span style={{ fontSize: 18 }}>🍽️</span>
+                </div>
+                <div>
+                  <p style={{ fontSize: 14, fontWeight: 500, color: '#2D2D2D', margin: 0 }}>
+                    {MOCK_PHOTO_RESPONSE.dishName}
+                  </p>
+                  <p style={{ fontSize: 11, color: '#A0A0A0', margin: 0 }}>
+                    {MOCK_PHOTO_RESPONSE.calories} kcal
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* AI コメント */}
+            <div className="p-4 rounded-2xl mb-4" style={{ background: '#FDF0ED' }}>
+              <div className="flex items-start gap-3">
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: '#E07A5F' }}
+                >
+                  <span style={{ fontSize: 14, color: '#fff' }}>✨</span>
+                </div>
+                <div>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#E07A5F', margin: '0 0 4px 0' }}>
+                    記録コメント
+                  </p>
+                  <p style={{ fontSize: 13, color: '#2D2D2D', margin: 0, lineHeight: 1.6 }}>
+                    {MOCK_PHOTO_RESPONSE.ai_comment}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* 保存ボタン */}
+            <button
+              data-testid="meal-save-button"
+              onClick={handleSandboxComplete}
+              disabled={isSaving}
+              className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+              style={{
+                background: isSaving ? '#A0A0A0' : '#E07A5F',
+                opacity: isSaving ? 0.8 : 1,
+              }}
+              aria-label="保存"
+            >
+              {isSaving ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>保存中...</span>
+                </>
+              ) : (
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>日時を選んで保存</span>
+              )}
+            </button>
           </div>
         )}
       </div>
@@ -221,7 +390,7 @@ export default function HandsonTourPhotoPage() {
         }}
         onSandboxComplete={handleSandboxComplete}
       >
-        <MealNewScreenPlaceholder />
+        <MealNewSandboxInline />
       </TourSandboxWrapper>
     </div>
   );
