@@ -1,0 +1,34 @@
+appId: com.homegohan.app
+name: "Handson Tour - 01: onboarding 完了後に /handson-tour へ自動遷移"
+tags: ["handson-tour", "critical", "P1"]
+---
+# シナリオ: onboarding 完了 → /handson-tour に自動遷移、tour-step-0 が表示される
+# 確認ポイント:
+#   - onboarding-complete-cta-button タップ後、home-screen ではなく tour-step-0 に遷移
+#   - tour-step-0-title / tour-step-0-subtitle が表示される
+#   - tour-step-0-start / tour-step-0-skip ボタンが表示される
+
+# 新規ユーザー signup → onboarding 完走 → tour-step-0 到達
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+# /handson-tour の tour-step-0 が表示されることを確認
+- assertVisible:
+    id: "tour-step-0"
+
+- assertVisible:
+    id: "tour-step-0-title"
+
+- assertVisible:
+    id: "tour-step-0-subtitle"
+
+# はじめる / あとで ボタンが両方表示される
+- assertVisible:
+    id: "tour-step-0-start"
+
+- assertVisible:
+    id: "tour-step-0-skip"
+
+# home-screen はまだ表示されていないことを確認
+- assertNotVisible:
+    id: "home-screen"
