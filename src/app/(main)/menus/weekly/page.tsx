@@ -1,7 +1,15 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } from "react";
+import {
+  weekViewReducer, initialWeekViewState,
+  modalReducer, initialModalState,
+  aiGenerationReducer, initialAiGenerationState,
+  nutritionReducer, initialNutritionState,
+  recipeReducer, initialRecipeState,
+  uiFlagReducer, initialUiFlagState,
+} from './_state';
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
@@ -445,19 +453,307 @@ export default function WeeklyMenuPage() {
   // ハンズオンツアー sandbox モード: ?tour=1 クエリで V4GenerateModal を sandbox モードで開く
   const tourMode = searchParams.get('tour') === '1';
 
-  const [currentPlan, setCurrentPlan] = useState<WeekPlan | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [activeModal, setActiveModal] = useState<ModalType>(null);
+  // -------------------------------------------------------
+  // Phase B-2: useReducer 群
+  // -------------------------------------------------------
+  const [weekView, dispatchWeekView] = useReducer(weekViewReducer, initialWeekViewState);
+  const [modal, dispatchModal] = useReducer(modalReducer, initialModalState);
+  const [aiGen, dispatchAiGen] = useReducer(aiGenerationReducer, initialAiGenerationState);
+  const [nutrition, dispatchNutrition] = useReducer(nutritionReducer, initialNutritionState);
+  const [recipe, dispatchRecipe] = useReducer(recipeReducer, initialRecipeState);
+  const [uiFlag, dispatchUiFlag] = useReducer(uiFlagReducer, initialUiFlagState);
 
-  // V4 AIアシスタントモーダル
-  const [showV4Modal, setShowV4Modal] = useState(false);
+  // -------------------------------------------------------
+  // weekViewReducer から分解（後方互換エイリアス）
+  // -------------------------------------------------------
+  const currentPlan = weekView.currentPlan;
+  const setCurrentPlan = useCallback((plan: WeekPlan | null | ((prev: WeekPlan | null) => WeekPlan | null)) => {
+    if (typeof plan === 'function') {
+      // functional update: 現在の state を取得して適用 (この箇所では直接呼べないため dispatch 経由)
+      // NOTE: functional update は使用箇所ごとに展開済み
+      dispatchWeekView({ type: 'PLAN_SET', payload: plan(weekView.currentPlan) });
+    } else {
+      dispatchWeekView({ type: 'PLAN_SET', payload: plan });
+    }
+  }, [weekView.currentPlan]);
 
-  // 完了モーダル用（refreshOnDismiss: OKを押したときに献立データを再取得するか）
-  const [successMessage, setSuccessMessage] = useState<{ title: string; message: string; refreshOnDismiss?: boolean } | null>(null);
-  
-  // Week Navigation
-  const [weekStart, setWeekStart] = useState<Date>(getWeekStart(new Date()));
-  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const weekStart = weekView.weekStart;
+  const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
+
+  const selectedDayIndex = weekView.selectedDayIndex;
+  const setSelectedDayIndex = useCallback((idx: number) => dispatchWeekView({ type: 'DAY_SELECT', payload: idx }), []);
+
+  const isCalendarExpanded = weekView.isCalendarExpanded;
+  const setIsCalendarExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'CALENDAR_TOGGLE' }), []);
+
+  const displayMonth = weekView.displayMonth;
+  const setDisplayMonth = useCallback((d: Date | ((prev: Date) => Date)) => {
+    const next = typeof d === 'function' ? d(weekView.displayMonth) : d;
+    dispatchWeekView({ type: 'DISPLAY_MONTH_SET', payload: next });
+  }, [weekView.displayMonth]);
+
+  const weekStartDay = weekView.weekStartDay;
+  const setWeekStartDay = useCallback((day: WeekStartDay) => {
+    // WEEK_START_DAY_LOADED action を使用するため個別には不要 (fetchWeekStartDay 内でまとめて dispatch)
+    // compat 用に残す（使用なし）
+    void day;
+  }, []);
+  const weekStartDayLoaded = weekView.weekStartDayLoaded;
+  const setWeekStartDayLoaded = useCallback((_v: boolean) => {
+    // WEEK_START_DAY_LOADED に統合済み。個別 setter は互換用
+    void _v;
+  }, []);
+  const holidays = weekView.holidays;
+  const setHolidays = useCallback((v: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => {
+    const next = typeof v === 'function' ? v(weekView.holidays) : v;
+    dispatchWeekView({ type: 'HOLIDAYS_SET', payload: next });
+  }, [weekView.holidays]);
+
+  const calendarMealDates = weekView.calendarMealDates;
+  const setCalendarMealDates = useCallback((v: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (typeof v === 'function') {
+      dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_SET', payload: v(weekView.calendarMealDates) });
+    } else {
+      dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_SET', payload: v });
+    }
+  }, [weekView.calendarMealDates]);
+
+  const expandedMealId = weekView.expandedMealId;
+  const setExpandedMealId = useCallback((id: string | null) => dispatchWeekView({ type: 'MEAL_EXPAND', payload: id }), []);
+
+  const hasAutoExpanded = weekView.hasAutoExpanded;
+  const setHasAutoExpanded = useCallback((_v: boolean) => {
+    // autoExpand は MEAL_AUTO_EXPANDED action で管理。個別 setter は互換用
+    void _v;
+  }, []);
+
+  const isDayNutritionExpanded = weekView.isDayNutritionExpanded;
+  const setIsDayNutritionExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'DAY_NUTRITION_TOGGLE' }), []);
+
+  const isTodayExpanded = weekView.isTodayExpanded;
+  const setIsTodayExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'TODAY_TOGGLE' }), []);
+
+  // -------------------------------------------------------
+  // modalReducer から分解
+  // -------------------------------------------------------
+  const activeModal = modal.activeModal;
+  const setActiveModal = useCallback((m: ModalType) => dispatchModal({ type: 'MODAL_OPEN', payload: m }), []);
+
+  const showV4Modal = modal.showV4Modal;
+  const setShowV4Modal = useCallback((v: boolean) => {
+    if (v) dispatchModal({ type: 'V4_MODAL_OPEN' });
+    else dispatchModal({ type: 'V4_MODAL_CLOSE' });
+  }, []);
+
+  const editingMeal = modal.editingMeal;
+  const setEditingMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_EDITING_MEAL', payload: m }), []);
+
+  const regeneratingMeal = modal.regeneratingMeal;
+  const setRegeneratingMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_REGENERATING_MEAL', payload: m }), []);
+
+  const regeneratingMealId = modal.regeneratingMealId;
+  const setRegeneratingMealId = useCallback((id: string | null) => dispatchModal({ type: 'MODAL_SET_REGENERATING_MEAL_ID', payload: id }), []);
+
+  const manualEditMeal = modal.manualEditMeal;
+  const setManualEditMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_MANUAL_EDIT_MEAL', payload: m }), []);
+
+  const deletingMeal = modal.deletingMeal;
+  const setDeletingMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_DELETING_MEAL', payload: m }), []);
+
+  const photoEditMeal = modal.photoEditMeal;
+  const setPhotoEditMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_PHOTO_EDIT_MEAL', payload: m }), []);
+
+  const imageGenerateMeal = modal.imageGenerateMeal;
+  const setImageGenerateMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_IMAGE_GENERATE_MEAL', payload: m }), []);
+
+  const improveMealTargets = modal.improveMealTargets;
+  const setImproveMealTargets = useCallback((targets: MealType[]) => dispatchModal({ type: 'IMPROVE_TARGETS_SET', payload: targets }), []);
+
+  const showWeeklySummaryModal = modal.showWeeklySummaryModal;
+  const setShowWeeklySummaryModal = useCallback((v: boolean) => {
+    if (v) dispatchModal({ type: 'WEEKLY_SUMMARY_MODAL_OPEN' });
+    else dispatchModal({ type: 'WEEKLY_SUMMARY_MODAL_CLOSE' });
+  }, []);
+
+  const showServingsModal = modal.showServingsModal;
+  const setShowServingsModal = useCallback((v: boolean) => {
+    if (v) dispatchModal({ type: 'SERVINGS_MODAL_OPEN' });
+    else dispatchModal({ type: 'SERVINGS_MODAL_CLOSE' });
+  }, []);
+
+  const showImproveMealModal = modal.showImproveMealModal;
+  const setShowImproveMealModal = useCallback((v: boolean) => {
+    if (v) dispatchModal({ type: 'IMPROVE_MEAL_MODAL_OPEN' });
+    else dispatchModal({ type: 'IMPROVE_MEAL_MODAL_CLOSE' });
+  }, []);
+
+  const showNutritionDetailModal = modal.showNutritionDetailModal;
+  const setShowNutritionDetailModal = useCallback((v: boolean) => {
+    if (v) dispatchModal({ type: 'NUTRITION_DETAIL_MODAL_OPEN' });
+    else dispatchModal({ type: 'NUTRITION_DETAIL_MODAL_CLOSE' });
+  }, []);
+
+  const isDeleting = modal.isDeleting;
+  const setIsDeleting = useCallback((v: boolean) => dispatchModal({ type: 'IS_DELETING_SET', payload: v }), []);
+
+  // -------------------------------------------------------
+  // aiGenerationReducer から分解
+  // -------------------------------------------------------
+  const isGenerating = aiGen.isGenerating;
+  const setIsGenerating = useCallback((v: boolean) => {
+    if (v) dispatchAiGen({ type: 'GEN_START' });
+    else dispatchAiGen({ type: 'GEN_SUCCESS' });
+  }, []);
+
+  const generatingMeal = aiGen.generatingMeal;
+  const setGeneratingMeal = useCallback((m: { dayIndex: number; mealType: MealType } | null) => dispatchAiGen({ type: 'GENERATING_MEAL_SET', payload: m }), []);
+
+  const generationProgress = aiGen.generationProgress;
+  const setGenerationProgress = useCallback((v: typeof aiGen.generationProgress | ((prev: typeof aiGen.generationProgress) => typeof aiGen.generationProgress)) => {
+    if (typeof v === 'function') {
+      // functional update: compat 用 — setGenerationProgress は null のみ渡される
+      // null の場合は GEN_SUCCESS を流用
+      dispatchAiGen({ type: 'GEN_SUCCESS' });
+    } else if (v === null) {
+      dispatchAiGen({ type: 'GEN_SUCCESS' });
+    } else {
+      dispatchAiGen({ type: 'GEN_PROGRESS', payload: v });
+    }
+  }, []);
+
+  const generationFailedError = aiGen.generationFailedError;
+  const setGenerationFailedError = useCallback((err: string | null) => dispatchAiGen({ type: 'GEN_FAIL', payload: { error: err, requestId: null } }), []);
+
+  const generationFailedRequestId = aiGen.generationFailedRequestId;
+  const setGenerationFailedRequestId = useCallback((id: string | null) => dispatchAiGen({ type: 'GEN_FAIL', payload: { error: null, requestId: id } }), []);
+
+  const isRegenerating = aiGen.isRegenerating;
+  const setIsRegenerating = useCallback((v: boolean) => {
+    if (v) dispatchAiGen({ type: 'REGEN_START' });
+    else dispatchAiGen({ type: 'REGEN_END' });
+  }, []);
+
+  const isImprovingMeal = aiGen.isImprovingMeal;
+  const setIsImprovingMeal = useCallback((v: boolean) => {
+    if (v) dispatchAiGen({ type: 'IMPROVE_MEAL_START' });
+    else dispatchAiGen({ type: 'IMPROVE_MEAL_END' });
+  }, []);
+
+  const improveNextDay = aiGen.improveNextDay;
+  const setImproveNextDay = useCallback((v: boolean) => dispatchAiGen({ type: 'IMPROVE_NEXT_DAY_SET', payload: v }), []);
+
+  const isAnalyzingPhoto = aiGen.isAnalyzingPhoto;
+  const setIsAnalyzingPhoto = useCallback((v: boolean) => {
+    if (v) dispatchAiGen({ type: 'PHOTO_ANALYZE_START' });
+    else dispatchAiGen({ type: 'PHOTO_ANALYZE_END' });
+  }, []);
+
+  const isGeneratingMealImage = aiGen.isGeneratingMealImage;
+  const setIsGeneratingMealImage = useCallback((v: boolean) => {
+    if (v) dispatchAiGen({ type: 'IMAGE_GEN_START' });
+    else dispatchAiGen({ type: 'IMAGE_GEN_END' });
+  }, []);
+
+  // -------------------------------------------------------
+  // nutritionReducer から分解
+  // -------------------------------------------------------
+  const radarChartNutrients = nutrition.radarChartNutrients;
+  const setRadarChartNutrients = useCallback((v: string[]) => dispatchNutrition({ type: 'RADAR_NUTRIENTS_SET', payload: v }), []);
+
+  const nutritionFeedback = nutrition.nutritionFeedback;
+  const setNutritionFeedback = useCallback((v: string | null) => dispatchNutrition({ type: 'NUTRITION_FEEDBACK_SET', payload: v }), []);
+
+  const praiseComment = nutrition.praiseComment;
+  const setPraiseComment = useCallback((v: string | null) => dispatchNutrition({ type: 'PRAISE_COMMENT_SET', payload: v }), []);
+
+  const nutritionTip = nutrition.nutritionTip;
+  const setNutritionTip = useCallback((v: string | null) => dispatchNutrition({ type: 'NUTRITION_TIP_SET', payload: v }), []);
+
+  const isLoadingFeedback = nutrition.isLoadingFeedback;
+  const setIsLoadingFeedback = useCallback((v: boolean) => {
+    if (v) dispatchNutrition({ type: 'FEEDBACK_LOADING_START' });
+    else dispatchNutrition({ type: 'FEEDBACK_LOADING_END' });
+  }, []);
+
+  const isEditingRadarNutrients = nutrition.isEditingRadarNutrients;
+  const setIsEditingRadarNutrients = useCallback((v: boolean) => {
+    if (v) dispatchNutrition({ type: 'RADAR_EDIT_START' });
+    else dispatchNutrition({ type: 'RADAR_EDIT_CANCEL' });
+  }, []);
+
+  const tempRadarNutrients = nutrition.tempRadarNutrients;
+  const setTempRadarNutrients = useCallback((v: string[]) => dispatchNutrition({ type: 'TEMP_RADAR_NUTRIENTS_SET', payload: v }), []);
+
+  const isSavingRadarNutrients = nutrition.isSavingRadarNutrients;
+  const setIsSavingRadarNutrients = useCallback((_v: boolean) => {
+    // RADAR_SAVING_START/END を使う。個別 setter は互換用
+    if (_v) dispatchNutrition({ type: 'RADAR_SAVING_START' });
+    // end は payload(saved nutrients) が必要なため RADAR_SAVING_END は別途呼ぶ
+  }, []);
+
+  const lastFeedbackDate = nutrition.lastFeedbackDate;
+  const setLastFeedbackDate = useCallback((v: string | null) => dispatchNutrition({ type: 'LAST_FEEDBACK_DATE_SET', payload: v }), []);
+
+  const feedbackCacheId = nutrition.feedbackCacheId;
+  const setFeedbackCacheId = useCallback((v: string | null) => dispatchNutrition({ type: 'FEEDBACK_CACHE_ID_SET', payload: v }), []);
+
+  const weeklySummaryTab = nutrition.weeklySummaryTab;
+  const setWeeklySummaryTab = useCallback((v: 'today' | 'week') => dispatchNutrition({ type: 'WEEKLY_SUMMARY_TAB_SET', payload: v }), []);
+
+  const weeklyNutritionFeedback = nutrition.weeklyNutritionFeedback;
+  const setWeeklyNutritionFeedback = useCallback((v: string | null) => dispatchNutrition({ type: 'WEEKLY_NUTRITION_FEEDBACK_SET', payload: v }), []);
+
+  const isLoadingWeeklyFeedback = nutrition.isLoadingWeeklyFeedback;
+  const setIsLoadingWeeklyFeedback = useCallback((v: boolean) => {
+    if (v) dispatchNutrition({ type: 'WEEKLY_FEEDBACK_LOADING_START' });
+    else dispatchNutrition({ type: 'WEEKLY_FEEDBACK_LOADING_END' });
+  }, []);
+
+  // -------------------------------------------------------
+  // recipeReducer から分解
+  // -------------------------------------------------------
+  const selectedRecipe = recipe.selectedRecipe;
+  const setSelectedRecipe = useCallback((v: string | null) => dispatchRecipe({ type: 'RECIPE_SELECT', payload: v }), []);
+
+  const selectedRecipeData = recipe.selectedRecipeData as Record<string, unknown> | null;
+  const setSelectedRecipeData = useCallback((v: unknown) => dispatchRecipe({ type: 'RECIPE_DATA_SET', payload: v }), []);
+
+  const isFavorite = recipe.isFavorite;
+  const setIsFavorite = useCallback((v: boolean) => dispatchRecipe({ type: 'FAVORITE_SET', payload: v }), []);
+
+  const isFavoriteLoading = recipe.isFavoriteLoading;
+  const setIsFavoriteLoading = useCallback((v: boolean) => dispatchRecipe({ type: 'FAVORITE_LOADING_SET', payload: v }), []);
+
+  const aiSuggestions = recipe.aiSuggestions;
+  const setAiSuggestions = useCallback((v: unknown[]) => dispatchRecipe({ type: 'AI_SUGGESTIONS_SET', payload: v }), []);
+
+  const aiHint = recipe.aiHint;
+  const setAiHint = useCallback((v: string) => dispatchRecipe({ type: 'AI_HINT_SET', payload: v }), []);
+
+  const isLoadingHint = recipe.isLoadingHint;
+  const setIsLoadingHint = useCallback((v: boolean) => {
+    if (v) dispatchRecipe({ type: 'HINT_LOADING_START' });
+    else dispatchRecipe({ type: 'HINT_LOADING_END' });
+  }, []);
+
+  // -------------------------------------------------------
+  // uiFlagReducer から分解
+  // -------------------------------------------------------
+  const loading = uiFlag.loading;
+  const setLoading = useCallback((v: boolean) => dispatchUiFlag({ type: 'LOADING_SET', payload: v }), []);
+
+  const successMessage = uiFlag.successMessage;
+  const setSuccessMessage = useCallback((v: typeof uiFlag.successMessage) => {
+    if (v === null) dispatchUiFlag({ type: 'SUCCESS_DISMISS' });
+    else dispatchUiFlag({ type: 'SUCCESS_SHOW', payload: v });
+  }, []);
+
+  const shouldRestoreSubscription = uiFlag.shouldRestoreSubscription;
+  const setShouldRestoreSubscription = useCallback((v: boolean) => dispatchUiFlag({ type: 'SUBSCRIPTION_RESTORE_SET', payload: v }), []);
+
+  // -------------------------------------------------------
+  // Phase B-2: weekView 導出値
+  // -------------------------------------------------------
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
 
   // ハンズオンツアー: ?tour=1 クエリで V4GenerateModal を自動オープン
@@ -468,14 +764,7 @@ export default function WeeklyMenuPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tourMode]);
 
-  // Calendar expansion state
-  const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
-  const [displayMonth, setDisplayMonth] = useState<Date>(() => weekStart);
-
-  // Week start day setting & holidays
-  const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>('monday');
-  const [weekStartDayLoaded, setWeekStartDayLoaded] = useState(false);
-  const [holidays, setHolidays] = useState<Record<string, string>>({});
+  // Week start day setting & holidays (fetch)
 
   // Fetch user's weekStartDay setting
   useEffect(() => {
@@ -483,7 +772,10 @@ export default function WeeklyMenuPage() {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        setWeekStartDayLoaded(true);
+        dispatchWeekView({
+          type: 'WEEK_START_DAY_LOADED',
+          payload: { weekStartDay: 'monday', weekStart: weekView.weekStart },
+        });
         return;
       }
       const { data: profile } = await supabase
@@ -492,11 +784,20 @@ export default function WeeklyMenuPage() {
         .eq('id', user.id)
         .single();
       if (profile?.week_start_day) {
-        setWeekStartDay(profile.week_start_day as WeekStartDay);
-        // Re-calculate week start with new setting
-        setWeekStart(getWeekStart(new Date(), profile.week_start_day as WeekStartDay));
+        const newWeekStartDay = profile.week_start_day as WeekStartDay;
+        dispatchWeekView({
+          type: 'WEEK_START_DAY_LOADED',
+          payload: {
+            weekStartDay: newWeekStartDay,
+            weekStart: getWeekStart(new Date(), newWeekStartDay),
+          },
+        });
+      } else {
+        dispatchWeekView({
+          type: 'WEEK_START_DAY_LOADED',
+          payload: { weekStartDay: 'monday', weekStart: weekView.weekStart },
+        });
       }
-      setWeekStartDayLoaded(true);
     };
     fetchWeekStartDay();
   }, []);
@@ -525,8 +826,7 @@ export default function WeeklyMenuPage() {
     setDisplayMonth(weekStart);
   }, [weekStart]);
 
-  // Calendar meal dates - 月カレンダー用の献立存在日マップ（キャッシュ）
-  const [calendarMealDates, setCalendarMealDates] = useState<Set<string>>(new Set());
+  // Calendar meal dates - 月カレンダー用の献立存在日マップ（weekViewReducer 管理）
   const fetchedRangesRef = useRef<Set<string>>(new Set()); // 既にフェッチした範囲を記録
 
   // Fetch meal dates for a range and accumulate (helper function)
@@ -549,11 +849,7 @@ export default function WeeklyMenuPage() {
           }
         });
         // 既存のデータに追加（置き換えではなく累積）
-        setCalendarMealDates(prev => {
-          const merged = new Set(prev);
-          newDates.forEach(d => merged.add(d));
-          return merged;
-        });
+        dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_MERGE', payload: newDates });
       }
     } catch (error) {
       console.error('Failed to fetch calendar meal dates:', error);
@@ -574,11 +870,7 @@ export default function WeeklyMenuPage() {
     });
 
     if (newDates.size > 0) {
-      setCalendarMealDates(prev => {
-        const merged = new Set(prev);
-        newDates.forEach(d => merged.add(d));
-        return merged;
-      });
+      dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_MERGE', payload: newDates });
     }
   }, []);
 
@@ -586,18 +878,16 @@ export default function WeeklyMenuPage() {
   const syncCalendarMealDatesFromDailyMeals = useCallback((dailyMeals: any[]) => {
     if (!dailyMeals) return;
 
-    setCalendarMealDates(prev => {
-      const updated = new Set(prev);
-      dailyMeals.forEach((day: any) => {
-        if (day.meals && day.meals.length > 0) {
-          updated.add(day.dayDate);
-        } else {
-          updated.delete(day.dayDate);
-        }
-      });
-      return updated;
+    const updated = new Set(weekView.calendarMealDates);
+    dailyMeals.forEach((day: any) => {
+      if (day.meals && day.meals.length > 0) {
+        updated.add(day.dayDate);
+      } else {
+        updated.delete(day.dayDate);
+      }
     });
-  }, []);
+    dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_SET', payload: updated });
+  }, [weekView.calendarMealDates]);
 
   // 週が変わるタイミングで前後2週間をプリフェッチ
   useEffect(() => {
@@ -635,11 +925,8 @@ export default function WeeklyMenuPage() {
     fetchMonthMealDates();
   }, [displayMonth, fetchAndCacheMealDates]);
 
-  // Expanded Meal State - 食事IDで管理（同じタイプの複数食事に対応）
-  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
-  const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
-  const [isDayNutritionExpanded, setIsDayNutritionExpanded] = useState(false);
-  
+  // Expanded Meal State - weekViewReducer 管理（同じタイプの複数食事に対応）
+
   // 直近の食事を自動展開する関数
   const autoExpandNextMeal = (plan: WeekPlan | null, dates: { dateStr: string }[]) => {
     if (!plan || !plan.days || hasAutoExpanded) return;
@@ -685,45 +972,29 @@ export default function WeeklyMenuPage() {
       const priorities = dayIdx === todayIndex ? mealPriority : ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
       
       for (const mealType of priorities) {
-        const meal = day.meals.find(m => m.mealType === mealType && !m.isCompleted);
+        const meal = day.meals.find((m: any) => m.mealType === mealType && !m.isCompleted);
         if (meal) {
-          setExpandedMealId(meal.id);
-          setSelectedDayIndex(dayIdx);
-          setHasAutoExpanded(true);
+          dispatchWeekView({ type: 'MEAL_AUTO_EXPANDED', payload: { mealId: meal.id, dayIndex: dayIdx } });
           return;
         }
       }
     }
-    
+
     // 未完了がない場合は今日（または最初の日）の最初の食事を展開
     const fallbackDayIdx = todayIndex >= 0 ? todayIndex : 0;
-    const fallbackDay = plan.days.find(d => d.dayDate === dates[fallbackDayIdx]?.dateStr);
+    const fallbackDay = plan.days.find((d: any) => d.dayDate === dates[fallbackDayIdx]?.dateStr);
     if (fallbackDay?.meals?.[0]) {
-      setExpandedMealId(fallbackDay.meals[0].id);
-      setSelectedDayIndex(fallbackDayIdx);
-      setHasAutoExpanded(true);
+      dispatchWeekView({ type: 'MEAL_AUTO_EXPANDED', payload: { mealId: fallbackDay.meals[0].id, dayIndex: fallbackDayIdx } });
     }
   };
 
-  // Form States
+  // Form States (aiChat/addMeal/conditions は Phase B-3 で formDraftStore に移行予定)
   const [aiChatInput, setAiChatInput] = useState("");
   const [addMealKey, setAddMealKey] = useState<MealType | null>(null);
   const [addMealDayIndex, setAddMealDayIndex] = useState<number>(0);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatingMeal, setGeneratingMeal] = useState<{ dayIndex: number; mealType: MealType } | null>(null);
-  const [generationProgress, setGenerationProgress] = useState<{
-    phase: string;
-    message: string;
-    percentage: number;
-    totalSlots?: number;
-    completedSlots?: number;
-    isUltimateMode?: boolean;
-  } | null>(null);
-  // 生成失敗時のエラーモーダル状態
-  const [generationFailedError, setGenerationFailedError] = useState<string | null>(null);
-  // 失敗時のリトライ用リクエスト ID（DB から再 INSERT するのではなく、再エンキュー）
-  const [generationFailedRequestId, setGenerationFailedRequestId] = useState<string | null>(null);
+  // isGenerating / generatingMeal / generationProgress / generationFailedError / generationFailedRequestId
+  // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
   // Meal Plan再取得関数（キャッシュも更新）
   const refreshMealPlan = useCallback(async () => {
@@ -1408,8 +1679,7 @@ export default function WeeklyMenuPage() {
   }, [weekStart, weekDates, isGenerating, generatingMeal]);
   
   
-  // 復元用フラグ（購読開始時に使用）
-  const [shouldRestoreSubscription, setShouldRestoreSubscription] = useState(false);
+  // 復元用フラグ（購読開始時に使用）→ uiFlagReducer 管理
 
   // 買い物リスト再生成の復元（リロード時）
   useEffect(() => {
@@ -1456,12 +1726,11 @@ export default function WeeklyMenuPage() {
     restoreShoppingListRegeneration();
   }, []);
   
-  // Edit meal state
-  const [editingMeal, setEditingMeal] = useState<PlannedMeal | null>(null);
+  // Edit meal state (editingMeal → modalReducer, editMealName/Mode → Phase B-3 formDraftStore)
   const [editMealName, setEditMealName] = useState("");
   const [editMealMode, setEditMealMode] = useState<MealMode>('cook');
-  
-  // Pantry & Shopping
+
+  // Pantry & Shopping (fridgeItems/shoppingList 等 → Phase B-3 pantryStore/shoppingStore)
   const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
   const [activeShoppingList, setActiveShoppingList] = useState<ShoppingList | null>(null);
@@ -1469,45 +1738,20 @@ export default function WeeklyMenuPage() {
   const [shoppingListProgress, setShoppingListProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
   const [shoppingListRequestId, setShoppingListRequestId] = useState<string | null>(null);
   const [shoppingListTotalServings, setShoppingListTotalServings] = useState<number | null>(null);
-  
-  // 曜日別人数設定モーダル
-  const [showServingsModal, setShowServingsModal] = useState(false);
+
+  // 曜日別人数設定 (servingsConfig → Phase B-3 servingsConfigStore)
   const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
   const [isLoadingServingsConfig, setIsLoadingServingsConfig] = useState(false);
-  
-  // レーダーチャート関連
-  const [radarChartNutrients, setRadarChartNutrients] = useState<string[]>(DEFAULT_RADAR_NUTRIENTS);
-  const [showNutritionDetailModal, setShowNutritionDetailModal] = useState(false);
-  const [nutritionFeedback, setNutritionFeedback] = useState<string | null>(null);
-  const [praiseComment, setPraiseComment] = useState<string | null>(null);
-  const [nutritionTip, setNutritionTip] = useState<string | null>(null);
-  const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
-  const [isEditingRadarNutrients, setIsEditingRadarNutrients] = useState(false);
-  const [tempRadarNutrients, setTempRadarNutrients] = useState<string[]>([]);
-  const [isSavingRadarNutrients, setIsSavingRadarNutrients] = useState(false);
-  const [lastFeedbackDate, setLastFeedbackDate] = useState<string | null>(null);
-  const [feedbackCacheId, setFeedbackCacheId] = useState<string | null>(null);
+
+  // feedbackChannelRef (nutrition 系は nutritionReducer 管理)
   const feedbackChannelRef = useRef<RealtimeChannel | null>(null);
-  
-  // AI栄養士のコメントで献立改善
-  const [showImproveMealModal, setShowImproveMealModal] = useState(false);
-  const [improveMealTargets, setImproveMealTargets] = useState<MealType[]>([]);
-  const [isImprovingMeal, setIsImprovingMeal] = useState(false);
-  const [improveNextDay, setImproveNextDay] = useState(false); // 翌日1日を対象にするモード
-  
-  // 週間サマリーモーダル
-  const [showWeeklySummaryModal, setShowWeeklySummaryModal] = useState(false);
-  const [weeklySummaryTab, setWeeklySummaryTab] = useState<'today' | 'week'>('today');
-  const [weeklyNutritionFeedback, setWeeklyNutritionFeedback] = useState<string | null>(null);
-  const [isLoadingWeeklyFeedback, setIsLoadingWeeklyFeedback] = useState(false);
-  
-  // 買い物リスト範囲選択
+
+  // 買い物リスト範囲選択 (Phase B-3 shoppingStore 予定)
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
     type: 'week',
     todayMeals: ['breakfast', 'lunch', 'dinner'],
     daysCount: 3,
   });
-  const [isTodayExpanded, setIsTodayExpanded] = useState(false);
   const [shoppingRangeStep, setShoppingRangeStep] = useState<'range' | 'servings'>('range');
 
   // スーパーの動線に合わせたカテゴリ順序
@@ -1558,36 +1802,16 @@ export default function WeeklyMenuPage() {
     return sortedEntries;
   }, [shoppingList]);
   
-  // Add fridge item form
+  // Add fridge/shopping form (Phase B-3 で formDraftStore 予定、今は useState 維持)
   const [newFridgeName, setNewFridgeName] = useState("");
   const [newFridgeAmount, setNewFridgeAmount] = useState("");
   const [newFridgeExpiry, setNewFridgeExpiry] = useState("");
-  
-  // Add shopping item form
   const [newShoppingName, setNewShoppingName] = useState("");
   const [newShoppingAmount, setNewShoppingAmount] = useState("");
   const [newShoppingCategory, setNewShoppingCategory] = useState("食材");
 
-  // Recipe Modal
-  const [selectedRecipe, setSelectedRecipe] = useState<string | null>(null);
-  const [selectedRecipeData, setSelectedRecipeData] = useState<any>(null);
-  const [isFavorite, setIsFavorite] = useState(false);
-  const [isFavoriteLoading, setIsFavoriteLoading] = useState(false);
-  
-  // AI Preview
-  const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
-  
-  // AI Hint
-  const [aiHint, setAiHint] = useState<string>("");
-  const [isLoadingHint, setIsLoadingHint] = useState(false);
-  
-  // Regenerating meal
-  const [regeneratingMeal, setRegeneratingMeal] = useState<PlannedMeal | null>(null);
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [regeneratingMealId, setRegeneratingMealId] = useState<string | null>(null);
-  
-  // Manual edit state
-  const [manualEditMeal, setManualEditMeal] = useState<PlannedMeal | null>(null);
+  // Recipe / AI / manualEdit / photo / imageGenerate → reducers 管理 (Phase B-2 移行済み)
+  // formDraft 系 (manualDishes/mode/catalogQuery 等) → Phase B-3 formDraftStore 予定
   const [manualDishes, setManualDishes] = useState<DishDetail[]>([]);
   const [manualMode, setManualMode] = useState<MealMode>('cook');
   const [catalogQuery, setCatalogQuery] = useState('');
@@ -1595,24 +1819,16 @@ export default function WeeklyMenuPage() {
   const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<CatalogProductSummary | null>(null);
   const [isCatalogSearching, setIsCatalogSearching] = useState(false);
   const [catalogSearchError, setCatalogSearchError] = useState('');
-  
-  // Delete confirmation state
-  const [deletingMeal, setDeletingMeal] = useState<PlannedMeal | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  
-  // Photo edit state（複数枚対応）
-  const [photoEditMeal, setPhotoEditMeal] = useState<PlannedMeal | null>(null);
+
+  // Photo edit files (reducer に移せない File[] は Phase B-3 まで維持)
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
-  const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Image generation state（参照画像対応）
-  const [imageGenerateMeal, setImageGenerateMeal] = useState<PlannedMeal | null>(null);
+  // Image generation files
   const [imageGenerationPrompt, setImageGenerationPrompt] = useState('');
   const [imageReferenceFiles, setImageReferenceFiles] = useState<File[]>([]);
   const [imageReferencePreviews, setImageReferencePreviews] = useState<string[]>([]);
-  const [isGeneratingMealImage, setIsGeneratingMealImage] = useState(false);
   const imageGenerateInputRef = useRef<HTMLInputElement>(null);
 
   // レシピモーダルが開いたとき、お気に入り状態を取得
@@ -3949,11 +4165,11 @@ export default function WeeklyMenuPage() {
         shoppingList,
         fetchedAt: Date.now(),
       });
-      setManualEditMeal((prev) => (
-        prev && prev.id === imageGenerateMeal.id
-          ? { ...prev, imageUrl: generatePayload.imageUrl }
-          : prev
-      ));
+      setManualEditMeal(
+        manualEditMeal && manualEditMeal.id === imageGenerateMeal.id
+          ? { ...manualEditMeal, imageUrl: generatePayload.imageUrl }
+          : manualEditMeal,
+      );
 
       closeImageGenerateModal(true);
       setSuccessMessage({
@@ -5745,13 +5961,13 @@ export default function WeeklyMenuPage() {
           setImproveMealTargets(uniqueMeals.length > 0 ? uniqueMeals : ['breakfast', 'lunch', 'dinner']);
         }}
         onRefetchFeedback={(dateStr) => fetchNutritionFeedback(dateStr, true)}
-        onStartEditRadar={() => { setTempRadarNutrients([...radarChartNutrients]); setIsEditingRadarNutrients(true); }}
-        onCancelEditRadar={() => { setIsEditingRadarNutrients(false); setTempRadarNutrients([]); }}
+        onStartEditRadar={() => { dispatchNutrition({ type: 'RADAR_EDIT_START' }); }}
+        onCancelEditRadar={() => { dispatchNutrition({ type: 'RADAR_EDIT_CANCEL' }); }}
         onToggleRadarNutrient={(key) => {
           if (tempRadarNutrients.includes(key)) {
-            setTempRadarNutrients(prev => prev.filter(k => k !== key));
+            setTempRadarNutrients(tempRadarNutrients.filter(k => k !== key));
           } else if (tempRadarNutrients.length < 8) {
-            setTempRadarNutrients(prev => [...prev, key]);
+            setTempRadarNutrients([...tempRadarNutrients, key]);
           }
         }}
         onSaveRadarNutrients={async () => {
@@ -5759,7 +5975,7 @@ export default function WeeklyMenuPage() {
             alert('3個以上選択してください');
             return;
           }
-          setIsSavingRadarNutrients(true);
+          dispatchNutrition({ type: 'RADAR_SAVING_START' });
           try {
             const res = await fetch('/api/profile', {
               method: 'POST',
@@ -5767,14 +5983,13 @@ export default function WeeklyMenuPage() {
               body: JSON.stringify({ radarChartNutrients: tempRadarNutrients })
             });
             if (res.ok) {
-              setRadarChartNutrients(tempRadarNutrients);
-              setIsEditingRadarNutrients(false);
-              setTempRadarNutrients([]);
+              dispatchNutrition({ type: 'RADAR_SAVING_END', payload: tempRadarNutrients });
+            } else {
+              dispatchNutrition({ type: 'RADAR_SAVING_CANCEL' });
             }
           } catch (e) {
             console.error('Failed to save radar chart nutrients:', e);
-          } finally {
-            setIsSavingRadarNutrients(false);
+            dispatchNutrition({ type: 'RADAR_SAVING_CANCEL' });
           }
         }}
       />
