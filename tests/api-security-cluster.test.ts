@@ -372,17 +372,17 @@ describe('#186 /api/upload POST', () => {
 });
 
 // ─────────────────────────────────────────────
-// #187 /api/org/users GET — select 列制限
+// #187 /api/org/members GET — select 列制限
+// (旧 /api/org/users は /api/org/members に統合済み: docs/design/00-existing-cleanup.md#L53)
 // ─────────────────────────────────────────────
-// org/users は cookies() を使う旧スタイルのため直接 import すると型エラーになりやすい。
+// org/members は cookies() を使う旧スタイルのため直接 import すると型エラーになりやすい。
 // ここでは select 引数の変更が反映されているかをファイル内容で確認するスモークテストとする。
-describe('#187 /api/org/users select 列制限', () => {
+describe('#187 /api/org/members select 列制限', () => {
   it('select 引数に * が含まれないこと (ソースファイル確認)', async () => {
     const fs = await import('fs');
-    const source = fs.readFileSync(
-      new URL('../src/app/api/org/users/route.ts', import.meta.url),
-      'utf-8'
-    );
+    const path = await import('path');
+    const filePath = path.resolve(__dirname, '../src/app/api/org/members/route.ts');
+    const source = fs.readFileSync(filePath, 'utf-8');
     // select('*') が残っていないことを確認
     expect(source).not.toMatch(/\.select\(['"`]\*['"`]\)/);
     // 必要カラムが明示されていることを確認
