@@ -71,7 +71,8 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
     }
   }
 
-  const isBanned = Array.isArray(profile.roles) && profile.roles.includes('banned');
+  // 凍結状態は frozen_at IS NOT NULL で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
+  const isBanned = (profile as { frozen_at?: string | null }).frozen_at != null;
   const isSuperAdmin = actor.roles.includes('super_admin');
   const isAdmin = actor.roles.includes('admin') || isSuperAdmin;
 
@@ -112,11 +113,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
               {(Array.isArray(profile.roles) ? profile.roles : ['user']).map((role: string) => (
                 <span
                   key={role}
-                  className={`inline-block text-xs px-1.5 py-0.5 rounded font-mono ${
-                    role === 'banned'
-                      ? 'bg-red-50 text-red-700'
-                      : 'bg-gray-100 text-gray-600'
-                  }`}
+                  className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
                 >
                   {role}
                 </span>
@@ -127,9 +124,21 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
             <dt className="text-gray-500 mb-1">ステータス</dt>
             <dd>
               {isBanned ? (
-                <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
-                  BAN 済み
-                </span>
+                <div>
+                  <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
+                    凍結中
+                  </span>
+                  {(profile as { frozen_at?: string | null }).frozen_at && (
+                    <span className="ml-2 text-xs text-gray-400">
+                      {new Date((profile as { frozen_at: string }).frozen_at).toLocaleString('ja-JP')} 〜
+                    </span>
+                  )}
+                  {(profile as { frozen_reason?: string | null }).frozen_reason && (
+                    <p className="mt-1 text-xs text-red-600">
+                      理由: {(profile as { frozen_reason: string }).frozen_reason}
+                    </p>
+                  )}
+                </div>
               ) : (
                 <span className="inline-block bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
                   アクティブ

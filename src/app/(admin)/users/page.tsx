@@ -34,16 +34,17 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
 
   let query = supabase
     .from('user_profiles')
-    .select('id, display_name, roles, plan_key_cached, last_login_at, created_at', { count: 'exact' });
+    .select('id, display_name, roles, plan_key_cached, last_login_at, created_at, frozen_at', { count: 'exact' });
 
   if (q) {
     query = query.ilike('display_name', `%${q}%`);
   }
 
+  // 凍結状態は frozen_at IS NOT NULL で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
   if (status === 'banned') {
-    query = query.contains('roles', ['banned']);
+    query = query.not('frozen_at', 'is', null);
   } else if (status === 'active') {
-    query = query.not('roles', 'cs', '["banned"]');
+    query = query.is('frozen_at', null);
   }
 
   query = query
@@ -109,7 +110,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
               </tr>
             ) : (
               (users ?? []).map((user) => {
-                const isBanned = Array.isArray(user.roles) && user.roles.includes('banned');
+                const isBanned = (user as { frozen_at?: string | null }).frozen_at != null;
                 return (
                   <tr key={user.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
@@ -125,16 +126,14 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
-                        {(Array.isArray(user.roles) ? user.roles : ['user'])
-                          .filter((r) => r !== 'banned')
-                          .map((role) => (
-                            <span
-                              key={role}
-                              className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
-                            >
-                              {role}
-                            </span>
-                          ))}
+                        {(Array.isArray(user.roles) ? user.roles : ['user']).map((role) => (
+                          <span
+                            key={role}
+                            className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
+                          >
+                            {role}
+                          </span>
+                        ))}
                       </div>
                     </td>
                     <td className="px-4 py-3">
