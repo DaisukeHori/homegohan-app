@@ -4,25 +4,9 @@ env:
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
 # 01: 既存ユーザーで login → home 到達
+# Note: ログイン共通フローは _shared/login.yaml に集約。
+#       ここではその canonical flow を呼ぶだけにして単一障害点を排除。
 - launchApp
-# 前の状態をリセット (ホーム or Admin Console にいる場合)
-- runFlow:
-    file: "../_shared/ensure-welcome.yaml"
+- runFlow: ../_shared/login.yaml
 - assertVisible:
-    text: "ほめゴハン"
-- tapOn:
-    text: "ログイン"
-- assertVisible:
-    id: "login-screen"
-- tapOn:
-    id: "email-input"
-- inputText: ${E2E_USER_EMAIL}
-- tapOn:
-    id: "password-input"
-- inputText: ${E2E_USER_PASSWORD}
-- tapOn:
-    id: "login-button"
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 10000
+    id: "home-screen"

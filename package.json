@@ -23,7 +23,8 @@
     "diagnostic:v4-benchmark": "node scripts/diagnostics/v4-benchmark.js",
     "mobile:start": "npm --workspace apps/mobile run start",
     "mobile:ios": "npm --workspace apps/mobile run ios",
-    "mobile:android": "npm --workspace apps/mobile run android"
+    "mobile:android": "npm --workspace apps/mobile run android",
+    "test:e2e:reset-data": "bash apps/mobile/maestro/scripts/reset-test-users.sh"
   },
   "engines": {
     "node": "20.x"

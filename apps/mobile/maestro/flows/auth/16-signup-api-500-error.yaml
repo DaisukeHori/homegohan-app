@@ -1,8 +1,25 @@
 appId: com.homegohan.app
+env:
+  # MAESTRO_RUN_NETWORK_FAULT を "1" に設定した場合のみ全 assertion を実行する。
+  # ローカル開発・CI 通常実行では mock サーバーがないため assertion をスキップする。
+  # 実行方法 (mock サーバー環境):
+  #   MAESTRO_RUN_NETWORK_FAULT=1 maestro test auth/16-signup-api-500-error.yaml
+  # See: issue #641
+  MAESTRO_RUN_NETWORK_FAULT: ${MAESTRO_RUN_NETWORK_FAULT:-0}
 ---
 # 16: signup: API 500 エラー
-# Note: Supabase が内部エラーを返した場合のエラーハンドリング確認
-# テスト環境では不正な URL 設定や、mock により 500 を再現
+# SKIP 条件: MAESTRO_RUN_NETWORK_FAULT != "1"
+#   → mock サーバー環境でのみ実行可。ローカル開発では early-exit でスキップ。
+#   → 実 Supabase に api500test@example.com を投げても 500 は返らないため。
+#   参照: issue #641 "auth/16 signup-api-500-error は mock 必要"
+
+# mock サーバーが有効でなければ早期終了 (スキップ扱い)
+- runFlow:
+    when:
+      condition: ${MAESTRO_RUN_NETWORK_FAULT} != "1"
+    file: "../_shared/early-exit.yaml"
+
+# 以下は MAESTRO_RUN_NETWORK_FAULT=1 のときのみ実行される
 - launchApp
 # 前の状態をリセット (ホーム or Admin Console にいる場合)
 - runFlow:
