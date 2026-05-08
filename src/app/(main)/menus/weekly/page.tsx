@@ -19,6 +19,27 @@ import remarkGfm from "remark-gfm";
 // #fix/e2e-profile-reminder-banner-chunk: chunk 404 防止のため静的 import に変更
 // ProfileReminderBanner は "use client" + isVisible:false 初期値のため SSR でも安全
 import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
+import { ProgressTodoCard } from "./_components/ProgressTodoCard";
+import { FridgeModal } from "./_components/modals/FridgeModal";
+import { AddFridgeModal } from "./_components/modals/AddFridgeModal";
+import { ShoppingModal } from "./_components/modals/ShoppingModal";
+import { AddShoppingModal } from "./_components/modals/AddShoppingModal";
+import { ShoppingRangeModal } from "./_components/modals/ShoppingRangeModal";
+import { RecipeModal } from "./_components/modals/RecipeModal";
+import { AddMealModal } from "./_components/modals/AddMealModal";
+import { ManualEditModal } from "./_components/modals/ManualEditModal";
+import { EditMealModal } from "./_components/modals/EditMealModal";
+import { AiAssistantModal } from "./_components/modals/AiAssistantModal";
+import { StatsModal } from "./_components/modals/StatsModal";
+import { ServingsModal } from "./_components/modals/ServingsModal";
+import { AddMealSlotModal } from "./_components/modals/AddMealSlotModal";
+import { ConfirmDeleteModal } from "./_components/modals/ConfirmDeleteModal";
+import { AiMealModal } from "./_components/modals/AiMealModal";
+import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
+import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
+import { PhotoEditModal } from "./_components/modals/PhotoEditModal";
+import { NutritionDetailModal } from "./_components/modals/NutritionDetailModal";
+import { ImproveMealModal } from "./_components/modals/ImproveMealModal";
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
@@ -235,158 +256,6 @@ const NutritionItem = ({ label, value, unit, decimals = 1, textColor }: {
 };
 
 // PROGRESS_PHASES / ULTIMATE_PROGRESS_PHASES / SHOPPING_LIST_PHASES / PhaseDefinition は @homegohan/shared からインポート
-
-// 進捗ToDoカード（タップで展開）
-const ProgressTodoCard = ({ 
-  progress, 
-  colors: cardColors,
-  phases = PROGRESS_PHASES,
-  defaultMessage = 'AIが献立を生成中...',
-}: { 
-  progress: { phase: string; message: string; percentage: number; totalSlots?: number; completedSlots?: number } | null;
-  colors: { accent: string; purple: string };
-  phases?: PhaseDefinition[];
-  defaultMessage?: string;
-}) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  
-  const currentPercentage = progress?.percentage ?? 0;
-  const currentPhase = progress?.phase ?? '';
-  const totalSlots = progress?.totalSlots ?? 0;
-  
-  // totalSlotsから日数を計算（3スロット = 1日と仮定）
-  const totalDays = totalSlots > 0 ? Math.ceil(totalSlots / 3) : 0;
-  
-  // 動的にフェーズラベルを生成
-  const dynamicPhases = useMemo(() => {
-    return phases.map(p => {
-      if (p.phase === 'generating') {
-        // totalSlotsが設定されていれば日数を表示、なければデフォルト
-        if (totalDays > 0) {
-          const dayLabel = totalDays === 1 ? '1日分' : `${totalDays}日分`;
-          return { ...p, label: `${dayLabel}の献立をAIが作成` };
-        }
-        // totalSlotsがまだ来ていない場合はデフォルトのまま
-        return p;
-      }
-      return p;
-    });
-  }, [phases, totalDays]);
-  
-  // 各フェーズの状態を判定
-  const getPhaseStatus = (phase: PhaseDefinition) => {
-    if (currentPercentage >= phase.threshold) {
-      return 'completed';
-    }
-    if (currentPhase === phase.phase || 
-        (currentPhase.startsWith(phase.phase.split('_')[0]) && currentPercentage < phase.threshold)) {
-      return 'in_progress';
-    }
-    return 'pending';
-  };
-
-  const isError = currentPhase === 'failed';
-
-  return (
-    <div
-      className="mx-3 mt-2 rounded-xl overflow-hidden cursor-pointer transition-all duration-300"
-      style={{ background: isError 
-        ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
-        : `linear-gradient(135deg, ${cardColors.accent} 0%, ${cardColors.purple} 100%)` 
-      }}
-      onClick={() => setIsExpanded(!isExpanded)}
-    >
-      {/* ヘッダー部分 */}
-      <div className="px-3.5 py-2.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {isError ? (
-              <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
-                <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700 }}>!</span>
-              </div>
-            ) : (
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            )}
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>
-              {isError 
-                ? (progress?.message || 'エラーが発生しました')
-                : totalDays > 0 
-                  ? `献立を生成中...（${progress?.completedSlots || 0}/${totalSlots}食、${totalDays}日分）`
-                  : (progress?.message || defaultMessage)
-              }
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {!isError && (
-              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
-                {progress?.percentage ? `${progress.percentage}%` : ''}
-              </span>
-            )}
-            {isExpanded ? (
-              <ChevronUp size={14} color="rgba(255,255,255,0.7)" />
-            ) : (
-              <ChevronDown size={14} color="rgba(255,255,255,0.7)" />
-            )}
-          </div>
-        </div>
-        {progress?.percentage !== undefined && !isError && (
-          <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-white rounded-full transition-all duration-500 ease-out"
-              style={{ width: `${progress.percentage}%` }}
-            />
-          </div>
-        )}
-      </div>
-      
-      {/* 展開時のToDoリスト（エラー時は表示しない） */}
-      <AnimatePresence>
-        {isExpanded && !isError && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="px-3.5 pb-3 pt-1 border-t border-white/20">
-              <div className="space-y-1.5">
-                {dynamicPhases.filter(p => p.phase !== 'failed').map((phase) => {
-                  const status = getPhaseStatus(phase);
-                  return (
-                    <div 
-                      key={phase.phase}
-                      className="flex items-center gap-2"
-                    >
-                      {status === 'completed' ? (
-                        <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
-                          <Check size={10} color={isError ? '#ef4444' : cardColors.accent} strokeWidth={3} />
-                        </div>
-                      ) : status === 'in_progress' ? (
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full border-2 border-white/40" />
-                      )}
-                      <span 
-                        style={{ 
-                          fontSize: 11, 
-                          color: status === 'pending' ? 'rgba(255,255,255,0.5)' : '#fff',
-                          fontWeight: status === 'in_progress' ? 600 : 400,
-                        }}
-                      >
-                        {phase.label}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
 
 // 材料テキストをパースして配列に変換
 const parseIngredientsText = (text: string): { name: string; amount: string }[] => {
@@ -5440,2313 +5309,332 @@ export default function WeeklyMenuPage() {
             
             {/* AI Assistant Modal */}
             {activeModal === 'ai' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '70vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={18} color={colors.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>AIアシスタント</span>
-                  </div>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-4 overflow-auto">
-                  <button
-                    onClick={handleGenerateWeekly}
-                    disabled={isGenerating}
-                    className="w-full p-4 mb-3 rounded-[14px] text-left transition-opacity"
-                    style={{ background: colors.accent, opacity: isGenerating ? 0.6 : 1 }}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      {isGenerating ? (
-                        <div className="w-[18px] h-[18px] border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <Sparkles size={18} color="#fff" />
-                      )}
-                      <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
-                        {isGenerating 
-                          ? '生成中...' 
-                          : emptySlotCount > 0
-                            ? '空欄をすべて埋める'
-                            : 'AI献立アシスタント'}
-                      </span>
-                    </div>
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: 0 }}>
-                      {isGenerating
-                        ? 'AIが献立を作成しています...'
-                        : emptySlotCount > 0
-                          ? `${emptySlotCount}件の空欄にAIが献立を提案します`
-                          : `期間を指定してAIに献立を作成してもらえます`}
-                    </p>
-                  </button>
-                  <p style={{ fontSize: 11, color: colors.textMuted, margin: '12px 0 8px' }}>条件を指定（複数選択可）</p>
-                  {AI_CONDITIONS.map((text, i) => {
-                    const isSelected = selectedConditions.includes(text);
-                    return (
-                      <button
-                        key={i}
-                        data-testid={`ai-condition-${text}`}
-                        onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
-                        className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
-                        style={{
-                          background: isSelected ? colors.accentLight : colors.bg,
-                          color: isSelected ? colors.accent : colors.text,
-                          border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
-                        }}
-                      >
-                        <span>{text}</span>
-                        {isSelected && <Check size={16} color={colors.accent} />}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="px-4 py-3 flex gap-2 flex-shrink-0 pb-4 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
-                  <input 
-                    type="text" 
-                    value={aiChatInput}
-                    onChange={(e) => setAiChatInput(e.target.value)}
-                    placeholder="例: 木金は簡単に..." 
-                    className="flex-1 px-3.5 py-2.5 rounded-full text-[13px] outline-none"
-                    style={{ background: colors.bg }}
-                  />
-                  <button 
-                    onClick={handleGenerateWeekly}
-                    disabled={isGenerating}
-                    className="w-11 h-11 rounded-full flex items-center justify-center cursor-pointer hover:opacity-90 transition-opacity" 
-                    style={{ background: colors.accent }}
-                  >
-                    <Send size={16} color="#fff" />
-                  </button>
-                </div>
-              </motion.div>
+              <AiAssistantModal
+                isGenerating={isGenerating}
+                emptySlotCount={emptySlotCount}
+                selectedConditions={selectedConditions}
+                aiChatInput={aiChatInput}
+                onClose={() => setActiveModal(null)}
+                onChangeConditions={setSelectedConditions}
+                onChangeAiChatInput={setAiChatInput}
+                onGenerateWeekly={handleGenerateWeekly}
+              />
             )}
 
-            {/* Stats Modal - 新デザイン: 週間サマリー + 今日/今週タブ */}
+            {/* Stats Modal */}
             {activeModal === 'stats' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '85vh' }}
-              >
-                {/* ヘッダー */}
-                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <BarChart3 size={18} color={colors.purple} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>栄養分析</span>
-                  </div>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                
-                <div className="flex-1 overflow-auto pb-4 lg:pb-6">
-                  {/* 週間サマリーヘッダー */}
-                  <div className="px-4 pt-3 pb-2" style={{ background: `linear-gradient(135deg, ${colors.purpleLight} 0%, ${colors.accentLight} 100%)` }}>
-                    <div className="flex gap-2 mb-2">
-                      <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
-                        <ChefHat size={18} color={colors.success} className="mx-auto mb-0.5" />
-                        <p style={{ fontSize: 20, fontWeight: 700, color: colors.success, margin: 0 }}>{stats.cookRate}%</p>
-                        <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>自炊率</p>
-                    </div>
-                      <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
-                        <Flame size={18} color={colors.accent} className="mx-auto mb-0.5" />
-                        <p style={{ fontSize: 20, fontWeight: 700, color: colors.accent, margin: 0 }}>{stats.avgCal}</p>
-                        <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>平均kcal/日</p>
-                    </div>
-                      <div className="flex-1 rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.8)' }}>
-                        <div className="flex justify-center gap-1 mb-0.5">
-                          <span style={{ fontSize: 9, color: colors.success }}>🍳{stats.cookCount}</span>
-                          <span style={{ fontSize: 9, color: colors.purple }}>🛒{stats.buyCount}</span>
-                          <span style={{ fontSize: 9, color: colors.warning }}>🍽{stats.outCount}</span>
-                  </div>
-                        <p style={{ fontSize: 14, fontWeight: 600, color: colors.text, margin: 0 }}>{stats.cookCount + stats.buyCount + stats.outCount}食</p>
-                        <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>今週の献立</p>
-                      </div>
-                  </div>
-                  </div>
-                  
-                  {/* タブ */}
-                  <div className="flex px-4 py-2 gap-2" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                    <button
-                      onClick={() => setWeeklySummaryTab('today')}
-                      className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
-                      style={{
-                        background: weeklySummaryTab === 'today' ? colors.accent : 'transparent',
-                        color: weeklySummaryTab === 'today' ? '#fff' : colors.textLight,
-                      }}
-                    >
-                      📅 今日
-                    </button>
-                    <button
-                      onClick={() => setWeeklySummaryTab('week')}
-                      className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
-                      style={{
-                        background: weeklySummaryTab === 'week' ? colors.accent : 'transparent',
-                        color: weeklySummaryTab === 'week' ? '#fff' : colors.textLight,
-                      }}
-                    >
-                      📊 今週
-                    </button>
-                  </div>
-                  
-                  {/* タブコンテンツ */}
-                  <div className="p-4">
-                    {weeklySummaryTab === 'today' ? (
-                      // 今日タブ
-                      (() => {
-                        const todayIndex = weekDates.findIndex(d => d.dateStr === formatLocalDate(new Date()));
-                        const todayDayData = currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date()));
-                        const todayNutrition = getDayTotalNutrition(todayDayData);
-                        const mealCount = todayDayData?.meals?.length || 0;
-                        
-                        return (
-                          <>
-                            {/* 今日の日付 */}
-                            <div className="flex items-center justify-between mb-3">
-                              <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
-                                {new Date().getMonth() + 1}月{new Date().getDate()}日（{['日', '月', '火', '水', '木', '金', '土'][new Date().getDay()]}）の栄養
-                              </p>
-                              <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.accentLight, color: colors.accent }}>
-                                {mealCount}食分
-                              </span>
-                            </div>
-                            
-                            {/* レーダーチャート */}
-                            <div className="flex justify-center mb-3">
-                              <NutritionRadarChart
-                                nutrition={todayNutrition}
-                                selectedNutrients={radarChartNutrients}
-                                size={180}
-                                showLabels={true}
-                              />
-                            </div>
-                            
-                            {/* AI栄養士コメント（褒め＋アドバイス） */}
-                            <div className="mb-3 space-y-2">
-                              {/* 褒めコメント */}
-                              <div className="p-3 rounded-xl" style={{ background: colors.successLight }}>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <Heart size={12} color={colors.success} fill={colors.success} />
-                                  <span style={{ fontSize: 11, fontWeight: 600, color: colors.success }}>褒めポイント</span>
-                                </div>
-                                {isLoadingFeedback ? (
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.success, borderTopColor: 'transparent' }} />
-                                    <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
-                                  </div>
-                                ) : praiseComment ? (
-                                  <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.5 }}>{praiseComment}</p>
-                                ) : (
-                                  <p style={{ fontSize: 11, color: colors.textMuted }}>分析データがありません</p>
-                                )}
-                              </div>
-
-                              {/* アドバイス */}
-                              {(nutritionFeedback || isLoadingFeedback) && (
-                                <div className="p-3 rounded-xl" style={{ background: colors.accentLight }}>
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <Sparkles size={12} color={colors.accent} />
-                                    <span style={{ fontSize: 11, fontWeight: 600, color: colors.accent }}>改善アドバイス</span>
-                                  </div>
-                                  {isLoadingFeedback ? (
-                                    <span style={{ fontSize: 11, color: colors.textMuted }}>...</span>
-                                  ) : (
-                                    <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }}>{nutritionFeedback}</p>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* 栄養豆知識 */}
-                              {nutritionTip && (
-                                <div className="p-2 rounded-lg flex items-start gap-2" style={{ background: colors.blueLight }}>
-                                  <span style={{ fontSize: 10 }}>💡</span>
-                                  <p style={{ fontSize: 10, color: colors.blue, lineHeight: 1.4 }}>{nutritionTip}</p>
-                                </div>
-                              )}
-                            </div>
-                            
-                            {/* 献立改善ボタン */}
-                            {nutritionFeedback && (
-                              <button
-                                onClick={() => {
-                                  setActiveModal(null);
-                                  // 今日の日を選択してから栄養詳細モーダルを開く
-                                  const todayIdx = weekDates.findIndex(d => d.dateStr === formatLocalDate(new Date()));
-                                  if (todayIdx >= 0) {
-                                    setSelectedDayIndex(todayIdx);
-                                  }
-                                  setShowNutritionDetailModal(true);
-                                }}
-                                className="w-full p-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all hover:opacity-90"
-                                style={{ background: colors.accent, color: '#fff', fontSize: 12 }}
-                              >
-                                <RefreshCw size={14} />
-                                詳細を見る / 献立を改善
-                              </button>
-                            )}
-                          </>
-                        );
-                      })()
-                    ) : (
-                      // 今週タブ
-                      (() => {
-                        const weekNutrition = getWeekTotalNutrition();
-                        
-                        return (
-                          <>
-                            {/* 週の期間 */}
-                            <div className="flex items-center justify-between mb-3">
-                              <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
-                                {weekDates[0]?.date.getMonth() + 1}/{weekDates[0]?.date.getDate()} 〜 {weekDates[6]?.date.getMonth() + 1}/{weekDates[6]?.date.getDate()} の平均栄養
-                              </p>
-                              <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.purpleLight, color: colors.purple }}>
-                                {weekNutrition.daysWithMeals}日分
-                              </span>
-                            </div>
-                            
-                            {/* 週間レーダーチャート */}
-                            <div className="flex justify-center mb-3">
-                              <NutritionRadarChart
-                                nutrition={weekNutrition.averages}
-                                selectedNutrients={radarChartNutrients}
-                                size={180}
-                                showLabels={true}
-                              />
-                            </div>
-                            
-                            {/* 週間AI栄養士コメント */}
-                            <div className="mb-3 p-3 rounded-xl" style={{ background: colors.purpleLight }}>
-                              <div className="flex items-center gap-2 mb-1">
-                      <Sparkles size={12} color={colors.purple} />
-                                <span style={{ fontSize: 11, fontWeight: 600, color: colors.purple }}>週間AIヒント</span>
-                    </div>
-                    {isLoadingHint ? (
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-                        <span style={{ fontSize: 11, color: colors.textMuted }}>ヒントを生成中...</span>
-                      </div>
-                    ) : (
-                                <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }}>
-                        {aiHint || `今週の自炊率は${stats.cookRate}%です。週末にまとめて作り置きすると、平日の自炊率が上がりますよ！`}
-                      </p>
-                              )}
-                            </div>
-                            
-                            {/* 主要栄養素の週間平均 */}
-                            <div className="grid grid-cols-3 gap-2">
-                              {[
-                                { label: 'カロリー', value: `${Math.round(weekNutrition.averages.caloriesKcal)}`, unit: 'kcal', color: colors.accent },
-                                { label: 'タンパク質', value: `${Math.round(weekNutrition.averages.proteinG)}`, unit: 'g', color: colors.success },
-                                { label: '脂質', value: `${Math.round(weekNutrition.averages.fatG)}`, unit: 'g', color: colors.warning },
-                                { label: '炭水化物', value: `${Math.round(weekNutrition.averages.carbsG)}`, unit: 'g', color: colors.blue },
-                                { label: '食物繊維', value: `${Math.round(weekNutrition.averages.fiberG * 10) / 10}`, unit: 'g', color: colors.purple },
-                                { label: '塩分', value: `${Math.round(weekNutrition.averages.sodiumG * 10) / 10}`, unit: 'g', color: colors.danger },
-                              ].map(item => (
-                                <div key={item.label} className="p-2 rounded-lg text-center" style={{ background: colors.bg }}>
-                                  <p style={{ fontSize: 16, fontWeight: 600, color: item.color, margin: 0 }}>{item.value}</p>
-                                  <p style={{ fontSize: 9, color: colors.textLight, margin: 0 }}>{item.label}({item.unit}/日)</p>
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        );
-                      })()
-                    )}
-                  </div>
-                </div>
-              </motion.div>
+              <StatsModal
+                stats={stats}
+                weekDates={weekDates}
+                weeklySummaryTab={weeklySummaryTab}
+                radarChartNutrients={radarChartNutrients}
+                todayNutrition={getDayTotalNutrition(currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date())))}
+                todayMealCount={currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date()))?.meals?.length || 0}
+                weekNutrition={getWeekTotalNutrition()}
+                isLoadingFeedback={isLoadingFeedback}
+                isLoadingHint={isLoadingHint}
+                praiseComment={praiseComment}
+                nutritionFeedback={nutritionFeedback}
+                nutritionTip={nutritionTip}
+                aiHint={aiHint}
+                onClose={() => setActiveModal(null)}
+                onChangeTab={setWeeklySummaryTab}
+                onOpenNutritionDetail={() => {
+                  setActiveModal(null);
+                  const todayIdx = weekDates.findIndex(d => d.dateStr === formatLocalDate(new Date()));
+                  if (todayIdx >= 0) {
+                    setSelectedDayIndex(todayIdx);
+                  }
+                  setShowNutritionDetailModal(true);
+                }}
+              />
             )}
 
             {/* Fridge Modal */}
             {activeModal === 'fridge' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '75vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <Refrigerator size={18} color={colors.blue} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>冷蔵庫</span>
-                    <span style={{ fontSize: 11, color: colors.textMuted }}>{fridgeItems.length}品</span>
-                  </div>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-3 overflow-auto">
-                  {fridgeItems.length === 0 ? (
-                    <p className="text-center py-8" style={{ color: colors.textMuted }}>冷蔵庫は空です</p>
-                  ) : (
-                    fridgeItems.sort((a, b) => (getDaysUntil(a.expirationDate) || 999) - (getDaysUntil(b.expirationDate) || 999)).map(item => {
-                      const daysLeft = getDaysUntil(item.expirationDate);
-                      return (
-                        <div key={item.id} className="flex items-center justify-between px-3 py-2.5 rounded-[10px] mb-1.5" style={{ 
-                          background: daysLeft !== null && daysLeft <= 1 ? colors.dangerLight : daysLeft !== null && daysLeft <= 3 ? colors.warningLight : colors.bg 
-                        }}>
-                          <div className="flex items-center gap-2.5">
-                            <span style={{ fontSize: 14, fontWeight: 500, color: colors.text }}>{item.name}</span>
-                            <span style={{ fontSize: 11, color: colors.textMuted }}>{item.amount || ''}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span style={{
-                              fontSize: 10,
-                              fontWeight: 600,
-                              color: daysLeft !== null && daysLeft <= 1 ? colors.danger : daysLeft !== null && daysLeft <= 3 ? colors.warning : colors.textMuted,
-                            }}>
-                              {daysLeft === null ? '' : daysLeft === 0 ? '今日まで' : daysLeft === 1 ? '明日まで' : `${daysLeft}日`}
-                            </span>
-                            <button onClick={() => deletePantryItem(item.id)} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.05)' }}>
-                              <Trash2 size={12} color={colors.textMuted} />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-                <div className="px-4 py-2.5 pb-4 lg:pb-6" style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <button onClick={() => setActiveModal('addFridge')} className="w-full p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
-                    <Plus size={16} color={colors.textMuted} />
-                    <span style={{ fontSize: 13, color: colors.textMuted }}>食材を追加</span>
-                  </button>
-                </div>
-              </motion.div>
+              <FridgeModal
+                fridgeItems={fridgeItems}
+                onClose={() => setActiveModal(null)}
+                onOpenAddFridge={() => setActiveModal('addFridge')}
+                onDeleteItem={deletePantryItem}
+              />
             )}
 
             {/* Add Fridge Item Modal */}
             {activeModal === 'addFridge' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl"
-                style={{ background: colors.card }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex justify-between items-center mb-4">
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>食材を追加</span>
-                  <button onClick={() => setActiveModal('fridge')} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={newFridgeName}
-                    onChange={(e) => setNewFridgeName(e.target.value)}
-                    placeholder="食材名（例: 鶏もも肉）"
-                    className="w-full p-3 rounded-xl text-[14px] outline-none"
-                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                  />
-                  <input
-                    type="text"
-                    value={newFridgeAmount}
-                    onChange={(e) => setNewFridgeAmount(e.target.value)}
-                    placeholder="量（例: 300g）"
-                    className="w-full p-3 rounded-xl text-[14px] outline-none"
-                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                  />
-                  <input
-                    type="date"
-                    value={newFridgeExpiry}
-                    onChange={(e) => setNewFridgeExpiry(e.target.value)}
-                    className="w-full p-3 rounded-xl text-[14px] outline-none"
-                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                  />
-                  <button
-                    onClick={addPantryItem}
-                    disabled={!newFridgeName}
-                    className="w-full p-3 rounded-xl font-semibold text-[14px] disabled:opacity-50"
-                    style={{ background: colors.accent, color: '#fff' }}
-                  >
-                    追加する
-                  </button>
-                </div>
-              </motion.div>
+              <AddFridgeModal
+                newFridgeName={newFridgeName}
+                newFridgeAmount={newFridgeAmount}
+                newFridgeExpiry={newFridgeExpiry}
+                onChangeName={setNewFridgeName}
+                onChangeAmount={setNewFridgeAmount}
+                onChangeExpiry={setNewFridgeExpiry}
+                onAdd={addPantryItem}
+                onClose={() => setActiveModal('fridge')}
+              />
             )}
 
             {/* Shopping List Modal */}
             {activeModal === 'shopping' && (
-              <div className="fixed inset-0 z-[201] pointer-events-none">
-                {/* backdrop: 背後ナビを遮断しモーダルを閉じる (#76) */}
-                <div
-                  className="absolute inset-0 pointer-events-auto"
-                  onClick={() => setActiveModal(null)}
-                />
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="absolute bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 flex flex-col rounded-t-3xl pointer-events-auto"
-                style={{ background: colors.card, maxHeight: '75vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <ShoppingCart size={18} color={colors.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>買い物リスト</span>
-                    <span style={{ fontSize: 11, color: colors.textMuted }}>{shoppingList.filter(i => !i.isChecked).length}/{shoppingList.length}</span>
-                    {shoppingListTotalServings !== null && shoppingListTotalServings > 0 && (
-                      <span style={{ fontSize: 11, color: colors.accent, fontWeight: 600, background: colors.accentLight, padding: '2px 6px', borderRadius: 8 }}>
-                        {shoppingListTotalServings}食分
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {shoppingList.length > 0 && (
-                      <button
-                        onClick={deleteAllShoppingItems}
-                        className="w-7 h-7 rounded-full flex items-center justify-center"
-                        style={{ background: colors.bg }}
-                        title="すべて削除"
-                      >
-                        <Trash2 size={14} color={colors.danger || '#ef4444'} />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setShowServingsModal(true)}
-                      className="w-7 h-7 rounded-full flex items-center justify-center"
-                      style={{ background: colors.bg }}
-                      title="人数設定"
-                    >
-                      <Users size={14} color={colors.textLight} />
-                    </button>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                  </div>
-                </div>
-                <div className="flex-1 p-3 overflow-auto">
-                  {shoppingList.length === 0 ? (
-                    <p className="text-center py-8" style={{ color: colors.textMuted }}>買い物リストは空です</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {groupedShoppingList.map(([category, items]) => (
-                        <div key={category}>
-                          {/* カテゴリ見出し */}
-                          <div className="flex items-center gap-2 mb-2 px-1">
-                            <span className="text-[13px] font-semibold" style={{ color: colors.text }}>{category}</span>
-                            <span className="text-[11px]" style={{ color: colors.textMuted }}>
-                              {items.filter(i => !i.isChecked).length}/{items.length}
-                            </span>
-                          </div>
-                          {/* カテゴリ内アイテム */}
-                          {items.map(item => (
-                      <div
-                        key={item.id}
-                        className="flex items-center gap-2.5 p-3 rounded-[10px] mb-1.5"
-                        style={{ background: item.isChecked ? colors.bg : colors.card, border: item.isChecked ? 'none' : `1px solid ${colors.border}` }}
-                      >
-                        <button
-                          onClick={() => toggleShoppingItem(item.id, item.isChecked)}
-                          className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
-                          style={{ 
-                            border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
-                            background: item.isChecked ? colors.success : 'transparent'
-                          }}
-                        >
-                          {item.isChecked && <Check size={12} color="#fff" />}
-                        </button>
-                        <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
-                          {item.itemName}
-                        </span>
-                              {/* 数量（タップで切り替え） */}
-                              <button
-                                onClick={() => toggleShoppingVariant(item.id, item)}
-                                disabled={!item.quantityVariants || item.quantityVariants.length <= 1}
-                                className="px-2 py-0.5 rounded text-[12px] transition-colors"
-                                style={{ 
-                                  color: colors.textMuted, 
-                                  background: item.quantityVariants?.length > 1 ? colors.bg : 'transparent',
-                                  cursor: item.quantityVariants?.length > 1 ? 'pointer' : 'default'
-                                }}
-                                title={item.quantityVariants?.length > 1 ? 'タップで単位切替' : undefined}
-                              >
-                                {item.quantity || '適量'}
-                                {item.quantityVariants?.length > 1 && <span className="ml-0.5 text-[10px]">⟳</span>}
-                              </button>
-                              {/* AI/手動バッジ */}
-                              <span 
-                                className="px-1.5 py-0.5 rounded text-[10px]" 
-                                style={{ 
-                                  background: item.source === 'generated' ? '#E8F5E9' : '#FFF3E0',
-                                  color: item.source === 'generated' ? '#2E7D32' : '#E65100'
-                                }}
-                              >
-                                {item.source === 'generated' ? 'AI' : '手動'}
-                              </span>
-                        <button
-                          onClick={() => deleteShoppingItem(item.id)}
-                          className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'rgba(0,0,0,0.05)' }}
-                        >
-                          <Trash2 size={12} color={colors.textMuted} />
-                        </button>
-                      </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                {/* 再生成中の進捗表示 */}
-                {isRegeneratingShoppingList && shoppingListProgress && (
-                  <div className="mx-0">
-                    <ProgressTodoCard
-                      progress={shoppingListProgress}
-                      colors={colors}
-                      phases={SHOPPING_LIST_PHASES}
-                      defaultMessage="買い物リストを生成中..."
-                    />
-                    {/* エラー時の閉じるボタン */}
-                    {shoppingListProgress.phase === 'failed' && (
-                      <div className="mx-3 mt-2 flex justify-end">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setIsRegeneratingShoppingList(false);
-                            setShoppingListProgress(null);
-                            setShoppingListRequestId(null);
-                          }}
-                          className="px-4 py-2 rounded-lg text-sm font-medium"
-                          style={{ background: colors.card, color: colors.text, border: `1px solid ${colors.border}` }}
-                        >
-                          閉じる
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <button onClick={() => setActiveModal('addShopping')} className="flex-1 p-3 rounded-xl flex items-center justify-center gap-1.5" style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}>
-                    <Plus size={14} color={colors.textMuted} />
-                    <span style={{ fontSize: 12, color: colors.textMuted }}>追加</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!hasAnyMealsThisWeek) {
-                        setSuccessMessage({
-                          title: '献立がありません',
-                          message: 'この週の献立がありません。先に献立を生成してください。',
-                        });
-                        return;
-                      }
-                      setActiveModal('shoppingRange');
-                    }}
-                    disabled={isRegeneratingShoppingList}
-                    data-testid="shopping-regenerate-button"
-                    className="flex-[2] p-3 rounded-xl flex items-center justify-center gap-1.5 transition-opacity"
-                    style={{ background: colors.accent, opacity: isRegeneratingShoppingList ? 0.7 : 1 }}
-                  >
-                    {isRegeneratingShoppingList ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>AIが整理中...</span>
-                      </>
-                    ) : (
-                      <>
-                    <RefreshCw size={14} color="#fff" />
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>献立から再生成</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </motion.div>
-              </div>
+              <ShoppingModal
+                shoppingList={shoppingList}
+                groupedShoppingList={groupedShoppingList}
+                shoppingListTotalServings={shoppingListTotalServings}
+                isRegeneratingShoppingList={isRegeneratingShoppingList}
+                shoppingListProgress={shoppingListProgress}
+                hasAnyMealsThisWeek={hasAnyMealsThisWeek}
+                onClose={() => setActiveModal(null)}
+                onOpenAddShopping={() => setActiveModal('addShopping')}
+                onOpenShoppingRange={() => setActiveModal('shoppingRange')}
+                onToggleItem={toggleShoppingItem}
+                onDeleteItem={deleteShoppingItem}
+                onDeleteAll={deleteAllShoppingItems}
+                onToggleVariant={toggleShoppingVariant}
+                onOpenServingsModal={() => setShowServingsModal(true)}
+                onDismissProgress={() => { setIsRegeneratingShoppingList(false); setShoppingListProgress(null); setShoppingListRequestId(null); }}
+                onSetSuccessMessage={setSuccessMessage}
+              />
             )}
 
             {/* Add Shopping Item Modal */}
             {activeModal === 'addShopping' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl"
-                style={{ background: colors.card }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex justify-between items-center mb-4">
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>買い物リストに追加</span>
-                  <button onClick={() => setActiveModal('shopping')} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={newShoppingName}
-                    onChange={(e) => setNewShoppingName(e.target.value)}
-                    placeholder="品名（例: もやし）"
-                    className="w-full p-3 rounded-xl text-[14px] outline-none"
-                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                  />
-                  <input
-                    type="text"
-                    value={newShoppingAmount}
-                    onChange={(e) => setNewShoppingAmount(e.target.value)}
-                    placeholder="量（例: 2袋）"
-                    className="w-full p-3 rounded-xl text-[14px] outline-none"
-                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                  />
-                  <select
-                    value={newShoppingCategory}
-                    onChange={(e) => setNewShoppingCategory(e.target.value)}
-                    className="w-full p-3 rounded-xl text-[14px] outline-none"
-                    style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                  >
-                    <option value="野菜">野菜</option>
-                    <option value="肉">肉</option>
-                    <option value="魚">魚</option>
-                    <option value="乳製品">乳製品</option>
-                    <option value="調味料">調味料</option>
-                    <option value="乾物">乾物</option>
-                    <option value="食材">その他</option>
-                  </select>
-                  <button
-                    onClick={addShoppingItem}
-                    disabled={!newShoppingName}
-                    className="w-full p-3 rounded-xl font-semibold text-[14px] disabled:opacity-50"
-                    style={{ background: colors.accent, color: '#fff' }}
-                  >
-                    追加する
-                  </button>
-                </div>
-              </motion.div>
+              <AddShoppingModal
+                newShoppingName={newShoppingName}
+                newShoppingAmount={newShoppingAmount}
+                newShoppingCategory={newShoppingCategory}
+                onChangeName={setNewShoppingName}
+                onChangeAmount={setNewShoppingAmount}
+                onChangeCategory={setNewShoppingCategory}
+                onAdd={addShoppingItem}
+                onClose={() => setActiveModal('shopping')}
+              />
             )}
 
             {/* Shopping Range Selection Modal (2-step) */}
             {activeModal === 'shoppingRange' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl max-h-[75vh] overflow-y-auto"
-                style={{ background: colors.card }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Step 1: 範囲選択 */}
-                {shoppingRangeStep === 'range' && (
-                  <>
-                    <div className="flex justify-between items-center mb-4">
-                      <div className="flex items-center gap-2">
-                        <span style={{ fontSize: 15, fontWeight: 600 }}>買い物の範囲を選択</span>
-                        <span style={{ fontSize: 11, color: colors.textMuted, background: colors.bg, padding: '2px 6px', borderRadius: 6 }}>ステップ 1/2</span>
-                      </div>
-                      <button onClick={() => { setActiveModal('shopping'); setShoppingRangeStep('range'); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                        <X size={14} color={colors.textLight} />
-                      </button>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      {/* 今日の分 */}
-                      <div>
-                        <button
-                          onClick={() => {
-                            if (shoppingRange.type === 'today') {
-                              setIsTodayExpanded(!isTodayExpanded);
-                            } else {
-                              setShoppingRange({ ...shoppingRange, type: 'today' });
-                              setIsTodayExpanded(true);
-                            }
-                          }}
-                          className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
-                          style={{ 
-                            background: shoppingRange.type === 'today' ? colors.accent : colors.bg,
-                            border: `1px solid ${shoppingRange.type === 'today' ? colors.accent : colors.border}`
-                          }}
-                        >
-                          <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'today' ? '#fff' : colors.text }}>
-                            今日の分
-                          </span>
-                          {shoppingRange.type === 'today' && (
-                            <ChevronDown 
-                              size={16} 
-                              color="#fff" 
-                              style={{ transform: isTodayExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
-                            />
-                          )}
-                        </button>
-                        
-                        {/* 今日の食事タイプ選択 */}
-                        <AnimatePresence>
-                          {shoppingRange.type === 'today' && isTodayExpanded && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="overflow-hidden"
-                            >
-                              <div className="pl-4 pt-2 space-y-1">
-                                {(['breakfast', 'lunch', 'dinner'] as const).map((mealType) => {
-                                  const isSelected = shoppingRange.todayMeals.includes(mealType);
-                                  const label = mealType === 'breakfast' ? '朝食' : mealType === 'lunch' ? '昼食' : '夕食';
-                                  return (
-                                    <button
-                                      key={mealType}
-                                      onClick={() => {
-                                        const newMeals = isSelected
-                                          ? shoppingRange.todayMeals.filter(m => m !== mealType)
-                                          : [...shoppingRange.todayMeals, mealType];
-                                        setShoppingRange({ ...shoppingRange, todayMeals: newMeals });
-                                      }}
-                                      className="w-full p-2.5 rounded-lg flex items-center gap-2"
-                                      style={{ background: isSelected ? `${colors.accent}15` : 'transparent' }}
-                                    >
-                                      <div 
-                                        className="w-5 h-5 rounded flex items-center justify-center"
-                                        style={{ 
-                                          background: isSelected ? colors.accent : 'transparent',
-                                          border: `2px solid ${isSelected ? colors.accent : colors.border}`
-                                        }}
-                                      >
-                                        {isSelected && <Check size={12} color="#fff" />}
-                                      </div>
-                                      <span style={{ fontSize: 13, color: colors.text }}>{label}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                      
-                      {/* 明日の分 */}
-                      <button
-                        onClick={() => setShoppingRange({ ...shoppingRange, type: 'tomorrow' })}
-                        className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
-                        style={{ 
-                          background: shoppingRange.type === 'tomorrow' ? colors.accent : colors.bg,
-                          border: `1px solid ${shoppingRange.type === 'tomorrow' ? colors.accent : colors.border}`
-                        }}
-                      >
-                        <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'tomorrow' ? '#fff' : colors.text }}>
-                          明日の分
-                        </span>
-                      </button>
-                      
-                      {/* 明後日の分 */}
-                      <button
-                        onClick={() => setShoppingRange({ ...shoppingRange, type: 'dayAfterTomorrow' })}
-                        className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
-                        style={{ 
-                          background: shoppingRange.type === 'dayAfterTomorrow' ? colors.accent : colors.bg,
-                          border: `1px solid ${shoppingRange.type === 'dayAfterTomorrow' ? colors.accent : colors.border}`
-                        }}
-                      >
-                        <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'dayAfterTomorrow' ? '#fff' : colors.text }}>
-                          明後日の分
-                        </span>
-                      </button>
-                      
-                      {/* ○○日分 (時系列順: 明後日 < N日分 < 1週間) */}
-                      <div>
-                        <button
-                          onClick={() => setShoppingRange({ ...shoppingRange, type: 'days' })}
-                          className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
-                          style={{
-                            background: shoppingRange.type === 'days' ? colors.accent : colors.bg,
-                            border: `1px solid ${shoppingRange.type === 'days' ? colors.accent : colors.border}`
-                          }}
-                        >
-                          <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'days' ? '#fff' : colors.text }}>
-                            {shoppingRange.daysCount}日分
-                          </span>
-                        </button>
-
-                        {shoppingRange.type === 'days' && (
-                          <div className="pl-4 pt-2 flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={1}
-                              max={14}
-                              value={shoppingRange.daysCount}
-                              onChange={(e) => setShoppingRange({ ...shoppingRange, daysCount: parseInt(e.target.value) || 1 })}
-                              className="w-20 p-2 rounded-lg text-center text-[14px] outline-none"
-                              style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                            />
-                            <span style={{ fontSize: 13, color: colors.textMuted }}>日分（今日から）</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 1週間分 */}
-                      <button
-                        onClick={() => setShoppingRange({ ...shoppingRange, type: 'week' })}
-                        className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
-                        style={{
-                          background: shoppingRange.type === 'week' ? colors.accent : colors.bg,
-                          border: `1px solid ${shoppingRange.type === 'week' ? colors.accent : colors.border}`
-                        }}
-                      >
-                        <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'week' ? '#fff' : colors.text }}>
-                          1週間分
-                        </span>
-                      </button>
-                    </div>
-                    
-                    {/* 次へボタン */}
-                    <button
-                      onClick={() => setShoppingRangeStep('servings')}
-                      disabled={shoppingRange.type === 'today' && shoppingRange.todayMeals.length === 0}
-                      className="w-full mt-4 p-3.5 rounded-xl font-semibold text-[14px] disabled:opacity-50 flex items-center justify-center gap-2"
-                      style={{ background: colors.accent, color: '#fff' }}
-                    >
-                      次へ（人数確認）
-                      <ChevronRight size={18} />
-                    </button>
-                  </>
-                )}
-                
-                {/* Step 2: 人数確認・編集 */}
-                {shoppingRangeStep === 'servings' && (
-                  <>
-                    <div className="flex justify-between items-center mb-4">
-                      <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => setShoppingRangeStep('range')}
-                          className="w-7 h-7 rounded-full flex items-center justify-center"
-                          style={{ background: colors.bg }}
-                        >
-                          <ChevronLeft size={14} color={colors.textLight} />
-                        </button>
-                        <span style={{ fontSize: 15, fontWeight: 600 }}>人数を確認</span>
-                        <span style={{ fontSize: 11, color: colors.textMuted, background: colors.bg, padding: '2px 6px', borderRadius: 6 }}>ステップ 2/2</span>
-                      </div>
-                      <button onClick={() => { setActiveModal('shopping'); setShoppingRangeStep('range'); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                        <X size={14} color={colors.textLight} />
-                      </button>
-                    </div>
-                    
-                    <p style={{ fontSize: 13, color: colors.textLight, marginBottom: 12 }}>
-                      各セルをクリックして人数を変更できます（0=作らない）
-                    </p>
-                    
-                    {/* Grid Header */}
-                    <div className="grid grid-cols-4 gap-2 mb-2">
-                      <div />
-                      {(['朝', '昼', '夜'] as const).map((label, i) => (
-                        <div key={i} className="text-center font-bold" style={{ fontSize: 13, color: colors.text }}>{label}</div>
-                      ))}
-                    </div>
-                    
-                    {/* Grid Rows */}
-                    {(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const).map((day) => {
-                      const labels: Record<string, string> = { monday: '月', tuesday: '火', wednesday: '水', thursday: '木', friday: '金', saturday: '土', sunday: '日' };
-                      const isWeekend = day === 'saturday' || day === 'sunday';
-                      const defaultServings = servingsConfig?.default ?? 2;
-                      
-                      return (
-                        <div key={day} className="grid grid-cols-4 gap-2 mb-2">
-                          <div className="flex items-center justify-center font-bold" style={{ fontSize: 13, color: isWeekend ? colors.accent : colors.text }}>
-                            {labels[day]}
-                          </div>
-                          {(['breakfast', 'lunch', 'dinner'] as const).map((meal) => {
-                            const value = servingsConfig?.byDayMeal?.[day]?.[meal] ?? defaultServings;
-                            
-                            const updateValue = (newValue: number) => {
-                              const updated: ServingsConfig = {
-                                default: servingsConfig?.default ?? 2,
-                                byDayMeal: { ...servingsConfig?.byDayMeal }
-                              };
-                              if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
-                              updated.byDayMeal[day][meal] = Math.max(0, Math.min(10, newValue));
-                              setServingsConfig(updated);
-                            };
-                            
-                            return (
-                              <div
-                                key={meal}
-                                className="flex items-center justify-between rounded-lg px-1"
-                                style={{
-                                  background: value === 0 ? colors.bg : colors.successLight,
-                                  border: `1px solid ${value === 0 ? colors.border : colors.success}`
-                                }}
-                              >
-                                <button
-                                  onClick={() => updateValue(value - 1)}
-                                  className="w-6 h-8 flex items-center justify-center text-lg font-bold"
-                                  style={{ color: value === 0 ? colors.textMuted : colors.success }}
-                                >
-                                  −
-                                </button>
-                                <span 
-                                  className="font-bold text-center min-w-[16px]"
-                                  style={{ 
-                                    fontSize: 14,
-                                    color: value === 0 ? colors.textMuted : colors.success 
-                                  }}
-                                >
-                                  {value === 0 ? '-' : value}
-                                </span>
-                                <button
-                                  onClick={() => updateValue(value + 1)}
-                                  className="w-6 h-8 flex items-center justify-center text-lg font-bold"
-                                  style={{ color: value === 0 ? colors.textMuted : colors.success }}
-                                >
-                                  +
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })}
-                    
-                    {/* Legend */}
-                    <div className="flex justify-center gap-4 mt-3 mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded" style={{ background: colors.successLight, border: `1px solid ${colors.success}` }} />
-                        <span style={{ fontSize: 11, color: colors.textLight }}>作る</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded" style={{ background: colors.bg, border: `1px solid ${colors.border}` }} />
-                        <span style={{ fontSize: 11, color: colors.textLight }}>作らない</span>
-                      </div>
-                    </div>
-                    
-                    {/* 生成開始ボタン */}
-                    <button
-                      onClick={async () => {
-                        // まずservingsConfigを保存
-                        if (servingsConfig) {
-                          try {
-                            await fetch('/api/profile', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ servingsConfig })
-                            });
-                          } catch (e) {
-                            console.error('Failed to save servings config:', e);
-                          }
-                        }
-                        setActiveModal('shopping');
-                        setShoppingRangeStep('range');
-                        regenerateShoppingList();
-                      }}
-                      data-testid="generate-shopping-list-button"
-                      className="w-full mt-2 p-3.5 rounded-xl font-semibold text-[14px] flex items-center justify-center gap-2"
-                      style={{ background: colors.accent, color: '#fff' }}
-                    >
-                      <Sparkles size={18} />
-                      この設定で買い物リストを生成
-                    </button>
-                  </>
-                )}
-              </motion.div>
+              <ShoppingRangeModal
+                shoppingRange={shoppingRange}
+                shoppingRangeStep={shoppingRangeStep}
+                isTodayExpanded={isTodayExpanded}
+                servingsConfig={servingsConfig}
+                onClose={() => { setActiveModal('shopping'); setShoppingRangeStep('range'); }}
+                onChangeRange={setShoppingRange}
+                onChangeStep={setShoppingRangeStep}
+                onToggleTodayExpanded={setIsTodayExpanded}
+                onUpdateServingsConfig={setServingsConfig}
+                onGenerate={async (cfg) => {
+                  if (cfg) {
+                    try {
+                      await fetch('/api/profile', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ servingsConfig: cfg })
+                      });
+                    } catch (e) {
+                      console.error('Failed to save servings config:', e);
+                    }
+                  }
+                  setActiveModal('shopping');
+                  setShoppingRangeStep('range');
+                  regenerateShoppingList();
+                }}
+              />
             )}
 
-            {/* Recipe Modal */}
+                        {/* Recipe Modal */}
             {activeModal === 'recipe' && selectedRecipe && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl overflow-hidden"
-                style={{ background: colors.card, maxHeight: '90vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <BookOpen size={18} color={colors.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>{selectedRecipe}</span>
-                  </div>
-                  <button onClick={() => { setActiveModal(null); setSelectedRecipe(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 min-h-0 p-4 overflow-y-auto">
-                  {/* 基本情報 */}
-                  <div className="flex flex-wrap gap-3 mb-4">
-                    {selectedRecipeData?.role && (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-bold" style={{ 
-                        background: selectedRecipeData.role === 'main' ? colors.accent : selectedRecipeData.role === 'rice' ? '#8B4513' : selectedRecipeData.role === 'soup' ? colors.blue : colors.success,
-                        color: '#fff'
-                      }}>
-                        {selectedRecipeData.role === 'main' ? '主菜' : selectedRecipeData.role === 'soup' ? '汁物' : selectedRecipeData.role === 'rice' ? '主食' : '副菜'}
-                      </span>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <Flame size={14} color={colors.textMuted} />
-                      <span style={{ fontSize: 12, color: colors.textLight }}>{selectedRecipeData?.calories_kcal ?? selectedRecipeData?.cal ?? '-'}kcal</span>
-                    </div>
-                  </div>
-
-                  {(selectedRecipeData?.imageUrl || selectedRecipeData?.image_status) && (
-                    <div className="mb-4">
-                      {selectedRecipeData?.imageUrl ? (
-                        <div className="relative h-48 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
-                          <Image
-                            src={selectedRecipeData.imageUrl}
-                            alt={selectedRecipe ?? 'Dish image'}
-                            fill
-                            sizes="(max-width: 1024px) 100vw, 50vw"
-                            className="object-cover"
-                          />
-                        </div>
-                      ) : (
-                        <div
-                          className="h-48 rounded-2xl flex items-center justify-center px-4 text-center"
-                          style={{ background: colors.bg, border: `1px dashed ${colors.border}` }}
-                        >
-                          <p style={{ fontSize: 13, color: colors.textMuted, margin: 0 }}>
-                            {selectedRecipeData?.image_status === 'pending'
-                              ? '料理画像を生成中です'
-                              : selectedRecipeData?.image_status === 'stale'
-                                ? '料理内容の変更後、画像を再生成待ちです'
-                                : '料理画像の生成に失敗しました'}
-                          </p>
-                        </div>
-                      )}
-                      {selectedRecipeData?.image_status && selectedRecipeData.image_status !== 'ready' && (
-                        <p style={{ fontSize: 11, color: colors.textMuted, marginTop: 8, marginBottom: 0 }}>
-                          {selectedRecipeData.image_status === 'pending'
-                            ? 'AIが料理画像を生成しています。'
-                            : selectedRecipeData.image_status === 'stale'
-                              ? '現在の料理内容に合わせた画像へ更新待ちです。'
-                              : '画像生成に失敗しました。後でもう一度お試しください。'}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* この料理の栄養素 */}
-                  {selectedRecipeData && (selectedRecipeData.protein_g || selectedRecipeData.fat_g || selectedRecipeData.carbs_g) && (
-                    <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>📊 この料理の栄養素</p>
-                      <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[11px]" style={{ color: colors.text }}>
-                        {/* 基本栄養素 */}
-                        <NutritionItem label="エネルギー" value={selectedRecipeData.calories_kcal} unit="kcal" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="タンパク質" value={selectedRecipeData.protein_g} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="脂質" value={selectedRecipeData.fat_g} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="炭水化物" value={selectedRecipeData.carbs_g} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="食物繊維" value={selectedRecipeData.fiber_g} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="糖質" value={selectedRecipeData.sugar_g} unit="g" textColor={colors.textMuted} />
-                        {/* ミネラル */}
-                        <NutritionItem label="塩分" value={selectedRecipeData.sodium_g} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="カリウム" value={selectedRecipeData.potassium_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="カルシウム" value={selectedRecipeData.calcium_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="リン" value={selectedRecipeData.phosphorus_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="鉄分" value={selectedRecipeData.iron_mg} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="亜鉛" value={selectedRecipeData.zinc_mg} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="ヨウ素" value={selectedRecipeData.iodine_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="コレステロール" value={selectedRecipeData.cholesterol_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        {/* ビタミン */}
-                        <NutritionItem label="ビタミンA" value={selectedRecipeData.vitamin_a_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB1" value={selectedRecipeData.vitamin_b1_mg} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB2" value={selectedRecipeData.vitamin_b2_mg} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB6" value={selectedRecipeData.vitamin_b6_mg} unit="mg" decimals={2} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンB12" value={selectedRecipeData.vitamin_b12_ug} unit="µg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンC" value={selectedRecipeData.vitamin_c_mg} unit="mg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンD" value={selectedRecipeData.vitamin_d_ug} unit="µg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンE" value={selectedRecipeData.vitamin_e_mg} unit="mg" textColor={colors.textMuted} />
-                        <NutritionItem label="ビタミンK" value={selectedRecipeData.vitamin_k_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        <NutritionItem label="葉酸" value={selectedRecipeData.folic_acid_ug} unit="µg" decimals={0} textColor={colors.textMuted} />
-                        {/* 脂肪酸 */}
-                        <NutritionItem label="飽和脂肪酸" value={selectedRecipeData.saturated_fat_g} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="一価不飽和脂肪酸" value={selectedRecipeData.monounsaturated_fat_g} unit="g" textColor={colors.textMuted} />
-                        <NutritionItem label="多価不飽和脂肪酸" value={selectedRecipeData.polyunsaturated_fat_g} unit="g" textColor={colors.textMuted} />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 材料 */}
-                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>🥕 材料</p>
-                  <div className="rounded-xl p-3 mb-4" style={{ background: colors.bg }}>
-                    {(() => {
-                      const dish = selectedRecipeData?.dishes?.[0];
-                      // 新方式: ingredientsMd を優先（LLMが生成したマークダウン）
-                      const ingredientsMd = dish?.ingredientsMd || formatIngredientsToMarkdown(
-                        dish?.ingredientsText,
-                        selectedRecipeData?.ingredients
-                      );
-                      if (ingredientsMd) {
-                        return (
-                          <div className="prose prose-sm max-w-none [&_table]:w-full [&_th]:text-left [&_th]:p-2 [&_td]:p-2 [&_tr]:border-b" style={{ fontSize: 13, color: colors.text }}>
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{ingredientsMd}</ReactMarkdown>
-                          </div>
-                        );
-                      }
-                      return <p style={{ fontSize: 13, color: colors.textMuted }}>材料情報なし</p>;
-                    })()}
-                  </div>
-
-                  {/* 作り方 */}
-                  <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, margin: '0 0 8px' }}>👨‍🍳 作り方</p>
-                  <div className="rounded-xl p-3" style={{ background: colors.bg }}>
-                    {(() => {
-                      const dish = selectedRecipeData?.dishes?.[0];
-                      // 新方式: recipeStepsMd を優先（LLMが生成したマークダウン）
-                      const recipeStepsMd = dish?.recipeStepsMd || formatRecipeStepsToMarkdown(
-                        dish?.recipeStepsText,
-                        selectedRecipeData?.recipeSteps
-                      );
-                      if (recipeStepsMd) {
-                        return (
-                          <div className="prose prose-sm max-w-none [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:mb-2" style={{ fontSize: 13, color: colors.text }}>
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{recipeStepsMd}</ReactMarkdown>
-                          </div>
-                        );
-                      }
-                      return (
-                        <p style={{ fontSize: 13, color: colors.textMuted }}>
-                          レシピはAI献立を生成すると自動で作成されます。<br />
-                          「AIで変更」ボタンから再生成してください。
-                        </p>
-                      );
-                    })()}
-                  </div>
-                </div>
-                <div className="px-4 py-2.5 pb-4 lg:pb-6 flex gap-2 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <button
-                    onClick={handleToggleFavorite}
-                    disabled={isFavoriteLoading}
-                    aria-pressed={isFavorite}
-                    aria-label={isFavorite ? 'お気に入りから削除' : 'お気に入りに追加'}
-                    className="w-11 h-11 rounded-full flex items-center justify-center transition-colors active:scale-95 transition-transform"
-                    style={{ background: isFavorite ? '#FFF0F0' : colors.bg }}
-                    data-testid="favorite-button"
-                  >
-                    <Heart
-                      size={18}
-                      color={isFavorite ? '#FF6B6B' : colors.textMuted}
-                      fill={isFavorite ? '#FF6B6B' : 'none'}
-                    />
-                  </button>
-                  <button
-                    onClick={addRecipeToShoppingList}
-                    className="flex-1 p-3 rounded-xl font-semibold text-[14px] flex items-center justify-center gap-2 active:scale-95 transition-transform" 
-                    style={{ background: colors.accent, color: '#fff' }}
-                  >
-                    <ShoppingCart size={18} />
-                    材料を買い物リストに追加
-                  </button>
-                </div>
-              </motion.div>
+              <RecipeModal
+                selectedRecipe={selectedRecipe}
+                selectedRecipeData={selectedRecipeData}
+                isFavorite={isFavorite}
+                isFavoriteLoading={isFavoriteLoading}
+                onClose={() => { setActiveModal(null); setSelectedRecipe(null); }}
+                onToggleFavorite={handleToggleFavorite}
+                onAddToShoppingList={addRecipeToShoppingList}
+              />
             )}
 
             {/* Servings Config Modal */}
             {showServingsModal && (
-              <motion.div
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[300] flex items-center justify-center"
-                style={{ background: 'rgba(0,0,0,0.5)' }}
-                onClick={() => setShowServingsModal(false)}
-              >
-                <motion.div
-                  initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-                  className="w-[95%] max-w-md rounded-2xl p-5"
-                  style={{ background: colors.card }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 style={{ fontSize: 18, fontWeight: 700 }}>曜日別人数設定</h3>
-                    <button onClick={() => setShowServingsModal(false)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                      <X size={16} color={colors.textLight} />
-                    </button>
-                  </div>
-                  
-                  <p style={{ fontSize: 13, color: colors.textLight, marginBottom: 16 }}>
-                    各セルをクリックして人数を変更（0=作らない/外食）
-                  </p>
-                  
-                  {/* Grid Header */}
-                  <div className="grid grid-cols-4 gap-2 mb-2">
-                    <div />
-                    {(['朝', '昼', '夜'] as const).map((label, i) => (
-                      <div key={i} className="text-center font-bold" style={{ fontSize: 13, color: colors.text }}>{label}</div>
-                    ))}
-                  </div>
-                  
-                  {/* Grid Rows */}
-                  {(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const).map((day) => {
-                    const labels: Record<string, string> = { monday: '月', tuesday: '火', wednesday: '水', thursday: '木', friday: '金', saturday: '土', sunday: '日' };
-                    const isWeekend = day === 'saturday' || day === 'sunday';
-                    const defaultServings = servingsConfig?.default ?? 2;
-                    
-                    return (
-                      <div key={day} className="grid grid-cols-4 gap-2 mb-2">
-                        <div className="flex items-center justify-center font-bold" style={{ fontSize: 13, color: isWeekend ? colors.accent : colors.text }}>
-                          {labels[day]}
-                        </div>
-                        {(['breakfast', 'lunch', 'dinner'] as const).map((meal) => {
-                          const value = servingsConfig?.byDayMeal?.[day]?.[meal] ?? defaultServings;
-                          
-                          const updateValue = (newValue: number) => {
-                            const updated: ServingsConfig = {
-                              default: servingsConfig?.default ?? 2,
-                              byDayMeal: { ...servingsConfig?.byDayMeal }
-                            };
-                            if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
-                            updated.byDayMeal[day][meal] = Math.max(0, Math.min(10, newValue));
-                            setServingsConfig(updated);
-                          };
-                          
-                          return (
-                            <div
-                              key={meal}
-                              className="flex items-center justify-between rounded-lg px-1"
-                              style={{
-                                background: value === 0 ? colors.bg : colors.successLight,
-                                border: `1px solid ${value === 0 ? colors.border : colors.success}`
-                              }}
-                            >
-                              <button
-                                onClick={() => updateValue(value - 1)}
-                                className="w-7 h-9 flex items-center justify-center text-lg font-bold"
-                                style={{ color: value === 0 ? colors.textMuted : colors.success }}
-                              >
-                                −
-                              </button>
-                              <span 
-                                className="font-bold text-center min-w-[18px]"
-                                style={{ 
-                                  fontSize: 15,
-                                  color: value === 0 ? colors.textMuted : colors.success 
-                                }}
-                              >
-                                {value === 0 ? '-' : value}
-                              </span>
-                              <button
-                                onClick={() => updateValue(value + 1)}
-                                className="w-7 h-9 flex items-center justify-center text-lg font-bold"
-                                style={{ color: value === 0 ? colors.textMuted : colors.success }}
-                              >
-                                +
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                  
-                  {/* Legend */}
-                  <div className="flex justify-center gap-4 mt-4 mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 rounded" style={{ background: colors.successLight, border: `1px solid ${colors.success}` }} />
-                      <span style={{ fontSize: 11, color: colors.textLight }}>作る</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 rounded" style={{ background: colors.bg, border: `1px solid ${colors.border}` }} />
-                      <span style={{ fontSize: 11, color: colors.textLight }}>作らない</span>
-                    </div>
-                  </div>
-                  
-                  {/* Save Button */}
-                  <button
-                    onClick={async () => {
-                      if (!servingsConfig) return;
-                      try {
-                        const res = await fetch('/api/profile', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ servingsConfig })
-                        });
-                        if (res.ok) {
-                          setSuccessMessage({ title: '保存しました', message: '人数設定を更新しました' });
-                          setShowServingsModal(false);
-                        }
-                      } catch (e) {
-                        console.error('Failed to save servings config:', e);
-                      }
-                    }}
-                    className="w-full p-3.5 rounded-xl font-semibold"
-                    style={{ background: colors.accent, color: '#fff' }}
-                  >
-                    保存する
-                  </button>
-                </motion.div>
-              </motion.div>
+              <ServingsModal
+                servingsConfig={servingsConfig}
+                onClose={() => setShowServingsModal(false)}
+                onUpdateServingsConfig={setServingsConfig}
+                onSave={async () => {
+                  if (!servingsConfig) return;
+                  try {
+                    const res = await fetch('/api/profile', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ servingsConfig })
+                    });
+                    if (res.ok) {
+                      setSuccessMessage({ title: '保存しました', message: '人数設定を更新しました' });
+                      setShowServingsModal(false);
+                    }
+                  } catch (e) {
+                    console.error('Failed to save servings config:', e);
+                  }
+                }}
+              />
             )}
 
             {/* Add Meal Modal */}
             {activeModal === 'add' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex justify-between items-center px-4 py-3.5" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>{addMealKey && MEAL_LABELS[addMealKey]}を追加</span>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-auto px-4 py-3.5 pb-4 lg:pb-7">
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <label style={{ fontSize: 12, color: colors.textMuted }}>市販品・外食メニューから選ぶ</label>
-                      {selectedCatalogProduct && (
-                        <button
-                          onClick={() => {
-                            setSelectedCatalogProduct(null);
-                            setCatalogQuery('');
-                          }}
-                          className="text-[12px]"
-                          style={{ color: colors.textLight }}
-                        >
-                          解除
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      type="text"
-                      value={catalogQuery}
-                      onChange={(e) => {
-                        setCatalogQuery(e.target.value);
-                        if (!e.target.value.trim()) {
-                          setSelectedCatalogProduct(null);
-                        }
-                      }}
-                      placeholder="商品名で検索"
-                      className="w-full p-3 rounded-xl text-[13px] outline-none"
-                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                    />
-                    <p style={{ fontSize: 11, color: colors.textMuted, margin: '6px 0 0 0' }}>
-                      選んだ商品は「買う」か「外食」で追加すると公開栄養値ごと保存されます。
-                    </p>
-
-                    {selectedCatalogProduct && (
-                      <div
-                        className="mt-3 p-3 rounded-2xl"
-                        style={{ background: colors.purpleLight, border: `1px solid ${colors.purple}` }}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p style={{ fontSize: 12, color: colors.purple, margin: '0 0 4px 0', fontWeight: 600 }}>
-                              選択中
-                            </p>
-                            <p style={{ fontSize: 14, color: colors.text, margin: 0, fontWeight: 600 }}>
-                              {selectedCatalogProduct.name}
-                            </p>
-                            <p style={{ fontSize: 12, color: colors.textLight, margin: '4px 0 0 0' }}>
-                              {selectedCatalogProduct.brandName}
-                              {selectedCatalogProduct.priceYen ? ` / ${selectedCatalogProduct.priceYen}円` : ''}
-                            </p>
-                          </div>
-                          <div style={{ fontSize: 12, color: colors.textLight, textAlign: 'right' }}>
-                            <div>{selectedCatalogProduct.caloriesKcal ?? '-'} kcal</div>
-                            <div>P {formatNutrition(selectedCatalogProduct.proteinG)}g</div>
-                            <div>F {formatNutrition(selectedCatalogProduct.fatG)}g</div>
-                            <div>C {formatNutrition(selectedCatalogProduct.carbsG)}g</div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {(isCatalogSearching || catalogSearchError || catalogResults.length > 0) && (
-                      <div className="mt-3 space-y-2">
-                        {isCatalogSearching && (
-                          <p style={{ fontSize: 12, color: colors.textMuted, margin: 0 }}>検索中...</p>
-                        )}
-                        {catalogSearchError && (
-                          <p style={{ fontSize: 12, color: colors.danger, margin: 0 }}>{catalogSearchError}</p>
-                        )}
-                        {catalogResults.map((product) => {
-                          const isSelected = selectedCatalogProduct?.id === product.id;
-                          return (
-                            <button
-                              key={product.id}
-                              onClick={() => setSelectedCatalogProduct(product)}
-                              className="w-full p-3 rounded-2xl text-left"
-                              style={{
-                                background: isSelected ? colors.purpleLight : colors.bg,
-                                border: isSelected ? `1px solid ${colors.purple}` : `1px solid ${colors.border}`,
-                              }}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 4px 0' }}>
-                                    {product.brandName}
-                                  </p>
-                                  <p style={{ fontSize: 13, color: colors.text, margin: 0, fontWeight: 600 }}>
-                                    {product.name}
-                                  </p>
-                                  <p style={{ fontSize: 11, color: colors.textLight, margin: '4px 0 0 0' }}>
-                                    {product.categoryCode || '分類なし'}
-                                    {product.priceYen ? ` / ${product.priceYen}円` : ''}
-                                  </p>
-                                </div>
-                                <div style={{ fontSize: 11, color: colors.textLight, textAlign: 'right' }}>
-                                  <div>{product.caloriesKcal ?? '-'} kcal</div>
-                                  <div>P {formatNutrition(product.proteinG)}g</div>
-                                  <div>F {formatNutrition(product.fatG)}g</div>
-                                  <div>C {formatNutrition(product.carbsG)}g</div>
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).filter(([k]) => k !== 'skip').map(([key, mode]) => {
-                      const ModeIcon = mode.icon;
-                      return (
-                        <button 
-                          key={key} 
-                          onClick={() => handleAddMealWithMode(key)}
-                          className="flex items-center gap-2.5 p-3 rounded-[10px]" 
-                          style={{ background: mode.bg }}
-                        >
-                          <ModeIcon size={18} color={mode.color} />
-                          <span style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>{mode.label}で追加</span>
-                        </button>
-                      );
-                    })}
-                    <button onClick={() => setActiveModal('aiMeal')} className="flex items-center gap-2.5 p-3 rounded-[10px]" style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}>
-                      <Sparkles size={18} color={colors.accent} />
-                      <span style={{ fontSize: 13, fontWeight: 500, color: colors.accent }}>AIに提案してもらう</span>
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
+              <AddMealModal
+                addMealKey={addMealKey}
+                modeConfig={MODE_CONFIG}
+                catalogQuery={catalogQuery}
+                catalogResults={catalogResults}
+                selectedCatalogProduct={selectedCatalogProduct}
+                isCatalogSearching={isCatalogSearching}
+                catalogSearchError={catalogSearchError}
+                onClose={() => setActiveModal(null)}
+                onOpenAiMeal={() => setActiveModal('aiMeal')}
+                onChangeCatalogQuery={setCatalogQuery}
+                onSelectCatalogProduct={setSelectedCatalogProduct}
+                onAddMealWithMode={handleAddMealWithMode}
+              />
             )}
 
             {/* Add Meal Slot Modal - 食事を追加 */}
             {activeModal === 'addMealSlot' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-3.5 pb-4 lg:pb-7 rounded-t-3xl"
-                style={{ background: colors.card }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex justify-between items-center mb-3.5">
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>食事を追加</span>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <p style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
-                  {weekDates[selectedDayIndex] && `${weekDates[selectedDayIndex].date.getMonth() + 1}/${weekDates[selectedDayIndex].date.getDate()}（${weekDates[selectedDayIndex].dayOfWeek}）`}に追加する食事を選んでください
-                </p>
-                <div className="flex flex-col gap-2">
-                  {ALL_MEAL_TYPES.map(type => (
-                    <button 
-                      key={type}
-                      onClick={() => openAddMealModal(type, selectedDayIndex)}
-                      className="w-full flex items-center justify-between p-4 rounded-xl transition-colors"
-                      style={{ background: colors.bg }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ 
-                          background: type === 'breakfast' ? colors.warningLight 
-                            : type === 'lunch' ? colors.accentLight 
-                            : type === 'dinner' ? colors.purpleLight 
-                            : type === 'snack' ? colors.successLight 
-                            : colors.blueLight 
-                        }}>
-                          <span style={{ fontSize: 18 }}>
-                            {type === 'breakfast' ? '🌅' 
-                              : type === 'lunch' ? '☀️' 
-                              : type === 'dinner' ? '🌙' 
-                              : type === 'snack' ? '🍪' 
-                              : '🌃'}
-                          </span>
-                        </div>
-                        <span style={{ fontSize: 15, fontWeight: 500, color: colors.text }}>{MEAL_LABELS[type]}</span>
-                      </div>
-                      <ChevronRight size={18} color={colors.textMuted} />
-                    </button>
-                  ))}
-                </div>
-              </motion.div>
+              <AddMealSlotModal
+                selectedDayIndex={selectedDayIndex}
+                weekDates={weekDates}
+                onClose={() => setActiveModal(null)}
+                onSelectMealType={(type, dayIndex) => openAddMealModal(type, dayIndex)}
+              />
             )}
 
             {/* Delete Confirmation Modal */}
             {activeModal === 'confirmDelete' && deletingMeal && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }} 
-                animate={{ opacity: 1, scale: 1 }} 
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.15 }}
-                className="fixed inset-0 z-[202] flex items-center justify-center p-4"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div 
-                  className="w-full max-w-sm rounded-2xl p-5"
-                  style={{ background: colors.card }}
-                >
-                  <div className="flex flex-col items-center text-center mb-5">
-                    <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ background: colors.dangerLight }}>
-                      <Trash2 size={24} color={colors.danger} />
-                    </div>
-                    <h3 style={{ fontSize: 17, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
-                      この食事を削除しますか？
-                    </h3>
-                    <p style={{ fontSize: 13, color: colors.textMuted, margin: 0 }}>
-                      「{deletingMeal.dishName || MEAL_LABELS[deletingMeal.mealType as MealType]}」を削除します。<br/>
-                      この操作は取り消せません。
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => { setActiveModal(null); setDeletingMeal(null); }}
-                      className="flex-1 py-3 rounded-xl"
-                      style={{ background: colors.bg }}
-                    >
-                      <span style={{ fontSize: 14, fontWeight: 500, color: colors.textLight }}>キャンセル</span>
-                    </button>
-                    <button
-                      onClick={confirmDeleteMeal}
-                      disabled={isDeleting}
-                      className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
-                      style={{ background: colors.danger }}
-                    >
-                      {isDeleting ? (
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <>
-                          <Trash2 size={14} color="#fff" />
-                          <span style={{ fontSize: 14, fontWeight: 500, color: '#fff' }}>削除する</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
+              <ConfirmDeleteModal
+                deletingMeal={deletingMeal}
+                isDeleting={isDeleting}
+                onCancel={() => { setActiveModal(null); setDeletingMeal(null); }}
+                onConfirm={confirmDeleteMeal}
+              />
             )}
 
             {/* AI Single Meal Modal */}
             {activeModal === 'aiMeal' && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '70vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={18} color={colors.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>
-                      {weekDates[addMealDayIndex] && `${weekDates[addMealDayIndex].date.getMonth() + 1}/${weekDates[addMealDayIndex].date.getDate()}（${weekDates[addMealDayIndex].dayOfWeek}）`}の{addMealKey && MEAL_LABELS[addMealKey]}
-                    </span>
-                  </div>
-                  <button onClick={() => setActiveModal(null)} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-4 overflow-auto">
-                  <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>条件を指定（複数選択可）</p>
-                  {AI_CONDITIONS.map((text, i) => {
-                    const isSelected = selectedConditions.includes(text);
-                    return (
-                      <button
-                        key={i}
-                        data-testid={`weekly-condition-${text}`}
-                        onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
-                        className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
-                        style={{
-                          background: isSelected ? colors.accentLight : colors.bg,
-                          color: isSelected ? colors.accent : colors.text,
-                          border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
-                        }}
-                      >
-                        <span>{text}</span>
-                        {isSelected && <Check size={16} color={colors.accent} />}
-                      </button>
-                    );
-                  })}
-                  <div className="mt-4">
-                    <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
-                    <textarea
-                      value={aiChatInput}
-                      onChange={(e) => setAiChatInput(e.target.value)}
-                      placeholder="例: 昨日カレーだったので違うものがいい、野菜多めで..."
-                      className="w-full p-3 rounded-[10px] text-[13px] outline-none resize-none"
-                      style={{ background: colors.bg, minHeight: 80 }}
-                    />
-                  </div>
-                </div>
-                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
-                  <button 
-                    onClick={handleGenerateSingleMeal}
-                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
-                    style={{ background: colors.accent }}
-                  >
-                    <Sparkles size={16} color="#fff" />
-                    <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>この1食をAIに提案してもらう</span>
-                  </button>
-                </div>
-              </motion.div>
+              <AiMealModal
+                addMealKey={addMealKey}
+                addMealDayIndex={addMealDayIndex}
+                weekDates={weekDates}
+                selectedConditions={selectedConditions}
+                aiChatInput={aiChatInput}
+                onClose={() => setActiveModal(null)}
+                onChangeConditions={setSelectedConditions}
+                onChangeAiChatInput={setAiChatInput}
+                onGenerateSingleMeal={handleGenerateSingleMeal}
+              />
             )}
 
             {/* Edit Meal Modal */}
             {activeModal === 'editMeal' && editingMeal && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl"
-                style={{ background: colors.card }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex justify-between items-center mb-4">
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>食事を変更</span>
-                  <button onClick={() => { setActiveModal(null); setEditingMeal(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 4 }}>料理名</label>
-                    <input
-                      type="text"
-                      value={editMealName}
-                      onChange={(e) => setEditMealName(e.target.value)}
-                      className="w-full p-3 rounded-xl text-[14px] outline-none"
-                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 4 }}>タイプ</label>
-                    <div className="flex flex-wrap gap-2">
-                      {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).map(([key, mode]) => {
-                        const ModeIcon = mode.icon;
-                        const isSelected = editMealMode === key;
-                        return (
-                          <button
-                            key={key}
-                            onClick={() => setEditMealMode(key)}
-                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-                            style={{ 
-                              background: isSelected ? mode.bg : colors.bg,
-                              border: isSelected ? `2px solid ${mode.color}` : '2px solid transparent'
-                            }}
-                          >
-                            <ModeIcon size={14} color={isSelected ? mode.color : colors.textMuted} />
-                            <span style={{ fontSize: 12, color: isSelected ? mode.color : colors.textMuted }}>{mode.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <button
-                    onClick={saveEditMeal}
-                    className="w-full p-3 rounded-xl font-semibold text-[14px]"
-                    style={{ background: colors.accent, color: '#fff' }}
-                  >
-                    保存する
-                  </button>
-                </div>
-              </motion.div>
+              <EditMealModal
+                editMealName={editMealName}
+                editMealMode={editMealMode}
+                modeConfig={MODE_CONFIG}
+                onClose={() => { setActiveModal(null); setEditingMeal(null); }}
+                onChangeName={setEditMealName}
+                onChangeMode={setEditMealMode}
+                onSave={saveEditMeal}
+              />
             )}
 
             {/* AI Regenerate Meal Modal */}
             {activeModal === 'regenerateMeal' && regeneratingMeal && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '70vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={18} color={colors.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>
-                      {MEAL_LABELS[regeneratingMeal.mealType as MealType]}をAIで変更
-                    </span>
-                  </div>
-                  <button onClick={() => { setActiveModal(null); setRegeneratingMeal(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-4 overflow-auto">
-                  <div className="p-3 rounded-xl mb-4" style={{ background: colors.bg }}>
-                    <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 4px' }}>現在の献立</p>
-                    <p style={{ fontSize: 14, fontWeight: 500, color: colors.text, margin: 0 }}>{regeneratingMeal.dishName}</p>
-                  </div>
-                  
-                  <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>新しい条件を指定（複数選択可）</p>
-                  {AI_CONDITIONS.map((text, i) => {
-                    const isSelected = selectedConditions.includes(text);
-                    return (
-                      <button
-                        key={i}
-                        data-testid={`regen-condition-${text}`}
-                        onClick={() => setSelectedConditions(prev => isSelected ? prev.filter(c => c !== text) : [...prev, text])}
-                        className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
-                        style={{
-                          background: isSelected ? colors.accentLight : colors.bg,
-                          color: isSelected ? colors.accent : colors.text,
-                          border: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent'
-                        }}
-                      >
-                        <span>{text}</span>
-                        {isSelected && <Check size={16} color={colors.accent} />}
-                      </button>
-                    );
-                  })}
-                  <div className="mt-4">
-                    <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
-                    <textarea
-                      value={aiChatInput}
-                      onChange={(e) => setAiChatInput(e.target.value)}
-                      placeholder="例: もっとヘルシーに、魚料理がいい..."
-                      className="w-full p-3 rounded-[10px] text-[13px] outline-none resize-none"
-                      style={{ background: colors.bg, minHeight: 80 }}
-                    />
-                  </div>
-                </div>
-                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
-                  <button 
-                    onClick={handleRegenerateMeal}
-                    disabled={isRegenerating}
-                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
-                    style={{ background: colors.accent, opacity: isRegenerating ? 0.7 : 1 }}
-                  >
-                    {isRegenerating ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIが新しい献立を考え中...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} color="#fff" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIで別の献立に変更</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </motion.div>
+              <RegenerateMealModal
+                regeneratingMeal={regeneratingMeal}
+                selectedConditions={selectedConditions}
+                aiChatInput={aiChatInput}
+                isRegenerating={isRegenerating}
+                onClose={() => { setActiveModal(null); setRegeneratingMeal(null); }}
+                onChangeConditions={setSelectedConditions}
+                onChangeAiChatInput={setAiChatInput}
+                onRegenerateMeal={handleRegenerateMeal}
+              />
             )}
 
             {/* Manual Edit Modal */}
             {activeModal === 'manualEdit' && manualEditMeal && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '75vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <Pencil size={18} color={colors.textLight} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>手動で変更</span>
-                  </div>
-                  <button onClick={() => { setActiveModal(null); setManualEditMeal(null); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-4 overflow-auto">
-                  {/* Mode Selection */}
-                  <div className="mb-4">
-                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>タイプ</label>
-                    <div className="flex flex-wrap gap-2">
-                      {(Object.entries(MODE_CONFIG) as [MealMode, typeof MODE_CONFIG['cook']][]).map(([key, mode]) => {
-                        const ModeIcon = mode.icon;
-                        const isSelected = manualMode === key;
-                        return (
-                          <button
-                            key={key}
-                            onClick={() => setManualMode(key)}
-                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-                            style={{ 
-                              background: isSelected ? mode.bg : colors.bg,
-                              border: isSelected ? `2px solid ${mode.color}` : '2px solid transparent'
-                            }}
-                          >
-                            <ModeIcon size={14} color={isSelected ? mode.color : colors.textMuted} />
-                            <span style={{ fontSize: 12, color: isSelected ? mode.color : colors.textMuted }}>{mode.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <label style={{ fontSize: 12, color: colors.textMuted }}>市販品・外食メニューから選ぶ</label>
-                      {selectedCatalogProduct && (
-                        <button
-                          onClick={() => {
-                            setSelectedCatalogProduct(null);
-                            setCatalogQuery('');
-                          }}
-                          className="text-[12px]"
-                          style={{ color: colors.textLight }}
-                        >
-                          解除
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      type="text"
-                      value={catalogQuery}
-                      onChange={(e) => {
-                        setCatalogQuery(e.target.value);
-                        if (!e.target.value.trim()) {
-                          setSelectedCatalogProduct(null);
-                        }
-                      }}
-                      placeholder="商品名で検索"
-                      className="w-full p-3 rounded-xl text-[13px] outline-none"
-                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                    />
-                    <p style={{ fontSize: 11, color: colors.textMuted, margin: '6px 0 0 0' }}>
-                      コンビニだけでなく、今後はスーパーや外食メニューも同じ catalog で追加します。
-                    </p>
-
-                    {selectedCatalogProduct && (
-                      <div
-                        className="mt-3 p-3 rounded-2xl"
-                        style={{ background: colors.purpleLight, border: `1px solid ${colors.purple}` }}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p style={{ fontSize: 12, color: colors.purple, margin: '0 0 4px 0', fontWeight: 600 }}>
-                              選択中
-                            </p>
-                            <p style={{ fontSize: 14, color: colors.text, margin: 0, fontWeight: 600 }}>
-                              {selectedCatalogProduct.name}
-                            </p>
-                            <p style={{ fontSize: 12, color: colors.textLight, margin: '4px 0 0 0' }}>
-                              {selectedCatalogProduct.brandName}
-                              {selectedCatalogProduct.priceYen ? ` / ${selectedCatalogProduct.priceYen}円` : ''}
-                            </p>
-                          </div>
-                          <div style={{ fontSize: 12, color: colors.textLight, textAlign: 'right' }}>
-                            <div>{selectedCatalogProduct.caloriesKcal ?? '-'} kcal</div>
-                            <div>P {formatNutrition(selectedCatalogProduct.proteinG)}g</div>
-                            <div>F {formatNutrition(selectedCatalogProduct.fatG)}g</div>
-                            <div>C {formatNutrition(selectedCatalogProduct.carbsG)}g</div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {(isCatalogSearching || catalogSearchError || catalogResults.length > 0) && (
-                      <div className="mt-3 space-y-2">
-                        {isCatalogSearching && (
-                          <p style={{ fontSize: 12, color: colors.textMuted, margin: 0 }}>検索中...</p>
-                        )}
-                        {catalogSearchError && (
-                          <p style={{ fontSize: 12, color: colors.danger, margin: 0 }}>{catalogSearchError}</p>
-                        )}
-                        {catalogResults.map((product) => {
-                          const isSelected = selectedCatalogProduct?.id === product.id;
-                          return (
-                            <button
-                              key={product.id}
-                              onClick={() => applyCatalogProductToManualEdit(product)}
-                              className="w-full p-3 rounded-2xl text-left"
-                              style={{
-                                background: isSelected ? colors.purpleLight : colors.bg,
-                                border: isSelected ? `1px solid ${colors.purple}` : `1px solid ${colors.border}`,
-                              }}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p style={{ fontSize: 12, color: colors.textMuted, margin: '0 0 4px 0' }}>
-                                    {product.brandName}
-                                  </p>
-                                  <p style={{ fontSize: 13, color: colors.text, margin: 0, fontWeight: 600 }}>
-                                    {product.name}
-                                  </p>
-                                  <p style={{ fontSize: 11, color: colors.textLight, margin: '4px 0 0 0' }}>
-                                    {product.categoryCode || '分類なし'}
-                                    {product.priceYen ? ` / ${product.priceYen}円` : ''}
-                                  </p>
-                                </div>
-                                <div style={{ fontSize: 11, color: colors.textLight, textAlign: 'right' }}>
-                                  <div>{product.caloriesKcal ?? '-'} kcal</div>
-                                  <div>P {formatNutrition(product.proteinG)}g</div>
-                                  <div>F {formatNutrition(product.fatG)}g</div>
-                                  <div>C {formatNutrition(product.carbsG)}g</div>
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Dishes */}
-                  <div className="mb-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <label style={{ fontSize: 12, color: colors.textMuted }}>料理（複数可）</label>
-                      <button onClick={addManualDish} className="text-[12px] flex items-center gap-1" style={{ color: colors.accent }}>
-                        <Plus size={12} /> 追加
-                      </button>
-                    </div>
-                    {manualDishes.map((dish, idx) => (
-                      <div key={idx} className="flex gap-2 mb-2">
-                        <select
-                          value={dish.role || 'main'}
-                          onChange={(e) => updateManualDish(idx, 'role', e.target.value)}
-                          className="w-20 p-2 rounded-lg text-[12px] outline-none"
-                          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                        >
-                          <option value="main">主菜</option>
-                          <option value="side">副菜</option>
-                          <option value="soup">汁物</option>
-                          <option value="rice">ご飯</option>
-                          <option value="salad">サラダ</option>
-                          <option value="dessert">デザート</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={dish.name}
-                          onChange={(e) => updateManualDish(idx, 'name', e.target.value)}
-                          placeholder="料理名"
-                          className="flex-1 p-2 rounded-lg text-[13px] outline-none"
-                          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                        />
-                        <input
-                          type="number"
-                          value={dish.calories_kcal || ''}
-                          onChange={(e) => updateManualDish(idx, 'calories_kcal', parseInt(e.target.value) || 0)}
-                          placeholder="kcal"
-                          className="w-16 p-2 rounded-lg text-[13px] outline-none text-center"
-                          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                        />
-                        {manualDishes.length > 1 && (
-                          <button onClick={() => removeManualDish(idx)} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: colors.dangerLight }}>
-                            <Trash2 size={14} color={colors.danger} />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  {manualEditMeal.imageUrl && (
-                    <div className="mb-4">
-                      <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>現在の画像</label>
-                      <div className="relative h-40 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
-                        <Image
-                          src={manualEditMeal.imageUrl}
-                          alt={manualEditMeal.dishName || 'Meal image'}
-                          fill
-                          sizes="(max-width: 1024px) 100vw, 50vw"
-                          className="object-cover"
-                        />
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                    <button
-                      onClick={() => {
-                        setActiveModal('photoEdit');
-                        setPhotoEditMeal(manualEditMeal);
-                      }}
-                      className="w-full p-3 rounded-xl flex items-center justify-center gap-2"
-                      style={{ background: colors.blueLight, border: `1px solid ${colors.blue}` }}
-                    >
-                      <Camera size={16} color={colors.blue} />
-                      <span style={{ fontSize: 13, color: colors.blue }}>写真から入力</span>
-                    </button>
-                    <button
-                      onClick={openImageGenerate}
-                      className="w-full p-3 rounded-xl flex items-center justify-center gap-2"
-                      style={{ background: colors.accentLight, border: `1px solid ${colors.accent}` }}
-                    >
-                      <ImageIcon size={16} color={colors.accent} />
-                      <span style={{ fontSize: 13, color: colors.accent }}>AIで画像生成</span>
-                    </button>
-                  </div>
-                </div>
-                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
-                  <button 
-                    onClick={saveManualEdit}
-                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2"
-                    style={{ background: colors.accent }}
-                  >
-                    <Check size={16} color="#fff" />
-                    <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>保存する</span>
-                  </button>
-                </div>
-              </motion.div>
+              <ManualEditModal
+                manualEditMeal={manualEditMeal}
+                manualDishes={manualDishes}
+                manualMode={manualMode}
+                modeConfig={MODE_CONFIG}
+                catalogQuery={catalogQuery}
+                catalogResults={catalogResults}
+                selectedCatalogProduct={selectedCatalogProduct}
+                isCatalogSearching={isCatalogSearching}
+                catalogSearchError={catalogSearchError}
+                onClose={() => { setActiveModal(null); setManualEditMeal(null); }}
+                onChangeMode={setManualMode}
+                onChangeCatalogQuery={setCatalogQuery}
+                onSelectCatalogProduct={setSelectedCatalogProduct}
+                onApplyCatalogProduct={applyCatalogProductToManualEdit}
+                onAddDish={addManualDish}
+                onRemoveDish={removeManualDish}
+                onUpdateDish={updateManualDish}
+                onOpenPhotoEdit={() => { setActiveModal('photoEdit'); setPhotoEditMeal(manualEditMeal); }}
+                onOpenImageGenerate={openImageGenerate}
+                onSave={saveManualEdit}
+              />
             )}
 
+            {/* Image Generate Modal */}
             {activeModal === 'imageGenerate' && imageGenerateMeal && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '78vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <ImageIcon size={18} color={colors.accent} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>AIで料理画像を生成</span>
-                    {imageReferencePreviews.length > 0 && (
-                      <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.accentLight, color: colors.accent }}>
-                        参照 {imageReferencePreviews.length}枚
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => closeImageGenerateModal(true)}
-                    disabled={isGeneratingMealImage}
-                    className="w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-50"
-                    style={{ background: colors.bg }}
-                  >
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-4 overflow-auto">
-                  {imageGenerateMeal.imageUrl && (
-                    <div className="mb-4">
-                      <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>現在の画像</label>
-                      <div className="relative h-40 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
-                        <Image
-                          src={imageGenerateMeal.imageUrl}
-                          alt={imageGenerateMeal.dishName || 'Meal image'}
-                          fill
-                          sizes="(max-width: 1024px) 100vw, 50vw"
-                          className="object-cover"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mb-4">
-                    <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>生成したい画像の説明</label>
-                    <textarea
-                      value={imageGenerationPrompt}
-                      onChange={(e) => setImageGenerationPrompt(e.target.value)}
-                      placeholder="例: 彩りの良い和風ハンバーグ定食、湯気のある自然光、木のテーブル"
-                      rows={4}
-                      className="w-full p-3 rounded-2xl text-[13px] outline-none resize-none"
-                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-                    />
-                    <p style={{ fontSize: 11, color: colors.textMuted, marginTop: 8 }}>
-                      料理名だけでも生成できます。盛り付け、雰囲気、器の指定も追加できます。
-                    </p>
-                  </div>
-
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <label style={{ fontSize: 12, color: colors.textMuted }}>参照画像（任意・複数可）</label>
-                      <button
-                        onClick={() => imageGenerateInputRef.current?.click()}
-                        className="text-[12px] flex items-center gap-1"
-                        style={{ color: colors.accent }}
-                      >
-                        <Plus size={12} /> 追加
-                      </button>
-                    </div>
-
-                    <input
-                      type="file"
-                      ref={imageGenerateInputRef}
-                      accept="image/*"
-                      multiple
-                      onChange={handleImageReferenceSelect}
-                      className="hidden"
-                    />
-
-                    {imageReferencePreviews.length > 0 ? (
-                      <div className="grid grid-cols-3 gap-2">
-                        {imageReferencePreviews.map((preview, idx) => (
-                          <div key={idx} className="relative aspect-square">
-                            <Image
-                              src={preview}
-                              alt={`Reference ${idx + 1}`}
-                              fill
-                              sizes="(max-width: 768px) 33vw, 120px"
-                              unoptimized
-                              className="rounded-lg object-cover"
-                            />
-                            <button
-                              onClick={() => removeImageReference(idx)}
-                              className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center"
-                              style={{ background: 'rgba(0,0,0,0.6)' }}
-                            >
-                              <X size={12} color="#fff" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => imageGenerateInputRef.current?.click()}
-                        className="w-full p-6 rounded-2xl flex flex-col items-center gap-2"
-                        style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
-                      >
-                        <ImageIcon size={32} color={colors.textMuted} />
-                        <span style={{ fontSize: 13, color: colors.textMuted }}>参考画像を追加する</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="p-3 rounded-xl" style={{ background: colors.accentLight }}>
-                    <p style={{ fontSize: 11, color: colors.accent, margin: 0 }}>
-                      AIが料理画像を新規生成します。参照画像を追加すると、盛り付けや色味を寄せやすくなります。
-                    </p>
-                  </div>
-                </div>
-                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
-                  <button
-                    onClick={generateMealImage}
-                    disabled={!imageGenerationPrompt.trim() || isGeneratingMealImage}
-                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
-                    style={{ background: colors.accent }}
-                  >
-                    {isGeneratingMealImage ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>画像を生成中...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} color="#fff" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>料理画像を生成する</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </motion.div>
+              <ImageGenerateModal
+                imageGenerateMeal={{ ...imageGenerateMeal, imageUrl: imageGenerateMeal.imageUrl ?? undefined }}
+                imageGenerationPrompt={imageGenerationPrompt}
+                imageReferencePreviews={imageReferencePreviews}
+                isGeneratingMealImage={isGeneratingMealImage}
+                onClose={() => closeImageGenerateModal(true)}
+                onChangePrompt={setImageGenerationPrompt}
+                onAddReferenceImages={(files: FileList) => {
+                  const newFiles = Array.from(files);
+                  setImageReferenceFiles(prev => [...prev, ...newFiles]);
+                  newFiles.forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                      if (e.target?.result) {
+                        setImageReferencePreviews(prev => [...prev, e.target!.result as string]);
+                      }
+                    };
+                    reader.readAsDataURL(file);
+                  });
+                }}
+                onRemoveReferenceImage={removeImageReference}
+                onGenerate={generateMealImage}
+              />
             )}
 
-            {/* Photo Edit Modal（複数枚対応） */}
+            {/* Photo Edit Modal */}
             {activeModal === 'photoEdit' && photoEditMeal && (
-              <motion.div
-                initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
-                style={{ background: colors.card, maxHeight: '75vh' }}
-              >
-                <div className="flex justify-between items-center px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <div className="flex items-center gap-2">
-                    <Camera size={18} color={colors.blue} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>写真から入力</span>
-                    {photoPreviews.length > 0 && (
-                      <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.accentLight, color: colors.accent }}>
-                        {photoPreviews.length}枚
-                      </span>
-                    )}
-                  </div>
-                  <button onClick={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-                    <X size={14} color={colors.textLight} />
-                  </button>
-                </div>
-                <div className="flex-1 p-4 overflow-auto">
-                  <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>
-                    食事の写真を撮影またはアップロードすると、AIが料理を認識して栄養素を推定します。<br/>
-                    <strong>複数枚の写真をまとめて追加できます。</strong>
-                  </p>
-                  
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    accept="image/*"
-                    capture="environment"
-                    multiple
-                    onChange={handlePhotoSelect}
-                    className="hidden"
-                  />
-                  
-                  {/* 選択済み写真のプレビュー */}
-                  {photoPreviews.length > 0 && (
-                    <div className="mb-4">
-                      <div className="grid grid-cols-3 gap-2">
-                        {photoPreviews.map((preview, idx) => (
-                          <div key={idx} className="relative aspect-square">
-                            <Image
-                              src={preview}
-                              alt={`Preview ${idx + 1}`}
-                              fill
-                              sizes="(max-width: 768px) 33vw, 120px"
-                              unoptimized
-                              className="rounded-lg object-cover"
-                            />
-                            <button
-                              onClick={() => removePhoto(idx)}
-                              className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center"
-                              style={{ background: 'rgba(0,0,0,0.6)' }}
-                            >
-                              <X size={12} color="#fff" />
-                            </button>
-                          </div>
-                        ))}
-                        {/* 追加ボタン */}
-                        <button
-                          onClick={() => {
-                            const input = document.createElement('input');
-                            input.type = 'file';
-                            input.accept = 'image/*';
-                            input.multiple = true;
-                            input.onchange = (e) => handlePhotoSelect(e as any);
-                            input.click();
-                          }}
-                          className="aspect-square rounded-lg flex flex-col items-center justify-center"
-                          style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
-                        >
-                          <Plus size={24} color={colors.textMuted} />
-                          <span style={{ fontSize: 10, color: colors.textMuted }}>追加</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* 写真未選択時のボタン */}
-                  {photoPreviews.length === 0 && (
-                    <div className="flex gap-3 mb-4">
-                      <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex-1 p-6 rounded-xl flex flex-col items-center gap-2"
-                        style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
-                      >
-                        <Camera size={32} color={colors.textMuted} />
-                        <span style={{ fontSize: 13, color: colors.textMuted }}>撮影する</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          const input = document.createElement('input');
-                          input.type = 'file';
-                          input.accept = 'image/*';
-                          input.multiple = true;
-                          input.onchange = (e) => handlePhotoSelect(e as any);
-                          input.click();
-                        }}
-                        className="flex-1 p-6 rounded-xl flex flex-col items-center gap-2"
-                        style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
-                      >
-                        <ImageIcon size={32} color={colors.textMuted} />
-                        <span style={{ fontSize: 13, color: colors.textMuted }}>選択する</span>
-                      </button>
-                    </div>
-                  )}
-                  
-                  <div className="p-3 rounded-xl" style={{ background: colors.blueLight }}>
-                    <p style={{ fontSize: 11, color: colors.blue, margin: 0 }}>
-                      💡 AIが写真から料理名、カロリー、栄養素を自動で推定します。複数枚の場合はまとめて解析します。
-                    </p>
-                  </div>
-                </div>
-                <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
-                  <button 
-                    onClick={analyzePhotoWithAI}
-                    disabled={photoFiles.length === 0 || isAnalyzingPhoto}
-                    className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
-                    style={{ background: colors.blue }}
-                  >
-                    {isAnalyzingPhoto ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>AIが解析中...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} color="#fff" />
-                        <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>
-                          {photoFiles.length > 1 ? `${photoFiles.length}枚をAIで解析` : 'AIで解析する'}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </motion.div>
+              <PhotoEditModal
+                photoPreviews={photoPreviews}
+                photoFilesCount={photoFiles.length}
+                isAnalyzingPhoto={isAnalyzingPhoto}
+                onClose={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }}
+                onPhotoSelect={(files: FileList) => {
+                  const newFiles = Array.from(files);
+                  setPhotoFiles(prev => [...prev, ...newFiles]);
+                  newFiles.forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                      if (e.target?.result) {
+                        setPhotoPreviews(prev => [...prev, e.target!.result as string]);
+                      }
+                    };
+                    reader.readAsDataURL(file);
+                  });
+                }}
+                onRemovePhoto={removePhoto}
+                onAnalyze={analyzePhotoWithAI}
+              />
             )}
           </>
         )}
@@ -7834,672 +5722,201 @@ export default function WeeklyMenuPage() {
       )}
 
       {/* 栄養詳細モーダル */}
-      <AnimatePresence>
-        {showNutritionDetailModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-            onClick={() => setShowNutritionDetailModal(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
-                <div className="flex items-center gap-2">
-                  <BarChart3 size={20} style={{ color: colors.accent }} />
-                  <h2 className="text-lg font-bold" style={{ color: colors.text }}>
-                    {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()} の栄養分析
-                  </h2>
-                </div>
-                <button
-                  onClick={() => setShowNutritionDetailModal(false)}
-                  className="p-2 rounded-full hover:bg-gray-100 transition-colors"
-                >
-                  <X size={20} style={{ color: colors.textLight }} />
-                </button>
-              </div>
-
-              {/* Content */}
-              <div className="p-4 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 140px)' }}>
-                {(() => {
-                  const dayNutrition = getDayTotalNutrition(currentDay);
-                  const mealCount = currentDay?.meals?.length || 0;
-                  return (
-                    <>
-                      {/* レーダーチャート（大きく表示） */}
-                      <div className="flex justify-center mb-4">
-                        <NutritionRadarChart
-                          nutrition={dayNutrition}
-                          selectedNutrients={radarChartNutrients}
-                          size={220}
-                          showLabels={true}
-                        />
-                      </div>
-
-                      {/* AI栄養士のコメント（褒め＋アドバイス） */}
-                      <div className="mb-4 space-y-3">
-                        {/* 褒めコメント */}
-                        <div className="p-3 rounded-xl" style={{ background: colors.successLight }}>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <Heart size={14} color={colors.success} fill={colors.success} />
-                              <span style={{ fontSize: 12, fontWeight: 600, color: colors.success }}>褒めポイント</span>
-                            </div>
-                            {(praiseComment || nutritionFeedback) && !isLoadingFeedback && (
-                              <button
-                                onClick={() => {
-                                  const currentDateStr = weekDates[selectedDayIndex]?.dateStr;
-                                  if (currentDateStr) {
-                                    fetchNutritionFeedback(currentDateStr, true);
-                                  }
-                                }}
-                                className="text-[10px] px-2 py-0.5 rounded"
-                                style={{ background: colors.bg, color: colors.textMuted }}
-                              >
-                                再分析
-                              </button>
-                            )}
-                          </div>
-                          {isLoadingFeedback ? (
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.success, borderTopColor: 'transparent' }} />
-                              <span style={{ fontSize: 11, color: colors.textLight }}>あなたの献立を分析中...</span>
-                            </div>
-                          ) : praiseComment ? (
-                            <p style={{ fontSize: 13, color: colors.text, lineHeight: 1.6 }}>{praiseComment}</p>
-                          ) : (
-                            <p style={{ fontSize: 11, color: colors.textMuted }}>分析データがありません</p>
-                          )}
-                        </div>
-
-                        {/* 改善アドバイス */}
-                        {(nutritionFeedback || isLoadingFeedback) && (
-                          <div className="p-3 rounded-xl" style={{ background: colors.accentLight }}>
-                            <div className="flex items-center gap-2 mb-2">
-                              <Sparkles size={14} color={colors.accent} />
-                              <span style={{ fontSize: 12, fontWeight: 600, color: colors.accent }}>改善アドバイス</span>
-                            </div>
-                            {isLoadingFeedback ? (
-                              <span style={{ fontSize: 11, color: colors.textMuted }}>...</span>
-                            ) : (
-                              <p style={{ fontSize: 12, color: colors.text, lineHeight: 1.6 }}>{nutritionFeedback}</p>
-                            )}
-                          </div>
-                        )}
-
-                        {/* 栄養豆知識 */}
-                        {nutritionTip && (
-                          <div className="p-3 rounded-lg flex items-start gap-2" style={{ background: colors.blueLight }}>
-                            <span style={{ fontSize: 12 }}>💡</span>
-                            <p style={{ fontSize: 11, color: colors.blue, lineHeight: 1.5 }}>{nutritionTip}</p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* この提案で献立を改善ボタン */}
-                      {nutritionFeedback && !isLoadingFeedback ? (
-                        <div className="mb-4">
-                          <>
-                            <div style={{ marginBottom: 12 }}></div>
-                            {/* この提案で献立を改善ボタン */}
-                            <button
-                              onClick={() => {
-                                setShowImproveMealModal(true);
-                                setImproveNextDay(false); // リセット
-                                // デフォルトで全食事を選択
-                                const mealsForDay = currentDay?.meals?.map(m => m.mealType) || [];
-                                const uniqueMeals = [...new Set(mealsForDay)] as MealType[];
-                                setImproveMealTargets(uniqueMeals.length > 0 ? uniqueMeals : ['breakfast', 'lunch', 'dinner']);
-                              }}
-                              className="w-full p-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all hover:opacity-90"
-                              style={{ background: colors.accent, color: '#fff', fontSize: 12 }}
-                            >
-                              <RefreshCw size={14} />
-                              この提案で献立を改善
-                            </button>
-                          </>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 mb-4">
-                          <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                          <span style={{ fontSize: 11, color: colors.textLight }}>分析を準備中...</span>
-                        </div>
-                      )}
-
-                      {/* 全栄養素一覧 */}
-                      <div className="mb-4">
-                        <p style={{ fontSize: 13, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
-                          📊 全栄養素（{mealCount}食分）
-                        </p>
-                        {Object.entries(NUTRIENT_BY_CATEGORY).map(([category, nutrients]) => (
-                          <div key={category} className="mb-3">
-                            <p className="text-[10px] font-bold mb-1.5" style={{ color: colors.textMuted }}>
-                              {CATEGORY_LABELS[category]}
-                            </p>
-                            <div className="grid grid-cols-2 gap-2">
-                              {nutrients.map(def => {
-                                const value = (dayNutrition as any)[def.key] ?? 0;
-                                const percentage = calculateDriPercentage(def.key, value);
-                                const isGood = percentage >= 80 && percentage <= 120;
-                                const isLow = percentage < 50;
-                                const isHigh = percentage > 150;
-                                return (
-                                  <div key={def.key} className="flex items-center gap-2 p-1.5 rounded" style={{ background: colors.bg }}>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex justify-between items-center">
-                                        <span className="text-[10px] truncate" style={{ color: colors.textLight }}>
-                                          {def.label}
-                                        </span>
-                                        <span className="text-[9px]" style={{ color: colors.textMuted }}>
-                                          {value.toFixed(def.decimals)}{def.unit}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-1 mt-0.5">
-                                        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: colors.border }}>
-                                          <div
-                                            className="h-full rounded-full"
-                                            style={{
-                                              width: `${Math.min(percentage, 100)}%`,
-                                              background: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted,
-                                            }}
-                                          />
-                                        </div>
-                                        <span 
-                                          className="text-[8px] w-7 text-right font-medium"
-                                          style={{ color: isGood ? colors.success : isLow ? colors.warning : isHigh ? colors.accent : colors.textMuted }}
-                                        >
-                                          {percentage}%
-                                        </span>
-                                      </div>
-                                    </div>
-    </div>
-  );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* レーダーチャート表示栄養素の変更 */}
-                      <div className="pt-3" style={{ borderTop: `1px solid ${colors.border}` }}>
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-[11px]" style={{ color: colors.textMuted }}>
-                            レーダーチャートに表示する栄養素（{isEditingRadarNutrients ? tempRadarNutrients.length : radarChartNutrients.length}角形）
-                          </p>
-                          {!isEditingRadarNutrients && (
-                            <button
-                              onClick={() => {
-                                setTempRadarNutrients([...radarChartNutrients]);
-                                setIsEditingRadarNutrients(true);
-                              }}
-                              className="text-[10px] px-2 py-1 rounded"
-                              style={{ background: colors.bg, color: colors.accent }}
-                            >
-                              変更
-                            </button>
-                          )}
-                        </div>
-
-                        {isEditingRadarNutrients ? (
-                          // 編集モード: 栄養素を選択
-                          <div>
-                            <p className="text-[9px] mb-2" style={{ color: colors.textMuted }}>
-                              3〜8個を選択してください（選択順で表示）
-                            </p>
-                            {Object.entries(NUTRIENT_BY_CATEGORY).map(([category, nutrients]) => (
-                              <div key={category} className="mb-2">
-                                <p className="text-[9px] font-bold mb-1" style={{ color: colors.textMuted }}>
-                                  {CATEGORY_LABELS[category]}
-                                </p>
-                                <div className="flex flex-wrap gap-1">
-                                  {nutrients.map(def => {
-                                    const isSelected = tempRadarNutrients.includes(def.key);
-                                    const index = tempRadarNutrients.indexOf(def.key);
-                                    return (
-                                      <button
-                                        key={def.key}
-                                        onClick={() => {
-                                          if (isSelected) {
-                                            setTempRadarNutrients(prev => prev.filter(k => k !== def.key));
-                                          } else if (tempRadarNutrients.length < 8) {
-                                            setTempRadarNutrients(prev => [...prev, def.key]);
-                                          }
-                                        }}
-                                        className="px-2 py-0.5 rounded-full text-[9px] transition-all flex items-center gap-1"
-                                        style={{
-                                          background: isSelected ? colors.accent : colors.bg,
-                                          color: isSelected ? '#fff' : colors.textLight,
-                                          opacity: !isSelected && tempRadarNutrients.length >= 8 ? 0.5 : 1,
-                                        }}
-                                      >
-                                        {isSelected && <span className="text-[8px]">{index + 1}</span>}
-                                        {def.label}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
-                            <div className="flex gap-2 mt-3">
-                              <button
-                                onClick={() => {
-                                  setIsEditingRadarNutrients(false);
-                                  setTempRadarNutrients([]);
-                                }}
-                                className="flex-1 py-2 rounded-lg text-xs"
-                                style={{ background: colors.bg, color: colors.textLight }}
-                              >
-                                キャンセル
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  if (tempRadarNutrients.length < 3) {
-                                    alert('3個以上選択してください');
-                                    return;
-                                  }
-                                  setIsSavingRadarNutrients(true);
-                                  try {
-                                    const res = await fetch('/api/profile', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ radarChartNutrients: tempRadarNutrients })
-                                    });
-                                    if (res.ok) {
-                                      setRadarChartNutrients(tempRadarNutrients);
-                                      setIsEditingRadarNutrients(false);
-                                      setTempRadarNutrients([]);
-                                    }
-                                  } catch (e) {
-                                    console.error('Failed to save radar chart nutrients:', e);
-                                  } finally {
-                                    setIsSavingRadarNutrients(false);
-                                  }
-                                }}
-                                disabled={tempRadarNutrients.length < 3 || isSavingRadarNutrients}
-                                className="flex-1 py-2 rounded-lg text-xs text-white disabled:opacity-50"
-                                style={{ background: colors.accent }}
-                              >
-                                {isSavingRadarNutrients ? '保存中...' : `保存（${tempRadarNutrients.length}角形）`}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          // 表示モード: 現在の選択を表示
-                          <div className="flex flex-wrap gap-1.5">
-                            {radarChartNutrients.map((key, idx) => {
-                              const def = getNutrientDefinition(key);
-                              return (
-                                <span
-                                  key={key}
-                                  className="px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1"
-                                  style={{ background: colors.accentLight, color: colors.accent }}
-                                >
-                                  <span className="text-[8px] opacity-70">{idx + 1}</span>
-                                  {def?.label}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <NutritionDetailModal
+        showNutritionDetailModal={showNutritionDetailModal}
+        selectedDayIndex={selectedDayIndex}
+        weekDates={weekDates}
+        dayNutrition={getDayTotalNutrition(currentDay)}
+        mealCount={currentDay?.meals?.length || 0}
+        radarChartNutrients={radarChartNutrients}
+        isEditingRadarNutrients={isEditingRadarNutrients}
+        tempRadarNutrients={tempRadarNutrients}
+        isSavingRadarNutrients={isSavingRadarNutrients}
+        isLoadingFeedback={isLoadingFeedback}
+        praiseComment={praiseComment}
+        nutritionFeedback={nutritionFeedback}
+        nutritionTip={nutritionTip}
+        onClose={() => setShowNutritionDetailModal(false)}
+        onOpenImprove={() => {
+          setShowImproveMealModal(true);
+          setImproveNextDay(false);
+          const mealsForDay = currentDay?.meals?.map((m: PlannedMeal) => m.mealType) || [];
+          const uniqueMeals = [...new Set(mealsForDay)] as MealType[];
+          setImproveMealTargets(uniqueMeals.length > 0 ? uniqueMeals : ['breakfast', 'lunch', 'dinner']);
+        }}
+        onRefetchFeedback={(dateStr) => fetchNutritionFeedback(dateStr, true)}
+        onStartEditRadar={() => { setTempRadarNutrients([...radarChartNutrients]); setIsEditingRadarNutrients(true); }}
+        onCancelEditRadar={() => { setIsEditingRadarNutrients(false); setTempRadarNutrients([]); }}
+        onToggleRadarNutrient={(key) => {
+          if (tempRadarNutrients.includes(key)) {
+            setTempRadarNutrients(prev => prev.filter(k => k !== key));
+          } else if (tempRadarNutrients.length < 8) {
+            setTempRadarNutrients(prev => [...prev, key]);
+          }
+        }}
+        onSaveRadarNutrients={async () => {
+          if (tempRadarNutrients.length < 3) {
+            alert('3個以上選択してください');
+            return;
+          }
+          setIsSavingRadarNutrients(true);
+          try {
+            const res = await fetch('/api/profile', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ radarChartNutrients: tempRadarNutrients })
+            });
+            if (res.ok) {
+              setRadarChartNutrients(tempRadarNutrients);
+              setIsEditingRadarNutrients(false);
+              setTempRadarNutrients([]);
+            }
+          } catch (e) {
+            console.error('Failed to save radar chart nutrients:', e);
+          } finally {
+            setIsSavingRadarNutrients(false);
+          }
+        }}
+      />
 
       {/* 献立改善の食事選択モーダル */}
-      <AnimatePresence>
-        {showImproveMealModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-            onClick={() => !isImprovingMeal && setShowImproveMealModal(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
-                <div className="flex items-center gap-2">
-                  <RefreshCw size={20} style={{ color: colors.accent }} />
-                  <h2 className="text-lg font-bold" style={{ color: colors.text }}>
-                    献立を改善
-                  </h2>
-                </div>
-                {!isImprovingMeal && (
-                  <button
-                    onClick={() => setShowImproveMealModal(false)}
-                    className="p-2 rounded-full hover:bg-gray-100 transition-colors"
-                  >
-                    <X size={20} style={{ color: colors.textLight }} />
-                  </button>
-                )}
-              </div>
+      <ImproveMealModal
+        showImproveMealModal={showImproveMealModal}
+        isImprovingMeal={isImprovingMeal}
+        selectedDayIndex={selectedDayIndex}
+        weekDates={weekDates}
+        improveMealTargets={improveMealTargets}
+        improveNextDay={improveNextDay}
+        nutritionFeedback={nutritionFeedback}
+        currentPlanDays={currentPlan?.days || []}
+        onClose={() => setShowImproveMealModal(false)}
+        onToggleMealTarget={(type) => {
+          if (improveMealTargets.includes(type)) {
+            setImproveMealTargets(improveMealTargets.filter(t => t !== type));
+          } else {
+            setImproveMealTargets([...improveMealTargets, type]);
+          }
+        }}
+        onSelectAllDay={() => {
+          setImproveNextDay(false);
+          if (improveMealTargets.length === 3) {
+            setImproveMealTargets([]);
+          } else {
+            setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
+          }
+        }}
+        onSelectNextDay={() => {
+          const nextIndex = Math.min(selectedDayIndex + 1, weekDates.length - 1);
+          if (nextIndex !== selectedDayIndex) {
+            setSelectedDayIndex(nextIndex);
+            setShowImproveMealModal(false);
+            setTimeout(() => {
+              setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
+              setShowImproveMealModal(true);
+            }, 100);
+          } else {
+            setImproveNextDay(true);
+            setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
+          }
+        }}
+        onImprove={async () => {
+          if (improveMealTargets.length === 0) {
+            alert('改善する食事を選択してください');
+            return;
+          }
 
-              {/* Content */}
-              <div className="p-4">
-                {isImprovingMeal ? (
-                  // 生成中
-                  <div className="py-8 text-center">
-                    <div className="w-12 h-12 border-3 border-t-transparent rounded-full animate-spin mx-auto mb-4" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                    <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>AI栄養士の提案で献立を改善中...</p>
-                    <p style={{ fontSize: 12, color: colors.textLight, marginTop: 8 }}>しばらくお待ちください</p>
-                  </div>
-                ) : (
-                  <>
-                    {/* 対象日表示 */}
-                    <div className="mb-4 p-3 rounded-lg" style={{ background: colors.bg }}>
-                      <p style={{ fontSize: 12, color: colors.textLight }}>対象日</p>
-                      <p style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
-                        {weekDates[selectedDayIndex]?.date.getMonth() + 1}月{weekDates[selectedDayIndex]?.date.getDate()}日（{weekDates[selectedDayIndex]?.dayOfWeek}）
-                        {weekDates[selectedDayIndex]?.dateStr === new Date().toISOString().split('T')[0] && <span className="ml-2 text-xs px-2 py-0.5 rounded-full" style={{ background: colors.accentLight, color: colors.accent }}>今日</span>}
-                      </p>
-                    </div>
+          setIsImprovingMeal(true);
 
-                    {/* AI栄養士のコメント抜粋 */}
-                    {nutritionFeedback && (
-                      <div className="mb-4 p-3 rounded-lg" style={{ background: colors.accentLight }}>
-                        <div className="flex items-center gap-1 mb-1">
-                          <Sparkles size={12} color={colors.accent} />
-                          <span style={{ fontSize: 10, fontWeight: 600, color: colors.accent }}>AI栄養士の提案</span>
-                        </div>
-                        <p style={{ fontSize: 11, color: colors.text, lineHeight: 1.5 }} className="line-clamp-3">
-                          {nutritionFeedback}
-                        </p>
-                      </div>
-                    )}
+          try {
+            const targetDateStr = improveNextDay
+              ? weekDates[selectedDayIndex + 1]?.dateStr
+              : weekDates[selectedDayIndex]?.dateStr;
 
-                    {/* 改善対象の選択 */}
-                    <div className="mb-4">
-                      <p style={{ fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
-                        どの食事を改善しますか？
-                      </p>
-                      {(() => {
-                        const targetDateStr = weekDates[selectedDayIndex]?.dateStr;
-                        const targetDay = currentPlan?.days?.find((d: MealPlanDay) => d.dayDate === targetDateStr);
-                        const todayStr = new Date().toISOString().split('T')[0];
-                        const isPast = targetDateStr && targetDateStr < todayStr;
-                        
-                        if (isPast) {
-                          // 過去の日は翌日を対象に
-                          return (
-                            <div className="p-3 rounded-lg text-center" style={{ background: colors.bg }}>
-                              <p style={{ fontSize: 12, color: colors.textLight, marginBottom: 8 }}>
-                                この日は過去のため、翌日の献立を改善します
-                              </p>
-                              <button
-                                onClick={() => {
-                                  // 翌日へ移動して再表示
-                                  const nextIndex = Math.min(selectedDayIndex + 1, weekDates.length - 1);
-                                  if (nextIndex !== selectedDayIndex) {
-                                    setSelectedDayIndex(nextIndex);
-                                    setShowImproveMealModal(false);
-                                    // 翌日のモーダルを再度開く
-                                    setTimeout(() => {
-                                      setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
-                                      setShowImproveMealModal(true);
-                                    }, 100);
-                                  }
-                                }}
-                                className="px-4 py-2 rounded-lg text-xs font-medium"
-                                style={{ background: colors.accent, color: '#fff' }}
-                              >
-                                翌日の献立を改善
-                              </button>
-                            </div>
-                          );
+            if (!targetDateStr) {
+              alert('対象日が見つかりません');
+              setIsImprovingMeal(false);
+              return;
+            }
+
+            const analysisDate = weekDates[selectedDayIndex]?.dateStr;
+            const userComment = nutritionFeedback
+              ? `${analysisDate}の栄養分析に基づくAI栄養士の提案を参考に改善してください：\n${nutritionFeedback}`
+              : undefined;
+
+            const targetSlots = improveMealTargets.map(mealType => ({
+              date: targetDateStr,
+              mealType,
+            }));
+
+            const requestRes = await fetch('/api/ai/menu/v4/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                targetSlots,
+                resolveExistingMeals: true,
+                note: userComment,
+                constraints: {},
+              }),
+            });
+
+            if (!requestRes.ok) {
+              const errorData = await requestRes.json().catch(() => ({}));
+              throw new Error(errorData.error || 'リクエストの作成に失敗しました');
+            }
+
+            const requestData = await requestRes.json();
+
+            setShowImproveMealModal(false);
+            setShowNutritionDetailModal(false);
+
+            const totalSlotsCount = targetSlots.length;
+            setIsGenerating(true);
+            setGenerationProgress({
+              phase: 'analyzing',
+              message: 'AI栄養士の提案を反映中...',
+              percentage: 5,
+              totalSlots: totalSlotsCount,
+              completedSlots: 0,
+            });
+
+            if (requestData.requestId) {
+              v4Generation.subscribeToProgress(
+                requestData.requestId,
+                async (progress: any) => {
+                  const uiProgress = convertV4ProgressToUIFormat(progress);
+                  setGenerationProgress(uiProgress);
+
+                  if (progress.status === 'completed' || progress.status === 'failed') {
+                    setIsGenerating(false);
+                    setGenerationProgress(null);
+                    const startStr = weekDates[0]?.dateStr;
+                    const endStr = weekDates[weekDates.length - 1]?.dateStr;
+                    if (startStr && endStr) {
+                      const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
+                      if (refreshRes.ok) {
+                        const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
+                        if (dailyMeals && dailyMeals.length > 0) {
+                          const newPlan = { days: dailyMeals };
+                          const newShoppingList = shoppingListData?.items || [];
+                          setCurrentPlan(newPlan);
+                          if (newShoppingList.length > 0) setShoppingList(newShoppingList);
+                          updateCalendarMealDatesFromDailyMeals(dailyMeals);
+                          weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
                         }
-                        
-                        const mealOptions: { type: MealType; label: string; icon: string }[] = [
-                          { type: 'breakfast', label: '朝食', icon: '🌅' },
-                          { type: 'lunch', label: '昼食', icon: '☀️' },
-                          { type: 'dinner', label: '夕食', icon: '🌙' },
-                        ];
-                        
-                        return (
-                          <div className="space-y-2">
-                            {mealOptions.map(opt => {
-                              const isSelected = improveMealTargets.includes(opt.type);
-                              const existingMeal = targetDay?.meals?.find((m: PlannedMeal) => m.mealType === opt.type);
-                              
-                              return (
-                                <button
-                                  key={opt.type}
-                                  onClick={() => {
-                                    if (isSelected) {
-                                      setImproveMealTargets(improveMealTargets.filter(t => t !== opt.type));
-                                    } else {
-                                      setImproveMealTargets([...improveMealTargets, opt.type]);
-                                    }
-                                  }}
-                                  className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all ${isSelected ? 'ring-2 ring-orange-400' : ''}`}
-                                  style={{
-                                    background: isSelected ? colors.accentLight : colors.bg,
-                                  }}
-                                >
-                                  <span className="text-xl">{opt.icon}</span>
-                                  <div className="flex-1 text-left">
-                                    <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{opt.label}</p>
-                                    <p style={{ fontSize: 11, color: colors.textLight }}>
-                                      {existingMeal?.dishes?.length 
-                                        ? `現在: ${existingMeal.dishes.map((d: DishDetail) => d.name).join('、')}` 
-                                        : '未設定'
-                                      }
-                                    </p>
-                                  </div>
-                                  <div 
-                                    className={`w-5 h-5 rounded-full flex items-center justify-center ${isSelected ? 'bg-white' : ''}`}
-                                    style={{ border: isSelected ? 'none' : `2px solid ${colors.border}` }}
-                                  >
-                                    {isSelected && <Check size={14} color={colors.accent} />}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                            
-                            {/* 1日全体を選択 */}
-                            <button
-                              onClick={() => {
-                                setImproveNextDay(false);
-                                if (improveMealTargets.length === 3) {
-                                  setImproveMealTargets([]);
-                                } else {
-                                  setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
-                                }
-                              }}
-                              className="w-full p-2 rounded-lg text-xs text-center transition-all"
-                              style={{ 
-                                background: !improveNextDay && improveMealTargets.length === 3 ? colors.accentLight : 'transparent',
-                                color: colors.accent 
-                              }}
-                            >
-                              {!improveNextDay && improveMealTargets.length === 3 ? '✓ この日1日を選択中' : 'この日1日全体を選択'}
-                            </button>
-                            
-                            {/* 翌日1日を改善 */}
-                            {(() => {
-                              const nextDayIndex = selectedDayIndex + 1;
-                              const nextDay = weekDates[nextDayIndex];
-                              if (!nextDay) return null;
-                              
-                              return (
-                                <button
-                                  onClick={() => {
-                                    setImproveNextDay(true);
-                                    setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
-                                  }}
-                                  className="w-full p-3 rounded-lg text-sm text-center transition-all flex items-center justify-center gap-2"
-                                  style={{ 
-                                    background: improveNextDay ? colors.accentLight : colors.bg,
-                                    color: improveNextDay ? colors.accent : colors.textLight,
-                                    border: improveNextDay ? `2px solid ${colors.accent}` : 'none'
-                                  }}
-                                >
-                                  <span>📅</span>
-                                  <span>
-                                    {improveNextDay ? '✓ ' : ''}翌日（{nextDay.date.getMonth() + 1}/{nextDay.date.getDate()}）1日を改善
-                                  </span>
-                                </button>
-                              );
-                            })()}
-                          </div>
-                        );
-                      })()}
-                    </div>
-
-                    {/* 実行ボタン */}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setShowImproveMealModal(false)}
-                        className="flex-1 py-3 rounded-lg text-sm"
-                        style={{ background: colors.bg, color: colors.textLight }}
-                      >
-                        キャンセル
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (improveMealTargets.length === 0) {
-                            alert('改善する食事を選択してください');
-                            return;
-                          }
-                          
-                          setIsImprovingMeal(true);
-                          
-                          try {
-                            // 翌日モードの場合は翌日の日付を使用
-                            const targetDateStr = improveNextDay 
-                              ? weekDates[selectedDayIndex + 1]?.dateStr 
-                              : weekDates[selectedDayIndex]?.dateStr;
-                            
-                            if (!targetDateStr) {
-                              alert('対象日が見つかりません');
-                              setIsImprovingMeal(false);
-                              return;
-                            }
-                            
-                            // AI栄養士のコメントをユーザーコメントとして使用
-                            const analysisDate = weekDates[selectedDayIndex]?.dateStr;
-                            const userComment = nutritionFeedback 
-                              ? `${analysisDate}の栄養分析に基づくAI栄養士の提案を参考に改善してください：\n${nutritionFeedback}`
-                              : undefined;
-                            
-                            // V4 Generateを呼び出すためのスロットを構築
-                            const targetSlots = improveMealTargets.map(mealType => ({
-                              date: targetDateStr,
-                              mealType,
-                            }));
-                            
-                            // V4 APIを直接呼び出し（リクエスト作成とEdge Function呼び出しを一括で行う）
-                            const requestRes = await fetch('/api/ai/menu/v4/generate', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                targetSlots,
-                                resolveExistingMeals: true,
-                                note: userComment,
-                                constraints: {},
-                              }),
-                            });
-                            
-                            if (!requestRes.ok) {
-                              const errorData = await requestRes.json().catch(() => ({}));
-                              throw new Error(errorData.error || 'リクエストの作成に失敗しました');
-                            }
-                            
-                            const requestData = await requestRes.json();
-                            
-                            // モーダルを閉じてメインページで進捗を確認
-                            setShowImproveMealModal(false);
-                            setShowNutritionDetailModal(false);
-                            
-                            // 進捗表示を開始（totalSlotsを正しく設定）
-                            const totalSlotsCount = targetSlots.length;
-                            setIsGenerating(true);
-                            setGenerationProgress({
-                              phase: 'analyzing',
-                              message: 'AI栄養士の提案を反映中...',
-                              percentage: 5,
-                              totalSlots: totalSlotsCount,
-                              completedSlots: 0,
-                            });
-                            
-                            // ポーリングで進捗を追跡（既存のV4用のRealtimeを使用）
-                            if (requestData.requestId) {
-                              v4Generation.subscribeToProgress(
-                                requestData.requestId,
-                                async (progress: any) => {
-                                  // 進捗更新
-                                  const uiProgress = convertV4ProgressToUIFormat(progress);
-                                  setGenerationProgress(uiProgress);
-                                  
-                                  // 完了したらデータを再取得
-                                  if (progress.status === 'completed' || progress.status === 'failed') {
-                                    setIsGenerating(false);
-                                    setGenerationProgress(null);
-                                    // データを再取得
-                                    const startStr = weekDates[0]?.dateStr;
-                                    const endStr = weekDates[weekDates.length - 1]?.dateStr;
-                                    if (startStr && endStr) {
-                                      const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
-                                      if (refreshRes.ok) {
-                                        const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-                                        if (dailyMeals && dailyMeals.length > 0) {
-                                          const newPlan = { days: dailyMeals };
-                                          const newShoppingList = shoppingListData?.items || [];
-                                          setCurrentPlan(newPlan);
-                                          if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-                                          updateCalendarMealDatesFromDailyMeals(dailyMeals);
-                                          // キャッシュも更新
-                                          weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              );
-                            }
-                          } catch (error) {
-                            console.error('Failed to improve meals:', error);
-                            alert('献立の改善に失敗しました。もう一度お試しください。');
-                          } finally {
-                            setIsImprovingMeal(false);
-                          }
-                        }}
-                        disabled={improveMealTargets.length === 0}
-                        className="flex-1 py-3 rounded-lg text-sm font-medium text-white disabled:opacity-50 flex items-center justify-center gap-2"
-                        style={{ background: colors.accent }}
-                      >
-                        <Sparkles size={14} />
-                        {improveNextDay 
-                          ? `翌日${improveMealTargets.length}食分を改善` 
-                          : `${improveMealTargets.length}食分を改善`
-                        }
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                      }
+                    }
+                  }
+                }
+              );
+            }
+          } catch (error) {
+            console.error('Failed to improve meals:', error);
+            alert('献立の改善に失敗しました。もう一度お試しください。');
+          } finally {
+            setIsImprovingMeal(false);
+          }
+        }}
+      />
     </div>
   );
 }
