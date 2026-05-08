@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import type { Tables } from '@homegohan/shared';
 
 /**
  * #133 CSV エクスポート
@@ -92,7 +93,7 @@ export async function GET(request: Request) {
   const rows: string[] = [headers.join(',')];
 
   for (const day of days ?? []) {
-    const meals = (day.planned_meals as any[]) ?? [];
+    const meals = (day.planned_meals as Pick<Tables<"planned_meals">, "id" | "meal_type" | "dish_name" | "description" | "calories_kcal" | "mode" | "source_type" | "is_completed" | "created_at">[]) ?? [];
     if (meals.length === 0) {
       // 献立のない日も 1 行記録
       rows.push(rowToCsv([

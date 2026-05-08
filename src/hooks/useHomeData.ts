@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
 import { formatLocalDate } from "@homegohan/shared";
+import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 
 // 今日の献立データ
@@ -328,16 +329,17 @@ export const useHomeData = () => {
         .lte('day_date', todayStr)
         .order('day_date', { ascending: false });
 
+      type DayWithStreakMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed">[] };
       if (daysData && daysData.length > 0) {
         let streak = 0;
-        const sortedDays = daysData.sort((a, b) => 
+        const sortedDays = (daysData as DayWithStreakMeals[]).sort((a, b) =>
           new Date(b.day_date).getTime() - new Date(a.day_date).getTime()
         );
 
         for (const day of sortedDays) {
-          const meals = (day as any).planned_meals || [];
+          const meals = day.planned_meals || [];
           // 完了した自炊のみカウント
-          const hasCompletedCookMeal = meals.some((m: any) => 
+          const hasCompletedCookMeal = meals.some((m) =>
             (m.mode === 'cook' || m.mode === 'quick' || !m.mode) && m.is_completed
           );
           
@@ -383,14 +385,15 @@ export const useHomeData = () => {
           d.setDate(d.getDate() - i);
           const dateStr = formatLocalDate(d);
           
-          const dayData = daysData.find((dd: any) => dd.day_date === dateStr);
-          const meals = (dayData as any)?.planned_meals || [];
-          const completedMeals = meals.filter((m: any) => m.is_completed);
-          const cookMeals = completedMeals.filter((m: any) => m.mode === 'cook' || m.mode === 'quick');
+          type DayWithMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed" | "calories_kcal">[] };
+          const dayData = (daysData as DayWithMeals[]).find((dd) => dd.day_date === dateStr);
+          const meals = dayData?.planned_meals || [];
+          const completedMeals = meals.filter((m) => m.is_completed);
+          const cookMeals = completedMeals.filter((m) => m.mode === 'cook' || m.mode === 'quick');
           
           const mealCount = completedMeals.length;
           const cookRate = mealCount > 0 ? Math.round((cookMeals.length / mealCount) * 100) : 0;
-          const totalCalories = meals.reduce((sum: number, m: any) => sum + (m.calories_kcal || 0), 0);
+          const totalCalories = meals.reduce((sum: number, m) => sum + (m.calories_kcal || 0), 0);
           
           days.push({
             date: dateStr,
@@ -436,13 +439,14 @@ export const useHomeData = () => {
         let cookCount = 0;
         let totalMeals = 0;
 
-        daysData.forEach((day: any) => {
+        type DayWithMonthlyMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed">[] };
+        (daysData as DayWithMonthlyMeals[]).forEach((day) => {
           const meals = day.planned_meals || [];
           // 完了した食事のみカウント
-          const completedMeals = meals.filter((m: any) => m.is_completed);
+          const completedMeals = meals.filter((m) => m.is_completed);
           totalMeals += completedMeals.length;
           // 完了した自炊（mode='cook', 'quick', またはnull）をカウント
-          const completedCookMeals = completedMeals.filter((m: any) => 
+          const completedCookMeals = completedMeals.filter((m) =>
             m.mode === 'cook' || m.mode === 'quick' || !m.mode
           );
           cookCount += completedCookMeals.length;
@@ -539,8 +543,11 @@ export const useHomeData = () => {
         .limit(1)
         .maybeSingle();
 
-      if (latestData && (latestData as any).badges) {
-        const badge = (latestData as any).badges;
+      type LatestBadgeRow = { obtained_at: string | null; badges: Pick<Tables<"badges">, "name" | "code"> | Pick<Tables<"badges">, "name" | "code">[] | null };
+      if (latestData && (latestData as unknown as LatestBadgeRow).badges) {
+        const badgesRaw = (latestData as unknown as LatestBadgeRow).badges!;
+        const badge = Array.isArray(badgesRaw) ? badgesRaw[0] : badgesRaw;
+        if (!badge) return;
         setLatestBadge({
           name: badge.name,
           code: badge.code,

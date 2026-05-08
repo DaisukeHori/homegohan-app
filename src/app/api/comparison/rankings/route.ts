@@ -1,10 +1,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import type { 
-  MetricRankingSummary, 
-  ComparisonHighlight, 
+import type {
+  MetricRankingSummary,
+  ComparisonHighlight,
   ComparisonResponse,
-  ComparisonPrize 
+  ComparisonPrize,
+  MetricDefinition,
+  SegmentDefinition,
 } from '@/types/comparison';
 
 export async function GET(request: Request) {
@@ -66,8 +68,8 @@ export async function GET(request: Request) {
     const rankingsByMetric = new Map<string, MetricRankingSummary>();
 
     for (const ranking of rankings || []) {
-      const metric = ranking.metric_definitions as any;
-      const segment = ranking.segment_definitions as any;
+      const metric = ranking.metric_definitions as MetricDefinition | null;
+      const segment = ranking.segment_definitions as SegmentDefinition | null;
       
       if (!metric || !segment) continue;
 

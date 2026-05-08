@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
 import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
+import type { Tables } from '@homegohan/shared';
 
 /**
  * Get meals for a date range (日付ベースモデル対応)
@@ -43,7 +44,8 @@ export async function GET(request: Request) {
     }
 
     const dailyMeal = toDailyMeal(data);
-    const meals = ((data as any).planned_meals || []).map(toPlannedMeal);
+    const dataWithJoin = data as Tables<"user_daily_meals"> & { planned_meals: Tables<"planned_meals">[] };
+    const meals = (dataWithJoin.planned_meals || []).map(toPlannedMeal);
 
     return NextResponse.json({ dailyMeal, meals });
   }
@@ -95,7 +97,7 @@ export async function GET(request: Request) {
   const shoppingList = shoppingListData ? {
     id: shoppingListData.id,
     status: shoppingListData.status,
-    items: ((shoppingListData as any).shopping_list_items || []).map(toShoppingListItem),
+    items: ((shoppingListData as Tables<"shopping_lists"> & { shopping_list_items: Tables<"shopping_list_items">[] }).shopping_list_items || []).map(toShoppingListItem),
   } : null;
 
   return NextResponse.json({ 
