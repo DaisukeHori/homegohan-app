@@ -282,7 +282,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
           }
         }}
         renderLoading={() => (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <View testID="webview-loading" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             <ActivityIndicator size="large" color={colors.accent} />
           </View>
         )}

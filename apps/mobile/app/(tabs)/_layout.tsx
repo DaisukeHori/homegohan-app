@@ -77,6 +77,7 @@ export default function TabsLayout() {
               </View>
             ),
             tabBarLabel: () => null,
+            tabBarButtonTestID: "tab-meals",
           }}
         />
         <Tabs.Screen
