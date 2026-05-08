@@ -173,7 +173,7 @@ export async function POST(request: Request) {
       plannedMealId: meal.id,
       userId: user.id,
       triggerSource,
-      jobSeeds: dishImagePayload.jobs as any,
+      jobSeeds: dishImagePayload.jobs,
       requestId,
     });
     if (dishImagePayload.jobs.length > 0) {

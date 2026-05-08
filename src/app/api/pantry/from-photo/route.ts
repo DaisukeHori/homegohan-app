@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import type { Tables } from '@homegohan/shared';
 
 /**
  * 冷蔵庫写真解析結果をpantry_itemsに保存
@@ -86,7 +87,7 @@ export async function POST(request: Request) {
       created: 0,
       updated: 0,
       skipped: 0,
-      items: [] as any[],
+      items: [] as Tables<'pantry_items'>[],
     };
 
     // 各アイテムを処理

@@ -122,7 +122,7 @@ export function NutritionDetailModal({
               {/* レーダーチャート */}
               <div className="flex justify-center mb-4">
                 <NutritionRadarChart
-                  nutrition={dayNutrition as any}
+                  nutrition={dayNutrition}
                   selectedNutrients={radarChartNutrients}
                   size={220}
                   showLabels={true}

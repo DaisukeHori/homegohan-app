@@ -143,14 +143,16 @@ export default function HealthInsightsPage() {
 
         {/* フィルター */}
         <div className="flex gap-2">
-          {[
-            { key: 'all', label: 'すべて' },
-            { key: 'unread', label: '未読' },
-            { key: 'alerts', label: 'アラート', count: alertCount },
-          ].map((f) => (
+          {(
+            [
+              { key: 'all', label: 'すべて' },
+              { key: 'unread', label: '未読' },
+              { key: 'alerts', label: 'アラート', count: alertCount },
+            ] as { key: 'all' | 'unread' | 'alerts'; label: string; count?: number }[]
+          ).map((f) => (
             <button
               key={f.key}
-              onClick={() => setFilter(f.key as any)}
+              onClick={() => setFilter(f.key)}
               className="px-4 py-2 rounded-full text-sm font-medium flex items-center gap-1"
               style={{
                 backgroundColor: filter === f.key ? colors.accent : colors.card,

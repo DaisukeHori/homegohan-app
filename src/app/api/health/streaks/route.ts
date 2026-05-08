@@ -15,7 +15,8 @@ export async function GET(request: NextRequest) {
   const rawType = searchParams.get('type') || 'daily_record';
 
   const ALLOWED_STREAK_TYPES = ['daily_record', 'meal_record', 'health_record', 'exercise_record'] as const;
-  if (!ALLOWED_STREAK_TYPES.includes(rawType as any)) {
+  type StreakType = (typeof ALLOWED_STREAK_TYPES)[number];
+  if (!ALLOWED_STREAK_TYPES.includes(rawType as StreakType)) {
     return NextResponse.json({ error: 'Invalid streak type' }, { status: 400 });
   }
   const streakType = rawType;
@@ -117,7 +118,8 @@ export async function DELETE(request: NextRequest) {
   const rawTypeDelete = searchParams.get('type') || 'daily_record';
 
   const ALLOWED_STREAK_TYPES_DELETE = ['daily_record', 'meal_record', 'health_record', 'exercise_record'] as const;
-  if (!ALLOWED_STREAK_TYPES_DELETE.includes(rawTypeDelete as any)) {
+  type StreakTypeDelete = (typeof ALLOWED_STREAK_TYPES_DELETE)[number];
+  if (!ALLOWED_STREAK_TYPES_DELETE.includes(rawTypeDelete as StreakTypeDelete)) {
     return NextResponse.json({ error: 'Invalid streak type' }, { status: 400 });
   }
   const streakType = rawTypeDelete;

@@ -54,9 +54,9 @@ function buildExistingSummary(session: any): any | null {
   if (!session || typeof session !== 'object') return null;
   if (!session.summary) return null;
 
-  const cs = session.context_snapshot && typeof session.context_snapshot === 'object' ? session.context_snapshot : {};
-  const keyFacts = Array.isArray((cs as any).key_facts) ? (cs as any).key_facts : [];
-  const userInsights = Array.isArray((cs as any).user_insights) ? (cs as any).user_insights : [];
+  const cs: Record<string, unknown> = session.context_snapshot && typeof session.context_snapshot === 'object' ? session.context_snapshot as Record<string, unknown> : {};
+  const keyFacts = Array.isArray(cs.key_facts) ? cs.key_facts : [];
+  const userInsights = Array.isArray(cs.user_insights) ? cs.user_insights : [];
   const keyTopics = Array.isArray(session.key_topics) ? session.key_topics : [];
   const actionsTaken = Array.isArray(session.action_history)
     ? session.action_history
@@ -180,7 +180,7 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
         if (!summaryContent) throw new Error('要約の生成に失敗しました');
 
         const parsed = safeJsonParse(summaryContent);
-        if (!parsed || typeof parsed !== 'object' || typeof (parsed as any).summary !== 'string') {
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.summary !== 'string') {
           throw new Error('Invalid summary JSON');
         }
 

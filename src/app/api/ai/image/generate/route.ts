@@ -134,7 +134,7 @@ export async function POST(request: Request) {
       console.error('Upload error:', uploadError);
 
       const errorMessage = uploadError.message || String(uploadError);
-      const errorStatus = (uploadError as any).statusCode || (uploadError as any).status;
+      const errorStatus = uploadError.status;
 
       if (
         errorMessage.includes('Bucket not found') ||

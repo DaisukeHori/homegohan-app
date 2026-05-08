@@ -536,8 +536,9 @@ function OnboardingQuestionsContent() {
 
   const currentQuestion = QUESTIONS[currentStep];
   const isNumberQuestion = currentQuestion?.type === 'number';
-  const numberMin = isNumberQuestion && typeof (currentQuestion as any).min === 'number' ? (currentQuestion as any).min : 1;
-  const numberMax = isNumberQuestion && typeof (currentQuestion as any).max === 'number' ? (currentQuestion as any).max : 10;
+  const currentQuestionFields = currentQuestion as Record<string, unknown>;
+  const numberMin = isNumberQuestion && typeof currentQuestionFields.min === 'number' ? currentQuestionFields.min : 1;
+  const numberMax = isNumberQuestion && typeof currentQuestionFields.max === 'number' ? currentQuestionFields.max : 10;
   const numberValue = isNumberQuestion ? Number.parseInt(inputValue, 10) : NaN;
   const isNumberValid = isNumberQuestion && Number.isFinite(numberValue) && numberValue >= numberMin && numberValue <= numberMax;
   const hasTags = tags.length > 0;

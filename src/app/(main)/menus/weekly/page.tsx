@@ -135,6 +135,34 @@ interface ShoppingRangeSelection {
 // 全ての食事タイプ
 const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
+// 旧形式（cal/protein/fat/carbs 等の短縮キー）との後方互換のための型拡張
+// dish データが古いスキーマで保存されている可能性があるため
+type LegacyDishDetail = DishDetail & {
+  cal?: number;
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+  fiber?: number;
+  sugar?: number;
+  sodium?: number;
+  potassium?: number;
+  calcium?: number;
+  phosphorus?: number;
+  iron?: number;
+  zinc?: number;
+  cholesterol?: number;
+  vitaminA?: number;
+  vitaminB1?: number;
+  vitaminB2?: number;
+  vitaminB6?: number;
+  vitaminB12?: number;
+  vitaminC?: number;
+  vitaminD?: number;
+  vitaminE?: number;
+  vitaminK?: number;
+  folicAcid?: number;
+};
+
 // Reference UI Color Palette
 const colors = {
   bg: '#F7F6F3',
@@ -1746,7 +1774,8 @@ export default function WeeklyMenuPage() {
   const [isLoadingServingsConfig, setIsLoadingServingsConfig] = useState(false);
 
   // feedbackChannelRef (nutrition 系は nutritionReducer 管理)
-  const feedbackChannelRef = useRef<RealtimeChannel | null>(null);
+  // RealtimeChannel か、ポーリング用のカスタムクリーンアップオブジェクトのどちらかを保持する
+  const feedbackChannelRef = useRef<RealtimeChannel | { unsubscribe: () => void } | null>(null);
 
   // 買い物リスト範囲選択 (Phase B-3 shoppingStore 予定)
   const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
@@ -1815,7 +1844,7 @@ export default function WeeklyMenuPage() {
 
   // Recipe / AI / manualEdit / photo / imageGenerate → reducers 管理 (Phase B-2 移行済み)
   // formDraft 系 (manualDishes/mode/catalogQuery 等) → Phase B-3 formDraftStore 予定
-  const [manualDishes, setManualDishes] = useState<DishDetail[]>([]);
+  const [manualDishes, setManualDishes] = useState<LegacyDishDetail[]>([]);
   const [manualMode, setManualMode] = useState<MealMode>('cook');
   const [catalogQuery, setCatalogQuery] = useState('');
   const [catalogResults, setCatalogResults] = useState<CatalogProductSummary[]>([]);
@@ -2360,19 +2389,20 @@ export default function WeeklyMenuPage() {
         async (payload) => {
           try {
             console.log('📡 Realtime update received:', payload.new);
-            const newData = payload.new as { 
-              status: string; 
+            const newData = payload.new as {
+              status: string;
               mode?: string;
-              progress?: { 
-                phase?: string; 
-                message?: string; 
+              error_message?: string | null;
+              progress?: {
+                phase?: string;
+                message?: string;
                 percentage?: number;
                 // V4形式のフィールド
                 currentStep?: number;
                 totalSteps?: number;
                 completedSlots?: number;
                 totalSlots?: number;
-              } 
+              }
             };
             const newStatus = newData?.status;
             
@@ -2418,7 +2448,7 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
-              setGenerationFailedError((newData as any).error_message || '献立の生成に失敗しました。もう一度お試しください。');
+              setGenerationFailedError(newData.error_message || '献立の生成に失敗しました。もう一度お試しください。');
               setGenerationFailedRequestId(requestId);
             }
             // status === 'queued' / 'pending' / 'processing' の場合は継続して監視
@@ -2488,11 +2518,11 @@ export default function WeeklyMenuPage() {
   useEffect(() => {
     const dateStr = weekDates[selectedDayIndex]?.dateStr;
     if (typeof window !== 'undefined' && dateStr) {
-      (window as any).__weeklyCurrentDate = dateStr;
+      window.__weeklyCurrentDate = dateStr;
     }
     return () => {
       if (typeof window !== 'undefined') {
-        try { delete (window as any).__weeklyCurrentDate; } catch { /* noop */ }
+        try { delete window.__weeklyCurrentDate; } catch { /* noop */ }
       }
     };
   }, [selectedDayIndex, weekDates]);
@@ -2544,9 +2574,9 @@ export default function WeeklyMenuPage() {
     // 既存の購読/ポーリングをクリーンアップ
     if (feedbackChannelRef.current) {
       if ('unsubscribe' in feedbackChannelRef.current) {
-        (feedbackChannelRef.current as any).unsubscribe();
+        feedbackChannelRef.current.unsubscribe();
       } else {
-        supabase.removeChannel(feedbackChannelRef.current as RealtimeChannel);
+        supabase.removeChannel(feedbackChannelRef.current);
       }
       feedbackChannelRef.current = null;
     }
@@ -2705,7 +2735,7 @@ export default function WeeklyMenuPage() {
               clearInterval(pollInterval);
               supabase.removeChannel(channel);
             }
-          } as any;
+          };
         }
       } else {
         setNutritionFeedback('分析結果を取得できませんでした。');
@@ -2731,7 +2761,7 @@ export default function WeeklyMenuPage() {
     // クリーンアップ：モーダルが閉じたら購読/ポーリングを停止
     return () => {
       if (!showNutritionDetailModal && feedbackChannelRef.current) {
-        (feedbackChannelRef.current as any).unsubscribe?.();
+        feedbackChannelRef.current.unsubscribe?.();
         feedbackChannelRef.current = null;
       }
     };
@@ -3905,7 +3935,7 @@ export default function WeeklyMenuPage() {
       return;
     }
     
-    const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? (d as any).cal ?? 0), 0);
+    const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? d.cal ?? 0), 0);
     const dishName = validDishes.map(d => d.name).join('、');
     
     try {
@@ -4555,10 +4585,11 @@ export default function WeeklyMenuPage() {
     // 新規生成中はEmptySlotコンポーネントで表示
 
     // dishes配列から主菜と他の品数を取得
-    const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
-      ? meal.dishes 
-      : meal.dishes 
-        ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
+    // LegacyDishDetail にキャスト：旧形式(cal/protein等)と新形式(calories_kcal/protein_g等)の両方に対応
+    const dishesArray: LegacyDishDetail[] = Array.isArray(meal.dishes)
+      ? meal.dishes as LegacyDishDetail[]
+      : meal.dishes
+        ? Object.values(meal.dishes).filter(Boolean) as LegacyDishDetail[]
         : [];
     
     // 複数回目の食事の場合はラベルに番号を追加
@@ -4693,10 +4724,11 @@ export default function WeeklyMenuPage() {
     // プレースホルダーは使用しないので、meal.isGenerating は参照しない
     
     // dishes は配列形式に対応（可変数）
-    const dishesArray: DishDetail[] = Array.isArray(meal.dishes) 
-      ? meal.dishes 
-      : meal.dishes 
-        ? Object.values(meal.dishes).filter(Boolean) as DishDetail[]
+    // LegacyDishDetail にキャスト：旧形式(cal/protein等)と新形式(calories_kcal/protein_g等)の両方に対応
+    const dishesArray: LegacyDishDetail[] = Array.isArray(meal.dishes)
+      ? meal.dishes as LegacyDishDetail[]
+      : meal.dishes
+        ? Object.values(meal.dishes).filter(Boolean) as LegacyDishDetail[]
         : [];
     const hasDishes = dishesArray.length > 0;
     
@@ -4796,7 +4828,7 @@ export default function WeeklyMenuPage() {
                     // タップした料理だけを表示
                     setSelectedRecipe(dish.name);
                     // 古い形式(cal, protein等)と新しい形式(calories_kcal, protein_g等)の両方に対応
-                    const d = dish as any;
+                    const d = dish as LegacyDishDetail;
                     const normalizedDish = {
                       ...dish,
                       // 新しい形式を優先、なければ古い形式からマッピング
@@ -4826,7 +4858,7 @@ export default function WeeklyMenuPage() {
                     };
                     setSelectedRecipeData({
                       ...normalizedDish,
-                      imageUrl: (dish as any).image_url ?? meal.imageUrl ?? null,
+                      imageUrl: dish.image_url ?? meal.imageUrl ?? null,
                       // この料理だけを配列に入れる（UIの互換性のため）
                       dishes: [normalizedDish],
                       // 全料理の材料（買い物リスト用）
@@ -4839,15 +4871,15 @@ export default function WeeklyMenuPage() {
                 >
                   <div className="flex justify-between mb-1">
                     <span style={{ fontSize: 9, fontWeight: 700, color: config.color }}>{config.label}</span>
-                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.calories_kcal ?? (dish as any).cal ?? '-'}kcal</span>
+                    <span style={{ fontSize: 9, color: colors.textMuted }}>{dish.calories_kcal ?? dish.cal ?? '-'}kcal</span>
                   </div>
                   <p style={{ fontSize: 13, fontWeight: 500, color: colors.text, margin: 0 }}>{dish.name}</p>
                   {/* 栄養素（P/F/C）- 新旧形式両対応 */}
-                  {(dish.protein_g || dish.fat_g || dish.carbs_g || (dish as any).protein || (dish as any).fat || (dish as any).carbs) && (
+                  {(dish.protein_g || dish.fat_g || dish.carbs_g || dish.protein || dish.fat || dish.carbs) && (
                     <div className="flex gap-2 mt-1 text-[8px]" style={{ color: colors.textMuted }}>
-                      {((dish.protein_g ?? (dish as any).protein) ?? 0) > 0 && <span>P:{dish.protein_g ?? (dish as any).protein}g</span>}
-                      {((dish.fat_g ?? (dish as any).fat) ?? 0) > 0 && <span>F:{dish.fat_g ?? (dish as any).fat}g</span>}
-                      {((dish.carbs_g ?? (dish as any).carbs) ?? 0) > 0 && <span>C:{dish.carbs_g ?? (dish as any).carbs}g</span>}
+                      {((dish.protein_g ?? dish.protein) ?? 0) > 0 && <span>P:{dish.protein_g ?? dish.protein}g</span>}
+                      {((dish.fat_g ?? dish.fat) ?? 0) > 0 && <span>F:{dish.fat_g ?? dish.fat}g</span>}
+                      {((dish.carbs_g ?? dish.carbs) ?? 0) > 0 && <span>C:{dish.carbs_g ?? dish.carbs}g</span>}
                     </div>
                   )}
                   <span className="inline-flex items-center gap-1 mt-auto text-[9px]" style={{ color: colors.blue }}>
@@ -5258,7 +5290,7 @@ export default function WeeklyMenuPage() {
         <ProgressTodoCard
           progress={generationProgress}
           colors={colors}
-          phases={(generationProgress as any)?.isUltimateMode ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
+          phases={generationProgress?.isUltimateMode ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
         />
       ) : (
         <button
@@ -5369,7 +5401,7 @@ export default function WeeklyMenuPage() {
                           <div className="space-y-1">
                             {radarChartNutrients.slice(0, 6).map(key => {
                               const def = getNutrientDefinition(key);
-                              const value = (dayNutrition as any)[key] ?? 0;
+                              const value = (dayNutrition as Record<string, number>)[key] ?? 0;
                               const percentage = calculateDriPercentage(key, value);
                               const isGood = percentage >= 80 && percentage <= 120;
                               const isLow = percentage < 50;

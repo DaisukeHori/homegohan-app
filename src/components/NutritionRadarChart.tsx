@@ -20,37 +20,8 @@ import {
 // Types
 // ============================================
 
-interface DayNutrition {
-  caloriesKcal: number;
-  proteinG: number;
-  fatG: number;
-  carbsG: number;
-  sodiumG: number;
-  sugarG: number;
-  fiberG: number;
-  potassiumMg: number;
-  calciumMg: number;
-  phosphorusMg: number;
-  magnesiumMg: number;
-  ironMg: number;
-  zincMg: number;
-  iodineUg: number;
-  cholesterolMg: number;
-  vitaminAUg: number;
-  vitaminB1Mg: number;
-  vitaminB2Mg: number;
-  vitaminB6Mg: number;
-  vitaminB12Ug: number;
-  vitaminCMg: number;
-  vitaminDUg: number;
-  vitaminEMg: number;
-  vitaminKUg: number;
-  folicAcidUg: number;
-  saturatedFatG: number;
-}
-
 interface NutritionRadarChartProps {
-  nutrition: DayNutrition;
+  nutrition: Record<string, number>;
   selectedNutrients?: string[] | null;
   size?: number;
   showLabels?: boolean;
@@ -98,7 +69,7 @@ export function NutritionRadarChart({
   const chartData = useMemo(() => {
     return nutrients.map(key => {
       const def = getNutrientDefinition(key);
-      const value = (nutrition as any)[key] ?? 0;
+      const value = nutrition[key] ?? 0;
       const percentage = calculateDriPercentage(key, value);
       
       return {
