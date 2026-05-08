@@ -13,6 +13,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { registerAndSaveExpoPushToken } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
+import { PostHogProvider } from "../src/providers/PostHogProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
 
 // E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
@@ -63,22 +64,24 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <ProfileProvider>
-          <PushTokenRegistrar />
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="(public)" />
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="(org)" />
-            <Stack.Screen name="(admin)" />
-            <Stack.Screen name="(support)" />
-            <Stack.Screen name="(super-admin)" />
-            <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
-          </Stack>
-        </ProfileProvider>
-      </AuthProvider>
+      <PostHogProvider>
+        <AuthProvider>
+          <ProfileProvider>
+            <PushTokenRegistrar />
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="(public)" />
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="(org)" />
+              <Stack.Screen name="(admin)" />
+              <Stack.Screen name="(support)" />
+              <Stack.Screen name="(super-admin)" />
+              <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
+            </Stack>
+          </ProfileProvider>
+        </AuthProvider>
+      </PostHogProvider>
     </SafeAreaProvider>
   );
 }
