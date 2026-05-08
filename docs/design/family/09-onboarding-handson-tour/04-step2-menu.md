@@ -220,8 +220,8 @@ const response = await fetch('/api/menu-plans/add?source=handson_tour', {
 ```
 
 サーバー側:
-- `weekly_menus` テーブルに `is_sandbox = true` で INSERT
-- `planner` バッジ付与 (条件: weekly_menus に 1 件以上ある場合)
+- `user_daily_meals` テーブルに `is_sandbox = true` で INSERT (UNIQUE(user_id, day_date) 制約あり、`uniq_user_sandbox_daily_meal` で sandbox 行は user_id ごと 1 行に制限)
+- `planner` バッジ付与 (条件: `user_daily_meals` に 1 件以上ある場合)
 
 ### 3.10 サブステップ 2.9: 成功 → Step 3 へ
 
@@ -481,7 +481,7 @@ env:
 ```
 
 ### 11.3 Integration
-- 追加 API 成功後、`weekly_menus` に `is_sandbox=true` の行が追加されている
+- 追加 API 成功後、`user_daily_meals` に `is_sandbox=true` の行が追加されている
 - `user_badges` に `planner` が追加されている
 - force=1 で再表示時、すでに planner を持つユーザーには重複 INSERT されない
 
@@ -490,7 +490,7 @@ env:
 ## 12. 残不確実性 (§99 連携)
 
 - [ ] V4GenerateModal の sandbox prop 名称 (`mode='sandbox'` か `sandbox={...}` か、既存命名規則確認)
-- [ ] `weekly_menus` テーブルの列名 (date 系、meal_type 系、dish_name 系の正確な名称、operator/01 確認)
-- [ ] `planner` バッジの発火条件 (weekly_menus 1 件以上で良いか、別条件か、operator/01 + 既存実装確認)
+- [ ] `user_daily_meals` テーブルの列名 (`day_date` / `theme` / `nutritional_focus` / `is_cheat_day` 等、operator/01 §3.26.3 準拠)
+- [ ] `planner` バッジの発火条件 (`user_daily_meals` 1 件以上で良いか、別条件か、operator/01 + 既存実装確認)
 - [ ] 自由メモ入力を破棄して良いか (実 API 呼ばないので OK だが UX 違和感ないか)
 - [ ] ローディング 2.0 秒の妥当性 (実 API レイテンシは ~5-15 秒の場合あり、mock の方が速い → "速くて当然" の体験 OK)

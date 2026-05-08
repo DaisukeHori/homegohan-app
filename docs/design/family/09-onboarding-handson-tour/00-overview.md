@@ -15,7 +15,7 @@
 
 結果として:
 - 7 日継続率が新規登録者の **40%** 推定 (目標は 70%)
-- 7 日以内に `meal_logs` を 1 件以上追加するアクティベーション率が **60%** 推定
+- 7 日以内に `meals` を 1 件以上追加するアクティベーション率が **60%** 推定
 - 14 日以内にバッジを 1 つでも獲得する率が **35%** 推定
 
 ### 1.2 仮説
@@ -88,7 +88,7 @@
 
 ### 3.3 KPI 計測ツール
 - Analytics events (§22-analytics.md): PostHog or Mixpanel 経由
-- サーバー側集計 SQL (§22 KPI 集計クエリ例): audit_logs join meal_logs
+- サーバー側集計 SQL (§22 KPI 集計クエリ例): audit_logs join meals
 
 ### 3.4 KPI 監視 (§19, §20 連携)
 - §19-rollout §6 KPI モニタリング: Looker Studio / Metabase ダッシュボード
@@ -107,7 +107,7 @@
 | 英語版 (i18n 完全対応) | キー設計は最初から含むが、ja のみ実装 | v2 |
 | ペアレント別チュートリアル (家族プランで親子内容変更) | 家族機能の usage 確認後判断 | v3 |
 | ハンズオン中の sandbox 行を削除する API | sandbox 行は内部 admin 削除運用、ユーザー操作不要 | 永久 不要 |
-| 既存ユーザー (= meal_logs 既保有) への遡及表示 | 安全弁で auto-skip、後日変更したくなったら手動再表示で対応 | v2 |
+| 既存ユーザー (= meals 既保有) への遡及表示 | 安全弁で auto-skip、後日変更したくなったら手動再表示で対応 | v2 |
 
 ---
 
@@ -133,7 +133,7 @@
 - /home 直接表示、ハンズオン UI に出会わない
 
 ### 5.5 ペルソナ E (既存ユーザーの再ログイン)
-- meal_logs に過去の non-sandbox 行あり
+- meals に過去の non-sandbox 行あり
 - condition C で auto-skip
 - /handson-tour に直リンクしても /home へリダイレクト
 
@@ -145,7 +145,7 @@
 
 本機能の実装には以下の設計書への追記が必要:
 
-- `docs/design/operator/01-data-model.md`: user_profiles 拡張、badges seed 追加、meal_logs/weekly_menus に is_sandbox 追加
+- `docs/design/operator/01-data-model.md`: user_profiles 拡張、badges seed 追加、meals / user_daily_meals に is_sandbox 追加
 - `docs/design/family/02-api-spec.md`: 新規 API 4 本仕様
 - `docs/design/family/03-ui-spec.md`: ハンズオン画面群の追加
 - `docs/design/cross/03-design-system.md`: Coachmark コンポーネント仕様
