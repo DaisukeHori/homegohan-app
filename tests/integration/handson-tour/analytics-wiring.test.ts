@@ -16,7 +16,7 @@
  *   handson_tour_force_replayed
  *   web_vitals_lcp
  *   web_vitals_cls
- *   web_vitals_fid
+ *   web_vitals_inp
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -194,9 +194,9 @@ describe('HandsonTourEventSchemas — Zod schema 全件 pass', () => {
     expect(result.success).toBe(true);
   });
 
-  it('web_vitals_fid — valid', () => {
+  it('web_vitals_inp — valid', () => {
     const payload = { ...baseCommon(), value_ms: 50, page: '/handson-tour' };
-    const result = HandsonTourEventSchemas.web_vitals_fid.safeParse(payload);
+    const result = HandsonTourEventSchemas.web_vitals_inp.safeParse(payload);
     expect(result.success).toBe(true);
   });
 });
@@ -326,10 +326,10 @@ describe('fireAnalytics — AnalyticsAdapter への委譲確認', () => {
     expect(captureMock).toHaveBeenCalledWith('web_vitals_cls', expect.objectContaining({ value: 0.1 }));
   });
 
-  it('web_vitals_fid — adapter.capture が呼ばれる', () => {
-    fireAnalytics('web_vitals_fid', { ...baseCommon(), value_ms: 50, page: '/handson-tour' });
+  it('web_vitals_inp — adapter.capture が呼ばれる', () => {
+    fireAnalytics('web_vitals_inp', { ...baseCommon(), value_ms: 50, page: '/handson-tour' });
     expect(captureMock).toHaveBeenCalledOnce();
-    expect(captureMock).toHaveBeenCalledWith('web_vitals_fid', expect.objectContaining({ value_ms: 50 }));
+    expect(captureMock).toHaveBeenCalledWith('web_vitals_inp', expect.objectContaining({ value_ms: 50 }));
   });
 });
 
@@ -465,15 +465,15 @@ describe('Step 0-4 全分岐 + skip/replay/eligibility', () => {
     expect(result.success).toBe(true);
   });
 
-  it('web_vitals_lcp/cls/fid — 3 つのイベントが連続して捕捉できる', () => {
+  it('web_vitals_lcp/cls/inp — 3 つのイベントが連続して捕捉できる', () => {
     fireAnalytics('web_vitals_lcp', { ...baseCommon(), value_ms: 1200, page: '/handson-tour' });
     fireAnalytics('web_vitals_cls', { ...baseCommon(), value: 0.05, page: '/handson-tour' });
-    fireAnalytics('web_vitals_fid', { ...baseCommon(), value_ms: 30, page: '/handson-tour' });
+    fireAnalytics('web_vitals_inp', { ...baseCommon(), value_ms: 30, page: '/handson-tour' });
 
     expect(captured).toHaveLength(3);
     expect(captured[0].name).toBe('web_vitals_lcp');
     expect(captured[1].name).toBe('web_vitals_cls');
-    expect(captured[2].name).toBe('web_vitals_fid');
+    expect(captured[2].name).toBe('web_vitals_inp');
   });
 
   it('Mobile platform (ios) — adapter が ios プラットフォームで呼ばれる', () => {

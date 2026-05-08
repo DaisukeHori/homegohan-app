@@ -63,7 +63,8 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
           }
 
           // Web Vitals 計測 (handson-tour 専用 analytics schema)
-          import('web-vitals').then(({ onLCP, onCLS, onFID }) => {
+          // web-vitals v4+ では onFID は削除され onINP (Interaction to Next Paint) に置き換わった
+          import('web-vitals').then(({ onLCP, onCLS, onINP }) => {
             const page = typeof window !== 'undefined' ? window.location.pathname : '/';
             const common = {
               user_id: userId,
@@ -78,8 +79,8 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
             onCLS((metric) => {
               fireAnalytics('web_vitals_cls', { ...common, value: metric.value });
             });
-            onFID((metric) => {
-              fireAnalytics('web_vitals_fid', { ...common, value_ms: metric.value });
+            onINP((metric) => {
+              fireAnalytics('web_vitals_inp', { ...common, value_ms: metric.value });
             });
           }).catch(() => {
             // web-vitals unavailable — ignore
