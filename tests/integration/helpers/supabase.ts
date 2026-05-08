@@ -15,6 +15,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
 
 // ---------------------------------------------------------------
 // 関数形式 (PR #839 由来) — 各呼び出し時に env を読む。lazy 評価。
@@ -29,6 +30,7 @@ export function adminClient(): SupabaseClient {
   }
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
+    realtime: { transport: ws as unknown as typeof WebSocket },
   });
 }
 
@@ -56,6 +58,7 @@ export const supabaseAdmin = new Proxy({} as SupabaseClient, {
       }
       _supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
         auth: { autoRefreshToken: false, persistSession: false },
+        realtime: { transport: ws as unknown as typeof WebSocket },
       });
     }
     return _supabaseAdmin[prop as keyof SupabaseClient];
@@ -74,6 +77,7 @@ export const supabaseAnon = new Proxy({} as SupabaseClient, {
       }
       _supabaseAnon = createClient(supabaseUrl, anonKey, {
         auth: { autoRefreshToken: false, persistSession: false },
+        realtime: { transport: ws as unknown as typeof WebSocket },
       });
     }
     return _supabaseAnon[prop as keyof SupabaseClient];

@@ -13,33 +13,40 @@
  *   API_BASE_URL or PLAYWRIGHT_BASE_URL (default: http://localhost:3000)
  */
 import { defineConfig } from 'vitest/config';
+import { loadEnv } from 'vite';
 import path from 'node:path';
 
-export default defineConfig({
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
+export default defineConfig(({ mode }) => {
+  // .env.local を明示的に読み込む (prefix '' = 全変数対象)
+  const env = loadEnv(mode ?? 'test', process.cwd(), '');
+  return {
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
+      },
     },
-  },
-  test: {
-    include: ['tests/integration/**/*.test.ts'],
-    exclude: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/.next/**',
-      'tests/e2e/**',
-      'homegohan-app/**',
-      '.claude/**',
-    ],
-    // Integration tests hit real Supabase — allow longer timeouts
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
-    // Run sequentially to avoid auth rate limits and DB conflicts
-    pool: 'forks',
-    maxConcurrency: 1,
-    maxWorkers: 1,
-    env: {
-      NODE_ENV: 'test',
+    test: {
+      include: ['tests/integration/**/*.test.ts'],
+      exclude: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/.next/**',
+        'tests/e2e/**',
+        'homegohan-app/**',
+        '.claude/**',
+      ],
+      // Integration tests hit real Supabase — allow longer timeouts
+      testTimeout: 30_000,
+      hookTimeout: 30_000,
+      // Run sequentially to avoid auth rate limits and DB conflicts
+      pool: 'forks',
+      maxConcurrency: 1,
+      maxWorkers: 1,
+      env: {
+        NODE_ENV: 'test',
+        ...env,
+      },
+      setupFiles: ['./tests/integration/setup.ts'],
     },
-  },
+  };
 });
