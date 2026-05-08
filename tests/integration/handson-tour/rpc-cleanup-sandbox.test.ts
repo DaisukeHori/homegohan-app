@@ -103,6 +103,9 @@ describe.skipIf(!shouldRunIntegration())(
       expect(result).toBeDefined();
       // meals_deleted should be at least 1
       expect(result.meals_deleted as number).toBeGreaterThanOrEqual(1);
+      // daily_meals_deleted should be a non-negative number
+      expect(typeof result.daily_meals_deleted).toBe('number');
+      expect(result.daily_meals_deleted as number).toBeGreaterThanOrEqual(0);
 
       // Verify audit log was inserted
       const { count: auditCountAfter } = await client
@@ -123,6 +126,8 @@ describe.skipIf(!shouldRunIntegration())(
 
       const logDetails = latestLog?.details as Record<string, unknown> | null;
       expect((logDetails?.meals_deleted as number) ?? 0).toBeGreaterThanOrEqual(1);
+      expect(typeof logDetails?.daily_meals_deleted).toBe('number');
+      expect((logDetails?.daily_meals_deleted as number) ?? -1).toBeGreaterThanOrEqual(0);
     });
 
     it('2. 90日以内の sandbox 行は削除されない', async () => {
@@ -139,7 +144,12 @@ describe.skipIf(!shouldRunIntegration())(
       });
 
       // Execute cleanup
-      const { data: result } = await client.rpc('cleanup_handson_tour_sandbox_rows');
+      const { data: rawResult2 } = await client.rpc('cleanup_handson_tour_sandbox_rows');
+      const result2 = rawResult2 as Record<string, unknown>;
+
+      // meals_deleted and daily_meals_deleted should both be 0 for this user's recent rows
+      expect(typeof result2.meals_deleted).toBe('number');
+      expect(typeof result2.daily_meals_deleted).toBe('number');
 
       // Verify the recent row still exists
       const { data: remaining } = await client
