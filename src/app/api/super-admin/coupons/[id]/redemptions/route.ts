@@ -1,10 +1,8 @@
 /**
- * GET /api/super-admin/coupons/[code]/redemptions — クーポン適用履歴
+ * GET /api/super-admin/coupons/[id]/redemptions — クーポン適用履歴
  *
  * operator/01-data-model.md §3.6 準拠
  * 権限: super_admin のみ
- *
- * NOTE: [code] は URL パスの動的パラメータ。クーポンコード文字列で検索する。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,18 +11,18 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { CouponRedemptionsQuerySchema } from '@/lib/super-admin/coupons-schemas';
 
-type RouteContext = { params: { code: string } };
+type RouteContext = { params: { id: string } };
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
   try {
     await requireRole(['super_admin']);
     const supabase = createClient();
 
-    // クーポンコードからクーポンを取得
+    // クーポン ID(UUID)で取得
     const { data: coupon, error: couponErr } = await supabase
       .from('coupons')
       .select('id, code')
-      .eq('code', params.code)
+      .eq('id', params.id)
       .single();
 
     if (couponErr || !coupon) {
@@ -58,7 +56,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       .range(offset, offset + per_page - 1);
 
     if (error) {
-      console.error('[super-admin/coupons/[code]/redemptions GET]', error);
+      console.error('[super-admin/coupons/[id]/redemptions GET]', error);
       return NextResponse.json(
         { error: { code: 'OP_DB_ERROR', message: error.message } },
         { status: 500 }
@@ -76,7 +74,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     if (err instanceof ForbiddenError) {
       return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
     }
-    console.error('[super-admin/coupons/[code]/redemptions GET]', err);
+    console.error('[super-admin/coupons/[id]/redemptions GET]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
   }
 }

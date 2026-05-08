@@ -1732,6 +1732,36 @@ cross/04-api-conventions §error-format に準拠:
 | `feature_disabled` | Feature flag OFF |
 | `not_in_rollout` | 段階公開対象外 |
 
+### 15.6.1 Zod schema の配置(2026-05-08 確定)
+
+Next.js 14 App Router の `route.ts` は HTTP method handler(GET/POST 等)と予約済み config 以外の `export` を許可しない(参考: PR #810 で発生したビルドエラー)。本ドキュメント §15.2.3 / §15.3.3 / §15.4.2 / §15.4.3 で示している Zod schema は **`src/lib/handson-tour/schemas.ts` に集約 export し、`route.ts` から import する** こと。`route.ts` 内 inline 定義 + export は Next.js 制約違反。
+
+集約配置(canonical):
+
+```
+src/lib/handson-tour/schemas.ts
+├── HandsonTourStatusResponseSchema / type
+├── HandsonTourCompleteResponseSchema / type
+├── HandsonTourSkipRequestSchema / type
+└── HandsonTourSkipResponseSchema / type
+```
+
+`route.ts` での使用:
+
+```ts
+import {
+  HandsonTourSkipRequestSchema,
+  type HandsonTourSkipRequest,
+} from '@/lib/handson-tour/schemas';
+
+export async function POST(request: Request) {
+  const body = HandsonTourSkipRequestSchema.parse(await request.json());
+  // ...
+}
+```
+
+将来同じパターンの API を新設する場合(family/09 以外も含め)、`src/lib/<domain>/schemas.ts` に集約することを既定とする。
+
 ### 15.7 Authorization / CSRF / CORS
 
 Supabase Auth Bearer token 必須(他 family API と同じ)。SameSite=Lax cookie + Bearer token のため CSRF リスク低。CORS は `homegohan.app` (Web) と Expo callback(Mobile)を許可(cross/04 既定)。
