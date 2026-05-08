@@ -1,6 +1,8 @@
 /**
  * /admin/moderation/{type}/{id} — 個別審査画面
  * operator/03-ui-spec.md モデレーション準拠
+ *
+ * DB 直叩きを廃止し GET /api/admin/moderation/{type}/{id} 経由に統一。
  */
 
 export const dynamic = 'force-dynamic';
@@ -9,11 +11,26 @@ import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { adminFetch } from '@/lib/admin/fetch';
 import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
 
 interface PageProps {
   params: { type: string; id: string };
+}
+
+type ModerationItem = {
+  id: string;
+  type: string;
+  content_url: string | null;
+  reporter_count: number;
+  user_id: string;
+  status: string;
+  created_at: string;
+  resolution_note: string | null;
+};
+
+interface ModerationDetailApiResponse {
+  data: ModerationItem;
 }
 
 export default async function AdminModerationDetailPage({ params }: PageProps) {
@@ -34,40 +51,17 @@ export default async function AdminModerationDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  const supabase = await createClient();
-
-  type ModerationItem = {
-    id: string;
-    type: string;
-    content_url: string | null;
-    reporter_count: number;
-    user_id: string;
-    status: string;
-    created_at: string;
-    resolution_note: string | null;
-  };
-
-  let item: ModerationItem;
-
-  try {
-    const { data, error } = await supabase
-      .from('moderation_items')
-      .select('*')
-      .eq('id', id)
-      .eq('type', type)
-      .single();
-
-    if (error || !data) {
-      notFound();
-    }
-    // data が存在することが確認済み (notFound() が throw される場合は到達しない)
-    item = data as unknown as ModerationItem;
-  } catch {
+  // GET /api/admin/moderation/{type}/{id} 経由でデータ取得
+  const res = await adminFetch(`/api/admin/moderation/${type}/${id}`);
+  if (res.status === 404) {
+    notFound();
+  }
+  if (!res.ok) {
     notFound();
   }
 
-  // item は ModerationItem として確定 (notFound() が throw するため null の場合は到達しない)
-  const resolvedItem = item as ModerationItem;
+  const json = (await res.json()) as ModerationDetailApiResponse;
+  const resolvedItem = json.data;
   const isSuperAdmin = actor.roles.includes('super_admin');
   const isPending = resolvedItem.status === 'pending';
 
