@@ -114,7 +114,7 @@ export default function FavoritesScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: FavoriteItem }) => (
+  const renderItem = ({ item, index }: { item: FavoriteItem; index: number }) => (
     <View
       testID={`favorites-item-${item.id}`}
       style={{
@@ -168,7 +168,7 @@ export default function FavoritesScreen() {
 
       {/* ハートボタン */}
       <Pressable
-        testID={`favorites-remove-${item.id}`}
+        testID={index === 0 ? "favorites-first-heart-button" : `favorites-remove-${item.id}`}
         onPress={() => handleRemove(item)}
         disabled={removingId === item.id}
         accessibilityLabel="お気に入りから削除"
@@ -382,6 +382,7 @@ export default function FavoritesScreen() {
         </View>
       ) : (
         <FlatList
+          testID="favorites-list"
           data={favorites}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}

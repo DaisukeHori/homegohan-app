@@ -812,14 +812,16 @@ export default function MealNewPage() {
 
       {/* ─── Step: mode-select ─── */}
       {step === "mode-select" && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+        <ScrollView testID="meal-mode-select-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
           <Text style={{ fontSize: 13, color: colors.textMuted, textAlign: "center" }}>撮影するものを選んでください</Text>
 
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
             {(Object.entries(PHOTO_MODES) as [PhotoMode, typeof PHOTO_MODES.auto][]).map(([mode, config]) => {
               const isSelected = photoMode === mode;
+              // Normalize testID: replace underscores with dashes, drop "select-" prefix for Maestro compatibility
+              const modeTestID = `meal-mode-${mode.replace(/_/g, "-")}`;
               return (
-                <Pressable key={mode} testID={`meal-mode-select-${mode}`} onPress={() => setPhotoMode(mode)} style={{
+                <Pressable key={mode} testID={modeTestID} onPress={() => setPhotoMode(mode)} style={{
                   width: "47%", padding: spacing.md, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                   backgroundColor: isSelected ? config.bg : colors.card,
                   borderWidth: isSelected ? 2 : 1, borderColor: isSelected ? config.color : colors.border,
@@ -839,7 +841,7 @@ export default function MealNewPage() {
           </Button>
 
           {/* 手動入力への導線 */}
-          <Pressable testID="meal-mode-manual-button" onPress={() => setStep("manual")} style={{
+          <Pressable testID="meal-mode-manual" onPress={() => setStep("manual")} style={{
             flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
             padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bg,
             borderWidth: 1, borderColor: colors.border,
@@ -852,7 +854,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: manual ─── */}
       {step === "manual" && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }} keyboardShouldPersistTaps="handled">
+        <ScrollView testID="meal-form-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }} keyboardShouldPersistTaps="handled">
           {/* Date/meal type selector */}
           <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>記録日と食事タイプ</Text>
 
@@ -1013,7 +1015,7 @@ export default function MealNewPage() {
             <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>食事情報</Text>
 
             <TextInput
-              testID="meal-manual-name-input"
+              testID="meal-name-input"
               value={manualDishName}
               onChangeText={setManualDishName}
               placeholder="食事名（必須）"
@@ -1026,7 +1028,7 @@ export default function MealNewPage() {
 
             <View style={{ flexDirection: "row", gap: spacing.sm }}>
               <TextInput
-                testID="meal-manual-calorie-input"
+                testID="meal-calories-input"
                 value={manualCalories}
                 onChangeText={setManualCalories}
                 placeholder="カロリー (kcal)"
@@ -1088,7 +1090,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: capture ─── */}
       {step === "capture" && (
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+        <ScrollView testID="camera-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
           <Text style={{ fontSize: 13, color: colors.textMuted, textAlign: "center" }}>{modeCopy.captureDescription}</Text>
 
           {photos.length > 0 ? (
@@ -1110,7 +1112,7 @@ export default function MealNewPage() {
             </View>
           ) : (
             <View style={{ flexDirection: "row", gap: spacing.md }}>
-              <Pressable testID="meal-camera-button" onPress={takePhoto} style={({ pressed }) => ({
+              <Pressable testID="camera-capture-button" onPress={takePhoto} style={({ pressed }) => ({
                 flex: 1, padding: spacing.xl, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                 backgroundColor: colors.card, borderWidth: 2, borderStyle: "dashed", borderColor: colors.border, opacity: pressed ? 0.9 : 1,
               })}>
@@ -1119,7 +1121,7 @@ export default function MealNewPage() {
                 </View>
                 <Text style={{ fontSize: 14, fontWeight: "500", color: colors.text }}>{modeCopy.cameraLabel}</Text>
               </Pressable>
-              <Pressable testID="meal-gallery-button" onPress={pickFromLibrary} style={({ pressed }) => ({
+              <Pressable testID="camera-gallery-button" onPress={pickFromLibrary} style={({ pressed }) => ({
                 flex: 1, padding: spacing.xl, borderRadius: radius.lg, alignItems: "center", gap: spacing.sm,
                 backgroundColor: colors.card, borderWidth: 2, borderStyle: "dashed", borderColor: colors.border, opacity: pressed ? 0.9 : 1,
               })}>
@@ -1145,7 +1147,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: analyzing ─── */}
       {step === "analyzing" && (
-        <View testID="meal-analyzing-view" style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg, gap: spacing.lg }}>
+        <View testID="ai-analyzing-indicator" style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg, gap: spacing.lg }}>
           {photos.length > 0 && (
             <View style={{ position: "relative" }}>
               <Image source={{ uri: photos[0].uri }} style={{ width: 220, height: 220, borderRadius: radius.lg, opacity: 0.8 }} />
@@ -1164,7 +1166,7 @@ export default function MealNewPage() {
 
       {/* ─── Step: result (meal) ─── */}
       {step === "result" && (
-        <ScrollView testID="meal-result-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+        <ScrollView testID="meal-form-screen" contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           {/* Score */}
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.successLight }}>
             <View style={{ width: 56, height: 56, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", backgroundColor: overallScore >= 85 ? colors.success : overallScore >= 70 ? colors.warning : colors.accent }}>
