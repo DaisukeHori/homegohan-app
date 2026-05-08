@@ -106,6 +106,9 @@ export function TourOverlay(props: TourOverlayProps) {
           focusTrapOptions={{
             allowOutsideClick: true,
             escapeDeactivates: false,
+            // tabbable な要素がない auto-advance ステップでもエラーにならないよう
+            // オーバーレイ自体をフォールバックフォーカス先として指定する
+            fallbackFocus: '[data-testid="tour-overlay"]',
           }}
         >
           <motion.div
@@ -114,6 +117,7 @@ export function TourOverlay(props: TourOverlayProps) {
             aria-live="polite"
             aria-label={accessibilityLabel}
             data-testid="tour-overlay"
+            tabIndex={-1}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
