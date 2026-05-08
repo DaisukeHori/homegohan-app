@@ -20,8 +20,7 @@ export function TourSandboxWrapper<T>(props: TourSandboxWrapperPropsWithChildren
   const targetTestIds = Array.isArray(target) ? target : undefined;
 
   // children に mode='sandbox' + onSandboxComplete を注入
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sandboxChild = React.cloneElement(children as React.ReactElement<any>, {
+  const sandboxChild = React.cloneElement(children as React.ReactElement<Record<string, unknown>>, {
     ...(childProps as object),
     mode: 'sandbox',
     onSandboxComplete,

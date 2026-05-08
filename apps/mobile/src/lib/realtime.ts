@@ -10,7 +10,7 @@ import { supabase } from './supabase';
  */
 export function subscribeWeeklyMenuRequest(
   requestId: string,
-  onUpdate: (row: any) => void,
+  onUpdate: (row: Record<string, unknown>) => void,
 ): () => void {
   // --- Realtime subscription ---
   const channel = supabase
@@ -23,8 +23,7 @@ export function subscribeWeeklyMenuRequest(
         table: 'weekly_menu_requests',
         filter: `id=eq.${requestId}`,
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (payload: any) => onUpdate(payload.new),
+      (payload: { new: Record<string, unknown> }) => onUpdate(payload.new),
     )
     .subscribe();
 
@@ -35,8 +34,7 @@ export function subscribeWeeklyMenuRequest(
       .select('*')
       .eq('id', requestId)
       .single()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then(({ data, error }: { data: any; error: any }) => {
+      .then(({ data, error }: { data: Record<string, unknown> | null; error: unknown }) => {
         if (!error && data) {
           onUpdate(data);
         }
@@ -62,7 +60,7 @@ export function subscribeWeeklyMenuRequest(
  */
 export function subscribeNutritionFeedback(
   userId: string,
-  onInsert: (row: any) => void,
+  onInsert: (row: Record<string, unknown>) => void,
 ): () => void {
   // --- Realtime subscription ---
   const channel = supabase
@@ -75,8 +73,7 @@ export function subscribeNutritionFeedback(
         table: 'ai_nutrition_feedback',
         filter: `user_id=eq.${userId}`,
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (payload: any) => onInsert(payload.new),
+      (payload: { new: Record<string, unknown> }) => onInsert(payload.new),
     )
     .subscribe();
 
@@ -92,8 +89,7 @@ export function subscribeNutritionFeedback(
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(1)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then(({ data, error }: { data: any[] | null; error: any }) => {
+      .then(({ data, error }: { data: Record<string, unknown>[] | null; error: unknown }) => {
         if (!error && data && data.length > 0) {
           if (!initialized) {
             // 初回ポーリングはベースラインを記録するだけでコールバックを呼ばない
