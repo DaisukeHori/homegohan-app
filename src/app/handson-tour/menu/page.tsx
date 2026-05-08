@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { TourSandboxWrapper } from '@/components/handson-tour/TourSandboxWrapper';
 import {
@@ -10,6 +10,7 @@ import {
   MOCK_MENU_RESPONSE,
   STEP2_SUB_STEP_TO_TARGET,
   personalize,
+  fireAnalytics,
   type SubStepOfStep2,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
@@ -95,11 +96,14 @@ export default function HandsonTourMenuPage() {
     cooking_experience: null,
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
+      setUserId(user.id);
       supabase
         .from('user_profiles')
         .select('nickname, allergies, dislikes, cooking_experience')
@@ -119,11 +123,36 @@ export default function HandsonTourMenuPage() {
     });
   }, []);
 
+  // mount 時に step_viewed (step=2) を発火
+  useEffect(() => {
+    if (!userId) return;
+    fireAnalytics('handson_tour_step_viewed', {
+      user_id: userId,
+      timestamp: new Date().toISOString(),
+      platform: 'web' as const,
+      app_version: '1.0.0',
+      step: 2,
+      sub_step: '2.1',
+    });
+  }, [userId]);
+
   const advanceSubStep = (next: SubStepOfStep2) => setSubStep(next);
 
   const handleSandboxComplete = async () => {
     setSubStep('2.8');
     setIsSaving(true);
+    if (userId) {
+      const now = new Date().toISOString();
+      const dwell_ms = Date.now() - mountTimeRef.current;
+      fireAnalytics('handson_tour_step_completed', {
+        user_id: userId,
+        timestamp: now,
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 2,
+        dwell_ms,
+      });
+    }
     try {
       await fetch('/api/menu-plans/add?source=handson_tour', {
         method: 'POST',

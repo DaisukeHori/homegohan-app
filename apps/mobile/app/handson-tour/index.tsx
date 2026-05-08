@@ -22,6 +22,7 @@ import {
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
   personalize,
+  fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { TourProgress } from '../../src/handson-tour/TourProgress';
@@ -67,6 +68,20 @@ export default function HandsonTourWelcome() {
     );
   }, [nickname]);
 
+  // mount 時に eligible + step_viewed を発火
+  useEffect(() => {
+    if (!profile?.id) return;
+    const now = new Date().toISOString();
+    const common = {
+      user_id: profile.id,
+      timestamp: now,
+      platform: 'ios' as const,
+      app_version: '1.0.0',
+    };
+    fireAnalytics('handson_tour_eligible', { ...common, entry_source: 'auto' as const });
+    fireAnalytics('handson_tour_step_viewed', { ...common, step: 0 });
+  }, [profile?.id]);
+
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
     transform: [{ scale: scale.value }],
@@ -75,12 +90,30 @@ export default function HandsonTourWelcome() {
   const handleStart = () => {
     if (isTransitioning) return;
     setIsTransitioning(true);
+    if (profile?.id) {
+      const now = new Date().toISOString();
+      const dwell_ms = Date.now() - mountTimeRef.current;
+      const common = { user_id: profile.id, timestamp: now, platform: 'ios' as const, app_version: '1.0.0' };
+      fireAnalytics('handson_tour_started', { ...common, entry_source: 'auto' as const });
+      fireAnalytics('handson_tour_step_completed', { ...common, step: 0, dwell_ms });
+    }
     router.push(HANDSON_TOUR_ROUTES.step1 as never);
   };
 
   const handleSkip = async () => {
     if (isTransitioning) return;
     setIsTransitioning(true);
+
+    if (profile?.id) {
+      fireAnalytics('handson_tour_skipped', {
+        user_id: profile.id,
+        timestamp: new Date().toISOString(),
+        platform: 'ios' as const,
+        app_version: '1.0.0',
+        step: 0,
+        reason: 'user_action',
+      });
+    }
 
     try {
       await getApi().post('/api/handson-tour/skip', {

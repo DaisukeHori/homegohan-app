@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { TourSandboxWrapper } from '@/components/handson-tour/TourSandboxWrapper';
 import {
@@ -10,6 +10,7 @@ import {
   MOCK_PHOTO_RESPONSE,
   STEP1_SUB_STEP_TO_TARGET,
   personalize,
+  fireAnalytics,
   type SubStepOfStep1,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
@@ -91,11 +92,14 @@ export default function HandsonTourPhotoPage() {
   const [subStep, setSubStep] = useState<SubStepOfStep1>('1.1');
   const [profile, setProfile] = useState<UserProfile>({ nickname: null, target_kcal_per_day: null });
   const [isSaving, setIsSaving] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
+      setUserId(user.id);
       supabase
         .from('user_profiles')
         .select('nickname, target_kcal_per_day')
@@ -114,6 +118,19 @@ export default function HandsonTourPhotoPage() {
     });
   }, []);
 
+  // mount 時に step_viewed (step=1) を発火
+  useEffect(() => {
+    if (!userId) return;
+    fireAnalytics('handson_tour_step_viewed', {
+      user_id: userId,
+      timestamp: new Date().toISOString(),
+      platform: 'web' as const,
+      app_version: '1.0.0',
+      step: 1,
+      sub_step: '1.1',
+    });
+  }, [userId]);
+
   const advanceSubStep = (next: SubStepOfStep1) => {
     setSubStep(next);
   };
@@ -121,6 +138,18 @@ export default function HandsonTourPhotoPage() {
   const handleSandboxComplete = async () => {
     setSubStep('1.7');
     setIsSaving(true);
+    if (userId) {
+      const now = new Date().toISOString();
+      const dwell_ms = Date.now() - mountTimeRef.current;
+      fireAnalytics('handson_tour_step_completed', {
+        user_id: userId,
+        timestamp: now,
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 1,
+        dwell_ms,
+      });
+    }
     try {
       await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
         method: 'POST',

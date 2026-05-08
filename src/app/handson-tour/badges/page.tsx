@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { TourOverlay } from '@/components/handson-tour/TourOverlay';
 import {
@@ -9,6 +9,7 @@ import {
   HANDSON_TOUR_CONSTANTS,
   STEP3_SUB_STEP_TO_TARGET,
   personalize,
+  fireAnalytics,
   type SubStepOfStep3,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
@@ -77,11 +78,14 @@ export default function HandsonTourBadgesPage() {
   const [badges, setBadges] = useState<BadgeItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [nickname, setNickname] = useState('あなた');
+  const [userId, setUserId] = useState<string | null>(null);
+  const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
+      setUserId(user.id);
       supabase
         .from('user_profiles')
         .select('nickname')
@@ -105,6 +109,18 @@ export default function HandsonTourBadgesPage() {
       });
   }, []);
 
+  // userId 確定後に step_viewed (step=3) を発火
+  useEffect(() => {
+    if (!userId) return;
+    fireAnalytics('handson_tour_step_viewed', {
+      user_id: userId,
+      timestamp: new Date().toISOString(),
+      platform: 'web' as const,
+      app_version: '1.0.0',
+      step: 3,
+    });
+  }, [userId]);
+
   const advanceSubStep = (next: SubStepOfStep3) => setSubStep(next);
 
   const bubble = buildBubble(subStep, nickname);
@@ -121,7 +137,23 @@ export default function HandsonTourBadgesPage() {
       return { label: i18n.next_button, onPress: () => advanceSubStep('3.4') };
     }
     if (subStep === '3.4') {
-      return { label: i18n.next_button, onPress: () => router.push(HANDSON_TOUR_ROUTES.step4) };
+      return {
+        label: i18n.next_button,
+        onPress: () => {
+          if (userId) {
+            const dwell_ms = Date.now() - mountTimeRef.current;
+            fireAnalytics('handson_tour_step_completed', {
+              user_id: userId,
+              timestamp: new Date().toISOString(),
+              platform: 'web' as const,
+              app_version: '1.0.0',
+              step: 3,
+              dwell_ms,
+            });
+          }
+          router.push(HANDSON_TOUR_ROUTES.step4);
+        },
+      };
     }
     return undefined;
   })();

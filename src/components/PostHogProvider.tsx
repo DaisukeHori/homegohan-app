@@ -7,7 +7,7 @@
 import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { posthog, initPostHog, getAnalyticsConsent, ANALYTICS_CONSENT_KEY } from "@/lib/posthog";
-import { setAnalyticsAdapter } from "@homegohan/handson-tour-shared";
+import { setAnalyticsAdapter, fireAnalytics } from "@homegohan/handson-tour-shared";
 
 /**
  * PostHog Web Provider
@@ -61,6 +61,29 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
           } catch {
             // ignore
           }
+
+          // Web Vitals 計測 (handson-tour 専用 analytics schema)
+          import('web-vitals').then(({ onLCP, onCLS, onFID }) => {
+            const page = typeof window !== 'undefined' ? window.location.pathname : '/';
+            const common = {
+              user_id: userId,
+              timestamp: new Date().toISOString(),
+              platform: 'web' as const,
+              app_version: '1.0.0',
+              page,
+            };
+            onLCP((metric) => {
+              fireAnalytics('web_vitals_lcp', { ...common, value_ms: metric.value });
+            });
+            onCLS((metric) => {
+              fireAnalytics('web_vitals_cls', { ...common, value: metric.value });
+            });
+            onFID((metric) => {
+              fireAnalytics('web_vitals_fid', { ...common, value_ms: metric.value });
+            });
+          }).catch(() => {
+            // web-vitals unavailable — ignore
+          });
         });
     });
 

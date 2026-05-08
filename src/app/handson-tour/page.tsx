@@ -11,6 +11,7 @@ import {
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
   personalize,
+  fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 
 function safeNickname(raw: string | null | undefined): string {
@@ -29,6 +30,7 @@ export default function HandsonTourWelcomePage() {
 
   const [nickname, setNickname] = useState('あなた');
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const entrySource =
     searchParams.get('force') === '1' ? 'settings_force' : 'auto';
@@ -37,6 +39,7 @@ export default function HandsonTourWelcomePage() {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
+      setUserId(user.id);
       supabase
         .from('user_profiles')
         .select('nickname')
@@ -50,6 +53,20 @@ export default function HandsonTourWelcomePage() {
     });
   }, []);
 
+  // mount 時に eligible + step_viewed (step=0) を発火
+  useEffect(() => {
+    if (!userId) return;
+    const now = new Date().toISOString();
+    const common = {
+      user_id: userId,
+      timestamp: now,
+      platform: 'web' as const,
+      app_version: '1.0.0',
+    };
+    fireAnalytics('handson_tour_eligible', { ...common, entry_source: entrySource });
+    fireAnalytics('handson_tour_step_viewed', { ...common, step: 0 });
+  }, [userId, entrySource]);
+
   const i18n = HANDSON_TOUR_I18N_JA.tour.step0;
 
   const title = personalize(i18n.title, { nickname });
@@ -58,10 +75,28 @@ export default function HandsonTourWelcomePage() {
   const handleStart = () => {
     if (isTransitioning) return;
     setIsTransitioning(true);
+    if (userId) {
+      const now = new Date().toISOString();
+      const dwell_ms = Date.now() - mountTime.current;
+      const common = { user_id: userId, timestamp: now, platform: 'web' as const, app_version: '1.0.0' };
+      fireAnalytics('handson_tour_started', { ...common, entry_source: entrySource });
+      fireAnalytics('handson_tour_step_completed', { ...common, step: 0, dwell_ms });
+    }
     router.push(HANDSON_TOUR_ROUTES.step1);
   };
 
   const handleSkip = async () => {
+    if (userId) {
+      const now = new Date().toISOString();
+      fireAnalytics('handson_tour_skipped', {
+        user_id: userId,
+        timestamp: now,
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 0,
+        reason: 'user_action',
+      });
+    }
     try {
       await fetch('/api/handson-tour/skip', {
         method: 'POST',

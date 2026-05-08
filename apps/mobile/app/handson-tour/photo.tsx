@@ -20,6 +20,7 @@ import {
   MOCK_PHOTO_RESPONSE,
   STEP1_SUB_STEP_TO_TARGET,
   personalize,
+  fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 import type { SubStepOfStep1 } from '@homegohan/handson-tour-shared';
 
@@ -203,6 +204,19 @@ export default function HandsonTourPhoto() {
   const [subStep, setSubStep] = useState<SubStepOfStep1>('1.1');
   const mountTimeRef = useRef(Date.now());
 
+  // mount 時に step_viewed (step=1) を発火
+  useEffect(() => {
+    if (!profile?.id) return;
+    fireAnalytics('handson_tour_step_viewed', {
+      user_id: profile.id,
+      timestamp: new Date().toISOString(),
+      platform: 'ios' as const,
+      app_version: '1.0.0',
+      step: 1,
+      sub_step: '1.1',
+    });
+  }, [profile?.id]);
+
   const advanceSubStep = (next: SubStepOfStep1) => {
     setSubStep(next);
   };
@@ -246,6 +260,17 @@ export default function HandsonTourPhoto() {
   }, [subStep]);
 
   const handleSandboxComplete = async () => {
+    if (profile?.id) {
+      const dwell_ms = Date.now() - mountTimeRef.current;
+      fireAnalytics('handson_tour_step_completed', {
+        user_id: profile.id,
+        timestamp: new Date().toISOString(),
+        platform: 'ios' as const,
+        app_version: '1.0.0',
+        step: 1,
+        dwell_ms,
+      });
+    }
     // Step 2 へ遷移
     router.push(HANDSON_TOUR_ROUTES.step2 as never);
   };
