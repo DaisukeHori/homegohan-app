@@ -534,6 +534,20 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 既存テーブルの旧列名 'admin_id' を 'actor_id' に RENAME (canonical: actor_id)。
+-- prod では旧運用の admin_id を残したまま運用していたため、ここで正規化する。
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'admin_audit_logs' AND column_name = 'admin_id'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'admin_audit_logs' AND column_name = 'actor_id'
+  ) THEN
+    ALTER TABLE admin_audit_logs RENAME COLUMN admin_id TO actor_id;
+  END IF;
+END $$;
+
 ALTER TABLE admin_audit_logs
   ADD COLUMN IF NOT EXISTS target_type          VARCHAR(30),
   ADD COLUMN IF NOT EXISTS severity             VARCHAR(20) NOT NULL DEFAULT 'info',
