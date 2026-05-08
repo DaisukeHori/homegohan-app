@@ -182,7 +182,7 @@ export default function AIChatBubble() {
   const computeDefaultDayMenuDate = (): string => {
     const todayStr = new Date().toISOString().split('T')[0];
     if (typeof window !== 'undefined') {
-      const fromWeekly = (window as any).__weeklyCurrentDate;
+      const fromWeekly = window.__weeklyCurrentDate;
       if (typeof fromWeekly === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fromWeekly)) {
         if (fromWeekly !== todayStr) return fromWeekly;
       }

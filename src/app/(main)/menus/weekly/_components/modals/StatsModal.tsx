@@ -184,7 +184,7 @@ export function StatsModal({
               {/* レーダーチャート */}
               <div className="flex justify-center mb-3">
                 <NutritionRadarChart
-                  nutrition={todayNutrition as any}
+                  nutrition={todayNutrition}
                   selectedNutrients={radarChartNutrients}
                   size={180}
                   showLabels={true}
@@ -262,7 +262,7 @@ export function StatsModal({
               {/* 週間レーダーチャート */}
               <div className="flex justify-center mb-3">
                 <NutritionRadarChart
-                  nutrition={weekNutrition.averages as any}
+                  nutrition={weekNutrition.averages}
                   selectedNutrients={radarChartNutrients}
                   size={180}
                   showLabels={true}

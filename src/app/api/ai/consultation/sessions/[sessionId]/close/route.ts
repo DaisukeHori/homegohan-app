@@ -151,7 +151,7 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
             if (!summaryContent) throw new Error('要約の生成に失敗しました');
 
             const parsed = safeJsonParse(summaryContent);
-            if (!parsed || typeof parsed !== 'object' || typeof (parsed as any).summary !== 'string') {
+            if (!parsed || typeof parsed !== 'object' || typeof parsed.summary !== 'string') {
               throw new Error('Invalid summary JSON');
             }
 

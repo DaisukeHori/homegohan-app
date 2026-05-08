@@ -129,7 +129,9 @@ export default function HomePage() {
   const [checkinFeedback, setCheckinFeedback] = useState<
     { type: 'success' | 'error'; message: string } | null
   >(null);
-  const [checkinForm, setCheckinForm] = useState({
+  type CheckinFormKey = 'sleepHours' | 'sleepQuality' | 'fatigue' | 'focus' | 'hunger';
+  type CheckinForm = Record<CheckinFormKey, number>;
+  const [checkinForm, setCheckinForm] = useState<CheckinForm>({
     sleepHours: 7,
     sleepQuality: 3,
     fatigue: 3,
@@ -560,17 +562,19 @@ export default function HomePage() {
                       </div>
 
                       {/* 各項目（5段階） */}
-                      {[
-                        { key: 'sleepQuality', label: '💤 睡眠の質', options: ['悪い', 'やや悪い', '普通', '良い', '最高'] },
-                        { key: 'fatigue', label: '😫 疲労度', options: ['元気', 'やや疲れ', '普通', '疲れ', 'ヘトヘト'] },
-                        { key: 'focus', label: '🎯 集中力', options: ['低い', 'やや低い', '普通', '良い', '最高'] },
-                        { key: 'hunger', label: '🍽️ 空腹感', options: ['ない', '少し', '普通', 'ある', 'すごくある'] },
-                      ].map((item) => (
+                      {(
+                        [
+                          { key: 'sleepQuality' as CheckinFormKey, label: '💤 睡眠の質', options: ['悪い', 'やや悪い', '普通', '良い', '最高'] },
+                          { key: 'fatigue' as CheckinFormKey, label: '😫 疲労度', options: ['元気', 'やや疲れ', '普通', '疲れ', 'ヘトヘト'] },
+                          { key: 'focus' as CheckinFormKey, label: '🎯 集中力', options: ['低い', 'やや低い', '普通', '良い', '最高'] },
+                          { key: 'hunger' as CheckinFormKey, label: '🍽️ 空腹感', options: ['ない', '少し', '普通', 'ある', 'すごくある'] },
+                        ] as const
+                      ).map((item) => (
                         <div key={item.key}>
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-medium" style={{ color: colors.textLight }}>{item.label}</span>
                             <span className="text-xs" style={{ color: colors.textMuted }}>
-                              {item.options[(checkinForm as any)[item.key] - 1]}
+                              {item.options[checkinForm[item.key] - 1]}
                             </span>
                           </div>
                           <div className="flex gap-1">
@@ -579,7 +583,7 @@ export default function HomePage() {
                                 key={val}
                                 onClick={() => setCheckinForm({ ...checkinForm, [item.key]: val })}
                                 className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                  (checkinForm as any)[item.key] === val
+                                  checkinForm[item.key] === val
                                     ? 'bg-purple-500 text-white'
                                     : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                                 }`}

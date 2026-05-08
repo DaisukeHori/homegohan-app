@@ -58,6 +58,8 @@ interface FormData {
   creatinine: string;
   egfr: string;
   uric_acid: string;
+  // 画像（AI解析後に設定される）
+  image_url?: string;
 }
 
 const initialFormData: FormData = {
@@ -232,7 +234,7 @@ export default function NewHealthCheckupPage() {
         checkup_date: formData.checkup_date,
         facility_name: formData.facility_name || null,
         checkup_type: formData.checkup_type || null,
-        image_url: (formData as any).image_url || null,
+        image_url: formData.image_url || null,
       };
 
       numericFields.forEach(field => {
