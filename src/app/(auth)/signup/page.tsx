@@ -80,12 +80,23 @@ export default function SignupPage() {
 
       if (error) {
         console.error('Signup error:', error);
-        // Supabase エラーを日本語化してインライン表示
-        const messages: Record<string, string> = {
-          'Password should be at least 6 characters.': 'パスワードは8文字以上で入力してください',
-          'User already registered': 'このメールアドレスは既に登録されています',
-        };
-        setFormError(messages[error.message] ?? `登録に失敗しました: ${error.message}`);
+        // Supabase エラーコードおよびメッセージで日本語化
+        const isDuplicateEmail =
+          error.code === 'user_already_exists' ||
+          error.code === 'email_exists' ||
+          error.message === 'User already registered' ||
+          error.message.includes('already registered') ||
+          error.message.includes('already been registered');
+        const isWeakPassword =
+          error.code === 'weak_password' ||
+          error.message.includes('Password should be at least');
+        if (isDuplicateEmail) {
+          setFormError('このメールアドレスは既に登録されています。ログインへ進んでください。');
+        } else if (isWeakPassword) {
+          setFormError('パスワードは8文字以上で入力してください');
+        } else {
+          setFormError(`登録に失敗しました: ${error.message}`);
+        }
         // #286: エラー確定後に即座にローディングを解除（finally でも解除されるが明示的に）
         setIsLoading(false);
         return;
