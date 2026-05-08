@@ -16,6 +16,7 @@
 import { chromium, type FullConfig } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 const STORAGE_STATE_PATH = "tests/e2e/.auth/user.json";
 const MAX_RETRIES = 3;
@@ -61,6 +62,9 @@ async function fetchSupabaseSession(
 }
 
 async function globalSetup(config: FullConfig): Promise<void> {
+  // classify-test fixture を /tmp/classify-test/ に生成 (存在しない場合のみ)
+  seedClassifyFixtures();
+
   const baseURL =
     config.projects[0]?.use?.baseURL ??
     process.env.PLAYWRIGHT_BASE_URL ??
