@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -13,26 +14,21 @@ const colors = {
 };
 
 interface AddShoppingModalProps {
-  newShoppingName: string;
-  newShoppingAmount: string;
-  newShoppingCategory: string;
-  onChangeName: (value: string) => void;
-  onChangeAmount: (value: string) => void;
-  onChangeCategory: (value: string) => void;
   onAdd: () => void;
   onClose: () => void;
 }
 
 export function AddShoppingModal({
-  newShoppingName,
-  newShoppingAmount,
-  newShoppingCategory,
-  onChangeName,
-  onChangeAmount,
-  onChangeCategory,
   onAdd,
   onClose,
 }: AddShoppingModalProps) {
+  const newShoppingName = useFormDraftStore((s) => s.newShoppingName);
+  const newShoppingAmount = useFormDraftStore((s) => s.newShoppingAmount);
+  const newShoppingCategory = useFormDraftStore((s) => s.newShoppingCategory);
+  const setNewShoppingName = useFormDraftStore((s) => s.setNewShoppingName);
+  const setNewShoppingAmount = useFormDraftStore((s) => s.setNewShoppingAmount);
+  const setNewShoppingCategory = useFormDraftStore((s) => s.setNewShoppingCategory);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -51,7 +47,7 @@ export function AddShoppingModal({
         <input
           type="text"
           value={newShoppingName}
-          onChange={(e) => onChangeName(e.target.value)}
+          onChange={(e) => setNewShoppingName(e.target.value)}
           placeholder="品名（例: もやし）"
           className="w-full p-3 rounded-xl text-[14px] outline-none"
           style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
@@ -59,14 +55,14 @@ export function AddShoppingModal({
         <input
           type="text"
           value={newShoppingAmount}
-          onChange={(e) => onChangeAmount(e.target.value)}
+          onChange={(e) => setNewShoppingAmount(e.target.value)}
           placeholder="量（例: 2袋）"
           className="w-full p-3 rounded-xl text-[14px] outline-none"
           style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
         />
         <select
           value={newShoppingCategory}
-          onChange={(e) => onChangeCategory(e.target.value)}
+          onChange={(e) => setNewShoppingCategory(e.target.value)}
           className="w-full p-3 rounded-xl text-[14px] outline-none"
           style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
         >

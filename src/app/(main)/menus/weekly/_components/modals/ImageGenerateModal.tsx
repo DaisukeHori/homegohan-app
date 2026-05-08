@@ -4,6 +4,7 @@ import React, { useRef } from "react";
 import { motion } from "framer-motion";
 import { X, Plus, Sparkles, Image as ImageIcon } from "lucide-react";
 import Image from "next/image";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -23,11 +24,8 @@ interface ImageGenerateMeal {
 
 interface ImageGenerateModalProps {
   imageGenerateMeal: ImageGenerateMeal;
-  imageGenerationPrompt: string;
-  imageReferencePreviews: string[];
   isGeneratingMealImage: boolean;
   onClose: () => void;
-  onChangePrompt: (value: string) => void;
   onAddReferenceImages: (files: FileList) => void;
   onRemoveReferenceImage: (idx: number) => void;
   onGenerate: () => void;
@@ -35,16 +33,17 @@ interface ImageGenerateModalProps {
 
 export function ImageGenerateModal({
   imageGenerateMeal,
-  imageGenerationPrompt,
-  imageReferencePreviews,
   isGeneratingMealImage,
   onClose,
-  onChangePrompt,
   onAddReferenceImages,
   onRemoveReferenceImage,
   onGenerate,
 }: ImageGenerateModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const imageGenerationPrompt = useFormDraftStore((s) => s.imageGenerationPrompt);
+  const imageReferencePreviews = useFormDraftStore((s) => s.imageReferencePreviews);
+  const setImageGenerationPrompt = useFormDraftStore((s) => s.setImageGenerationPrompt);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -112,7 +111,7 @@ export function ImageGenerateModal({
           <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>生成したい画像の説明</label>
           <textarea
             value={imageGenerationPrompt}
-            onChange={(e) => onChangePrompt(e.target.value)}
+            onChange={(e) => setImageGenerationPrompt(e.target.value)}
             placeholder="例: 彩りの良い和風ハンバーグ定食、湯気のある自然光、木のテーブル"
             rows={4}
             className="w-full p-3 rounded-2xl text-[13px] outline-none resize-none"

@@ -8,6 +8,7 @@ import {
   nutritionReducer, initialNutritionState,
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
+  useServingsConfigStore,
 } from './_state';
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -5534,11 +5535,7 @@ export default function WeeklyMenuPage() {
               <AiAssistantModal
                 isGenerating={isGenerating}
                 emptySlotCount={emptySlotCount}
-                selectedConditions={selectedConditions}
-                aiChatInput={aiChatInput}
                 onClose={() => setActiveModal(null)}
-                onChangeConditions={setSelectedConditions}
-                onChangeAiChatInput={setAiChatInput}
                 onGenerateWeekly={handleGenerateWeekly}
               />
             )}
@@ -5575,7 +5572,6 @@ export default function WeeklyMenuPage() {
             {/* Fridge Modal */}
             {activeModal === 'fridge' && (
               <FridgeModal
-                fridgeItems={fridgeItems}
                 onClose={() => setActiveModal(null)}
                 onOpenAddFridge={() => setActiveModal('addFridge')}
                 onDeleteItem={deletePantryItem}
@@ -5585,12 +5581,6 @@ export default function WeeklyMenuPage() {
             {/* Add Fridge Item Modal */}
             {activeModal === 'addFridge' && (
               <AddFridgeModal
-                newFridgeName={newFridgeName}
-                newFridgeAmount={newFridgeAmount}
-                newFridgeExpiry={newFridgeExpiry}
-                onChangeName={setNewFridgeName}
-                onChangeAmount={setNewFridgeAmount}
-                onChangeExpiry={setNewFridgeExpiry}
                 onAdd={addPantryItem}
                 onClose={() => setActiveModal('fridge')}
               />
@@ -5599,11 +5589,7 @@ export default function WeeklyMenuPage() {
             {/* Shopping List Modal */}
             {activeModal === 'shopping' && (
               <ShoppingModal
-                shoppingList={shoppingList}
                 groupedShoppingList={groupedShoppingList}
-                shoppingListTotalServings={shoppingListTotalServings}
-                isRegeneratingShoppingList={isRegeneratingShoppingList}
-                shoppingListProgress={shoppingListProgress}
                 hasAnyMealsThisWeek={hasAnyMealsThisWeek}
                 onClose={() => setActiveModal(null)}
                 onOpenAddShopping={() => setActiveModal('addShopping')}
@@ -5621,12 +5607,6 @@ export default function WeeklyMenuPage() {
             {/* Add Shopping Item Modal */}
             {activeModal === 'addShopping' && (
               <AddShoppingModal
-                newShoppingName={newShoppingName}
-                newShoppingAmount={newShoppingAmount}
-                newShoppingCategory={newShoppingCategory}
-                onChangeName={setNewShoppingName}
-                onChangeAmount={setNewShoppingAmount}
-                onChangeCategory={setNewShoppingCategory}
                 onAdd={addShoppingItem}
                 onClose={() => setActiveModal('shopping')}
               />
@@ -5635,15 +5615,9 @@ export default function WeeklyMenuPage() {
             {/* Shopping Range Selection Modal (2-step) */}
             {activeModal === 'shoppingRange' && (
               <ShoppingRangeModal
-                shoppingRange={shoppingRange}
-                shoppingRangeStep={shoppingRangeStep}
                 isTodayExpanded={isTodayExpanded}
-                servingsConfig={servingsConfig}
                 onClose={() => { setActiveModal('shopping'); setShoppingRangeStep('range'); }}
-                onChangeRange={setShoppingRange}
-                onChangeStep={setShoppingRangeStep}
                 onToggleTodayExpanded={setIsTodayExpanded}
-                onUpdateServingsConfig={setServingsConfig}
                 onGenerate={async (cfg) => {
                   if (cfg) {
                     try {
@@ -5679,16 +5653,15 @@ export default function WeeklyMenuPage() {
             {/* Servings Config Modal */}
             {showServingsModal && (
               <ServingsModal
-                servingsConfig={servingsConfig}
                 onClose={() => setShowServingsModal(false)}
-                onUpdateServingsConfig={setServingsConfig}
                 onSave={async () => {
-                  if (!servingsConfig) return;
+                  const currentServingsConfig = useServingsConfigStore.getState().servingsConfig;
+                  if (!currentServingsConfig) return;
                   try {
                     const res = await fetch('/api/profile', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ servingsConfig })
+                      body: JSON.stringify({ servingsConfig: currentServingsConfig })
                     });
                     if (res.ok) {
                       setSuccessMessage({ title: '保存しました', message: '人数設定を更新しました' });
@@ -5704,17 +5677,9 @@ export default function WeeklyMenuPage() {
             {/* Add Meal Modal */}
             {activeModal === 'add' && (
               <AddMealModal
-                addMealKey={addMealKey}
                 modeConfig={MODE_CONFIG}
-                catalogQuery={catalogQuery}
-                catalogResults={catalogResults}
-                selectedCatalogProduct={selectedCatalogProduct}
-                isCatalogSearching={isCatalogSearching}
-                catalogSearchError={catalogSearchError}
                 onClose={() => setActiveModal(null)}
                 onOpenAiMeal={() => setActiveModal('aiMeal')}
-                onChangeCatalogQuery={setCatalogQuery}
-                onSelectCatalogProduct={setSelectedCatalogProduct}
                 onAddMealWithMode={handleAddMealWithMode}
               />
             )}
@@ -5742,14 +5707,8 @@ export default function WeeklyMenuPage() {
             {/* AI Single Meal Modal */}
             {activeModal === 'aiMeal' && (
               <AiMealModal
-                addMealKey={addMealKey}
-                addMealDayIndex={addMealDayIndex}
                 weekDates={weekDates}
-                selectedConditions={selectedConditions}
-                aiChatInput={aiChatInput}
                 onClose={() => setActiveModal(null)}
-                onChangeConditions={setSelectedConditions}
-                onChangeAiChatInput={setAiChatInput}
                 onGenerateSingleMeal={handleGenerateSingleMeal}
               />
             )}
@@ -5757,12 +5716,8 @@ export default function WeeklyMenuPage() {
             {/* Edit Meal Modal */}
             {activeModal === 'editMeal' && editingMeal && (
               <EditMealModal
-                editMealName={editMealName}
-                editMealMode={editMealMode}
                 modeConfig={MODE_CONFIG}
                 onClose={() => { setActiveModal(null); setEditingMeal(null); }}
-                onChangeName={setEditMealName}
-                onChangeMode={setEditMealMode}
                 onSave={saveEditMeal}
               />
             )}
@@ -5771,12 +5726,8 @@ export default function WeeklyMenuPage() {
             {activeModal === 'regenerateMeal' && regeneratingMeal && (
               <RegenerateMealModal
                 regeneratingMeal={regeneratingMeal}
-                selectedConditions={selectedConditions}
-                aiChatInput={aiChatInput}
                 isRegenerating={isRegenerating}
                 onClose={() => { setActiveModal(null); setRegeneratingMeal(null); }}
-                onChangeConditions={setSelectedConditions}
-                onChangeAiChatInput={setAiChatInput}
                 onRegenerateMeal={handleRegenerateMeal}
               />
             )}
@@ -5785,18 +5736,8 @@ export default function WeeklyMenuPage() {
             {activeModal === 'manualEdit' && manualEditMeal && (
               <ManualEditModal
                 manualEditMeal={manualEditMeal}
-                manualDishes={manualDishes}
-                manualMode={manualMode}
                 modeConfig={MODE_CONFIG}
-                catalogQuery={catalogQuery}
-                catalogResults={catalogResults}
-                selectedCatalogProduct={selectedCatalogProduct}
-                isCatalogSearching={isCatalogSearching}
-                catalogSearchError={catalogSearchError}
                 onClose={() => { setActiveModal(null); setManualEditMeal(null); }}
-                onChangeMode={setManualMode}
-                onChangeCatalogQuery={setCatalogQuery}
-                onSelectCatalogProduct={setSelectedCatalogProduct}
                 onApplyCatalogProduct={applyCatalogProductToManualEdit}
                 onAddDish={addManualDish}
                 onRemoveDish={removeManualDish}
@@ -5811,11 +5752,8 @@ export default function WeeklyMenuPage() {
             {activeModal === 'imageGenerate' && imageGenerateMeal && (
               <ImageGenerateModal
                 imageGenerateMeal={{ ...imageGenerateMeal, imageUrl: imageGenerateMeal.imageUrl ?? undefined }}
-                imageGenerationPrompt={imageGenerationPrompt}
-                imageReferencePreviews={imageReferencePreviews}
                 isGeneratingMealImage={isGeneratingMealImage}
                 onClose={() => closeImageGenerateModal(true)}
-                onChangePrompt={setImageGenerationPrompt}
                 onAddReferenceImages={(files: FileList) => {
                   const newFiles = Array.from(files);
                   setImageReferenceFiles(prev => [...prev, ...newFiles]);
@@ -5837,8 +5775,6 @@ export default function WeeklyMenuPage() {
             {/* Photo Edit Modal */}
             {activeModal === 'photoEdit' && photoEditMeal && (
               <PhotoEditModal
-                photoPreviews={photoPreviews}
-                photoFilesCount={photoFiles.length}
                 isAnalyzingPhoto={isAnalyzingPhoto}
                 onClose={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }}
                 onPhotoSelect={(files: FileList) => {

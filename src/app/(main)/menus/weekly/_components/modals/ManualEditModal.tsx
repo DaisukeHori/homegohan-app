@@ -6,6 +6,7 @@ import Image from "next/image";
 import { X, Check, Trash2, Plus, Pencil, Camera, Image as ImageIcon } from "lucide-react";
 import type { MealMode, PlannedMeal, DishDetail } from "@/types/domain";
 import type { CatalogProductSummary } from "@/types/catalog";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -46,18 +47,8 @@ interface ModeConfig {
 
 interface ManualEditModalProps {
   manualEditMeal: PlannedMeal;
-  manualDishes: DishDetail[];
-  manualMode: MealMode;
   modeConfig: Record<string, ModeConfig>;
-  catalogQuery: string;
-  catalogResults: CatalogProductSummary[];
-  selectedCatalogProduct: CatalogProductSummary | null;
-  isCatalogSearching: boolean;
-  catalogSearchError: string;
   onClose: () => void;
-  onChangeMode: (mode: MealMode) => void;
-  onChangeCatalogQuery: (query: string) => void;
-  onSelectCatalogProduct: (product: CatalogProductSummary | null) => void;
   onApplyCatalogProduct: (product: CatalogProductSummary) => void;
   onAddDish: () => void;
   onRemoveDish: (index: number) => void;
@@ -69,18 +60,8 @@ interface ManualEditModalProps {
 
 export function ManualEditModal({
   manualEditMeal,
-  manualDishes,
-  manualMode,
   modeConfig,
-  catalogQuery,
-  catalogResults,
-  selectedCatalogProduct,
-  isCatalogSearching,
-  catalogSearchError,
   onClose,
-  onChangeMode,
-  onChangeCatalogQuery,
-  onSelectCatalogProduct,
   onApplyCatalogProduct,
   onAddDish,
   onRemoveDish,
@@ -89,6 +70,17 @@ export function ManualEditModal({
   onOpenImageGenerate,
   onSave,
 }: ManualEditModalProps) {
+  const manualDishes = useFormDraftStore((s) => s.manualDishes);
+  const manualMode = useFormDraftStore((s) => s.manualMode);
+  const catalogQuery = useFormDraftStore((s) => s.catalogQuery);
+  const catalogResults = useFormDraftStore((s) => s.catalogResults);
+  const selectedCatalogProduct = useFormDraftStore((s) => s.selectedCatalogProduct);
+  const isCatalogSearching = useFormDraftStore((s) => s.isCatalogSearching);
+  const catalogSearchError = useFormDraftStore((s) => s.catalogSearchError);
+  const setManualMode = useFormDraftStore((s) => s.setManualMode);
+  const setCatalogQuery = useFormDraftStore((s) => s.setCatalogQuery);
+  const setSelectedCatalogProduct = useFormDraftStore((s) => s.setSelectedCatalogProduct);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -116,7 +108,7 @@ export function ManualEditModal({
               return (
                 <button
                   key={key}
-                  onClick={() => onChangeMode(key)}
+                  onClick={() => setManualMode(key)}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
                   style={{
                     background: isSelected ? mode.bg : colors.bg,
@@ -137,8 +129,8 @@ export function ManualEditModal({
             {selectedCatalogProduct && (
               <button
                 onClick={() => {
-                  onSelectCatalogProduct(null);
-                  onChangeCatalogQuery('');
+                  setSelectedCatalogProduct(null);
+                  setCatalogQuery('');
                 }}
                 className="text-[12px]"
                 style={{ color: colors.textLight }}
@@ -151,9 +143,9 @@ export function ManualEditModal({
             type="text"
             value={catalogQuery}
             onChange={(e) => {
-              onChangeCatalogQuery(e.target.value);
+              setCatalogQuery(e.target.value);
               if (!e.target.value.trim()) {
-                onSelectCatalogProduct(null);
+                setSelectedCatalogProduct(null);
               }
             }}
             placeholder="商品名で検索"

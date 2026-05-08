@@ -4,6 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
+import { useServingsConfigStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -21,18 +22,17 @@ type DayOfWeekKey = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' |
 type MealTimeKey = 'breakfast' | 'lunch' | 'dinner';
 
 interface ServingsModalProps {
-  servingsConfig: ServingsConfig | null;
   onClose: () => void;
-  onUpdateServingsConfig: (config: ServingsConfig) => void;
   onSave: () => void;
 }
 
 export function ServingsModal({
-  servingsConfig,
   onClose,
-  onUpdateServingsConfig,
   onSave,
 }: ServingsModalProps) {
+  const servingsConfig = useServingsConfigStore((s) => s.servingsConfig);
+  const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
+
   const days: DayOfWeekKey[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   const dayLabels: Record<DayOfWeekKey, string> = {
     monday: '月', tuesday: '火', wednesday: '水', thursday: '木',
@@ -46,7 +46,7 @@ export function ServingsModal({
     };
     if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
     updated.byDayMeal[day]![meal] = Math.max(0, Math.min(10, newValue));
-    onUpdateServingsConfig(updated);
+    setServingsConfig(updated);
   };
 
   return (

@@ -4,8 +4,8 @@ import React from "react";
 import { motion } from "framer-motion";
 import { X, Sparkles } from "lucide-react";
 import type { MealMode } from "@/types/domain";
-import type { CatalogProductSummary } from "@/types/catalog";
 import { MEAL_LABELS } from "@homegohan/shared";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -44,34 +44,27 @@ const formatNutrition = (value: number | null | undefined, decimals = 1): string
 };
 
 interface AddMealModalProps {
-  addMealKey: MealType | null;
   modeConfig: Record<string, ModeConfig>;
-  catalogQuery: string;
-  catalogResults: CatalogProductSummary[];
-  selectedCatalogProduct: CatalogProductSummary | null;
-  isCatalogSearching: boolean;
-  catalogSearchError: string;
   onClose: () => void;
   onOpenAiMeal: () => void;
-  onChangeCatalogQuery: (query: string) => void;
-  onSelectCatalogProduct: (product: CatalogProductSummary | null) => void;
   onAddMealWithMode: (mode: MealMode) => void;
 }
 
 export function AddMealModal({
-  addMealKey,
   modeConfig,
-  catalogQuery,
-  catalogResults,
-  selectedCatalogProduct,
-  isCatalogSearching,
-  catalogSearchError,
   onClose,
   onOpenAiMeal,
-  onChangeCatalogQuery,
-  onSelectCatalogProduct,
   onAddMealWithMode,
 }: AddMealModalProps) {
+  const addMealKey = useFormDraftStore((s) => s.addMealKey);
+  const catalogQuery = useFormDraftStore((s) => s.catalogQuery);
+  const catalogResults = useFormDraftStore((s) => s.catalogResults);
+  const selectedCatalogProduct = useFormDraftStore((s) => s.selectedCatalogProduct);
+  const isCatalogSearching = useFormDraftStore((s) => s.isCatalogSearching);
+  const catalogSearchError = useFormDraftStore((s) => s.catalogSearchError);
+  const setCatalogQuery = useFormDraftStore((s) => s.setCatalogQuery);
+  const setSelectedCatalogProduct = useFormDraftStore((s) => s.setSelectedCatalogProduct);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -93,8 +86,8 @@ export function AddMealModal({
             {selectedCatalogProduct && (
               <button
                 onClick={() => {
-                  onSelectCatalogProduct(null);
-                  onChangeCatalogQuery('');
+                  setSelectedCatalogProduct(null);
+                  setCatalogQuery('');
                 }}
                 className="text-[12px]"
                 style={{ color: colors.textLight }}
@@ -107,9 +100,9 @@ export function AddMealModal({
             type="text"
             value={catalogQuery}
             onChange={(e) => {
-              onChangeCatalogQuery(e.target.value);
+              setCatalogQuery(e.target.value);
               if (!e.target.value.trim()) {
-                onSelectCatalogProduct(null);
+                setSelectedCatalogProduct(null);
               }
             }}
             placeholder="商品名で検索"
@@ -161,7 +154,7 @@ export function AddMealModal({
                 return (
                   <button
                     key={product.id}
-                    onClick={() => onSelectCatalogProduct(product)}
+                    onClick={() => setSelectedCatalogProduct(product)}
                     className="w-full p-3 rounded-2xl text-left"
                     style={{
                       background: isSelected ? colors.purpleLight : colors.bg,

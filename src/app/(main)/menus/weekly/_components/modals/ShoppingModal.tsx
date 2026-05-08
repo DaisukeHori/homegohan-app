@@ -8,6 +8,7 @@ import {
 import type { ShoppingListItem } from "@/types/domain";
 import { SHOPPING_LIST_PHASES } from "@homegohan/shared";
 import { ProgressTodoCard } from "../ProgressTodoCard";
+import { useShoppingStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -24,11 +25,7 @@ const colors = {
 };
 
 interface ShoppingModalProps {
-  shoppingList: ShoppingListItem[];
   groupedShoppingList: [string, ShoppingListItem[]][];
-  shoppingListTotalServings: number | null;
-  isRegeneratingShoppingList: boolean;
-  shoppingListProgress: { phase: string; message: string; percentage: number } | null;
   hasAnyMealsThisWeek: boolean;
   onClose: () => void;
   onOpenAddShopping: () => void;
@@ -43,11 +40,7 @@ interface ShoppingModalProps {
 }
 
 export function ShoppingModal({
-  shoppingList,
   groupedShoppingList,
-  shoppingListTotalServings,
-  isRegeneratingShoppingList,
-  shoppingListProgress,
   hasAnyMealsThisWeek,
   onClose,
   onOpenAddShopping,
@@ -60,6 +53,11 @@ export function ShoppingModal({
   onDismissProgress,
   onSetSuccessMessage,
 }: ShoppingModalProps) {
+  const shoppingList = useShoppingStore((s) => s.shoppingList);
+  const shoppingListTotalServings = useShoppingStore((s) => s.shoppingListTotalServings);
+  const isRegeneratingShoppingList = useShoppingStore((s) => s.isRegeneratingShoppingList);
+  const shoppingListProgress = useShoppingStore((s) => s.shoppingListProgress);
+
   return (
     <div className="fixed inset-0 z-[201] pointer-events-none">
       {/* backdrop: 背後ナビを遮断しモーダルを閉じる (#76) */}

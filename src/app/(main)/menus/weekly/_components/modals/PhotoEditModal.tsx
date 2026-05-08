@@ -4,6 +4,7 @@ import React, { useRef } from "react";
 import { motion } from "framer-motion";
 import { X, Plus, Sparkles, Camera, Image as ImageIcon } from "lucide-react";
 import Image from "next/image";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -19,8 +20,6 @@ const colors = {
 };
 
 interface PhotoEditModalProps {
-  photoPreviews: string[];
-  photoFilesCount: number;
   isAnalyzingPhoto: boolean;
   onClose: () => void;
   onPhotoSelect: (files: FileList) => void;
@@ -29,8 +28,6 @@ interface PhotoEditModalProps {
 }
 
 export function PhotoEditModal({
-  photoPreviews,
-  photoFilesCount,
   isAnalyzingPhoto,
   onClose,
   onPhotoSelect,
@@ -38,6 +35,9 @@ export function PhotoEditModal({
   onAnalyze,
 }: PhotoEditModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const photoPreviews = useFormDraftStore((s) => s.photoPreviews);
+  const photoFiles = useFormDraftStore((s) => s.photoFiles);
 
   const handleCaptureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -163,7 +163,7 @@ export function PhotoEditModal({
       <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
         <button
           onClick={onAnalyze}
-          disabled={photoFilesCount === 0 || isAnalyzingPhoto}
+          disabled={photoFiles.length === 0 || isAnalyzingPhoto}
           className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
           style={{ background: colors.blue }}
         >
@@ -176,7 +176,7 @@ export function PhotoEditModal({
             <>
               <Sparkles size={16} color="#fff" />
               <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>
-                {photoFilesCount > 1 ? `${photoFilesCount}枚をAIで解析` : 'AIで解析する'}
+                {photoFiles.length > 1 ? `${photoFiles.length}枚をAIで解析` : 'AIで解析する'}
               </span>
             </>
           )}

@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -15,26 +16,21 @@ const colors = {
 };
 
 interface AddFridgeModalProps {
-  newFridgeName: string;
-  newFridgeAmount: string;
-  newFridgeExpiry: string;
-  onChangeName: (value: string) => void;
-  onChangeAmount: (value: string) => void;
-  onChangeExpiry: (value: string) => void;
   onAdd: () => void;
   onClose: () => void;
 }
 
 export function AddFridgeModal({
-  newFridgeName,
-  newFridgeAmount,
-  newFridgeExpiry,
-  onChangeName,
-  onChangeAmount,
-  onChangeExpiry,
   onAdd,
   onClose,
 }: AddFridgeModalProps) {
+  const newFridgeName = useFormDraftStore((s) => s.newFridgeName);
+  const newFridgeAmount = useFormDraftStore((s) => s.newFridgeAmount);
+  const newFridgeExpiry = useFormDraftStore((s) => s.newFridgeExpiry);
+  const setNewFridgeName = useFormDraftStore((s) => s.setNewFridgeName);
+  const setNewFridgeAmount = useFormDraftStore((s) => s.setNewFridgeAmount);
+  const setNewFridgeExpiry = useFormDraftStore((s) => s.setNewFridgeExpiry);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -53,7 +49,7 @@ export function AddFridgeModal({
         <input
           type="text"
           value={newFridgeName}
-          onChange={(e) => onChangeName(e.target.value)}
+          onChange={(e) => setNewFridgeName(e.target.value)}
           placeholder="食材名（例: 鶏もも肉）"
           className="w-full p-3 rounded-xl text-[14px] outline-none"
           style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
@@ -61,7 +57,7 @@ export function AddFridgeModal({
         <input
           type="text"
           value={newFridgeAmount}
-          onChange={(e) => onChangeAmount(e.target.value)}
+          onChange={(e) => setNewFridgeAmount(e.target.value)}
           placeholder="量（例: 300g）"
           className="w-full p-3 rounded-xl text-[14px] outline-none"
           style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
@@ -69,7 +65,7 @@ export function AddFridgeModal({
         <input
           type="date"
           value={newFridgeExpiry}
-          onChange={(e) => onChangeExpiry(e.target.value)}
+          onChange={(e) => setNewFridgeExpiry(e.target.value)}
           className="w-full p-3 rounded-xl text-[14px] outline-none"
           style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
         />

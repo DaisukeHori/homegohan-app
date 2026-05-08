@@ -4,6 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Sparkles, X, Check } from "lucide-react";
 import { AI_CONDITIONS, MEAL_LABELS } from "@homegohan/shared";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -23,28 +24,23 @@ interface WeekDate {
 }
 
 interface AiMealModalProps {
-  addMealKey: string | null;
-  addMealDayIndex: number;
   weekDates: WeekDate[];
-  selectedConditions: string[];
-  aiChatInput: string;
   onClose: () => void;
-  onChangeConditions: (conditions: string[]) => void;
-  onChangeAiChatInput: (value: string) => void;
   onGenerateSingleMeal: () => void;
 }
 
 export function AiMealModal({
-  addMealKey,
-  addMealDayIndex,
   weekDates,
-  selectedConditions,
-  aiChatInput,
   onClose,
-  onChangeConditions,
-  onChangeAiChatInput,
   onGenerateSingleMeal,
 }: AiMealModalProps) {
+  const addMealKey = useFormDraftStore((s) => s.addMealKey);
+  const addMealDayIndex = useFormDraftStore((s) => s.addMealDayIndex);
+  const selectedConditions = useFormDraftStore((s) => s.selectedConditions);
+  const aiChatInput = useFormDraftStore((s) => s.aiChatInput);
+  const setSelectedConditions = useFormDraftStore((s) => s.setSelectedConditions);
+  const setAiChatInput = useFormDraftStore((s) => s.setAiChatInput);
+
   const dayInfo = weekDates[addMealDayIndex];
   const mealLabel = addMealKey ? MEAL_LABELS[addMealKey as keyof typeof MEAL_LABELS] : '';
 
@@ -74,7 +70,7 @@ export function AiMealModal({
             <button
               key={i}
               data-testid={`weekly-condition-${text}`}
-              onClick={() => onChangeConditions(
+              onClick={() => setSelectedConditions(
                 isSelected ? selectedConditions.filter(c => c !== text) : [...selectedConditions, text]
               )}
               className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
@@ -93,7 +89,7 @@ export function AiMealModal({
           <p style={{ fontSize: 13, color: colors.textMuted, marginBottom: 8 }}>リクエスト（任意）</p>
           <textarea
             value={aiChatInput}
-            onChange={(e) => onChangeAiChatInput(e.target.value)}
+            onChange={(e) => setAiChatInput(e.target.value)}
             placeholder="例: 昨日カレーだったので違うものがいい、野菜多めで..."
             className="w-full p-3 rounded-[10px] text-[13px] outline-none resize-none"
             style={{ background: colors.bg, minHeight: 80 }}
