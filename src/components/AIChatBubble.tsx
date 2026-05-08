@@ -240,6 +240,8 @@ export default function AIChatBubble() {
   const fabDragStart = useRef<{ clientX: number; clientY: number; t: number; pos: { x: number; y: number } } | null>(null);
   const fabDraggingRef = useRef(false);
   const fabPositionRef = useRef<{ x: number; y: number }>({ x: 16, y: 96 });
+  // #125: ref ベースの連続クリック防止（state の stale 値に依存しない）
+  const isTogglingRef = useRef(false);
 
   // クライアントサイドでのみレンダリング
   useEffect(() => {
@@ -311,23 +313,25 @@ export default function AIChatBubble() {
   };
 
   // セッション一覧取得
-  const fetchSessions = useCallback(async () => {
+  // 戻り値: null = 未認証, Session[] = セッション一覧 (空配列含む)
+  const fetchSessions = useCallback(async (): Promise<Session[] | null> => {
     try {
       const res = await fetch('/api/ai/consultation/sessions?status=all');
       if (res.status === 401) {
         setIsAuthenticated(false);
-        return false;
+        return null;
       }
       if (res.ok) {
         setIsAuthenticated(true);
         const data = await res.json();
-        setSessions(data.sessions || []);
-        return true;
+        const fetched: Session[] = data.sessions || [];
+        setSessions(fetched);
+        return fetched;
       }
-      return false;
+      return null;
     } catch (e) {
       console.error('Failed to fetch sessions:', e);
-      return false;
+      return null;
     }
   }, []);
 
@@ -363,21 +367,23 @@ export default function AIChatBubble() {
       // 別のモーダルが開いている間はチャットを開かない
       return;
     }
-    // #125: transition 中の連続クリックを弾く
-    if (isToggling) return;
+    // #125: transition 中の連続クリックを弾く（ref で stale state を回避）
+    if (isTogglingRef.current) return;
+    isTogglingRef.current = true;
     setIsToggling(true);
     setIsOpen(true);
     setHasUnread(false);
     try {
-      const authenticated = await fetchSessions();
+      const fetchedSessions = await fetchSessions();
 
-      if (!authenticated) {
+      if (fetchedSessions === null) {
         return; // 認証されていない場合は何もしない
       }
 
       // 既存のアクティブセッションがあればそれを使う、なければ新規作成
-      if (sessions.length > 0 && !currentSessionId) {
-        const activeSession = sessions.find(s => s.messageCount > 0) || sessions[0];
+      // ※ fetchSessions() の返り値を直接参照（stale state 回避）
+      if (fetchedSessions.length > 0 && !currentSessionId) {
+        const activeSession = fetchedSessions.find(s => s.messageCount > 0) || fetchedSessions[0];
         setCurrentSessionId(activeSession.id);
         await fetchMessages(activeSession.id);
       } else if (!currentSessionId) {
@@ -387,7 +393,10 @@ export default function AIChatBubble() {
       }
     } finally {
       // #125: アニメーション完了まで少し待ってからフラグを解除
-      setTimeout(() => setIsToggling(false), 400);
+      setTimeout(() => {
+        isTogglingRef.current = false;
+        setIsToggling(false);
+      }, 400);
     }
   };
 
@@ -929,7 +938,7 @@ export default function AIChatBubble() {
                   <ChevronDown size={18} color={colors.textMuted} />
                 </button>
                 <button
-                  onClick={() => { setIsOpen(false); setIsToggling(false); }}
+                  onClick={() => { setIsOpen(false); setIsToggling(false); isTogglingRef.current = false; }}
                   aria-label="AIチャットを閉じる"
                   className="p-2 rounded-full hover:bg-gray-100"
                 >
