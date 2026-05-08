@@ -13,10 +13,12 @@ import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-// ProfileReminderBanner は dynamic import で lazy load (#322)
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED } from "@homegohan/shared";
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
+// #fix/e2e-profile-reminder-banner-chunk: chunk 404 防止のため静的 import に変更
+// ProfileReminderBanner は "use client" + isVisible:false 初期値のため SSR でも安全
+import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
@@ -25,10 +27,6 @@ const V4GenerateModal = dynamic(
 );
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
-  { ssr: false }
-);
-const ProfileReminderBannerDynamic = dynamic(
-  () => import("@/components/ProfileReminderBanner").then(m => ({ default: m.ProfileReminderBanner })),
   { ssr: false }
 );
 import {
@@ -5128,7 +5126,7 @@ export default function WeeklyMenuPage() {
       </div>
 
       {/* === Profile Reminder Banner === */}
-      <ProfileReminderBannerDynamic />
+      <ProfileReminderBanner />
 
       {/* === 生成失敗エラーモーダル === */}
       {generationFailedError && (
