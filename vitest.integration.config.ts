@@ -37,7 +37,6 @@ export default defineConfig({
     pool: 'forks',
     maxConcurrency: 1,
     maxWorkers: 1,
-    minWorkers: 1,
     env: {
       NODE_ENV: 'test',
     },
