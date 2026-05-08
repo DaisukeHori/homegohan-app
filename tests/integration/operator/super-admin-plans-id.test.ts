@@ -228,7 +228,7 @@ describe('POST /api/super-admin/plans/[id]/price-change', () => {
         new_yearly_price_jpy: 18000,
         applies_to: 'new_only',
         reason: 'Integration test price change',
-        effective_at: new Date().toISOString().split('T')[0],
+        effective_at: new Date().toISOString(),
       }
     );
     expect(res.status).toBe(200);
@@ -250,7 +250,7 @@ describe('POST /api/super-admin/plans/[id]/price-change', () => {
         new_monthly_price_jpy: 2000,
         applies_to: 'new_only',
         reason: 'Should fail',
-        effective_at: new Date().toISOString().split('T')[0],
+        effective_at: new Date().toISOString(),
       }
     );
     expect(res.status).toBe(422);
@@ -268,7 +268,7 @@ describe('POST /api/super-admin/plans/[id]/price-change', () => {
         new_monthly_price_jpy: 999,
         applies_to: 'new_only',
         reason: 'Admin should fail',
-        effective_at: new Date().toISOString().split('T')[0],
+        effective_at: new Date().toISOString(),
       }
     );
     expect(res.status).toBe(403);
@@ -280,7 +280,7 @@ describe('POST /api/super-admin/plans/[id]/price-change', () => {
       new_monthly_price_jpy: 999,
       applies_to: 'new_only',
       reason: 'No auth',
-      effective_at: new Date().toISOString().split('T')[0],
+      effective_at: new Date().toISOString(),
     });
     expect(res.status).toBe(401);
   });

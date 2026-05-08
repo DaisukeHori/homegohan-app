@@ -71,8 +71,8 @@ describe('GET /api/super-admin/coupons', () => {
 describe('POST /api/super-admin/coupons', () => {
   it('201 for super_admin creating a coupon', async () => {
     const couponCode = `TEST${TS}`;
-    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-    const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+    const tomorrow = new Date(Date.now() + 86400000).toISOString();
+    const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString();
 
     const res = await apiCall('POST', '/api/super-admin/coupons', superAdminUser.jwt, {
       code: couponCode,
@@ -126,8 +126,8 @@ describe('GET /api/super-admin/coupons/[id]/redemptions', () => {
   beforeAll(async () => {
     // Create a coupon to test redemptions
     const couponCode = `REDEEM${TS}`;
-    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-    const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+    const tomorrow = new Date(Date.now() + 86400000).toISOString();
+    const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString();
 
     const res = await apiCall('POST', '/api/super-admin/coupons', superAdminUser.jwt, {
       code: couponCode,
