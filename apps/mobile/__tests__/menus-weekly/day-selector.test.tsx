@@ -43,7 +43,7 @@ describe('日付セレクタ: accentColor ロジック', () => {
     it(`${SATURDAY} は colors.blue を返す`, () => {
       const result = calcAccentColor(SATURDAY, {});
       expect(result).toBe(colors.blue);
-      expect(colors.blue).toBe('#2196F3');
+      expect(colors.blue).toBe('#5B8BC7');
     });
   });
 
@@ -76,11 +76,11 @@ describe('日付セレクタ: accentColor ロジック', () => {
 
   describe('null の場合は colors.text / colors.textMuted が fallback', () => {
     it('colors.text が定義されている', () => {
-      expect(colors.text).toBe('#1A1A1A');
+      expect(colors.text).toBe('#2D2D2D');
     });
 
     it('colors.textMuted が定義されている', () => {
-      expect(colors.textMuted).toBe('#666666');
+      expect(colors.textMuted).toBe('#A0A0A0');
     });
 
     it('平日の accentColor ?? colors.text は colors.text', () => {

@@ -85,6 +85,46 @@ jest.mock('../../src/theme', () => ({
     border: '#E5E5E5',
     text: '#111111',
     textMuted: '#888888',
+    accentLight: '#FFF0EC',
+    success: '#6B9B6B',
+    successLight: '#EDF5ED',
+    blue: '#5B8BC7',
+    blueLight: '#EEF4FB',
+    purple: '#7C6BA0',
+    purpleLight: '#F5F3F8',
+    warning: '#E5A84B',
+    warningLight: '#FEF9EE',
+    danger: '#D64545',
+    dangerLight: '#FDECEC',
+  },
+  spacing: {
+    xs: 4, sm: 8, md: 12, lg: 16, xl: 20,
+    '2xl': 24, '3xl': 32, '4xl': 40, '5xl': 48,
+  },
+  radius: { sm: 4, md: 8, lg: 12, xl: 16, '2xl': 20, full: 9999 },
+  typography: { xs: 12, sm: 14, md: 16, lg: 18, xl: 20, '2xl': 24 },
+  shadows: {
+    sm: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
+    md: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 8, elevation: 3 },
+    lg: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 4 },
+  },
+}));
+
+// ── supabase のモック ─────────────────────────────────────────────────────────
+// _layout.tsx の依存チェーン (AIFloatingFab → api.ts → supabase.ts) が
+// WebSocket を要求するため stub に差し替える。
+jest.mock('../../src/lib/supabase', () => ({
+  supabase: {
+    auth: {
+      getSession: jest.fn().mockResolvedValue({ data: { session: null } }),
+      onAuthStateChange: jest.fn(() => ({ data: { subscription: { unsubscribe: jest.fn() } } })),
+    },
+    from: jest.fn(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+    })),
   },
 }));
 
@@ -195,10 +235,10 @@ describe('TabsLayout: タブ構成', () => {
     expect(meals?.options?.title).toBe('スキャン');
   });
 
-  it('favorites タブのタイトルが「お気に入り」', () => {
+  it('favorites タブは href: null (タブバー非表示)', () => {
     const configs = renderAndGetConfigs();
     const fav = configs.find((c) => c.name === 'favorites');
-    expect(fav?.options?.title).toBe('お気に入り');
+    expect(fav?.options?.href).toBeNull();
   });
 
   it('comparison タブのタイトルが「比較」', () => {
@@ -228,11 +268,10 @@ describe('TabsLayout: タブ構成', () => {
     expect(getByText('home')).toBeTruthy();
   });
 
-  it('favorites タブのアイコンが "heart"', () => {
+  it('favorites タブのアイコンは未定義 (href:null のためタブバーに表示されない)', () => {
     const configs = renderAndGetConfigs();
     const fav = configs.find((c) => c.name === 'favorites');
-    const { getByText } = render(fav?.options?.tabBarIcon({ color: '#000', size: 24 }));
-    expect(getByText('heart')).toBeTruthy();
+    expect(fav?.options?.tabBarIcon).toBeUndefined();
   });
 
   it('comparison タブのアイコンが "bar-chart"', () => {
