@@ -365,6 +365,22 @@ export default function SettingsTab() {
           </View>
         </View>
 
+        {/* ── ガイド ── */}
+        <View>
+          <Text style={styles.sectionLabel}>ガイド</Text>
+          <View style={styles.sectionCard}>
+            <SettingRow
+              icon="🎓"
+              iconBg="#EFF6FF"
+              title="使い方ガイドをもう一度見る"
+              subtitle="ハンズオンチュートリアルを再表示"
+              testID="settings-restart-handson-tour"
+              onPress={() => router.push("/handson-tour?force=1")}
+              last
+            />
+          </View>
+        </View>
+
         {/* ── サポートと法的情報 ── */}
         <View>
           <Text style={styles.sectionLabel}>サポートと法的情報</Text>

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,6 +10,7 @@ import { Button, Card } from "../../src/components/ui";
 import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
+import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
 
 // Inlined from lib/meal-image to avoid importing server-side code
 interface MealImageDish { name?: string | null; image_url?: string | null; image_source?: string | null; image_status?: string | null; image_generated_at?: string | null; [key: string]: any; }
@@ -184,9 +185,14 @@ const CATEGORY_EMOJI: Record<string, string> = {
   "野菜": "🥬", "肉類": "🥩", "魚介類": "🐟", "乳製品": "🧀", "果物": "🍎", "調味料": "🧂",
 };
 
+// ─── Sandbox asset ───────────────────────────────────
+const SANDBOX_SAMPLE_IMAGE = require("../../assets/handson-tour/sample-meal.jpg");
+
 // ─── Component ───────────────────────────────────────
 export default function MealNewPage() {
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ source?: string; sandbox?: string }>();
+  const isSandboxMode = params.source === "handson_tour" && params.sandbox === "true";
 
   // Step & mode
   const [step, setStep] = useState<Step>("mode-select");
@@ -623,6 +629,23 @@ export default function MealNewPage() {
     } finally { setIsSaving(false); }
   }
 
+  // ─── Sandbox save ──────────────────────────────────
+  async function saveSandboxMeal() {
+    setIsSaving(true);
+    try {
+      const api = getApi();
+      await api.post("/api/meal-plans/add-from-photo", {
+        ...MOCK_PHOTO_RESPONSE,
+        sandbox: true,
+        source: "handson_tour",
+      });
+      router.back();
+    } catch {
+      // sandbox errors are non-fatal — navigate back anyway
+      router.back();
+    } finally { setIsSaving(false); }
+  }
+
   // ─── Header title ──────────────────────────────────
   const headerTitle = useMemo(() => {
     switch (step) {
@@ -647,6 +670,100 @@ export default function MealNewPage() {
     else if (step === "manual") { setStep("mode-select"); resetAll(); }
     else { setStep("mode-select"); resetAll(); }
   };
+
+  // ─── Render: sandbox early return ─────────────────
+  if (isSandboxMode) {
+    return (
+      <View testID="meal-new-screen-sandbox" style={{ flex: 1, backgroundColor: colors.bg }}>
+        {/* Sandbox header */}
+        <View style={{
+          flexDirection: "row", alignItems: "center", gap: spacing.md,
+          paddingTop: insets.top + 8, paddingBottom: spacing.sm, paddingHorizontal: spacing.lg,
+          backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border,
+        }}>
+          <Pressable onPress={() => router.back()} hitSlop={12}>
+            <Ionicons name="close" size={22} color={colors.textLight} />
+          </Pressable>
+          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: spacing.sm, justifyContent: "center" }}>
+            <Ionicons name="camera" size={18} color={colors.accent} />
+            <Text style={{ fontSize: 16, fontWeight: "600", color: colors.text }}>食事を記録</Text>
+          </View>
+          <View style={{ width: 22 }} />
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
+          {/* Sample image */}
+          <Image
+            source={SANDBOX_SAMPLE_IMAGE}
+            style={{ width: "100%", height: 220, borderRadius: 12 }}
+            resizeMode="cover"
+          />
+
+          {/* Mock result card */}
+          <Card>
+            <View style={{ gap: spacing.sm }}>
+              <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text }}>
+                {MOCK_PHOTO_RESPONSE.dishName}
+              </Text>
+              <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
+                <Text style={{ fontSize: 13, color: colors.textLight }}>
+                  {MOCK_PHOTO_RESPONSE.calories} kcal
+                </Text>
+                <Text style={{ fontSize: 13, color: colors.textLight }}>
+                  たんぱく質 {MOCK_PHOTO_RESPONSE.protein_g}g
+                </Text>
+                <Text style={{ fontSize: 13, color: colors.textLight }}>
+                  脂質 {MOCK_PHOTO_RESPONSE.fat_g}g
+                </Text>
+                <Text style={{ fontSize: 13, color: colors.textLight }}>
+                  炭水化物 {MOCK_PHOTO_RESPONSE.carbs_g}g
+                </Text>
+              </View>
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                ※ チュートリアル用のサンプル解析結果です
+              </Text>
+            </View>
+          </Card>
+
+          {/* Detected items */}
+          <View style={{ gap: spacing.xs }}>
+            {MOCK_PHOTO_RESPONSE.detected_items.map((item) => (
+              <View key={item.name} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
+                <Text style={{ fontSize: 14, color: colors.text }}>{item.name}</Text>
+                <Text style={{ fontSize: 13, color: colors.textMuted }}>{item.portion_g}g</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Save button */}
+          <Pressable
+            testID="meal-sandbox-save-btn"
+            onPress={saveSandboxMeal}
+            disabled={isSaving}
+            style={({ pressed }) => ({
+              paddingVertical: spacing.lg,
+              borderRadius: 12,
+              backgroundColor: colors.accent,
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "row",
+              gap: spacing.sm,
+              opacity: isSaving ? 0.7 : pressed ? 0.9 : 1,
+            })}
+          >
+            {isSaving ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="checkmark-circle" size={20} color="#fff" />
+            )}
+            <Text style={{ fontSize: 16, fontWeight: "700", color: "#fff" }}>
+              {isSaving ? "保存中..." : "この食事を記録する"}
+            </Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
 
   // ─── Render ────────────────────────────────────────
   return (
