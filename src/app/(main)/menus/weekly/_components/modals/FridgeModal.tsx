@@ -3,7 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Refrigerator, X, Trash2, Plus } from "lucide-react";
-import type { PantryItem } from "@/types/domain";
+import { usePantryStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -35,18 +35,18 @@ const getDaysUntil = (dateStr: string | null | undefined): number | null => {
 };
 
 interface FridgeModalProps {
-  fridgeItems: PantryItem[];
   onClose: () => void;
   onOpenAddFridge: () => void;
   onDeleteItem: (id: string) => void;
 }
 
 export function FridgeModal({
-  fridgeItems,
   onClose,
   onOpenAddFridge,
   onDeleteItem,
 }: FridgeModalProps) {
+  const fridgeItems = usePantryStore((s) => s.fridgeItems);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}

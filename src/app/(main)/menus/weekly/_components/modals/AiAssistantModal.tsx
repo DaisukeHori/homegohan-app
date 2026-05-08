@@ -4,6 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Sparkles, X, Check, Send } from "lucide-react";
 import { AI_CONDITIONS } from "@homegohan/shared";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -19,24 +20,21 @@ const colors = {
 interface AiAssistantModalProps {
   isGenerating: boolean;
   emptySlotCount: number;
-  selectedConditions: string[];
-  aiChatInput: string;
   onClose: () => void;
-  onChangeConditions: (conditions: string[]) => void;
-  onChangeAiChatInput: (value: string) => void;
   onGenerateWeekly: () => void;
 }
 
 export function AiAssistantModal({
   isGenerating,
   emptySlotCount,
-  selectedConditions,
-  aiChatInput,
   onClose,
-  onChangeConditions,
-  onChangeAiChatInput,
   onGenerateWeekly,
 }: AiAssistantModalProps) {
+  const selectedConditions = useFormDraftStore((s) => s.selectedConditions);
+  const aiChatInput = useFormDraftStore((s) => s.aiChatInput);
+  const setSelectedConditions = useFormDraftStore((s) => s.setSelectedConditions);
+  const setAiChatInput = useFormDraftStore((s) => s.setAiChatInput);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -89,7 +87,7 @@ export function AiAssistantModal({
             <button
               key={i}
               data-testid={`ai-condition-${text}`}
-              onClick={() => onChangeConditions(
+              onClick={() => setSelectedConditions(
                 isSelected ? selectedConditions.filter(c => c !== text) : [...selectedConditions, text]
               )}
               className="w-full p-3 mb-1.5 rounded-[10px] text-left text-[13px] flex items-center justify-between transition-all"
@@ -109,7 +107,7 @@ export function AiAssistantModal({
         <input
           type="text"
           value={aiChatInput}
-          onChange={(e) => onChangeAiChatInput(e.target.value)}
+          onChange={(e) => setAiChatInput(e.target.value)}
           placeholder="例: 木金は簡単に..."
           className="flex-1 px-3.5 py-2.5 rounded-full text-[13px] outline-none"
           style={{ background: colors.bg }}

@@ -4,6 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
 import type { MealMode } from "@/types/domain";
+import { useFormDraftStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -23,24 +24,21 @@ interface ModeConfig {
 }
 
 interface EditMealModalProps {
-  editMealName: string;
-  editMealMode: MealMode;
   modeConfig: Record<string, ModeConfig>;
   onClose: () => void;
-  onChangeName: (value: string) => void;
-  onChangeMode: (mode: MealMode) => void;
   onSave: () => void;
 }
 
 export function EditMealModal({
-  editMealName,
-  editMealMode,
   modeConfig,
   onClose,
-  onChangeName,
-  onChangeMode,
   onSave,
 }: EditMealModalProps) {
+  const editMealName = useFormDraftStore((s) => s.editMealName);
+  const editMealMode = useFormDraftStore((s) => s.editMealMode);
+  const setEditMealName = useFormDraftStore((s) => s.setEditMealName);
+  const setEditMealMode = useFormDraftStore((s) => s.setEditMealMode);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -61,7 +59,7 @@ export function EditMealModal({
           <input
             type="text"
             value={editMealName}
-            onChange={(e) => onChangeName(e.target.value)}
+            onChange={(e) => setEditMealName(e.target.value)}
             className="w-full p-3 rounded-xl text-[14px] outline-none"
             style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
           />
@@ -75,7 +73,7 @@ export function EditMealModal({
               return (
                 <button
                   key={key}
-                  onClick={() => onChangeMode(key)}
+                  onClick={() => setEditMealMode(key)}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
                   style={{
                     background: isSelected ? mode.bg : colors.bg,

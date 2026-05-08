@@ -4,6 +4,7 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
+import { useShoppingStore, useServingsConfigStore } from "../../_state";
 
 const colors = {
   bg: '#F7F6F3',
@@ -18,41 +19,26 @@ const colors = {
   border: '#E8E8E8',
 };
 
-type ShoppingRangeType = 'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'custom';
-
-interface ShoppingRangeSelection {
-  type: ShoppingRangeType;
-  todayMeals: ('breakfast' | 'lunch' | 'dinner')[];
-  daysCount: number;
-  customStartDate?: string;
-  customEndDate?: string;
-}
-
 interface ShoppingRangeModalProps {
-  shoppingRange: ShoppingRangeSelection;
-  shoppingRangeStep: 'range' | 'servings';
   isTodayExpanded: boolean;
-  servingsConfig: ServingsConfig | null;
   onClose: () => void;
-  onChangeRange: (range: ShoppingRangeSelection) => void;
-  onChangeStep: (step: 'range' | 'servings') => void;
   onToggleTodayExpanded: (expanded: boolean) => void;
-  onUpdateServingsConfig: (config: ServingsConfig) => void;
   onGenerate: (servingsConfig: ServingsConfig | null) => Promise<void>;
 }
 
 export function ShoppingRangeModal({
-  shoppingRange,
-  shoppingRangeStep,
   isTodayExpanded,
-  servingsConfig,
   onClose,
-  onChangeRange,
-  onChangeStep,
   onToggleTodayExpanded,
-  onUpdateServingsConfig,
   onGenerate,
 }: ShoppingRangeModalProps) {
+  const shoppingRange = useShoppingStore((s) => s.shoppingRange);
+  const shoppingRangeStep = useShoppingStore((s) => s.shoppingRangeStep);
+  const setShoppingRange = useShoppingStore((s) => s.setShoppingRange);
+  const setShoppingRangeStep = useShoppingStore((s) => s.setShoppingRangeStep);
+  const servingsConfig = useServingsConfigStore((s) => s.servingsConfig);
+  const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
+
   return (
     <motion.div
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -82,7 +68,7 @@ export function ShoppingRangeModal({
                   if (shoppingRange.type === 'today') {
                     onToggleTodayExpanded(!isTodayExpanded);
                   } else {
-                    onChangeRange({ ...shoppingRange, type: 'today' });
+                    setShoppingRange({ ...shoppingRange, type: 'today' });
                     onToggleTodayExpanded(true);
                   }
                 }}
@@ -125,7 +111,7 @@ export function ShoppingRangeModal({
                               const newMeals = isSelected
                                 ? shoppingRange.todayMeals.filter(m => m !== mealType)
                                 : [...shoppingRange.todayMeals, mealType];
-                              onChangeRange({ ...shoppingRange, todayMeals: newMeals });
+                              setShoppingRange({ ...shoppingRange, todayMeals: newMeals });
                             }}
                             className="w-full p-2.5 rounded-lg flex items-center gap-2"
                             style={{ background: isSelected ? `${colors.accent}15` : 'transparent' }}
@@ -151,7 +137,7 @@ export function ShoppingRangeModal({
 
             {/* 明日の分 */}
             <button
-              onClick={() => onChangeRange({ ...shoppingRange, type: 'tomorrow' })}
+              onClick={() => setShoppingRange({ ...shoppingRange, type: 'tomorrow' })}
               className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
               style={{
                 background: shoppingRange.type === 'tomorrow' ? colors.accent : colors.bg,
@@ -165,7 +151,7 @@ export function ShoppingRangeModal({
 
             {/* 明後日の分 */}
             <button
-              onClick={() => onChangeRange({ ...shoppingRange, type: 'dayAfterTomorrow' })}
+              onClick={() => setShoppingRange({ ...shoppingRange, type: 'dayAfterTomorrow' })}
               className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
               style={{
                 background: shoppingRange.type === 'dayAfterTomorrow' ? colors.accent : colors.bg,
@@ -180,7 +166,7 @@ export function ShoppingRangeModal({
             {/* ○○日分 */}
             <div>
               <button
-                onClick={() => onChangeRange({ ...shoppingRange, type: 'days' })}
+                onClick={() => setShoppingRange({ ...shoppingRange, type: 'days' })}
                 className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
                 style={{
                   background: shoppingRange.type === 'days' ? colors.accent : colors.bg,
@@ -199,7 +185,7 @@ export function ShoppingRangeModal({
                     min={1}
                     max={14}
                     value={shoppingRange.daysCount}
-                    onChange={(e) => onChangeRange({ ...shoppingRange, daysCount: parseInt(e.target.value) || 1 })}
+                    onChange={(e) => setShoppingRange({ ...shoppingRange, daysCount: parseInt(e.target.value) || 1 })}
                     className="w-20 p-2 rounded-lg text-center text-[14px] outline-none"
                     style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
                   />
@@ -210,7 +196,7 @@ export function ShoppingRangeModal({
 
             {/* 1週間分 */}
             <button
-              onClick={() => onChangeRange({ ...shoppingRange, type: 'week' })}
+              onClick={() => setShoppingRange({ ...shoppingRange, type: 'week' })}
               className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
               style={{
                 background: shoppingRange.type === 'week' ? colors.accent : colors.bg,
@@ -225,7 +211,7 @@ export function ShoppingRangeModal({
 
           {/* 次へボタン */}
           <button
-            onClick={() => onChangeStep('servings')}
+            onClick={() => setShoppingRangeStep('servings')}
             disabled={shoppingRange.type === 'today' && shoppingRange.todayMeals.length === 0}
             className="w-full mt-4 p-3.5 rounded-xl font-semibold text-[14px] disabled:opacity-50 flex items-center justify-center gap-2"
             style={{ background: colors.accent, color: '#fff' }}
@@ -242,7 +228,7 @@ export function ShoppingRangeModal({
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-2">
               <button
-                onClick={() => onChangeStep('range')}
+                onClick={() => setShoppingRangeStep('range')}
                 className="w-7 h-7 rounded-full flex items-center justify-center"
                 style={{ background: colors.bg }}
               >
@@ -289,7 +275,7 @@ export function ShoppingRangeModal({
                     };
                     if (!updated.byDayMeal[day]) updated.byDayMeal[day] = {};
                     updated.byDayMeal[day][meal] = Math.max(0, Math.min(10, newValue));
-                    onUpdateServingsConfig(updated);
+                    setServingsConfig(updated);
                   };
 
                   return (
