@@ -324,6 +324,9 @@ export default function MealCaptureModal() {
   // ネイティブアプリから渡される AI 解析済みデータを prefill として受け取る
   const searchParams = useSearchParams();
 
+  // ハンズオンツアー sandbox モード検出
+  const isSandboxMode = searchParams.get('source') === 'handson_tour' && searchParams.get('sandbox') === 'true';
+
   useEffect(() => {
     const prefillParam = searchParams.get('prefill');
     if (!prefillParam) return;
@@ -348,6 +351,35 @@ export default function MealCaptureModal() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ハンズオンツアー sandbox モード: MOCK_PHOTO_RESPONSE を prefill して result ステップへ
+  useEffect(() => {
+    if (!isSandboxMode) return;
+    // dynamic import で共通パッケージから mock データを取得
+    import('@homegohan/handson-tour-shared').then(({ MOCK_PHOTO_RESPONSE, SAMPLE_MEAL_IMAGE }) => {
+      const mock = MOCK_PHOTO_RESPONSE;
+      setAnalyzedDishes(
+        mock.detected_items.map((item, i) => ({
+          name: item.name,
+          cal: i === 0 ? mock.calories : 0,
+          calories_kcal: i === 0 ? mock.calories : 0,
+          role: i === 0 ? 'main' : 'side',
+        }))
+      );
+      setTotalCalories(mock.calories);
+      setTotalProtein(mock.protein_g);
+      setTotalCarbs(mock.carbs_g);
+      setTotalFat(mock.fat_g);
+      setOverallScore(80);
+      setVegScore(60);
+      setPraiseComment(mock.ai_comment);
+      setNutritionTip('バランスのよい食事です！続けましょう。');
+      // sandbox モードでは固定写真を表示
+      setPhotoPreviews([SAMPLE_MEAL_IMAGE.webPath]);
+      setStep('result');
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSandboxMode]);
 
   // analyzing ステップに 45 秒の上限タイマー — タイムアウト時は classify-failed に遷移
   useEffect(() => {
@@ -982,7 +1014,11 @@ export default function MealCaptureModal() {
       }
       
       // 2. meal_plan と meal_plan_day を作成/取得し、planned_meal を追加
-      const res = await fetch('/api/meal-plans/add-from-photo', {
+      // sandbox モード時は ?source=handson_tour クエリと body.sandbox=true を付加
+      const apiUrl = isSandboxMode
+        ? '/api/meal-plans/add-from-photo?source=handson_tour'
+        : '/api/meal-plans/add-from-photo';
+      const res = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -993,6 +1029,7 @@ export default function MealCaptureModal() {
           imageUrl,
           nutritionalAdvice,
           catalogProductId: selectedCatalogProduct?.id ?? null,
+          ...(isSandboxMode ? { sandbox: true } : {}),
         }),
       });
       
