@@ -1449,10 +1449,310 @@ test('creates group and invites member via email link @smoke', async ({
 - 本仕様で完全新規実装
 - `cross/04-api-conventions.md` の規約に従いエラーフォーマットを統一
 
-## 15. 未解決事項
+## 15. ハンズオンチュートリアル (family/09 連携)
+
+family/09 初回オンボーディングハンズオンチュートリアルが追加する API 群。本セクションが canonical、family/09 配下の §09-api-spec.md は詳細補助 (proposal) 扱い。
+
+DDL は operator/01-data-model §3.26、UI は family/03-ui-spec §<Tour>、Analytics は cross/05-i18n-a11y §<tour> および operator/07-audit-monitoring §<events> を参照。
+
+### 15.1 エンドポイント一覧
+
+| Method | Path | 用途 | 区分 |
+|---|---|---|---|
+| GET | `/api/handson-tour/status` | 表示可否判定 | 新規 |
+| POST | `/api/handson-tour/complete` | 完了登録 + `tutorial_complete` 付与 | 新規 |
+| POST | `/api/handson-tour/skip` | 明示スキップ登録 | 新規 |
+| POST | `/api/meal-plans/add-from-photo` | sandbox 対応拡張 (`?source=handson_tour`, `body.sandbox=true`) | 既存拡張 |
+| POST | `/api/menu-plans/add` | 同上 | 既存拡張 |
+| GET | `/api/badges` | `tutorial_complete` を含む全件返却 (API 自体は変更なし、データ変更のみ) | データ変更のみ |
+| POST | `/api/onboarding/complete` | レスポンスに `next_route` 追加 | 既存拡張 |
+
+### 15.2 `GET /api/handson-tour/status`
+
+#### 15.2.1 役割
+クライアントは Tour ルートのマウント時にこの API を呼び、`should_show=false` なら即 `/home` へリダイレクト。
+
+#### 15.2.2 Request
+
+```http
+GET /api/handson-tour/status HTTP/1.1
+Authorization: Bearer <jwt>
+```
+
+Headers: `Authorization` (Supabase auth) のみ。Query / Body なし。
+
+#### 15.2.3 Response 200 Schema
+
+```ts
+import { z } from 'zod';
+
+export const HandsonTourStatusResponseSchema = z.object({
+  should_show: z.boolean(),
+  completed_at: z.string().datetime().nullable(),
+  skipped_at: z.string().datetime().nullable(),
+  reason: z.enum([
+    'eligible',
+    'onboarding_not_completed',
+    'already_completed',
+    'already_skipped',
+    'admin_role',
+    'existing_user_auto_skip',
+    'feature_disabled',
+    'not_in_rollout',
+  ]),
+});
+
+export type HandsonTourStatusResponse = z.infer<typeof HandsonTourStatusResponseSchema>;
+```
+
+#### 15.2.4 サーバー処理の判定順序
+
+1. `Authorization` 検証 → 失敗時 401
+2. profile 取得 → 行なし時 404 `profile_not_found`
+3. ロール判定: `roles && ['admin','super_admin','org_admin','org_industrial_doctor']` のいずれかに属する → `should_show=false`, `reason='admin_role'` (副作用なし、ロール変更時に再判定)
+4. `onboarding_completed_at IS NULL` → `should_show=false`, `reason='onboarding_not_completed'`
+5. `handson_tour_completed_at IS NOT NULL` → `should_show=false`, `reason='already_completed'`
+6. `handson_tour_skipped_at IS NOT NULL` → `should_show=false`, `reason='already_skipped'`
+7. RPC `user_has_non_sandbox_activity(user_id)` → true なら `handson_tour_skipped_at = now()` を冪等 UPDATE してから `should_show=false`, `reason='existing_user_auto_skip'` を返す (= condition C による恒久 auto-skip)
+8. すべてクリア → `should_show=true`, `reason='eligible'`
+
+実装サンプルは family/09/§09-api-spec.md §2.5 参照。RPC は operator/01 §3.26.5 canonical。
+
+#### 15.2.5 Rate Limit
+
+| 観点 | 値 |
+|---|---|
+| user 単位 | 60 req / 60 s |
+| IP 単位 | 600 req / 60 s |
+
+cross/04-api-conventions のデフォルト準拠。
+
+#### 15.2.6 エラーレスポンス
+
+| status | code | 状況 |
+|---|---|---|
+| 401 | `unauthorized` | JWT 不正 |
+| 404 | `profile_not_found` | profile 行未作成 |
+| 429 | `rate_limited` | rate limit 超過 |
+| 500 | `internal_error` | DB エラー |
+
+### 15.3 `POST /api/handson-tour/complete`
+
+#### 15.3.1 役割
+Step 4 卒業時。`user_profiles.handson_tour_completed_at` 更新 + `tutorial_complete` バッジ INSERT を atomic に実行。RPC `complete_handson_tour` (operator/01 §3.26.6 canonical) に委譲。
+
+#### 15.3.2 Request
+
+```http
+POST /api/handson-tour/complete HTTP/1.1
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{}
+```
+
+Body は空オブジェクト(将来拡張用予約)。Idempotency-Key 不要 (UPDATE が冪等)。
+
+#### 15.3.3 Response 200 Schema
+
+```ts
+export const HandsonTourCompleteResponseSchema = z.object({
+  completed_at: z.string().datetime(),
+  badge_awarded: z.object({
+    code: z.literal('tutorial_complete'),
+    name: z.string(),
+    obtained_at: z.string().datetime(),
+    icon_url: z.string().nullable(),
+  }),
+  already_completed: z.boolean(),
+  total_duration_ms: z.number().int().optional(),
+});
+```
+
+`total_duration_ms` はクライアント計測値で、サーバーは reflective に返さない(クライアントが Step 0 開始からの経過を analytics に送る用)。
+
+#### 15.3.4 サーバー処理ガード
+
+判定順序は §15.2.4 の 1〜3 と同じ。違反時:
+
+| 状況 | status | code | reason |
+|---|---|---|---|
+| admin role | 403 | `not_eligible` | `admin_role` |
+| condition C 違反かつ未完了 | 409 | `not_eligible` | `existing_user` |
+
+判定後、`supabase.rpc('complete_handson_tour', { p_user_id: user.id })` を呼び、結果 jsonb をそのまま返却。RPC は `already_completed` も同梱する。
+
+#### 15.3.5 Rate Limit
+
+```
+6 req / 60 s / user
+```
+
+通常は 1 回のみ。連打しても 6 回までで 429。
+
+#### 15.3.6 エラーレスポンス
+
+| status | code | 状況 |
+|---|---|---|
+| 401 | `unauthorized` | JWT 不正 |
+| 403 | `not_eligible` (`reason: admin_role`) | 特権ロール |
+| 404 | `profile_not_found` | profile 未作成 |
+| 409 | `not_eligible` (`reason: existing_user`) | 既存ユーザー |
+| 429 | `rate_limited` | rate limit 超過 |
+| 500 | `internal_error` | DB エラー / RPC EXCEPTION |
+
+### 15.4 `POST /api/handson-tour/skip`
+
+#### 15.4.1 役割
+明示スキップ(【あとで】タップ)or `hard_back` の登録。
+
+#### 15.4.2 Request
+
+```ts
+export const HandsonTourSkipRequestSchema = z.object({
+  step: z.number().int().min(0).max(4),
+  reason: z.enum(['user_action', 'hard_back']),
+});
+```
+
+#### 15.4.3 Response 200 Schema
+
+```ts
+export const HandsonTourSkipResponseSchema = z.object({
+  skipped_at: z.string().datetime(),
+});
+```
+
+#### 15.4.4 サーバー処理
+
+```ts
+await supabase
+  .from('user_profiles')
+  .update({ handson_tour_skipped_at: skippedAt })
+  .eq('user_id', user.id)
+  .is('handson_tour_skipped_at', null)
+  .is('handson_tour_completed_at', null);
+```
+
+完了済の場合は `skipped_at` を上書きしない(両方 NOT NULL を避ける)。Analytics 用の `logSkipEvent(user.id, body.step, body.reason)` を呼び出してから返却。
+
+注: admin / org_admin 等の特権ロールでも skip API は 200 で受理(UI 上はスキップ動線非表示だが、サーバー側は 403 を返さない)。
+
+#### 15.4.5 Rate Limit
+
+```
+12 req / 60 s / user
+```
+
+#### 15.4.6 エラーレスポンス
+
+| status | code | 状況 |
+|---|---|---|
+| 401 | `unauthorized` | JWT 不正 |
+| 400 | `validation_error` | body schema 不正 |
+| 404 | `profile_not_found` | profile 未作成 |
+| 429 | `rate_limited` | rate limit 超過 |
+| 500 | `internal_error` | DB エラー |
+
+### 15.5 既存 API 拡張
+
+#### 15.5.1 `POST /api/meal-plans/add-from-photo` 拡張
+
+Request 拡張:
+
+```ts
+type ExtendedRequest = ExistingRequest & {
+  /** ハンズオンサンドボックス用フラグ */
+  sandbox?: boolean;
+};
+
+// query
+?source=normal | handson_tour | manual  // analytics 用
+```
+
+サーバー側変更:
+- `is_sandbox = body.sandbox === true` で `meal_logs` に INSERT(operator/01 §3.26.2 で定義された `is_sandbox` 列に書き込む)
+- `source` クエリは analytics 用の付帯情報、DB 列としては `source` 列が既存にある場合のみ書き込み
+
+`sandbox=true` の偽装防止(API 層、defense in depth):
+
+| ガード条件 | レスポンス |
+|---|---|
+| `handson_tour_completed_at IS NOT NULL` または `handson_tour_skipped_at IS NOT NULL` | 409 `sandbox_not_eligible` (`reason: already_finished`) |
+| `roles && ['admin','super_admin','org_admin','org_industrial_doctor']` | 403 `sandbox_not_eligible` (`reason: admin_role`) |
+| `user_has_non_sandbox_activity(user_id) = true` | 409 `sandbox_not_eligible` (`reason: existing_user`) |
+
+通常の INSERT 処理 + first_bite バッジ付与は既存ロジック。
+
+#### 15.5.2 `POST /api/menu-plans/add` 拡張
+
+`sandbox?: boolean` と `?source=` を `meal-plans/add-from-photo` と同じ形で受ける。書き込み先は `weekly_menus.is_sandbox`(operator/01 §3.26.3)。バッジは既存 `planner` 付与ロジックを流用。
+
+#### 15.5.3 `POST /api/onboarding/complete` 拡張
+
+Response に `next_route` を追加:
+
+```ts
+type OnboardingCompleteResponse = {
+  ok: true;
+  // ... 既存フィールド ...
+  next_route: '/handson-tour' | '/home';
+};
+```
+
+サーバーは onboarding 完了処理の後に `getHandsonTourStatusInternal(userId)`(`/api/handson-tour/status` と同じロジックの内部関数)を呼び、`should_show` が true なら `/handson-tour`、false なら `/home` を返す。
+
+クライアントは `next_route` を読んで遷移し、ハードコード分岐を持たない(設計書 §01-trigger-flow §3 連携)。
+
+### 15.6 共通エラーレスポンス形式
+
+cross/04-api-conventions §error-format に準拠:
+
+```ts
+{
+  error: {
+    code: string;       // 'rate_limited', 'unauthorized', 'not_eligible', etc
+    message: string;    // ユーザー向けメッセージ (i18n key 可)
+    reason?: string;    // 細部 (analytics 用)
+    details?: unknown;  // 開発者向け詳細
+  };
+}
+```
+
+ハンズオン固有 `reason` 値:
+
+| reason | 意味 |
+|---|---|
+| `admin_role` | 特権ロール |
+| `existing_user` | condition C 違反 |
+| `onboarding_not_completed` | onboarding 未完 |
+| `already_completed` | 完了済 |
+| `already_skipped` | スキップ済 |
+| `already_finished` | 完了 OR スキップ済 (sandbox=true 拒否時) |
+| `feature_disabled` | Feature flag OFF |
+| `not_in_rollout` | 段階公開対象外 |
+
+### 15.7 Authorization / CSRF / CORS
+
+Supabase Auth Bearer token 必須(他 family API と同じ)。SameSite=Lax cookie + Bearer token のため CSRF リスク低。CORS は `homegohan.app` (Web) と Expo callback(Mobile)を許可(cross/04 既定)。
+
+### 15.8 テスト方針
+
+§13.1 / §13.2 / §13.3 にハンズオン関連のケースを追加する:
+
+- Unit: 判定順序(§15.2.4)の各 `reason` 分岐
+- Integration: RPC `complete_handson_tour` の冪等性、`already_completed` 判定の正確性、sandbox 偽装防止 3 ケース
+- E2E: status → complete までの正常系、admin 特権ロールの auto-skip、既存ユーザーの auto-skip、force=1 再表示
+
+詳細ケースは family/09/§09-api-spec.md §9 参照。
+
+## 16. 未解決事項
 
 | 項目 | 状態 |
 |------|------|
 | `GET /api/family/invites/{token}` のレート制限 | Upstash Ratelimit で 100 req/IP/min 設定 (cross/ 依存) |
 | split API の同意フロー詳細 UI | `03-ui-spec.md §6` で設計 |
 | `promote-to-user` の Email 確認フロー | Supabase Auth の `signUp` + `verifyOtp` フローを流用 |
+| `complete_handson_tour` RPC を Edge Function (TS) で代替するか | v1 は SQL function (§3.26.6)、v2 で再評価 |
+| sandbox 偽装防止の DB トリガー導入 | v1 は API 層のみ、v2 で defense in depth 検討 (§99 Q11) |
+| `next_route` を login API でも返すか | v1 は `onboarding/complete` のみ |

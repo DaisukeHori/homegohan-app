@@ -4,7 +4,9 @@
 
 ---
 
-## 1. 確定済 (v3 時点、2026-05-07)
+## 1. 確定済
+
+### 1.1 v3 時点 (2026-05-07)
 
 §00-overview §1 + §14 で確定:
 - ✅ サンプル写真: 唐揚げ定食 (`tests/e2e/fixtures/karaage.jpg`)
@@ -13,27 +15,45 @@
 - ✅ 中断リカバリ: 最初から再開
 - ✅ Analytics 計測: 最初から仕込む (10 event 種類)
 
+### 1.2 Phase 1 着手前確認の確定 (2026-05-08)
+
+8 項目すべて確定。Phase 1 着手判断はクリア。Q16 のみ Phase 4 開始前にリリース準備として運用具体化。
+
+- ✅ **Q1 バッジアイコン**: 🎓 絵文字採用 (案 A)。v1 リリース遅延ゼロ優先。SVG 発注は v2 検討
+- ✅ **Q2 Step 0 キャッチコピー**: "3 つの便利機能を一緒に試してみましょう (約 90 秒)" を採用
+- ✅ **Q3 スキップ後再開 UI**: `/settings` の「使い方ガイドをもう一度見る」項目で確定
+- ✅ **Q7 target_kcal_per_day**: カラム不存在を確認。実装は既存 `src/lib/build-nutrition-input.ts:26-50` の `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` を流用。新規 helper 不要。実カラム名は `age`(整数) / `height`(NUMERIC) / `weight`(NUMERIC) を使う (`birth_date` / `height_cm` / `weight_kg` は不存在)
+- ✅ **Q9 Mobile V4GenerateModal**: 実装済 (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行)。Web (`src/components/ai-assistant/V4GenerateModal.tsx` 556 行) と独立した実装。両方に `mode='sandbox'` prop を追加する
+- ✅ **Q10 Mobile BadgesPage**: 実装済 (`apps/mobile/app/badges/index.tsx` 109 行、Expo Router `/badges` 対応)。Web (`src/app/(main)/badges/page.tsx` 294 行) と独立。両方を改修。Mobile 版はフィルタ/ハイライト/アニメーション機能が Web 比で簡素なため、`tutorialMode` prop と `badge-card-{code}` testID 追加に加えハイライト演出を Mobile 側にも追加
+- ✅ **Q8 Analytics 配信先**: PostHog で確定。既存 SDK 未導入、設計書 §22-analytics.md §4 は既に PostHog 前提のコードサンプル(`posthog-js` + `posthog-react-native`)を持つ。導入物 / 環境変数:
+  - `posthog-js` (Web、`NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`)
+  - `posthog-react-native` (Mobile、`EXPO_PUBLIC_POSTHOG_KEY`)
+  - 設定: `person_profiles: 'identified_only'` + `autocapture: false`(Cookie 同意 + PII 要件適合、cross/08-legal-compliance §13)
+  - Mixpanel は React Native SDK の Expo 実績不足と MTU 課金の家族単位読みにくさで不採用
+- ✅ **Q16 アプリストア審査**: リスク低、Phase 1 着手可で確定(2026-05-08 Apple/Google ガイドライン照合 + 類似事例 3 件で実証):
+  - Apple Review Guidelines 2.3.1 (Hidden Features): リスク低、Notes for Review への明示記載で対応
+  - Apple Review Guidelines 1.1.6 (False Information) / 3.2.2(x) (強制インセンティブ): 非該当
+  - Google Play Developer Policy (Deceptive Behavior / Misrepresentation 2026-04 強化): リスク低、ストア説明文への明記で対応
+  - **業界標準慣行**: Duolingo(初回レッスン即時 XP/開始バッジ)/ Headspace(オンボーディング完了で達成バッジ)/ Nike Run Club(初回 5K 完了で距離バッジ)— いずれも「チュートリアル中の実操作 → 即時バッジ付与」で App Store / Google Play 多年運用中
+  - **必須リスク低減策 5 項目**(Phase 4 開始前までに完了):
+    1. App Store Connect Notes for Review に `is_sandbox` 仕様 + バッジ付与ロジックを具体記載
+    2. `first_bite` / `planner` バッジの description にチュートリアル由来含む旨を反映(family/09 §05)
+    3. Step 4 卒業画面の獲得演出に「チュートリアルで 3 つの機能を体験して獲得」disclaimer 追加(family/09 §06)
+    4. ストア説明文(App Store / Google Play)に「初回起動時に 90 秒のハンズオンチュートリアルで実機能を体験、完了時にバッジを獲得」を明記
+    5. sandbox 行の内部監査ログは設計書 §17 で既に `sandbox_not_eligible_attempt` 等を audit_logs 化済、自動クリーンアップ(90 日経過後削除)は v2 持ち越し(§3 既存)
+  - **Phase 4 開始前の運用**: Notes for Review 文案ドラフト → 社内/外部法務レビュー、もしくは Apple Developer Program の App Review Support での事前照会(Technical Compliance 質問)。「弁護士レビュー or 早期審査確認必須」の表記を「文案の法務ドラフト確認 or Apple 事前照会」に格下げ
+
 ---
 
 ## 2. 残不確実性 (Phase 1 開始までに堀さん確認)
 
 ### 2.1 デザイン決定
 
-#### Q1. tutorial_complete バッジのアイコンデザイン
-- **選択肢 A**: 🎓 絵文字 (フォールバック、v1 これで OK) ← 推奨
-- **選択肢 B**: 専用 SVG icon (v1 で発注、デザイナーアサイン必要)
-- **影響**: v1 リリーススケジュール、A なら遅延なし
+#### ~~Q1. tutorial_complete バッジのアイコンデザイン~~ → §1.2 で確定 (🎓 絵文字、案 A)
 
-#### Q2. Step 0 のキャッチコピー文言確定
-- 現状案: "3 つの便利機能を一緒に試してみましょう (約 90 秒)"
-- 代替案 1: "3 つの機能を試して、homegohan を使いこなしましょう"
-- 代替案 2: "{nickname} さんに合った機能を 90 秒で体験"
-- **影響**: ハンズオン開始率に直結
+#### ~~Q2. Step 0 のキャッチコピー文言確定~~ → §1.2 で確定 ("3 つの便利機能を一緒に試してみましょう (約 90 秒)")
 
-#### Q3. スキップ後の再開 UI 位置
-- 現状案: `/settings` の「使い方ガイドをもう一度見る」項目
-- 代替案: profile タブ内、または home の右上アイコン
-- **影響**: 再開到達率
+#### ~~Q3. スキップ後の再開 UI 位置~~ → §1.2 で確定 (`/settings` の「使い方ガイドをもう一度見る」)
 
 #### Q4. 進捗ドットの数
 - 現状: 5 個 (Step 0-4)
@@ -55,24 +75,13 @@
 
 ### 2.3 技術決定
 
-#### Q7. `user_profiles.target_kcal_per_day` カラムの存在
-- operator/01-data-model 確認が必要
-- 存在しない場合は計算 helper 関数を新規実装
-- **影響**: Step 1 の "目標 kcal の X%" 表示
+#### ~~Q7. `user_profiles.target_kcal_per_day` カラムの存在~~ → §1.2 で確定 (カラム不存在、既存 `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` 流用)
 
-#### Q8. Analytics 配信先 (PostHog or Mixpanel)
-- operator/07 で確定が必要
-- 既存の analytics 基盤がない場合、v1 で導入決定
-- **影響**: SDK 選定、コスト
+#### ~~Q8. Analytics 配信先 (PostHog or Mixpanel)~~ → §1.2 で確定 (PostHog、既存基盤なし、設計書 §22 が既に PostHog 前提)
 
-#### Q9. Mobile 版 V4GenerateModal の実装場所
-- researcher: web 中心の確認、mobile は未確認
-- 存在しない場合: web 流用 or mobile 新規実装
-- **影響**: §03/§13 の sandbox prop 仕様、Phase 3B 工数
+#### ~~Q9. Mobile 版 V4GenerateModal の実装場所~~ → §1.2 で確定 (Mobile 独立実装あり、両方に `mode='sandbox'` prop 追加)
 
-#### Q10. Mobile 版 BadgesPage の実装場所
-- 同上
-- **影響**: Phase 3B
+#### ~~Q10. Mobile 版 BadgesPage の実装場所~~ → §1.2 で確定 (Mobile 独立実装あり、両方改修。Mobile 側は機能補完あり)
 
 ### 2.4 セキュリティ
 
@@ -102,10 +111,7 @@
 - 永続化する場合は code 残す
 - **影響**: コード保守性
 
-#### Q16. アプリストア審査 (sandbox 行で実バッジ付与)
-- ガイドライン違反の懸念 (= 「実際に使われていない動作でバッジを与える」)
-- 弁護士レビュー or 早期審査確認
-- **影響**: リリース可否
+#### ~~Q16. アプリストア審査 (sandbox 行で実バッジ付与)~~ → §1.2 で確定 (リスク低、業界標準慣行、Phase 1 着手可。Phase 4 開始前にリスク低減策 5 項目 + Notes for Review 法務ドラフト)
 
 ### 2.6 アクセシビリティ
 
@@ -176,18 +182,18 @@
 
 ## 4. 確認チェックリスト (Phase 1 開始前)
 
-堀さんから以下の回答を得てから Phase 1 着手:
+2026-05-08 時点で 8 項目中 6 項目確定。残 2 項目のみ堀さん最終確認待ち。
 
-- [ ] Q1: バッジアイコン (🎓 絵文字 OK か / 専用 SVG 発注か)
-- [ ] Q2: Step 0 キャッチコピー確定
-- [ ] Q3: スキップ後再開 UI 位置 (`/settings` で OK か)
-- [ ] Q7: target_kcal_per_day カラム or 計算式
-- [ ] Q8: Analytics 配信先 (PostHog / Mixpanel / その他)
-- [ ] Q9: Mobile V4GenerateModal の存在確認
-- [ ] Q10: Mobile BadgesPage の存在確認
-- [ ] Q16: アプリストア審査の事前確認 (sandbox 行で実バッジ付与の合法性)
+- [x] Q1: バッジアイコン → 🎓 絵文字採用 (案 A)
+- [x] Q2: Step 0 キャッチコピー → "3 つの便利機能を一緒に試してみましょう (約 90 秒)"
+- [x] Q3: スキップ後再開 UI 位置 → `/settings` の「使い方ガイドをもう一度見る」
+- [x] Q7: target_kcal_per_day → カラム不存在、既存 `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` 流用
+- [x] Q8: Analytics 配信先 → PostHog 採用 (既存基盤なし、設計書 §22 が既に PostHog 前提)
+- [x] Q9: Mobile V4GenerateModal → 実装済 (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行)
+- [x] Q10: Mobile BadgesPage → 実装済 (`apps/mobile/app/badges/index.tsx` 109 行)
+- [x] Q16: アプリストア審査 → リスク低、業界標準慣行(Duolingo/Headspace/Nike Run Club 同等パターン審査通過)、Phase 1 着手可。Phase 4 開始前に Notes for Review 法務ドラフト + リスク低減策 5 項目(§1.2)を完了
 
-これら 8 項目で Phase 1 着手判断。
+8 項目すべて確定。Phase 1 着手判断クリア。
 
 ---
 
@@ -227,22 +233,37 @@
 
 ## 6. 設計確定後のアクション
 
-§99 全項目クローズ後:
+### 6.1 完了済 (2026-05-08)
 
-1. **canonical 整合性更新** (Opus 直接執筆):
-   - operator/01-data-model.md に DDL 追記
-   - family/02-api-spec.md に API 仕様追記
-   - family/03-ui-spec.md に画面群追記
-   - cross/03-design-system.md に Coachmark 仕様追記
-   - cross/05-i18n-a11y.md に tour 章追記
-   - operator/07-audit-monitoring.md に events 章追記
-   - mobile/01-architecture.md に routing 追記
+- ✅ canonical 整合性更新(Opus 直接執筆、PR #802):
+  - operator/01-data-model.md §3.26 に DDL + RPC 追記
+  - family/02-api-spec.md §15 に API 4 本 + 既存 3 拡張追記
+  - family/03-ui-spec.md §11 に画面群追記
+  - cross/03-design-system.md §21 に Coachmark 仕様追記
+  - cross/05-i18n-a11y.md §9 に tour 章追記
+  - operator/07-audit-monitoring.md §15 に events / PostHog 採用追記
+  - mobile/01-architecture.md §12 に routing + Maestro 12 flow 追記
+- ✅ §99 8 項目すべて確定
+- ✅ R5 整合性連続 2 回致命的ゼロ達成
 
-2. **Phase 1 PR 着手**
+### 6.2 Phase 1 着手で実行
 
-3. **引き継ぎファイル更新** (`/Users/horidaisuke/handover-pr798.md`):
-   - ハンズオンチュートリアル開発項目を追加
-   - Phase 1-5 を新スレッドで自動進行できる指示を含める
+1. **DB Migration**: `supabase/migrations/2026MMDD030_handson_tour.sql` を operator/01 §3.26 から実装
+2. **RPC 2 本**: `user_has_non_sandbox_activity` / `complete_handson_tour`(operator/01 §3.26.5-6 から)
+3. **API 実装**: `/api/handson-tour/{status,complete,skip}` + 既存 3 拡張(family/02 §15)
+4. **共通 package**: `packages/handson-tour-shared/` 新規作成(family/09 §16 §1.1、~1065 行)
+
+### 6.3 Phase 4 開始前に実行 (Q16 リスク低減策)
+
+1. App Store Connect Notes for Review 文案ドラフト作成 → 法務レビュー or Apple 事前照会
+2. `first_bite` / `planner` バッジ description にチュートリアル由来含む旨を反映(family/09 §05 + canonical の operator/01 §3.26.4)
+3. Step 4 卒業画面に「チュートリアルで 3 つの機能を体験して獲得」disclaimer 追加(family/09 §06)
+4. ストア説明文(App Store / Google Play)に「初回起動時 90 秒ハンズオンチュートリアル + 完了バッジ」明記
+5. sandbox 行の自動クリーンアップ(90 日経過後削除)を v2 ロードマップに登録
+
+### 6.4 引き継ぎファイル更新
+
+`/Users/horidaisuke/handover-pr798.md` の「追加開発項目」を Phase 1 着手中状態に更新。新スレッドで Phase 1-5 を自動進行できる指示を含める(別 PR で更新)。
 
 ---
 
@@ -255,6 +276,14 @@
 | 2026-05-07 | プラットフォーム範囲 | Web/Mobile 同時 (workspace package) |
 | 2026-05-07 | 中断リカバリ | v1 では最初から (途中再開なし) |
 | 2026-05-07 | Analytics 計測 | 最初から仕込む |
+| 2026-05-08 | Q1 バッジアイコン | 🎓 絵文字採用 (案 A、設計書推奨) |
+| 2026-05-08 | Q2 Step 0 キャッチコピー | 現状案 "3 つの便利機能を一緒に試してみましょう (約 90 秒)" |
+| 2026-05-08 | Q3 スキップ後再開 UI | `/settings` の「使い方ガイドをもう一度見る」 |
+| 2026-05-08 | Q7 target_kcal カラム | 不存在 → 既存 `buildNutritionCalculatorInput()` + `calculateNutritionTargets()` 流用 |
+| 2026-05-08 | Q9 Mobile V4GenerateModal | 実装済 → Web/Mobile 両方に `mode='sandbox'` prop 追加 |
+| 2026-05-08 | Q10 Mobile BadgesPage | 実装済 → Web/Mobile 両方改修 |
+| 2026-05-08 | Q8 Analytics 配信先 | PostHog 採用 (既存基盤なし、設計書 §22 既に PostHog 前提) |
+| 2026-05-08 | Q16 アプリストア審査 | リスク低、Phase 1 着手可。Apple 2.3.1 / Google Misrepresentation の双方で「Notes for Review 記載 + ストア説明文明記」で対応可、業界標準慣行に合致。Phase 4 前にリスク低減策 5 項目 |
 
 ---
 

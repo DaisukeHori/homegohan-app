@@ -656,7 +656,83 @@ CI で全家族画面の a11y スキャン。
 - `WebViewScreen.tsx` は保持 (ブリッジ共通)
 - `apps/mobile/src/lib/pushNotifications.ts` に `setBadgeCountAsync` 追加が必要 (`mobile/03-push-notification.md` と連携)
 
-## 11. 未解決事項
+## 11. ハンズオンチュートリアル画面群 (family/09 連携)
+
+family/09 初回オンボーディングハンズオンチュートリアルが追加する UI 群の canonical 概要。各 Step の詳細仕様(吹き出し位置、アニメーション、文言確定)は family/09 配下を参照、本セクションは family ドメイン側の画面登録と既存画面への影響範囲を確定する。
+
+### 11.1 ルート構造
+
+| ルート | 用途 | 詳細 |
+|---|---|---|
+| `/handson-tour` | Tour 全体 layout (TourProvider でラップ) | family/09 §16 |
+| `/handson-tour/step-0` | ウェルカム | family/09 §02 |
+| `/handson-tour/step-1` | 写真追加 sandbox | family/09 §03 |
+| `/handson-tour/step-2` | AI 献立 sandbox | family/09 §04 |
+| `/handson-tour/step-3` | バッジ確認 | family/09 §05 |
+| `/handson-tour/step-4` | 卒業 (`tutorial_complete` 付与) | family/09 §06 |
+| `/home` (welcome toast) | Step 5 = 通常 home + welcome toast 4 秒 | family/09 §06 |
+
+Web は Next.js App Router(`src/app/(main)/handson-tour/`)、Mobile は Expo Router(`apps/mobile/app/handson-tour/`)で同名ルートを並走させる。
+
+### 11.2 共通コンポーネント (family/09 §07 → cross/03 canonical)
+
+| コンポーネント | 役割 | canonical 参照先 |
+|---|---|---|
+| `TourBubble` | 吹き出し UI(矢印・本文・ボタン) | cross/03-design-system §<Coachmark> |
+| `TourProgress` | 進捗ドット (Step 0〜4 の 5 個、§99 §1.2 Q1 で 5 個固定) | cross/03-design-system §<Coachmark> |
+| `TourOverlay` | 背景 dim + マスク窓抜き | cross/03-design-system §<Coachmark> |
+| `TourSandboxWrapper` | sandbox prop を子に注入する Provider | family/09 §07 |
+
+`packages/handson-tour-shared/`(workspace package)で型・mock・i18n を Web/Mobile 共通化。設計書 §99 §1.1 で確定済。
+
+### 11.3 既存画面への sandbox 対応
+
+ハンズオン Step 1/2 が既存画面・コンポーネントを sandbox モードで再利用する。改修対象:
+
+| 画面 / コンポーネント | プラットフォーム | 改修内容 | 参照 |
+|---|---|---|---|
+| `V4GenerateModal` | Web (`src/components/ai-assistant/V4GenerateModal.tsx` 556 行) + Mobile (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行) | `mode='sandbox'` prop 追加 (両方独立実装、§99 §1.2 Q9 確定) | family/09 §04, §13 |
+| `BadgesPage` | Web (`src/app/(main)/badges/page.tsx` 294 行) + Mobile (`apps/mobile/app/badges/index.tsx` 109 行) | `tutorialMode` prop 追加 + `badge-card-{code}` 動的 testID。Mobile は機能差(フィルタ/ハイライト/アニメ簡素)があるため Mobile 側にハイライト演出も追加 (§99 §1.2 Q10 確定) | family/09 §05 |
+| meals/new ルート | Web + Mobile | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 表示、保存時に `body.sandbox=true` で family/02 §15.5.1 を呼ぶ | family/09 §03 |
+| menus/weekly | Web + Mobile | 同上、family/02 §15.5.2 連携 | family/09 §04 |
+
+既存画面 `data-testid="badge-card"` を `badge-card-{code}` に動的化する互換戦略は §99 Q25(open)で議論中、Phase 1 着手は block しない。
+
+### 11.4 Step 0 ウェルカム文言 (確定)
+
+§99 §1.2 Q2 で確定:
+
+> 3 つの便利機能を一緒に試してみましょう (約 90 秒)
+
+`packages/handson-tour-shared/src/i18n/ja/tour.json` の `step0.title` に格納。i18n 詳細は cross/05 §<tour>。
+
+### 11.5 進捗ドット数 (Phase 4 で確定 → §99 Q4 open)
+
+現状 5 個 (Step 0〜4)。§99 Q4 で「3 個案」が open だが、Phase 1 では 5 個で実装し、Phase 4 (a11y + Analytics) で確定値に切り替える(影響: TourProgress コンポーネントの prop のみ)。
+
+### 11.6 スキップ後の再開 UI (確定)
+
+§99 §1.2 Q3 で確定:
+
+`/settings` 画面に「使い方ガイドをもう一度見る」項目を追加。タップで `/handson-tour?force=1` へ遷移。
+
+| 配置 | コンポーネント | testID |
+|---|---|---|
+| `/settings` ページ内、help セクション | `SettingsRowLink` | `settings-restart-handson-tour` |
+
+### 11.7 a11y / 文言 / Analytics 連携
+
+- a11y(focus trap, Dynamic Type AX5, スクリーンリーダー読み上げ)は cross/05-i18n-a11y §<tour>
+- 10 イベント種類の定義は operator/07-audit-monitoring §<events>
+- 文言の i18n key 設計は cross/05-i18n-a11y §<tour>
+
+### 11.8 既存実装との関連
+
+- 既存 V4GenerateModal / BadgesPage / meals-new / weekly-menu は保持リスト(`docs/design/00-existing-cleanup.md`)に該当、改修のみ
+- `/settings` は既存実装(`src/app/(main)/settings/`)に行追加
+- `/handson-tour/*` は完全新規
+
+## 12. 未解決事項
 
 | 項目 | 状態 |
 |------|------|
@@ -664,3 +740,5 @@ CI で全家族画面の a11y スキャン。
 | 買い物リスト印刷レイアウトの詳細 | `06-shopping-list.md §5` で設計 |
 | グループ分割の同意取得 UI (step-by-step) | `07-lifecycle.md §3.3` で設計 |
 | 共有献立カレンダーの Mobile 向けスクロール挙動 | Mobile 実装フェーズで確定 |
+| 進捗ドット数 5 vs 3 (family/09 §99 Q4) | Phase 4 で確定、v1 は 5 個実装 |
+| 既存 `data-testid="badge-card"` を `badge-card-{code}` に動的化 (family/09 §99 Q25) | Phase 3A 着手前に確定 |

@@ -364,7 +364,126 @@ useEffect(() => {
 - `src/lib/nativeBridge.ts`
 - `src/app/api/app/version-check/route.ts` (Web 側)
 
-## 12. 未解決事項
+## 12. ハンズオンチュートリアル ルーティング (family/09 連携)
+
+family/09 初回オンボーディングハンズオンチュートリアルが Mobile 側に追加するルーティング・コンポーネント・コンテキストの canonical。詳細(行数目安、ファイル一覧、テスト fixture)は family/09 §16-files-structure.md 参照。
+
+### 12.1 Expo Router 経路
+
+家族・組織の WebView ハイブリッドとは異なり、ハンズオンチュートリアルは **ネイティブ画面** で実装する(WebView ではない)。理由は family/09 設計書 §00 §3:
+
+- Spotlight overlay の精度確保(`MaskedView` + Reanimated v3 ネイティブ実装が必要)
+- iOS Dynamic Type AX5 (2.85x) 対応のため、WebView 内 CSS では制御困難
+- 紙吹雪アニメーション(Step 4)を 60fps で出すため
+
+| ルート | ファイル | 用途 |
+|---|---|---|
+| `/handson-tour` | `apps/mobile/app/handson-tour/_layout.tsx` | TourProvider でラップする layout |
+| `/handson-tour` (index) | `apps/mobile/app/handson-tour/index.tsx` | Step 0 ウェルカム |
+| `/handson-tour/photo` | `apps/mobile/app/handson-tour/photo.tsx` | Step 1 写真追加 sandbox |
+| `/handson-tour/menu` | `apps/mobile/app/handson-tour/menu.tsx` | Step 2 AI 献立 sandbox |
+| `/handson-tour/badges` | `apps/mobile/app/handson-tour/badges.tsx` | Step 3 バッジ確認 |
+| `/handson-tour/graduate` | `apps/mobile/app/handson-tour/graduate.tsx` | Step 4 卒業 |
+
+Step 5(welcome toast)は通常 `/home` 復帰後にネイティブ Toast として表示。
+
+### 12.2 ディープリンク
+
+`homegohan://handson-tour` および `homegohan://handson-tour?force=1` を受け付ける。`apps/mobile/src/lib/deeplink.ts`(既存ファイル)の `parseInviteLink()` 列に handson-tour 分岐を追加。
+
+ただし Phase 1 では deep link は未公開、`/settings` の「使い方ガイドをもう一度見る」リンクのみが `router.push('/handson-tour?force=1')` で再表示する仕組み(family/03 §11.6)。
+
+### 12.3 新規 Mobile 側ファイル
+
+```
+apps/mobile/
+├── app/handson-tour/
+│   ├── _layout.tsx
+│   ├── index.tsx              # Step 0
+│   ├── photo.tsx              # Step 1
+│   ├── menu.tsx               # Step 2
+│   ├── badges.tsx             # Step 3
+│   └── graduate.tsx           # Step 4
+└── src/handson-tour/
+    ├── TourOverlay.tsx        # MaskedView + Reanimated
+    ├── TourBubble.tsx
+    ├── TourProgress.tsx
+    ├── TourSandboxWrapper.tsx
+    ├── Confetti.tsx           # Step 4 紙吹雪 (Reanimated 自前)
+    ├── useTourOverlayLogic.ts
+    ├── useReducedMotion.ts    # AccessibilityInfo.isReduceMotionEnabled()
+    └── index.ts
+```
+
+加えて:
+- `apps/mobile/src/contexts/TourContext.tsx` 新規(Tour 全体 state)
+- `apps/mobile/assets/handson-tour/sample-meal.jpg` 新規(~200KB、Web から cp)
+
+詳細行数目安は family/09 §16-files-structure.md §1.3 参照(合計 ~1740 行)。
+
+### 12.4 既存ファイル修正
+
+| 既存ファイル | 修正内容 |
+|---|---|
+| `apps/mobile/src/components/menu/V4GenerateModal.tsx` (642 行) | `mode='sandbox'` prop 対応 + sandbox 用 props 受信(§99 §1.2 Q9) |
+| `apps/mobile/app/badges/index.tsx` (109 行) | `tutorialMode` prop + `badge-card-{code}` 動的 testID + ハイライト演出追加(§99 §1.2 Q10) |
+| `apps/mobile/app/(tabs)/settings.tsx` 等の settings 画面 | 「使い方ガイドをもう一度見る」行追加(family/03 §11.6) |
+| `apps/mobile/app/meals/new.tsx`(新規 or 既存改修) | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 連動 |
+| `apps/mobile/src/lib/posthog.ts`(新規) | `posthog-react-native` 初期化(operator/07 §15.1) |
+
+### 12.5 共通 package との連携
+
+`packages/handson-tour-shared/`(workspace package)を `apps/mobile/package.json` の dependencies に追加:
+
+```json
+{
+  "dependencies": {
+    "@homegohan/handson-tour-shared": "workspace:*"
+  }
+}
+```
+
+mock データ・型・i18n・analytics ヘルパーはすべて此処から import。Web/Mobile で重複実装しない(設計書 §99 §1.1 確定)。
+
+### 12.6 ネイティブ依存追加
+
+| パッケージ | 用途 | 既存 / 新規 |
+|---|---|---|
+| `@react-native-masked-view/masked-view` | TourOverlay の Spotlight 穴抜き | 新規(EAS Build 設定で nativewind / linking 必要) |
+| `react-native-reanimated` v3 | 入場 / spotlight 移動 / 紙吹雪 | 既存(確認要) or 新規 |
+| `posthog-react-native` | Analytics 配信 | 新規 |
+
+EAS Build 前にローカル `npm ci` + 型チェック必須(lock 不整合・型エラーは静的に潰すこと、CI 待ちで検出する運用は不可)。
+
+### 12.7 a11y 要件 (Mobile 固有)
+
+- iOS Dynamic Type AX5 (2.85x) で TourBubble がはみ出ないこと(§99 Q17 open、Phase 4 で実機検証)
+- VoiceOver / TalkBack で各 Step タイトル → 本文 → primary action の順
+- `AccessibilityInfo.isReduceMotionEnabled()` 購読で reduced-motion 対応
+- ハードバック(Android)は `BackHandler` で skip API 発火
+
+### 12.8 テスト方針
+
+Maestro flow を `apps/mobile/maestro/flows/tour/` 配下に 12 件追加(family/09 §16 §1.7):
+
+| flow | 内容 |
+|---|---|
+| `01-handson-completion.yaml` | 正常系(Step 0 → 4 完走) |
+| `02-skip-at-welcome.yaml` | Step 0 でスキップ |
+| `03-hard-back.yaml` | ハードバックで skip |
+| `04-step1-error-retry.yaml` | Step 1 API 失敗 → リトライ |
+| `05-step2-menu-success.yaml` | Step 2 正常 |
+| `06-step2-error-retry.yaml` | Step 2 API 失敗 → リトライ |
+| `07-step3-badges.yaml` | Step 3 バッジ表示 |
+| `08-step4-graduation.yaml` | Step 4 卒業 |
+| `09-step4-retry.yaml` | Step 4 API 失敗 → リトライ |
+| `10-force-replay.yaml` | force=1 再表示 |
+| `11-admin-skip.yaml` | admin ロール auto-skip |
+| `12-existing-user-skip.yaml` | 既存ユーザー auto-skip |
+
+ハンズオン Maestro 着手は Issue #626(testID 不足)/ #627(Maestro stuck)解消後に並列着手。
+
+## 13. 未解決事項
 
 | 項目 | 優先度 | 担当 |
 |------|--------|------|
