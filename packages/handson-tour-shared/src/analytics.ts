@@ -88,7 +88,8 @@ export const HandsonTourEventSchemas = {
     page: z.string(),
   }),
 
-  web_vitals_fid: CommonPropertiesSchema.extend({
+  // web-vitals v4+ で onFID → onINP に変更 (INP = Interaction to Next Paint)
+  web_vitals_inp: CommonPropertiesSchema.extend({
     value_ms: z.number(),
     page: z.string(),
   }),
