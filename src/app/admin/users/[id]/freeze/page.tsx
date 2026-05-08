@@ -31,7 +31,7 @@ export default async function AdminUserFreezePage({ params }: PageProps) {
 
   const { data: profile, error } = await supabase
     .from('user_profiles')
-    .select('id, display_name, roles')
+    .select('id, display_name, roles, frozen_at')
     .eq('id', id)
     .single();
 
@@ -39,7 +39,8 @@ export default async function AdminUserFreezePage({ params }: PageProps) {
     notFound();
   }
 
-  const isBanned = Array.isArray(profile.roles) && profile.roles.includes('banned');
+  // 凍結状態は frozen_at IS NOT NULL で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
+  const isBanned = (profile as { frozen_at?: string | null }).frozen_at != null;
   const isSuperAdmin = actor.roles.includes('super_admin');
 
   return (

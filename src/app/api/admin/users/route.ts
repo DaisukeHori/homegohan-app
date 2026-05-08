@@ -53,7 +53,10 @@ export async function GET(request: Request) {
       organization_id,
       plan_key_cached,
       last_login_at,
-      created_at
+      created_at,
+      frozen_at,
+      frozen_reason,
+      frozen_by
     `,
       { count: 'exact' },
     );
@@ -70,11 +73,11 @@ export async function GET(request: Request) {
     query = query.contains('roles', [params.role]);
   }
 
-  // ステータスフィルタ (is_banned は roles 配列から判定)
+  // ステータスフィルタ (凍結状態は frozen_at IS NOT NULL で判定)
   if (params.status === 'banned') {
-    query = query.contains('roles', ['banned']);
+    query = query.not('frozen_at', 'is', null);
   } else if (params.status === 'active') {
-    query = query.not('roles', 'cs', '["banned"]');
+    query = query.is('frozen_at', null);
   }
 
   // 登録日フィルタ
@@ -118,7 +121,10 @@ export async function GET(request: Request) {
     display_name: u.display_name,
     plan_key: u.plan_key_cached ?? 'free',
     roles: u.roles ?? ['user'],
-    is_banned: Array.isArray(u.roles) && u.roles.includes('banned'),
+    is_banned: (u as { frozen_at?: string | null }).frozen_at != null,
+    frozen_at: (u as { frozen_at?: string | null }).frozen_at ?? null,
+    frozen_reason: (u as { frozen_reason?: string | null }).frozen_reason ?? null,
+    frozen_by: (u as { frozen_by?: string | null }).frozen_by ?? null,
     last_login_at: u.last_login_at,
     registered_at: u.created_at,
     meal_count: 0, // 集計は別クエリが必要

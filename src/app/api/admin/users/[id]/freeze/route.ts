@@ -1,7 +1,9 @@
 /**
- * POST /api/admin/users/{id}/freeze — ユーザー凍結 (BAN)
+ * POST /api/admin/users/{id}/freeze — ユーザー凍結
  * DELETE /api/admin/users/{id}/freeze — 凍結解除
  * operator/02-api-spec.md §4 準拠
+ * 凍結状態は roles 配列ではなく frozen_at 列で管理する
+ * ('banned' は公式 12 ロール外のため使用禁止: cross/CLAUDE.md §B)
  */
 
 import { NextResponse } from 'next/server';
@@ -88,21 +90,22 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
-  // super_admin を BAN しようとした場合は拒否
+  // super_admin を凍結しようとした場合は拒否
   if (Array.isArray(profile.roles) && profile.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_TARGET_PROTECTED', message: 'super_admin ユーザーを BAN することはできません' } },
+      { error: { code: 'OP_TARGET_PROTECTED', message: 'super_admin ユーザーを凍結することはできません' } },
       { status: 403 },
     );
   }
 
-  // roles に 'banned' を追加
-  const currentRoles: string[] = Array.isArray(profile.roles) ? profile.roles : ['user'];
-  const newRoles = [...new Set([...currentRoles, 'banned'])];
-
+  // frozen_at / frozen_reason / frozen_by を UPDATE (roles には手を加えない)
   const { error: updateError } = await supabase
     .from('user_profiles')
-    .update({ roles: newRoles } as Record<string, unknown>)
+    .update({
+      frozen_at: new Date().toISOString(),
+      frozen_reason: `[${freezeData.reason_category}] ${freezeData.reason_detail}`,
+      frozen_by: actor.id,
+    } as Record<string, unknown>)
     .eq('id', id);
 
   if (updateError) {
@@ -192,10 +195,10 @@ export async function DELETE(request: Request, { params }: Params) {
   const { reason } = parseResult.data;
   const supabase = await createClient();
 
-  // 対象ユーザーのロールから 'banned' を除去
+  // 対象ユーザーが存在するか確認
   const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
-    .select('id, roles')
+    .select('id')
     .eq('id', id)
     .single();
 
@@ -206,12 +209,14 @@ export async function DELETE(request: Request, { params }: Params) {
     );
   }
 
-  const currentRoles: string[] = Array.isArray(profile.roles) ? profile.roles : ['user'];
-  const newRoles = currentRoles.filter((r) => r !== 'banned');
-
+  // frozen_at / frozen_reason / frozen_by を NULL にリセット (凍結解除)
   const { error: updateError } = await supabase
     .from('user_profiles')
-    .update({ roles: newRoles } as Record<string, unknown>)
+    .update({
+      frozen_at: null,
+      frozen_reason: null,
+      frozen_by: null,
+    } as Record<string, unknown>)
     .eq('id', id);
 
   if (updateError) {

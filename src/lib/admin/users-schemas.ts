@@ -50,6 +50,9 @@ export const UserDetailResponseSchema = z.object({
     })
     .nullable(),
   is_banned: z.boolean(),
+  frozen_at: z.string().datetime().nullable().optional(),
+  frozen_reason: z.string().nullable().optional(),
+  frozen_by: z.string().uuid().nullable().optional(),
   last_login_at: z.string().nullable(),
   registered_at: z.string(),
 });
