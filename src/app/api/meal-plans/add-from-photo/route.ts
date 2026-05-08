@@ -4,9 +4,11 @@ import { buildCatalogSelectionUpdate } from "../../../../lib/catalog-products";
 import { buildPhotoDishList } from "../../../../lib/meal-image";
 import { cancelPendingMealImageJobs } from "../../../../lib/meal-image-jobs";
 
+const ADMIN_ROLES = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'] as const;
+
 export async function POST(request: Request) {
   const supabase = await createClient();
-  
+
   try {
     const {
       dayDate,
@@ -16,11 +18,50 @@ export async function POST(request: Request) {
       imageUrl,
       nutritionalAdvice,
       catalogProductId,
+      sandbox,
     } = await request.json();
     
+    const searchParams = new URL(request.url).searchParams;
+    const source = searchParams.get('source') ?? 'normal';
+
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const isSandbox = sandbox === true;
+
+    if (isSandbox) {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('handson_tour_completed_at, handson_tour_skipped_at, roles')
+        .eq('user_id', user.id)
+        .single();
+
+      if (profile?.handson_tour_completed_at || profile?.handson_tour_skipped_at) {
+        return NextResponse.json(
+          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'already_finished' } },
+          { status: 409 },
+        );
+      }
+
+      const hasAdminRole = Array.isArray(profile?.roles) &&
+        profile.roles.some((r: string) => (ADMIN_ROLES as readonly string[]).includes(r));
+      if (hasAdminRole) {
+        return NextResponse.json(
+          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'admin_role' } },
+          { status: 403 },
+        );
+      }
+
+      const { data: hasActivity } = await supabase
+        .rpc('user_has_non_sandbox_activity', { p_user_id: user.id });
+      if (hasActivity) {
+        return NextResponse.json(
+          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'existing_user' } },
+          { status: 409 },
+        );
+      }
     }
     
     // 1. user_daily_meals を取得または作成
@@ -107,7 +148,8 @@ export async function POST(request: Request) {
       is_completed: false,
       dishes: photoDishes.length > 0 ? photoDishes : null,
       is_simple: photoDishes.length <= 1,
-      source_type: 'manual',
+      source_type: source === 'handson_tour' ? 'handson_tour' : 'manual',
+      is_sandbox: isSandbox,
     };
 
     if (catalogProductId) {

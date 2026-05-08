@@ -18,6 +18,9 @@ import {
   validateSlotCount,
   type MealDay,
 } from "@/lib/slot-builder";
+import {
+  MOCK_MENU_RESPONSE,
+} from "@homegohan/handson-tour-shared";
 
 // ============================================
 // Types
@@ -30,7 +33,24 @@ type GenerateMode = 'empty' | 'ai_only' | 'selected' | 'range' | 'single_day';
 // destructive flag that must default to false every time the modal opens.
 const STORAGE_KEY_RANGE_DAYS = 'v4_range_days';
 
-interface V4GenerateModalProps {
+// ============================================
+// Sandbox types (family/09 §07 §6.2)
+// ============================================
+
+interface V4GenerateModalSandboxProps {
+  mode: 'sandbox';
+  isOpen: boolean;
+  onClose: () => void;
+  initialFlags?: { no_cook?: boolean; simple_only?: boolean; variety_emphasis?: boolean };
+  prefilled: typeof MOCK_MENU_RESPONSE;
+  loadingDurationMs: number;
+  apiOptions: { source: 'handson_tour'; sandbox: true };
+  onSandboxComplete: (result: { menu_id: string; badge_awarded?: any }) => void;
+  onSandboxError?: (error: any) => void;
+}
+
+interface V4GenerateModalNormalProps {
+  mode?: 'normal';
   isOpen: boolean;
   onClose: () => void;
   mealPlanDays: MealDay[];
@@ -44,6 +64,8 @@ interface V4GenerateModalProps {
   }) => Promise<void>;
   isGenerating?: boolean;
 }
+
+type V4GenerateModalProps = V4GenerateModalSandboxProps | V4GenerateModalNormalProps;
 
 // ============================================
 // Color Palette (matching weekly page)
@@ -74,7 +96,176 @@ const colors = {
 // Component
 // ============================================
 
-export function V4GenerateModal({
+// ============================================
+// Sandbox Component
+// ============================================
+
+function V4GenerateModalSandbox({
+  isOpen,
+  onClose,
+  initialFlags = {},
+  prefilled,
+  loadingDurationMs,
+  apiOptions,
+  onSandboxComplete,
+  onSandboxError,
+}: Omit<V4GenerateModalSandboxProps, 'mode'>) {
+  const [isSandboxLoading, setIsSandboxLoading] = useState(false);
+  const [sandboxLoaded, setSandboxLoaded] = useState(false);
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setIsSandboxLoading(false);
+      setSandboxLoaded(false);
+    }
+  }, [isOpen]);
+
+  const handleSandboxSave = async () => {
+    if (isSandboxLoading) return;
+    setIsSandboxLoading(true);
+    // Simulate loading for STEP2_LOADING_DURATION_MS
+    await new Promise(resolve => setTimeout(resolve, loadingDurationMs));
+    try {
+      const res = await fetch('/api/menu-plans/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...prefilled,
+          ...apiOptions,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        onSandboxComplete({ menu_id: data.menu_id ?? 'sandbox', badge_awarded: data.badge_awarded });
+      } else {
+        const errBody = await res.json().catch(() => ({}));
+        onSandboxError?.(errBody);
+      }
+    } catch (error) {
+      onSandboxError?.(error);
+    } finally {
+      setIsSandboxLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  const dish = prefilled;
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+          className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+          data-testid="v4-generate-modal-sandbox"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
+            <div className="flex items-center gap-2">
+              <Sparkles size={20} style={{ color: colors.accent }} />
+              <h2 className="text-lg font-bold" style={{ color: colors.text }}>AIアシスタント（体験）</h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+            >
+              <X size={20} style={{ color: colors.textLight }} />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="p-4 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 140px)' }}>
+            {/* Sandbox info banner */}
+            <div className="mb-4 p-3 rounded-xl" style={{ backgroundColor: colors.accentLight }}>
+              <p className="text-sm font-bold" style={{ color: colors.accent }}>
+                ハンズオン体験モード
+              </p>
+              <p className="text-xs mt-1" style={{ color: colors.textLight }}>
+                サンプル献立でAIアシスタントを体験できます
+              </p>
+            </div>
+
+            {/* Prefilled menu preview */}
+            <div className="mb-4 p-4 rounded-xl border" style={{ borderColor: colors.border, backgroundColor: colors.bg }}>
+              <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>生成された献立（サンプル）</p>
+              <p className="font-bold text-lg mb-1" style={{ color: colors.text }}>{dish.dish_name}</p>
+              <div className="flex gap-3 text-sm" style={{ color: colors.textLight }}>
+                <span>{dish.calories} kcal</span>
+                <span>P: {dish.protein_g}g</span>
+                <span>F: {dish.fat_g}g</span>
+                <span>C: {dish.carbs_g}g</span>
+              </div>
+              <div className="mt-2 flex gap-2 flex-wrap">
+                <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.accentLight, color: colors.accent }}>
+                  {dish.cooking_time_minutes}分
+                </span>
+                <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.successLight, color: colors.success }}>
+                  {dish.difficulty === 'easy' ? '簡単' : dish.difficulty === 'medium' ? '普通' : '本格'}
+                </span>
+                <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: colors.blueLight, color: colors.blue }}>
+                  {dish.servings}人分
+                </span>
+              </div>
+            </div>
+
+            {/* Ingredients */}
+            <div className="mb-4">
+              <p className="text-sm font-bold mb-2" style={{ color: colors.textLight }}>材料</p>
+              <div className="grid grid-cols-2 gap-1">
+                {dish.ingredients.map((ing, i) => (
+                  <div key={i} className="text-sm" style={{ color: colors.text }}>
+                    {ing.name} {ing.quantity_g}{ing.unit}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Save button */}
+            <button
+              data-testid="v4-sandbox-save-button"
+              onClick={handleSandboxSave}
+              disabled={isSandboxLoading}
+              className="w-full py-4 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2"
+              style={{
+                backgroundColor: isSandboxLoading ? colors.purple : colors.accent,
+                opacity: isSandboxLoading ? 0.8 : 1,
+              }}
+            >
+              {isSandboxLoading ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  献立を登録中...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={18} />
+                  この献立を登録する
+                </>
+              )}
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+// ============================================
+// Normal Component
+// ============================================
+
+function V4GenerateModalNormal({
   isOpen,
   onClose,
   mealPlanDays,
@@ -82,7 +273,7 @@ export function V4GenerateModal({
   weekEndDate,
   onGenerate,
   isGenerating = false,
-}: V4GenerateModalProps) {
+}: Omit<V4GenerateModalNormalProps, 'mode'>) {
   // Mode selection
   const [selectedMode, setSelectedMode] = useState<GenerateMode | null>(null);
   
@@ -592,5 +783,38 @@ export function V4GenerateModal({
         </motion.div>
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+// ============================================
+// Main Export — discriminated union dispatcher
+// ============================================
+
+export function V4GenerateModal(props: V4GenerateModalProps) {
+  if (props.mode === 'sandbox') {
+    return (
+      <V4GenerateModalSandbox
+        isOpen={props.isOpen}
+        onClose={props.onClose}
+        initialFlags={props.initialFlags}
+        prefilled={props.prefilled}
+        loadingDurationMs={props.loadingDurationMs}
+        apiOptions={props.apiOptions}
+        onSandboxComplete={props.onSandboxComplete}
+        onSandboxError={props.onSandboxError}
+      />
+    );
+  }
+  // normal mode (mode === 'normal' or mode === undefined)
+  return (
+    <V4GenerateModalNormal
+      isOpen={props.isOpen}
+      onClose={props.onClose}
+      mealPlanDays={props.mealPlanDays}
+      weekStartDate={props.weekStartDate}
+      weekEndDate={props.weekEndDate}
+      onGenerate={props.onGenerate}
+      isGenerating={props.isGenerating}
+    />
   );
 }
