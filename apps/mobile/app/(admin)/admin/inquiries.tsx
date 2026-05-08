@@ -64,7 +64,7 @@ export default function AdminInquiriesPage() {
   }, [status]);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+    <ScrollView testID="admin-inquiries-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -73,13 +73,14 @@ export default function AdminInquiriesPage() {
           </Pressable>
           <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Inquiries</Text>
         </View>
-        <Pressable onPress={load} hitSlop={8}>
+        <Pressable testID="admin-inquiries-refresh" onPress={load} hitSlop={8}>
           <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
       {/* Status Filter */}
       <ChipSelector
+        testIDPrefix="admin-inquiries-status"
         options={STATUS_OPTIONS}
         selected={status}
         onSelect={setStatus}
@@ -99,9 +100,9 @@ export default function AdminInquiriesPage() {
       ) : items.length === 0 ? (
         <EmptyState icon={<Ionicons name="chatbubbles-outline" size={40} color={colors.textMuted} />} message="問い合わせがありません。" />
       ) : (
-        <View style={{ gap: spacing.sm }}>
+        <View testID="admin-inquiries-list" style={{ gap: spacing.sm }}>
           {items.map((i) => (
-            <Card key={i.id} onPress={() => router.push(`/admin/inquiries/${i.id}`)}>
+            <Card key={i.id} testID={`admin-inquiry-item-${i.id}`} onPress={() => router.push(`/admin/inquiries/${i.id}`)}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                   <Ionicons name="chatbubble-ellipses" size={18} color={colors.accent} />

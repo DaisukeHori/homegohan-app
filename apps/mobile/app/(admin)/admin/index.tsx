@@ -55,7 +55,7 @@ export default function AdminHomePage() {
   }, []);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+    <ScrollView testID="admin-dashboard-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -64,16 +64,16 @@ export default function AdminHomePage() {
           </Pressable>
           <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Admin Console</Text>
         </View>
-        <Pressable onPress={load} hitSlop={8}>
+        <Pressable testID="admin-dashboard-refresh" onPress={load} hitSlop={8}>
           <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
       {/* Navigation */}
       <SectionHeader title="Menu" />
-      <View style={{ gap: spacing.sm }}>
+      <View testID="admin-dashboard-nav" style={{ gap: spacing.sm }}>
         {NAV_ITEMS.map((item) => (
-          <Card key={item.href} onPress={() => router.push(item.href as any)}>
+          <Card key={item.href} testID={`admin-nav-${item.label.toLowerCase()}`} onPress={() => router.push(item.href as any)}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
               <View style={{ width: 40, height: 40, borderRadius: radius.md, backgroundColor: item.bg, alignItems: "center", justifyContent: "center" }}>
                 <Ionicons name={item.icon} size={20} color={item.color} />

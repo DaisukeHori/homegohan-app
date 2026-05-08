@@ -96,7 +96,7 @@ export default function AdminAnnouncementsPage() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+    <ScrollView testID="admin-announcements-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
         <Pressable onPress={() => router.back()} hitSlop={8}>
@@ -106,11 +106,12 @@ export default function AdminAnnouncementsPage() {
       </View>
 
       {/* Create Form */}
-      <Card>
+      <Card testID="admin-announcements-create-form">
         <View style={{ gap: spacing.md }}>
           <SectionHeader title="新規作成" />
-          <Input value={title} onChangeText={setTitle} placeholder="タイトル" />
+          <Input testID="admin-announcements-title-input" value={title} onChangeText={setTitle} placeholder="タイトル" />
           <Input
+            testID="admin-announcements-content-input"
             value={content}
             onChangeText={setContent}
             placeholder="内容"
@@ -136,7 +137,7 @@ export default function AdminAnnouncementsPage() {
               {isPublic ? "公開: ON" : "公開: OFF"}
             </Text>
           </Pressable>
-          <Button onPress={create} loading={isSubmitting} disabled={isSubmitting}>
+          <Button testID="admin-announcements-create-button" onPress={create} loading={isSubmitting} disabled={isSubmitting}>
             {isSubmitting ? "作成中..." : "作成"}
           </Button>
         </View>
@@ -164,9 +165,9 @@ export default function AdminAnnouncementsPage() {
       ) : items.length === 0 ? (
         <EmptyState icon={<Ionicons name="megaphone-outline" size={40} color={colors.textMuted} />} message="お知らせがありません。" />
       ) : (
-        <View style={{ gap: spacing.sm }}>
+        <View testID="admin-announcements-list" style={{ gap: spacing.sm }}>
           {items.map((a) => (
-            <Card key={a.id}>
+            <Card key={a.id} testID={`admin-announcement-item-${a.id}`}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                   <Ionicons name="megaphone" size={18} color={colors.accent} />

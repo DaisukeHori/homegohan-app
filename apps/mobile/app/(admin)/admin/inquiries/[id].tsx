@@ -93,7 +93,7 @@ export default function AdminInquiryDetailPage() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+    <ScrollView testID="admin-inquiry-detail-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
         <Pressable onPress={() => router.back()} hitSlop={8}>
@@ -168,7 +168,7 @@ export default function AdminInquiryDetailPage() {
                 style={{ minHeight: 100, textAlignVertical: "top" }}
               />
 
-              <Button onPress={save} loading={isSaving} disabled={isSaving}>
+              <Button testID="admin-inquiry-detail-save-button" onPress={save} loading={isSaving} disabled={isSaving}>
                 {isSaving ? "保存中..." : "保存"}
               </Button>
             </View>

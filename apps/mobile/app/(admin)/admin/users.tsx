@@ -85,7 +85,7 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+    <ScrollView testID="admin-users-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
         <Pressable onPress={() => router.back()} hitSlop={8}>
@@ -99,11 +99,12 @@ export default function AdminUsersPage() {
         <View style={{ gap: spacing.md }}>
           <SectionHeader title="検索" />
           <Input
+            testID="admin-users-search-input"
             value={q}
             onChangeText={setQ}
             placeholder="nickname or id で検索"
           />
-          <Button onPress={load}>
+          <Button testID="admin-users-search-button" onPress={load}>
             検索
           </Button>
         </View>
@@ -122,9 +123,9 @@ export default function AdminUsersPage() {
       ) : items.length === 0 ? (
         <EmptyState icon={<Ionicons name="people-outline" size={40} color={colors.textMuted} />} message="ユーザーがいません。" />
       ) : (
-        <View style={{ gap: spacing.sm }}>
+        <View testID="admin-users-list" style={{ gap: spacing.sm }}>
           {items.map((u) => (
-            <Card key={u.id}>
+            <Card key={u.id} testID={`admin-user-item-${u.id}`}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                   <View

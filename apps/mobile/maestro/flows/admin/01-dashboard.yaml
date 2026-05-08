@@ -1,0 +1,35 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 01: admin ロールでログイン → Admin Console ダッシュボード表示確認 + リフレッシュ操作
+- runFlow:
+    file: "../_shared/login-as-admin.yaml"
+
+# ダッシュボード画面の表示確認
+- assertVisible:
+    id: "admin-dashboard-screen"
+- assertVisible:
+    text: "Admin Console"
+
+# ナビゲーションメニューの表示確認
+- assertVisible:
+    id: "admin-dashboard-nav"
+
+# 主要操作: リフレッシュボタンをタップ
+- tapOn:
+    id: "admin-dashboard-refresh"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# スクロールして統計カード表示確認
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# クリーンアップ: ログアウト
+- runFlow:
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    file: "../_shared/logout.yaml"

@@ -1,0 +1,49 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 05: admin → Announcements 画面表示確認 + お知らせ作成フォーム操作
+- runFlow:
+    file: "../_shared/login-as-admin.yaml"
+
+# ダッシュボードから Announcements ナビゲーションをタップ
+- tapOn:
+    id: "admin-nav-announcements"
+- extendedWaitUntil:
+    visible:
+      id: "admin-announcements-screen"
+    timeout: 15000
+
+# Announcements 画面の表示確認
+- assertVisible:
+    text: "Announcements"
+
+# 作成フォームの表示確認
+- assertVisible:
+    id: "admin-announcements-create-form"
+
+# 主要操作: タイトルと内容を入力する（実際の作成は副作用が大きいためフォーム入力まで）
+- tapOn:
+    id: "admin-announcements-title-input"
+- inputText: "E2E テスト用お知らせ"
+- tapOn:
+    id: "admin-announcements-content-input"
+- inputText: "これは Maestro E2E テストによる自動入力です。"
+
+# スクロールして一覧確認
+- scroll
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# クリーンアップ: ダッシュボードに戻ってログアウト
+- tapOn:
+    point: "5%,7%"
+- extendedWaitUntil:
+    visible:
+      id: "admin-dashboard-screen"
+    timeout: 10000
+- runFlow:
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    file: "../_shared/logout.yaml"

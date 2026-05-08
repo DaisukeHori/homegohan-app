@@ -1,0 +1,53 @@
+appId: com.homegohan.app
+env:
+  E2E_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL}
+  E2E_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD}
+---
+# 04: admin → Audit Logs 画面表示確認 + アクションタイプフィルター操作
+- runFlow:
+    file: "../_shared/login-as-admin.yaml"
+
+# ダッシュボードから Audit Logs ナビゲーションをタップ
+- tapOn:
+    id: "admin-nav-audit logs"
+- extendedWaitUntil:
+    visible:
+      id: "admin-audit-logs-screen"
+    timeout: 15000
+
+# Audit Logs 画面の表示確認
+- assertVisible:
+    text: "Audit Logs"
+
+# 主要操作: action_type フィルター入力 → 検索
+- tapOn:
+    id: "admin-audit-logs-filter-input"
+- inputText: "user_ban"
+- tapOn:
+    id: "admin-audit-logs-search-button"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# スクロールしてログリスト確認
+- scroll
+
+# フィルタークリアして再検索
+- tapOn:
+    id: "admin-audit-logs-filter-input"
+- clearText
+- tapOn:
+    id: "admin-audit-logs-search-button"
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# クリーンアップ: ダッシュボードに戻ってログアウト
+- tapOn:
+    point: "5%,7%"
+- extendedWaitUntil:
+    visible:
+      id: "admin-dashboard-screen"
+    timeout: 10000
+- runFlow:
+    file: "../_shared/back-from-admin.yaml"
+- runFlow:
+    file: "../_shared/logout.yaml"

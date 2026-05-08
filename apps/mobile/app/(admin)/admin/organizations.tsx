@@ -79,7 +79,7 @@ export default function AdminOrganizationsPage() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+    <ScrollView testID="admin-organizations-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -88,17 +88,17 @@ export default function AdminOrganizationsPage() {
           </Pressable>
           <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Organizations</Text>
         </View>
-        <Pressable onPress={load} hitSlop={8}>
+        <Pressable testID="admin-organizations-refresh" onPress={load} hitSlop={8}>
           <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
       {/* Create Form */}
-      <Card>
+      <Card testID="admin-organizations-create-form">
         <View style={{ gap: spacing.md }}>
           <SectionHeader title="新規作成" />
-          <Input value={name} onChangeText={setName} placeholder="組織名" />
-          <Button onPress={create} loading={isSubmitting} disabled={isSubmitting}>
+          <Input testID="admin-organizations-name-input" value={name} onChangeText={setName} placeholder="組織名" />
+          <Button testID="admin-organizations-create-button" onPress={create} loading={isSubmitting} disabled={isSubmitting}>
             {isSubmitting ? "作成中..." : "作成"}
           </Button>
         </View>
@@ -119,9 +119,9 @@ export default function AdminOrganizationsPage() {
       ) : items.length === 0 ? (
         <EmptyState icon={<Ionicons name="business-outline" size={40} color={colors.textMuted} />} message="組織がありません。" />
       ) : (
-        <View style={{ gap: spacing.sm }}>
+        <View testID="admin-organizations-list" style={{ gap: spacing.sm }}>
           {items.map((o) => (
-            <Card key={o.id}>
+            <Card key={o.id} testID={`admin-org-item-${o.id}`}>
               <View style={{ gap: spacing.sm }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                   <View style={{ width: 40, height: 40, borderRadius: radius.md, backgroundColor: colors.successLight, alignItems: "center", justifyContent: "center" }}>

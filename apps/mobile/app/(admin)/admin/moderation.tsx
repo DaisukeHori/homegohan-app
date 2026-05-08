@@ -95,7 +95,7 @@ export default function AdminModerationPage() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+    <ScrollView testID="admin-moderation-screen" style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: 56, paddingHorizontal: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
@@ -104,13 +104,14 @@ export default function AdminModerationPage() {
           </Pressable>
           <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>Moderation</Text>
         </View>
-        <Pressable onPress={load} hitSlop={8}>
+        <Pressable testID="admin-moderation-refresh" onPress={load} hitSlop={8}>
           <Ionicons name="refresh" size={22} color={colors.textMuted} />
         </Pressable>
       </View>
 
       {/* Status Filter */}
       <ChipSelector
+        testIDPrefix="admin-moderation-status"
         options={STATUS_OPTIONS}
         selected={status}
         onSelect={setStatus}
