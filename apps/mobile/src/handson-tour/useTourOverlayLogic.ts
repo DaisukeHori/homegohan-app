@@ -3,7 +3,10 @@
 // measureInWindow + 100ms ポーリング + onLayout 連動
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Component, ElementRef } from 'react';
 import { findNodeHandle, UIManager } from 'react-native';
+
+type TourTargetRef = Component | ElementRef<React.ElementType> | number;
 
 import type { TargetRect, TourOverlayProps } from '@homegohan/handson-tour-shared';
 
@@ -158,10 +161,9 @@ export function useTourOverlayLogic(
 // useTourOverlayLogic が testID から要素を取得できるようにする。
 // ============================================================
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const tourTargetRefRegistry = new Map<string, any>();
+const tourTargetRefRegistry = new Map<string, TourTargetRef>();
 
-export function registerTourTarget(testId: string, ref: unknown): void {
+export function registerTourTarget(testId: string, ref: TourTargetRef): void {
   tourTargetRefRegistry.set(testId, ref);
 }
 

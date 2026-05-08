@@ -73,14 +73,12 @@ export async function initPostHogMobile(): Promise<PostHog | null> {
  */
 export function captureEvent(
   eventName: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  props: Record<string, any>,
+  props: PostHogEventProperties,
 ): void {
   if (!_posthog) return;
   try {
     // sanitizeProps の戻り値を SDK が期待する型にキャスト
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _posthog.capture(eventName, sanitizeProps(props as PostHogEventProperties) as any);
+    _posthog.capture(eventName, sanitizeProps(props) as Record<string, unknown>);
   } catch {
     // ignore
   }
