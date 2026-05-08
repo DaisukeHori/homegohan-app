@@ -302,9 +302,11 @@ CREATE TABLE IF NOT EXISTS coupon_redemptions (
   id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   coupon_id                   UUID NOT NULL REFERENCES coupons(id),
   user_id                     UUID REFERENCES auth.users(id),
-  organization_id             UUID DEFERRABLE INITIALLY DEFERRED,
+  organization_id             UUID,
   -- NOTE: organizations テーブルは org/ ドメイン (02-organization-management) で作成される。
-  -- coupon_redemptions は 01-operator-admin で先に作成されるため DEFERRABLE INITIALLY DEFERRED を付与。
+  -- coupon_redemptions が先行するため、FK は後続 migration で
+  -- ALTER TABLE coupon_redemptions ADD CONSTRAINT ... REFERENCES organizations(id)
+  -- として付与する (PG は CREATE TABLE 時に DEFERRABLE 単独指定不可、要 REFERENCES)。
   subscription_target         VARCHAR(20) NOT NULL
     CHECK (subscription_target IN ('personal', 'org')),
   applied_to_subscription_id  UUID NOT NULL,
@@ -660,7 +662,8 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   resolved_at   TIMESTAMPTZ,
   closed_at     TIMESTAMPTZ,
   -- 組織・家族関連付け (任意)
-  organization_id UUID DEFERRABLE INITIALLY DEFERRED,
+  -- organizations FK は org ドメイン migration で ALTER TABLE で付与
+  organization_id UUID,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -773,8 +776,8 @@ CREATE TABLE IF NOT EXISTS sales_leads (
   assigned_to     UUID REFERENCES auth.users(id),
   estimated_acv   INT,
   notes           TEXT,
-  -- 契約後の組織 ID
-  converted_org_id UUID DEFERRABLE INITIALLY DEFERRED,
+  -- 契約後の組織 ID (organizations FK は org ドメイン migration で ALTER TABLE で付与)
+  converted_org_id UUID,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
