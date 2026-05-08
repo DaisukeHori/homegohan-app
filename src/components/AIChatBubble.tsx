@@ -930,7 +930,7 @@ export default function AIChatBubble() {
                 </button>
                 <button
                   onClick={() => { setIsOpen(false); setIsToggling(false); }}
-                  aria-label="閉じる"
+                  aria-label="AIチャットを閉じる"
                   className="p-2 rounded-full hover:bg-gray-100"
                 >
                   <X size={18} color={colors.textMuted} />
