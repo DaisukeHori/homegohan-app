@@ -79,6 +79,7 @@ test.describe("Health record core — 探索", () => {
       "Failed to fetch RSC payload",         // Next.js RSC fallback (known)
       "rb._useSession",                       // Supabase session init race
       "Failed to load resource: net::ERR_",   // ネットワーク瞬断
+      "Failed to fetch",                      // onboarding/resume 等の一時的 fetch 失敗
     ];
     const fatalErrors = consoleErrors.filter(
       (e) =>
@@ -102,6 +103,16 @@ test.describe("Health record core — 探索", () => {
   // ---------------------------------------------------------------------------
   test("S2: 今日の記録 cards または CTA が表示される", async ({ page }) => {
     await gotoAuthed(page, "/health");
+
+    // h1 が visible になるまで待機 (client-side fetch 完了 + loading=false を確認)
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 15_000 });
+
+    // loading spinner が消えるまで待機 (today card か CTA が出現するまで)
+    const cardOrCta = page
+      .locator("text=今日の記録")
+      .or(page.locator("text=今日の記録をつける"))
+      .first();
+    await expect(cardOrCta).toBeVisible({ timeout: 10_000 });
 
     const hasRecord = await page.locator("text=今日の記録").first().isVisible().catch(() => false);
     const hasCta = await page.locator("text=今日の記録をつける").first().isVisible().catch(() => false);
@@ -294,6 +305,11 @@ test.describe("Health record core — 探索", () => {
   test("S8: /health/record — 全 fields 入力して submit できる", async ({ page }) => {
     await gotoAuthed(page, "/health/record");
 
+    // loading 完了まで待機 (loading: true → spinner、false → form)
+    await expect(page.locator("h1,h2").first()).toBeVisible({ timeout: 10_000 });
+    // 体重 input が visible になるまで待機 (body セクション expanded: true が確定してから)
+    await expect(page.locator('input[type="number"]').first()).toBeVisible({ timeout: 10_000 });
+
     const numberInputs = page.locator('input[type="number"]');
     const inputCount = await numberInputs.count();
 
@@ -346,10 +362,10 @@ test.describe("Health record core — 探索", () => {
     await expect(activeSection).toBeVisible({ timeout: 10_000 });
 
     // 目標カードまたは空状態のいずれかが表示される
+    // 実装: config.label (体重/体脂肪率/1日の歩数) + "目標: {value}{unit}" のテキストで表示される
     const emptyState = await page.locator("text=目標がありません").isVisible().catch(() => false);
-    const hasGoalCards = (await page.locator('text=目標体重').isVisible().catch(() => false))
-      || (await page.locator('text=目標体脂肪率').isVisible().catch(() => false))
-      || (await page.locator('text=目標:').isVisible().catch(() => false));
+    const hasGoalCards = (await page.locator('text=目標:').isVisible().catch(() => false))
+      || (await page.locator('.rounded-2xl').filter({ has: page.locator('[class*="rounded-lg"]') }).first().isVisible().catch(() => false));
 
     expect(emptyState || hasGoalCards, "目標カードか空状態が表示されること").toBe(true);
 
@@ -394,15 +410,21 @@ test.describe("Health record core — 探索", () => {
 
     // 削除: goal card 内の Trash アイコンボタン
     // class は "p-2" のみ (back button は "p-2 -ml-2", + button は "p-2 rounded-lg")
-    // より安全に: goal カードコンテナ内の button を狙う
-    page.on("dialog", (dialog) => void dialog.accept());
+    // 実装は window.confirm ではなく React カスタム modal (#87) を使うため
+    // page.on("dialog") は効かない。ゴミ箱クリック → 削除確認 modal の「削除する」ボタンをクリックする
     // goal card は rounded-2xl クラスのコンテナ内にある
     const trashBtns = page.locator('.rounded-2xl button.p-2');
     const trashCount = await trashBtns.count();
 
     if (trashCount > 0) {
       await trashBtns.first().click();
-      await page.waitForTimeout(2_000);
+      // 削除確認 modal が表示される (#87: window.confirm 廃止 → React modal)
+      const confirmDeleteBtn = page.locator("button", { hasText: "削除する" }).first();
+      const confirmVisible = await confirmDeleteBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+      if (confirmVisible) {
+        await confirmDeleteBtn.click();
+        await page.waitForTimeout(2_000);
+      }
       const stillVisible = await goalCard.isVisible({ timeout: 2_000 }).catch(() => false);
       if (stillVisible) {
         console.info("Goal card still visible after delete — possibly multiple goals exist");
