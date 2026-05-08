@@ -184,9 +184,9 @@ SET search_path = public
 AS $$
 BEGIN
   RETURN EXISTS (
-    SELECT 1 FROM meal_logs WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   ) OR EXISTS (
-    SELECT 1 FROM weekly_menus WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM user_daily_meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   );
 END;
 $$;
@@ -338,14 +338,14 @@ DECLARE
 BEGIN
   -- 0. UPDATE 前に既存値を取得 (already_completed 判定の確実性のため、§21 §6 と一致)
   SELECT handson_tour_completed_at INTO v_existing_completed_at
-  FROM user_profiles WHERE user_id = p_user_id;
+  FROM user_profiles WHERE id = p_user_id;
 
   v_was_already := (v_existing_completed_at IS NOT NULL);
 
   -- 1. profile UPDATE (冪等)
   UPDATE user_profiles
   SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
-  WHERE user_id = p_user_id
+  WHERE id = p_user_id
   RETURNING handson_tour_completed_at INTO v_completed_at;
 
   -- 2. badge INSERT (冪等)
