@@ -35,12 +35,16 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       return { valid: false, slots: [], error: `targetSlots[${i}] is not an object` };
     }
 
-    const { date, mealType, plannedMealId } = slot as any;
+    const slotObj = slot as Record<string, unknown>;
+    const date = slotObj['date'];
+    const mealType = slotObj['mealType'];
+    const plannedMealId = slotObj['plannedMealId'];
+
     if (!date || typeof date !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) {
       return { valid: false, slots: [], error: `targetSlots[${i}].date must be YYYY-MM-DD format` };
     }
 
-    if (!mealType || !VALID_MEAL_TYPES.includes(mealType)) {
+    if (!mealType || typeof mealType !== 'string' || !VALID_MEAL_TYPES.includes(mealType as MealType)) {
       return { valid: false, slots: [], error: `targetSlots[${i}].mealType must be one of: ${VALID_MEAL_TYPES.join(', ')}` };
     }
 
@@ -50,13 +54,13 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       }
     }
 
-    const key = plannedMealId || `${date}:${mealType}`;
+    const key = (typeof plannedMealId === 'string' ? plannedMealId : null) || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
       return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };
     }
     seenKeys.add(key);
 
-    validated.push({ date, mealType: mealType as MealType, plannedMealId: plannedMealId || undefined });
+    validated.push({ date, mealType: mealType as MealType, plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined });
   }
 
   return { valid: true, slots: validated };

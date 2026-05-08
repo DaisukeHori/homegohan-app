@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import { createClient } from "@/lib/supabase/client";
+import type { Tables } from "@homegohan/shared";
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
@@ -82,11 +83,14 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           filter: `id=eq.${reqId}`,
         },
         (payload) => {
-          const newData = payload.new as any;
-          
+          const newData = payload.new as Tables<"weekly_menu_requests">;
+
           // progressにstatusも含めて渡す（コールバック側で完了判定できるように）
+          const progressObj = (typeof newData.progress === 'object' && newData.progress !== null && !Array.isArray(newData.progress))
+            ? (newData.progress as Record<string, unknown>)
+            : {};
           const progressWithStatus = {
-            ...(newData.progress || {}),
+            ...progressObj,
             status: newData.status,
             errorMessage: newData.error_message,
           };

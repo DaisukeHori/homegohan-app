@@ -83,9 +83,10 @@ export async function POST(
 
     if (error) throw error;
 
-    const userProfile = data.user_profiles as any;
-    return NextResponse.json({ 
-      success: true, 
+    const userProfileRaw = data.user_profiles as { nickname: string | null } | { nickname: string | null }[] | null;
+    const userProfile = Array.isArray(userProfileRaw) ? userProfileRaw[0] ?? null : userProfileRaw;
+    return NextResponse.json({
+      success: true,
       comment: {
         id: data.id,
         content: data.content,

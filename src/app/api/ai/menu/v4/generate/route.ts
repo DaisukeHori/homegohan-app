@@ -6,14 +6,15 @@ import { getSeasonalIngredientsForRange } from '@/lib/seasonal-ingredients';
 import { getEventsForRange } from '@/lib/seasonal-events';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
-import type { 
-  TargetSlot, 
-  ExistingMenuContext, 
+import type {
+  TargetSlot,
+  ExistingMenuContext,
   FridgeItemContext,
   MenuGenerationConstraints,
   SeasonalContext,
   MealType
 } from '@/types/domain';
+import type { Tables } from '@homegohan/shared';
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 
@@ -43,27 +44,30 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       return { valid: false, slots: [], error: `targetSlots[${i}] is not an object` };
     }
     
-    const { date, mealType, plannedMealId } = slot as any;
-    
+    const slotObj = slot as Record<string, unknown>;
+    const date = slotObj['date'];
+    const mealType = slotObj['mealType'];
+    const plannedMealId = slotObj['plannedMealId'];
+
     // date validation
     if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return { valid: false, slots: [], error: `targetSlots[${i}].date must be YYYY-MM-DD format` };
     }
-    
+
     // mealType validation
-    if (!mealType || !VALID_MEAL_TYPES.includes(mealType)) {
+    if (!mealType || typeof mealType !== 'string' || !VALID_MEAL_TYPES.includes(mealType as MealType)) {
       return { valid: false, slots: [], error: `targetSlots[${i}].mealType must be one of: ${VALID_MEAL_TYPES.join(', ')}` };
     }
-    
+
     // plannedMealId validation (optional, but if present must be valid UUID)
     if (plannedMealId !== undefined && plannedMealId !== null) {
       if (typeof plannedMealId !== 'string' || !/^[0-9a-f-]{36}$/i.test(plannedMealId)) {
         return { valid: false, slots: [], error: `targetSlots[${i}].plannedMealId must be a valid UUID` };
       }
     }
-    
+
     // Check for duplicates (date+mealType must be unique, unless plannedMealId differs)
-    const key = plannedMealId || `${date}:${mealType}`;
+    const key = (typeof plannedMealId === 'string' ? plannedMealId : null) || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
       return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };
     }
@@ -72,7 +76,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     validated.push({
       date,
       mealType: mealType as MealType,
-      plannedMealId: plannedMealId || undefined,
+      plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined,
     });
   }
   
@@ -167,7 +171,7 @@ export async function POST(request: Request) {
           slot.plannedMealId = undefined;
           continue;
         }
-        const day = (pm.user_daily_meals as any) || {};
+        const day = (pm.user_daily_meals as Pick<Tables<"user_daily_meals">, "day_date"> | null) ?? { day_date: '' };
         if (String(pm.meal_type) !== String(slot.mealType)) {
           return NextResponse.json({ error: 'plannedMealId mealType mismatch' }, { status: 400 });
         }
@@ -225,7 +229,7 @@ export async function POST(request: Request) {
       for (const day of existingMealsData) {
         const dayDate = day.day_date as string;
         const isPast = dayDate < todayStr;
-        const meals = (day.planned_meals as any[]) || [];
+        const meals = (day.planned_meals as Pick<Tables<"planned_meals">, "id" | "meal_type" | "dish_name" | "is_completed" | "mode">[]) || [];
         
         for (const meal of meals) {
           if (meal.dish_name) {
