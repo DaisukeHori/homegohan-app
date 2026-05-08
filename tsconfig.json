@@ -32,6 +32,12 @@
       ],
       "@homegohan/shared/*": [
         "./packages/shared/src/*"
+      ],
+      "@homegohan/handson-tour-shared": [
+        "./packages/handson-tour-shared/src/index.ts"
+      ],
+      "@homegohan/handson-tour-shared/*": [
+        "./packages/handson-tour-shared/src/*"
       ]
     }
   },
@@ -49,7 +55,8 @@
     "supabase",
     "tests",
     "apps/mobile",
-    "packages",
+    "packages/core",
+    "packages/shared",
     "homegohan-app"
   ]
 }
