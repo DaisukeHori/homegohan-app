@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { TourProvider } from '@/contexts/TourContext';
+import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus';
 
 interface HandsonTourLayoutProps {
   children: React.ReactNode;
@@ -28,24 +29,12 @@ export default async function HandsonTourLayout({
 
   if (!isForce) {
     try {
-      const baseUrl =
-        process.env.NEXT_PUBLIC_APP_URL ??
-        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-      const res = await fetch(`${baseUrl}/api/handson-tour/status`, {
-        headers: {
-          Cookie: (await import('next/headers')).cookies().toString(),
-        },
-        cache: 'no-store',
-      });
-
-      if (res.ok) {
-        const status = (await res.json()) as { should_show: boolean };
-        if (!status.should_show) {
-          redirect('/home');
-        }
+      const status = await getHandsonTourStatusInternal(user.id);
+      if (!status.should_show) {
+        redirect('/home');
       }
     } catch {
-      // ネットワークエラー時はそのまま表示する
+      // プロファイル未取得時はそのまま表示する
     }
   }
 
