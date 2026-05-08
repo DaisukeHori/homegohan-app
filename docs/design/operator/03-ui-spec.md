@@ -705,7 +705,7 @@ sequenceDiagram
 
 ## 38. 既存実装との関連
 
-- `src/app/(admin)/` および `src/app/(super-admin)/` は commit `32d13e1` で全削除済み → 完全新規実装
+- `src/app/(admin)/` および `src/app/(super-admin)/` は commit `32d13e1` で全削除済み → PR #816-#824 で `src/app/admin/` / `src/app/super-admin/` (実 segment) として新規実装済み (PR #821 で route group から実 segment にリネーム)
 - 既存の UI パーツ (`components/ui/*`) は活用する
 
 ## 39. 未解決事項

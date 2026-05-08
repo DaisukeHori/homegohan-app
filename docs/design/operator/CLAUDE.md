@@ -136,7 +136,7 @@ operator は **全ドメインの基盤**:
 - 既存 LLM Edge Functions
 
 ### 新規作成
-- `src/app/(admin)/`, `src/app/(super-admin)/` 配下全 UI (要件 03 §9)
+- `src/app/admin/`, `src/app/super-admin/` 配下全 UI (要件 03 §9) ※ PR #821 で route group から実 segment にリネーム済み
 - `src/app/api/admin/*`, `super-admin/*` 全 API (要件 03 §8)
 - 全 cron job (`src/app/api/cron/*` + pg_cron)
 - 全運用手順書 (`docs/operations/*.md`)

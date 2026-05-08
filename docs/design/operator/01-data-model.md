@@ -53,7 +53,7 @@
 27. password_history
 28. failed_invite_lookups
 29. user_sessions_metadata
-30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meal_logs.is_sandbox + weekly_menus.is_sandbox + badges seed + RPC 2 本
+30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meals.is_sandbox + user_daily_meals.is_sandbox + badges seed + RPC 2 本
 ```
 
 ### 3.2 `subscription_plans` — プラン定義マスター
@@ -1102,6 +1102,8 @@ CREATE POLICY "sessions_revoke_self" ON user_sessions_metadata
 
 family/09(初回オンボーディングハンズオンツアー)が利用する DB 拡張をここに集約する。本セクションが canonical、family/09 配下の §08-state-db / §21-migration-sql は proposal 扱い。
 
+> **実テーブル名の注意**: 過去版では `meal_logs` / `weekly_menus` と記述していたが、実スキーマには存在しない。実体は `meals`(`db_audit_fixes` 由来) / `user_daily_meals`(`date_based_model_migration` 由来)。本セクションは実体に揃えている (2026-05-08 修正)。`user_profiles` の主キーも `id`(`auth.users(id)` への FK)であり、`user_id` 列は存在しない点に注意。
+
 #### 3.26.1 `user_profiles` 拡張 (handson_tour 状態)
 
 ```sql
@@ -1116,9 +1118,9 @@ COMMENT ON COLUMN user_profiles.handson_tour_completed_at IS
 COMMENT ON COLUMN user_profiles.handson_tour_skipped_at IS
   '初回ハンズオンチュートリアル明示スキップ or auto-skip 日時 (family/09)';
 
--- 部分インデックス: 表示判定 (should_show) 高速化、pending な user_id だけ index に乗る
+-- 部分インデックス: 表示判定 (should_show) 高速化、pending な user だけ index に乗る
 CREATE INDEX IF NOT EXISTS idx_user_profiles_handson_tour_pending
-  ON user_profiles (user_id)
+  ON user_profiles (id)
   WHERE handson_tour_completed_at IS NULL AND handson_tour_skipped_at IS NULL;
 ```
 
@@ -1126,27 +1128,27 @@ CREATE INDEX IF NOT EXISTS idx_user_profiles_handson_tour_pending
 - 同時に両方 NOT NULL は v1 では発生しない(force=1 で再表示後の skip ボタン非表示のため)
 - `handson_tour_completed_at IS NOT NULL` の場合、表示判定で `handson_tour_skipped_at` は無視
 
-RLS は既存 `user_profiles_owner_rw`(`auth.uid() = user_id`)で保護される。新規列追加のみで RLS 変更は不要。
+RLS は既存 `user_profiles_owner_rw`(`auth.uid() = id`)で保護される。新規列追加のみで RLS 変更は不要。
 
-#### 3.26.2 `meal_logs` 拡張 (sandbox 識別子)
+#### 3.26.2 `meals` 拡張 (sandbox 識別子)
 
-`meal_logs` 本体は既存実装(`docs/design/00-existing-cleanup.md` 保持リスト)。本拡張は ALTER のみを管理する。
+`meals` 本体は既存実装(`docs/design/00-existing-cleanup.md` 保持リスト、`db_audit_fixes` で定義)。本拡張は ALTER のみを管理する。
 
 ```sql
-ALTER TABLE meal_logs
+ALTER TABLE meals
   ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
 
-COMMENT ON COLUMN meal_logs.is_sandbox IS
+COMMENT ON COLUMN meals.is_sandbox IS
   'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
 
 -- 通常 UI のクエリ高速化(WHERE is_sandbox=false で index pruning)
-CREATE INDEX IF NOT EXISTS idx_meal_logs_user_non_sandbox
-  ON meal_logs (user_id, eaten_at DESC)
+CREATE INDEX IF NOT EXISTS idx_meals_user_non_sandbox
+  ON meals (user_id, eaten_at DESC)
   WHERE is_sandbox = false;
 
 -- 部分 UNIQUE: ハンズオン中の二重 INSERT 防止 (user_id, is_sandbox=true) は 1 行のみ
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
-  ON meal_logs (user_id)
+  ON meals (user_id)
   WHERE is_sandbox = true;
 ```
 
@@ -1154,17 +1156,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_meal
 - 通常 UI(週間献立 / 食事一覧)は `WHERE is_sandbox = false` を必ず付与
 - バッジ判定(`first_bite` 等)は `is_sandbox=true` も対象に含める(設計書 §03-step1-photo §03)
 
-#### 3.26.3 `weekly_menus` 拡張 (sandbox 識別子)
+#### 3.26.3 `user_daily_meals` 拡張 (sandbox 識別子)
+
+`user_daily_meals` は日付ベースの献立管理テーブル(`date_based_model_migration` 由来、`UNIQUE(user_id, day_date)`)。本拡張は ALTER のみ。
 
 ```sql
-ALTER TABLE weekly_menus
+ALTER TABLE user_daily_meals
   ADD COLUMN IF NOT EXISTS is_sandbox BOOLEAN NOT NULL DEFAULT false;
 
-COMMENT ON COLUMN weekly_menus.is_sandbox IS
+COMMENT ON COLUMN user_daily_meals.is_sandbox IS
   'true = ハンズオンチュートリアル中の sandbox 投入 (family/09)';
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_menu
-  ON weekly_menus (user_id)
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_sandbox_daily_meal
+  ON user_daily_meals (user_id)
   WHERE is_sandbox = true;
 ```
 
@@ -1198,9 +1202,9 @@ SET search_path = public
 AS $$
 BEGIN
   RETURN EXISTS (
-    SELECT 1 FROM meal_logs WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   ) OR EXISTS (
-    SELECT 1 FROM weekly_menus WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
+    SELECT 1 FROM user_daily_meals WHERE user_id = p_user_id AND is_sandbox = false LIMIT 1
   );
 END;
 $$;
@@ -1236,7 +1240,7 @@ BEGIN
   -- now() はトランザクション開始時刻で固定なので、COALESCE 後の RETURNING と完全一致して
   -- 判定が壊れる。先に SELECT NULL チェックすることで防ぐ。
   SELECT handson_tour_completed_at INTO v_existing_completed_at
-  FROM user_profiles WHERE user_id = p_user_id;
+  FROM user_profiles WHERE id = p_user_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'profile_not_found';
@@ -1246,7 +1250,7 @@ BEGIN
 
   UPDATE user_profiles
   SET handson_tour_completed_at = COALESCE(handson_tour_completed_at, now())
-  WHERE user_id = p_user_id
+  WHERE id = p_user_id
   RETURNING handson_tour_completed_at INTO v_completed_at;
 
   SELECT id, name, icon_url INTO v_badge_id, v_badge_name, v_badge_icon_url
@@ -1293,17 +1297,17 @@ BEGIN;
 DROP FUNCTION IF EXISTS complete_handson_tour(uuid);
 DROP FUNCTION IF EXISTS user_has_non_sandbox_activity(uuid);
 
-DROP INDEX IF EXISTS uniq_user_sandbox_menu;
+DROP INDEX IF EXISTS uniq_user_sandbox_daily_meal;
 DROP INDEX IF EXISTS uniq_user_sandbox_meal;
-DROP INDEX IF EXISTS idx_meal_logs_user_non_sandbox;
+DROP INDEX IF EXISTS idx_meals_user_non_sandbox;
 DROP INDEX IF EXISTS idx_user_profiles_handson_tour_pending;
 
 DELETE FROM user_badges
   WHERE badge_id IN (SELECT id FROM badges WHERE code = 'tutorial_complete');
 DELETE FROM badges WHERE code = 'tutorial_complete';
 
-ALTER TABLE weekly_menus DROP COLUMN IF EXISTS is_sandbox;
-ALTER TABLE meal_logs   DROP COLUMN IF EXISTS is_sandbox;
+ALTER TABLE user_daily_meals DROP COLUMN IF EXISTS is_sandbox;
+ALTER TABLE meals            DROP COLUMN IF EXISTS is_sandbox;
 ALTER TABLE user_profiles
   DROP COLUMN IF EXISTS handson_tour_skipped_at,
   DROP COLUMN IF EXISTS handson_tour_completed_at;
