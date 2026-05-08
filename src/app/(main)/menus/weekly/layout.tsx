@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 export const metadata: Metadata = {
   title: "週間献立",
@@ -10,6 +11,7 @@ export default function WeeklyMenuLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return children;
+  // useSearchParams を使うため Suspense でラップ
+  return <Suspense>{children}</Suspense>;
 }
 

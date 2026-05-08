@@ -405,12 +405,34 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* セクション 3.5: ハンズオンガイド */}
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">チュートリアル</h2>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <button
+              type="button"
+              data-testid="settings-restart-handson-tour"
+              onClick={() => router.push('/handson-tour?force=1')}
+              className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500" aria-hidden="true">📖</div>
+                <div className="text-left">
+                  <span className="font-bold text-gray-700">使い方ガイドをもう一度見る</span>
+                  <p className="text-xs text-gray-400">ハンズオンチュートリアルを最初から体験</p>
+                </div>
+              </div>
+              <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        </div>
+
         {/* セクション 4: サポート・法的情報 */}
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">サポートと法的情報</h2>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-             
-             <button 
+
+             <button
                onClick={() => router.push('/terms')}
                className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors"
              >
