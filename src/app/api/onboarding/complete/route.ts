@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
+import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus'
 
 /**
  * オンボーディング完了API (OB-API-02)
@@ -148,7 +149,15 @@ export async function POST() {
       // 栄養目標のエラーは無視して続行（オンボーディング完了は成功）
     }
 
-    return NextResponse.json({ success: true })
+    let nextRoute: '/handson-tour' | '/home' = '/home';
+    try {
+      const tourStatus = await getHandsonTourStatusInternal(user.id);
+      nextRoute = tourStatus.should_show ? '/handson-tour' : '/home';
+    } catch {
+      nextRoute = '/home';
+    }
+
+    return NextResponse.json({ success: true, next_route: nextRoute })
   } catch (error: unknown) {
     console.error('API Error:', error)
     const message = error instanceof Error ? error.message : 'Unknown error'
