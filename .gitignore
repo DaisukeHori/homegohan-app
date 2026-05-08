@@ -71,3 +71,6 @@ data/raw/
 # Supabase Edge Functions
 /deno.lock
 supabase/functions/deno.lock
+
+# Claude Code agent worktrees (transient, never tracked)
+.claude/worktrees/
