@@ -2,17 +2,12 @@ import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-export const HandsonTourSkipRequestSchema = z.object({
+const HandsonTourSkipRequestSchema = z.object({
   step: z.number().int().min(0).max(4),
   reason: z.enum(['user_action', 'hard_back']),
 });
 
-export const HandsonTourSkipResponseSchema = z.object({
-  skipped_at: z.string().datetime(),
-});
-
-export type HandsonTourSkipRequest = z.infer<typeof HandsonTourSkipRequestSchema>;
-export type HandsonTourSkipResponse = z.infer<typeof HandsonTourSkipResponseSchema>;
+type HandsonTourSkipRequest = z.infer<typeof HandsonTourSkipRequestSchema>;
 
 export async function POST(request: Request) {
   try {

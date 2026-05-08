@@ -1,20 +1,5 @@
-import { z } from 'zod';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-
-export const HandsonTourCompleteResponseSchema = z.object({
-  completed_at: z.string().datetime(),
-  badge_awarded: z.object({
-    code: z.literal('tutorial_complete'),
-    name: z.string(),
-    obtained_at: z.string().datetime(),
-    icon_url: z.string().nullable(),
-  }),
-  already_completed: z.boolean(),
-  total_duration_ms: z.number().int().optional(),
-});
-
-export type HandsonTourCompleteResponse = z.infer<typeof HandsonTourCompleteResponseSchema>;
 
 const ADMIN_ROLES = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'] as const;
 
