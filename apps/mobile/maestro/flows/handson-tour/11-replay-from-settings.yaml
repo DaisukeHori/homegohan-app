@@ -1,0 +1,98 @@
+appId: com.homegohan.app
+name: "Handson Tour - 11: 完走済 user → /settings → 再開ボタン → Step 0 再表示"
+tags: ["handson-tour", "P2"]
+---
+# シナリオ: 完走済 user → /settings → settings-restart-handson-tour タップ → Step 0 再表示
+# 確認ポイント:
+#   - 完走済 user (E2E_TOUR_COMPLETED_EMAIL) でログイン
+#   - settings 画面に移動
+#   - settings-restart-handson-tour ボタンが表示される
+#   - タップ後 tour-step-0 が表示される
+# 前提: E2E_TOUR_COMPLETED_EMAIL / E2E_TOUR_COMPLETED_PASSWORD に
+#        handson_tour_completed_at が設定済みのテストユーザーを用意
+# 備考: force replay (§4.1 シナリオ 10) を Maestro で確認するシナリオ
+
+# 完走済 user でログイン
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+
+- tapOn:
+    text: "ログイン"
+
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_TOUR_COMPLETED_EMAIL}
+
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_TOUR_COMPLETED_PASSWORD}
+
+- tapOn:
+    id: "login-button"
+
+# home-screen に遷移 (完走済みなのでツアーはスキップ)
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+# tour-step-0 は表示されない (完走済み)
+- assertNotVisible:
+    id: "tour-step-0"
+
+# Profile タブ → 設定画面に移動
+- tapOn:
+    id: "tab-profile"
+
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "profile-settings-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+
+# settings-restart-handson-tour ボタンまでスクロール
+- scrollUntilVisible:
+    element:
+      id: "settings-restart-handson-tour"
+    direction: DOWN
+    timeout: 10000
+
+- assertVisible:
+    id: "settings-restart-handson-tour"
+
+# 再開ボタンをタップ
+- tapOn:
+    id: "settings-restart-handson-tour"
+
+# 確認ダイアログが出る場合
+- tapOn:
+    text: "確認"
+    optional: true
+- tapOn:
+    text: "やり直す"
+    optional: true
+
+# tour-step-0 が再表示される
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-0"
+    timeout: 15000
+
+- assertVisible:
+    id: "tour-step-0"
+- assertVisible:
+    id: "tour-step-0-start"
+- assertVisible:
+    id: "tour-step-0-skip"

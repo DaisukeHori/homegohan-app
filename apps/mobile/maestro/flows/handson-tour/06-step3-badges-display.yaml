@@ -1,0 +1,98 @@
+appId: com.homegohan.app
+name: "Handson Tour - 06: Step 3 バッジ表示確認 → 「次へ」→ Step 4"
+tags: ["handson-tour", "P1"]
+---
+# シナリオ: Step 3 tour-step-3-loading 表示 → 14 種バッジ表示確認 → 「次へ」タップ → Step 4
+# 確認ポイント:
+#   - tour-step-3-loading が表示される
+#   - バッジ読み込み後に各バッジが表示される
+#   - tour-step-4-saving または tour-step-4-graduate に遷移する
+# TODO: tour-step-3-intro / badge-card-* testID は mobile 未実装。別 PR で fix
+# TODO: 14 種バッジ全て確認するには badge-card-{code} の testID 実装が必要
+
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+- assertVisible:
+    id: "tour-step-0"
+
+- tapOn:
+    id: "tour-step-0-start"
+
+# Step 1 高速通過
+- waitForAnimationToEnd:
+    timeout: 6000
+
+- extendedWaitUntil:
+    visible:
+      id: "meal-save-button"
+    timeout: 15000
+
+- tapOn:
+    id: "meal-save-button"
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Step 2 高速通過: 生成→追加
+- waitForAnimationToEnd:
+    timeout: 6000
+
+- tapOn:
+    id: "v4-generate-button"
+    optional: true
+- tapOn:
+    text: "生成する"
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 8000
+
+- tapOn:
+    id: "v4-add-to-menu-button"
+    optional: true
+- tapOn:
+    text: "献立に追加"
+    optional: true
+
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Step 3: tour-step-3-loading が表示される
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-3-loading"
+    timeout: 15000
+
+- assertVisible:
+    id: "tour-step-3-loading"
+
+# バッジ読み込み完了を待つ
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# tour-step-3-intro 吹き出し (TODO: testID 未実装、別 PR で fix)
+# バッジカード確認 (TODO: badge-card-* testID 未実装。テキストマッチで代替)
+- assertVisible:
+    text: "first_bite"
+    optional: true
+- assertVisible:
+    text: "planner"
+    optional: true
+
+# 「次へ」ボタンで Step 4 へ
+- tapOn:
+    id: "tour-next-button"
+    optional: true
+- tapOn:
+    text: "次へ"
+    optional: true
+
+# Step 4: tour-step-4-saving または tour-step-4-graduate に遷移
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "tour-step-4-saving"
+      - visible:
+          id: "tour-step-4-graduate"
+    timeout: 15000

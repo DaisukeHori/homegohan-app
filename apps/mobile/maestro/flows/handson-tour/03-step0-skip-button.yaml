@@ -1,0 +1,41 @@
+appId: com.homegohan.app
+name: "Handson Tour - 03: Step 0「あとで」タップ → /home へ遷移"
+tags: ["handson-tour", "critical", "P1"]
+---
+# シナリオ: Step 0 で「あとで」タップ → /home へ遷移
+# 確認ポイント:
+#   - tour-step-0-skip タップ後に home-screen が表示される
+#   - tour-step-0 は表示されない
+#   - アプリ再起動後も tour-step-0 は表示されない (handson_tour_skipped_at がセットされている)
+
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+- assertVisible:
+    id: "tour-step-0"
+
+# 「あとで」ボタンをタップ
+- tapOn:
+    id: "tour-step-0-skip"
+
+# home-screen に遷移することを確認
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# tour-step-0 は表示されていないことを確認
+- assertNotVisible:
+    id: "tour-step-0"
+
+# アプリを再起動しても tour は表示されない (handson_tour_skipped_at セット確認)
+- killApp
+- launchApp
+
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"

@@ -1,0 +1,116 @@
+appId: com.homegohan.app
+name: "Handson Tour - 12: Step 1 でデバイス戻るボタン → 確認モーダル → キャンセル / 確定"
+tags: ["handson-tour", "P2"]
+---
+# シナリオ: Step 1 でデバイス戻るボタン → 確認モーダル → キャンセル / 確定の両分岐
+# 確認ポイント:
+#   - Step 1 中に Android 戻るボタン (Back) を押すと確認モーダルが出る
+#   - 「キャンセル」→ Step 1 に戻る
+#   - 再度 Back → 「確定」→ home-screen に遷移 (handson_tour_skipped_at セット)
+# 備考: iOS では Back gesture (edge swipe) で同様の動作を想定
+#        Android 実機では pressKey: Back で戻るボタンを押せる
+#        iOS では Maestro の pressKey: Back は機能しない場合あり (iOS back gesture 非対応)
+
+- runFlow:
+    file: "../_shared/login-as-new-user.yaml"
+
+- assertVisible:
+    id: "tour-step-0"
+
+- tapOn:
+    id: "tour-step-0-start"
+
+# Step 1 に遷移
+- extendedWaitUntil:
+    visible:
+      id: "meal-camera-button"
+    timeout: 10000
+
+# ===== 分岐A: 戻るボタン → キャンセル → Step 1 に戻る =====
+
+# デバイスの戻るボタンを押す
+# iOS: back gesture (edge swipe) / Android: Back key
+- pressKey: Back
+  # iOS では Back key が効かない場合があるため optional
+- tapOn:
+    text: "戻る"
+    optional: true
+
+# 確認モーダルが表示される
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          text: "中断しますか"
+      - visible:
+          text: "あとで"
+      - visible:
+          text: "キャンセル"
+    timeout: 5000
+
+# 「キャンセル」をタップして Step 1 に戻る
+- tapOn:
+    text: "キャンセル"
+    optional: true
+- tapOn:
+    text: "続ける"
+    optional: true
+
+# Step 1 に戻っていることを確認
+- extendedWaitUntil:
+    visible:
+      id: "meal-camera-button"
+    timeout: 10000
+
+- assertVisible:
+    id: "meal-camera-button"
+
+# ===== 分岐B: 戻るボタン → 確定 → home へ =====
+
+# 再度戻るボタン
+- pressKey: Back
+- tapOn:
+    text: "戻る"
+    optional: true
+
+# 確認モーダルが再表示される
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          text: "中断しますか"
+      - visible:
+          text: "あとで"
+    timeout: 5000
+
+# 「確定」または「あとで」をタップ
+- tapOn:
+    text: "確定"
+    optional: true
+- tapOn:
+    text: "あとで"
+    optional: true
+- tapOn:
+    text: "スキップ"
+    optional: true
+
+# home-screen に遷移
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"
+- assertNotVisible:
+    id: "meal-camera-button"
+
+# アプリ再起動後も tour は表示されない (handson_tour_skipped_at セット)
+- killApp
+- launchApp
+
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"

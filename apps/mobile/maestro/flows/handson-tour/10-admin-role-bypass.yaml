@@ -1,0 +1,73 @@
+appId: com.homegohan.app
+name: "Handson Tour - 10: admin role → /handson-tour 直リンクで /home リダイレクト"
+tags: ["handson-tour", "P2"]
+---
+# シナリオ: admin role user でログイン → /handson-tour 直リンク → /home へ即リダイレクト
+# 確認ポイント:
+#   - E2E_TOUR_ADMIN_EMAIL (admin ロールのテストユーザー) でログイン
+#   - /handson-tour に deep link でアクセスしても tour-step-0 は表示されない
+#   - home-screen に即リダイレクトされる
+# 前提: E2E_TOUR_ADMIN_EMAIL / E2E_TOUR_ADMIN_PASSWORD に admin role ユーザーが設定済み
+# 備考: shouldShowHandsonTour() の condition D (admin role bypass) を確認するシナリオ
+
+# admin role でログイン
+- runFlow:
+    file: "../_shared/ensure-welcome.yaml"
+
+- tapOn:
+    text: "ログイン"
+
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000
+
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_TOUR_ADMIN_EMAIL}
+
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_TOUR_ADMIN_PASSWORD}
+
+- tapOn:
+    id: "login-button"
+
+# admin は home-screen または admin console に遷移
+- extendedWaitUntil:
+    anyOf:
+      - visible:
+          id: "home-screen"
+      - visible:
+          text: "Admin Console"
+    timeout: 15000
+
+# admin console にいる場合は home に戻る
+- runFlow:
+    when:
+      visible:
+        text: "Admin Console"
+    file: "../_shared/back-from-admin.yaml"
+
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 10000
+
+# tour-step-0 は表示されない
+- assertNotVisible:
+    id: "tour-step-0"
+
+# /handson-tour に deep link でアクセス
+- launchApp:
+    arguments:
+      - "homegohan://handson-tour"
+
+# admin は tour をバイパスして home に戻る
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 15000
+
+- assertNotVisible:
+    id: "tour-step-0"
