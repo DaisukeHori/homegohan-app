@@ -32,7 +32,7 @@ export default function OrgMembersPage() {
     setError(null);
     try {
       const api = getApi();
-      const res = await api.get<{ members: Member[] }>("/api/org/users");
+      const res = await api.get<{ members: Member[] }>("/api/org/members");
       setItems(res.members ?? []);
     } catch (e: any) {
       setError(e?.message ?? "取得に失敗しました。");
@@ -53,7 +53,7 @@ export default function OrgMembersPage() {
     setIsSubmitting(true);
     try {
       const api = getApi();
-      await api.post("/api/org/users", { email: e, password: p, nickname: n });
+      await api.post("/api/org/members", { email: e, password: p, nickname: n });
       setEmail("");
       setPassword("");
       setNickname("");

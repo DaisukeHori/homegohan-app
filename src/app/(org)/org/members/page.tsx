@@ -22,7 +22,7 @@ export default function MembersPage() {
 
   const fetchMembers = async () => {
     setLoading(true);
-    const res = await fetch('/api/org/users');
+    const res = await fetch('/api/org/members');
     if (res.ok) {
       const data = await res.json();
       setMembers(data.members);
@@ -38,7 +38,7 @@ export default function MembersPage() {
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const res = await fetch('/api/org/users', {
+      const res = await fetch('/api/org/members', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),

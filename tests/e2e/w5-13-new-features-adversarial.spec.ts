@@ -175,11 +175,11 @@ test.describe("[org][adversarial] A. 組織 API", () => {
   });
 
   /**
-   * A-2: 未認証で GET /api/org/users → 401
+   * A-2: 未認証で GET /api/org/members → 401
    */
   test("A-2: 未認証で組織ユーザー一覧は 401", async ({ page }) => {
     await page.goto("/");
-    const result = await apiFetchUnauthenticated(page, "/api/org/users");
+    const result = await apiFetchUnauthenticated(page, "/api/org/members");
     expect(result.status).toBe(401);
   });
 
@@ -203,11 +203,11 @@ test.describe("[org][adversarial] A. 組織 API", () => {
   });
 
   /**
-   * A-5: 一般ユーザーで POST /api/org/users (ユーザー作成) → 403
+   * A-5: 一般ユーザーで POST /api/org/members (ユーザー作成) → 403
    */
   test("A-5: 一般ユーザーで組織ユーザー作成は 403", async ({ page }) => {
     await login(page);
-    const result = await apiFetch(page, "/api/org/users", {
+    const result = await apiFetch(page, "/api/org/members", {
       method: "POST",
       body: {
         email: "hacker@evil.com",
