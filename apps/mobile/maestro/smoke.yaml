@@ -1,4 +1,141 @@
 appId: com.homegohan.app
 ---
+# smoke.yaml — TestFlight / 実機 smoke テスト
+#
+# カバー範囲: 起動 → ログイン → ホーム表示 → 5 タブ遷移 → ログアウト
+#
+# 環境変数 (実行前に設定):
+#   E2E_USER_EMAIL    : テスト用メールアドレス
+#   E2E_USER_PASSWORD : テスト用パスワード
+#
+# 実行:
+#   maestro test apps/mobile/maestro/smoke.yaml
+#   または apps/mobile ディレクトリから:
+#   npm run test:e2e:smoke
+
+# ─── 1. アプリ起動 ────────────────────────────────────────────────────────────
 - launchApp
-- assertVisible: ".*"
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 15000
+
+# ─── 2. ログイン ─────────────────────────────────────────────────────────────
+- tapOn:
+    id: "welcome-login-button"
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000
+
+# メールアドレス入力
+- tapOn:
+    id: "email-input"
+- inputText: ${E2E_USER_EMAIL}
+
+# パスワード入力
+- tapOn:
+    id: "password-input"
+- inputText: ${E2E_USER_PASSWORD}
+
+# ログイン実行
+- tapOn:
+    id: "login-button"
+
+# ─── 3. ホーム画面表示確認 ───────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: "webview-home"
+    timeout: 20000
+
+# Expo dev build の Console Error/Warning オーバーレイを閉じる (TestFlight では不要だが念のため)
+- tapOn:
+    text: "Dismiss"
+    optional: true
+- tapOn:
+    text: "Minimize"
+    optional: true
+
+# ─── 4. タブ遷移 — 献立 (menus) ─────────────────────────────────────────────
+- tapOn:
+    id: "tab-menus"
+- extendedWaitUntil:
+    visible:
+      id: "webview-menus"
+    timeout: 15000
+
+# ─── 5. タブ遷移 — スキャン (meals) ─────────────────────────────────────────
+# meals タブはラベル非表示のため text でタップ
+- tapOn:
+    text: "スキャン"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible:
+    id: "webview-meals"
+
+# ─── 6. タブ遷移 — 比較 (comparison) ────────────────────────────────────────
+- tapOn:
+    id: "tab-comparison"
+- extendedWaitUntil:
+    visible:
+      id: "webview-comparison"
+    timeout: 15000
+
+# ─── 7. タブ遷移 — マイページ (profile) ──────────────────────────────────────
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "webview-profile"
+    timeout: 15000
+
+# ─── 8. ホームへ戻る ─────────────────────────────────────────────────────────
+- tapOn:
+    id: "tab-home"
+- extendedWaitUntil:
+    visible:
+      id: "webview-home"
+    timeout: 15000
+
+# ─── 9. ログアウト ───────────────────────────────────────────────────────────
+# プロファイルタブ → 設定 → ログアウト
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-screen"
+    timeout: 15000
+- scroll
+- waitForAnimationToEnd:
+    timeout: 2000
+- scrollUntilVisible:
+    element:
+      id: "profile-settings-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "profile-settings-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "settings-logout-button"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "settings-logout-button"
+- extendedWaitUntil:
+    visible:
+      id: "settings-logout-confirm-button"
+    timeout: 5000
+- tapOn:
+    id: "settings-logout-confirm-button"
+
+# ─── 10. ウェルカム画面に戻ることを確認 ──────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 15000

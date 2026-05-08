@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "test:e2e:smoke": "maestro test maestro/smoke.yaml"
   },
   "dependencies": {
     "@expo-google-fonts/noto-sans-jp": "^0.4.3",
