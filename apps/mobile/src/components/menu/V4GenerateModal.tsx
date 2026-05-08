@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +29,8 @@ import {
   validateSlotCount,
   type MealDay,
 } from "../../../../../lib/slot-builder";
+import { MOCK_MENU_RESPONSE } from "@homegohan/handson-tour-shared";
+import { getApi } from "../../lib/api";
 import { colors, radius, shadows, spacing } from "../../theme";
 
 // ============================================================
@@ -45,7 +47,32 @@ export interface V4GenerateParams {
   ultimateMode: false;
 }
 
-interface Props {
+// ── Sandbox props (discriminated union) ──────────────────────
+export interface V4GenerateModalSandboxProps {
+  mode: "sandbox";
+  visible: boolean;
+  onClose: () => void;
+  initialFlags?: {
+    useFridgeFirst?: boolean;
+    quickMeals?: boolean;
+    japaneseStyle?: boolean;
+    healthy?: boolean;
+  };
+  prefilled?: typeof MOCK_MENU_RESPONSE;
+  loadingDurationMs?: number;
+  apiOptions?: { source: "handson_tour"; sandbox: true };
+  onSandboxComplete?: (result: typeof MOCK_MENU_RESPONSE) => void;
+  // Normal-mode props not needed in sandbox — provide dummies for type compat
+  mealPlanDays?: DayRow[];
+  weekStartDate?: string;
+  weekEndDate?: string;
+  isGenerating?: boolean;
+  onGenerate?: (params: V4GenerateParams) => Promise<void>;
+}
+
+// ── Normal props ─────────────────────────────────────────────
+export interface V4GenerateModalNormalProps {
+  mode?: "normal" | undefined;
   visible: boolean;
   onClose: () => void;
   onGenerate: (params: V4GenerateParams) => Promise<void>;
@@ -54,6 +81,8 @@ interface Props {
   weekEndDate: string;
   isGenerating: boolean;
 }
+
+export type V4GenerateModalProps = V4GenerateModalSandboxProps | V4GenerateModalNormalProps;
 
 // DayRow は weekly/index.tsx と同じ型構造に対応
 interface DayRow {
@@ -142,7 +171,190 @@ const C = {
 // Component
 // ============================================================
 
-export function V4GenerateModal({
+export function V4GenerateModal(props: V4GenerateModalProps) {
+  // ── Sandbox mode ────────────────────────────────────────────
+  if (props.mode === "sandbox") {
+    return <V4GenerateModalSandbox {...props} />;
+  }
+
+  // ── Normal mode ─────────────────────────────────────────────
+  return <V4GenerateModalNormal {...props} />;
+}
+
+// ============================================================
+// Sandbox implementation
+// ============================================================
+function V4GenerateModalSandbox({
+  visible,
+  onClose,
+  prefilled = MOCK_MENU_RESPONSE,
+  loadingDurationMs = 2000,
+  apiOptions = { source: "handson_tour", sandbox: true },
+  onSandboxComplete,
+}: V4GenerateModalSandboxProps) {
+  const [isSandboxLoading, setIsSandboxLoading] = useState(false);
+  const [sandboxDone, setSandboxDone] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Reset when modal opens
+  useEffect(() => {
+    if (visible) {
+      setSandboxDone(false);
+      setIsSandboxLoading(false);
+    }
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [visible]);
+
+  const handleSandboxGenerate = async () => {
+    if (isSandboxLoading || sandboxDone) return;
+    setIsSandboxLoading(true);
+    timerRef.current = setTimeout(async () => {
+      try {
+        const api = getApi();
+        await api.post("/api/menu-plans/add", {
+          ...prefilled,
+          ...apiOptions,
+        });
+      } catch {
+        // sandbox errors are ignored — mock flow must complete
+      }
+      setSandboxDone(true);
+      setIsSandboxLoading(false);
+      onSandboxComplete?.(prefilled);
+    }, loadingDurationMs);
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+      testID="v4-modal-sandbox"
+    >
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: C.bg }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        {/* Header */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md,
+            borderBottomWidth: 1,
+            borderBottomColor: C.border,
+            backgroundColor: C.card,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="sparkles" size={20} color={C.accent} />
+            <Text style={{ fontSize: 17, fontWeight: "700", color: C.text }}>
+              AI献立アシスタント
+            </Text>
+          </View>
+          <Pressable
+            onPress={onClose}
+            hitSlop={8}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              backgroundColor: C.bg,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Ionicons name="close" size={18} color={C.textLight} />
+          </Pressable>
+        </View>
+
+        {/* Sandbox content */}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}
+        >
+          {/* Preview card */}
+          <View
+            style={{
+              padding: spacing.lg,
+              borderRadius: radius.xl,
+              backgroundColor: C.accentLight,
+              borderWidth: 1,
+              borderColor: C.accent,
+              gap: spacing.sm,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="restaurant" size={18} color={C.accent} />
+              <Text style={{ fontSize: 15, fontWeight: "700", color: C.text }}>
+                {prefilled.dish_name}
+              </Text>
+            </View>
+            <Text style={{ fontSize: 13, color: C.textLight }}>
+              {prefilled.calories} kcal · 調理時間 {prefilled.cooking_time_minutes} 分 · {prefilled.servings} 人分
+            </Text>
+            <Text style={{ fontSize: 12, color: C.textMuted }}>
+              ※ チュートリアル用のサンプル献立です
+            </Text>
+          </View>
+
+          {sandboxDone ? (
+            <View style={{ alignItems: "center", gap: spacing.md, paddingVertical: spacing.xl }}>
+              <Ionicons name="checkmark-circle" size={48} color={C.success} />
+              <Text style={{ fontSize: 16, fontWeight: "700", color: C.success }}>
+                献立を追加しました！
+              </Text>
+            </View>
+          ) : (
+            <Pressable
+              testID="v4-sandbox-submit-btn"
+              onPress={handleSandboxGenerate}
+              disabled={isSandboxLoading}
+              style={({ pressed }) => ({
+                paddingVertical: spacing.lg,
+                borderRadius: radius.xl,
+                backgroundColor: isSandboxLoading ? C.purple : C.accent,
+                alignItems: "center",
+                justifyContent: "center",
+                flexDirection: "row",
+                gap: spacing.sm,
+                opacity: isSandboxLoading ? 0.85 : pressed ? 0.9 : 1,
+              })}
+            >
+              {isSandboxLoading ? (
+                <>
+                  <ActivityIndicator size="small" color="#fff" />
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: "#fff" }}>
+                    献立を作成中...
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="sparkles" size={18} color="#fff" />
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: "#fff" }}>
+                    この献立を追加する
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          )}
+
+          <View style={{ height: spacing.xl }} />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ============================================================
+// Normal implementation (original logic, extracted)
+// ============================================================
+function V4GenerateModalNormal({
   visible,
   onClose,
   onGenerate,
@@ -150,7 +362,7 @@ export function V4GenerateModal({
   weekStartDate,
   weekEndDate,
   isGenerating,
-}: Props) {
+}: V4GenerateModalNormalProps) {
   const todayStr = useMemo(() => getTodayStr(), []);
 
   const [selectedMode, setSelectedMode] = useState<GenerateMode | null>(null);
