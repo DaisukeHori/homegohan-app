@@ -7,9 +7,10 @@
  *   3. ?next=/home パラメータが付与されていること (middleware がセット)
  *   4. ゲストモードのままホームが表示されないこと
  *
- * 注意: production では未認証でも /home がゲストモードで表示される実装のため、
- *       /login へのリダイレクトを前提とするテストは現状 skip。
- *       middleware でゲストモードを廃止し /login へ強制リダイレクトする修正後に有効化する。
+ * middleware (lib/supabase/middleware.ts) が公開ルート / ゲストルート / 認証必須ルートを正しく
+ * 分岐し、未認証アクセスを /login へリダイレクトすることを E2E で検証する。
+ *
+ * T06: Coverage Recovery — bug-37 middleware skip 解消 (Closes #848)
  */
 import { test, expect } from "@playwright/test";
 
@@ -23,24 +24,13 @@ async function clearSession(page: any) {
   });
 }
 
-/** middleware で !isPublicPath に Cache-Control: private, no-store を設定し CDN bypass を解消済み */
-const REDIRECT_EXPECTED = true;
-
 test("unauthenticated access to /home redirects to /login", async ({ page }) => {
-  if (!REDIRECT_EXPECTED) {
-    test.skip(true, '未認証アクセスがゲストモードで /home を表示する実装のため skip (middleware 修正待ち)');
-    return;
-  }
   await clearSession(page);
   await page.goto("/home");
   await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
 });
 
 test("redirect URL includes ?next= pointing back to the original protected route", async ({ page }) => {
-  if (!REDIRECT_EXPECTED) {
-    test.skip(true, '未認証アクセスがゲストモードで /home を表示する実装のため skip (middleware 修正待ち)');
-    return;
-  }
   await clearSession(page);
   await page.goto("/home");
   await page.waitForURL(/\/login/, { timeout: 15_000 });
@@ -50,10 +40,6 @@ test("redirect URL includes ?next= pointing back to the original protected route
 });
 
 test("unauthenticated access to /health redirects to /login with correct next param", async ({ page }) => {
-  if (!REDIRECT_EXPECTED) {
-    test.skip(true, '未認証アクセスがゲストモードで /home を表示する実装のため skip (middleware 修正待ち)');
-    return;
-  }
   await clearSession(page);
   await page.goto("/health");
   await page.waitForURL(/\/login/, { timeout: 15_000 });
@@ -63,10 +49,6 @@ test("unauthenticated access to /health redirects to /login with correct next pa
 });
 
 test("guest mode ('ゲスト') is not shown on home page when unauthenticated — login page shown instead", async ({ page }) => {
-  if (!REDIRECT_EXPECTED) {
-    test.skip(true, '未認証アクセスがゲストモードで /home を表示する実装のため skip (middleware 修正待ち)');
-    return;
-  }
   await clearSession(page);
   await page.goto("/home");
   await page.waitForURL(/\/login/, { timeout: 15_000 });
