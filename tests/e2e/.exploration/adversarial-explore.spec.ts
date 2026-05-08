@@ -563,7 +563,10 @@ test.describe("G4: 日付境界", () => {
    * 4-1: 翌週ボタンを 100 回押し続けて 2027 年まで進む → render エラーなし
    */
   test("4-1: 翌週ボタン 100 連打 → 2027 年まで進んでも render エラーなし", async ({ page }) => {
-    test.skip(true, "B: spec flaky — 翌週ボタンの locator (aria-label*=翌週 等) が実装 UI と一致しないため clickCount=0 で終了しやすい。ナビゲーション自体はクライアントサイド state 更新のみでレース条件なし。locator を実装に合わせて修正するまでスキップ。");
+    // Why: 翌週ボタンの locator (aria-label*=翌週 等) が実装 UI と一致せず
+    //   clickCount=0 で終了しやすい。ナビゲーション自体はクライアントサイド state 更新のみでレース条件なし。
+    // 解除条件: /menus/weekly の翌週ボタンの aria-label 実装を確認して locator を修正する。
+    test.fixme(true, "B: spec flaky — 翌週ボタンの locator が実装 UI と一致しない。aria-label 確認後に locator 修正で解除可能。");
     const m = attachMonitors(page);
     await authedPage(page);
     await page.goto("/menus/weekly");
@@ -674,7 +677,10 @@ test.describe("G5: ネットワーク劣化", () => {
    * 5-2: API 5xx をモック → エラー表示 (page.route 経由)
    */
   test("5-2: 献立生成 API を 500 にモック → エラー UI 表示", async ({ page }) => {
-    test.skip(true, "C: 環境依存 — 生成ボタン (AI献立|献立を作る|献立を生成) が非表示の環境ではモックが発火せず warn のみで終了。エラー UI の有無は警告ログに留まり fail しないが、ボタン locator が不安定なため探索的確認としてスキップ。");
+    // Why: 生成ボタン (AI献立|献立を作る|献立を生成) が非表示の環境ではモックが発火せず warn のみで終了。
+    //   エラー UI の有無は警告ログに留まり fail しないが、ボタン locator が不安定。
+    // 解除条件: E2E ユーザーの週間献立が生成済みでボタンが常に表示される環境を保証できる場合。
+    test.fixme(true, "C: 環境依存 — 生成ボタン locator が不安定。E2E ユーザーの献立状態が保証できる環境で解除可能。");
     const m = attachMonitors(page);
     await authedPage(page);
 

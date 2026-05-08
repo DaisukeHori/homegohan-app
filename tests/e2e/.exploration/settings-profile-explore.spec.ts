@@ -129,11 +129,12 @@ test.describe("Scenario 1: 通知・自動解析 toggle", () => {
   });
 
   test("1-2: 自動解析 toggle OFF → リロード後も OFF を維持する", async ({ page }) => {
-    // B spec flaky: settingsページのnotification-preferences APIロードが完了する前に
-    // toggleをclickするためrace conditionが発生する。
-    // useEffect内のfetch完了後にstateが上書きされてclickが無効化される。
-    // 修正案: click前にAPIレスポンスを待つ waitForResponse を追加する必要がある。
-    test.skip(true, 'race condition: settings page fetch completes after click, overriding toggle state');
+    // Why: settings ページの notification-preferences API ロードが完了する前に
+    //   toggle をクリックするため race condition が発生する。
+    //   useEffect 内の fetch 完了後に state が上書きされ click が無効化される。
+    // 解除条件: click 前に waitForResponse('/api/settings/notification-preferences') を
+    //   追加してレース条件を解消するか、loadState('networkidle') を強化した後。
+    test.fixme(true, 'B: race condition — settings page fetch overrides toggle click; fix: waitForResponse before click');
 
     const { consoleLogs, networkErrors } = attachMonitors(page);
     await login(page);

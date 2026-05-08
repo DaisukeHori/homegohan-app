@@ -73,8 +73,10 @@ test("progress bar is restored from localStorage when request is still pending",
   const appeared = await progressBar.first().isVisible({ timeout: 10_000 }).catch(() => false);
 
   if (!appeared) {
-    // UI 要素名が変わっている可能性がある場合はスキップ（smoke 相当）
-    test.skip();
+    // Why: processing モック時に進捗バー UI (生成中テキスト / data-testid='generation-progress') が
+    //   見つからない。UI の locator が実装と一致していない可能性がある。
+    // 解除条件: 週間献立ページの進捗バー要素の data-testid / テキストを実装に合わせて locator 修正後
+    test.fixme(true, "C: 進捗バー UI が見つからない。locator を実装の data-testid に合わせて修正後に解除可能。");
     return;
   }
 

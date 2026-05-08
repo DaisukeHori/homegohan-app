@@ -110,8 +110,10 @@ test("navigating away and back does not show 0 kcal for a just-generated day", a
   const isNextWeekVisible = await nextWeekButton.isVisible({ timeout: 8_000 }).catch(() => false);
 
   if (!isNextWeekVisible) {
-    // ナビゲーションボタンが見つからない場合はスキップ
-    test.skip();
+    // Why: 翌週ナビゲーションボタン (aria-label='翌週' 等) が見つからない
+    //   UI の実装で aria-label が変わっている可能性がある。
+    // 解除条件: 週間献立ページの翌週ボタンの aria-label を実装から確認して locator 修正後
+    test.fixme(true, "C: 翌週ボタンが見つからない。aria-label を実装に合わせて locator 修正後に解除可能。");
     return;
   }
 

@@ -19,7 +19,9 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
 
     const recipeButton = authedPage.locator('text=レシピを見る').first();
     if (!(await recipeButton.isVisible({ timeout: 2000 }).catch(() => false))) {
-      test.skip(true, 'No recipe available for E2E user');
+      // Why: E2E ユーザーの週間献立にレシピデータがない
+      // 解除条件: E2E ユーザーに週間献立 (レシピ付き) が生成済みの環境で解除可能
+      test.fixme(true, "C: E2E ユーザーにレシピデータなし。週間献立が生成済みの環境で解除可能。");
       return;
     }
 
@@ -29,7 +31,9 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
       .catch(() => false);
 
     if (!buttonAvailable) {
-      test.skip(true, '週間献立にレシピを見るボタンが見つかりませんでした (データ未生成)');
+      // Why: 「レシピを見る」ボタンが 8 秒以内に表示されない (データ未生成またはロード遅延)
+      // 解除条件: E2E ユーザーに週間献立データが存在する環境で解除可能
+      test.fixme(true, "C: 「レシピを見る」ボタンが見つからない。献立データ保有ユーザーで解除可能。");
       return;
     }
 
@@ -78,7 +82,9 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
 
     const recipeButton = authedPage.locator('text=レシピを見る').first();
     if (!(await recipeButton.isVisible({ timeout: 2000 }).catch(() => false))) {
-      test.skip(true, 'No recipe available for E2E user');
+      // Why: E2E ユーザーの週間献立にレシピデータがない
+      // 解除条件: E2E ユーザーに週間献立 (レシピ付き) が生成済みの環境で解除可能
+      test.fixme(true, "C: E2E ユーザーにレシピデータなし。週間献立が生成済みの環境で解除可能。");
       return;
     }
 
@@ -88,7 +94,9 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
       .catch(() => false);
 
     if (!buttonAvailable) {
-      test.skip(true, '週間献立にレシピを見るボタンが見つかりませんでした (データ未生成)');
+      // Why: 「レシピを見る」ボタンが 8 秒以内に表示されない
+      // 解除条件: E2E ユーザーに週間献立データが存在する環境で解除可能
+      test.fixme(true, "C: 「レシピを見る」ボタンが見つからない。献立データ保有ユーザーで解除可能。");
       return;
     }
 
@@ -100,7 +108,9 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     // まず disabled でないことを確認 (disabled なら API未完了でスキップ)
     const isDisabled = await favBtn.isDisabled().catch(() => true);
     if (isDisabled) {
-      test.skip(true, 'favorite ボタンが disabled — API 応答待ち or 未サポート状態');
+      // Why: favorite ボタンが disabled のまま (お気に入り取得 API 応答待ちまたは未サポート状態)
+      // 解除条件: お気に入り取得 API が正常に応答するまで waitForResponse を追加後
+      test.fixme(true, "C: favorite ボタンが disabled。お気に入り API 応答待ち waitForResponse 追加後に解除可能。");
       return;
     }
 
@@ -130,7 +140,9 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     const recipeButton2 = authedPage.locator('text=レシピを見る').first();
     const available2 = await recipeButton2.waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false);
     if (!available2) {
-      test.skip(true, 'リロード後にレシピボタンが見つからない');
+      // Why: リロード後に「レシピを見る」ボタンが再表示されない (ページ状態リセットまたはデータロード失敗)
+      // 解除条件: E2E ユーザーの週間献立データが安定して存在する環境で解除可能
+      test.fixme(true, "C: リロード後にレシピボタンが非表示。献立データが安定する環境で解除可能。");
       return;
     }
     await recipeButton2.click();

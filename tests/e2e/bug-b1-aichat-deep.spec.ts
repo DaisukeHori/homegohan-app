@@ -496,7 +496,10 @@ test.describe("シナリオ 8: セッション終了と要約", () => {
     const isEnabled = await archiveBtn.isEnabled().catch(() => false);
     if (!isEnabled) {
       console.warn("[セッション終了] Archive ボタンが disabled のためスキップ");
-      test.skip();
+      // Why: Archive ボタン (チャットウィンドウ内の最初の rounded-full ボタン) が disabled
+      //   メッセージ送信直後は応答中で disabled になる場合がある。
+      // 解除条件: archiveBtn の locator を data-testid で特定し、応答完了を waitForResponse で待つ修正後
+      test.fixme(true, "C: Archive ボタンが disabled。data-testid で特定し waitForResponse 後に解除可能。");
       return;
     }
 

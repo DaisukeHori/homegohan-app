@@ -185,7 +185,9 @@ test("7. 30-second check-in: condition button → submit → feedback shown", as
   // 既に今日のチェックインが完了している場合はスキップ
   const alreadyDone = await page.getByText("今日のチェックイン完了！").isVisible().catch(() => false);
   if (alreadyDone) {
-    test.skip(true, "today's check-in already submitted");
+    // Why: 既に今日のチェックインが完了しているためチェックインフォームが非表示
+    // 解除条件: 日付が変わって新しいチェックイン可能状態になるか、チェックインリセット API を利用後
+    test.fixme(true, "C: 今日のチェックインは既に完了済み。翌日以降または状態リセット後に解除可能。");
     return;
   }
 
@@ -211,7 +213,9 @@ test("7. 30-second check-in: condition button → submit → feedback shown", as
     const recordBtnVisible = await recordBtn.isVisible({ timeout: 3_000 }).catch(() => false);
     if (!recordBtnVisible) {
       console.log("[7] チェックイン UI が見つからない");
-      test.skip(true, "check-in UI not found — may not be implemented in this env");
+      // Why: チェックインボタン (コンディションアイコン・記録するボタン) が見つからない
+      // 解除条件: UI のセレクターが変更された場合は実装確認後に locator を修正する
+      test.fixme(true, "C: チェックイン UI が見つからない。実装の UI セレクターを確認して locator 修正後に解除可能。");
       return;
     }
     await recordBtn.click();
@@ -252,7 +256,9 @@ test("8. AI suggestion card click causes some reaction", async ({ authedPage: pa
   const isVisible = await suggestionCard.isVisible().catch(() => false);
 
   if (!isVisible) {
-    test.skip(true, "AI suggestion card not present for this user/state");
+    // Why: 「今日のアドバイス」AI サジェストカードが表示されていない (ユーザー状態/データ依存)
+    // 解除条件: E2E ユーザーに AI サジェスト生成条件が揃った状態 (献立生成済み・チェックイン済み等) で解除可能
+    test.fixme(true, "C: AI サジェストカードが非表示。ユーザーの献立・チェックイン状態が揃えば解除可能。");
     return;
   }
 
@@ -289,7 +295,9 @@ test("9. expiring fridge items alert (conditional)", async ({ authedPage: page }
   if (!isVisible) {
     // アラートがないこと自体は正常 (データ依存)
     console.log("No expiring items alert - may be correct if no items near expiry");
-    test.skip(true, "No expiring items for this user; skipping alert check");
+    // Why: 期限切れ間近の冷蔵庫アイテムがこのユーザーには存在しない (正常状態)
+    // 解除条件: E2E ユーザーの冷蔵庫に期限切れ間近アイテムがある状態で解除可能 (自動化困難)
+    test.fixme(true, "C: 期限切れアラートなし。E2E ユーザーの冷蔵庫データ状態依存のため自動化困難。");
     return;
   }
 

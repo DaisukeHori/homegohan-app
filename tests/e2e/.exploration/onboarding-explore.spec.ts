@@ -362,7 +362,10 @@ test("S3: 栄養設計を計算中... 画面を専用に確認", async ({ page }
   // 全質問を完走した直後の極めて短いウィンドウを Playwright がキャプチャできない。
   // onboarding質問数が多く完走に1分以上かかることもあり、
   // その間にタイムアウトやflakynessが生じる。
-  test.skip(true, 'timing-dependent: 2500ms calculating window is too short to reliably capture in CI');
+  // Why: isCalculating=true の状態が 2500ms しか続かないため CI の Playwright が
+  //   キャプチャできない。全質問を完走するのに1分以上かかることもあり、タイムアウトが生じる。
+  // 解除条件: calculating 画面の表示時間を延長するか、専用の storybook/unit テストで代替する。
+  test.fixme(true, 'B: timing-dependent — 2500ms calculating window is too short to reliably capture in CI');
 
   /**
    * 最後の質問に答えた瞬間に isCalculating=true になり 2500ms 表示される。

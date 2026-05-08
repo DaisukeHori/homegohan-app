@@ -131,7 +131,10 @@ test.describe("Health record core — 探索", () => {
     const ctaVisible = await ctaButton.isVisible().catch(() => false);
 
     if (!ctaVisible) {
-      test.skip(true, "今日の記録が既にあるため CTA は非表示。S8 の /health/record フォームで検証済み");
+      // Why: 今日の健康記録が既に存在するため「今日の記録をつける」CTA ボタンが非表示
+      //   /health/record フォームの単独テスト (S8) で代替カバー済み。
+      // 解除条件: 日付が変わって新しい記録が可能になるか、健康記録リセットが可能な環境で解除
+      test.fixme(true, "C: 今日の健康記録が既に存在するため CTA 非表示。翌日以降または記録リセット後に解除可能。");
       return;
     }
 
@@ -179,7 +182,10 @@ test.describe("Health record core — 探索", () => {
     const pastButtons = page.locator('button[aria-pressed="false"]');
     const pastCount = await pastButtons.count();
     if (pastCount === 0) {
-      test.skip(true, "過去日の aria-pressed=\"false\" ボタンが見つからない");
+      // Why: カレンダーに aria-pressed="false" の過去日ボタンが見つからない
+      //   アカウントが今日だけで過去データがない、またはカレンダー実装の変更の可能性がある。
+      // 解除条件: カレンダーの過去日ボタンの aria-pressed 実装を確認して locator 修正後
+      test.fixme(true, "C: 過去日カレンダーボタンが見つからない。aria-pressed 実装確認後に解除可能。");
       return;
     }
 
@@ -210,7 +216,9 @@ test.describe("Health record core — 探索", () => {
     const pastButtons = page.locator('button[aria-pressed="false"]');
     const pastCount = await pastButtons.count();
     if (pastCount === 0) {
-      test.skip(true, "過去日ボタンが見つからない");
+      // Why: カレンダーに aria-pressed="false" の過去日ボタンが見つからない
+      // 解除条件: S4 と同様に aria-pressed 実装確認後に locator 修正後
+      test.fixme(true, "C: 過去日ボタンが見つからない。aria-pressed 実装確認後に解除可能。");
       return;
     }
 
@@ -240,7 +248,9 @@ test.describe("Health record core — 探索", () => {
     const allCalBtns = page.locator("button[aria-pressed]");
     const calCount = await allCalBtns.count();
     if (calCount === 0) {
-      test.skip(true, "カレンダーボタンが見つからない");
+      // Why: カレンダーに aria-pressed 属性を持つボタンが見つからない
+      // 解除条件: HealthCalendar の実装で aria-pressed 属性が付与されていることを確認後
+      test.fixme(true, "C: カレンダーボタン (aria-pressed) が見つからない。実装の aria-pressed 確認後に解除可能。");
       return;
     }
 
@@ -252,7 +262,9 @@ test.describe("Health record core — 探索", () => {
     const pastButtons = page.locator('button[aria-pressed="false"]');
     const pastCount = await pastButtons.count();
     if (pastCount === 0) {
-      test.skip(true, "過去日ボタンが見つからない");
+      // Why: カレンダーに aria-pressed="false" の過去日ボタンが見つからない
+      // 解除条件: S4 と同様に aria-pressed 実装確認後に locator 修正後
+      test.fixme(true, "C: 過去日ボタンが見つからない。aria-pressed 実装確認後に解除可能。");
       return;
     }
 

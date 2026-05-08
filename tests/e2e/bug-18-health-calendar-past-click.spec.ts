@@ -93,7 +93,10 @@ test("clicking today's calendar cell (or re-clicking same day) dismisses past re
     // パネルが閉じない実装の場合はスキップ (production 動作に依存)
     const stillVisible = await recordSection.isVisible().catch(() => false);
     if (stillVisible) {
-      test.skip(true, '今日ボタンクリック後に過去日パネルが閉じない (UI実装に依存)');
+      // Why: 今日のカレンダーセルをクリックしても過去日パネルが閉じない
+      //   HealthCalendar の「今日」クリックで selectedDate リセットが実装されていない可能性がある。
+      // 解除条件: HealthCalendar で今日セルクリック時に selectedDate=null をセットするよう実装修正後
+      test.fixme(true, "B: 今日ボタンクリック後に過去日パネルが閉じない。HealthCalendar の selectedDate リセット実装後に解除可能。");
       return;
     }
     await expect(recordSection).not.toBeVisible();

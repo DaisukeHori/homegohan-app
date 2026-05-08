@@ -372,14 +372,18 @@ test.describe("オートモード classify — 4 カテゴリ各 2 枚", () => {
 
 test.describe("判別不能画像 → classify-failed ステップ", () => {
   test("4-1: 白紙画像 → classify-failed になること", async ({ authedPage }) => {
-    test.skip(true, "C: 環境依存 — AIが白紙画像をどのカテゴリに分類するかは非決定的。classify-failed に落ちる場合も落ちない場合もあり、AIモデルのレスポンス次第で結果が変わる。本物バグ判定不可。");
+    // Why: AI が白紙画像をどのカテゴリに分類するかは非決定論的。
+    //   classify-failed に落ちる場合も落ちない場合もあり、AI モデルのレスポンス次第で結果が変わる。
+    // 解除条件: 白紙判定ロジックをサーバーサイドでモック可能にするか、
+    //   classify-failed を強制する専用 fixture 画像が用意できた場合。
+    test.fixme(true, "C: AI の分類が非決定論的。classify-failed を強制する fixture 画像または API モックが必要。");
     test.setTimeout(120_000);
 
     const blankImagePath = path.join(SAMPLE_DIR, "unknown-blank.jpg");
 
     // ファイルが存在しない場合はスキップ
     if (!fs.existsSync(blankImagePath)) {
-      test.skip(true, `白紙画像が見つかりません: ${blankImagePath}`);
+      test.fixme(true, `白紙画像が見つかりません: ${blankImagePath} — /tmp/classify-test/ に配置後に解除`);
       return;
     }
 
@@ -439,13 +443,15 @@ test.describe("判別不能画像 → classify-failed ステップ", () => {
   test("4-2: classify-failed 画面に「撮り直す」と「モードを選び直す」ボタンがある", async ({
     authedPage,
   }) => {
-    test.skip(true, "C: 環境依存 — 4-1 と同様、白紙画像の AI 分類結果が非決定的なため classify-failed 画面への到達が保証できない。4-1 が安定してから再有効化する。");
+    // Why: 4-1 と同様、白紙画像の AI 分類結果が非決定論的なため classify-failed 画面への到達が保証できない。
+    // 解除条件: 4-1 が安定して classify-failed を確実に再現できるようになった後。
+    test.fixme(true, "C: 4-1 と同様に AI 分類が非決定論的。4-1 が安定してから再有効化する。");
     test.setTimeout(120_000);
 
     const blankImagePath = path.join(SAMPLE_DIR, "unknown-blank.jpg");
 
     if (!fs.existsSync(blankImagePath)) {
-      test.skip(true, `白紙画像が見つかりません: ${blankImagePath}`);
+      test.fixme(true, `白紙画像が見つかりません: ${blankImagePath} — /tmp/classify-test/ に配置後に解除`);
       return;
     }
 
@@ -511,7 +517,9 @@ test.describe("analyzing ステップ — 45 秒タイムアウトガード", ()
     // 白紙でよい (classify-failed を高確率で引き起こす)
     const blankImagePath = path.join(SAMPLE_DIR, "unknown-blank.jpg");
     if (!fs.existsSync(blankImagePath)) {
-      test.skip(true, `白紙画像が見つかりません: ${blankImagePath}`);
+      // Why: テスト用画像が /tmp/classify-test/ に存在しない
+      // 解除条件: /tmp/classify-test/unknown-blank.jpg を配置する
+      test.fixme(true, `白紙画像が見つかりません: ${blankImagePath} — /tmp/classify-test/ に配置後に解除`);
       return;
     }
 

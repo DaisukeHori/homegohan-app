@@ -111,8 +111,10 @@ test("queued status shows progress bar on page load", async ({ authedPage }) => 
   const appeared = await progressBar.first().isVisible({ timeout: 10_000 }).catch(() => false);
 
   if (!appeared) {
-    // UI 要素名が変わっている可能性がある場合はスキップ（smoke 相当）
-    test.skip();
+    // Why: 進捗バー UI 要素 (生成中テキスト / data-testid='generation-progress') が見つからない
+    //   UI の実装が変わった可能性がある。
+    // 解除条件: 週間献立ページの進捗バー表示要素 (testid / テキスト) を実装に合わせて locator 修正後
+    test.fixme(true, "C: 進捗バー UI 要素が見つからない。locator を実装の data-testid に合わせて修正後に解除可能。");
     return;
   }
 
@@ -153,7 +155,9 @@ test("progress bar is restored after tab switch when status is processing", asyn
   const appeared = await progressBar.first().isVisible({ timeout: 12_000 }).catch(() => false);
 
   if (!appeared) {
-    test.skip();
+    // Why: タブ切替後に進捗バーが復元されない (UI 要素 locator が変更された可能性)
+    // 解除条件: 週間献立ページの進捗バー locator を実装の data-testid に合わせて修正後
+    test.fixme(true, "C: タブ切替後の進捗バー復元確認不可。locator を実装 testid に合わせて修正後に解除可能。");
     return;
   }
 
@@ -199,8 +203,11 @@ test("failed status shows error modal with retry button", async ({ authedPage })
   const errorVisible = await errorModal.first().isVisible({ timeout: 8_000 }).catch(() => false);
 
   if (!retryVisible && !errorVisible) {
-    // failed の処理が非同期で発生する可能性があるのでスキップ
-    test.skip();
+    // Why: failed ステータスのエラーモーダル・リトライボタンが見つからない
+    //   API モックが正しく機能していない、または UI の locator が変更された可能性がある。
+    // 解除条件: エラー表示 UI の data-testid (generation-failed-modal / generation-retry-button) が
+    //   実装に存在することを確認・修正後
+    test.fixme(true, "C: failed 状態のエラー UI が見つからない。data-testid の実装確認後に解除可能。");
     return;
   }
 

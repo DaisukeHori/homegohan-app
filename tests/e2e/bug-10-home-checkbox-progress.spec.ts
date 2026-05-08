@@ -29,7 +29,9 @@ test("home meal toggle updates today's progress percentage", async ({ authedPage
     }
   }
 
-  test.skip(!toggle, "today's meal plan is empty for this user; cannot exercise toggle");
+  // Why: 今日の献立データが未登録のため meal toggle ボタンが存在しない
+  // 解除条件: E2E ユーザーの今日の献立が生成済みである状態 (週間献立生成後)
+  test.fixme(!toggle, "C: 今日の献立データなし。週間献立が生成済みの E2E ユーザー環境で解除可能。");
 
   const before = (await percentEl.textContent())?.trim() ?? "0%";
 

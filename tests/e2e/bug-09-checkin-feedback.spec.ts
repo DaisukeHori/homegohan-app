@@ -15,7 +15,9 @@ test("30-second check-in shows success feedback after submit", async ({ authedPa
     .getByText("今日のチェックイン完了！")
     .isVisible()
     .catch(() => false);
-  test.skip(alreadyDone, "today's check-in already submitted; cannot retest feedback flow");
+  // Why: 今日のチェックインが既に完了しているためフィードバック再テスト不可
+  // 解除条件: 日付が変わって新しいチェックインが可能になるか、チェックインリセット API 利用後
+  test.fixme(alreadyDone, "C: 今日のチェックインは既に完了済み。翌日以降または状態リセット後に解除可能。");
 
   // チェックインフォームを開く
   if (await startButton.isVisible().catch(() => false)) {
