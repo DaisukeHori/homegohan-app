@@ -29,7 +29,7 @@ export type UsersSearchParams = z.infer<typeof UsersSearchSchema>;
 export const UserDetailResponseSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email().optional(),
-  display_name: z.string().nullable(),
+  nickname: z.string().nullable(),
   roles: z.array(z.string()),
   plan_key: z.string().nullable(),
   organization_id: z.string().uuid().nullable(),

@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { stage, assigned_to, page, per_page } = queryResult.data;
-    const supabase = createClient();
+    const supabase = await createClient();
 
     let query = supabase
       .from('sales_leads')
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const inputData = parseResult.data;
 
     // assigned_to が未指定の場合は作成者を割り当て

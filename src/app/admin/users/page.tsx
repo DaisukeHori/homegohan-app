@@ -34,10 +34,10 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
 
   let query = supabase
     .from('user_profiles')
-    .select('id, display_name, roles, plan_key_cached, last_login_at, created_at, frozen_at', { count: 'exact' });
+    .select('id, nickname, roles, plan_key_cached, last_login_at, created_at, frozen_at', { count: 'exact' });
 
   if (q) {
-    query = query.ilike('display_name', `%${q}%`);
+    query = query.ilike('nickname', `%${q}%`);
   }
 
   // 凍結状態は frozen_at IS NOT NULL で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
@@ -115,7 +115,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
                   <tr key={user.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-900">
-                        {user.display_name ?? '(名前なし)'}
+                        {user.nickname ?? '(名前なし)'}
                       </div>
                       <div className="text-xs text-gray-400 font-mono">{user.id.slice(0, 8)}...</div>
                     </td>

@@ -18,7 +18,7 @@ type RouteContext = { params: { id: string } };
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
     await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: coupon, error } = await supabase
       .from('coupons')
@@ -49,7 +49,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   try {
     const user = await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const body = await request.json();
     const parseResult = CouponUpdateSchema.safeParse(body);
@@ -138,7 +138,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 export async function DELETE(request: NextRequest, { params }: RouteContext) {
   try {
     const user = await requireRole(['super_admin']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: existing, error: fetchErr } = await supabase
       .from('coupons')

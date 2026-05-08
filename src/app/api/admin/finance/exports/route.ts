@@ -27,7 +27,7 @@ function toCsv(headers: string[], rows: Record<string, unknown>[]): string {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireRole(['admin', 'super_admin', 'finance']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const body = await request.json() as unknown;
     const req = ExportRequestSchema.parse(body);

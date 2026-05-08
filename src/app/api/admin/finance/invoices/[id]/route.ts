@@ -17,7 +17,7 @@ export async function GET(
 ) {
   try {
     await requireRole(['admin', 'super_admin', 'finance']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const { data: evt, error } = await supabase
       .from('stripe_webhook_events')

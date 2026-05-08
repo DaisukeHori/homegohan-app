@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const user = await requireRole(['admin', 'super_admin', 'finance']);
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // 最新スナップショット (今月と先月) を revenue_snapshots から取得
     const today = new Date();

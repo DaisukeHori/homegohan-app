@@ -110,7 +110,7 @@ export async function GET(_request: Request, { params }: Params) {
     data: {
       id: profile.id,
       email: null,
-      display_name: profile.display_name,
+      nickname: profile.nickname,
       roles: profile.roles ?? ['user'],
       plan_key: profile.plan_key_cached ?? 'free',
       organization_id: profile.organization_id,
