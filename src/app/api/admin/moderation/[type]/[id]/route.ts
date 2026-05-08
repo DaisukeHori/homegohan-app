@@ -1,4 +1,5 @@
 /**
+ * GET  /api/admin/moderation/{type}/{id} — 個別モデレーションアイテム取得
  * POST /api/admin/moderation/{type}/{id} — 個別モデレーション (承認/却下)
  * operator/02-api-spec.md §5 準拠
  * 権限: admin, super_admin, content_moderator
@@ -17,6 +18,60 @@ import {
 export const dynamic = 'force-dynamic';
 
 type Params = { params: { type: string; id: string } };
+
+export async function GET(_request: Request, { params }: Params) {
+  try {
+    await requireRole(['admin', 'super_admin', 'content_moderator']);
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(
+        { error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } },
+        { status: 401 },
+      );
+    }
+    if (err instanceof ForbiddenError) {
+      return NextResponse.json(
+        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { status: 403 },
+      );
+    }
+    throw err;
+  }
+
+  const { type, id } = params;
+
+  if (!MODERATION_TYPES.includes(type as ModerationType)) {
+    return NextResponse.json(
+      { error: { code: 'VALIDATION_ERROR', message: `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
+      { status: 400 },
+    );
+  }
+
+  const supabase = await createClient();
+
+  try {
+    const { data, error } = await supabase
+      .from('moderation_items')
+      .select('*')
+      .eq('id', id)
+      .eq('type', type)
+      .single();
+
+    if (error || !data) {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: 'モデレーションアイテムが見つかりません' } },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json({ data });
+  } catch {
+    return NextResponse.json(
+      { error: { code: 'NOT_FOUND', message: 'モデレーションアイテムが見つかりません' } },
+      { status: 404 },
+    );
+  }
+}
 
 export async function POST(request: Request, { params }: Params) {
   let actor;

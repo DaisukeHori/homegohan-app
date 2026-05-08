@@ -1,6 +1,8 @@
 /**
  * /admin/moderation — モデレーションキュー一覧
  * operator/03-ui-spec.md §5 モデレーション画面準拠
+ *
+ * DB 直叩きを廃止し GET /api/admin/moderation/queue 経由に統一。
  */
 
 export const dynamic = 'force-dynamic';
@@ -9,10 +11,29 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { adminFetch } from '@/lib/admin/fetch';
 
 interface PageProps {
   searchParams: { status?: string; type?: string; page?: string };
+}
+
+interface ModerationItem {
+  id: string;
+  type: string;
+  content_url: string | null;
+  reporter_count: number;
+  user_id: string;
+  status: string;
+  created_at: string;
+}
+
+interface ModerationApiResponse {
+  data: ModerationItem[];
+  meta: {
+    total: number;
+    page: number;
+    per_page: number;
+  };
 }
 
 export default async function AdminModerationPage({ searchParams }: PageProps) {
@@ -30,38 +51,27 @@ export default async function AdminModerationPage({ searchParams }: PageProps) {
   const page = Math.max(1, parseInt(searchParams.page ?? '1', 10));
   const perPage = 30;
 
-  const supabase = await createClient();
+  // GET /api/admin/moderation/queue 経由でデータ取得
+  const params = new URLSearchParams();
+  params.set('status', status);
+  if (type) params.set('type', type);
+  params.set('page', String(page));
+  params.set('per_page', String(perPage));
 
-  let items: Array<{
-    id: string;
-    type: string;
-    content_url: string | null;
-    reporter_count: number;
-    user_id: string;
-    status: string;
-    created_at: string;
-  }> = [];
+  let items: ModerationItem[] = [];
   let total = 0;
 
   try {
-    let query = supabase
-      .from('moderation_items')
-      .select('*', { count: 'exact' })
-      .eq('status', status);
-
-    if (type) {
-      query = query.eq('type', type);
+    const res = await adminFetch(`/api/admin/moderation/queue?${params.toString()}`);
+    if (res.ok) {
+      const json = (await res.json()) as ModerationApiResponse;
+      items = json.data ?? [];
+      total = json.meta?.total ?? 0;
+    } else {
+      console.error('[admin/moderation page] API error:', res.status);
     }
-
-    query = query
-      .order('created_at', { ascending: true })
-      .range((page - 1) * perPage, page * perPage - 1);
-
-    const { data, count } = await query;
-    items = data ?? [];
-    total = count ?? 0;
-  } catch {
-    // moderation_items テーブル未作成の場合は空を返す
+  } catch (err) {
+    console.error('[admin/moderation page] fetch failed:', err);
   }
 
   const totalPages = Math.ceil(total / perPage);

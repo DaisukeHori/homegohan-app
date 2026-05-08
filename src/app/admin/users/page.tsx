@@ -1,6 +1,8 @@
 /**
  * /admin/users — ユーザー一覧・検索
  * operator/03-ui-spec.md §5 準拠
+ *
+ * DB 直叩きを廃止し GET /api/admin/users 経由に統一。
  */
 
 export const dynamic = 'force-dynamic';
@@ -9,10 +11,30 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { adminFetch } from '@/lib/admin/fetch';
 
 interface PageProps {
   searchParams: { q?: string; status?: string; page?: string };
+}
+
+interface UserItem {
+  id: string;
+  nickname: string | null;
+  plan_key: string;
+  roles: string[];
+  is_banned: boolean;
+  frozen_at: string | null;
+  last_login_at: string | null;
+  registered_at: string | null;
+}
+
+interface UsersApiResponse {
+  data: UserItem[];
+  meta: {
+    total: number;
+    page: number;
+    per_page: number;
+  };
 }
 
 export default async function AdminUsersPage({ searchParams }: PageProps) {
@@ -30,29 +52,29 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
   const page = Math.max(1, parseInt(searchParams.page ?? '1', 10));
   const perPage = 50;
 
-  const supabase = await createClient();
+  // GET /api/admin/users 経由でデータ取得
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  params.set('page', String(page));
+  params.set('per_page', String(perPage));
 
-  let query = supabase
-    .from('user_profiles')
-    .select('id, nickname, roles, plan_key_cached, last_login_at, created_at, frozen_at', { count: 'exact' });
+  let users: UserItem[] = [];
+  let total = 0;
 
-  if (q) {
-    query = query.ilike('nickname', `%${q}%`);
+  try {
+    const res = await adminFetch(`/api/admin/users?${params.toString()}`);
+    if (res.ok) {
+      const json = (await res.json()) as UsersApiResponse;
+      users = json.data ?? [];
+      total = json.meta?.total ?? 0;
+    } else {
+      console.error('[admin/users page] API error:', res.status);
+    }
+  } catch (err) {
+    console.error('[admin/users page] fetch failed:', err);
   }
 
-  // 凍結状態は frozen_at IS NOT NULL で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
-  if (status === 'banned') {
-    query = query.not('frozen_at', 'is', null);
-  } else if (status === 'active') {
-    query = query.is('frozen_at', null);
-  }
-
-  query = query
-    .order('created_at', { ascending: false })
-    .range((page - 1) * perPage, page * perPage - 1);
-
-  const { data: users, count } = await query;
-  const total = count ?? 0;
   const totalPages = Math.ceil(total / perPage);
 
   return (
@@ -102,67 +124,64 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {(users ?? []).length === 0 ? (
+            {users.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                   ユーザーが見つかりません
                 </td>
               </tr>
             ) : (
-              (users ?? []).map((user) => {
-                const isBanned = (user as { frozen_at?: string | null }).frozen_at != null;
-                return (
-                  <tr key={user.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">
-                        {user.nickname ?? '(名前なし)'}
-                      </div>
-                      <div className="text-xs text-gray-400 font-mono">{user.id.slice(0, 8)}...</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
-                        {user.plan_key_cached ?? 'free'}
+              users.map((user) => (
+                <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-gray-900">
+                      {user.nickname ?? '(名前なし)'}
+                    </div>
+                    <div className="text-xs text-gray-400 font-mono">{user.id.slice(0, 8)}...</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
+                      {user.plan_key ?? 'free'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {(Array.isArray(user.roles) ? user.roles : ['user']).map((role) => (
+                        <span
+                          key={role}
+                          className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
+                        >
+                          {role}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {user.is_banned ? (
+                      <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
+                        BAN
                       </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {(Array.isArray(user.roles) ? user.roles : ['user']).map((role) => (
-                          <span
-                            key={role}
-                            className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
-                          >
-                            {role}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {isBanned ? (
-                        <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
-                          BAN
-                        </span>
-                      ) : (
-                        <span className="inline-block bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
-                          active
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">
-                      {user.created_at
-                        ? new Date(user.created_at).toLocaleDateString('ja-JP')
-                        : '-'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/admin/users/${user.id}`}
-                        className="text-orange-500 hover:text-orange-700 text-xs font-medium"
-                      >
-                        詳細
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })
+                    ) : (
+                      <span className="inline-block bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
+                        active
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">
+                    {user.registered_at
+                      ? new Date(user.registered_at).toLocaleDateString('ja-JP')
+                      : '-'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <Link
+                      href={`/admin/users/${user.id}`}
+                      className="text-orange-500 hover:text-orange-700 text-xs font-medium"
+                    >
+                      詳細
+                    </Link>
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>

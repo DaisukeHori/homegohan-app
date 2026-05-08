@@ -1,10 +1,34 @@
 /**
  * /super-admin/plans — プラン定義・販売管理 一覧
  * operator/03-ui-spec.md §23 準拠
+ *
+ * DB 直叩きを廃止し GET /api/super-admin/plans 経由に統一。
  */
 
+export const dynamic = 'force-dynamic';
+
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { requireRole } from '@/lib/auth/helpers';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { adminFetch } from '@/lib/admin/fetch';
+
+interface Plan {
+  id: string;
+  plan_key: string;
+  display_name: string;
+  plan_type: string;
+  monthly_price_jpy: number | null;
+  yearly_price_jpy: number | null;
+  feature_packages: string[] | null;
+  status: string;
+  display_order: number;
+}
+
+interface PlansApiResponse {
+  data: Plan[];
+  meta: { total: number; page: number; per_page: number };
+}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: '下書き', color: 'bg-slate-100 text-slate-600' },
@@ -20,12 +44,32 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 export default async function PlansPage() {
-  const supabase = createClient();
+  try {
+    await requireRole(['super_admin']);
+  } catch (err) {
+    if (err instanceof AuthError || err instanceof ForbiddenError) {
+      redirect('/login');
+    }
+    throw err;
+  }
 
-  const { data: plans, error } = await supabase
-    .from('subscription_plans')
-    .select('*')
-    .order('display_order', { ascending: true });
+  // GET /api/super-admin/plans 経由でデータ取得
+  let plans: Plan[] = [];
+  let fetchError = false;
+
+  try {
+    const res = await adminFetch('/api/super-admin/plans?per_page=100');
+    if (res.ok) {
+      const json = (await res.json()) as PlansApiResponse;
+      plans = json.data ?? [];
+    } else {
+      fetchError = true;
+      console.error('[super-admin/plans page] API error:', res.status);
+    }
+  } catch (err) {
+    fetchError = true;
+    console.error('[super-admin/plans page] fetch failed:', err);
+  }
 
   return (
     <div>
@@ -43,9 +87,9 @@ export default async function PlansPage() {
         </Link>
       </div>
 
-      {error && (
+      {fetchError && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
-          データの取得に失敗しました: {error.message}
+          データの取得に失敗しました
         </div>
       )}
 
@@ -66,7 +110,7 @@ export default async function PlansPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {(plans ?? []).map((plan) => {
+            {plans.map((plan) => {
               const statusInfo = STATUS_LABELS[plan.status] ?? { label: plan.status, color: 'bg-slate-100 text-slate-600' };
               const typeInfo = TYPE_LABELS[plan.plan_type] ?? { label: plan.plan_type, color: 'bg-slate-100 text-slate-600' };
               return (
@@ -87,7 +131,7 @@ export default async function PlansPage() {
                     {plan.yearly_price_jpy != null ? `¥${plan.yearly_price_jpy.toLocaleString()}` : '—'}
                   </td>
                   <td className="px-4 py-3 text-center text-slate-700">
-                    {(plan.feature_packages as string[] | null)?.length ?? 0}
+                    {plan.feature_packages?.length ?? 0}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusInfo.color}`}>
@@ -106,7 +150,7 @@ export default async function PlansPage() {
                 </tr>
               );
             })}
-            {(plans ?? []).length === 0 && (
+            {plans.length === 0 && !fetchError && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
                   プランがありません

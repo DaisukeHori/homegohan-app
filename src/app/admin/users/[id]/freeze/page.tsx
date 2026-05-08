@@ -1,6 +1,8 @@
 /**
  * /admin/users/{id}/freeze — 凍結フォーム
  * operator/03-ui-spec.md §6 BAN モーダル相当
+ *
+ * DB 直叩きを廃止し GET /api/admin/users/{id} 経由に統一。
  */
 
 export const dynamic = 'force-dynamic';
@@ -9,10 +11,22 @@ import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { adminFetch } from '@/lib/admin/fetch';
 
 interface PageProps {
   params: { id: string };
+}
+
+interface FreezeProfile {
+  id: string;
+  nickname: string | null;
+  roles: string[];
+  is_banned: boolean;
+  frozen_at: string | null;
+}
+
+interface UserDetailApiResponse {
+  data: FreezeProfile;
 }
 
 export default async function AdminUserFreezePage({ params }: PageProps) {
@@ -27,20 +41,21 @@ export default async function AdminUserFreezePage({ params }: PageProps) {
   }
 
   const { id } = params;
-  const supabase = await createClient();
 
-  const { data: profile, error } = await supabase
-    .from('user_profiles')
-    .select('id, nickname, roles, frozen_at')
-    .eq('id', id)
-    .single();
-
-  if (error || !profile) {
+  // GET /api/admin/users/{id} 経由で凍結状態取得
+  const res = await adminFetch(`/api/admin/users/${id}`);
+  if (res.status === 404) {
+    notFound();
+  }
+  if (!res.ok) {
     notFound();
   }
 
-  // 凍結状態は frozen_at IS NOT NULL で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
-  const isBanned = (profile as { frozen_at?: string | null }).frozen_at != null;
+  const json = (await res.json()) as UserDetailApiResponse;
+  const profile = json.data;
+
+  // 凍結状態は is_banned で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
+  const isBanned = profile.is_banned;
   const isSuperAdmin = actor.roles.includes('super_admin');
 
   return (

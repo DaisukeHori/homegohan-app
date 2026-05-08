@@ -1,6 +1,8 @@
 /**
  * /admin/users/{id} — ユーザー詳細
  * operator/03-ui-spec.md §6 準拠
+ *
+ * DB 直叩きを廃止し GET /api/admin/users/{id} 経由に統一。
  */
 
 export const dynamic = 'force-dynamic';
@@ -9,10 +11,42 @@ import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { adminFetch } from '@/lib/admin/fetch';
 
 interface PageProps {
   params: { id: string };
+}
+
+interface ActiveSubscription {
+  plan_key: string;
+  status: string;
+  next_billing_at: string | null;
+}
+
+interface AuditLog {
+  id: string;
+  action_type: string;
+  created_at: string;
+  severity: string;
+  details: unknown;
+}
+
+interface UserDetailProfile {
+  id: string;
+  nickname: string | null;
+  roles: string[];
+  plan_key: string;
+  is_banned: boolean;
+  frozen_at: string | null;
+  frozen_reason: string | null;
+  last_login_at: string | null;
+  registered_at: string | null;
+  active_subscription: ActiveSubscription | null;
+  ban_history: AuditLog[];
+}
+
+interface UserDetailApiResponse {
+  data: UserDetailProfile;
 }
 
 export default async function AdminUserDetailPage({ params }: PageProps) {
@@ -27,52 +61,26 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
   }
 
   const { id } = params;
-  const supabase = await createClient();
 
-  const { data: profile, error } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('id', id)
-    .single();
-
-  if (error || !profile) {
+  // GET /api/admin/users/{id} 経由でデータ取得
+  const res = await adminFetch(`/api/admin/users/${id}`);
+  if (res.status === 404) {
+    notFound();
+  }
+  if (!res.ok) {
     notFound();
   }
 
-  // アクティブサブスクリプション
-  let activeSubscription = null;
-  try {
-    const { data: sub } = await supabase
-      .from('personal_subscriptions')
-      .select('plan_key, status, current_period_end')
-      .eq('user_id', id)
-      .in('status', ['active', 'trialing', 'paused', 'past_due', 'grace'])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    activeSubscription = sub;
-  } catch {
-    // テーブル未作成の場合
-  }
+  const json = (await res.json()) as UserDetailApiResponse;
+  const profile = json.data;
 
-  // 監査ログ (super_admin のみ)
-  let auditLogs: unknown[] = [];
-  if (actor.roles.includes('super_admin')) {
-    try {
-      const { data: logs } = await supabase
-        .from('admin_audit_logs')
-        .select('*')
-        .eq('target_id', id)
-        .order('created_at', { ascending: false })
-        .limit(20);
-      auditLogs = logs ?? [];
-    } catch {
-      // SELECT 権限なし
-    }
-  }
+  const activeSubscription = profile.active_subscription;
+  // 監査ログ (super_admin のみ: ban_history を使用)
+  const auditLogs: AuditLog[] = actor.roles.includes('super_admin')
+    ? (profile.ban_history as AuditLog[]) ?? []
+    : [];
 
-  // 凍結状態は frozen_at IS NOT NULL で判定 ('banned' ロールは使用禁止: cross/CLAUDE.md §B)
-  const isBanned = (profile as { frozen_at?: string | null }).frozen_at != null;
+  const isBanned = profile.is_banned;
   const isSuperAdmin = actor.roles.includes('super_admin');
   const isAdmin = actor.roles.includes('admin') || isSuperAdmin;
 
@@ -84,7 +92,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
           ユーザー管理
         </Link>
         {' / '}
-        <span className="text-gray-900">{profile.nickname ?? id.slice(0, 8)}</span>
+        <span className="text-gray-900">{profile.nickname ?? profile.id.slice(0, 8)}</span>
       </nav>
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">
@@ -103,7 +111,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
             <dt className="text-gray-500 mb-1">プラン</dt>
             <dd>
               <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
-                {profile.plan_key_cached ?? 'free'}
+                {profile.plan_key ?? 'free'}
               </span>
             </dd>
           </div>
@@ -128,14 +136,14 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
                   <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
                     凍結中
                   </span>
-                  {(profile as { frozen_at?: string | null }).frozen_at && (
+                  {profile.frozen_at && (
                     <span className="ml-2 text-xs text-gray-400">
-                      {new Date((profile as { frozen_at: string }).frozen_at).toLocaleString('ja-JP')} 〜
+                      {new Date(profile.frozen_at).toLocaleString('ja-JP')} 〜
                     </span>
                   )}
-                  {(profile as { frozen_reason?: string | null }).frozen_reason && (
+                  {profile.frozen_reason && (
                     <p className="mt-1 text-xs text-red-600">
-                      理由: {(profile as { frozen_reason: string }).frozen_reason}
+                      理由: {profile.frozen_reason}
                     </p>
                   )}
                 </div>
@@ -149,8 +157,8 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
           <div>
             <dt className="text-gray-500 mb-1">登録日</dt>
             <dd className="text-gray-900">
-              {profile.created_at
-                ? new Date(profile.created_at).toLocaleString('ja-JP')
+              {profile.registered_at
+                ? new Date(profile.registered_at).toLocaleString('ja-JP')
                 : '-'}
             </dd>
           </div>
@@ -198,17 +206,17 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
           <dl className="grid grid-cols-3 gap-4 text-sm">
             <div>
               <dt className="text-gray-500 mb-1">プラン</dt>
-              <dd className="font-mono">{(activeSubscription as { plan_key: string }).plan_key}</dd>
+              <dd className="font-mono">{activeSubscription.plan_key}</dd>
             </div>
             <div>
               <dt className="text-gray-500 mb-1">ステータス</dt>
-              <dd>{(activeSubscription as { status: string }).status}</dd>
+              <dd>{activeSubscription.status}</dd>
             </div>
             <div>
               <dt className="text-gray-500 mb-1">次回更新</dt>
               <dd>
-                {(activeSubscription as { current_period_end: string | null }).current_period_end
-                  ? new Date((activeSubscription as { current_period_end: string }).current_period_end).toLocaleDateString('ja-JP')
+                {activeSubscription.next_billing_at
+                  ? new Date(activeSubscription.next_billing_at).toLocaleDateString('ja-JP')
                   : '-'}
               </dd>
             </div>
@@ -221,7 +229,7 @@ export default async function AdminUserDetailPage({ params }: PageProps) {
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">監査ログ (直近 20 件)</h2>
           <div className="space-y-2 text-sm">
-            {(auditLogs as Array<{ id: string; action_type: string; created_at: string; severity: string; details: unknown }>).map((log) => (
+            {auditLogs.map((log) => (
               <div
                 key={log.id}
                 className="flex items-start gap-3 p-3 rounded-lg bg-gray-50"

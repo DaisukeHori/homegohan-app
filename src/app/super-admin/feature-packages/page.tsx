@@ -1,18 +1,60 @@
 /**
  * /super-admin/feature-packages — 機能パッケージ一覧
  * operator/01-data-model.md §3.3 準拠
+ *
+ * DB 直叩きを廃止し GET /api/super-admin/feature-packages 経由に統一。
  */
 
+export const dynamic = 'force-dynamic';
+
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { requireRole } from '@/lib/auth/helpers';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { adminFetch } from '@/lib/admin/fetch';
+
+interface FeaturePackage {
+  id: string;
+  package_key: string;
+  display_name: string;
+  description: string | null;
+  feature_flags: string[] | null;
+  status: string;
+  display_order: number;
+}
+
+interface FeaturePackagesApiResponse {
+  data: FeaturePackage[];
+  meta: { total: number; page: number; per_page: number };
+}
 
 export default async function FeaturePackagesPage() {
-  const supabase = createClient();
+  try {
+    await requireRole(['super_admin']);
+  } catch (err) {
+    if (err instanceof AuthError || err instanceof ForbiddenError) {
+      redirect('/login');
+    }
+    throw err;
+  }
 
-  const { data: packages, error } = await supabase
-    .from('feature_packages')
-    .select('*')
-    .order('display_order', { ascending: true });
+  // GET /api/super-admin/feature-packages 経由でデータ取得
+  let packages: FeaturePackage[] = [];
+  let fetchError = false;
+
+  try {
+    const res = await adminFetch('/api/super-admin/feature-packages?per_page=100');
+    if (res.ok) {
+      const json = (await res.json()) as FeaturePackagesApiResponse;
+      packages = json.data ?? [];
+    } else {
+      fetchError = true;
+      console.error('[super-admin/feature-packages page] API error:', res.status);
+    }
+  } catch (err) {
+    fetchError = true;
+    console.error('[super-admin/feature-packages page] fetch failed:', err);
+  }
 
   return (
     <div>
@@ -30,14 +72,14 @@ export default async function FeaturePackagesPage() {
         </Link>
       </div>
 
-      {error && (
+      {fetchError && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
-          データの取得に失敗しました: {error.message}
+          データの取得に失敗しました
         </div>
       )}
 
       <div className="grid gap-4">
-        {(packages ?? []).map((pkg) => (
+        {packages.map((pkg) => (
           <div key={pkg.id} className="bg-white rounded-xl border border-slate-200 p-5">
             <div className="flex items-start justify-between">
               <div className="flex-1">
@@ -56,7 +98,7 @@ export default async function FeaturePackagesPage() {
                   <p className="text-sm text-slate-500 mb-3">{pkg.description}</p>
                 )}
                 <div className="flex flex-wrap gap-1.5">
-                  {((pkg.feature_flags as string[] | null) ?? []).map((flag: string) => (
+                  {(pkg.feature_flags ?? []).map((flag: string) => (
                     <span
                       key={flag}
                       className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded font-mono"
@@ -75,7 +117,7 @@ export default async function FeaturePackagesPage() {
             </div>
           </div>
         ))}
-        {(packages ?? []).length === 0 && (
+        {packages.length === 0 && !fetchError && (
           <div className="bg-white rounded-xl border border-slate-200 px-4 py-8 text-center text-slate-400">
             機能パッケージがありません
           </div>
