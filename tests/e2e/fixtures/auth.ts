@@ -2,15 +2,15 @@ import { test as base, expect, type Page, type BrowserContext } from "@playwrigh
 import * as fs from "fs";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
-import { REFRESH_TOKEN_PATH, refreshSupabaseSession } from "../global-setup";
+import {
+  refreshSupabaseSession,
+  getStorageStatePath,
+  getRefreshTokenPath,
+  getWorkerUserEmail,
+} from "../global-setup";
 
 // Worker プロセスでも .env.local が読み込まれるよう dotenv を再実行する
 dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
-
-export const E2E_USER = {
-  email: process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local",
-  password: process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!",
-};
 
 // ログインタイムアウト
 const LOGIN_TIMEOUT_MS = 90_000;
@@ -20,8 +20,57 @@ const RETRY_BASE_DELAY_MS = 2_000;
 // storageState が期限まで何秒未満なら expired と判定するバッファ
 const EXPIRY_BUFFER_SECONDS = 300; // 5 分
 
-/** globalSetup が保存した storageState ファイルのパス */
-const STORAGE_STATE_PATH = "tests/e2e/.auth/user.json";
+/** 分散対象ユーザー数 (global-setup と合わせる) */
+const MULTI_USER_COUNT = 4;
+
+/**
+ * worker インデックスに対応するユーザー認証情報を返す。
+ *
+ * - E2E_USER_EMAIL がマルチユーザーパターン外なら単一ユーザーモード
+ * - それ以外は workerIndex % 4 で e2e-user-01〜04 を割り当て
+ */
+export function getUserCredentials(workerIndex: number): { email: string; password: string } {
+  const envEmail = process.env.E2E_USER_EMAIL;
+  const password = process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
+  const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
+
+  if (!isMultiUserPattern) {
+    // backward compat: 単一ユーザーモード
+    return {
+      email: envEmail!,
+      password: process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!",
+    };
+  }
+
+  const email = getWorkerUserEmail(workerIndex);
+  return { email, password };
+}
+
+/**
+ * worker インデックスに対応する storageState ファイルパスを返す。
+ *
+ * 単一ユーザーモード (E2E_USER_EMAIL がパターン外) では従来パスを返す。
+ */
+function resolveStorageStatePath(workerIndex: number): string {
+  const envEmail = process.env.E2E_USER_EMAIL;
+  const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
+  if (!isMultiUserPattern) {
+    return "tests/e2e/.auth/user.json";
+  }
+  return getStorageStatePath(workerIndex);
+}
+
+/**
+ * worker インデックスに対応する refresh token ファイルパスを返す。
+ */
+function resolveRefreshTokenPath(workerIndex: number): string {
+  const envEmail = process.env.E2E_USER_EMAIL;
+  const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
+  if (!isMultiUserPattern) {
+    return "tests/e2e/.auth/refresh.json";
+  }
+  return getRefreshTokenPath(workerIndex);
+}
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,9 +80,9 @@ async function sleep(ms: number): Promise<void> {
  * storageState の access_token が期限切れ (または期限まで 5 分未満) かどうかを確認する。
  * Cookie の中の Supabase セッション JSON から expires_at を取得して判定する。
  */
-function isStorageStateExpired(): boolean {
+function isStorageStateExpired(storageStatePath: string): boolean {
   try {
-    const raw = fs.readFileSync(STORAGE_STATE_PATH, "utf-8");
+    const raw = fs.readFileSync(storageStatePath, "utf-8");
     const state = JSON.parse(raw) as {
       cookies?: Array<{ name: string; value: string; expires?: number }>;
       origins?: Array<{
@@ -106,14 +155,18 @@ function isStorageStateExpired(): boolean {
  * refresh_token を使ってセッションを更新し、Cookie として Playwright コンテキストに注入する。
  * password grant より rate limit が緩い。
  */
-async function refreshSessionViaCookie(page: Page, baseURL: string): Promise<boolean> {
+async function refreshSessionViaCookie(
+  page: Page,
+  baseURL: string,
+  refreshTokenPath: string,
+): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !anonKey) return false;
 
   try {
-    const raw = fs.readFileSync(REFRESH_TOKEN_PATH, "utf-8");
+    const raw = fs.readFileSync(refreshTokenPath, "utf-8");
     const { refresh_token } = JSON.parse(raw) as { refresh_token: string };
     if (!refresh_token) return false;
 
@@ -124,7 +177,7 @@ async function refreshSessionViaCookie(page: Page, baseURL: string): Promise<boo
     // 新しい refresh_token を保存
     if (session.refresh_token) {
       fs.writeFileSync(
-        REFRESH_TOKEN_PATH,
+        refreshTokenPath,
         JSON.stringify({
           refresh_token: session.refresh_token,
           expires_at: session.expires_at ?? (Math.floor(Date.now() / 1000) + 3600),
@@ -173,7 +226,12 @@ async function refreshSessionViaCookie(page: Page, baseURL: string): Promise<boo
  * Supabase REST API でセッションを取得し、Cookie として Playwright コンテキストに注入する。
  * @supabase/ssr は Cookie ベースの認証を使うため、localStorage 注入では機能しない。
  */
-async function injectSessionViaCookie(page: Page, baseURL: string): Promise<boolean> {
+async function injectSessionViaCookie(
+  page: Page,
+  baseURL: string,
+  email: string,
+  password: string,
+): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -189,7 +247,7 @@ async function injectSessionViaCookie(page: Page, baseURL: string): Promise<bool
         "Content-Type": "application/json",
         apikey: anonKey,
       },
-      body: JSON.stringify({ email: E2E_USER.email, password: E2E_USER.password }),
+      body: JSON.stringify({ email, password }),
     });
 
     if (!resp.ok) {
@@ -252,24 +310,28 @@ async function isAlreadyLoggedIn(page: Page, baseURL: string): Promise<boolean> 
   }
 }
 
-export async function login(page: Page, baseURL = ""): Promise<void> {
+export async function login(page: Page, baseURL = "", workerIndex = 0): Promise<void> {
+  const { email, password } = getUserCredentials(workerIndex);
+  const storageStatePath = resolveStorageStatePath(workerIndex);
+  const refreshTokenPath = resolveRefreshTokenPath(workerIndex);
+
   // 1. storageState の access_token が有効期限内かつ認証済みなら signin をスキップ
-  if (!isStorageStateExpired()) {
+  if (!isStorageStateExpired(storageStatePath)) {
     if (await isAlreadyLoggedIn(page, baseURL)) {
       return;
     }
   }
 
   // 2. storageState が期限切れ → refresh_token で再取得 (password grant より rate limit が緩い)
-  if (fs.existsSync(REFRESH_TOKEN_PATH)) {
-    const refreshOk = await refreshSessionViaCookie(page, baseURL);
+  if (fs.existsSync(refreshTokenPath)) {
+    const refreshOk = await refreshSessionViaCookie(page, baseURL, refreshTokenPath);
     if (refreshOk) {
       return;
     }
   }
 
   // 3. refresh_token も使えない場合は password grant で直接 signin
-  const cookieLoginOk = await injectSessionViaCookie(page, baseURL);
+  const cookieLoginOk = await injectSessionViaCookie(page, baseURL, email, password);
   if (cookieLoginOk) {
     return;
   }
@@ -295,8 +357,8 @@ export async function login(page: Page, baseURL = ""): Promise<void> {
         { timeout: 20_000 },
       ).catch(async () => { await new Promise((r) => setTimeout(r, 1000)); });
 
-      await page.locator("#email").fill(E2E_USER.email);
-      await page.locator("#password").fill(E2E_USER.password);
+      await page.locator("#email").fill(email);
+      await page.locator("#password").fill(password);
 
       const navigationPromise = page.waitForURL(
         (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
@@ -336,8 +398,10 @@ export async function login(page: Page, baseURL = ""): Promise<void> {
 export async function newAuthedContext(
   browser: import("@playwright/test").Browser,
   extraOptions: Parameters<import("@playwright/test").Browser["newContext"]>[0] = {},
+  workerIndex = 0,
 ): Promise<BrowserContext> {
-  const storagePath = fs.existsSync(STORAGE_STATE_PATH) ? STORAGE_STATE_PATH : undefined;
+  const storageStatePath = resolveStorageStatePath(workerIndex);
+  const storagePath = fs.existsSync(storageStatePath) ? storageStatePath : undefined;
   return browser.newContext({
     storageState: storagePath,
     ...extraOptions,
@@ -350,9 +414,23 @@ type AuthFixtures = {
 
 export const test = base.extend<AuthFixtures>({
   authedPage: async ({ page, baseURL }, use) => {
-    await login(page, baseURL ?? "");
+    const workerIndex = test.info().workerIndex;
+    await login(page, baseURL ?? "", workerIndex);
     await use(page);
   },
 });
 
 export { expect };
+
+// backward compat: 既存コードが REFRESH_TOKEN_PATH / E2E_USER をインポートしている場合の互換
+export { MULTI_USER_COUNT };
+
+/** @deprecated workerIndex を受け取る getUserCredentials() を使うこと */
+export const E2E_USER = {
+  get email() {
+    return process.env.E2E_USER_EMAIL ?? "e2e-user-01@homegohan.test";
+  },
+  get password() {
+    return process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
+  },
+};
