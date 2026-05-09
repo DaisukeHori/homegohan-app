@@ -724,7 +724,7 @@ test.describe("G: モーダルを X ボタンで閉じる", () => {
     // X ボタンをクリック (モーダル内の X ボタン)
     // AddMealModal の X ボタンは button > X アイコン または aria-label で見つかる
     // モーダル内の最後の X ボタン（lucide x アイコン）を使う
-    const closeBtn = page.locator('button:has(svg[data-lucide="x"])').last();
+    const closeBtn = page.locator('button:has(svg.lucide-x)').last();
     const hasCloseBtn = await closeBtn
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)
@@ -783,7 +783,7 @@ test.describe("G: モーダルを X ボタンで閉じる", () => {
     await page.waitForTimeout(1_000);
 
     // X ボタンで閉じる
-    const closeBtn = page.locator('button:has(svg[data-lucide="x"])').last();
+    const closeBtn = page.locator('button:has(svg.lucide-x)').last();
     const hasCloseBtn = await closeBtn
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)
@@ -858,7 +858,7 @@ test.describe("H: addMealSlot 経由のフロー", () => {
     ).toBeVisible({ timeout: 5_000 });
 
     // Step 5: X ボタンで閉じる
-    const closeBtn = page.locator('button:has(svg[data-lucide="x"])').last();
+    const closeBtn = page.locator('button:has(svg.lucide-x)').last();
     const hasCloseBtn = await closeBtn
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)
@@ -891,7 +891,7 @@ test.describe("H: addMealSlot 経由のフロー", () => {
     await page.getByText("食事を追加").waitFor({ state: "visible", timeout: 5_000 }).catch(() => {});
 
     // addMealSlot モーダル内の X ボタン
-    const closeBtn = page.locator('button:has(svg[data-lucide="x"])').last();
+    const closeBtn = page.locator('button:has(svg.lucide-x)').last();
     const hasCloseBtn = await closeBtn
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)

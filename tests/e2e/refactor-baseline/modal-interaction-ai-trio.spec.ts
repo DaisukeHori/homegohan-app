@@ -319,8 +319,8 @@ test.describe("AiMealModal — AI 単発生成", () => {
     await page.waitForTimeout(300);
 
     // 選択状態 (Check アイコンが表示される) を確認
-    // 各条件ボタン内に svg[data-lucide="check"] が現れる
-    const checkedItems = page.locator('[data-testid^="weekly-condition-"] svg[data-lucide="check"]');
+    // 各条件ボタン内に svg.lucide-check が現れる
+    const checkedItems = page.locator('[data-testid^="weekly-condition-"] svg.lucide-check');
     const checkedCount = await checkedItems.count();
     expect(checkedCount).toBeGreaterThanOrEqual(2);
   });
@@ -348,7 +348,7 @@ test.describe("AiMealModal — AI 単発生成", () => {
     // AiMealModal の close ボタンは header 右端の w-7 h-7 ボタン
     const closeBtn = page
       .locator("button")
-      .filter({ has: page.locator('svg[data-lucide="x"]') })
+      .filter({ has: page.locator('svg.lucide-x') })
       .first();
     await closeBtn.waitFor({ state: "visible", timeout: 5_000 });
     await closeBtn.click();
@@ -541,7 +541,7 @@ test.describe("RegenerateMealModal — 再生成", () => {
     // X ボタンでキャンセル
     const closeBtn = page
       .locator("button")
-      .filter({ has: page.locator('svg[data-lucide="x"]') })
+      .filter({ has: page.locator('svg.lucide-x') })
       .first();
     await closeBtn.waitFor({ state: "visible", timeout: 5_000 });
     await closeBtn.click();
@@ -709,7 +709,7 @@ test.describe("ImproveMealModal — 改善提案", () => {
     // 選択状態: ring-2 クラスが付くか、Check アイコンが現れる
     const isSelected =
       (await breakfastBtn.evaluate((el) => el.className.includes("ring-2"))) ||
-      (await breakfastBtn.locator('svg[data-lucide="check"]').isVisible().catch(() => false));
+      (await breakfastBtn.locator('svg.lucide-check').isVisible().catch(() => false));
 
     expect(isSelected).toBe(true);
   });
