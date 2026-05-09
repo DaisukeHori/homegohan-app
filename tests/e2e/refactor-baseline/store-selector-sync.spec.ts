@@ -62,7 +62,7 @@ test.describe("scenario-1: formDraft sync (AddFridgeModal 入力値保持)", () 
     const closeBtn = page.locator('button').filter({ hasText: /^$/ }).filter({ has: page.locator('svg') }).last();
     // X ボタンを aria-label や class で特定できない場合は汎用的に最後の X ボタンを使う
     // AddFridgeModal の X は style={{ background: colors.bg }} のボタン
-    const xBtns = page.locator('button:has(svg[data-lucide="x"])');
+    const xBtns = page.locator('button:has(svg.lucide-x)');
     const xCount = await xBtns.count();
     if (xCount > 0) {
       await xBtns.last().click();
@@ -141,7 +141,7 @@ test.describe("scenario-2: manualEdit dish list sync", () => {
     const initialCount = await dishInputs.count().catch(() => 0);
 
     // モーダルを閉じる (X ボタン)
-    const xBtns = page.locator('button:has(svg[data-lucide="x"])');
+    const xBtns = page.locator('button:has(svg.lucide-x)');
     const xCount = await xBtns.count();
     if (xCount > 0) {
       await xBtns.last().click();
@@ -229,7 +229,7 @@ test.describe("scenario-3: shoppingRange step 切替", () => {
     }
 
     // モーダルを閉じる
-    const xBtns = page.locator('button:has(svg[data-lucide="x"])');
+    const xBtns = page.locator('button:has(svg.lucide-x)');
     const xCount = await xBtns.count();
     if (xCount > 0) {
       await xBtns.last().click();
@@ -342,7 +342,7 @@ test.describe("scenario-4: pantry store reflect", () => {
       : null;
 
     // FridgeModal を閉じる
-    const xBtns = page.locator('button:has(svg[data-lucide="x"])');
+    const xBtns = page.locator('button:has(svg.lucide-x)');
     const xCount = await xBtns.count();
     if (xCount > 0) {
       await xBtns.last().click();
@@ -451,7 +451,7 @@ test.describe("scenario-5: servingsConfig reflect (ServingsModal)", () => {
       await saveBtn.click();
     } else {
       // X ボタンで閉じる
-      const xBtns = page.locator('button:has(svg[data-lucide="x"])');
+      const xBtns = page.locator('button:has(svg.lucide-x)');
       const xCount = await xBtns.count();
       if (xCount > 0) {
         await xBtns.first().click();
@@ -536,7 +536,7 @@ test.describe("scenario-6: catalogQuery persist (AddMealModal)", () => {
     await expect(catalogInput).toHaveValue(testQuery);
 
     // モーダルを閉じる (X ボタン)
-    const xBtns = page.locator('button:has(svg[data-lucide="x"])');
+    const xBtns = page.locator('button:has(svg.lucide-x)');
     const xCount = await xBtns.count();
     if (xCount > 0) {
       await xBtns.last().click();

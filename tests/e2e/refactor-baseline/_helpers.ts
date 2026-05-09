@@ -72,7 +72,7 @@ export async function openFridgeModal(page: Page): Promise<void> {
 /** モーダルを閉じる (X ボタンを押す) */
 export async function closeModalByX(page: Page): Promise<void> {
   // 最前面のモーダル内の X ボタン (X アイコン内の button)
-  const closeBtn = page.locator('button:has(svg[data-lucide="x"])').last();
+  const closeBtn = page.locator('button:has(svg.lucide-x)').last();
   await closeBtn.waitFor({ state: "visible", timeout: 5_000 });
   await closeBtn.click();
 }
