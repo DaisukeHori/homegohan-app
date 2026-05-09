@@ -8,11 +8,11 @@
  * 2. 取得したセッションを Cookie として Playwright コンテキストに直接設定
  *    (@supabase/ssr は localStorage でなく Cookie を使うため)
  * 3. /home に遷移して認証済み状態を確認
- * 4. storageState を保存
- * 5. refresh_token を別ファイルに保存 (auth fixture での再認証に利用)
+ * 4. storageState を atomic write (tmp + rename) で保存
+ * 5. refresh_token を別ファイルに atomic write で保存 (auth fixture での再認証に利用)
  *
  * workers=4 対応:
- * - e2e-user-01〜04 の 4 ユーザーそれぞれで storageState を並列生成
+ * - e2e-user-01〜04 の 4 ユーザーを 1 秒間隔で順次セットアップ (rate limit 回避)
  * - 各 worker は test.workerIndex に応じてユーザーを切り替え (auth fixture 側)
  * - backward compat: E2E_USER_EMAIL が設定済みかつパターン外なら単一ユーザーモード
  *
@@ -52,6 +52,22 @@ export function getRefreshTokenPath(workerIndex: number): string {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * JSON ファイルを atomic write (tmp + rename) で保存する。
+ * 並列 worker が同じファイルを同時更新しても中途半端なファイルが残らない。
+ */
+function atomicWriteJson(filePath: string, data: unknown): void {
+  const dir = path.dirname(filePath);
+  const tmpPath = path.join(dir, `${path.basename(filePath)}.tmp.${process.pid}`);
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(data), "utf-8");
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    throw err;
+  }
 }
 
 /**
@@ -176,15 +192,11 @@ async function setupUserSession(
           console.log(`[global-setup] Cookie セッション設定完了: ${cookieName} @ ${domain} (${email})`);
 
           if (session.refresh_token) {
-            fs.writeFileSync(
-              refreshTokenPath,
-              JSON.stringify({
-                refresh_token: session.refresh_token,
-                expires_at: session.expires_at ?? (Math.floor(Date.now() / 1000) + 3600),
-                saved_at: Math.floor(Date.now() / 1000),
-              }),
-              "utf-8",
-            );
+            atomicWriteJson(refreshTokenPath, {
+              refresh_token: session.refresh_token,
+              expires_at: session.expires_at ?? (Math.floor(Date.now() / 1000) + 3600),
+              saved_at: Math.floor(Date.now() / 1000),
+            });
             console.log(`[global-setup] refresh_token saved to ${refreshTokenPath}`);
           }
 
@@ -236,7 +248,10 @@ async function setupUserSession(
         }
       }
 
-      await context.storageState({ path: storageStatePath });
+      // storageState を atomic write (tmp path -> rename) で保存
+      const storageStateTmpPath = `${storageStatePath}.tmp.${process.pid}`;
+      await context.storageState({ path: storageStateTmpPath });
+      fs.renameSync(storageStateTmpPath, storageStatePath);
       console.log(`[global-setup] storageState saved to ${storageStatePath} (${email}, attempt ${attempt})`);
       await context.close();
       await browser.close();
@@ -296,10 +311,9 @@ async function globalSetup(config: FullConfig): Promise<void> {
     return;
   }
 
-  // マルチユーザーモード: e2e-user-01〜04 を並列でセットアップ
-  console.log(`[global-setup] マルチユーザーモード: ${MULTI_USER_COUNT} ユーザーを並列セットアップ`);
+  // マルチユーザーモード: e2e-user-01〜04 を 1 秒間隔で順次セットアップ (rate limit 回避)
+  console.log(`[global-setup] マルチユーザーモード: ${MULTI_USER_COUNT} ユーザーを順次セットアップ (1 秒間隔)`);
 
-  const tasks: Promise<void>[] = [];
   for (let i = 0; i < MULTI_USER_COUNT; i++) {
     const idx = i + 1;
     const padded = String(idx).padStart(2, "0");
@@ -318,20 +332,22 @@ async function globalSetup(config: FullConfig): Promise<void> {
         : "fallback";
     console.log(`[global-setup] user-${padded}: password 由来 = ${passwordSource}`);
 
-    tasks.push(
-      setupUserSession(
-        baseURL,
-        userEmail,
-        userPassword,
-        supabaseUrl,
-        supabaseAnonKey,
-        storageStatePath,
-        refreshTokenPath,
-      ),
+    await setupUserSession(
+      baseURL,
+      userEmail,
+      userPassword,
+      supabaseUrl,
+      supabaseAnonKey,
+      storageStatePath,
+      refreshTokenPath,
     );
-  }
 
-  await Promise.all(tasks);
+    // 最後のユーザー以外は 1 秒待機して rate limit を回避
+    if (i < MULTI_USER_COUNT - 1) {
+      console.log(`[global-setup] 次のユーザーまで 1 秒待機...`);
+      await sleep(1_000);
+    }
+  }
 
   // backward compat: user.json / refresh.json を user-01 のシンボリックリンクとして作成
   const legacyStoragePath = "tests/e2e/.auth/user.json";
