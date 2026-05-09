@@ -31,7 +31,6 @@ const MULTI_USER_COUNT = 4;
  */
 export function getUserCredentials(workerIndex: number): { email: string; password: string } {
   const envEmail = process.env.E2E_USER_EMAIL;
-  const password = process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
   const isMultiUserPattern = !envEmail || /^e2e-user-\d+@homegohan\.test$/.test(envEmail);
 
   if (!isMultiUserPattern) {
@@ -42,6 +41,12 @@ export function getUserCredentials(workerIndex: number): { email: string; passwo
     };
   }
 
+  const idx = (workerIndex % 4) + 1;
+  const padded = String(idx).padStart(2, "0");
+  const password =
+    process.env[`E2E_USER_${padded}_PASSWORD`] ??
+    process.env.E2E_USER_PASSWORD ??
+    "TestE2E2026!secure";
   const email = getWorkerUserEmail(workerIndex);
   return { email, password };
 }
