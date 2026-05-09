@@ -51,11 +51,8 @@ test("user-scoped localStorage keys are cleared after sign-out", async ({ authed
   await authedPage.goto("/settings");
   await authedPage.waitForLoadState("networkidle");
 
-  // ログアウトボタンを探す (テキストで検索)
-  const logoutButton = authedPage
-    .getByRole("button", { name: /ログアウト/ })
-    .or(authedPage.locator('button').filter({ hasText: /ログアウト/ }))
-    .first();
+  // ログアウトボタンを data-testid で取得
+  const logoutButton = authedPage.getByTestId("logout-button");
 
   const logoutVisible = await logoutButton.isVisible().catch(() => false);
 
@@ -78,15 +75,12 @@ test("user-scoped localStorage keys are cleared after sign-out", async ({ authed
     return;
   }
 
-  // ログアウトボタンをクリック
-  // /settings のログアウトボタンは確認モーダル (React) を開く。
-  // ネイティブ dialog ではないので、モーダル内の「ログアウト」ボタンを改めてクリックする。
+  // ログアウトボタンをクリック (確認モーダルが開く)
   authedPage.on("dialog", (dialog) => dialog.accept()); // ネイティブ dialog 対応（念のため）
   await logoutButton.click();
 
-  // 確認モーダルが開いた場合は、モーダル内の「ログアウト」ボタンをクリックする
-  // モーダル内のボタンはテキストが「ログアウト」の2番目のボタン (最初は開くボタン自体)
-  const confirmButton = authedPage.locator('button').filter({ hasText: /^ログアウト$/ }).last();
+  // 確認モーダル内の「ログアウト」ボタンを data-testid で取得してクリック
+  const confirmButton = authedPage.getByTestId("logout-confirm-button");
   const confirmVisible = await confirmButton.isVisible({ timeout: 3_000 }).catch(() => false);
   if (confirmVisible) {
     await confirmButton.click();
@@ -120,12 +114,12 @@ test("v4_include_existing is not written to localStorage (no persistence)", asyn
   // null または "false" であること
   expect(initial).not.toBe("true");
 
-  // AI アシスタントを開いて「期間を指定」モードに進む
-  const aiBubble = authedPage.locator('button:has(svg.lucide-sparkles)').first();
+  // AI アシスタントバナーボタンを data-testid で取得して開く
+  const aiBubble = authedPage.getByTestId("ai-assistant-banner-button");
   const bubbleVisible = await aiBubble.isVisible().catch(() => false);
   if (!bubbleVisible) {
-    // AI ボタンが見つからなければスキップ
-    console.warn("AI bubble not found, skipping localStorage write check");
+    // AI ボタンが見つからなければ silent pass を避けるため skip
+    test.skip(true, "AI assistant banner button not found on /menus/weekly – test skipped");
     return;
   }
 
@@ -133,7 +127,7 @@ test("v4_include_existing is not written to localStorage (no persistence)", asyn
   const rangeButton = authedPage.getByRole("button", { name: /期間を指定/ });
   const rangeVisible = await rangeButton.isVisible({ timeout: 8_000 }).catch(() => false);
   if (!rangeVisible) {
-    console.warn("Range button not found, skipping");
+    test.skip(true, "Range button not found in V4GenerateModal – test skipped");
     return;
   }
   await rangeButton.click();

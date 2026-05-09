@@ -5294,6 +5294,7 @@ export default function WeeklyMenuPage() {
         />
       ) : (
         <button
+          data-testid="ai-assistant-banner-button"
           onClick={() => setShowV4Modal(true)}
           className="mx-3 mt-2 px-3.5 py-2.5 rounded-xl flex items-center justify-between"
           style={{ background: colors.accent }}
