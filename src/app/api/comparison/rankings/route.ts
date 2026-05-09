@@ -10,11 +10,11 @@ import type {
 } from '@/types/comparison';
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
   const { searchParams } = new URL(request.url);
   const periodType = searchParams.get('periodType') || 'weekly';
 
   try {
+    const supabase = await createClient();
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
