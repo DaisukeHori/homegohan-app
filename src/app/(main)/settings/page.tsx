@@ -472,6 +472,7 @@ export default function SettingsPage() {
         <div>
           <Button
             variant="outline"
+            data-testid="logout-button"
             onClick={() => setShowLogoutModal(true)}
             className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
           >
@@ -534,6 +535,7 @@ export default function SettingsPage() {
               </p>
               <div className="flex flex-col gap-3">
                 <button
+                  data-testid="logout-confirm-button"
                   onClick={handleLogout}
                   className="w-full py-3 rounded-full bg-[#333] text-white font-bold hover:bg-black transition-colors shadow-lg"
                 >
