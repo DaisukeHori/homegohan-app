@@ -89,8 +89,7 @@ test.describe("AddFridgeModal インタラクション", () => {
     const addFridgeHeader = page.getByText("食材を追加").first();
     await addFridgeHeader.waitFor({ state: "visible", timeout: 5_000 });
 
-    // addFridge モーダルコンテナ内の X ボタンを探す
-    // fixed bottom-20 に位置する div の内部 button (lucide-x アイコン)
+    // addFridge モーダルコンテナ内の X ボタンを探す (lucide-x クラスで特定)
     const cancelBtn = page.locator('button:has(svg.lucide-x)').last();
     await cancelBtn.click();
 
@@ -433,7 +432,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
 
     if (!isMealSlotModal) return;
 
-    // X ボタンをクリック
+    // X ボタンをクリック (lucide-x クラスで特定)
     const closeBtn = page.locator('button:has(svg.lucide-x)').last();
     await closeBtn.click();
 

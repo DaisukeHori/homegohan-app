@@ -367,8 +367,7 @@ test.describe("ShoppingModal", () => {
       await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
     }
 
-    // より確実な方法: 各アイテム行内の最初のボタン (チェックボタン) を取得
-    // shopping item rows have class rounded-[10px] mb-1.5
+    // より確実な方法: shopping アイテム行 (rounded-[10px] mb-1.5) 内の最初のボタン (チェックボタン) を取得
     const itemRows = page.locator('div.rounded-\\[10px\\].mb-1\\.5');
     const firstRow = itemRows.first();
     const firstCheckBtn = firstRow.locator('button').first();

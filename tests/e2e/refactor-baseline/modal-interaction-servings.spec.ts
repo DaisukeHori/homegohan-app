@@ -423,7 +423,7 @@ test.describe("scenario-7: キャンセルでモーダルが閉じる", () => {
     }
 
     // X ボタン (aria-label なし、button > X lucide icon)
-    // ServingsModal の X ボタンは button > svg[data-lucide="x"] の親
+    // ServingsModal の X ボタンは button > svg.lucide-x の親
     const closeBtn = page
       .locator("button")
       .filter({ has: page.locator('svg.lucide-x') })
