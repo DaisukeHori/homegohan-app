@@ -8,6 +8,12 @@ export async function GET(
 ) {
   const supabase = await createClient();
 
+  // 未認証は 401
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const { data, error } = await supabase
     .from('recipe_comments')
     .select(`

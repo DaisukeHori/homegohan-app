@@ -19,9 +19,20 @@ const MAX_UI_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 2_000;
 // storageState が期限まで何秒未満なら expired と判定するバッファ
 const EXPIRY_BUFFER_SECONDS = 300; // 5 分
+// storageState が期限まで何秒未満なら先回り refresh するしきい値
+const PRE_REFRESH_BUFFER_SECONDS = 600; // 10 分
+// password grant の retry 設定
+const PASSWORD_GRANT_MAX_RETRIES = 3;
+const PASSWORD_GRANT_BASE_DELAY_MS = 2_000;
 
 /** 分散対象ユーザー数 (global-setup と合わせる) */
 const MULTI_USER_COUNT = 4;
+
+/**
+ * worker インデックスごとのログイン中 Promise キャッシュ。
+ * 同一 worker 内で複数テストが同時に auth fixture を呼んでも 1 回しか signin しない。
+ */
+const workerLoginPromises = new Map<number, Promise<void>>();
 
 /**
  * worker インデックスに対応するユーザー認証情報を返す。
@@ -82,10 +93,28 @@ async function sleep(ms: number): Promise<void> {
 }
 
 /**
- * storageState の access_token が期限切れ (または期限まで 5 分未満) かどうかを確認する。
- * Cookie の中の Supabase セッション JSON から expires_at を取得して判定する。
+ * JSON ファイルを atomic write (tmp + rename) で保存する。
+ * 並列 worker が同じファイルを同時更新しても中途半端なファイルが残らない。
  */
-function isStorageStateExpired(storageStatePath: string): boolean {
+function atomicWriteJson(filePath: string, data: unknown): void {
+  const dir = path.dirname(filePath);
+  const tmpPath = path.join(dir, `${path.basename(filePath)}.tmp.${process.pid}`);
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(data), "utf-8");
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    // tmpPath が残っている場合は削除を試みる
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    throw err;
+  }
+}
+
+/**
+ * storageState の access_token が期限切れ (または期限まで指定秒数未満) かどうかを確認する。
+ * Cookie の中の Supabase セッション JSON から expires_at を取得して判定する。
+ * bufferSeconds を変えることで「expired 判定」と「先回り refresh 判定」の両方に使う。
+ */
+function isStorageStateExpired(storageStatePath: string, bufferSeconds = EXPIRY_BUFFER_SECONDS): boolean {
   try {
     const raw = fs.readFileSync(storageStatePath, "utf-8");
     const state = JSON.parse(raw) as {
@@ -106,8 +135,8 @@ function isStorageStateExpired(storageStatePath: string): boolean {
             const session = JSON.parse(decoded) as { expires_at?: number };
             if (session.expires_at) {
               const remaining = session.expires_at - nowSec;
-              if (remaining < EXPIRY_BUFFER_SECONDS) {
-                console.log(`[auth fixture] storageState Cookie セッション期限切れ (残り ${remaining}秒)`);
+              if (remaining < bufferSeconds) {
+                console.log(`[auth fixture] storageState Cookie セッション期限切れ (残り ${remaining}秒, buffer ${bufferSeconds}秒)`);
                 return true;
               }
               return false;
@@ -117,7 +146,7 @@ function isStorageStateExpired(storageStatePath: string): boolean {
             return true;
           }
           // Cookie 自体の expires を確認
-          if (cookie.expires && cookie.expires - nowSec < EXPIRY_BUFFER_SECONDS) {
+          if (cookie.expires && cookie.expires - nowSec < bufferSeconds) {
             console.log(`[auth fixture] storageState Cookie expires 期限切れ`);
             return true;
           }
@@ -134,8 +163,8 @@ function isStorageStateExpired(storageStatePath: string): boolean {
               const session = JSON.parse(item.value) as { expires_at?: number };
               if (session.expires_at) {
                 const remaining = session.expires_at - nowSec;
-                if (remaining < EXPIRY_BUFFER_SECONDS) {
-                  console.log(`[auth fixture] storageState localStorage セッション期限切れ (残り ${remaining}秒)`);
+                if (remaining < bufferSeconds) {
+                  console.log(`[auth fixture] storageState localStorage セッション期限切れ (残り ${remaining}秒, buffer ${bufferSeconds}秒)`);
                   return true;
                 }
                 return false;
@@ -179,17 +208,13 @@ async function refreshSessionViaCookie(
     const session = await refreshSupabaseSession(supabaseUrl, anonKey, refresh_token);
     if (!session) return false;
 
-    // 新しい refresh_token を保存
+    // 新しい refresh_token を atomic write で保存
     if (session.refresh_token) {
-      fs.writeFileSync(
-        refreshTokenPath,
-        JSON.stringify({
-          refresh_token: session.refresh_token,
-          expires_at: session.expires_at ?? (Math.floor(Date.now() / 1000) + 3600),
-          saved_at: Math.floor(Date.now() / 1000),
-        }),
-        "utf-8",
-      );
+      atomicWriteJson(refreshTokenPath, {
+        refresh_token: session.refresh_token,
+        expires_at: session.expires_at ?? (Math.floor(Date.now() / 1000) + 3600),
+        saved_at: Math.floor(Date.now() / 1000),
+      });
     }
 
     const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
@@ -229,6 +254,7 @@ async function refreshSessionViaCookie(
 
 /**
  * Supabase REST API でセッションを取得し、Cookie として Playwright コンテキストに注入する。
+ * 429 / 500 は exponential backoff + jitter で最大 PASSWORD_GRANT_MAX_RETRIES 回リトライする。
  * @supabase/ssr は Cookie ベースの認証を使うため、localStorage 注入では機能しない。
  */
 async function injectSessionViaCookie(
@@ -245,59 +271,86 @@ async function injectSessionViaCookie(
     return false;
   }
 
-  try {
-    const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: anonKey,
-      },
-      body: JSON.stringify({ email, password }),
-    });
+  let lastStatus = 0;
 
-    if (!resp.ok) {
-      console.warn(`[auth fixture] Supabase API login failed: ${resp.status}`);
-      return false;
+  for (let attempt = 1; attempt <= PASSWORD_GRANT_MAX_RETRIES; attempt++) {
+    try {
+      const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: anonKey,
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      lastStatus = resp.status;
+
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        console.warn(`[auth fixture] Supabase API login failed: ${resp.status} (attempt ${attempt}/${PASSWORD_GRANT_MAX_RETRIES}): ${body.substring(0, 200)}`);
+
+        // 429 (rate limit) または 5xx はリトライ対象
+        if ((resp.status === 429 || resp.status >= 500) && attempt < PASSWORD_GRANT_MAX_RETRIES) {
+          const baseDelay = PASSWORD_GRANT_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+          // jitter: baseDelay の ±25% をランダムに加算
+          const jitter = Math.floor(baseDelay * 0.25 * (Math.random() * 2 - 1));
+          const delay = Math.max(1000, baseDelay + jitter);
+          console.log(`[auth fixture] ${delay}ms 後にリトライ...`);
+          await sleep(delay);
+          continue;
+        }
+
+        return false;
+      }
+
+      const session = await resp.json() as Record<string, unknown>;
+      if (!session.access_token) return false;
+
+      // @supabase/ssr の Cookie 名は sb-{project-ref}-auth-token
+      const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+      const cookieName = `sb-${supabaseRef}-auth-token`;
+      const domain = baseURL ? new URL(baseURL).hostname : "localhost";
+      const isSecure = baseURL.startsWith("https");
+      const cookieValue = encodeURIComponent(JSON.stringify(session));
+      const expiresAt = (session.expires_at as number) ?? (Date.now() / 1000 + 3600);
+
+      // 古いセッション Cookie を消してから新しいものを設定
+      await page.context().clearCookies();
+      await page.context().addCookies([
+        {
+          name: cookieName,
+          value: cookieValue,
+          domain,
+          path: "/",
+          expires: expiresAt,
+          httpOnly: false,
+          secure: isSecure,
+          sameSite: "Lax",
+        },
+      ]);
+
+      // /home に遷移して認証済み状態を確認
+      const targetBase = baseURL || "";
+      await page.goto(`${targetBase}/home`);
+      await page.waitForURL(
+        (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
+        { timeout: 30_000 },
+      );
+      return true;
+    } catch (err) {
+      console.warn(`[auth fixture] injectSessionViaCookie error (attempt ${attempt}/${PASSWORD_GRANT_MAX_RETRIES}): ${err}`);
+      if (attempt < PASSWORD_GRANT_MAX_RETRIES) {
+        const baseDelay = PASSWORD_GRANT_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        const jitter = Math.floor(baseDelay * 0.25 * (Math.random() * 2 - 1));
+        const delay = Math.max(1000, baseDelay + jitter);
+        await sleep(delay);
+      }
     }
-
-    const session = await resp.json() as Record<string, unknown>;
-    if (!session.access_token) return false;
-
-    // @supabase/ssr の Cookie 名は sb-{project-ref}-auth-token
-    const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
-    const cookieName = `sb-${supabaseRef}-auth-token`;
-    const domain = baseURL ? new URL(baseURL).hostname : "localhost";
-    const isSecure = baseURL.startsWith("https");
-    const cookieValue = encodeURIComponent(JSON.stringify(session));
-    const expiresAt = (session.expires_at as number) ?? (Date.now() / 1000 + 3600);
-
-    // 古いセッション Cookie を消してから新しいものを設定
-    await page.context().clearCookies();
-    await page.context().addCookies([
-      {
-        name: cookieName,
-        value: cookieValue,
-        domain,
-        path: "/",
-        expires: expiresAt,
-        httpOnly: false,
-        secure: isSecure,
-        sameSite: "Lax",
-      },
-    ]);
-
-    // /home に遷移して認証済み状態を確認
-    const targetBase = baseURL || "";
-    await page.goto(`${targetBase}/home`);
-    await page.waitForURL(
-      (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-      { timeout: 30_000 },
-    );
-    return true;
-  } catch (err) {
-    console.warn(`[auth fixture] injectSessionViaCookie error: ${err}`);
-    return false;
   }
+
+  console.warn(`[auth fixture] injectSessionViaCookie: ${PASSWORD_GRANT_MAX_RETRIES} 回失敗 (last status: ${lastStatus})`);
+  return false;
 }
 
 /**
@@ -315,15 +368,30 @@ async function isAlreadyLoggedIn(page: Page, baseURL: string): Promise<boolean> 
   }
 }
 
-export async function login(page: Page, baseURL = "", workerIndex = 0): Promise<void> {
+/**
+ * 実際のログイン処理本体。worker ごとの mutex (Promise キャッシュ) の外から呼ばれる。
+ */
+async function doLogin(page: Page, baseURL: string, workerIndex: number): Promise<void> {
   const { email, password } = getUserCredentials(workerIndex);
   const storageStatePath = resolveStorageStatePath(workerIndex);
   const refreshTokenPath = resolveRefreshTokenPath(workerIndex);
 
-  // 1. storageState の access_token が有効期限内かつ認証済みなら signin をスキップ
-  if (!isStorageStateExpired(storageStatePath)) {
-    if (await isAlreadyLoggedIn(page, baseURL)) {
-      return;
+  // 1. storageState が存在し access_token が有効期限内 (5分超) かどうかを確認
+  const storageExpired = isStorageStateExpired(storageStatePath, EXPIRY_BUFFER_SECONDS);
+
+  if (!storageExpired) {
+    // 1a. 期限まで 10 分未満なら先回り refresh (access_token が切れる前に更新)
+    const needsPreRefresh = isStorageStateExpired(storageStatePath, PRE_REFRESH_BUFFER_SECONDS);
+    if (needsPreRefresh && fs.existsSync(refreshTokenPath)) {
+      console.log(`[auth fixture] worker${workerIndex}: 期限 10 分前のため先回り refresh 実行`);
+      const refreshOk = await refreshSessionViaCookie(page, baseURL, refreshTokenPath);
+      if (refreshOk) return;
+      // refresh 失敗なら通常の認証フローにフォールスルー
+    } else {
+      // 期限まで余裕あり → 既にログイン済みか確認してスキップ
+      if (await isAlreadyLoggedIn(page, baseURL)) {
+        return;
+      }
     }
   }
 
@@ -335,7 +403,7 @@ export async function login(page: Page, baseURL = "", workerIndex = 0): Promise<
     }
   }
 
-  // 3. refresh_token も使えない場合は password grant で直接 signin
+  // 3. refresh_token も使えない場合は password grant で直接 signin (retry+jitter 付き)
   const cookieLoginOk = await injectSessionViaCookie(page, baseURL, email, password);
   if (cookieLoginOk) {
     return;
@@ -395,6 +463,32 @@ export async function login(page: Page, baseURL = "", workerIndex = 0): Promise<
   }
 
   throw new Error(`[auth fixture] ログイン失敗: ${lastError}`);
+}
+
+/**
+ * worker ごとの mutex (in-memory Promise キャッシュ) 付きのログイン関数。
+ * 同一 worker 内で複数テストが同時に呼んでも 1 回しか signin しない。
+ */
+export async function login(page: Page, baseURL = "", workerIndex = 0): Promise<void> {
+  const existing = workerLoginPromises.get(workerIndex);
+  if (existing) {
+    // 既に進行中のログイン Promise を待つ
+    try {
+      await existing;
+      return;
+    } catch {
+      // 前回のログインが失敗していた場合は再試行
+      workerLoginPromises.delete(workerIndex);
+    }
+  }
+
+  const loginPromise = doLogin(page, baseURL, workerIndex).finally(() => {
+    // ログイン完了後はキャッシュをクリア (次のテストは再度チェックする)
+    workerLoginPromises.delete(workerIndex);
+  });
+
+  workerLoginPromises.set(workerIndex, loginPromise);
+  await loginPromise;
 }
 
 /**

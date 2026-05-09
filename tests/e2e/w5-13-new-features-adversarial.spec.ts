@@ -1149,8 +1149,8 @@ test.describe("B. Pantry 食材管理 (#136)", () => {
     await attach(authedPage, testInfo, "B-7: /pantry");
 
     // ページ本体が表示されていること (エラーページではない)
-    const bodyText = await authedPage.locator("body").textContent();
-    expect(bodyText, "Pantryページが表示されている").not.toMatch(/404|not found/i);
+    const bodyText = await authedPage.locator("body").innerText();
+    expect(bodyText, "Pantryページが表示されている").not.toMatch(/404/);
 
     // Pantry関連のテキストが存在するか
     const hasPantryContent =

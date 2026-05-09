@@ -529,7 +529,7 @@ test.describe("B. Pantry — 一覧表示と基本 CRUD", () => {
     }
 
     // 「食材管理」ヘッダーが存在すること
-    const header = authedPage.getByText("食材管理");
+    const header = authedPage.getByRole("heading", { name: "食材管理" });
     await expect(header).toBeVisible({ timeout: 10_000 });
   });
 
