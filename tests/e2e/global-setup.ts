@@ -9,6 +9,7 @@
  *    (@supabase/ssr は localStorage でなく Cookie を使うため)
  * 3. /home に遷移して認証済み状態を確認
  * 4. storageState を保存
+ * 5. refresh_token を別ファイルに保存 (auth fixture での再認証に利用)
  *
  * ログイン失敗時は警告を出力して続行する (各テストが個別ログインにフォールバック)。
  */
@@ -19,6 +20,8 @@ import * as path from "path";
 import { seedClassifyFixtures } from "./setup/seed-classify-fixtures";
 
 const STORAGE_STATE_PATH = "tests/e2e/.auth/user.json";
+/** refresh_token と expires_at を保存するファイル */
+export const REFRESH_TOKEN_PATH = "tests/e2e/.auth/refresh.json";
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 2_000;
 
@@ -57,6 +60,40 @@ async function fetchSupabaseSession(
     return data;
   } catch (err) {
     console.warn(`[global-setup] fetchSupabaseSession error: ${err}`);
+    return null;
+  }
+}
+
+/**
+ * refresh_token を使って新しいセッションを取得する (rate limit が password grant より緩い)。
+ */
+export async function refreshSupabaseSession(
+  supabaseUrl: string,
+  anonKey: string,
+  refreshToken: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: anonKey,
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      console.warn(`[global-setup] Supabase refresh API error ${resp.status}: ${body.substring(0, 200)}`);
+      return null;
+    }
+    const data = await resp.json() as Record<string, unknown>;
+    if (!data.access_token) {
+      console.warn(`[global-setup] Supabase refresh: no access_token in response`);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn(`[global-setup] refreshSupabaseSession error: ${err}`);
     return null;
   }
 }
@@ -129,6 +166,20 @@ async function globalSetup(config: FullConfig): Promise<void> {
           ]);
 
           console.log(`[global-setup] Cookie セッション設定完了: ${cookieName} @ ${domain}`);
+
+          // refresh_token を別ファイルに保存 (auth fixture が rate limit 回避に利用)
+          if (session.refresh_token) {
+            fs.writeFileSync(
+              REFRESH_TOKEN_PATH,
+              JSON.stringify({
+                refresh_token: session.refresh_token,
+                expires_at: session.expires_at ?? (Math.floor(Date.now() / 1000) + 3600),
+                saved_at: Math.floor(Date.now() / 1000),
+              }),
+              "utf-8",
+            );
+            console.log(`[global-setup] refresh_token saved to ${REFRESH_TOKEN_PATH}`);
+          }
 
           // 3. /home に遷移して認証済み状態を確認
           await page.goto(`${baseURL}/home`);
