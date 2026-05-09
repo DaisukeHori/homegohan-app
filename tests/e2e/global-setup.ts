@@ -297,20 +297,32 @@ async function globalSetup(config: FullConfig): Promise<void> {
   }
 
   // マルチユーザーモード: e2e-user-01〜04 を並列でセットアップ
-  const multiPassword = process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
   console.log(`[global-setup] マルチユーザーモード: ${MULTI_USER_COUNT} ユーザーを並列セットアップ`);
 
   const tasks: Promise<void>[] = [];
   for (let i = 0; i < MULTI_USER_COUNT; i++) {
     const idx = i + 1;
-    const userEmail = `e2e-user-0${idx}@homegohan.test`;
-    const storageStatePath = `tests/e2e/.auth/user-0${idx}.json`;
-    const refreshTokenPath = `tests/e2e/.auth/refresh-0${idx}.json`;
+    const padded = String(idx).padStart(2, "0");
+    const userEmail = `e2e-user-${padded}@homegohan.test`;
+    const storageStatePath = `tests/e2e/.auth/user-${padded}.json`;
+    const refreshTokenPath = `tests/e2e/.auth/refresh-${padded}.json`;
+
+    // パスワード優先順位: 個別環境変数 > 共通環境変数 > fallback
+    const perUserPassword = process.env[`E2E_USER_${padded}_PASSWORD`];
+    const commonPassword = process.env.E2E_USER_PASSWORD;
+    const userPassword = perUserPassword ?? commonPassword ?? "TestE2E2026!secure";
+    const passwordSource = perUserPassword
+      ? `個別 (E2E_USER_${padded}_PASSWORD)`
+      : commonPassword
+        ? "共通 (E2E_USER_PASSWORD)"
+        : "fallback";
+    console.log(`[global-setup] user-${padded}: password 由来 = ${passwordSource}`);
+
     tasks.push(
       setupUserSession(
         baseURL,
         userEmail,
-        multiPassword,
+        userPassword,
         supabaseUrl,
         supabaseAnonKey,
         storageStatePath,
