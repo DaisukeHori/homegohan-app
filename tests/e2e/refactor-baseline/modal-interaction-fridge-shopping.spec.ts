@@ -367,17 +367,8 @@ test.describe("ShoppingModal", () => {
       await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
     }
 
-    // 最初の未チェックアイテムのチェックボタンを取得
-    // チェックボタン: w-[22px] h-[22px] rounded-full の button
-    const checkButtons = page.locator('button.rounded-full').filter({ hasText: '' });
-    // チェックボタンは flex items-center justify-center の丸いボタン
-    // border が設定されているものが未チェック
-    const uncheckedBtn = page.locator('button').filter({
-      has: page.locator(':scope').filter({ hasText: '' })
-    }).first();
-
-    // より確実な方法: 各アイテム行内の最初のボタン (チェックボタン) を取得
-    const itemRows = page.locator('div.flex.items-center.gap-2\\.5');
+    // より確実な方法: shopping アイテム行 (rounded-[10px] mb-1.5) 内の最初のボタン (チェックボタン) を取得
+    const itemRows = page.locator('div.rounded-\\[10px\\].mb-1\\.5');
     const firstRow = itemRows.first();
     const firstCheckBtn = firstRow.locator('button').first();
 

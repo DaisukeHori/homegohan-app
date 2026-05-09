@@ -423,10 +423,10 @@ test.describe("scenario-7: キャンセルでモーダルが閉じる", () => {
     }
 
     // X ボタン (aria-label なし、button > X lucide icon)
-    // ServingsModal の X ボタンは button > svg[data-lucide="x"] の親
+    // ServingsModal の X ボタンは button > svg.lucide-x の親
     const closeBtn = page
       .locator("button")
-      .filter({ has: page.locator('svg[data-lucide="x"]') })
+      .filter({ has: page.locator('svg.lucide-x') })
       .last();
 
     await closeBtn.waitFor({ state: "visible", timeout: 5_000 });
@@ -469,7 +469,7 @@ test.describe("scenario-7: キャンセルでモーダルが閉じる", () => {
     // X ボタンで閉じる (保存しない)
     const closeBtn = page
       .locator("button")
-      .filter({ has: page.locator('svg[data-lucide="x"]') })
+      .filter({ has: page.locator('svg.lucide-x') })
       .last();
     await closeBtn.click();
 
