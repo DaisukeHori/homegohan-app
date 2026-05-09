@@ -1,7 +1,9 @@
 /**
- * POST /api/admin/finance/exports
- * CSV エクスポート生成
+ * GET  /api/admin/finance/exports — エクスポート一覧 (権限確認用)
+ * POST /api/admin/finance/exports — CSV エクスポート生成
  * 権限: admin, super_admin, finance
+ *
+ * E2E: w5-12-admin-adversarial F-24 (通常 user → 403)
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
@@ -10,6 +12,33 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 
 export const dynamic = 'force-dynamic';
+
+export async function GET(_request: NextRequest) {
+  try {
+    await requireRole(['admin', 'super_admin', 'finance']);
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(
+        { error: { code: 'UNAUTHENTICATED', message: '認証が必要です' } },
+        { status: 401 },
+      );
+    }
+    if (err instanceof ForbiddenError) {
+      return NextResponse.json(
+        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { status: 403 },
+      );
+    }
+    throw err;
+  }
+
+  // エクスポート種別の一覧を返す (POST で実際の生成を行う)
+  return NextResponse.json({
+    data: {
+      available_types: ['revenue', 'invoices', 'subscriptions', 'nps'],
+    },
+  });
+}
 
 /** 配列データを CSV 文字列に変換するシンプルなヘルパー */
 function toCsv(headers: string[], rows: Record<string, unknown>[]): string {
