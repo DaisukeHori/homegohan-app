@@ -71,7 +71,7 @@ export function FridgeModal({
           fridgeItems.sort((a, b) => (getDaysUntil(a.expirationDate) || 999) - (getDaysUntil(b.expirationDate) || 999)).map(item => {
             const daysLeft = getDaysUntil(item.expirationDate);
             return (
-              <div key={item.id} className="flex items-center justify-between px-3 py-2.5 rounded-[10px] mb-1.5" style={{
+              <div key={item.id} data-testid="fridge-item" className="flex items-center justify-between px-3 py-2.5 rounded-[10px] mb-1.5" style={{
                 background: daysLeft !== null && daysLeft <= 1 ? colors.dangerLight : daysLeft !== null && daysLeft <= 3 ? colors.warningLight : colors.bg
               }}>
                 <div className="flex items-center gap-2.5">

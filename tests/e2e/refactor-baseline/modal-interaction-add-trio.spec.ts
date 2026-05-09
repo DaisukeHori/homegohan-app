@@ -90,9 +90,8 @@ test.describe("AddFridgeModal インタラクション", () => {
     await addFridgeHeader.waitFor({ state: "visible", timeout: 5_000 });
 
     // addFridge モーダルコンテナ内の X ボタンを探す
-    // fixed bottom-20 に位置する div の内部 button (X アイコン)
-    // getByRole で最後の button を取ることで addFridge 内の閉じるボタンを狙う
-    const cancelBtn = page.locator('button').filter({ has: page.locator('svg') }).last();
+    // fixed bottom-20 に位置する div の内部 button (lucide-x アイコン)
+    const cancelBtn = page.locator('button:has(svg.lucide-x)').last();
     await cancelBtn.click();
 
     // addFridge モーダルのヘッダーが消えること
@@ -218,7 +217,7 @@ test.describe("AddShoppingModal インタラクション", () => {
     await page.getByPlaceholder(/品名（例/).fill("キャンセル確認品");
 
     // X ボタンをクリック (addShopping モーダルの閉じるボタン)
-    const closeBtn = page.locator("button").filter({ has: page.locator("svg") }).last();
+    const closeBtn = page.locator('button:has(svg.lucide-x)').last();
     await closeBtn.click();
 
     await expect(page.getByText("買い物リストに追加").first()).toBeHidden({ timeout: 5_000 });
@@ -435,7 +434,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     if (!isMealSlotModal) return;
 
     // X ボタンをクリック
-    const closeBtn = page.locator("button").filter({ has: page.locator("svg") }).last();
+    const closeBtn = page.locator('button:has(svg.lucide-x)').last();
     await closeBtn.click();
 
     // モーダルが閉じること (「食事を追加」テキストが消える)
