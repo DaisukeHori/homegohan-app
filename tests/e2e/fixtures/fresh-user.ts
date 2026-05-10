@@ -364,6 +364,16 @@ type FreshUserFixtures = {
    * family/01-invite-accept-share.spec.ts など org 招待 API テストで使用する。
    */
   operatorUser: RoleUserFixtureValue;
+
+  /**
+   * super_admin ロールを持つ fresh user。
+   * - createFreshUser + user_profiles に roles=['super_admin'] / onboarding 完了 を UPSERT
+   * - session inject 済み
+   * - afterAll で admin.deleteUser (cascade で user_profiles も削除)
+   *
+   * /super-admin/* エンドポイント / UI テスト、audit_log 閲覧テストで使用する。
+   */
+  superAdminUser: RoleUserFixtureValue;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -525,6 +535,48 @@ export const test = base.extend<FreshUserFixtures>({
       await upsertUserProfile(user.id, {
         nickname: "E2E Admin User",
         roles: ["admin"],
+      });
+
+      // session inject
+      await injectSession(page, user.email, user.password);
+
+      await use({
+        page,
+        userId: user.id,
+        email: user.email,
+        password: user.password,
+        organizationId: null,
+      });
+    } finally {
+      // admin.deleteUser で cascade 削除 (user_profiles も消える)
+      await cleanupFreshUser(supabaseAdmin, user.id);
+    }
+  },
+
+  /**
+   * superAdminUser: super_admin ロールを持つ fresh user。
+   *
+   * 1. admin.createUser (email_confirm: true) で即時ユーザー作成
+   * 2. user_profiles に roles=['super_admin'] / onboarding 完了 を UPSERT
+   *    (service_role REST API 経由 — RLS をバイパス)
+   * 3. session inject
+   * 4. afterAll: admin.deleteUser (cascade で user_profiles も削除)
+   *
+   * super_admin ロール判定: src/app/api/admin/users/[id]/role/route.ts が
+   * user_profiles.roles に 'super_admin' が含まれるかで確認する。
+   * /super-admin/* 系 API・UI アクセステストに適切。
+   */
+  superAdminUser: async ({ page }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, {
+      emailPrefix: "e2e-fresh-superadmin",
+    });
+
+    try {
+      // user_profiles: roles=['super_admin'] + onboarding 完了 で UPSERT
+      await upsertUserProfile(user.id, {
+        nickname: "E2E Super Admin User",
+        roles: ["super_admin"],
       });
 
       // session inject
