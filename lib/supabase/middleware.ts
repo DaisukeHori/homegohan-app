@@ -88,6 +88,7 @@ export async function updateSession(request: NextRequest) {
     '/signup',
     '/auth',
     '/onboarding/welcome',
+    '/invite',  // 招待受領ページ: signup 前でもアクセス可 (設計書 03-ui-spec.md §12.1)
     '/about',
     '/pricing',
     '/guide',
