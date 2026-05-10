@@ -23,7 +23,7 @@ export const OrgInviteSchema = z.object({
   status: OrgInviteStatusSchema,
   expires_at: z.string().datetime(),
   created_at: z.string().datetime(),
-  invited_by: z.string().uuid(),
+  invited_by: z.string().uuid().nullable(),
   accepted_at: z.string().datetime().nullable(),
   accepted_by: z.string().uuid().nullable(),
   rejected_at: z.string().datetime().nullable(),

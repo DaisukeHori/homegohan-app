@@ -105,11 +105,11 @@ export async function POST(
     );
   }
 
-  const result = data as { family_id: string; member_id: string; role: string };
+  const result = data as { id: string; family_id: string; role: string };
   return NextResponse.json({
     data: {
       family_id: result.family_id,
-      member_id: result.member_id,
+      member_id: result.id,  // RPC は family_members の id を返す (主キー名は id)
       role: result.role,
     },
   });
