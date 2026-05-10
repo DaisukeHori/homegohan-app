@@ -568,13 +568,13 @@ function OnboardingQuestionsContent() {
     } else {
       setIsCalculating(true);
 
+      // Fix 1: weight_change_rate を target_weight + target_date から自動算出
+      const computedAnswers = { ...newAnswers };
+
       // Fix 2: exercise_duration を削除しデフォルト値 60 を固定送信
       if (!computedAnswers.exercise_duration) {
         computedAnswers.exercise_duration = '60';
       }
-
-      // Fix 1: weight_change_rate を target_weight + target_date から自動算出
-      const computedAnswers = { ...newAnswers };
       if (
         (computedAnswers.nutrition_goal === 'lose_weight' || computedAnswers.nutrition_goal === 'gain_muscle') &&
         !computedAnswers.weight_change_rate
