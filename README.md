@@ -1,4 +1,4 @@
-# homegohan-app
+# ほめゴハン (homegohan-app)
 
 ほめゴハンの monorepo です。Web アプリ、Expo mobile アプリ、Supabase Edge Functions、共有パッケージを同じリポジトリで管理しています。
 
