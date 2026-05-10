@@ -227,17 +227,6 @@ const QUESTIONS: Question[] = [
     showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
   },
   {
-    id: "weight_change_rate",
-    text: "どのくらいのペースで変えたいですか？",
-    type: "choice",
-    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
-    options: [
-      { label: "🐢 ゆっくり（月1-2kg）", value: "slow", description: "無理なく長期的に" },
-      { label: "🚶 普通（月2-3kg）", value: "moderate", description: "バランス重視" },
-      { label: "🚀 積極的（月3kg以上）", value: "aggressive", description: "短期集中で" },
-    ],
-  },
-  {
     id: "exercise_types",
     text: "普段どんな運動をしていますか？（複数選択可）",
     type: "multi_choice",
@@ -559,7 +548,22 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.nutrition_goal) profile.nutritionGoal = ans.nutrition_goal;
   if (ans.target_weight) profile.targetWeight = parseFloat(ans.target_weight);
   if (ans.target_date) profile.targetDate = ans.target_date;
-  if (ans.weight_change_rate) profile.weightChangeRate = ans.weight_change_rate;
+  // weight_change_rate: target_weight + target_date から自動算出
+  if (ans.nutrition_goal === "lose_weight" || ans.nutrition_goal === "gain_muscle") {
+    const currentWeight = ans.weight ? parseFloat(ans.weight) : null;
+    const targetWeight = ans.target_weight ? parseFloat(ans.target_weight) : null;
+    if (currentWeight !== null && targetWeight !== null && ans.target_date) {
+      const monthsToTarget = (new Date(ans.target_date).getTime() - Date.now()) / (30 * 24 * 3600 * 1000);
+      if (monthsToTarget > 0) {
+        const kgPerMonth = Math.abs(currentWeight - targetWeight) / monthsToTarget;
+        profile.weightChangeRate = kgPerMonth < 1.5 ? "slow" : kgPerMonth < 2.5 ? "moderate" : "aggressive";
+      } else {
+        profile.weightChangeRate = "normal";
+      }
+    } else {
+      profile.weightChangeRate = "moderate";
+    }
+  }
   if (ans.exercise_types?.length && !ans.exercise_types.includes("none")) profile.exerciseTypes = ans.exercise_types;
   if (ans.exercise_frequency) profile.exerciseFrequency = parseInt(ans.exercise_frequency);
   if (ans.exercise_intensity) profile.exerciseIntensity = ans.exercise_intensity;
@@ -821,7 +825,22 @@ export default function OnboardingQuestions() {
       if (ans.nutrition_goal) updates.nutrition_goal = ans.nutrition_goal;
       if (ans.target_weight) updates.target_weight = parseFloat(ans.target_weight);
       if (ans.target_date) updates.target_date = ans.target_date;
-      if (ans.weight_change_rate) updates.weight_change_rate = ans.weight_change_rate;
+      // weight_change_rate: target_weight + target_date から自動算出
+      if (ans.nutrition_goal === "lose_weight" || ans.nutrition_goal === "gain_muscle") {
+        const currentWeight = ans.weight ? parseFloat(ans.weight) : null;
+        const targetWeight = ans.target_weight ? parseFloat(ans.target_weight) : null;
+        if (currentWeight !== null && targetWeight !== null && ans.target_date) {
+          const monthsToTarget = (new Date(ans.target_date).getTime() - Date.now()) / (30 * 24 * 3600 * 1000);
+          if (monthsToTarget > 0) {
+            const kgPerMonth = Math.abs(currentWeight - targetWeight) / monthsToTarget;
+            updates.weight_change_rate = kgPerMonth < 1.5 ? "slow" : kgPerMonth < 2.5 ? "moderate" : "aggressive";
+          } else {
+            updates.weight_change_rate = "moderate";
+          }
+        } else {
+          updates.weight_change_rate = "moderate";
+        }
+      }
       if (ans.exercise_types && !ans.exercise_types.includes("none")) {
         updates.exercise_types = ans.exercise_types;
       }
