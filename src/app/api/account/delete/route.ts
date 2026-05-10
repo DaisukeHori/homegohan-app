@@ -66,6 +66,9 @@ export async function POST(request: Request) {
     // CASCADEされない/NO ACTION な参照を先に解消
     await supabaseAdmin.from('ai_content_logs').delete().eq('user_id', userId);
 
+    // ★ Critical 4: family_invites.invited_by を NULL 化 (ON DELETE SET NULL 相当の事前処理)
+    await supabaseAdmin.from('family_invites').update({ invited_by: null }).eq('invited_by', userId);
+
     // 管理系の参照（通常ユーザーは対象外だが、消せない状態を防ぐためnull化）
     await supabaseAdmin.from('admin_audit_logs').update({ admin_id: null }).eq('admin_id', userId);
     await supabaseAdmin.from('admin_user_notes').update({ admin_id: null }).eq('admin_id', userId);
