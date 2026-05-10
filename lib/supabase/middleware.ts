@@ -96,6 +96,7 @@ export async function updateSession(request: NextRequest) {
     '/legal',
     '/company',
     '/news',
+    '/invite',  // 招待トークンページ (認証不要で内容確認できる必要がある)
   ]
   const isPublicPath = publicPaths.some(
     (path) =>
