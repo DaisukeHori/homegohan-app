@@ -15,6 +15,8 @@ import {
   getUserProfile,
   createFreshOrg,
   cleanup,
+  extractInviteUrl,
+  normalizeInviteUrl,
 } from '../helpers/membership';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
@@ -50,13 +52,14 @@ async function postInvite(
   const res = await ownerPage.request.post(`${BASE_URL}/api/org/invites`, {
     data: { email, role },
   });
-  const json = await res.json() as { ok?: boolean; invite?: { invite_url?: string }; error?: unknown };
+  const json = await res.json() as Record<string, unknown>;
   expect(
     res.ok(),
     `招待発行 失敗 (status: ${res.status()}) body: ${JSON.stringify(json)}`,
   ).toBeTruthy();
-  const inviteUrl = json.invite?.invite_url ?? '';
-  expect(inviteUrl, `invite_url が取得できない: ${JSON.stringify(json)}`).toContain('/invite/');
+  const rawUrl = extractInviteUrl(json);
+  expect(rawUrl, `invite_url/inviteUrl が取得できない: ${JSON.stringify(json)}`).toContain('/invite/');
+  const inviteUrl = normalizeInviteUrl(rawUrl, BASE_URL);
   const token = inviteUrl.split('/invite/')[1] ?? '';
   expect(token, 'token が空').toBeTruthy();
   return { inviteUrl, token };

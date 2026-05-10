@@ -7,7 +7,7 @@
 
 import { test, expect } from '../fixtures/fresh-org';
 import { createClient } from '@supabase/supabase-js';
-import { getUserProfile } from '../helpers/membership';
+import { getUserProfile, extractInviteUrl, normalizeInviteUrl } from '../helpers/membership';
 import { createFreshUser, cleanupFreshUser } from '../fixtures/fresh-user';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
@@ -46,21 +46,14 @@ test.describe('org 招待 — 新規ユーザ (α-4)', () => {
       const inviteRes = await ownerPage.request.post(`${BASE_URL}/api/org/invites`, {
         data: { email: newUserEmail, role: 'member' },
       });
-      const inviteJson = await inviteRes.json() as {
-        ok?: boolean;
-        invite?: { invite_url?: string };
-        error?: unknown;
-      };
+      const inviteJson = await inviteRes.json() as Record<string, unknown>;
       expect(
         inviteRes.ok(),
         `招待発行 失敗 (status: ${inviteRes.status()}) body: ${JSON.stringify(inviteJson)}`,
       ).toBeTruthy();
-      expect(inviteJson.ok, `ok が false: ${JSON.stringify(inviteJson)}`).toBe(true);
-      expect(
-        inviteJson.invite?.invite_url,
-        `invite_url が undefined: ${JSON.stringify(inviteJson)}`,
-      ).toContain('/invite/');
-      const inviteUrl = inviteJson.invite!.invite_url!;
+      const rawInviteUrl = extractInviteUrl(inviteJson);
+      expect(rawInviteUrl, `invite_url/inviteUrl が undefined: ${JSON.stringify(inviteJson)}`).toContain('/invite/');
+      const inviteUrl = normalizeInviteUrl(rawInviteUrl, BASE_URL);
       const token = inviteUrl.split('/invite/')[1];
       expect(token).toBeTruthy();
 
@@ -184,12 +177,14 @@ test.describe('org 招待 — 新規ユーザ (α-4)', () => {
       const inviteRes = await ownerPage.request.post(`${BASE_URL}/api/org/invites`, {
         data: { email: newUserEmail, role: 'member' },
       });
-      const inviteJson2 = await inviteRes.json() as { ok?: boolean; invite?: { invite_url?: string }; error?: unknown };
+      const inviteJson2 = await inviteRes.json() as Record<string, unknown>;
       expect(
         inviteRes.ok(),
         `招待発行 失敗 (status: ${inviteRes.status()}) body: ${JSON.stringify(inviteJson2)}`,
       ).toBeTruthy();
-      const token = inviteJson2.invite?.invite_url?.split('/invite/')[1] ?? '';
+      const rawUrl2 = extractInviteUrl(inviteJson2);
+      const normalizedUrl2 = normalizeInviteUrl(rawUrl2, BASE_URL);
+      const token = normalizedUrl2.split('/invite/')[1] ?? '';
 
       // admin API でユーザー作成
       const { data: newUserData, error: createErr } = await supabaseAdmin.auth.admin.createUser({

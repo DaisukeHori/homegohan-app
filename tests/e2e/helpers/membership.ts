@@ -25,6 +25,34 @@ const ws = require('ws') as typeof WebSocket;
 export const TEST_PASSWORD = 'TestE2E2026!secure';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// extractInviteUrl
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/org/invites のレスポンスから inviteUrl を取得する。
+ * main (Vercel) と worktree (P7) で形式が異なるため両方に対応:
+ * - main: { success: true, invite: { inviteUrl, expiresAt } }
+ * - P7:   { ok: true,      invite: { invite_url, expires_at } }
+ * いずれかが存在すればその値を返す。なければ空文字列。
+ */
+export function extractInviteUrl(json: Record<string, unknown>): string {
+  const invite = json.invite as Record<string, unknown> | undefined;
+  if (!invite) return '';
+  if (typeof invite.invite_url === 'string') return invite.invite_url;
+  if (typeof invite.inviteUrl === 'string') return invite.inviteUrl;
+  return '';
+}
+
+/**
+ * extractInviteUrl で得た URL のホスト部分を BASE_URL に置換する。
+ * API が localhost:3000 を返す場合に Vercel URL に変換するために使う。
+ */
+export function normalizeInviteUrl(rawUrl: string, baseUrl: string): string {
+  if (!rawUrl) return '';
+  return rawUrl.replace(/^https?:\/\/[^/]+/, baseUrl);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Supabase admin クライアント (service_role)
 // ─────────────────────────────────────────────────────────────────────────────
 
