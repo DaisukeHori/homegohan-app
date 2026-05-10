@@ -116,6 +116,7 @@ export async function cleanupFreshUser(
 /**
  * anon API でパスワードグラントを行い、Cookie を Playwright コンテキストに注入する。
  * @supabase/ssr は Cookie ベース認証を使用するため localStorage 注入では機能しない。
+ * 429 (rate limit) の場合は最大 3 回、指数バックオフでリトライする。
  */
 export async function injectSession(
   page: Page,
@@ -131,19 +132,32 @@ export async function injectSession(
     );
   }
 
-  const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: anonKey,
-    },
-    body: JSON.stringify({ email, password }),
-  });
+  const MAX_RETRIES = 4;
+  let resp: Response | null = null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: anonKey,
+      },
+      body: JSON.stringify({ email, password }),
+    });
 
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "");
+    if (resp.status !== 429) break;
+
+    // 429: rate limit — wait with exponential backoff before retry
+    const waitMs = attempt * 3000; // 3s, 6s, 9s, 12s
+    console.warn(
+      `[fresh-user fixture] injectSession rate limited (429), attempt ${attempt}/${MAX_RETRIES}. 待機: ${waitMs}ms`,
+    );
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+
+  if (!resp || !resp.ok) {
+    const body = await resp?.text().catch(() => "") ?? "";
     throw new Error(
-      `[fresh-user fixture] セッション取得失敗 (${resp.status}): ${body.substring(0, 300)}`,
+      `[fresh-user fixture] セッション取得失敗 (${resp?.status ?? "?"}) after ${MAX_RETRIES} attempts: ${body.substring(0, 300)}`,
     );
   }
 
