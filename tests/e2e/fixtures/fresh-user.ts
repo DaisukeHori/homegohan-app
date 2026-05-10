@@ -4,13 +4,15 @@
  * 毎 test で fresh user を生成する Playwright fixture 群。
  * 既存の authedPage (storageState 共有) と共存し、signup/onboarding/tour 系テストで使用する。
  *
- * 3 種類の fixture:
- *   freshUserPage      — signup 直後 (確認メール確認済み + ログイン状態)
- *   onboardingPendingUser — 確認済み + onboarding 未完了
- *   tourPendingUser    — onboarding 完了 + tour 未起動
+ * 5 種類の fixture:
+ *   freshUserPage           — signup 直後 (確認メール確認済み + ログイン状態)
+ *   onboardingPendingUser   — 確認済み + onboarding 未完了
+ *   tourPendingUser         — onboarding 完了 + tour 未起動 (Page のみ返す後方互換版)
+ *   tourPendingUserWithInfo — onboarding 完了 + tour 未起動 + userInfo を含む拡張版
+ *   freshUserBrowserContext — browser fixture ベースのマルチコンテキスト向け
  */
 
-import { test as base, type Page } from "@playwright/test";
+import { test as base, type Page, type Browser, type BrowserContext } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
@@ -67,6 +69,7 @@ export type FreshUserInfo = {
   id: string;
   email: string;
   password: string;
+  accessToken?: string;
 };
 
 /**
@@ -197,6 +200,20 @@ export async function injectSession(
 // Fixture 型定義
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** freshUserBrowserContext fixture の戻り値型 */
+export type FreshUserBrowserContextResult = {
+  context: BrowserContext;
+  page: Page;
+  userInfo: FreshUserInfo;
+  cleanup: () => Promise<void>;
+  /**
+   * 同一ユーザーの 2 つ目のコンテキストを作成するファクトリ関数。
+   * マルチコンテキストテスト (A-3 等) で別ブラウザ相当のコンテキストが必要な場合に使う。
+   * 返された context は afterEach の cleanup では閉じないため、テスト内で明示的に close() すること。
+   */
+  createSecondContext: () => Promise<{ context: BrowserContext; page: Page }>;
+};
+
 type FreshUserFixtures = {
   /**
    * signup UI フロー検証用。
@@ -213,11 +230,27 @@ type FreshUserFixtures = {
   onboardingPendingUser: Page;
 
   /**
-   * tour テスト用。
+   * tour テスト用 (後方互換版: Page のみ返す)。
    * admin.createUser + user_profiles.onboarding_completed_at = NOW() で挿入 + session inject。
    * onboarding 完了済み + tour 未起動状態。
+   * 既存の smoke spec / tour/02-07 spec はこちらを使い続ける。
    */
   tourPendingUser: Page;
+
+  /**
+   * tour テスト用 (拡張版: Page + userInfo を返す)。
+   * tourPendingUser と同じ状態を作るが、{ page, userInfo } を返す。
+   * userId が必要な spec (tour/05, 06 の userId hack 解消) でこちらを使う。
+   */
+  tourPendingUserWithInfo: { page: Page; userInfo: FreshUserInfo };
+
+  /**
+   * マルチコンテキストテスト向け。
+   * browser fixture を受け取り、新規ユーザーを作成してコンテキストを返す。
+   * 戻り値: { context, page, userInfo, cleanup }
+   * cleanup は afterEach で呼ばれる。
+   */
+  freshUserBrowserContext: FreshUserBrowserContextResult;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -355,6 +388,178 @@ export const test = base.extend<FreshUserFixtures>({
       await cleanupFreshUser(supabaseAdmin, user.id);
     }
   },
+
+  /**
+   * tourPendingUserWithInfo: tourPendingUser の拡張版。
+   * Page に加えて userInfo (id / email / accessToken) を返す。
+   * tour/05, 06 で context.cookies() hack の代わりに userInfo.id を使う。
+   */
+  tourPendingUserWithInfo: async ({ page }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, {
+      emailPrefix: "e2e-fresh-tour-info",
+    });
+
+    let accessToken: string | undefined;
+
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      const now = new Date().toISOString();
+
+      // user_profiles に onboarding 完了済みレコードを INSERT
+      const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          id: user.id,
+          nickname: "E2E Tour Test User",
+          age_group: "30s",
+          gender: "unspecified",
+          onboarding_completed_at: now,
+        }),
+      });
+
+      if (!profileResp.ok) {
+        const body = await profileResp.text();
+        throw new Error(
+          `[tourPendingUserWithInfo] user_profiles INSERT 失敗 (${profileResp.status}): ${body.substring(0, 300)}`,
+        );
+      }
+
+      // access_token を取得して userInfo に含める
+      const tokenResp = await fetch(
+        `${supabaseUrl}/auth/v1/token?grant_type=password`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: anonKey,
+          },
+          body: JSON.stringify({ email: user.email, password: user.password }),
+        },
+      );
+      if (tokenResp.ok) {
+        const tokenData = (await tokenResp.json()) as Record<string, unknown>;
+        accessToken = tokenData.access_token as string | undefined;
+      }
+
+      // session inject
+      await injectSession(page, user.email, user.password);
+      await use({
+        page,
+        userInfo: { ...user, accessToken },
+      });
+    } finally {
+      await cleanupFreshUser(supabaseAdmin, user.id);
+    }
+  },
+
+  /**
+   * freshUserBrowserContext: マルチコンテキストテスト向け。
+   * browser fixture を使い、新規ユーザーを作成して専用コンテキストを返す。
+   * afterEach で cleanup を呼ぶことでユーザーを削除する。
+   */
+  freshUserBrowserContext: async ({ browser }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, {
+      emailPrefix: "e2e-fresh-browser-ctx",
+    });
+
+    // onboarding 完了済みプロファイルを INSERT
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const now = new Date().toISOString();
+
+    const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify({
+        id: user.id,
+        nickname: "E2E BrowserCtx User",
+        age_group: "30s",
+        gender: "unspecified",
+        onboarding_completed_at: now,
+      }),
+    });
+
+    if (!profileResp.ok) {
+      await cleanupFreshUser(supabaseAdmin, user.id).catch(() => {});
+      const body = await profileResp.text();
+      throw new Error(
+        `[freshUserBrowserContext] user_profiles INSERT 失敗 (${profileResp.status}): ${body.substring(0, 300)}`,
+      );
+    }
+
+    // access_token を取得
+    let accessToken: string | undefined;
+    const tokenResp = await fetch(
+      `${supabaseUrl}/auth/v1/token?grant_type=password`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: anonKey,
+        },
+        body: JSON.stringify({ email: user.email, password: user.password }),
+      },
+    );
+    if (tokenResp.ok) {
+      const tokenData = (await tokenResp.json()) as Record<string, unknown>;
+      accessToken = tokenData.access_token as string | undefined;
+    }
+
+    // storageState を持たない新規コンテキストを作成
+    const context = await browser.newContext({ storageState: undefined });
+    const page = await context.newPage();
+
+    // session inject (page コンテキストに Cookie を注入)
+    await injectSession(page, user.email, user.password);
+
+    const cleanup = async () => {
+      await context.close().catch(() => {});
+      await cleanupFreshUser(supabaseAdmin, user.id).catch(() => {});
+    };
+
+    /**
+     * 同一ユーザーの 2 つ目のコンテキストを作成する。
+     * 返された context は呼び出し元でクローズする責任を持つ。
+     */
+    const createSecondContext = async (): Promise<{
+      context: BrowserContext;
+      page: Page;
+    }> => {
+      const ctx2 = await browser.newContext({ storageState: undefined });
+      const pg2 = await ctx2.newPage();
+      // 同一ユーザーの Cookie を注入して認証状態を作る
+      await injectSession(pg2, user.email, user.password);
+      return { context: ctx2, page: pg2 };
+    };
+
+    try {
+      await use({
+        context,
+        page,
+        userInfo: { ...user, accessToken },
+        cleanup,
+        createSecondContext,
+      });
+    } finally {
+      await cleanup();
+    }
+  },
 });
 
-export { expect } from "@playwright/test";
+export { expect, type Page, type Browser, type BrowserContext } from "@playwright/test";

@@ -15,7 +15,7 @@
  *   PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npm run test:e2e -- w5-1-onboarding-adversarial
  */
 
-import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { test, expect, type Page, type BrowserContext } from "./fixtures/fresh-user";
 import { login, newAuthedContext } from "./fixtures/auth";
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
@@ -138,30 +138,29 @@ test.describe("A. 完了後の動作", () => {
    * A-3: 完了後に別ブラウザで signin → onboarding 出ないことを確認
    *
    * 新しいブラウザコンテキスト（= 別ブラウザ相当）でログインして completed を確認する。
+   * [Step 3 Shard A2] freshUserBrowserContext + createSecondContext に移行。
+   * newAuthedContext(browser) は使用しない。
    */
   test("A-3: 完了後に別コンテキストでログイン → onboarding は出ない", async ({
-    browser,
+    freshUserBrowserContext: { page: pageA, createSecondContext },
   }) => {
-    // コンテキスト A で完了状態を作る (storageState 適用でログイン回数削減)
-    const ctxA = await newAuthedContext(browser);
-    const pageA = await ctxA.newPage();
-    await login(pageA);
+    // コンテキスト A で完了状態を作る (fresh user はデフォルト onboarding 完了済み)
     await resetOnboarding(pageA);
     await completeOnboardingViaApi(pageA);
-    await ctxA.close();
 
-    // コンテキスト B（別ブラウザ相当）でログイン (storageState 適用)
-    const ctxB = await newAuthedContext(browser);
-    const pageB = await ctxB.newPage();
-    await login(pageB);
-    await pageB.goto(`${BASE_URL}/onboarding`);
-    // completed なので /home に飛ぶはず
-    await pageB.waitForURL(/\/(home|onboarding\/complete)/, {
-      timeout: 15_000,
-    });
-    expect(pageB.url()).not.toMatch(/\/onboarding\/welcome/);
-    expect(pageB.url()).not.toMatch(/\/onboarding\/resume/);
-    await ctxB.close();
+    // コンテキスト B（別ブラウザ相当）で同一ユーザーとしてアクセス
+    const { context: ctxB, page: pageB } = await createSecondContext();
+    try {
+      await pageB.goto(`${BASE_URL}/onboarding`);
+      // completed なので /home に飛ぶはず
+      await pageB.waitForURL(/\/(home|onboarding\/complete)/, {
+        timeout: 15_000,
+      });
+      expect(pageB.url()).not.toMatch(/\/onboarding\/welcome/);
+      expect(pageB.url()).not.toMatch(/\/onboarding\/resume/);
+    } finally {
+      await ctxB.close();
+    }
   });
 
   /**
@@ -298,17 +297,16 @@ test.describe("B. 中断 / 再開", () => {
    * 2つのタブで onboarding/questions を開いて回答した場合、
    * 後から保存された回答が DB に反映されることを確認する（last-write-wins）。
    * 期待: エラーにならず、どちらか片方の回答が DB に残る。
+   *
+   * [Step 3 Shard A2] freshUserBrowserContext に移行。newAuthedContext は使用しない。
    */
   test("B-8: 2タブで同時に onboarding を開いてもエラーにならない", async ({
-    browser,
+    freshUserBrowserContext: { context, page: pageA },
   }) => {
-    // storageState で認証済みコンテキストを作成し login() 回数を削減
-    const ctx = await newAuthedContext(browser);
-    const pageA = await ctx.newPage();
-    await login(pageA);
     await resetOnboarding(pageA);
 
-    const pageB = await ctx.newPage();
+    // 同一コンテキスト内の 2 枚目のタブ
+    const pageB = await context.newPage();
 
     // 両方のタブで questions ページを開く
     await Promise.all([
@@ -339,8 +337,7 @@ test.describe("B. 中断 / 再開", () => {
     // どちらかの値が DB に保存されている（エラーにはなっていない）
     const status = await getOnboardingStatus(pageA);
     expect(["not_started", "in_progress"]).toContain(status.status);
-
-    await ctx.close();
+    // context は freshUserBrowserContext fixture が cleanup する
   });
 
   /**
@@ -491,14 +488,12 @@ test.describe("B. 中断 / 再開", () => {
    *
    * page.close() でタブを閉じて新しいタブで再開したとき、
    * DB から進捗が復元されることを確認する。
+   *
+   * [Step 3 Shard A2] freshUserBrowserContext に移行。newAuthedContext は使用しない。
    */
   test("B-12: タブを強制クローズして新タブで再開すると進捗が復元される", async ({
-    browser,
+    freshUserBrowserContext: { context, page: page1 },
   }) => {
-    // storageState で認証済みコンテキストを作成し login() 回数を削減
-    const ctx = await newAuthedContext(browser);
-    const page1 = await ctx.newPage();
-    await login(page1);
     await resetOnboarding(page1);
 
     // フローを開始して最初の質問に回答
@@ -517,7 +512,7 @@ test.describe("B. 中断 / 再開", () => {
     await page1.close();
 
     // 新しいタブで再開
-    const page2 = await ctx.newPage();
+    const page2 = await context.newPage();
     const statusData = await page2.evaluate(async (url: string) => {
       const r = await fetch(url, { credentials: "include" });
       return r.json();
@@ -533,8 +528,7 @@ test.describe("B. 中断 / 再開", () => {
     }
     // not_started の場合はタイミング問題 (saveProgress が間に合わなかった)
     // これも有効なケースとして許容
-
-    await ctx.close();
+    // context は freshUserBrowserContext fixture が cleanup する
   });
 
   /**
@@ -1091,15 +1085,13 @@ test.describe("D. 並列 / 競合", () => {
    * エラーにならないことを確認する。
    */
   test("D-21: 2タブで同時に完了させてもエラーにならない", async ({
-    browser,
+    freshUserBrowserContext: { context, page: pageA },
   }) => {
-    // #311 対応: storageState を適用して認証済みコンテキストで両タブを起動する
-    const ctx = await newAuthedContext(browser);
-    const pageA = await ctx.newPage();
-    await login(pageA);
+    // [Step 3 Shard A2] freshUserBrowserContext に移行。newAuthedContext は使用しない。
     await resetOnboarding(pageA);
 
-    const pageB = await ctx.newPage();
+    // 同一コンテキスト内の 2 枚目のタブ
+    const pageB = await context.newPage();
 
     // 両タブで progress を設定
     const progressPayload = {
@@ -1146,8 +1138,7 @@ test.describe("D. 並列 / 競合", () => {
     // 最終的に completed になっていること
     const finalStatus = await getOnboardingStatus(pageA);
     expect(finalStatus.status).toBe("completed");
-
-    await ctx.close();
+    // context は freshUserBrowserContext fixture が cleanup する
   });
 
   /**
@@ -1158,12 +1149,9 @@ test.describe("D. 並列 / 競合", () => {
    * onboarding_completed_at は保持されるべき（progress 保存は completed を消さない）。
    */
   test("D-22: タブ A で完了後にタブ B で進んでも completed_at は消えない", async ({
-    browser,
+    freshUserBrowserContext: { context, page: pageA },
   }) => {
-    // #311 対応: storageState を適用して pageB も認証済み状態で起動する
-    const ctx = await newAuthedContext(browser);
-    const pageA = await ctx.newPage();
-    await login(pageA);
+    // [Step 3 Shard A2] freshUserBrowserContext に移行。newAuthedContext は使用しない。
     await resetOnboarding(pageA);
     await startOnboardingFlow(pageA);
 
@@ -1171,7 +1159,7 @@ test.describe("D. 並列 / 競合", () => {
     await completeOnboardingViaApi(pageA);
 
     // タブ B で progress を保存（古いクライアントが送ってくる状況）
-    const pageB = await ctx.newPage();
+    const pageB = await context.newPage();
     const res = await pageB.evaluate(
       async ({ url, payload }: { url: string; payload: any }) => {
         const r = await fetch(url, {
@@ -1198,8 +1186,7 @@ test.describe("D. 並列 / 競合", () => {
     // completed_at が消えていないこと
     const statusAfter = await getOnboardingStatus(pageA);
     expect(statusAfter.status).toBe("completed");
-
-    await ctx.close();
+    // context は freshUserBrowserContext fixture が cleanup する
   });
 
   /**

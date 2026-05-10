@@ -13,14 +13,17 @@
  * 注意: API モック禁止。実 Supabase に接続する。
  * Step 3 は Step 1/2 完了後に到達するため、前段のヘルパーを使って
  * /api/handson-tour のサンドボックスバッジ付与済み状態を前提とする。
+ *
+ * [Step 3 Shard A2] tourPendingUserWithInfo fixture に移行済み。
+ * userId は fixture の userInfo.id を直接使用 (context.cookies() hack 不要)。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect } from "../fixtures/fresh-user";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 
 dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
+dotenvConfig({ path: path.resolve(__dirname, "../../../../.env.local") });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -43,7 +46,7 @@ async function awardBadgeDirectly(userId: string, badgeCode: string): Promise<vo
       },
     );
     if (!badgeResp.ok) return;
-    const badges = await badgeResp.json() as Array<{ id: string }>;
+    const badges = (await badgeResp.json()) as Array<{ id: string }>;
     if (!badges.length) return;
 
     const badgeId = badges[0].id;
@@ -71,35 +74,25 @@ async function awardBadgeDirectly(userId: string, badgeCode: string): Promise<vo
 test.describe("Tour - Step 3: バッジ確認", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
-
   // TODO: testID tour-step-3-intro 未実装、別 PR で対応
   test.skip("Step 3 intro 吹き出しが表示される (tour-step-3-intro)", () => {
     // tour-step-3-intro が実装されたら有効化する
   });
 
-  test("Step 3: tour-step-3-loading が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-load");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
+  test("Step 3: tour-step-3-loading が表示される", async ({ tourPendingUserWithInfo: { page, userInfo } }) => {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      test.skip(true, "Supabase 接続情報が未設定");
       return;
     }
 
     // サンドボックスバッジを直接付与して Step 3 の前提条件を作る
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
+    await awardBadgeDirectly(userInfo.id, "first_bite");
+    await awardBadgeDirectly(userInfo.id, "planner");
 
-    // Step 0 → Step 1 → Step 2 を通過して Step 3 に到達する
-    // (ハンズオンツアーの実際のフローを通じて確認)
+    // /handson-tour に遷移してから Step 0 → Step 1 → Step 2 を通過して Step 3 に到達する
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
+
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();
 
@@ -142,7 +135,10 @@ test.describe("Tour - Step 3: バッジ確認", () => {
 
     await generateBtn.click();
 
-    const isResultVisible = await page.getByTestId("v4-result-card").isVisible({ timeout: 30_000 }).catch(() => false);
+    const isResultVisible = await page
+      .getByTestId("v4-result-card")
+      .isVisible({ timeout: 30_000 })
+      .catch(() => false);
     if (!isResultVisible) {
       test.skip(true, "v4-result-card が表示されない");
       return;
@@ -165,17 +161,17 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     await expect(page.getByTestId("tour-step-3-loading")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Step 3: badge-card-first_bite が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-badge");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
+  test("Step 3: badge-card-first_bite が表示される", async ({ tourPendingUserWithInfo: { page, userInfo } }) => {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      test.skip(true, "Supabase 接続情報が未設定");
       return;
     }
 
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
+    await awardBadgeDirectly(userInfo.id, "first_bite");
+    await awardBadgeDirectly(userInfo.id, "planner");
+
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();
@@ -200,7 +196,10 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     if (!isGenVisible) {
       for (let i = 0; i < 3; i++) {
         const nb = page.getByTestId("tour-next-button");
-        if (await nb.isVisible()) { await nb.click(); await page.waitForTimeout(500); }
+        if (await nb.isVisible()) {
+          await nb.click();
+          await page.waitForTimeout(500);
+        }
       }
       isGenVisible = await generateBtn.isVisible({ timeout: 10_000 }).catch(() => false);
     }
@@ -209,12 +208,19 @@ test.describe("Tour - Step 3: バッジ確認", () => {
       return;
     }
     await generateBtn.click();
-    if (!(await page.getByTestId("v4-result-card").isVisible({ timeout: 30_000 }).catch(() => false))) {
+    if (
+      !(await page
+        .getByTestId("v4-result-card")
+        .isVisible({ timeout: 30_000 })
+        .catch(() => false))
+    ) {
       test.skip(true, "v4-result-card が表示されない");
       return;
     }
     const nb2 = page.getByTestId("tour-next-button");
-    if (await nb2.isVisible()) { await nb2.click(); }
+    if (await nb2.isVisible()) {
+      await nb2.click();
+    }
     const addBtn = page.getByTestId("v4-add-to-menu-button");
     if (!(await addBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
       test.skip(true, "v4-add-to-menu-button が表示されない");
@@ -229,24 +235,26 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     await expect(page.getByTestId("badge-card-first_bite")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-next");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
+  test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ tourPendingUserWithInfo: { page, userInfo } }) => {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      test.skip(true, "Supabase 接続情報が未設定");
       return;
     }
 
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
+    await awardBadgeDirectly(userInfo.id, "first_bite");
+    await awardBadgeDirectly(userInfo.id, "planner");
+
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();
 
     await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
     const nb = page.getByTestId("tour-next-button");
-    if (await nb.isVisible()) { await nb.click(); }
+    if (await nb.isVisible()) {
+      await nb.click();
+    }
 
     const saveBtn = page.getByTestId("meal-save-button");
     if (!(await saveBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
@@ -260,20 +268,35 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     if (!isGenVisible) {
       for (let i = 0; i < 3; i++) {
         const nb2 = page.getByTestId("tour-next-button");
-        if (await nb2.isVisible()) { await nb2.click(); await page.waitForTimeout(500); }
+        if (await nb2.isVisible()) {
+          await nb2.click();
+          await page.waitForTimeout(500);
+        }
       }
       isGenVisible = await generateBtn.isVisible({ timeout: 10_000 }).catch(() => false);
     }
-    if (!isGenVisible) { test.skip(true, "v4-generate-button が表示されない"); return; }
+    if (!isGenVisible) {
+      test.skip(true, "v4-generate-button が表示されない");
+      return;
+    }
     await generateBtn.click();
-    if (!(await page.getByTestId("v4-result-card").isVisible({ timeout: 30_000 }).catch(() => false))) {
-      test.skip(true, "v4-result-card が表示されない"); return;
+    if (
+      !(await page
+        .getByTestId("v4-result-card")
+        .isVisible({ timeout: 30_000 })
+        .catch(() => false))
+    ) {
+      test.skip(true, "v4-result-card が表示されない");
+      return;
     }
     const nb3 = page.getByTestId("tour-next-button");
-    if (await nb3.isVisible()) { await nb3.click(); }
+    if (await nb3.isVisible()) {
+      await nb3.click();
+    }
     const addBtn = page.getByTestId("v4-add-to-menu-button");
     if (!(await addBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "v4-add-to-menu-button が表示されない"); return;
+      test.skip(true, "v4-add-to-menu-button が表示されない");
+      return;
     }
     await addBtn.click();
 
@@ -281,7 +304,10 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     await expect(page.getByTestId("tour-step-3-loading")).toBeVisible({ timeout: 20_000 });
 
     // badge が表示されたら「次へ」で Step 4 へ
-    const badgeVisible = await page.getByTestId("badge-card-first_bite").isVisible({ timeout: 20_000 }).catch(() => false);
+    const badgeVisible = await page
+      .getByTestId("badge-card-first_bite")
+      .isVisible({ timeout: 20_000 })
+      .catch(() => false);
     if (!badgeVisible) {
       test.skip(true, "badge-card-first_bite が表示されない");
       return;
@@ -297,6 +323,10 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     }
 
     // Step 4: tour-step-4-saving が表示される
-    await expect(page.getByTestId("tour-step-4-saving").or(page.getByTestId("tour-step-4-graduate"))).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page
+        .getByTestId("tour-step-4-saving")
+        .or(page.getByTestId("tour-step-4-graduate")),
+    ).toBeVisible({ timeout: 20_000 });
   });
 });
