@@ -347,7 +347,7 @@ test('Template A renders valid envelope', () => {
 
 ## 11. 既存メールの一斉「ほめゴハン」化 (別 PR)
 
-既存 `homegohan` 表記を「ほめゴハン」に書き換える対象:
+既存 `homegohan` 表記から「ほめゴハン」に書き換える対象 (本タスクで処理済):
 - `src/app/api/contact/route.ts` の from / 件名
 - `src/app/api/admin/support/tickets/[id]/messages/route.ts` の件名
 - (将来) Supabase Auth カスタムテンプレート (signup confirm / magic link / reset)

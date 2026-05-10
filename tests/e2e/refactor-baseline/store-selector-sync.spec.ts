@@ -28,14 +28,14 @@
  *
  * 参照: PR #918, docs/refactor/2026-05-08-refactor-b-state-aggregation.md
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly, openShoppingModal, openFridgeModal } from "./_helpers";
 
 // ============================================================
 // シナリオ 1: formDraft sync — AddFridgeModal の入力値保持
 // ============================================================
 test.describe("scenario-1: formDraft sync (AddFridgeModal 入力値保持)", () => {
-  test("AddFridgeModal に入力した値は閉じて再度開いても保持または reset される (baseline 記録)", async ({ authedPage: page }) => {
+  test("AddFridgeModal に入力した値は閉じて再度開いても保持または reset される (baseline 記録)", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -111,7 +111,7 @@ test.describe("scenario-1: formDraft sync (AddFridgeModal 入力値保持)", () 
 // シナリオ 2: manualEdit dish list sync
 // ============================================================
 test.describe("scenario-2: manualEdit dish list sync", () => {
-  test("ManualEditModal の manualDishes store 値 — 閉じて再度開いたときの状態を記録", async ({ authedPage: page }) => {
+  test("ManualEditModal の manualDishes store 値 — 閉じて再度開いたときの状態を記録", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -178,7 +178,7 @@ test.describe("scenario-2: manualEdit dish list sync", () => {
 // シナリオ 3: shoppingRange step 切替
 // ============================================================
 test.describe("scenario-3: shoppingRange step 切替", () => {
-  test("ShoppingRangeModal を開いて step を range → servings に進めたとき、再度開くと step が range に戻る", async ({ authedPage: page }) => {
+  test("ShoppingRangeModal を開いて step を range → servings に進めたとき、再度開くと step が range に戻る", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -281,7 +281,7 @@ test.describe("scenario-3: shoppingRange step 切替", () => {
 // シナリオ 4: pantry store reflect
 // ============================================================
 test.describe("scenario-4: pantry store reflect", () => {
-  test("AddFridgeModal で追加した食材が FridgeModal のリストに即時反映される", async ({ authedPage: page }) => {
+  test("AddFridgeModal で追加した食材が FridgeModal のリストに即時反映される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -327,7 +327,7 @@ test.describe("scenario-4: pantry store reflect", () => {
     }
   });
 
-  test("FridgeModal を閉じて再度開いても食材リストが保持される (pantryStore は session 中永続)", async ({ authedPage: page }) => {
+  test("FridgeModal を閉じて再度開いても食材リストが保持される (pantryStore は session 中永続)", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -377,7 +377,7 @@ test.describe("scenario-4: pantry store reflect", () => {
 // シナリオ 5: servingsConfig reflect
 // ============================================================
 test.describe("scenario-5: servingsConfig reflect (ServingsModal)", () => {
-  test("ServingsModal で人数を変更すると servingsConfigStore に即時反映される", async ({ authedPage: page }) => {
+  test("ServingsModal で人数を変更すると servingsConfigStore に即時反映される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -472,7 +472,7 @@ test.describe("scenario-5: servingsConfig reflect (ServingsModal)", () => {
 // シナリオ 6: catalogQuery persist (AddMealModal)
 // ============================================================
 test.describe("scenario-6: catalogQuery persist (AddMealModal)", () => {
-  test("AddMealModal でカタログ検索クエリを入力 → 閉じる → 再度開く → query が保持または reset", async ({ authedPage: page }) => {
+  test("AddMealModal でカタログ検索クエリを入力 → 閉じる → 再度開く → query が保持または reset", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 

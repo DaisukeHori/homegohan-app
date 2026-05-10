@@ -7,16 +7,16 @@
  *
  * データが無い環境ではテストをスキップする。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("radar chart overconsumption alert", () => {
   test("average percentage is capped at 200% and warning shown when overconsumption detected", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/menus/weekly");
+    await tourPendingUser.goto("/menus/weekly");
 
     // 栄養分析モーダルを開くアイコン (aria-label="栄養分析を見る")
-    const analysisButton = authedPage.getByRole("button", { name: "栄養分析を見る" }).first();
+    const analysisButton = tourPendingUser.getByRole("button", { name: "栄養分析を見る" }).first();
     const analysisAvailable = await analysisButton
       .waitFor({ state: "visible", timeout: 10_000 })
       .then(() => true)
@@ -33,7 +33,7 @@ test.describe("radar chart overconsumption alert", () => {
     await analysisButton.click();
 
     // 「平均達成率」表示を取得 (data-testid="radar-average-display")
-    const averageDisplay = authedPage.locator('[data-testid="radar-average-display"]').first();
+    const averageDisplay = tourPendingUser.locator('[data-testid="radar-average-display"]').first();
     const displayVisible = await averageDisplay
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)
@@ -62,7 +62,7 @@ test.describe("radar chart overconsumption alert", () => {
       .getAttribute("data-overconsumption")
       .catch(() => "false");
     if (overconsumed === "true") {
-      const warning = authedPage.locator('[data-testid="overconsumption-warning"]').first();
+      const warning = tourPendingUser.locator('[data-testid="overconsumption-warning"]').first();
       await expect(warning).toBeVisible();
       await expect(warning).toHaveText(/過剰摂取/);
     }

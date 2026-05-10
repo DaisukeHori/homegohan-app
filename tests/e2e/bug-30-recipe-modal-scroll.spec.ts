@@ -6,15 +6,15 @@
  *       認証済みでナビゲートして実モーダルを開くケースと、ソースコード上の
  *       overflow-y-auto class 適用を確認するスモークの両方をカバーする。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("recipe modal scroll", () => {
-  test("recipe modal content area has overflow-y-auto and bounded max-height", async ({ authedPage }) => {
-    await authedPage.goto("/menus/weekly");
+  test("recipe modal content area has overflow-y-auto and bounded max-height", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/menus/weekly");
 
     // 「レシピを見る」ボタンが現れたらクリックしてモーダルを開く。データが無い環境では
     // ボタンが存在しない可能性があるため、軽くタイムアウトを設けて存在しなければスキップ扱い。
-    const recipeButton = authedPage.getByRole("button", { name: /レシピを見る/ }).first();
+    const recipeButton = tourPendingUser.getByRole("button", { name: /レシピを見る/ }).first();
     const buttonAvailable = await recipeButton
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)
@@ -31,7 +31,7 @@ test.describe("recipe modal scroll", () => {
     await recipeButton.click();
 
     // モーダルのスクロール領域: overflow-y-auto を含む div
-    const scrollArea = authedPage.locator('div.overflow-y-auto').filter({ hasText: /材料|作り方/ }).first();
+    const scrollArea = tourPendingUser.locator('div.overflow-y-auto').filter({ hasText: /材料|作り方/ }).first();
     await expect(scrollArea).toBeVisible();
 
     const overflowY = await scrollArea.evaluate((el) => getComputedStyle(el).overflowY);

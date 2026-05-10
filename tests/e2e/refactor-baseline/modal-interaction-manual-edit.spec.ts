@@ -24,7 +24,7 @@
  *   - LLM / 外部 API 実呼び出し回避 (network mock を利用)
  *   - 食事データが存在しない環境では関連ケースを skip
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly, findFirstMealCard } from "./_helpers";
 
 // ─── 共通ヘルパー ─────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ async function openManualEditModal(page: import("@playwright/test").Page) {
 // ─── ケース 1: モーダルオープン → 既存 dish list 表示 ─────────────────────────
 test.describe("case-1: モーダルオープン・初期表示", () => {
   test("ManualEditModal を開くと「手動で変更」ヘッダーと dish 一覧が表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -89,7 +89,7 @@ test.describe("case-1: モーダルオープン・初期表示", () => {
 // ─── ケース 2: dish 追加ボタン → 空の dish 行追加 ────────────────────────────
 test.describe("case-2: dish 追加", () => {
   test("「追加」ボタンをクリックすると dish 入力行が増える", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -126,7 +126,7 @@ test.describe("case-2: dish 追加", () => {
 // ─── ケース 3: dish 削除ボタン → 行削除 ──────────────────────────────────────
 test.describe("case-3: dish 削除", () => {
   test("dish が複数ある状態で削除ボタンをクリックすると行が消える", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -215,7 +215,7 @@ test.describe("case-3: dish 削除", () => {
 // ─── ケース 4: dish 名編集 input → 入力反映 ──────────────────────────────────
 test.describe("case-4: dish 名編集", () => {
   test("dish 名 input に文字を入力すると値が反映される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -245,7 +245,7 @@ test.describe("case-4: dish 名編集", () => {
 // ─── ケース 5: catalog 検索 → 結果表示 / 選択で dish 設定反映 ────────────────
 test.describe("case-5: catalog 検索", () => {
   test("catalog 検索 input に 2 文字以上入力すると検索が実行される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -308,7 +308,7 @@ test.describe("case-5: catalog 検索", () => {
   });
 
   test("catalog 結果をクリックすると product が選択状態になる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -388,7 +388,7 @@ test.describe("case-5: catalog 検索", () => {
 // ─── ケース 6: mode 切替 → UI 変化 ──────────────────────────────────────────
 test.describe("case-6: mode 切替", () => {
   test("タイプボタン (自炊 / 時短 / 買う / 外食) をクリックすると選択状態が変わる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -434,7 +434,7 @@ test.describe("case-6: mode 切替", () => {
   });
 
   test("「外食」モードをクリックすると UI が更新される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -478,7 +478,7 @@ test.describe("case-6: mode 切替", () => {
 // ─── ケース 7: 「写真から入力」ボタン → PhotoEditModal 連携 ──────────────────
 test.describe("case-7: 写真から入力ボタン", () => {
   test("「写真から入力」ボタンをクリックすると PhotoEdit モーダルへ遷移する", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -524,7 +524,7 @@ test.describe("case-7: 写真から入力ボタン", () => {
 // ─── ケース 8: 「AIで画像生成」ボタン → ImageGenerateModal 連携 ──────────────
 test.describe("case-8: AI画像生成ボタン", () => {
   test("「AIで画像生成」ボタンが表示されること (disabled 状態でも)", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -545,7 +545,7 @@ test.describe("case-8: AI画像生成ボタン", () => {
   });
 
   test("「AIで画像生成」ボタンをクリックすると ImageGenerate フローが開始する", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -611,7 +611,7 @@ test.describe("case-8: AI画像生成ボタン", () => {
 // ─── ケース 9: 保存ボタン → API 呼び出し (mock) ──────────────────────────────
 test.describe("case-9: 保存ボタン", () => {
   test("「保存する」ボタンをクリックすると PATCH API が呼ばれモーダルが閉じる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -667,7 +667,7 @@ test.describe("case-9: 保存ボタン", () => {
 // ─── ケース 10: キャンセル (X ボタン) → 変更破棄・モーダル閉じ ───────────────
 test.describe("case-10: キャンセル", () => {
   test("X ボタンをクリックするとモーダルが閉じる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -725,7 +725,7 @@ test.describe("case-10: キャンセル", () => {
   });
 
   test("モーダルを閉じた後も週ページが正常に表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -772,7 +772,7 @@ test.describe("case-10: キャンセル", () => {
 // ─── ケース 11: 空 dish list で保存 → エラー or バリデーション ────────────────
 test.describe("case-11: 空 dish list バリデーション", () => {
   test("すべての dish を削除して保存するとエラーまたは保存が実行されない", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);

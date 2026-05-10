@@ -22,7 +22,7 @@
  *     openShoppingModal → 人数設定ボタン のフローを使う
  */
 
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly, openShoppingModal } from "./_helpers";
 
 // ============================================================
@@ -67,7 +67,7 @@ async function openServingsModal(page: import("@playwright/test").Page): Promise
 // シナリオ 1: オープン → グリッド表示確認
 // ============================================================
 test.describe("scenario-1: ServingsModal オープン", () => {
-  test("人数設定ボタンで曜日別人数設定モーダルが開く", async ({ authedPage: page }) => {
+  test("人数設定ボタンで曜日別人数設定モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -99,7 +99,7 @@ test.describe("scenario-1: ServingsModal オープン", () => {
     });
   });
 
-  test("説明文「各セルをクリックして人数を変更」が表示される", async ({ authedPage: page }) => {
+  test("説明文「各セルをクリックして人数を変更」が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -122,7 +122,7 @@ test.describe("scenario-1: ServingsModal オープン", () => {
 // シナリオ 2: + ボタン → 値増加
 // ============================================================
 test.describe("scenario-2: + ボタンで値増加", () => {
-  test("月曜朝食の + ボタンを押すと表示値が増加する", async ({ authedPage: page }) => {
+  test("月曜朝食の + ボタンを押すと表示値が増加する", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -179,7 +179,7 @@ test.describe("scenario-2: + ボタンで値増加", () => {
 // シナリオ 3: − ボタン → 値減少
 // ============================================================
 test.describe("scenario-3: − ボタンで値減少", () => {
-  test("値が 1 以上のセルで − ボタンを押すと値が減少する", async ({ authedPage: page }) => {
+  test("値が 1 以上のセルで − ボタンを押すと値が減少する", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -237,7 +237,7 @@ test.describe("scenario-3: − ボタンで値減少", () => {
 // シナリオ 4: 0 状態での − ボタン → 0 未満にならない
 // ============================================================
 test.describe("scenario-4: 0 未満不可 (アンダーフロー防止)", () => {
-  test("値が 0 (表示 '-') のとき − ボタンを押しても 0 のまま", async ({ authedPage: page }) => {
+  test("値が 0 (表示 '-') のとき − ボタンを押しても 0 のまま", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -284,7 +284,7 @@ test.describe("scenario-4: 0 未満不可 (アンダーフロー防止)", () => 
 // シナリオ 5: 値 0 のとき "-" 表示、それ以外は数値表示
 // ============================================================
 test.describe("scenario-5: 値 0 のとき '-' 表示", () => {
-  test("セルの値が 0 のとき '-' が表示され、1 以上のとき数値が表示される", async ({ authedPage: page }) => {
+  test("セルの値が 0 のとき '-' が表示され、1 以上のとき数値が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -330,7 +330,7 @@ test.describe("scenario-5: 値 0 のとき '-' 表示", () => {
 // シナリオ 6: 保存 → API リクエストが発火
 // ============================================================
 test.describe("scenario-6: 保存ボタン → API リクエスト", () => {
-  test("保存するボタンをクリックすると /api/profile へのリクエストが発火する", async ({ authedPage: page }) => {
+  test("保存するボタンをクリックすると /api/profile へのリクエストが発火する", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -370,7 +370,7 @@ test.describe("scenario-6: 保存ボタン → API リクエスト", () => {
     expect(profileRequestFired).toBe(true);
   });
 
-  test("保存後にモーダルが閉じる", async ({ authedPage: page }) => {
+  test("保存後にモーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -409,7 +409,7 @@ test.describe("scenario-6: 保存ボタン → API リクエスト", () => {
 // シナリオ 7: キャンセル (X ボタン) → 元の値に戻る
 // ============================================================
 test.describe("scenario-7: キャンセルでモーダルが閉じる", () => {
-  test("X ボタンをクリックするとモーダルが閉じる", async ({ authedPage: page }) => {
+  test("X ボタンをクリックするとモーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -436,7 +436,7 @@ test.describe("scenario-7: キャンセルでモーダルが閉じる", () => {
     await expect(page.getByText("曜日別人数設定")).toBeHidden({ timeout: 8_000 });
   });
 
-  test("値を変更後にキャンセルして再度開くと store の値は変更されたまま (store は揮発型)", async ({ authedPage: page }) => {
+  test("値を変更後にキャンセルして再度開くと store の値は変更されたまま (store は揮発型)", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -496,7 +496,7 @@ test.describe("scenario-7: キャンセルでモーダルが閉じる", () => {
 // シナリオ 8: 過大値 → 上限 10 を超えない
 // ============================================================
 test.describe("scenario-8: 上限 10 を超えない (オーバーフロー防止)", () => {
-  test("+ ボタンを連打しても値が 10 を超えない", async ({ authedPage: page }) => {
+  test("+ ボタンを連打しても値が 10 を超えない", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 

@@ -12,7 +12,7 @@
  *   RegenerateMealModal (6 ケース) — 再生成フロー
  *   ImproveMealModal   (6 ケース) — 改善提案フロー
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly } from "./_helpers";
 
 // ============================================================
@@ -180,7 +180,7 @@ async function openImproveMealModal(page: import("@playwright/test").Page): Prom
 // AiMealModal テスト
 // ============================================================
 test.describe("AiMealModal — AI 単発生成", () => {
-  test("1: オープン → 条件選択 UI が表示される", async ({ authedPage: page }) => {
+  test("1: オープン → 条件選択 UI が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -206,7 +206,7 @@ test.describe("AiMealModal — AI 単発生成", () => {
     ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("2: 条件選択 → 「提案してもらう」ボタン押下で API リクエストが送信される (mock)", async ({ authedPage: page }) => {
+  test("2: 条件選択 → 「提案してもらう」ボタン押下で API リクエストが送信される (mock)", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
 
     let requestBody: unknown = null;
@@ -267,7 +267,7 @@ test.describe("AiMealModal — AI 単発生成", () => {
     expect(requestBody !== null || !modalStillVisible).toBe(true);
   });
 
-  test("3: リクエストテキスト入力が反映される", async ({ authedPage: page }) => {
+  test("3: リクエストテキスト入力が反映される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -288,7 +288,7 @@ test.describe("AiMealModal — AI 単発生成", () => {
     await expect(textarea).toHaveValue("野菜多めでヘルシーなメニューがいい");
   });
 
-  test("4: alergy/preference 条件を複数選択できる", async ({ authedPage: page }) => {
+  test("4: alergy/preference 条件を複数選択できる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -325,7 +325,7 @@ test.describe("AiMealModal — AI 単発生成", () => {
     expect(checkedCount).toBeGreaterThanOrEqual(2);
   });
 
-  test("5: キャンセル (X ボタン) でモーダルが閉じる", async ({ authedPage: page }) => {
+  test("5: キャンセル (X ボタン) でモーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -359,7 +359,7 @@ test.describe("AiMealModal — AI 単発生成", () => {
     ).toBeHidden({ timeout: 5_000 });
   });
 
-  test("6: 条件未選択でも「提案してもらう」ボタンは有効状態", async ({ authedPage: page }) => {
+  test("6: 条件未選択でも「提案してもらう」ボタンは有効状態", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -385,7 +385,7 @@ test.describe("AiMealModal — AI 単発生成", () => {
 // RegenerateMealModal テスト
 // ============================================================
 test.describe("RegenerateMealModal — 再生成", () => {
-  test("1: オープン → 現 meal 名が表示される", async ({ authedPage: page }) => {
+  test("1: オープン → 現 meal 名が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -409,7 +409,7 @@ test.describe("RegenerateMealModal — 再生成", () => {
     ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("2: 「再生成」ボタン押下 → loading 表示 (mock)", async ({ authedPage: page }) => {
+  test("2: 「再生成」ボタン押下 → loading 表示 (mock)", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
 
     // regenerate API を遅延レスポンスで mock して loading 表示を確認
@@ -455,7 +455,7 @@ test.describe("RegenerateMealModal — 再生成", () => {
     expect(["loading-text", "disabled", "not-disabled"]).toContain(loadingResult);
   });
 
-  test("3: 条件入力 → API request body に反映される (route mock)", async ({ authedPage: page }) => {
+  test("3: 条件入力 → API request body に反映される (route mock)", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
 
     let capturedBody: Record<string, unknown> | null = null;
@@ -522,7 +522,7 @@ test.describe("RegenerateMealModal — 再生成", () => {
     // 少なくともエラーなく完了することを確認
   });
 
-  test("4: キャンセル → モーダルが閉じる", async ({ authedPage: page }) => {
+  test("4: キャンセル → モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -549,7 +549,7 @@ test.describe("RegenerateMealModal — 再生成", () => {
     await expect(page.getByText(/をAIで変更/)).toBeHidden({ timeout: 5_000 });
   });
 
-  test("5: 連続押下 (二重 submit) でも UI エラーにならない", async ({ authedPage: page }) => {
+  test("5: 連続押下 (二重 submit) でも UI エラーにならない", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
 
     let requestCount = 0;
@@ -603,7 +603,7 @@ test.describe("RegenerateMealModal — 再生成", () => {
     expect(requestCount).toBeLessThanOrEqual(2);
   });
 
-  test("6: エラーレスポンス時の UI — モーダルが閉じずエラーを表示", async ({ authedPage: page }) => {
+  test("6: エラーレスポンス時の UI — モーダルが閉じずエラーを表示", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
 
     await page.route("**/api/ai/menu/meal/regenerate", (route) => {
@@ -652,7 +652,7 @@ test.describe("RegenerateMealModal — 再生成", () => {
 // ImproveMealModal テスト
 // ============================================================
 test.describe("ImproveMealModal — 改善提案", () => {
-  test("1: オープン → 対象日と食事タイプ選択 UI が表示される", async ({ authedPage: page }) => {
+  test("1: オープン → 対象日と食事タイプ選択 UI が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -674,7 +674,7 @@ test.describe("ImproveMealModal — 改善提案", () => {
     await expect(page.getByText(/どの食事を改善しますか/)).toBeVisible({ timeout: 5_000 });
   });
 
-  test("2: 食事タイプ (朝/昼/夕) を選択できる", async ({ authedPage: page }) => {
+  test("2: 食事タイプ (朝/昼/夕) を選択できる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -714,7 +714,7 @@ test.describe("ImproveMealModal — 改善提案", () => {
     expect(isSelected).toBe(true);
   });
 
-  test("3: 「翌日も対象」ボタン → state 反映", async ({ authedPage: page }) => {
+  test("3: 「翌日も対象」ボタン → state 反映", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -760,7 +760,7 @@ test.describe("ImproveMealModal — 改善提案", () => {
     expect(isSelected).toBe(true);
   });
 
-  test("4: 「改善する」ボタン → loading 表示 (mock)", async ({ authedPage: page }) => {
+  test("4: 「改善する」ボタン → loading 表示 (mock)", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
 
     // day regenerate API を遅延 mock
@@ -846,7 +846,7 @@ test.describe("ImproveMealModal — 改善提案", () => {
     expect(["loading", "spinner", "timeout-or-closed"]).toContain(loadingResult);
   });
 
-  test("5: キャンセルボタン → モーダルが閉じる", async ({ authedPage: page }) => {
+  test("5: キャンセルボタン → モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);
@@ -873,7 +873,7 @@ test.describe("ImproveMealModal — 改善提案", () => {
     ).toBeHidden({ timeout: 5_000 });
   });
 
-  test("6: 全食事タイプ未選択 → 「改善する」ボタンが disabled", async ({ authedPage: page }) => {
+  test("6: 全食事タイプ未選択 → 「改善する」ボタンが disabled", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await mockAiRoutes(page);
     await gotoWeekly(page);

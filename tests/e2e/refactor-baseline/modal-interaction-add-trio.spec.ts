@@ -17,7 +17,7 @@
  *   AddMealSlotModal: 食事種別ボタン群 (5種) の表示 / 各種別クリック→addMeal遷移 /
  *                     キャンセル→モーダル消去 / 日付情報の表示
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly, openFridgeModal, openShoppingModal } from "./_helpers";
 
 // ============================================================
@@ -34,7 +34,7 @@ test.describe("AddFridgeModal インタラクション", () => {
     await expect(page.getByText("食材を追加").first()).toBeVisible({ timeout: 8_000 });
   }
 
-  test("食材名・数量・期限を入力すると「追加する」ボタンが有効になり submit できる", async ({ authedPage: page }) => {
+  test("食材名・数量・期限を入力すると「追加する」ボタンが有効になり submit できる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddFridgeModal(page);
@@ -58,7 +58,7 @@ test.describe("AddFridgeModal インタラクション", () => {
     await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
   });
 
-  test("食材名が空の場合「追加する」ボタンが disabled になる", async ({ authedPage: page }) => {
+  test("食材名が空の場合「追加する」ボタンが disabled になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddFridgeModal(page);
@@ -76,7 +76,7 @@ test.describe("AddFridgeModal インタラクション", () => {
     await expect(addBtn).toBeDisabled({ timeout: 2_000 });
   });
 
-  test("食材名を入力してからキャンセルすると addFridge モーダルが閉じる", async ({ authedPage: page }) => {
+  test("食材名を入力してからキャンセルすると addFridge モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddFridgeModal(page);
@@ -97,7 +97,7 @@ test.describe("AddFridgeModal インタラクション", () => {
     await expect(page.getByText("食材を追加").first()).toBeHidden({ timeout: 5_000 });
   });
 
-  test("期限フィールド (type=date) が表示されること", async ({ authedPage: page }) => {
+  test("期限フィールド (type=date) が表示されること", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddFridgeModal(page);
@@ -106,7 +106,7 @@ test.describe("AddFridgeModal インタラクション", () => {
     await expect(expiryInput).toBeVisible({ timeout: 5_000 });
   });
 
-  test("食材名フィールドと数量フィールドが両方表示されること", async ({ authedPage: page }) => {
+  test("食材名フィールドと数量フィールドが両方表示されること", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddFridgeModal(page);
@@ -115,7 +115,7 @@ test.describe("AddFridgeModal インタラクション", () => {
     await expect(page.getByPlaceholder(/量（例: 300g）/)).toBeVisible({ timeout: 5_000 });
   });
 
-  test("食材名を入力→クリア→ボタンが再び disabled になる", async ({ authedPage: page }) => {
+  test("食材名を入力→クリア→ボタンが再び disabled になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddFridgeModal(page);
@@ -149,7 +149,7 @@ test.describe("AddShoppingModal インタラクション", () => {
     await expect(page.getByText("買い物リストに追加").first()).toBeVisible({ timeout: 8_000 });
   }
 
-  test("品名・数量・カテゴリを入力すると「追加する」ボタンが有効になり submit できる", async ({ authedPage: page }) => {
+  test("品名・数量・カテゴリを入力すると「追加する」ボタンが有効になり submit できる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddShoppingModal(page);
@@ -176,7 +176,7 @@ test.describe("AddShoppingModal インタラクション", () => {
     expect(["item-visible", "shopping-modal"]).toContain(result);
   });
 
-  test("カテゴリ select で各選択肢を切り替えられること", async ({ authedPage: page }) => {
+  test("カテゴリ select で各選択肢を切り替えられること", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddShoppingModal(page);
@@ -193,7 +193,7 @@ test.describe("AddShoppingModal インタラクション", () => {
     }
   });
 
-  test("品名が空の場合「追加する」ボタンが disabled になる", async ({ authedPage: page }) => {
+  test("品名が空の場合「追加する」ボタンが disabled になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddShoppingModal(page);
@@ -208,7 +208,7 @@ test.describe("AddShoppingModal インタラクション", () => {
     await expect(addBtn).toBeDisabled({ timeout: 2_000 });
   });
 
-  test("キャンセル (X ボタン) で addShopping モーダルが閉じる", async ({ authedPage: page }) => {
+  test("キャンセル (X ボタン) で addShopping モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddShoppingModal(page);
@@ -222,7 +222,7 @@ test.describe("AddShoppingModal インタラクション", () => {
     await expect(page.getByText("買い物リストに追加").first()).toBeHidden({ timeout: 5_000 });
   });
 
-  test("カテゴリ select に期待する選択肢が全て含まれること", async ({ authedPage: page }) => {
+  test("カテゴリ select に期待する選択肢が全て含まれること", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddShoppingModal(page);
@@ -241,7 +241,7 @@ test.describe("AddShoppingModal インタラクション", () => {
     expect(options).toContain("その他");
   });
 
-  test("品名入力→クリア→ボタンが再び disabled になる", async ({ authedPage: page }) => {
+  test("品名入力→クリア→ボタンが再び disabled になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openAddShoppingModal(page);
@@ -301,7 +301,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     return false;
   }
 
-  test("AddMealSlotModal に朝食・昼食・夕食・間食・夜食の 5 種別ボタンが表示される", async ({ authedPage: page }) => {
+  test("AddMealSlotModal に朝食・昼食・夕食・おやつ・夜食の 5 種別ボタンが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -323,8 +323,9 @@ test.describe("AddMealSlotModal インタラクション", () => {
 
     if (!isMealSlotModal) return;
 
-    // 5 種別ボタン (MEAL_LABELS に対応: 朝食/昼食/夕食/間食/夜食)
-    const mealLabels = ["朝食", "昼食", "夕食", "間食", "夜食"];
+    // 5 種別ボタン (MEAL_LABELS に対応: 朝食/昼食/夕食/おやつ/夜食)
+    // snack の MEAL_LABELS は「間食」ではなく「おやつ」
+    const mealLabels = ["朝食", "昼食", "夕食", "おやつ", "夜食"];
     for (const label of mealLabels) {
       const btn = page.getByRole("button", { name: new RegExp(label) }).first();
       const visible = await btn
@@ -338,7 +339,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     }
   });
 
-  test("朝食を選択すると AddMealModal (食事追加モード選択) へ遷移する", async ({ authedPage: page }) => {
+  test("朝食を選択すると AddMealModal (食事追加モード選択) へ遷移する", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -376,7 +377,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     expect(["add-modal", "breakfast-modal"]).toContain(result);
   });
 
-  test("夕食を選択すると AddMealModal へ遷移する", async ({ authedPage: page }) => {
+  test("夕食を選択すると AddMealModal へ遷移する", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -412,7 +413,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     expect(["add-modal", "dinner-modal"]).toContain(result);
   });
 
-  test("X ボタンでキャンセルすると AddMealSlotModal が閉じて元の UI に戻る", async ({ authedPage: page }) => {
+  test("X ボタンでキャンセルすると AddMealSlotModal が閉じて元の UI に戻る", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -443,7 +444,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     await expect(page.locator('[aria-label="前の週"]')).toBeVisible({ timeout: 5_000 });
   });
 
-  test("AddMealSlotModal に日付情報 (月/日) が表示される", async ({ authedPage: page }) => {
+  test("AddMealSlotModal に日付情報 (月/日) が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -476,7 +477,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     }
   });
 
-  test("間食・夜食ボタンが AddMealSlotModal 内に存在する", async ({ authedPage: page }) => {
+  test("おやつ・夜食ボタンが AddMealSlotModal 内に存在する", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -496,8 +497,9 @@ test.describe("AddMealSlotModal インタラクション", () => {
 
     if (!isMealSlotModal) return;
 
-    // 間食 (snack) と夜食 (midnight_snack) は基本 3 食以外の追加種別
-    const snackVisible = await page.getByText("間食").first()
+    // おやつ (snack) と夜食 (midnight_snack) は基本 3 食以外の追加種別
+    // snack の MEAL_LABELS は「間食」ではなく「おやつ」
+    const snackVisible = await page.getByText("おやつ").first()
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)
       .catch(() => false);

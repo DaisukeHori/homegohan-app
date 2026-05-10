@@ -5,16 +5,16 @@
  *       詳細モーダル (role=dialog) が表示され、バッジ名・取得条件が見えること。
  *       hover overlay の pointer-events が click を吸収していないことも担保する。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("badge detail modal opens on click", () => {
   test("clicking a badge card opens detail dialog with name and criteria", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/badges");
+    await tourPendingUser.goto("/badges");
 
     // データがロードされるまで待機 (loading 表示が消えるか、カードが現れるか)
-    const firstCard = authedPage.locator('[data-testid="badge-card"]').first();
+    const firstCard = tourPendingUser.locator('[data-testid="badge-card"]').first();
     const cardAvailable = await firstCard
       .waitFor({ state: "visible", timeout: 10_000 })
       .then(() => true)
@@ -35,7 +35,7 @@ test.describe("badge detail modal opens on click", () => {
     // 2. クリックでモーダル (role=dialog) が開く
     await firstCard.click();
 
-    const dialog = authedPage.getByRole("dialog");
+    const dialog = tourPendingUser.getByRole("dialog");
     await expect(dialog).toBeVisible({ timeout: 5_000 });
 
     // 3. 取得条件のラベルがモーダル内に表示されている

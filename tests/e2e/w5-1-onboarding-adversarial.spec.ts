@@ -13,15 +13,23 @@
  *
  * 実行方法:
  *   PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npm run test:e2e -- w5-1-onboarding-adversarial
+ *
+ * Step 3 Shard B: onboardingPendingUser fixture に移行済み
+ *   - page のみを使うテスト: onboardingPendingUser fixture を使用 (毎テスト fresh user + 自動 cleanup)
+ *   - browser を使うテスト (A-3, B-8, B-12, D-21, D-22): login / newAuthedContext を引き続き使用
  */
 
-import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { type Page, type BrowserContext } from "@playwright/test";
+import { test, expect } from "./fixtures/fresh-user";
 import { login, newAuthedContext } from "./fixtures/auth";
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
 const BASE_URL =
   process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+
+// fresh-user fixture を使用するため storageState はクリア
+test.use({ storageState: { cookies: [], origins: [] } });
 
 // ─── ヘルパー ─────────────────────────────────────────────────────────────────
 
@@ -75,7 +83,7 @@ async function startOnboardingFlow(page: Page): Promise<void> {
  */
 async function getOnboardingStatus(
   page: Page
-): Promise<{ status: string; progress?: any; nickname?: string }> {
+): Promise<{ status: string; progress?: unknown; nickname?: string }> {
   const result = await page.evaluate(async (url: string) => {
     const r = await fetch(url, { method: "GET", credentials: "include" });
     return r.json();
@@ -94,9 +102,8 @@ test.describe("A. 完了後の動作", () => {
    * クライアント側の /onboarding/page.tsx も API 経由で completed を検知して /home に飛ぶ。
    */
   test("A-1: 完了済みユーザーが /onboarding に直アクセスすると /home に飛ぶ", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await completeOnboardingViaApi(page);
 
@@ -112,16 +119,15 @@ test.describe("A. 完了後の動作", () => {
    * completed のままになるはず。localStorage のみ依存実装だと中断扱いになる致命的バグ。
    */
   test("A-2: 完了後に cookie 全削除して再ログイン → completed のまま", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await completeOnboardingViaApi(page);
 
     // cookie を全削除してセッションを破棄
     await page.context().clearCookies();
 
-    // 再ログイン
+    // 再ログイン (auth fixture の login を使用)
     await login(page);
 
     // ステータスが completed であることを確認
@@ -138,6 +144,8 @@ test.describe("A. 完了後の動作", () => {
    * A-3: 完了後に別ブラウザで signin → onboarding 出ないことを確認
    *
    * 新しいブラウザコンテキスト（= 別ブラウザ相当）でログインして completed を確認する。
+   *
+   * NOTE: browser fixture を使うため onboardingPendingUser ではなく既存の login/newAuthedContext を使用。
    */
   test("A-3: 完了後に別コンテキストでログイン → onboarding は出ない", async ({
     browser,
@@ -171,9 +179,8 @@ test.describe("A. 完了後の動作", () => {
    * /onboarding/complete でなければ /home を返す。
    */
   test("A-4: 完了済みユーザーが /onboarding/welcome に直アクセスすると /home に飛ぶ", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await completeOnboardingViaApi(page);
 
@@ -190,9 +197,8 @@ test.describe("A. 完了後の動作", () => {
    * クライアント側の status fetch が completed を返すため /home に飛ぶ。
    */
   test("A-5: 完了済みユーザーが /onboarding/questions に直アクセスしても質問フローに入れない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await completeOnboardingViaApi(page);
 
@@ -222,9 +228,8 @@ test.describe("A. 完了後の動作", () => {
    * （実装上、日付比較ロジックがなければ問題なし）
    */
   test("A-6: 完了後 30日後 (simulate) でも onboarding は強制表示されない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await completeOnboardingViaApi(page);
 
@@ -233,6 +238,7 @@ test.describe("A. 完了後の動作", () => {
       const OriginalDate = Date;
       const futureMs = 30 * 24 * 60 * 60 * 1000;
       class MockDate extends OriginalDate {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         constructor(...args: any[]) {
           if (args.length === 0) {
             super(OriginalDate.now() + futureMs);
@@ -267,9 +273,8 @@ test.describe("B. 中断 / 再開", () => {
    * 再開時に /api/onboarding/status から復元することを確認する。
    */
   test("B-7: 途中まで回答して離脱 → 再ログインで in_progress に戻る", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await startOnboardingFlow(page);
 
@@ -298,6 +303,8 @@ test.describe("B. 中断 / 再開", () => {
    * 2つのタブで onboarding/questions を開いて回答した場合、
    * 後から保存された回答が DB に反映されることを確認する（last-write-wins）。
    * 期待: エラーにならず、どちらか片方の回答が DB に残る。
+   *
+   * NOTE: browser fixture を使うため onboardingPendingUser ではなく既存の login/newAuthedContext を使用。
    */
   test("B-8: 2タブで同時に onboarding を開いてもエラーにならない", async ({
     browser,
@@ -350,9 +357,8 @@ test.describe("B. 中断 / 再開", () => {
    * ネットワークリクエストで確認する。localStorage には保存していないことも確認。
    */
   test("B-9: 回答は DB に保存され localStorage のみ依存ではない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // API コールを監視
@@ -398,9 +404,8 @@ test.describe("B. 中断 / 再開", () => {
    * 完了扱いになってから /menus/weekly に遷移する実装を確認する。
    */
   test("B-10: 最終付近でグローバルスキップボタンを押すと complete が呼ばれる", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -446,9 +451,8 @@ test.describe("B. 中断 / 再開", () => {
    * 連打しても負インデックスにならないことを確認する。
    */
   test("B-11: 戻るボタンを連打しても画面がクラッシュしない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -491,6 +495,8 @@ test.describe("B. 中断 / 再開", () => {
    *
    * page.close() でタブを閉じて新しいタブで再開したとき、
    * DB から進捗が復元されることを確認する。
+   *
+   * NOTE: browser fixture を使うため onboardingPendingUser ではなく既存の login/newAuthedContext を使用。
    */
   test("B-12: タブを強制クローズして新タブで再開すると進捗が復元される", async ({
     browser,
@@ -544,9 +550,8 @@ test.describe("B. 中断 / 再開", () => {
    * currentStep と answers をセットする実装を確認する。
    */
   test("B-13: questions?resume=true でアクセスすると進捗が DB から復元される", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // in_progress 状態を作る
@@ -589,9 +594,8 @@ test.describe("C. 異常入力", () => {
    * JS バリデーション (Number(answers.weight) < 10) を持つ。
    */
   test("C-14a: 体重に -100 を入力すると「次へ」が disabled になる", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -648,9 +652,8 @@ test.describe("C. 異常入力", () => {
    * C-14b: 体重フィールドに 999999 → 「次へ」が disabled になる
    */
   test("C-14b: 体重に 999999 を入力すると「次へ」が disabled になる", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -706,9 +709,8 @@ test.describe("C. 異常入力", () => {
    * 文字列が入っても Number() が NaN になりバリデーション失敗するはず。
    */
   test("C-14c: 体重に 'abc' を入力しても「次へ」は disabled のまま", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -763,9 +765,8 @@ test.describe("C. 異常入力", () => {
    * text型の nickname フィールドに XSS を入れた場合の挙動を確認する。
    */
   test("C-14d: nickname に XSS を入力してもスクリプトが実行されない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -797,9 +798,8 @@ test.describe("C. 異常入力", () => {
    * C-15: 身長に絵文字 / 全角数字 → バリデーション失敗で「次へ」が disabled
    */
   test("C-15: 身長に絵文字を入力しても「次へ」は disabled のまま", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -845,9 +845,8 @@ test.describe("C. 異常入力", () => {
    * 1000文字の文字列でサーバー側がエラーを返さないか、または適切にハンドリングするか確認。
    */
   test("C-16: アレルギーフィールドに 1000 文字のタグを入力しても画面がクラッシュしない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // アレルギーステップに直接到達するには多くのステップを経由する必要があるため、
@@ -857,7 +856,7 @@ test.describe("C. 異常入力", () => {
     const longString = "あ".repeat(1000);
 
     const res = await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         const r = await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -890,15 +889,14 @@ test.describe("C. 異常入力", () => {
    * API が 500 を返さないことを確認する。
    */
   test("C-17: SQL injection ペイロードを API に送っても 500 にならない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     const sqlInjection = "'; DROP TABLE users; --";
 
     const res = await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         const r = await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -931,16 +929,15 @@ test.describe("C. 異常入力", () => {
    * onerror が発火しないことを確認する。
    */
   test("C-18: XSS img タグを nickname に保存して表示しても script 実行されない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     const xssPayload = '<img src=x onerror=alert(1)>';
 
     // XSS ペイロードを progress API で保存
     await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -980,15 +977,14 @@ test.describe("C. 異常入力", () => {
    * 0 は範囲外なので disabled になるはず。
    */
   test("C-19: target_weight に 0 を入力すると「次へ」が disabled", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // nutrition_goal=lose_weight の状態で target_weight ステップを表示するために
     // progress API で状態を設定
     await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -1044,9 +1040,8 @@ test.describe("C. 異常入力", () => {
    * 連打してもステップが進まないことを確認する。
    */
   test("C-20: multi_choice で選択なしに「次へ」連打してもステップが進まない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -1089,6 +1084,8 @@ test.describe("D. 並列 / 競合", () => {
    * 2タブで別々の nickname を入力して submit したとき、
    * DB には後から来たリクエストの値が入る (last-write-wins)。
    * エラーにならないことを確認する。
+   *
+   * NOTE: browser fixture を使うため onboardingPendingUser ではなく既存の login/newAuthedContext を使用。
    */
   test("D-21: 2タブで同時に完了させてもエラーにならない", async ({
     browser,
@@ -1109,7 +1106,7 @@ test.describe("D. 並列 / 競合", () => {
     };
 
     await pageA.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -1156,6 +1153,8 @@ test.describe("D. 並列 / 競合", () => {
    *
    * タブ B が古い状態を持ったまま次のステップへ進んでも、
    * onboarding_completed_at は保持されるべき（progress 保存は completed を消さない）。
+   *
+   * NOTE: browser fixture を使うため onboardingPendingUser ではなく既存の login/newAuthedContext を使用。
    */
   test("D-22: タブ A で完了後にタブ B で進んでも completed_at は消えない", async ({
     browser,
@@ -1173,7 +1172,7 @@ test.describe("D. 並列 / 競合", () => {
     // タブ B で progress を保存（古いクライアントが送ってくる状況）
     const pageB = await ctx.newPage();
     const res = await pageB.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         const r = await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -1210,9 +1209,8 @@ test.describe("D. 並列 / 競合", () => {
    * 物理的に連打できない。disabled にはなっていないが表示されていないことを確認する。
    */
   test("D-23: choice ボタンを連打してもステップが正しく進む", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await page.goto(`${BASE_URL}/onboarding/questions`);
     await page.waitForLoadState("networkidle");
@@ -1255,15 +1253,14 @@ test.describe("D. 並列 / 競合", () => {
    * その後オンラインに戻してから再開したとき最後に保存した進捗から再開できることを確認する。
    */
   test("D-24: ネットワーク切断中の saveProgress 失敗後、再接続で再開できる", async ({
-    page,
+    onboardingPendingUser: page,
     context,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // まず一度オンラインで progress を保存する
     await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -1287,7 +1284,7 @@ test.describe("D. 並列 / 競合", () => {
     // オフライン中に progress 保存を試みる（失敗するはず）
     const offlineRes = await page
       .evaluate(
-        async ({ url, payload }: { url: string; payload: any }) => {
+        async ({ url, payload }: { url: string; payload: unknown }) => {
           try {
             const r = await fetch(url, {
               method: "POST",
@@ -1324,7 +1321,7 @@ test.describe("D. 並列 / 競合", () => {
     expect(["in_progress"]).toContain(statusAfter.status);
     if (statusAfter.status === "in_progress") {
       // currentStep が 5 のまま (オフライン時の 10 は保存されていない)
-      const savedStep = statusAfter.progress?.currentStep;
+      const savedStep = (statusAfter.progress as { currentStep?: number } | undefined)?.currentStep;
       if (savedStep !== undefined) {
         expect(savedStep).toBe(5);
       }
@@ -1344,9 +1341,8 @@ test.describe("E. 異常状態の DB", () => {
    * progress を削除した後の挙動を確認する。
    */
   test("E-25: onboarding リセット後は not_started が返る", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     const statusData = await getOnboardingStatus(page);
@@ -1364,14 +1360,13 @@ test.describe("E. 異常状態の DB", () => {
    * status=in_progress → /onboarding/resume に飛ぶはず。
    */
   test("E-26: roles 配列が空の状態でも in_progress フローが正常に動く", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // in_progress 状態にする
     await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -1406,9 +1401,8 @@ test.describe("E. 異常状態の DB", () => {
    * 未来日付でも in_progress として扱われることを確認する。
    */
   test("E-27: onboarding_started_at が未来日付でも in_progress として扱われる", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // 未来日付の started_at を持つ状態を progress API 経由で作る
@@ -1416,7 +1410,7 @@ test.describe("E. 異常状態の DB", () => {
     //  実際に「未来日付」を注入するには DB 直接操作が必要だが、
     //  ここでは「started_at がセットされている状態」として in_progress を確認する)
     await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -1449,9 +1443,8 @@ test.describe("E. 異常状態の DB", () => {
    *  progress API が空/null の progress を受け取った場合の挙動を代替確認)
    */
   test("E-28: 不正な progress ペイロードを送っても status API は 500 を返さない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // 不正なペイロードを progress API に送る
@@ -1486,9 +1479,8 @@ test.describe("F. 追加シナリオ (UI / UX の境界値)", () => {
    * null を返す（リダイレクトしない）実装。ページが表示できること。
    */
   test("F-29: in_progress 状態で /onboarding/complete に直アクセスしてもエラーにならない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
     await startOnboardingFlow(page);
 
@@ -1509,13 +1501,12 @@ test.describe("F. 追加シナリオ (UI / UX の境界値)", () => {
    * F-30: progress API に currentStep が負の数値でも 500 にならない
    */
   test("F-30: progress API に負の currentStep を送っても 500 にならない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     const res = await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         const r = await fetch(url, {
           method: "POST",
           credentials: "include",
@@ -1544,9 +1535,8 @@ test.describe("F. 追加シナリオ (UI / UX の境界値)", () => {
    * 3回呼んでも全て 200 を返すはず。
    */
   test("F-31: complete API を 3 回連続で呼び出しても全て 200 を返す", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     const results = [];
@@ -1577,9 +1567,8 @@ test.describe("F. 追加シナリオ (UI / UX の境界値)", () => {
    * 通常は問題ないが、極端に大きいオブジェクトで 500 にならないことを確認する。
    */
   test("F-32: 大きな answers オブジェクトを送っても 500 にならない", async ({
-    page,
+    onboardingPendingUser: page,
   }) => {
-    await login(page);
     await resetOnboarding(page);
 
     // 1000個のキーを持つ answers
@@ -1589,7 +1578,7 @@ test.describe("F. 追加シナリオ (UI / UX の境界値)", () => {
     }
 
     const res = await page.evaluate(
-      async ({ url, payload }: { url: string; payload: any }) => {
+      async ({ url, payload }: { url: string; payload: unknown }) => {
         const r = await fetch(url, {
           method: "POST",
           credentials: "include",

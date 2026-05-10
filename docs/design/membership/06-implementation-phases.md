@@ -191,7 +191,7 @@ Day 12-14: P7 (E2E 全件 + 残検証)
 - migration P0 で「最古の org_admin user を owner とする」自動 backfill 入れる
 
 ### B3: 「ほめゴハン」一斉表記変更 (別 PR)
-- 既存 `homegohan` UI/メール文字列を「ほめゴハン」に書き換える別タスク
+- 既存 `homegohan` UI/メール文字列を「ほめゴハン」に書き換える (Task #159 で完了)
 - P0-P7 と並列だが、conflict 注意 (touch する file 多数)
 - Task #159 (新規) で扱う
 

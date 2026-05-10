@@ -8,35 +8,35 @@
  *
  * データ損失リスク回避のため、破壊的操作は毎回明示的にユーザーが選択する必要がある。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("existing-meals checkbox defaults to unchecked each time the modal opens", async ({ authedPage }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+test("existing-meals checkbox defaults to unchecked each time the modal opens", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // ============================================================
   // Round 1: 初回モーダルオープン → チェックボックスは OFF
   // ============================================================
 
   // フローティング AI アシスタントボタンを開く
-  const aiBubble = authedPage.locator('button:has(svg.lucide-sparkles)').first();
+  const aiBubble = tourPendingUser.locator('button:has(svg.lucide-sparkles)').first();
   await expect(aiBubble).toBeVisible({ timeout: 15_000 });
   await aiBubble.click();
 
   // 「期間を指定」モードをクリック
-  const rangeButton = authedPage.getByRole("button", { name: /期間を指定/ });
+  const rangeButton = tourPendingUser.getByRole("button", { name: /期間を指定/ });
   await expect(rangeButton).toBeVisible({ timeout: 10_000 });
   await rangeButton.click();
 
   // 「既存の献立も作り直す」チェックボックスを探す
-  const checkbox = authedPage.locator('input[type="checkbox"]').filter({
-    hasAncestor: authedPage.locator('label, div').filter({ hasText: /既存の献立も作り直す/ }),
+  const checkbox = tourPendingUser.locator('input[type="checkbox"]').filter({
+    hasAncestor: tourPendingUser.locator('label, div').filter({ hasText: /既存の献立も作り直す/ }),
   }).first();
 
   // フォールバック: aria-checked や role="checkbox" でも探す
-  const checkboxFallback = authedPage
+  const checkboxFallback = tourPendingUser
     .getByRole("checkbox", { name: /既存の献立も作り直す/ })
-    .or(authedPage.locator('[data-testid="include-existing-checkbox"]'))
+    .or(tourPendingUser.locator('[data-testid="include-existing-checkbox"]'))
     .first();
 
   // どちらかのロケーターが表示されるまで待つ
@@ -48,7 +48,7 @@ test("existing-meals checkbox defaults to unchecked each time the modal opens", 
   if (!targetCheckbox) {
     // チェックボックスが見つからない場合はモーダルの存在だけ確認して終了
     // (UIが変わった場合でもテストが壊れないようにする)
-    const modalVisible = await authedPage.locator('[role="dialog"], [data-modal], .modal').first().isVisible().catch(() => false);
+    const modalVisible = await tourPendingUser.locator('[role="dialog"], [data-modal], .modal').first().isVisible().catch(() => false);
     console.warn("Could not find 'include existing' checkbox. Modal visible:", modalVisible);
     return;
   }
@@ -68,28 +68,28 @@ test("existing-meals checkbox defaults to unchecked each time the modal opens", 
   // V4GenerateModal は Escape キーを処理しないため、× ボタンを明示的にクリックする。
   // モーダルのオーバーレイ外側 (左上端) をクリックすると handleClose が呼ばれて閉じる。
   // V4GenerateModal の overlay div は onClick={handleClose} を持つ。
-  await authedPage.mouse.click(5, 5);
+  await tourPendingUser.mouse.click(5, 5);
   // モーダルが閉じるまで待つ: モーダル内の「期間を指定」テキストが消えることを確認
   // (V4GenerateModal の range mode 説明テキスト = モーダルが開いている証拠)
-  await authedPage.getByText('開始〜終了を選んで生成').waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+  await tourPendingUser.getByText('開始〜終了を選んで生成').waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
 
   // ============================================================
   // Round 2: 再オープン → チェックボックスは OFF にリセットされているべき
   // ============================================================
-  const aiBubble2 = authedPage.locator('button:has(svg.lucide-sparkles)').first();
+  const aiBubble2 = tourPendingUser.locator('button:has(svg.lucide-sparkles)').first();
   await expect(aiBubble2).toBeVisible({ timeout: 10_000 });
   await aiBubble2.click();
 
-  const rangeButton2 = authedPage.getByRole("button", { name: /期間を指定/ });
+  const rangeButton2 = tourPendingUser.getByRole("button", { name: /期間を指定/ });
   await expect(rangeButton2).toBeVisible({ timeout: 10_000 });
   await rangeButton2.click();
 
-  const checkbox2 = authedPage.locator('input[type="checkbox"]').filter({
-    hasAncestor: authedPage.locator('label, div').filter({ hasText: /既存の献立も作り直す/ }),
+  const checkbox2 = tourPendingUser.locator('input[type="checkbox"]').filter({
+    hasAncestor: tourPendingUser.locator('label, div').filter({ hasText: /既存の献立も作り直す/ }),
   }).first();
-  const checkboxFallback2 = authedPage
+  const checkboxFallback2 = tourPendingUser
     .getByRole("checkbox", { name: /既存の献立も作り直す/ })
-    .or(authedPage.locator('[data-testid="include-existing-checkbox"]'))
+    .or(tourPendingUser.locator('[data-testid="include-existing-checkbox"]'))
     .first();
 
   const targetCheckbox2 = await Promise.race([
@@ -108,7 +108,7 @@ test("existing-meals checkbox defaults to unchecked each time the modal opens", 
   // ============================================================
   // localStorage にも v4_include_existing が残っていないことを確認
   // ============================================================
-  const storedValue = await authedPage.evaluate(() =>
+  const storedValue = await tourPendingUser.evaluate(() =>
     localStorage.getItem("v4_include_existing"),
   );
   // null または "false" であること (true が残っていたら Bug-2 再現)

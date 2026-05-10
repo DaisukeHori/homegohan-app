@@ -6,19 +6,19 @@
  *
  * 注意: 本日の献立が未登録のユーザーではテストをスキップする (graceful skip)。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("home meal toggle updates today's progress percentage", async ({ authedPage }) => {
-  await authedPage.goto("/home");
+test("home meal toggle updates today's progress percentage", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/home");
 
-  const percentEl = authedPage.getByTestId("home-progress-percent");
+  const percentEl = tourPendingUser.getByTestId("home-progress-percent");
   await expect(percentEl).toBeVisible({ timeout: 10_000 });
 
   // 朝食/昼食/夕食のいずれか最初に見つかったチェックボタン
   const toggleCandidates = [
-    authedPage.getByTestId("meal-toggle-breakfast").first(),
-    authedPage.getByTestId("meal-toggle-lunch").first(),
-    authedPage.getByTestId("meal-toggle-dinner").first(),
+    tourPendingUser.getByTestId("meal-toggle-breakfast").first(),
+    tourPendingUser.getByTestId("meal-toggle-lunch").first(),
+    tourPendingUser.getByTestId("meal-toggle-dinner").first(),
   ];
 
   let toggle = null;

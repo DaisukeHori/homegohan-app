@@ -14,96 +14,14 @@
  * このテストで確認すること:
  *   1. onboarding 完了 CTA をクリックすると /handson-tour に遷移する (Bug 2 regression)
  *   2. tour の各ステップを完了すると /home に到達する
+ *
+ * Step 3 Shard B: onboardingPendingUser fixture に移行済み
+ *   - signupViaApi / resetUserState / 手動 injectSession を削除
+ *   - fresh-user.ts の onboardingPendingUser fixture を使用
  */
 
-import { test, expect } from "@playwright/test";
-import {
-  signupViaApi,
-  cleanupTestUser,
-  generateTestEmail,
-} from "./tour/helpers";
-import { config as dotenvConfig } from "dotenv";
-import * as path from "path";
-
-dotenvConfig({ path: path.resolve(__dirname, "../../.env.local") });
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-
-const TEST_PASSWORD = "E2eTourUser2026!";
-
-// ──────────────────────────────────────────────────────────
-// Supabase helpers
-// ──────────────────────────────────────────────────────────
-
-/** service_role 経由でユーザーの onboarding / tour 状態を全リセットする */
-async function resetUserState(userId: string): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${userId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify({
-      onboarding_completed_at: null,
-      onboarding_progress: null,  // in_progress 状態をクリア (resume へのリダイレクト防止)
-      handson_tour_completed_at: null,
-      handson_tour_skipped_at: null,
-    }),
-  });
-}
-
-/** Supabase anon API でパスワードグラントしてセッション Cookie を Page に注入する */
-async function injectSession(
-  page: import("@playwright/test").Page,
-  email: string,
-): Promise<boolean> {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
-  try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ email, password: TEST_PASSWORD }),
-    });
-    if (!resp.ok) return false;
-    const session = await resp.json() as Record<string, unknown>;
-    if (!session.access_token) return false;
-
-    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
-    const cookieName = `sb-${supabaseRef}-auth-token`;
-    // tour/helpers.ts の injectSession と同じ方法で baseURL/domain を取得する
-    const baseURL = (page.context() as unknown as { _options?: { baseURL?: string } })._options?.baseURL
-      ?? process.env.PLAYWRIGHT_BASE_URL
-      ?? "http://localhost:3000";
-    const domain = new URL(baseURL).hostname;
-    const cookieValue = encodeURIComponent(JSON.stringify(session));
-    const expiresAt = (session.expires_at as number) ?? (Date.now() / 1000 + 3600);
-
-    await page.context().clearCookies();
-    await page.context().addCookies([
-      {
-        name: cookieName,
-        value: cookieValue,
-        domain,
-        path: "/",
-        expires: expiresAt,
-        httpOnly: false,
-        secure: baseURL.startsWith("https"),
-        sameSite: "Lax",
-      },
-    ]);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { expect } from "@playwright/test";
+import { test } from "./fixtures/fresh-user";
 
 // ──────────────────────────────────────────────────────────
 // Onboarding helper: 最速で全質問を通過する
@@ -462,52 +380,22 @@ async function completeTourFast(page: import("@playwright/test").Page): Promise<
 test.describe("onboarding 完了 → handson-tour 自動起動 → graduate → /home 一気通貫 (Bug 2 regression)", () => {
   test.setTimeout(120_000);
 
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      // cleanup: auth ユーザーを削除することで user_profiles も CASCADE 削除される
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
+  // onboardingPendingUser fixture を使用: 毎テスト fresh user + afterEach で自動 cleanup
+  test.use({ storageState: { cookies: [], origins: [] } });
 
   test(
     "onboarding 完了 → handson-tour 自動起動 → graduate → /home",
-    async ({ page }) => {
-      if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
-        test.skip(true, "Supabase 環境変数が未設定 — .env.local を確認");
-        return;
-      }
+    async ({ onboardingPendingUser: page }) => {
+      // onboardingPendingUser: email_confirm=true で作成 + session inject 済み
+      // user_profiles 未作成 → onboarding 未完了状態
 
-      // 1. 新規ユーザー作成 (onboarding / tour 両方未完了の状態)
-      //    signupViaApi は onboarding_completed_at を設定するが、
-      //    ここでは onboarding フローを UI で通過するため null に reset する
-      const email = generateTestEmail("e2e-ob-tour-home");
-      userId = await signupViaApi(email, TEST_PASSWORD);
-
-      if (!userId) {
-        test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-        return;
-      }
-
-      // signupViaApi が onboarding_completed_at を設定するので null に reset
-      await resetUserState(userId);
-
-      // 2. セッション Cookie を注入してログイン状態にする
-      const injected = await injectSession(page, email);
-      if (!injected) {
-        test.skip(true, "セッション注入失敗");
-        return;
-      }
-
-      // 3. /onboarding/questions に遷移して全質問を最速完走
+      // 1. /onboarding/welcome に遷移して全質問を最速完走
       await completeOnboardingFast(page);
 
-      // 4. /onboarding/complete に到達していることを確認
+      // 2. /onboarding/complete に到達していることを確認
       await expect(page).toHaveURL(/onboarding\/complete/, { timeout: 5_000 });
 
-      // 5. Bug 2 regression assert:
+      // 3. Bug 2 regression assert:
       //    「この設定で始める」CTA の href が /handson-tour になっていることを確認
       //    (Bug 2 修正前は /home ハードコードだったため、ここが /home だと Bug 2 再発)
       //    complete/page.tsx は sessionStorage から onboarding_next_route を読み取る。
@@ -515,13 +403,13 @@ test.describe("onboarding 完了 → handson-tour 自動起動 → graduate → 
       const ctaHref = await page.locator("a").filter({ hasText: "この設定で始める" }).getAttribute("href");
       expect(ctaHref, "Bug 2 regression: CTA href が /home ハードコードになっていないか確認").toBe("/handson-tour");
 
-      // 6. CTA をクリックして /handson-tour に遷移
+      // 4. CTA をクリックして /handson-tour に遷移
       await page.locator("a").filter({ hasText: "この設定で始める" }).click();
 
-      // 7. Bug 2 の核心: /handson-tour に遷移することを確認
+      // 5. Bug 2 の核心: /handson-tour に遷移することを確認
       await expect(page).toHaveURL(/handson-tour/, { timeout: 15_000 });
 
-      // 7.5. API ルートをモックして高速化 (sandbox API が遅延・hang しないようにする)
+      // 5.5. API ルートをモックして高速化 (sandbox API が遅延・hang しないようにする)
       // handleSandboxComplete が呼ぶ /api/meal-plans/add-from-photo の fetch hang を防ぐ
       await page.route('**/api/meal-plans/add-from-photo**', async (route) => {
         await route.fulfill({
@@ -570,7 +458,7 @@ test.describe("onboarding 完了 → handson-tour 自動起動 → graduate → 
         });
       });
 
-      // 8. tour の各 step を完了 (既存 tour spec の helper を流用)
+      // 6. tour の各 step を完了 (既存 tour spec の helper を流用)
       const tourCompleted = await completeTourFast(page);
 
       if (!tourCompleted) {
@@ -579,34 +467,16 @@ test.describe("onboarding 完了 → handson-tour 自動起動 → graduate → 
         return;
       }
 
-      // 9. /home に到達したことを確認
+      // 7. /home に到達したことを確認
       await expect(page).toHaveURL(/\/home/, { timeout: 15_000 });
     },
   );
 
   test(
     "[smoke] sessionStorage の onboarding_next_route が /handson-tour に設定される",
-    async ({ page }) => {
-      if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
-        test.skip(true, "Supabase 環境変数が未設定");
-        return;
-      }
-
-      const email = generateTestEmail("e2e-ob-ss-check");
-      userId = await signupViaApi(email, TEST_PASSWORD);
-
-      if (!userId) {
-        test.skip(true, "新規ユーザー作成失敗");
-        return;
-      }
-
-      await resetUserState(userId);
-
-      const injected = await injectSession(page, email);
-      if (!injected) {
-        test.skip(true, "セッション注入失敗");
-        return;
-      }
+    async ({ onboardingPendingUser: page }) => {
+      // onboardingPendingUser: email_confirm=true で作成 + session inject 済み
+      // user_profiles 未作成 → onboarding 未完了状態
 
       // onboarding を最速完走
       await completeOnboardingFast(page);

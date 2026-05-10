@@ -26,7 +26,7 @@ async function sendAdminNotification(inquiry: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'homegohan <noreply@homegohan.app>',
+        from: 'ほめゴハン <noreply@homegohan.app>',
         to: [adminEmail],
         subject: `[お問い合わせ] ${inquiry.subject}`,
         text: [

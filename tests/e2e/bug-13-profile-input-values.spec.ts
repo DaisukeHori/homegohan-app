@@ -8,23 +8,23 @@
  *   3. 入力欄に値を入れたあと、ネイティブの value 属性 (DOM の value プロパティ) が
  *      placeholder ではなく、実際の入力値を保持していること。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("profile basic-tab inputs distinguish placeholder vs real value", async ({ authedPage }) => {
-  await authedPage.goto("/profile");
+test("profile basic-tab inputs distinguish placeholder vs real value", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/profile");
   // networkidle に依存しすぎないよう timeout を設定し、失敗してもスキップで対応
-  await authedPage.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await tourPendingUser.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
   // ヘッダーの編集アイコン (鉛筆ボタン) で編集モーダルを開く
   // 既に未入力タブガイド (setIsEditing) が自動オープンしている可能性もあるので両対応
-  const ageInput = authedPage.locator("#profile-age-input");
-  const heightInput = authedPage.locator("#profile-height-input");
-  const weightInput = authedPage.locator("#profile-weight-input");
+  const ageInput = tourPendingUser.locator("#profile-age-input");
+  const heightInput = tourPendingUser.locator("#profile-height-input");
+  const weightInput = tourPendingUser.locator("#profile-weight-input");
 
   if (!(await ageInput.isVisible().catch(() => false))) {
     // プロフィールページの「基本情報」行をクリックして編集モーダルを開く
     // (クイック設定の「基本情報」行をクリックして isEditing=true にする)
-    const basicInfoRow = authedPage.locator("button").filter({ hasText: "基本情報" }).first();
+    const basicInfoRow = tourPendingUser.locator("button").filter({ hasText: "基本情報" }).first();
     await basicInfoRow.click({ timeout: 10_000 }).catch(() => {});
   }
 
@@ -58,11 +58,11 @@ test("profile basic-tab inputs distinguish placeholder vs real value", async ({ 
   await expect(weightInput).toHaveValue("66");
 
   // 値が入っていれば「未入力」バッジは存在しないこと
-  await expect(authedPage.getByTestId("profile-age-empty-badge")).toHaveCount(0);
-  await expect(authedPage.getByTestId("profile-height-empty-badge")).toHaveCount(0);
-  await expect(authedPage.getByTestId("profile-weight-empty-badge")).toHaveCount(0);
+  await expect(tourPendingUser.getByTestId("profile-age-empty-badge")).toHaveCount(0);
+  await expect(tourPendingUser.getByTestId("profile-height-empty-badge")).toHaveCount(0);
+  await expect(tourPendingUser.getByTestId("profile-weight-empty-badge")).toHaveCount(0);
 
   // クリア → 「未入力」バッジが表示される
   await ageInput.fill("");
-  await expect(authedPage.getByTestId("profile-age-empty-badge")).toBeVisible();
+  await expect(tourPendingUser.getByTestId("profile-age-empty-badge")).toBeVisible();
 });

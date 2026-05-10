@@ -6,15 +6,15 @@
  * - 正しい UUID 形式で認証なし → 401
  */
 
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 const NONEXISTENT_UUID = "00000000-0000-0000-0000-000000000000";
 
 test.describe("#294 /api/catalog/products/[id] UUID バリデーション", () => {
-  test("SQL injection 風 id → 400", async ({ authedPage }) => {
-    await authedPage.goto("/");
+  test("SQL injection 風 id → 400", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/");
 
-    const status = await authedPage.evaluate(async () => {
+    const status = await tourPendingUser.evaluate(async () => {
       const res = await fetch("/api/catalog/products/';DROP TABLE products;--");
       return res.status;
     });
@@ -22,10 +22,10 @@ test.describe("#294 /api/catalog/products/[id] UUID バリデーション", () =
     expect(status).toBe(400);
   });
 
-  test("XSS 風 id → 400", async ({ authedPage }) => {
-    await authedPage.goto("/");
+  test("XSS 風 id → 400", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/");
 
-    const status = await authedPage.evaluate(async () => {
+    const status = await tourPendingUser.evaluate(async () => {
       const res = await fetch("/api/catalog/products/%3Cscript%3Ealert(1)%3C%2Fscript%3E");
       return res.status;
     });
@@ -33,10 +33,10 @@ test.describe("#294 /api/catalog/products/[id] UUID バリデーション", () =
     expect(status).toBe(400);
   });
 
-  test("正しい UUID 形式で存在しないレコード → 404", async ({ authedPage }) => {
-    await authedPage.goto("/");
+  test("正しい UUID 形式で存在しないレコード → 404", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/");
 
-    const result = await authedPage.evaluate(async (uuid) => {
+    const result = await tourPendingUser.evaluate(async (uuid) => {
       const res = await fetch(`/api/catalog/products/${uuid}`);
       return { status: res.status, body: await res.json() };
     }, NONEXISTENT_UUID);
@@ -44,10 +44,10 @@ test.describe("#294 /api/catalog/products/[id] UUID バリデーション", () =
     expect(result.status).toBe(404);
   });
 
-  test("invalid_id エラーボディが返る", async ({ authedPage }) => {
-    await authedPage.goto("/");
+  test("invalid_id エラーボディが返る", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/");
 
-    const result = await authedPage.evaluate(async () => {
+    const result = await tourPendingUser.evaluate(async () => {
       const res = await fetch("/api/catalog/products/not-a-uuid");
       return { status: res.status, body: await res.json() };
     });
