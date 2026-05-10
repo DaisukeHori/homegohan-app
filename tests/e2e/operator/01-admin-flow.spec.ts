@@ -10,9 +10,8 @@
  *   4. super_admin として /api/super-admin/audit-logs を叩き記録を確認
  *
  * 前提条件:
- *   - ADMIN_USER_EMAIL / ADMIN_USER_PASSWORD: admin ロールを持つユーザー
- *   - SUPER_ADMIN_USER_EMAIL / SUPER_ADMIN_USER_PASSWORD: super_admin ロールを持つユーザー
- *   - 未設定の場合は権限拒否確認テストとして実行 (適切に SKIP or PASS)
+ *   - adminUser fixture: createFreshUser + user_profiles.roles=['admin'] で自動生成
+ *   - superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成
  *
  * 実行:
  *   npm run test:e2e -- tests/e2e/operator
@@ -27,96 +26,6 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-
-// super_admin は fresh-user fixture では提供しないため、引き続き環境変数から取得する
-const SUPER_ADMIN_USER = process.env.SUPER_ADMIN_USER_EMAIL
-  ? {
-      email: process.env.SUPER_ADMIN_USER_EMAIL,
-      password: process.env.SUPER_ADMIN_USER_PASSWORD ?? "",
-    }
-  : null;
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-
-// ─── ヘルパー ─────────────────────────────────────────────────────────────────
-
-/**
- * Supabase Auth API でセッショントークンを取得し、Cookie をページに注入する。
- * super_admin / E2E_USER の旧スタイルログインで使用する。
- */
-async function injectSupabaseSession(
-  page: import("@playwright/test").Page,
-  email: string,
-  password: string,
-): Promise<boolean> {
-  if (!SUPABASE_URL || !ANON_KEY) return false;
-
-  try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: ANON_KEY },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) return false;
-
-    const session = (await resp.json()) as Record<string, unknown>;
-    if (!session.access_token) return false;
-
-    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
-    const cookieName = `sb-${supabaseRef}-auth-token`;
-    const domain = new URL(BASE_URL).hostname;
-    const cookieValue = encodeURIComponent(JSON.stringify(session));
-    const expiresAt = (session.expires_at as number) ?? Date.now() / 1000 + 3600;
-
-    await page.context().clearCookies();
-    await page.context().addCookies([
-      {
-        name: cookieName,
-        value: cookieValue,
-        domain,
-        path: "/",
-        expires: expiresAt,
-        httpOnly: false,
-        secure: BASE_URL.startsWith("https"),
-        sameSite: "Lax",
-      },
-    ]);
-
-    await page.goto(`${BASE_URL}/home`);
-    await page.waitForURL(
-      (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-      { timeout: 30_000 },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * UI ログイン (API セッション注入のフォールバック)
- */
-async function uiLogin(
-  page: import("@playwright/test").Page,
-  email: string,
-  password: string,
-): Promise<void> {
-  await page.goto(`${BASE_URL}/login`);
-  await page.waitForLoadState("networkidle");
-  await page.evaluate(() => {
-    localStorage.removeItem("auth_last_fail_ts");
-  });
-  await page.locator("#email").fill(email);
-  await page.locator("#password").fill(password);
-  await Promise.all([
-    page.waitForURL(
-      (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-      { timeout: 60_000 },
-    ),
-    page.locator("button[type=submit]").click(),
-  ]);
-}
 
 /**
  * API fetch を page コンテキストで実行する。
@@ -248,24 +157,12 @@ test.describe("operator/admin: ログイン → モデレーション → audit_
   /**
    * T14-A6: audit_log が記録されていることを super_admin で確認する
    *
-   * SUPER_ADMIN_USER が設定されている場合のみ実行。
+   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
    * /api/super-admin/audit-logs エンドポイントで直近のログを取得し
    * レスポンス形式が仕様通りであることをアサートする。
    */
-  test("T14-A6: super_admin が audit_log を取得して記録を確認する", async ({ page }) => {
-    if (!SUPER_ADMIN_USER) {
-      test.skip(true, "SUPER_ADMIN_USER_EMAIL 未設定のためスキップ (CI Secret を確認してください)");
-      return;
-    }
-
-    const loggedIn = await injectSupabaseSession(
-      page,
-      SUPER_ADMIN_USER.email,
-      SUPER_ADMIN_USER.password,
-    );
-    if (!loggedIn) {
-      await uiLogin(page, SUPER_ADMIN_USER.email, SUPER_ADMIN_USER.password);
-    }
+  test("T14-A6: super_admin が audit_log を取得して記録を確認する", async ({ superAdminUser }) => {
+    const { page } = superAdminUser;
 
     // 監査ログ API を叩く
     const { status, body } = await apiFetch(

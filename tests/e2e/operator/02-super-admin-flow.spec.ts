@@ -11,8 +11,7 @@
  *   5. /api/super-admin/audit-logs で全操作が記録されていることを確認
  *
  * 前提条件:
- *   - SUPER_ADMIN_USER_EMAIL / SUPER_ADMIN_USER_PASSWORD: super_admin ロールを持つユーザー
- *   - 未設定の場合は権限拒否確認テストのみ実行
+ *   - superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成
  *
  * 実行:
  *   npm run test:e2e -- tests/e2e/operator
@@ -28,98 +27,8 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
-// super_admin は fresh-user fixture では提供しないため、引き続き環境変数から取得する
-const SUPER_ADMIN_USER = process.env.SUPER_ADMIN_USER_EMAIL
-  ? {
-      email: process.env.SUPER_ADMIN_USER_EMAIL,
-      password: process.env.SUPER_ADMIN_USER_PASSWORD ?? "",
-    }
-  : null;
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-
 // テスト用クーポンコード (衝突回避のためタイムスタンプを含める)
 const TEST_COUPON_CODE = `E2ETEST${Date.now().toString(36).toUpperCase()}`;
-
-// ─── ヘルパー ─────────────────────────────────────────────────────────────────
-
-/**
- * Supabase Auth API でセッショントークンを取得し、Cookie をページに注入する。
- * super_admin のログインに使用する。
- */
-async function injectSupabaseSession(
-  page: import("@playwright/test").Page,
-  email: string,
-  password: string,
-): Promise<boolean> {
-  if (!SUPABASE_URL || !ANON_KEY) return false;
-
-  try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: ANON_KEY },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) return false;
-
-    const session = (await resp.json()) as Record<string, unknown>;
-    if (!session.access_token) return false;
-
-    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
-    const cookieName = `sb-${supabaseRef}-auth-token`;
-    const domain = new URL(BASE_URL).hostname;
-    const cookieValue = encodeURIComponent(JSON.stringify(session));
-    const expiresAt = (session.expires_at as number) ?? Date.now() / 1000 + 3600;
-
-    await page.context().clearCookies();
-    await page.context().addCookies([
-      {
-        name: cookieName,
-        value: cookieValue,
-        domain,
-        path: "/",
-        expires: expiresAt,
-        httpOnly: false,
-        secure: BASE_URL.startsWith("https"),
-        sameSite: "Lax",
-      },
-    ]);
-
-    await page.goto(`${BASE_URL}/home`);
-    await page.waitForURL(
-      (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-      { timeout: 30_000 },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * UI ログイン
- */
-async function uiLogin(
-  page: import("@playwright/test").Page,
-  email: string,
-  password: string,
-): Promise<void> {
-  await page.goto(`${BASE_URL}/login`);
-  await page.waitForLoadState("networkidle");
-  await page.evaluate(() => {
-    localStorage.removeItem("auth_last_fail_ts");
-  });
-  await page.locator("#email").fill(email);
-  await page.locator("#password").fill(password);
-  await Promise.all([
-    page.waitForURL(
-      (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-      { timeout: 60_000 },
-    ),
-    page.locator("button[type=submit]").click(),
-  ]);
-}
 
 /**
  * API fetch を page コンテキストで実行する。
@@ -147,26 +56,6 @@ async function apiFetch(
     },
     { path, options },
   );
-}
-
-/**
- * super_admin としてログインする共通ヘルパー。
- * SUPER_ADMIN_USER が未設定の場合はテストをスキップする。
- */
-async function loginAsSuperAdmin(page: import("@playwright/test").Page): Promise<void> {
-  if (!SUPER_ADMIN_USER) {
-    test.skip(true, "SUPER_ADMIN_USER_EMAIL 未設定のためスキップ (CI Secret を確認してください)");
-    return;
-  }
-
-  const loggedIn = await injectSupabaseSession(
-    page,
-    SUPER_ADMIN_USER.email,
-    SUPER_ADMIN_USER.password,
-  );
-  if (!loggedIn) {
-    await uiLogin(page, SUPER_ADMIN_USER.email, SUPER_ADMIN_USER.password);
-  }
 }
 
 // ─── テストスイート ───────────────────────────────────────────────────────────
@@ -212,10 +101,11 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
 
   /**
    * T14-S3: super_admin がクーポンを作成し audit_log に記録されることを確認
+   *
+   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
    */
-  test("T14-S3: super_admin がクーポンを作成し audit_log に記録される", async ({ page }) => {
-    await loginAsSuperAdmin(page);
-    if (!SUPER_ADMIN_USER) return;
+  test("T14-S3: super_admin がクーポンを作成し audit_log に記録される", async ({ superAdminUser }) => {
+    const { page } = superAdminUser;
 
     // クーポン作成
     const today = new Date().toISOString().split("T")[0];
@@ -282,10 +172,11 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
 
   /**
    * T14-S4: super_admin がプラン一覧を取得して存在を確認する
+   *
+   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
    */
-  test("T14-S4: super_admin がプラン一覧を取得できる", async ({ page }) => {
-    await loginAsSuperAdmin(page);
-    if (!SUPER_ADMIN_USER) return;
+  test("T14-S4: super_admin がプラン一覧を取得できる", async ({ superAdminUser }) => {
+    const { page } = superAdminUser;
 
     const { status, body } = await apiFetch(page, "/api/super-admin/plans?per_page=10&page=1");
 
@@ -317,9 +208,8 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
    * 2. フラグが存在すれば PATCH /api/super-admin/flags/{key} で enabled を toggle
    * 3. audit_log に記録されたことを確認
    */
-  test("T14-S5: super_admin が機能フラグ一覧を取得し flag を toggle する", async ({ page }) => {
-    await loginAsSuperAdmin(page);
-    if (!SUPER_ADMIN_USER) return;
+  test("T14-S5: super_admin が機能フラグ一覧を取得し flag を toggle する", async ({ superAdminUser }) => {
+    const { page } = superAdminUser;
 
     // フラグ一覧を取得
     const { status: flagListStatus, body: flagListBody } = await apiFetch(
@@ -391,10 +281,11 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
 
   /**
    * T14-S6: super_admin が /super-admin/flags UI ページを表示できる
+   *
+   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
    */
-  test("T14-S6: super_admin が /super-admin/flags UI を表示できる", async ({ page }) => {
-    await loginAsSuperAdmin(page);
-    if (!SUPER_ADMIN_USER) return;
+  test("T14-S6: super_admin が /super-admin/flags UI を表示できる", async ({ superAdminUser }) => {
+    const { page } = superAdminUser;
 
     await page.goto(`${BASE_URL}/super-admin/flags`);
     await page.waitForLoadState("networkidle");
@@ -410,10 +301,11 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
 
   /**
    * T14-S7: super_admin が /super-admin/coupons UI ページを表示できる
+   *
+   * superAdminUser fixture: createFreshUser + user_profiles.roles=['super_admin'] で自動生成。
    */
-  test("T14-S7: super_admin が /super-admin/coupons UI を表示できる", async ({ page }) => {
-    await loginAsSuperAdmin(page);
-    if (!SUPER_ADMIN_USER) return;
+  test("T14-S7: super_admin が /super-admin/coupons UI を表示できる", async ({ superAdminUser }) => {
+    const { page } = superAdminUser;
 
     await page.goto(`${BASE_URL}/super-admin/coupons`);
     await page.waitForLoadState("networkidle");
@@ -431,10 +323,9 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
    * レスポンスフィールドが operator/07-audit-monitoring §3-4 準拠の形式であることを検証。
    */
   test("T14-S8: audit_log エントリが operator spec 準拠の形式で記録されている", async ({
-    page,
+    superAdminUser,
   }) => {
-    await loginAsSuperAdmin(page);
-    if (!SUPER_ADMIN_USER) return;
+    const { page } = superAdminUser;
 
     const { status, body } = await apiFetch(
       page,
