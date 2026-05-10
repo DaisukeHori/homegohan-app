@@ -132,7 +132,7 @@ export async function injectSession(
     );
   }
 
-  const MAX_RETRIES = 4;
+  const MAX_RETRIES = 5;
   let resp: Response | null = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
@@ -147,7 +147,8 @@ export async function injectSession(
     if (resp.status !== 429) break;
 
     // 429: rate limit — wait with exponential backoff before retry
-    const waitMs = attempt * 3000; // 3s, 6s, 9s, 12s
+    // Supabase free tier: ~10 req/min per IP on password grant
+    const waitMs = attempt * 10_000; // 10s, 20s, 30s, 40s, 50s
     console.warn(
       `[fresh-user fixture] injectSession rate limited (429), attempt ${attempt}/${MAX_RETRIES}. 待機: ${waitMs}ms`,
     );

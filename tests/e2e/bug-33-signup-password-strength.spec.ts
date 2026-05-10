@@ -4,8 +4,14 @@
  * 確認: /signup で弱いパスワード ("123") を送信したとき、インラインで日本語の
  *       強度エラーが表示されてフォーム送信がブロックされること。
  *       強いパスワード ("Password1!") を入力するとエラーが解消されること。
+ *
+ * 移行: UI バリデーションのみのテストのため fresh user 生成は不要。
+ *       storageState: empty で clean state を保証する。
  */
 import { test, expect } from "@playwright/test";
+
+// 認証状態を持たない clean state で実行
+test.use({ storageState: { cookies: [], origins: [] } });
 
 test.describe("signup password strength validation", () => {
   test("weak password shows inline Japanese error and blocks submission", async ({
