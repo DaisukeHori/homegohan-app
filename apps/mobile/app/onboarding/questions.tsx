@@ -437,16 +437,8 @@ const QUESTIONS: Question[] = [
     ],
   },
   {
-    id: "family_size",
-    text: "何人分の食事を作りますか？（1〜10人）",
-    type: "number",
-    placeholder: "例: 4",
-    min: 1,
-    max: 10,
-  },
-  {
     id: "servings_config",
-    text: "曜日ごとの食事人数を設定してください\n（0人＝作らない/外食）",
+    text: "食事の基本人数と曜日別設定をしてください\n（0人＝作らない/外食）",
     type: "servings_grid",
   },
   {
@@ -571,7 +563,12 @@ function transformAnswersToProfile(ans: Record<string, any>) {
     ans.cuisine_preference.forEach((c: string) => { prefs[c] = 5; });
     profile.cuisinePreferences = prefs;
   }
-  if (ans.family_size) profile.familySize = parseInt(ans.family_size);
+  // family_size は servings_config.default から導出 (質問削除のため)
+  if (ans.servings_config?.default) {
+    profile.familySize = ans.servings_config.default;
+  } else {
+    profile.familySize = 1;
+  }
   if (ans.servings_config) profile.servingsConfig = ans.servings_config;
   if (ans.shopping_frequency) profile.shoppingFrequency = ans.shopping_frequency;
   if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") profile.weeklyFoodBudget = parseInt(ans.weekly_food_budget);
@@ -868,7 +865,10 @@ export default function OnboardingQuestions() {
         });
         updates.cuisine_preferences = prefs;
       }
-      if (ans.family_size) updates.family_size = parseInt(ans.family_size);
+      // family_size は servings_config.default から導出 (質問削除のため)
+      if (ans.servings_config?.default) {
+        updates.family_size = ans.servings_config.default;
+      }
       if (ans.servings_config) updates.servings_config = ans.servings_config;
       if (ans.shopping_frequency) updates.shopping_frequency = ans.shopping_frequency;
       if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") {
@@ -1310,6 +1310,40 @@ export default function OnboardingQuestions() {
       {/* Servings grid */}
       {currentQuestion.type === "servings_grid" ? (
         <View testID="onboarding-servings-screen" style={{ gap: spacing.md }}>
+          {/* 基本人数入力 (family_size の代替) */}
+          <View style={styles.defaultServingsRow}>
+            <Text style={styles.defaultServingsLabel}>基本人数</Text>
+            <View style={styles.defaultServingsControl}>
+              <Pressable
+                onPress={() => {
+                  const current = answers.servings_config?.default ?? 2;
+                  if (current <= 1) return;
+                  const newDefault = current - 1;
+                  const newConfig = createDefaultServingsConfig(newDefault);
+                  setAnswers((prev) => ({ ...prev, servings_config: newConfig }));
+                }}
+                style={styles.gridButton}
+              >
+                <Ionicons name="remove" size={18} color={colors.success} />
+              </Pressable>
+              <Text style={styles.defaultServingsValue}>
+                {answers.servings_config?.default ?? 2}人
+              </Text>
+              <Pressable
+                onPress={() => {
+                  const current = answers.servings_config?.default ?? 2;
+                  if (current >= 10) return;
+                  const newDefault = current + 1;
+                  const newConfig = createDefaultServingsConfig(newDefault);
+                  setAnswers((prev) => ({ ...prev, servings_config: newConfig }));
+                }}
+                style={styles.gridButton}
+              >
+                <Ionicons name="add" size={18} color={colors.success} />
+              </Pressable>
+            </View>
+          </View>
+
           <Text style={styles.gridHint}>
             各セルをタップして人数を変更できます
           </Text>
@@ -1339,9 +1373,9 @@ export default function OnboardingQuestions() {
                   </Text>
                 </View>
                 {MEAL_TYPES.map((meal) => {
-                  const familySize = parseInt(answers.family_size) || 2;
-                  const currentConfig = answers.servings_config || createDefaultServingsConfig(familySize);
-                  const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? familySize;
+                  const defaultPeople = answers.servings_config?.default ?? 2;
+                  const currentConfig = answers.servings_config || createDefaultServingsConfig(defaultPeople);
+                  const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? defaultPeople;
 
                   const updateValue = (newValue: number) => {
                     const clampedValue = Math.max(0, Math.min(10, newValue));
@@ -1410,8 +1444,8 @@ export default function OnboardingQuestions() {
           <Pressable
             testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
             onPress={() => {
-              const familySize = parseInt(answers.family_size) || 2;
-              const config = answers.servings_config || createDefaultServingsConfig(familySize);
+              const defaultPeople = answers.servings_config?.default ?? 2;
+              const config = answers.servings_config || createDefaultServingsConfig(defaultPeople);
               handleAnswer(config);
             }}
             style={styles.nextButton}
@@ -1816,5 +1850,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#9CA3AF",
     marginTop: spacing.md,
+  },
+  /* ── Default servings (family_size 代替) ── */
+  defaultServingsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: "#fff",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  defaultServingsLabel: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  defaultServingsControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  defaultServingsValue: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: colors.text,
+    minWidth: 36,
+    textAlign: "center",
   },
 });
