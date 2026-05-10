@@ -26,7 +26,7 @@
  *
  * 合計: 13 ケース
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly, openFridgeModal, openShoppingModal } from "./_helpers";
 
 // ─────────────────────────────────────────────
@@ -35,7 +35,7 @@ import { gotoWeekly, openFridgeModal, openShoppingModal } from "./_helpers";
 
 test.describe("FridgeModal", () => {
   // F-1: 食材一覧表示 + スクロール可能コンテナ
-  test("F-1: 食材一覧が表示され、スクロール可能なコンテナが存在する", async ({ authedPage: page }) => {
+  test("F-1: 食材一覧が表示され、スクロール可能なコンテナが存在する", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -57,7 +57,7 @@ test.describe("FridgeModal", () => {
   });
 
   // F-2: 食材削除ボタンがクリック可能 (確認ダイアログなし = 即削除)
-  test("F-2: 食材削除ボタンをクリックすると確認ダイアログなしで即削除できる", async ({ authedPage: page }) => {
+  test("F-2: 食材削除ボタンをクリックすると確認ダイアログなしで即削除できる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -103,7 +103,7 @@ test.describe("FridgeModal", () => {
   });
 
   // F-3: 期限切れ食材のハイライト (dangerLight 背景)
-  test("F-3: 期限切れ食材 (今日・過去) が danger 背景でハイライトされる", async ({ authedPage: page }) => {
+  test("F-3: 期限切れ食材 (今日・過去) が danger 背景でハイライトされる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -162,7 +162,7 @@ test.describe("FridgeModal", () => {
   });
 
   // F-4: 「食材を追加」ボタン → AddFridgeModal 遷移
-  test("F-4: 「食材を追加」ボタンをクリックすると AddFridgeModal が開く", async ({ authedPage: page }) => {
+  test("F-4: 「食材を追加」ボタンをクリックすると AddFridgeModal が開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -189,7 +189,7 @@ test.describe("FridgeModal", () => {
   });
 
   // F-5: 期限近 (3日以内) 食材の警告表示
-  test("F-5: 期限3日以内の食材が warning 背景でハイライトされる", async ({ authedPage: page }) => {
+  test("F-5: 期限3日以内の食材が warning 背景でハイライトされる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -244,7 +244,7 @@ test.describe("FridgeModal", () => {
   });
 
   // F-6: 0 件時の empty state
-  test("F-6: 冷蔵庫が空のとき empty state メッセージが表示される", async ({ authedPage: page }) => {
+  test("F-6: 冷蔵庫が空のとき empty state メッセージが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -276,7 +276,7 @@ test.describe("FridgeModal", () => {
 
 test.describe("ShoppingModal", () => {
   // S-1: 買い物リスト一覧表示
-  test("S-1: 買い物リスト一覧が表示され、アイテム数カウンターが存在する", async ({ authedPage: page }) => {
+  test("S-1: 買い物リスト一覧が表示され、アイテム数カウンターが存在する", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -301,7 +301,7 @@ test.describe("ShoppingModal", () => {
   });
 
   // S-2: カテゴリ別グルーピング表示
-  test("S-2: 買い物アイテムがカテゴリ別にグルーピングされて表示される", async ({ authedPage: page }) => {
+  test("S-2: 買い物アイテムがカテゴリ別にグルーピングされて表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -342,7 +342,7 @@ test.describe("ShoppingModal", () => {
   });
 
   // S-3: チェックボックス click → 完了マーク
-  test("S-3: アイテムのチェックボタンをクリックすると完了マーク (line-through) になる", async ({ authedPage: page }) => {
+  test("S-3: アイテムのチェックボタンをクリックすると完了マーク (line-through) になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -397,7 +397,7 @@ test.describe("ShoppingModal", () => {
   });
 
   // S-4: 削除ボタン click → アイテム消滅
-  test("S-4: アイテムの削除ボタンをクリックするとアイテムが消える", async ({ authedPage: page }) => {
+  test("S-4: アイテムの削除ボタンをクリックするとアイテムが消える", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -432,7 +432,7 @@ test.describe("ShoppingModal", () => {
   });
 
   // S-5: 「献立から再生成」ボタン → loading state または shoppingRange モーダル
-  test("S-5: 「献立から再生成」ボタンをクリックすると loading state が現れるか range モーダルが開く", async ({ authedPage: page }) => {
+  test("S-5: 「献立から再生成」ボタンをクリックすると loading state が現れるか range モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -463,7 +463,7 @@ test.describe("ShoppingModal", () => {
   });
 
   // S-6: 「追加」ボタン → AddShoppingModal 遷移
-  test("S-6: 「追加」ボタンをクリックすると AddShoppingModal が開く", async ({ authedPage: page }) => {
+  test("S-6: 「追加」ボタンをクリックすると AddShoppingModal が開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -497,7 +497,7 @@ test.describe("ShoppingModal", () => {
   });
 
   // S-7: 0 件時の empty state
-  test("S-7: 買い物リストが空のとき empty state メッセージが表示される", async ({ authedPage: page }) => {
+  test("S-7: 買い物リストが空のとき empty state メッセージが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openShoppingModal(page);

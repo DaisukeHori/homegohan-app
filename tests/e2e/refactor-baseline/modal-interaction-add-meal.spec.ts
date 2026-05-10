@@ -21,7 +21,7 @@
  *   - 外部 API は page.route() で mock
  *   - DB 書き込みが発生するケースは mock で副作用を防ぐ
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly } from "./_helpers";
 
 // ============================================================
@@ -119,7 +119,7 @@ async function mockMealPlansGet(page: import("@playwright/test").Page): Promise<
 // A. AddMealModal の開き方
 // ============================================================
 test.describe("A: AddMealModal の開き方", () => {
-  test("A-1: 空の朝食スロットから add モーダルが開く", async ({ authedPage: page }) => {
+  test("A-1: 空の朝食スロットから add モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -142,7 +142,7 @@ test.describe("A: AddMealModal の開き方", () => {
     ).toBeVisible({ timeout: 8_000 });
   });
 
-  test("A-2: 「食事を追加」ボタン → addMealSlot モーダルが開く", async ({ authedPage: page }) => {
+  test("A-2: 「食事を追加」ボタン → addMealSlot モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -170,7 +170,7 @@ test.describe("A: AddMealModal の開き方", () => {
 // B. モード別ボタン表示確認
 // ============================================================
 test.describe("B: モードボタン表示", () => {
-  test("B-1: add モーダルに 4 つのモードボタンが表示される (自炊/時短/買う/外食)", async ({ authedPage: page }) => {
+  test("B-1: add モーダルに 4 つのモードボタンが表示される (自炊/時短/買う/外食)", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -187,7 +187,7 @@ test.describe("B: モードボタン表示", () => {
     await expect(page.getByRole("button", { name: /外食で追加/ })).toBeVisible({ timeout: 5_000 });
   });
 
-  test("B-2: add モーダルに「AIに提案してもらう」ボタンが表示される", async ({ authedPage: page }) => {
+  test("B-2: add モーダルに「AIに提案してもらう」ボタンが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -202,7 +202,7 @@ test.describe("B: モードボタン表示", () => {
     ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("B-3: add モーダルの catalog 検索フィールドが表示される", async ({ authedPage: page }) => {
+  test("B-3: add モーダルの catalog 検索フィールドが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -222,7 +222,7 @@ test.describe("B: モードボタン表示", () => {
 // C. 食事種別選択 (addMealSlot 経由)
 // ============================================================
 test.describe("C: 食事種別選択 (addMealSlot 経由)", () => {
-  test("C-1: addMealSlot → 朝食 → add モーダルでタイトルが「朝食を追加」になる", async ({ authedPage: page }) => {
+  test("C-1: addMealSlot → 朝食 → add モーダルでタイトルが「朝食を追加」になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -251,7 +251,7 @@ test.describe("C: 食事種別選択 (addMealSlot 経由)", () => {
     ).toBeVisible({ timeout: 8_000 });
   });
 
-  test("C-2: addMealSlot → 昼食 → add モーダルでタイトルが「昼食を追加」になる", async ({ authedPage: page }) => {
+  test("C-2: addMealSlot → 昼食 → add モーダルでタイトルが「昼食を追加」になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -287,7 +287,7 @@ test.describe("C: 食事種別選択 (addMealSlot 経由)", () => {
     ).toBeVisible({ timeout: 8_000 });
   });
 
-  test("C-3: addMealSlot → 夕食 → add モーダルでタイトルが「夕食を追加」になる", async ({ authedPage: page }) => {
+  test("C-3: addMealSlot → 夕食 → add モーダルでタイトルが「夕食を追加」になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -323,7 +323,7 @@ test.describe("C: 食事種別選択 (addMealSlot 経由)", () => {
     ).toBeVisible({ timeout: 8_000 });
   });
 
-  test("C-4: addMealSlot → おやつ → add モーダルでタイトルが「おやつを追加」になる", async ({ authedPage: page }) => {
+  test("C-4: addMealSlot → おやつ → add モーダルでタイトルが「おやつを追加」になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -359,7 +359,7 @@ test.describe("C: 食事種別選択 (addMealSlot 経由)", () => {
     ).toBeVisible({ timeout: 8_000 });
   });
 
-  test("C-5: addMealSlot → 夜食 → add モーダルでタイトルが「夜食を追加」になる", async ({ authedPage: page }) => {
+  test("C-5: addMealSlot → 夜食 → add モーダルでタイトルが「夜食を追加」になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -400,7 +400,7 @@ test.describe("C: 食事種別選択 (addMealSlot 経由)", () => {
 // D. catalog 検索フロー
 // ============================================================
 test.describe("D: catalog 検索", () => {
-  test("D-1: 商品名を 2 文字以上入力すると検索中ステータスが表示される", async ({ authedPage: page }) => {
+  test("D-1: 商品名を 2 文字以上入力すると検索中ステータスが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -446,7 +446,7 @@ test.describe("D: catalog 検索", () => {
     expect(["searching", "results"]).toContain(searchFeedback);
   });
 
-  test("D-2: catalog 検索結果を選択すると「選択中」パネルが表示される", async ({ authedPage: page }) => {
+  test("D-2: catalog 検索結果を選択すると「選択中」パネルが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -501,7 +501,7 @@ test.describe("D: catalog 検索", () => {
     await expect(page.getByText("モックおにぎり")).toBeVisible({ timeout: 5_000 });
   });
 
-  test("D-3: 「解除」ボタンで catalog 選択が解除される", async ({ authedPage: page }) => {
+  test("D-3: 「解除」ボタンで catalog 選択が解除される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -562,7 +562,7 @@ test.describe("D: catalog 検索", () => {
     await expect(page.getByText("選択中")).toBeHidden({ timeout: 5_000 });
   });
 
-  test("D-4: 1 文字の検索では結果が表示されない (2 文字以上が必要)", async ({ authedPage: page }) => {
+  test("D-4: 1 文字の検索では結果が表示されない (2 文字以上が必要)", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -586,7 +586,7 @@ test.describe("D: catalog 検索", () => {
 // E. モードボタン押下 → API mock → モーダル閉じる
 // ============================================================
 test.describe("E: モード選択してモーダル閉じる (mock)", () => {
-  test("E-1: 「自炊で追加」押下 → API POST → モーダルが閉じる", async ({ authedPage: page }) => {
+  test("E-1: 「自炊で追加」押下 → API POST → モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await mockMealPost(page);
@@ -608,7 +608,7 @@ test.describe("E: モード選択してモーダル閉じる (mock)", () => {
     ).toBeHidden({ timeout: 8_000 });
   });
 
-  test("E-2: 「時短で追加」押下 → API POST → モーダルが閉じる", async ({ authedPage: page }) => {
+  test("E-2: 「時短で追加」押下 → API POST → モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await mockMealPost(page);
@@ -629,7 +629,7 @@ test.describe("E: モード選択してモーダル閉じる (mock)", () => {
     ).toBeHidden({ timeout: 8_000 });
   });
 
-  test("E-3: 「買うで追加」押下 → API POST → モーダルが閉じる", async ({ authedPage: page }) => {
+  test("E-3: 「買うで追加」押下 → API POST → モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await mockMealPost(page);
@@ -650,7 +650,7 @@ test.describe("E: モード選択してモーダル閉じる (mock)", () => {
     ).toBeHidden({ timeout: 8_000 });
   });
 
-  test("E-4: 「外食で追加」押下 → API POST → モーダルが閉じる", async ({ authedPage: page }) => {
+  test("E-4: 「外食で追加」押下 → API POST → モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await mockMealPost(page);
@@ -676,7 +676,7 @@ test.describe("E: モード選択してモーダル閉じる (mock)", () => {
 // F. AIに提案してもらう → aiMeal モーダル遷移
 // ============================================================
 test.describe("F: AI 提案ボタン", () => {
-  test("F-1: 「AIに提案してもらう」押下 → aiMeal モーダルに遷移する", async ({ authedPage: page }) => {
+  test("F-1: 「AIに提案してもらう」押下 → aiMeal モーダルに遷移する", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -706,7 +706,7 @@ test.describe("F: AI 提案ボタン", () => {
 // G. X ボタン → モーダル閉じる
 // ============================================================
 test.describe("G: モーダルを X ボタンで閉じる", () => {
-  test("G-1: X ボタンで add モーダルが閉じる", async ({ authedPage: page }) => {
+  test("G-1: X ボタンで add モーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -744,7 +744,7 @@ test.describe("G: モーダルを X ボタンで閉じる", () => {
     ).toBeHidden({ timeout: 8_000 });
   });
 
-  test("G-2: モーダルを閉じた後、再度開いても catalog 検索がリセットされている", async ({ authedPage: page }) => {
+  test("G-2: モーダルを閉じた後、再度開いても catalog 検索がリセットされている", async ({ tourPendingUser: page }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
 
@@ -814,7 +814,7 @@ test.describe("G: モーダルを X ボタンで閉じる", () => {
 // H. addMealSlot 経由の store リセット検証
 // ============================================================
 test.describe("H: addMealSlot 経由のフロー", () => {
-  test("H-1: addMealSlot → 食事種別選択 → add モーダル → X で閉じる フル遷移", async ({ authedPage: page }) => {
+  test("H-1: addMealSlot → 食事種別選択 → add モーダル → X で閉じる フル遷移", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -872,7 +872,7 @@ test.describe("H: addMealSlot 経由のフロー", () => {
     }
   });
 
-  test("H-2: addMealSlot モーダル自体も X ボタンで閉じられる", async ({ authedPage: page }) => {
+  test("H-2: addMealSlot モーダル自体も X ボタンで閉じられる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 

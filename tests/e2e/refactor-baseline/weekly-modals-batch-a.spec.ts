@@ -19,7 +19,7 @@
  *
  * 参照: tests/e2e/refactor-baseline/weekly-characterization.spec.ts (既存 7 モーダル)
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly, openShoppingModal } from "./_helpers";
 
 // ============================================================
@@ -33,7 +33,7 @@ test.describe("modal-1: AiAssistantModal (ai)", () => {
       "AiAssistantModal は現行 UI では到達不能。testID 追加後に再有効化を推奨。"
   );
 
-  test("AI アシスタントモーダルが開く (placeholder)", async ({ authedPage: page }) => {
+  test("AI アシスタントモーダルが開く (placeholder)", async ({ tourPendingUser: page }) => {
     await gotoWeekly(page);
     // この spec は到達不能なため実装不要
   });
@@ -44,7 +44,7 @@ test.describe("modal-1: AiAssistantModal (ai)", () => {
 // ============================================================
 test.describe("modal-2: AiMealModal (aiMeal)", () => {
   test("add モーダル内「AIに提案してもらう」ボタンで aiMeal モーダルが開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -124,7 +124,7 @@ test.describe("modal-2: AiMealModal (aiMeal)", () => {
   });
 
   test("aiMeal モーダルで条件ボタンを選択すると aria が反転する", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -178,7 +178,7 @@ test.describe("modal-2: AiMealModal (aiMeal)", () => {
 // ============================================================
 test.describe("modal-3: RegenerateMealModal (regenerateMeal)", () => {
   test("meal-regenerate-button で regenerateMeal モーダルが開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -214,7 +214,7 @@ test.describe("modal-3: RegenerateMealModal (regenerateMeal)", () => {
   });
 
   test("regenerateMeal モーダルを X ボタンで閉じると元 UI に戻る", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -264,7 +264,7 @@ test.describe("modal-3: RegenerateMealModal (regenerateMeal)", () => {
 // ============================================================
 test.describe("modal-4: NutritionDetailModal", () => {
   test("StatsModal から「詳細を見る / 献立を改善」で NutritionDetailModal が開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -322,7 +322,7 @@ test.describe("modal-4: NutritionDetailModal", () => {
   });
 
   test("日付ヘッダーのレーダーチャートをクリックすると NutritionDetailModal が開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -382,7 +382,7 @@ test.describe("modal-4: NutritionDetailModal", () => {
 // モーダル 5: StatsModal
 // ============================================================
 test.describe("modal-5: StatsModal (stats)", () => {
-  test("「栄養分析を見る」ボタンで StatsModal が開く", async ({ authedPage: page }) => {
+  test("「栄養分析を見る」ボタンで StatsModal が開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -406,7 +406,7 @@ test.describe("modal-5: StatsModal (stats)", () => {
   });
 
   test("StatsModal で「今週」タブに切り替えると週間サマリーが表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -440,7 +440,7 @@ test.describe("modal-5: StatsModal (stats)", () => {
 // ============================================================
 test.describe("modal-6: ServingsModal (showServingsModal)", () => {
   test("買い物リストモーダルの人数設定ボタンで ServingsModal が開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -468,7 +468,7 @@ test.describe("modal-6: ServingsModal (showServingsModal)", () => {
   });
 
   test("ServingsModal でキャンセル (X ボタン) するとモーダルが閉じる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -497,7 +497,7 @@ test.describe("modal-6: ServingsModal (showServingsModal)", () => {
 // ============================================================
 test.describe("modal-7: ShoppingRangeModal (shoppingRange)", () => {
   test("buying 再生成ボタンで shoppingRange モーダルが開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -539,7 +539,7 @@ test.describe("modal-7: ShoppingRangeModal (shoppingRange)", () => {
   });
 
   test("shoppingRange モーダルで「1週間分」を選択して次へ進める", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
