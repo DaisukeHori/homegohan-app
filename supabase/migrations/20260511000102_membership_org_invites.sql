@@ -3,6 +3,18 @@
 -- 番号: 設計書指定 000002 → 000102 にシフト
 -- P0 Critical Fix F3: status/invited_by 不在カラムを ADD COLUMN IF NOT EXISTS で補完
 
+-- ★ Warning 4: fresh install 時にテーブルが存在しない場合に備えて CREATE TABLE IF NOT EXISTS
+-- リモート DB に既存であれば no-op、fresh install 時に有効
+CREATE TABLE IF NOT EXISTS organization_invites (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  token TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  -- 他カラムは下の ALTER TABLE で追加
+);
+
 -- ★ status カラムが存在しない場合に追加 (既存テーブルの状況によっては必要)
 ALTER TABLE organization_invites
   ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';

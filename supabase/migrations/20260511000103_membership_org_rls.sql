@@ -36,9 +36,21 @@ DROP POLICY IF EXISTS organizations_delete_owner ON organizations;
 CREATE POLICY organizations_delete_owner ON organizations
   FOR DELETE USING (organizations.owner_id = auth.uid());
 
+-- ★ Critical 7-A: 運営強制操作用 DELETE policy (super_admin)
+DROP POLICY IF EXISTS organizations_delete_super_admin ON organizations;
+CREATE POLICY organizations_delete_super_admin ON organizations
+  FOR DELETE USING (
+    EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND 'super_admin' = ANY(roles))
+  );
+
 -- organization_invites: pending 確認は token 持ちなら誰でも (受諾画面で表示するため)
 -- 一覧は admin/owner のみ
 ALTER TABLE organization_invites ENABLE ROW LEVEL SECURITY;
+
+-- ★ Warning 1: token 持ちユーザが pending 招待を参照できる policy
+DROP POLICY IF EXISTS org_invites_select_token ON organization_invites;
+CREATE POLICY org_invites_select_token ON organization_invites
+  FOR SELECT USING (status = 'pending' AND expires_at > NOW() AND auth.uid() IS NOT NULL);
 
 DROP POLICY IF EXISTS org_invites_select_admin ON organization_invites;
 CREATE POLICY org_invites_select_admin ON organization_invites

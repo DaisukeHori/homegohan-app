@@ -85,8 +85,8 @@ BEGIN
     RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
   END IF;
 
-  -- 招待 fetch
-  SELECT * INTO v_invite FROM organization_invites WHERE token = p_token;
+  -- 招待 fetch (★ Warning 2: SELECT FOR UPDATE で二重受諾防止)
+  SELECT * INTO v_invite FROM organization_invites WHERE token = p_token FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'INVITE_NOT_FOUND' USING ERRCODE = 'P0001';
   END IF;
@@ -132,6 +132,11 @@ BEGIN
   UPDATE organization_invites
     SET status = 'accepted', accepted_at = NOW(), accepted_by = auth.uid()
     WHERE id = v_invite.id;
+
+  -- ライセンス使用数 increment
+  UPDATE org_license_pools
+    SET used_licenses = used_licenses + 1, updated_at = NOW()
+    WHERE organization_id = v_invite.organization_id;
 
   -- 監査ログ
   INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
@@ -222,6 +227,11 @@ BEGIN
     WHERE id = p_user_id
     RETURNING * INTO v_target;
 
+  -- ライセンス使用数 decrement
+  UPDATE org_license_pools
+    SET used_licenses = GREATEST(used_licenses - 1, 0), updated_at = NOW()
+    WHERE organization_id = p_organization_id;
+
   INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id)
   VALUES ('organization', p_organization_id, 'member_removed', auth.uid(), p_user_id);
 
@@ -258,6 +268,11 @@ BEGIN
         is_active_in_org = FALSE, joined_org_at = NULL
     WHERE id = auth.uid()
     RETURNING * INTO v_user;
+
+  -- ライセンス使用数 decrement
+  UPDATE org_license_pools
+    SET used_licenses = GREATEST(used_licenses - 1, 0), updated_at = NOW()
+    WHERE organization_id = v_org_id;
 
   INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id)
   VALUES ('organization', v_org_id, 'member_left', auth.uid(), auth.uid());

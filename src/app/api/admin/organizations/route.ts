@@ -148,7 +148,34 @@ export async function POST(request: Request) {
   // 明示的に指定がない場合は呼び出し元 admin を owner とする
   const effectiveOwnerId = owner_id ?? actor.id;
 
-  const { data: org, error: insertError } = await supabase
+  // owner が既に他組織に所属しているかチェック (user_profiles_org_consistency 制約対応)
+  const { createClient: createAdminSupabaseClient } = await import('@supabase/supabase-js');
+  const supabaseAdminUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAdminKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseAdminUrl || !supabaseAdminKey) {
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'サーバー設定エラーです' } },
+      { status: 500 },
+    );
+  }
+  const supabaseAdmin = createAdminSupabaseClient(supabaseAdminUrl, supabaseAdminKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: ownerProfile } = await supabaseAdmin
+    .from('user_profiles')
+    .select('organization_id')
+    .eq('id', effectiveOwnerId)
+    .single();
+
+  if (ownerProfile?.organization_id) {
+    return NextResponse.json(
+      { error: { code: 'OWNER_ALREADY_IN_ORG', message: '指定した owner は既に別の組織に所属しています' } },
+      { status: 409 },
+    );
+  }
+
+  const { data: org, error: insertError } = await supabaseAdmin
     .from('organizations')
     .insert({ name, plan, owner_id: effectiveOwnerId })
     .select('id, name, plan, owner_id, created_at, updated_at')
@@ -158,6 +185,21 @@ export async function POST(request: Request) {
     console.error('[api/admin/organizations] POST insert error:', insertError?.message);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } },
+      { status: 500 },
+    );
+  }
+
+  // owner の user_profiles を更新 (org_role='owner', organization_id 設定)
+  const { error: profileUpdateError } = await supabaseAdmin
+    .from('user_profiles')
+    .update({ organization_id: org.id, org_role: 'owner' })
+    .eq('id', effectiveOwnerId);
+
+  if (profileUpdateError) {
+    console.error('[api/admin/organizations] POST profile update error:', profileUpdateError.message);
+    // org 作成は成功しているが user_profiles が更新できない場合はエラー
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'オーナーのプロフィール更新に失敗しました' } },
       { status: 500 },
     );
   }

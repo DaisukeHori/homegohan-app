@@ -28,6 +28,15 @@ UPDATE user_profiles
 SET org_role = 'member'
 WHERE organization_id IS NOT NULL AND org_role IS NULL;
 
+-- ★ Warning 5 (step 2.5): roles配列に'org_admin'を持つユーザは org_role='admin' に昇格
+-- owner backfill より前に実行 (owner が上書きされないよう順序注意)
+UPDATE user_profiles
+SET org_role = 'admin'
+WHERE organization_id IS NOT NULL
+  AND 'org_admin' = ANY(roles)
+  AND org_role <> 'owner'
+  AND (org_role IS NULL OR org_role = 'member');
+
 -- owner backfill: organizations.owner_id と一致する user は role='owner' に上書き
 UPDATE user_profiles up
 SET org_role = 'owner'

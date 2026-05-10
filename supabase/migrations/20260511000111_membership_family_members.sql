@@ -45,6 +45,9 @@ CREATE INDEX IF NOT EXISTS idx_family_members_family ON family_members(family_id
 CREATE INDEX IF NOT EXISTS idx_family_members_user ON family_members(user_id) WHERE user_id IS NOT NULL;
 
 -- 整合性: child_profile は role='child' AND user_id IS NULL のときのみ
+-- ★ Warning 3: DROP IF EXISTS で冪等に
+ALTER TABLE family_members
+  DROP CONSTRAINT IF EXISTS family_members_child_profile_consistency;
 ALTER TABLE family_members
   ADD CONSTRAINT family_members_child_profile_consistency CHECK (
     (role = 'child' AND user_id IS NULL AND child_profile IS NOT NULL)

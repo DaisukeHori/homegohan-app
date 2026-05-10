@@ -53,6 +53,11 @@ CREATE POLICY family_members_update_self_or_adult ON family_members
   );
 
 -- family_invites
+-- ★ Warning 1: token 持ちユーザが pending 招待を参照できる policy
+DROP POLICY IF EXISTS family_invites_select_token ON family_invites;
+CREATE POLICY family_invites_select_token ON family_invites
+  FOR SELECT USING (status = 'pending' AND expires_at > NOW() AND auth.uid() IS NOT NULL);
+
 DROP POLICY IF EXISTS family_invites_select_adult ON family_invites;
 CREATE POLICY family_invites_select_adult ON family_invites
   FOR SELECT USING (
