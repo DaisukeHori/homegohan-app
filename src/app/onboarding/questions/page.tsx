@@ -375,14 +375,6 @@ const QUESTIONS = [
     ]
   },
   {
-    id: 'family_size',
-    text: '何人分の食事を作りますか？\n（1〜10人）',
-    type: 'number',
-    placeholder: '例: 4',
-    min: 1,
-    max: 10,
-  },
-  {
     id: 'servings_config',
     text: '曜日ごとの食事人数を設定してください\n（0人＝作らない/外食）',
     type: 'servings_grid',
@@ -1109,10 +1101,42 @@ function OnboardingQuestionsContent() {
               {/* 曜日別人数設定グリッド */}
               {currentQuestion.type === 'servings_grid' && (
                 <div className="space-y-4">
+                  {/* Fix 3: 基本人数入力（family_size 質問を削除してここに統合） */}
+                  <div className="flex items-center gap-3 justify-center">
+                    <label className="text-sm font-bold text-gray-600">基本人数：</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(answers.family_size) || 2;
+                          const next = Math.max(1, current - 1);
+                          const newConfig = createDefaultServingsConfig(next);
+                          setAnswers({ ...answers, family_size: String(next), servings_config: newConfig });
+                        }}
+                        className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100"
+                      >
+                        −
+                      </button>
+                      <span className="text-lg font-bold text-gray-800 min-w-[2ch] text-center">
+                        {parseInt(answers.family_size) || 2}
+                      </span>
+                      <button
+                        onClick={() => {
+                          const current = parseInt(answers.family_size) || 2;
+                          const next = Math.min(10, current + 1);
+                          const newConfig = createDefaultServingsConfig(next);
+                          setAnswers({ ...answers, family_size: String(next), servings_config: newConfig });
+                        }}
+                        className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100"
+                      >
+                        +
+                      </button>
+                      <span className="text-sm text-gray-500">人</span>
+                    </div>
+                  </div>
                   <p className="text-center text-sm text-gray-500">
                     各セルをクリックして人数を変更できます
                   </p>
-                  
+
                   {/* ヘッダー行 */}
                   <div className="grid grid-cols-4 gap-2">
                     <div /> {/* 空セル */}
@@ -1122,7 +1146,7 @@ function OnboardingQuestionsContent() {
                       </div>
                     ))}
                   </div>
-                  
+
                   {/* 曜日行 */}
                   {DAYS_OF_WEEK.map((day) => {
                     const familySize = parseInt(answers.family_size) || 2;
@@ -1199,8 +1223,12 @@ function OnboardingQuestionsContent() {
                   <Button
                     onClick={() => {
                       const familySize = parseInt(answers.family_size) || 2;
-                      const config = answers.servings_config || createDefaultServingsConfig(familySize);
-                      handleAnswer(config);
+                      const config: ServingsConfig = answers.servings_config || createDefaultServingsConfig(familySize);
+                      // Fix 3: family_size = servings_config.default を保証
+                      const finalConfig: ServingsConfig = { ...config, default: familySize };
+                      // family_size も同期して保存（progress API が読む）
+                      setAnswers({ ...answers, family_size: String(familySize), servings_config: finalConfig });
+                      handleAnswer(finalConfig);
                     }}
                     className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-4 text-sm sm:text-base"
                   >
