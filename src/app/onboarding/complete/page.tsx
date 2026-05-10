@@ -1,10 +1,28 @@
 "use client";
 
 import Link from "next/link";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { NutritionTargetPlanner } from "@/components/nutrition/nutrition-target-planner";
 
+const ALLOWED_NEXT_ROUTES = ["/handson-tour", "/home"] as const;
+type AllowedNextRoute = (typeof ALLOWED_NEXT_ROUTES)[number];
+
+function isAllowedNextRoute(value: unknown): value is AllowedNextRoute {
+  return ALLOWED_NEXT_ROUTES.includes(value as AllowedNextRoute);
+}
+
 export default function OnboardingCompletePage() {
+  const [nextRoute, setNextRoute] = useState<AllowedNextRoute>("/home");
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem("onboarding_next_route");
+    sessionStorage.removeItem("onboarding_next_route");
+    if (isAllowedNextRoute(stored)) {
+      setNextRoute(stored);
+    }
+  }, []);
+
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,_#fff3ec_0%,_#fffaf7_35%,_#ffffff_100%)] px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-6xl">
@@ -38,7 +56,7 @@ export default function OnboardingCompletePage() {
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <Link
-            href="/home"
+            href={nextRoute}
             className="inline-flex w-full items-center justify-center rounded-full bg-[#222] px-6 py-4 text-sm font-bold text-white transition-colors hover:bg-black sm:w-auto"
           >
             この設定で始める
