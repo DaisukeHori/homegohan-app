@@ -95,7 +95,8 @@ BEGIN
     RAISE EXCEPTION 'ALREADY_IN_FAMILY' USING ERRCODE = 'P0001';
   END IF;
 
-  UPDATE family_members SET user_id = p_user_id, child_profile = NULL WHERE id = p_member_id
+  -- ★ Critical 6: role を 'adult' に更新 (子供からユーザへのpromotionでrole変更必須)
+  UPDATE family_members SET user_id = p_user_id, child_profile = NULL, role = 'adult' WHERE id = p_member_id
     RETURNING * INTO v_member;
   UPDATE user_profiles SET family_id = v_member.family_id WHERE id = p_user_id;
 
@@ -110,12 +111,13 @@ REVOKE EXECUTE ON FUNCTION public.promote_child_to_user FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.promote_child_to_user TO authenticated;
 
 -- 家族招待発行 (representative/adult のみ)
+-- ★ Critical 5: SECURITY DEFINER に変更 (membership_audit INSERT が RLS bypass で可能になる)
 CREATE OR REPLACE FUNCTION public.create_family_invite(
   p_family_id UUID,
   p_email TEXT,
   p_custom_message TEXT DEFAULT NULL
 ) RETURNS family_invites
-LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_invite family_invites;
   v_token TEXT;
@@ -183,7 +185,8 @@ BEGIN
     RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
   END IF;
 
-  SELECT * INTO v_invite FROM family_invites WHERE token = p_token;
+  -- ★ Warning 2: SELECT FOR UPDATE で二重受諾防止
+  SELECT * INTO v_invite FROM family_invites WHERE token = p_token FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'INVITE_NOT_FOUND' USING ERRCODE = 'P0001';
   END IF;
