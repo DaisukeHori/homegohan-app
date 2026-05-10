@@ -123,17 +123,6 @@ const QUESTIONS = [
       answers.nutrition_goal === 'athlete_performance' && answers.sport_type === 'custom',
   },
   {
-    id: 'sport_experience',
-    text: '競技経験はどのくらいですか？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => answers.nutrition_goal === 'athlete_performance',
-    options: [
-      { label: '🔰 初心者（1年未満）', value: 'beginner', description: '始めたばかり' },
-      { label: '📈 中級者（1〜3年）', value: 'intermediate', description: '基礎は身についている' },
-      { label: '🏆 上級者（3年以上）', value: 'advanced', description: '競技会・大会出場レベル' },
-    ]
-  },
-  {
     id: 'training_phase',
     text: '現在のトレーニング期は？',
     type: 'choice',
@@ -161,18 +150,6 @@ const QUESTIONS = [
     showIf: (answers: Record<string, any>) =>
       answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
     allowSkip: true,
-  },
-  {
-    id: 'weight_change_rate',
-    text: 'どのくらいのペースで変えたいですか？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => 
-      answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
-    options: [
-      { label: '🐢 ゆっくり（月1-2kg）', value: 'slow', description: '無理なく長期的に' },
-      { label: '🚶 普通（月2-3kg）', value: 'moderate', description: 'バランス重視' },
-      { label: '🚀 積極的（月3kg以上）', value: 'aggressive', description: '短期集中で' },
-    ]
   },
   {
     id: 'exercise_types',
@@ -219,19 +196,6 @@ const QUESTIONS = [
     ]
   },
   {
-    id: 'exercise_duration',
-    text: '1回の運動時間は？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => 
-      !answers.exercise_types?.includes('none'),
-    options: [
-      { label: '⏱️ 30分未満', value: '30' },
-      { label: '⏱️ 30分〜1時間', value: '60' },
-      { label: '⏱️ 1〜2時間', value: '90' },
-      { label: '⏱️ 2時間以上', value: '120' },
-    ]
-  },
-  {
     id: 'work_style',
     text: '普段の仕事・活動スタイルは？',
     type: 'choice',
@@ -258,8 +222,6 @@ const QUESTIONS = [
       { label: '🩺 貧血', value: '貧血' },
       { label: '🦶 痛風', value: '痛風' },
       { label: '🌿 便秘・下痢', value: '消化器系' },
-      { label: '😪 不眠・睡眠障害', value: '睡眠障害' },
-      { label: '🤧 花粉症・アレルギー', value: 'アレルギー' },
       { label: '🌡️ 甲状腺疾患', value: '甲状腺疾患' },
       { label: '🧠 自律神経失調', value: '自律神経' },
       { label: '😰 うつ・不安障害', value: 'メンタル' },
@@ -398,14 +360,6 @@ const QUESTIONS = [
       { label: '🌶️ エスニック', value: 'ethnic' },
       { label: '🥘 韓国料理', value: 'korean' },
     ]
-  },
-  {
-    id: 'family_size',
-    text: '何人分の食事を作りますか？\n（1〜10人）',
-    type: 'number',
-    placeholder: '例: 4',
-    min: 1,
-    max: 10,
   },
   {
     id: 'servings_config',
@@ -614,8 +568,53 @@ function OnboardingQuestionsContent() {
     } else {
       setIsCalculating(true);
 
+      // Fix 1: weight_change_rate を target_weight + target_date から自動算出
+      const computedAnswers = { ...newAnswers };
+
+      // Fix 2: exercise_duration を削除しデフォルト値 60 を固定送信
+      if (!computedAnswers.exercise_duration) {
+        computedAnswers.exercise_duration = '60';
+      }
+      if (
+        (computedAnswers.nutrition_goal === 'lose_weight' || computedAnswers.nutrition_goal === 'gain_muscle') &&
+        !computedAnswers.weight_change_rate
+      ) {
+        if (computedAnswers.target_weight && computedAnswers.target_date) {
+          const nowDate = new Date();
+          const targetDate = new Date(computedAnswers.target_date);
+          const monthsDiff = (targetDate.getTime() - nowDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+          const weightDiff = Math.abs(
+            parseFloat(computedAnswers.target_weight) - parseFloat(computedAnswers.weight || '0')
+          );
+          if (monthsDiff > 0) {
+            const kgPerMonth = weightDiff / monthsDiff;
+            if (kgPerMonth < 2) {
+              computedAnswers.weight_change_rate = 'slow';
+            } else if (kgPerMonth < 3) {
+              computedAnswers.weight_change_rate = 'moderate';
+            } else {
+              computedAnswers.weight_change_rate = 'aggressive';
+            }
+          } else {
+            computedAnswers.weight_change_rate = 'moderate';
+          }
+        } else {
+          computedAnswers.weight_change_rate = 'moderate';
+        }
+      }
+
       // 完了処理
       try {
+        // 算出した weight_change_rate を progress に保存してから complete を呼ぶ
+        await fetch('/api/onboarding/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            currentStep: currentStep,
+            answers: computedAnswers,
+            totalQuestions: calculateTotalQuestions(computedAnswers),
+          }),
+        });
         await fetch('/api/onboarding/complete', { method: 'POST' });
       } catch (e) {
         console.error(e);
@@ -1089,10 +1088,42 @@ function OnboardingQuestionsContent() {
               {/* 曜日別人数設定グリッド */}
               {currentQuestion.type === 'servings_grid' && (
                 <div className="space-y-4">
+                  {/* Fix 3: 基本人数入力（family_size 質問を削除してここに統合） */}
+                  <div className="flex items-center gap-3 justify-center">
+                    <label className="text-sm font-bold text-gray-600">基本人数：</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(answers.family_size) || 2;
+                          const next = Math.max(1, current - 1);
+                          const newConfig = createDefaultServingsConfig(next);
+                          setAnswers({ ...answers, family_size: String(next), servings_config: newConfig });
+                        }}
+                        className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100"
+                      >
+                        −
+                      </button>
+                      <span className="text-lg font-bold text-gray-800 min-w-[2ch] text-center">
+                        {parseInt(answers.family_size) || 2}
+                      </span>
+                      <button
+                        onClick={() => {
+                          const current = parseInt(answers.family_size) || 2;
+                          const next = Math.min(10, current + 1);
+                          const newConfig = createDefaultServingsConfig(next);
+                          setAnswers({ ...answers, family_size: String(next), servings_config: newConfig });
+                        }}
+                        className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center font-bold text-gray-600 hover:bg-gray-100"
+                      >
+                        +
+                      </button>
+                      <span className="text-sm text-gray-500">人</span>
+                    </div>
+                  </div>
                   <p className="text-center text-sm text-gray-500">
                     各セルをクリックして人数を変更できます
                   </p>
-                  
+
                   {/* ヘッダー行 */}
                   <div className="grid grid-cols-4 gap-2">
                     <div /> {/* 空セル */}
@@ -1102,7 +1133,7 @@ function OnboardingQuestionsContent() {
                       </div>
                     ))}
                   </div>
-                  
+
                   {/* 曜日行 */}
                   {DAYS_OF_WEEK.map((day) => {
                     const familySize = parseInt(answers.family_size) || 2;
@@ -1179,8 +1210,12 @@ function OnboardingQuestionsContent() {
                   <Button
                     onClick={() => {
                       const familySize = parseInt(answers.family_size) || 2;
-                      const config = answers.servings_config || createDefaultServingsConfig(familySize);
-                      handleAnswer(config);
+                      const config: ServingsConfig = answers.servings_config || createDefaultServingsConfig(familySize);
+                      // Fix 3: family_size = servings_config.default を保証
+                      const finalConfig: ServingsConfig = { ...config, default: familySize };
+                      // family_size も同期して保存（progress API が読む）
+                      setAnswers({ ...answers, family_size: String(familySize), servings_config: finalConfig });
+                      handleAnswer(finalConfig);
                     }}
                     className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-4 text-sm sm:text-base"
                   >
