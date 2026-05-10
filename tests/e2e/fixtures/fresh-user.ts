@@ -114,8 +114,57 @@ export async function cleanupFreshUser(
 }
 
 /**
+ * admin API の generateLink (magiclink) を使って rate limit なしでセッションを確立する。
+ * password grant の代わりに使用することで Supabase の 429 を回避できる。
+ */
+export async function injectSessionViaLink(
+  page: Page,
+  supabaseAdmin: ReturnType<typeof createClient>,
+  userId: string,
+  email: string,
+  appBaseURL: string,
+): Promise<void> {
+  // magiclink タイプで generateLink
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+    type: "magiclink",
+    email,
+    options: {
+      redirectTo: `${appBaseURL}/auth/callback`,
+    },
+  });
+
+  if (error || !data.user) {
+    throw new Error(
+      `[fresh-user fixture] injectSessionViaLink: generateLink 失敗 (userId: ${userId}): ${error?.message ?? "unknown"}`,
+    );
+  }
+
+  const hashedToken = data.properties?.hashed_token;
+  if (!hashedToken) {
+    throw new Error(
+      `[fresh-user fixture] injectSessionViaLink: hashed_token が取得できませんでした (userId: ${userId})`,
+    );
+  }
+
+  // /auth/callback に hashed_token を渡してセッション確立
+  const callbackUrl = `${appBaseURL}/auth/callback?token_hash=${hashedToken}&type=magiclink`;
+  await page.goto(callbackUrl);
+
+  // onboarding / home / verify に遷移するまで待機
+  await page.waitForURL(
+    (url) =>
+      url.pathname.startsWith("/onboarding") ||
+      url.pathname.startsWith("/auth/verify") ||
+      url.pathname.startsWith("/home") ||
+      url.pathname === "/",
+    { timeout: 20_000 },
+  );
+}
+
+/**
  * anon API でパスワードグラントを行い、Cookie を Playwright コンテキストに注入する。
  * @supabase/ssr は Cookie ベース認証を使用するため localStorage 注入では機能しない。
+ * 429 rate limit 時は exponential backoff でリトライする。
  */
 export async function injectSession(
   page: Page,
@@ -131,52 +180,71 @@ export async function injectSession(
     );
   }
 
-  const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: anonKey,
-    },
-    body: JSON.stringify({ email, password }),
-  });
+  // 429 rate limit 対応: exponential backoff で最大 4 回リトライ
+  const MAX_RETRIES = 4;
+  let lastError = "";
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: anonKey,
+      },
+      body: JSON.stringify({ email, password }),
+    });
 
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "");
-    throw new Error(
-      `[fresh-user fixture] セッション取得失敗 (${resp.status}): ${body.substring(0, 300)}`,
-    );
+    if (resp.status === 429 && attempt < MAX_RETRIES) {
+      const delay = 5000 * Math.pow(2, attempt - 1); // 5s, 10s, 20s
+      console.log(`[fresh-user fixture] 429 rate limit。${delay}ms 後にリトライ (${attempt}/${MAX_RETRIES})`);
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
+    }
+
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      lastError = `セッション取得失敗 (${resp.status}): ${body.substring(0, 300)}`;
+      if (attempt < MAX_RETRIES && resp.status >= 500) {
+        const delay = 2000 * Math.pow(2, attempt - 1);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw new Error(`[fresh-user fixture] ${lastError}`);
+    }
+
+    const session = (await resp.json()) as Record<string, unknown>;
+    if (!session.access_token) {
+      throw new Error("[fresh-user fixture] access_token が含まれていません");
+    }
+
+    const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
+    const cookieName = `sb-${supabaseRef}-auth-token`;
+
+    // baseURL は playwright.config.ts の use.baseURL から取得
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+    const domain = new URL(baseURL).hostname;
+    const isSecure = baseURL.startsWith("https");
+    const cookieValue = encodeURIComponent(JSON.stringify(session));
+    const expiresAt =
+      (session.expires_at as number) ?? Math.floor(Date.now() / 1000) + 3600;
+
+    await page.context().clearCookies();
+    await page.context().addCookies([
+      {
+        name: cookieName,
+        value: cookieValue,
+        domain,
+        path: "/",
+        expires: expiresAt,
+        httpOnly: false,
+        secure: isSecure,
+        sameSite: "Lax",
+      },
+    ]);
+    return; // success
   }
-
-  const session = (await resp.json()) as Record<string, unknown>;
-  if (!session.access_token) {
-    throw new Error("[fresh-user fixture] access_token が含まれていません");
-  }
-
-  const supabaseRef = supabaseUrl.replace("https://", "").split(".")[0];
-  const cookieName = `sb-${supabaseRef}-auth-token`;
-
-  // baseURL は playwright.config.ts の use.baseURL から取得
-  const baseURL =
-    process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-  const domain = new URL(baseURL).hostname;
-  const isSecure = baseURL.startsWith("https");
-  const cookieValue = encodeURIComponent(JSON.stringify(session));
-  const expiresAt =
-    (session.expires_at as number) ?? Math.floor(Date.now() / 1000) + 3600;
-
-  await page.context().clearCookies();
-  await page.context().addCookies([
-    {
-      name: cookieName,
-      value: cookieValue,
-      domain,
-      path: "/",
-      expires: expiresAt,
-      httpOnly: false,
-      secure: isSecure,
-      sameSite: "Lax",
-    },
-  ]);
+  // should not reach here
+  throw new Error(`[fresh-user fixture] injectSession: ${lastError || "最大リトライ回数超過"}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -274,16 +342,19 @@ export const test = base.extend<FreshUserFixtures>({
    * onboardingPendingUser: 確認済み + onboarding 未完了ユーザー。
    * admin.createUser (email_confirm: true) で即時作成し session inject。
    * user_profiles レコードは作成しない (onboarding 未着手状態)。
+   * injectSessionViaLink を使い rate limit なしでセッション確立する。
    */
-  onboardingPendingUser: async ({ page }, use) => {
+  onboardingPendingUser: async ({ page, baseURL }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-onboarding",
     });
+    const appBaseURL = baseURL ?? process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
     try {
       // session inject のみ。user_profiles は作成しない (onboarding 未完了)
-      await injectSession(page, user.email, user.password);
+      // magiclink 経由で rate limit 回避
+      await injectSessionViaLink(page, supabaseAdmin, user.id, user.email, appBaseURL);
       await use(page);
     } finally {
       await cleanupFreshUser(supabaseAdmin, user.id);
@@ -294,12 +365,14 @@ export const test = base.extend<FreshUserFixtures>({
    * tourPendingUser: onboarding 完了 + tour 未起動ユーザー。
    * admin.createUser + user_profiles に onboarding_completed_at = NOW() を INSERT。
    * handson_tour_completed_at / handson_tour_skipped_at は NULL (tour 未起動)。
+   * injectSessionViaLink を使い rate limit なしでセッション確立する。
    */
-  tourPendingUser: async ({ page }, use) => {
+  tourPendingUser: async ({ page, baseURL }, use) => {
     const supabaseAdmin = getAdminClient();
     const user = await createFreshUser(supabaseAdmin, {
       emailPrefix: "e2e-fresh-tour",
     });
+    const appBaseURL = baseURL ?? process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
     try {
       // user_profiles に onboarding 完了済みレコードを service_role で INSERT
@@ -333,8 +406,8 @@ export const test = base.extend<FreshUserFixtures>({
         );
       }
 
-      // session inject
-      await injectSession(page, user.email, user.password);
+      // session inject (magiclink 経由で rate limit 回避)
+      await injectSessionViaLink(page, supabaseAdmin, user.id, user.email, appBaseURL);
       await use(page);
     } finally {
       // admin.deleteUser で cascade 削除 (user_profiles も消える)

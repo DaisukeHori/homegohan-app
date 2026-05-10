@@ -9,8 +9,11 @@
  * page.evaluate() を使って localStorage を直接操作する。
  * サインアウトフローが完走できない場合は、
  * clearUserScopedLocalStorage ヘルパーの存在をスモークテストで確認する。
+ *
+ * tourPendingUser fixture: onboarding 完了済みユーザーとして開始。
+ * /menus/weekly 等にアクセス可能な状態。毎テスト独立した fresh user で動作する。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 const USER_SCOPED_KEYS = [
   "v4_include_existing",
@@ -22,22 +25,22 @@ const USER_SCOPED_KEYS = [
   "profile_reminder_dismissed",
 ] as const;
 
-test("user-scoped localStorage keys are cleared after sign-out", async ({ authedPage }) => {
+test("user-scoped localStorage keys are cleared after sign-out", async ({ tourPendingUser: page }) => {
   // ログイン済みで /menus/weekly にいる状態から開始
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await page.goto("/menus/weekly");
+  await page.waitForLoadState("networkidle");
 
   // ============================================================
   // Step 1: センシティブなキーを localStorage にセット
   // ============================================================
-  await authedPage.evaluate((keys) => {
+  await page.evaluate((keys) => {
     for (const key of keys) {
       localStorage.setItem(key, "true");
     }
   }, USER_SCOPED_KEYS);
 
   // セットできていることを確認
-  const beforeSignOut = await authedPage.evaluate((keys) => {
+  const beforeSignOut = await page.evaluate((keys) => {
     return keys.map((k) => ({ key: k, value: localStorage.getItem(k) }));
   }, USER_SCOPED_KEYS);
 
@@ -48,11 +51,11 @@ test("user-scoped localStorage keys are cleared after sign-out", async ({ authed
   // ============================================================
   // Step 2: 設定ページのログアウトを実行
   // ============================================================
-  await authedPage.goto("/settings");
-  await authedPage.waitForLoadState("networkidle");
+  await page.goto("/settings");
+  await page.waitForLoadState("networkidle");
 
   // ログアウトボタンを data-testid で取得
-  const logoutButton = authedPage.getByTestId("logout-button");
+  const logoutButton = page.getByTestId("logout-button");
 
   const logoutVisible = await logoutButton.isVisible().catch(() => false);
 
@@ -62,9 +65,9 @@ test("user-scoped localStorage keys are cleared after sign-out", async ({ authed
     console.warn("Logout button not found on /settings – falling back to smoke test");
 
     // /login にリダイレクトされたページで localStorage が空であることを確認
-    const isLoginPage = authedPage.url().includes("/login");
+    const isLoginPage = page.url().includes("/login");
     if (isLoginPage) {
-      const afterRedirect = await authedPage.evaluate((keys) =>
+      const afterRedirect = await page.evaluate((keys) =>
         keys.map((k) => ({ key: k, value: localStorage.getItem(k) })),
         USER_SCOPED_KEYS,
       );
@@ -76,23 +79,23 @@ test("user-scoped localStorage keys are cleared after sign-out", async ({ authed
   }
 
   // ログアウトボタンをクリック (確認モーダルが開く)
-  authedPage.on("dialog", (dialog) => dialog.accept()); // ネイティブ dialog 対応（念のため）
+  page.on("dialog", (dialog) => dialog.accept()); // ネイティブ dialog 対応（念のため）
   await logoutButton.click();
 
   // 確認モーダル内の「ログアウト」ボタンを data-testid で取得してクリック
-  const confirmButton = authedPage.getByTestId("logout-confirm-button");
+  const confirmButton = page.getByTestId("logout-confirm-button");
   const confirmVisible = await confirmButton.isVisible({ timeout: 3_000 }).catch(() => false);
   if (confirmVisible) {
     await confirmButton.click();
   }
 
   // ログインページにリダイレクトされるまで待つ
-  await authedPage.waitForURL((url) => url.pathname.startsWith("/login"), { timeout: 15_000 });
+  await page.waitForURL((url) => url.pathname.startsWith("/login"), { timeout: 15_000 });
 
   // ============================================================
   // Step 3: ログアウト後 localStorage にキーが残っていないことを確認
   // ============================================================
-  const afterSignOut = await authedPage.evaluate((keys) => {
+  const afterSignOut = await page.evaluate((keys) => {
     return keys.map((k) => ({ key: k, value: localStorage.getItem(k) }));
   }, USER_SCOPED_KEYS);
 
@@ -104,18 +107,18 @@ test("user-scoped localStorage keys are cleared after sign-out", async ({ authed
   }
 });
 
-test("v4_include_existing is not written to localStorage (no persistence)", async ({ authedPage }) => {
+test("v4_include_existing is not written to localStorage (no persistence)", async ({ tourPendingUser: page }) => {
   // ログイン済みで /menus/weekly を開く
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await page.goto("/menus/weekly");
+  await page.waitForLoadState("networkidle");
 
   // セッション開始時点で v4_include_existing が残っていないこと (サインアウトで消えているはず)
-  const initial = await authedPage.evaluate(() => localStorage.getItem("v4_include_existing"));
+  const initial = await page.evaluate(() => localStorage.getItem("v4_include_existing"));
   // null または "false" であること
   expect(initial).not.toBe("true");
 
   // AI アシスタントバナーボタンを data-testid で取得して開く
-  const aiBubble = authedPage.getByTestId("ai-assistant-banner-button");
+  const aiBubble = page.getByTestId("ai-assistant-banner-button");
   const bubbleVisible = await aiBubble.isVisible().catch(() => false);
   if (!bubbleVisible) {
     // AI ボタンが見つからなければ silent pass を避けるため skip
@@ -124,7 +127,7 @@ test("v4_include_existing is not written to localStorage (no persistence)", asyn
   }
 
   await aiBubble.click();
-  const rangeButton = authedPage.getByRole("button", { name: /期間を指定/ });
+  const rangeButton = page.getByRole("button", { name: /期間を指定/ });
   const rangeVisible = await rangeButton.isVisible({ timeout: 8_000 }).catch(() => false);
   if (!rangeVisible) {
     test.skip(true, "Range button not found in V4GenerateModal – test skipped");
@@ -133,8 +136,8 @@ test("v4_include_existing is not written to localStorage (no persistence)", asyn
   await rangeButton.click();
 
   // 少し待って localStorage の値を確認 (値が書き込まれていないはず)
-  await authedPage.waitForTimeout(500);
-  const afterModalOpen = await authedPage.evaluate(() => localStorage.getItem("v4_include_existing"));
+  await page.waitForTimeout(500);
+  const afterModalOpen = await page.evaluate(() => localStorage.getItem("v4_include_existing"));
 
   // 修正後: v4_include_existing は localStorage に書き込まれないため null のまま
   expect(afterModalOpen).toBeNull();
