@@ -1,5 +1,6 @@
-// src/app/api/family/invites/[token]/accept/route.ts
+// src/app/api/family/invites/[id]/accept/route.ts
 // (設計書 02-flow-spec.md §7)
+// Note: [id] slug is used for route deduplication; the value is the invite token.
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AcceptFamilyInviteBodySchema } from '@/schemas/membership/family-invite-action';
@@ -7,7 +8,7 @@ import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 
 export async function POST(
   request: Request,
-  { params }: { params: Promise<{ token: string }> },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const supabase = await createClient();
 
@@ -20,7 +21,7 @@ export async function POST(
     );
   }
 
-  const { token } = await params;
+  const { id: token } = await params;
 
   // リクエスト検証
   let body: unknown;
@@ -105,11 +106,11 @@ export async function POST(
     );
   }
 
-  const result = data as { id: string; family_id: string; role: string };
+  const result = data as { family_id: string; member_id: string; role: string };
   return NextResponse.json({
     data: {
       family_id: result.family_id,
-      member_id: result.id,  // RPC は family_members の id を返す (主キー名は id)
+      member_id: result.member_id,
       role: result.role,
     },
   });

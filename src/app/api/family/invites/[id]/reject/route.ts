@@ -1,17 +1,18 @@
-// src/app/api/family/invites/[token]/reject/route.ts
+// src/app/api/family/invites/[id]/reject/route.ts
 // (設計書 02-flow-spec.md §3 相当, family 版)
+// Note: [id] slug is used for route deduplication; the value is the invite token.
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 
 export async function POST(
   _request: Request,
-  { params }: { params: Promise<{ token: string }> },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const supabase = await createClient();
 
   // 認証は任意 (未ログインでも拒否できる)
-  const { token } = await params;
+  const { id: token } = await params;
 
   if (!token) {
     return NextResponse.json(

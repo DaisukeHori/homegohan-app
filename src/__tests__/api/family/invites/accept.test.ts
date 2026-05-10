@@ -16,7 +16,7 @@ vi.mock('next/server', async () => {
   return actual;
 });
 
-const { POST } = await import('@/app/api/family/invites/[token]/accept/route');
+const { POST } = await import('@/app/api/family/invites/[id]/accept/route');
 
 const validUser = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'dad@example.com' };
 const validToken = 'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd';
@@ -27,7 +27,7 @@ const validBody = {
 };
 
 const makeParams = (token: string) => ({
-  params: Promise.resolve({ token }),
+  params: Promise.resolve({ id: token }),
 });
 
 beforeEach(() => {

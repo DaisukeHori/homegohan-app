@@ -1,5 +1,6 @@
-// src/app/api/org/invites/[token]/accept/route.ts
+// src/app/api/org/invites/[id]/accept/route.ts
 // (設計書 02-flow-spec.md §1.2 Happy path — POST /api/org/invites/{token}/accept)
+// Note: [id] slug is used for route deduplication; the value is the invite token.
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -7,9 +8,9 @@ import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 
 export async function POST(
   _req: Request,
-  { params }: { params: Promise<{ token: string }> },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const { token } = await params;
+  const { id: token } = await params;
 
   const supabase = createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
