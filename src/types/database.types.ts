@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "13.0.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       admin_audit_logs: {
@@ -2251,27 +2226,109 @@ export type Database = {
       }
       family_groups: {
         Row: {
-          created_at: string | null
+          created_at: string
+          dissolved_at: string | null
           id: string
+          member_limit: number
           name: string
-          owner_id: string | null
-          updated_at: string | null
+          plan_key: string
+          representative_id: string
+          status: string
+          updated_at: string
         }
         Insert: {
-          created_at?: string | null
+          created_at?: string
+          dissolved_at?: string | null
           id?: string
-          name?: string
-          owner_id?: string | null
-          updated_at?: string | null
+          member_limit?: number
+          name: string
+          plan_key?: string
+          representative_id: string
+          status?: string
+          updated_at?: string
         }
         Update: {
-          created_at?: string | null
+          created_at?: string
+          dissolved_at?: string | null
           id?: string
+          member_limit?: number
           name?: string
-          owner_id?: string | null
-          updated_at?: string | null
+          plan_key?: string
+          representative_id?: string
+          status?: string
+          updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "family_groups_plan_key_fkey"
+            columns: ["plan_key"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["plan_key"]
+          },
+        ]
+      }
+      family_invites: {
+        Row: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string
+          custom_message: string | null
+          email: string
+          expires_at: string
+          family_id: string
+          id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["family_role_enum"]
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          status: string
+          token: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          created_at?: string
+          custom_message?: string | null
+          email: string
+          expires_at: string
+          family_id: string
+          id?: string
+          invited_by?: string | null
+          invited_role?: Database["public"]["Enums"]["family_role_enum"]
+          rejected_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+          token: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          created_at?: string
+          custom_message?: string | null
+          email?: string
+          expires_at?: string
+          family_id?: string
+          id?: string
+          invited_by?: string | null
+          invited_role?: Database["public"]["Enums"]["family_role_enum"]
+          rejected_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "family_invites_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "family_groups"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       family_meal_logs: {
         Row: {
@@ -2309,7 +2366,7 @@ export type Database = {
             foreignKeyName: "family_meal_logs_family_member_id_fkey"
             columns: ["family_member_id"]
             isOneToOne: false
-            referencedRelation: "family_members"
+            referencedRelation: "legacy_family_members"
             referencedColumns: ["id"]
           },
           {
@@ -2323,78 +2380,60 @@ export type Database = {
       }
       family_members: {
         Row: {
-          allergies: string[] | null
-          birth_date: string | null
-          created_at: string | null
-          daily_calories: number | null
-          diet_style: string | null
-          dislikes: string[] | null
-          display_order: number | null
-          family_group_id: string | null
-          favorite_foods: string[] | null
-          gender: string | null
-          health_conditions: string[] | null
-          height: number | null
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
           id: string
-          is_active: boolean | null
-          name: string
-          protein_ratio: number | null
-          relation: string
-          spice_tolerance: string | null
-          updated_at: string | null
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
           user_id: string | null
-          weight: number | null
         }
         Insert: {
-          allergies?: string[] | null
-          birth_date?: string | null
-          created_at?: string | null
-          daily_calories?: number | null
-          diet_style?: string | null
-          dislikes?: string[] | null
-          display_order?: number | null
-          family_group_id?: string | null
-          favorite_foods?: string[] | null
-          gender?: string | null
-          health_conditions?: string[] | null
-          height?: number | null
+          avatar_color?: string
+          child_profile?: Json | null
+          display_name?: string | null
+          family_id: string
           id?: string
-          is_active?: boolean | null
-          name: string
-          protein_ratio?: number | null
-          relation: string
-          spice_tolerance?: string | null
-          updated_at?: string | null
+          joined_at?: string
+          relationship?: string | null
+          removed_at?: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health?: boolean
+          share_meals?: boolean
+          share_menu?: boolean
+          status?: string
+          tags?: string[]
           user_id?: string | null
-          weight?: number | null
         }
         Update: {
-          allergies?: string[] | null
-          birth_date?: string | null
-          created_at?: string | null
-          daily_calories?: number | null
-          diet_style?: string | null
-          dislikes?: string[] | null
-          display_order?: number | null
-          family_group_id?: string | null
-          favorite_foods?: string[] | null
-          gender?: string | null
-          health_conditions?: string[] | null
-          height?: number | null
+          avatar_color?: string
+          child_profile?: Json | null
+          display_name?: string | null
+          family_id?: string
           id?: string
-          is_active?: boolean | null
-          name?: string
-          protein_ratio?: number | null
-          relation?: string
-          spice_tolerance?: string | null
-          updated_at?: string | null
+          joined_at?: string
+          relationship?: string | null
+          removed_at?: string | null
+          role?: Database["public"]["Enums"]["family_role_enum"]
+          share_health?: boolean
+          share_meals?: boolean
+          share_menu?: boolean
+          status?: string
+          tags?: string[]
           user_id?: string | null
-          weight?: number | null
         }
         Relationships: [
           {
-            foreignKeyName: "family_members_family_group_id_fkey"
-            columns: ["family_group_id"]
+            foreignKeyName: "family_members_family_id_fkey"
+            columns: ["family_id"]
             isOneToOne: false
             referencedRelation: "family_groups"
             referencedColumns: ["id"]
@@ -3318,6 +3357,110 @@ export type Database = {
         }
         Relationships: []
       }
+      legacy_family_groups: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string
+          owner_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          owner_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          owner_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      legacy_family_members: {
+        Row: {
+          allergies: string[] | null
+          birth_date: string | null
+          created_at: string | null
+          daily_calories: number | null
+          diet_style: string | null
+          dislikes: string[] | null
+          display_order: number | null
+          family_group_id: string | null
+          favorite_foods: string[] | null
+          gender: string | null
+          health_conditions: string[] | null
+          height: number | null
+          id: string
+          is_active: boolean | null
+          name: string
+          protein_ratio: number | null
+          relation: string
+          spice_tolerance: string | null
+          updated_at: string | null
+          user_id: string | null
+          weight: number | null
+        }
+        Insert: {
+          allergies?: string[] | null
+          birth_date?: string | null
+          created_at?: string | null
+          daily_calories?: number | null
+          diet_style?: string | null
+          dislikes?: string[] | null
+          display_order?: number | null
+          family_group_id?: string | null
+          favorite_foods?: string[] | null
+          gender?: string | null
+          health_conditions?: string[] | null
+          height?: number | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          protein_ratio?: number | null
+          relation: string
+          spice_tolerance?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+          weight?: number | null
+        }
+        Update: {
+          allergies?: string[] | null
+          birth_date?: string | null
+          created_at?: string | null
+          daily_calories?: number | null
+          diet_style?: string | null
+          dislikes?: string[] | null
+          display_order?: number | null
+          family_group_id?: string | null
+          favorite_foods?: string[] | null
+          gender?: string | null
+          health_conditions?: string[] | null
+          height?: number | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          protein_ratio?: number | null
+          relation?: string
+          spice_tolerance?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+          weight?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "family_members_family_group_id_fkey"
+            columns: ["family_group_id"]
+            isOneToOne: false
+            referencedRelation: "legacy_family_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       llm_usage_logs: {
         Row: {
           call_type: string | null
@@ -3660,6 +3803,7 @@ export type Database = {
           is_sandbox: boolean
           meal_type: string
           memo: string | null
+          paste_group_id: string | null
           photo_url: string | null
           updated_at: string | null
           user_id: string
@@ -3671,6 +3815,7 @@ export type Database = {
           is_sandbox?: boolean
           meal_type: string
           memo?: string | null
+          paste_group_id?: string | null
           photo_url?: string | null
           updated_at?: string | null
           user_id: string
@@ -3682,9 +3827,43 @@ export type Database = {
           is_sandbox?: boolean
           meal_type?: string
           memo?: string | null
+          paste_group_id?: string | null
           photo_url?: string | null
           updated_at?: string | null
           user_id?: string
+        }
+        Relationships: []
+      }
+      membership_audit: {
+        Row: {
+          action: string
+          actor_id: string | null
+          created_at: string
+          id: string
+          metadata: Json
+          scope: string
+          scope_id: string
+          target_user_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          scope: string
+          scope_id: string
+          target_user_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          scope?: string
+          scope_id?: string
+          target_user_id?: string | null
         }
         Relationships: []
       }
@@ -4091,6 +4270,41 @@ export type Database = {
           },
         ]
       }
+      org_license_pools: {
+        Row: {
+          available_licenses: number | null
+          family_addon_seats: number
+          organization_id: string
+          total_licenses: number | null
+          updated_at: string
+          used_licenses: number
+        }
+        Insert: {
+          available_licenses?: number | null
+          family_addon_seats?: number
+          organization_id: string
+          total_licenses?: number | null
+          updated_at?: string
+          used_licenses?: number
+        }
+        Update: {
+          available_licenses?: number | null
+          family_addon_seats?: number
+          organization_id?: string
+          total_licenses?: number | null
+          updated_at?: string
+          used_licenses?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_license_pools_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_challenge_participants: {
         Row: {
           challenge_id: string | null
@@ -4195,38 +4409,62 @@ export type Database = {
       organization_invites: {
         Row: {
           accepted_at: string | null
+          accepted_by: string | null
           created_at: string | null
           created_by: string | null
+          custom_message: string | null
           department_id: string | null
           email: string
           expires_at: string
           id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["org_role_enum"]
           organization_id: string | null
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
           role: string | null
+          status: string
           token: string
         }
         Insert: {
           accepted_at?: string | null
+          accepted_by?: string | null
           created_at?: string | null
           created_by?: string | null
+          custom_message?: string | null
           department_id?: string | null
           email: string
           expires_at: string
           id?: string
+          invited_by?: string | null
+          invited_role?: Database["public"]["Enums"]["org_role_enum"]
           organization_id?: string | null
+          rejected_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
           role?: string | null
+          status?: string
           token: string
         }
         Update: {
           accepted_at?: string | null
+          accepted_by?: string | null
           created_at?: string | null
           created_by?: string | null
+          custom_message?: string | null
           department_id?: string | null
           email?: string
           expires_at?: string
           id?: string
+          invited_by?: string | null
+          invited_role?: Database["public"]["Enums"]["org_role_enum"]
           organization_id?: string | null
+          rejected_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
           role?: string | null
+          status?: string
           token?: string
         }
         Relationships: [
@@ -4295,13 +4533,16 @@ export type Database = {
           contact_email: string | null
           contact_name: string | null
           created_at: string | null
+          dissolved_at: string | null
           employee_count: number | null
           id: string
           industry: string | null
           logo_url: string | null
           name: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
+          status: string
           subscription_expires_at: string | null
           subscription_status: string | null
           updated_at: string | null
@@ -4310,13 +4551,16 @@ export type Database = {
           contact_email?: string | null
           contact_name?: string | null
           created_at?: string | null
+          dissolved_at?: string | null
           employee_count?: number | null
           id?: string
           industry?: string | null
           logo_url?: string | null
           name: string
+          owner_id?: string | null
           plan?: string | null
           settings?: Json | null
+          status?: string
           subscription_expires_at?: string | null
           subscription_status?: string | null
           updated_at?: string | null
@@ -4325,16 +4569,55 @@ export type Database = {
           contact_email?: string | null
           contact_name?: string | null
           created_at?: string | null
+          dissolved_at?: string | null
           employee_count?: number | null
           id?: string
           industry?: string | null
           logo_url?: string | null
           name?: string
+          owner_id?: string | null
           plan?: string | null
           settings?: Json | null
+          status?: string
           subscription_expires_at?: string | null
           subscription_status?: string | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      ownership_transfer_proposals: {
+        Row: {
+          expires_at: string
+          from_user_id: string
+          id: string
+          proposed_at: string
+          resolved_at: string | null
+          scope: string
+          scope_id: string
+          status: string
+          to_user_id: string
+        }
+        Insert: {
+          expires_at?: string
+          from_user_id: string
+          id?: string
+          proposed_at?: string
+          resolved_at?: string | null
+          scope: string
+          scope_id: string
+          status?: string
+          to_user_id: string
+        }
+        Update: {
+          expires_at?: string
+          from_user_id?: string
+          id?: string
+          proposed_at?: string
+          resolved_at?: string | null
+          scope?: string
+          scope_id?: string
+          status?: string
+          to_user_id?: string
         }
         Relationships: []
       }
@@ -6113,6 +6396,7 @@ export type Database = {
           exercise_intensity: string | null
           exercise_types: string[] | null
           family_config: Json | null
+          family_id: string | null
           family_size: number | null
           favorite_dishes: string[] | null
           favorite_ingredients: string[] | null
@@ -6136,7 +6420,9 @@ export type Database = {
           household_members: Json | null
           id: string
           industry: string | null
+          is_active_in_org: boolean
           is_banned: boolean | null
+          joined_org_at: string | null
           kitchen_appliances: string[] | null
           last_login_at: string | null
           last_profile_update: string | null
@@ -6155,6 +6441,7 @@ export type Database = {
           onboarding_progress: Json | null
           onboarding_started_at: string | null
           online_grocery: boolean | null
+          org_role: Database["public"]["Enums"]["org_role_enum"] | null
           organic_preference: string | null
           organization_id: string | null
           outdoor_activities: string[] | null
@@ -6242,6 +6529,7 @@ export type Database = {
           exercise_intensity?: string | null
           exercise_types?: string[] | null
           family_config?: Json | null
+          family_id?: string | null
           family_size?: number | null
           favorite_dishes?: string[] | null
           favorite_ingredients?: string[] | null
@@ -6265,7 +6553,9 @@ export type Database = {
           household_members?: Json | null
           id: string
           industry?: string | null
+          is_active_in_org?: boolean
           is_banned?: boolean | null
+          joined_org_at?: string | null
           kitchen_appliances?: string[] | null
           last_login_at?: string | null
           last_profile_update?: string | null
@@ -6284,6 +6574,7 @@ export type Database = {
           onboarding_progress?: Json | null
           onboarding_started_at?: string | null
           online_grocery?: boolean | null
+          org_role?: Database["public"]["Enums"]["org_role_enum"] | null
           organic_preference?: string | null
           organization_id?: string | null
           outdoor_activities?: string[] | null
@@ -6371,6 +6662,7 @@ export type Database = {
           exercise_intensity?: string | null
           exercise_types?: string[] | null
           family_config?: Json | null
+          family_id?: string | null
           family_size?: number | null
           favorite_dishes?: string[] | null
           favorite_ingredients?: string[] | null
@@ -6394,7 +6686,9 @@ export type Database = {
           household_members?: Json | null
           id?: string
           industry?: string | null
+          is_active_in_org?: boolean
           is_banned?: boolean | null
+          joined_org_at?: string | null
           kitchen_appliances?: string[] | null
           last_login_at?: string | null
           last_profile_update?: string | null
@@ -6413,6 +6707,7 @@ export type Database = {
           onboarding_progress?: Json | null
           onboarding_started_at?: string | null
           online_grocery?: boolean | null
+          org_role?: Database["public"]["Enums"]["org_role_enum"] | null
           organic_preference?: string | null
           organization_id?: string | null
           outdoor_activities?: string[] | null
@@ -6465,6 +6760,13 @@ export type Database = {
           work_style?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "user_profiles_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "family_groups"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "user_profiles_organization_id_fkey"
             columns: ["organization_id"]
@@ -6730,6 +7032,260 @@ export type Database = {
       }
     }
     Functions: {
+      accept_family_invite: {
+        Args: {
+          p_share_health?: boolean
+          p_share_meals?: boolean
+          p_share_menu?: boolean
+          p_token: string
+        }
+        Returns: {
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
+          id: string
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      accept_family_representative_transfer: {
+        Args: { p_proposal_id: string }
+        Returns: {
+          created_at: string
+          dissolved_at: string | null
+          id: string
+          member_limit: number
+          name: string
+          plan_key: string
+          representative_id: string
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_groups"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      accept_org_invite: {
+        Args: { p_token: string }
+        Returns: {
+          age: number | null
+          age_group: string
+          ai_learning_enabled: boolean | null
+          alcohol_frequency: string | null
+          banned_at: string | null
+          banned_reason: string | null
+          basal_body_temp: number | null
+          body_fat_percentage: number | null
+          bowel_movement: string | null
+          business_trip_frequency: string | null
+          caffeine_intake: string | null
+          carb_cycling: boolean | null
+          cheat_day_config: Json | null
+          children_ages: number[] | null
+          climate_sensitivity: string | null
+          cold_sensitivity: boolean | null
+          commute: Json | null
+          competition_date: string | null
+          cooking_experience: string | null
+          costco_member: boolean | null
+          created_at: string | null
+          cuisine_preferences: Json | null
+          daily_water_ml: number | null
+          department: string | null
+          desk_hours_per_day: number | null
+          diet_flags: Json | null
+          diet_style: string | null
+          disliked_cooking: string[] | null
+          disliked_cooking_methods: string[] | null
+          entertainment_frequency: string | null
+          exercise_duration_per_session: number | null
+          exercise_frequency: number | null
+          exercise_intensity: string | null
+          exercise_types: string[] | null
+          family_config: Json | null
+          family_id: string | null
+          family_size: number | null
+          favorite_dishes: string[] | null
+          favorite_ingredients: string[] | null
+          fitness_goals: string[] | null
+          freezer_capacity: string | null
+          frozen_at: string | null
+          frozen_by: string | null
+          frozen_reason: string | null
+          gender: string
+          goal_text: string | null
+          gym_member: boolean | null
+          handson_tour_completed_at: string | null
+          handson_tour_skipped_at: string | null
+          has_children: boolean | null
+          has_elderly: boolean | null
+          health_checkup_guidance: Json | null
+          health_checkup_results: Json | null
+          health_conditions: string[] | null
+          height: number | null
+          hobbies: string[] | null
+          household_members: Json | null
+          id: string
+          industry: string | null
+          is_active_in_org: boolean
+          is_banned: boolean | null
+          joined_org_at: string | null
+          kitchen_appliances: string[] | null
+          last_login_at: string | null
+          last_profile_update: string | null
+          lifestyle: Json | null
+          login_count: number | null
+          meal_prep_ok: boolean | null
+          meal_times: Json | null
+          meal_timing_preference: string | null
+          medications: string[] | null
+          menopause: boolean | null
+          muscle_mass: number | null
+          nickname: string
+          nutrition_goal: string | null
+          occupation: string | null
+          onboarding_completed_at: string | null
+          onboarding_progress: Json | null
+          onboarding_started_at: string | null
+          online_grocery: boolean | null
+          org_role: Database["public"]["Enums"]["org_role_enum"] | null
+          organic_preference: string | null
+          organization_id: string | null
+          outdoor_activities: string[] | null
+          overtime_frequency: string | null
+          perf_modes: string[] | null
+          performance_profile: Json | null
+          personal_trainer: boolean | null
+          pets: string[] | null
+          plan_key_cached: string | null
+          preferred_stores: string[] | null
+          pregnancy_status: string | null
+          presentation_importance: string | null
+          profile_completeness: number | null
+          radar_chart_nutrients: string[] | null
+          region: string | null
+          religious_restrictions: string | null
+          roles: string[] | null
+          servings_config: Json | null
+          shopping_frequency: string | null
+          skin_condition: string | null
+          sleep_quality: string | null
+          sleep_time: string | null
+          smoking: boolean | null
+          snacking_habit: string | null
+          sns_food_posting: boolean | null
+          specialty_cuisines: string[] | null
+          sports_activities: Json | null
+          stress_level: string | null
+          supplement_use: string[] | null
+          swelling_prone: boolean | null
+          target_body_fat: number | null
+          target_date: string | null
+          target_weight: number | null
+          taste_preferences: Json | null
+          temperature_preference: string | null
+          texture_preferences: string[] | null
+          travel_frequency: string | null
+          updated_at: string | null
+          wake_time: string | null
+          water_cutting: boolean | null
+          week_start_day: string | null
+          weekday_cooking_minutes: number | null
+          weekend_activity: string | null
+          weekend_cooking_minutes: number | null
+          weekly_exercise_minutes: number | null
+          weekly_food_budget: number | null
+          weight: number | null
+          weight_change_rate: string | null
+          work_hours: Json | null
+          work_style: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "user_profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      accept_org_owner_transfer: {
+        Args: { p_proposal_id: string }
+        Returns: {
+          contact_email: string | null
+          contact_name: string | null
+          created_at: string | null
+          dissolved_at: string | null
+          employee_count: number | null
+          id: string
+          industry: string | null
+          logo_url: string | null
+          name: string
+          owner_id: string | null
+          plan: string | null
+          settings: Json | null
+          status: string
+          subscription_expires_at: string | null
+          subscription_status: string | null
+          updated_at: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organizations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      add_family_child: {
+        Args: {
+          p_child_profile: Json
+          p_display_name: string
+          p_family_id: string
+        }
+        Returns: {
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
+          id: string
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      can_view_user_meals: {
+        Args: { p_target_user_id: string }
+        Returns: boolean
+      }
       claim_menu_request: {
         Args: { p_worker_id: string }
         Returns: {
@@ -6768,6 +7324,90 @@ export type Database = {
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
       complete_handson_tour: { Args: { p_user_id: string }; Returns: Json }
+      create_family_group: {
+        Args: { p_name: string; p_plan_key?: string }
+        Returns: {
+          created_at: string
+          dissolved_at: string | null
+          id: string
+          member_limit: number
+          name: string
+          plan_key: string
+          representative_id: string
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_groups"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      create_family_invite: {
+        Args: {
+          p_custom_message?: string
+          p_email: string
+          p_family_id: string
+        }
+        Returns: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string
+          custom_message: string | null
+          email: string
+          expires_at: string
+          family_id: string
+          id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["family_role_enum"]
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_invites"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      create_org_invite: {
+        Args: {
+          p_custom_message?: string
+          p_email: string
+          p_organization_id: string
+          p_role?: Database["public"]["Enums"]["org_role_enum"]
+        }
+        Returns: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string | null
+          created_by: string | null
+          custom_message: string | null
+          department_id: string | null
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["org_role_enum"]
+          organization_id: string | null
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          role: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organization_invites"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
         Returns: {
@@ -6788,7 +7428,554 @@ export type Database = {
         Args: { p_function_name: string }
         Returns: number
       }
+      leave_family: {
+        Args: never
+        Returns: {
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
+          id: string
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      leave_org: {
+        Args: never
+        Returns: {
+          age: number | null
+          age_group: string
+          ai_learning_enabled: boolean | null
+          alcohol_frequency: string | null
+          banned_at: string | null
+          banned_reason: string | null
+          basal_body_temp: number | null
+          body_fat_percentage: number | null
+          bowel_movement: string | null
+          business_trip_frequency: string | null
+          caffeine_intake: string | null
+          carb_cycling: boolean | null
+          cheat_day_config: Json | null
+          children_ages: number[] | null
+          climate_sensitivity: string | null
+          cold_sensitivity: boolean | null
+          commute: Json | null
+          competition_date: string | null
+          cooking_experience: string | null
+          costco_member: boolean | null
+          created_at: string | null
+          cuisine_preferences: Json | null
+          daily_water_ml: number | null
+          department: string | null
+          desk_hours_per_day: number | null
+          diet_flags: Json | null
+          diet_style: string | null
+          disliked_cooking: string[] | null
+          disliked_cooking_methods: string[] | null
+          entertainment_frequency: string | null
+          exercise_duration_per_session: number | null
+          exercise_frequency: number | null
+          exercise_intensity: string | null
+          exercise_types: string[] | null
+          family_config: Json | null
+          family_id: string | null
+          family_size: number | null
+          favorite_dishes: string[] | null
+          favorite_ingredients: string[] | null
+          fitness_goals: string[] | null
+          freezer_capacity: string | null
+          frozen_at: string | null
+          frozen_by: string | null
+          frozen_reason: string | null
+          gender: string
+          goal_text: string | null
+          gym_member: boolean | null
+          handson_tour_completed_at: string | null
+          handson_tour_skipped_at: string | null
+          has_children: boolean | null
+          has_elderly: boolean | null
+          health_checkup_guidance: Json | null
+          health_checkup_results: Json | null
+          health_conditions: string[] | null
+          height: number | null
+          hobbies: string[] | null
+          household_members: Json | null
+          id: string
+          industry: string | null
+          is_active_in_org: boolean
+          is_banned: boolean | null
+          joined_org_at: string | null
+          kitchen_appliances: string[] | null
+          last_login_at: string | null
+          last_profile_update: string | null
+          lifestyle: Json | null
+          login_count: number | null
+          meal_prep_ok: boolean | null
+          meal_times: Json | null
+          meal_timing_preference: string | null
+          medications: string[] | null
+          menopause: boolean | null
+          muscle_mass: number | null
+          nickname: string
+          nutrition_goal: string | null
+          occupation: string | null
+          onboarding_completed_at: string | null
+          onboarding_progress: Json | null
+          onboarding_started_at: string | null
+          online_grocery: boolean | null
+          org_role: Database["public"]["Enums"]["org_role_enum"] | null
+          organic_preference: string | null
+          organization_id: string | null
+          outdoor_activities: string[] | null
+          overtime_frequency: string | null
+          perf_modes: string[] | null
+          performance_profile: Json | null
+          personal_trainer: boolean | null
+          pets: string[] | null
+          plan_key_cached: string | null
+          preferred_stores: string[] | null
+          pregnancy_status: string | null
+          presentation_importance: string | null
+          profile_completeness: number | null
+          radar_chart_nutrients: string[] | null
+          region: string | null
+          religious_restrictions: string | null
+          roles: string[] | null
+          servings_config: Json | null
+          shopping_frequency: string | null
+          skin_condition: string | null
+          sleep_quality: string | null
+          sleep_time: string | null
+          smoking: boolean | null
+          snacking_habit: string | null
+          sns_food_posting: boolean | null
+          specialty_cuisines: string[] | null
+          sports_activities: Json | null
+          stress_level: string | null
+          supplement_use: string[] | null
+          swelling_prone: boolean | null
+          target_body_fat: number | null
+          target_date: string | null
+          target_weight: number | null
+          taste_preferences: Json | null
+          temperature_preference: string | null
+          texture_preferences: string[] | null
+          travel_frequency: string | null
+          updated_at: string | null
+          wake_time: string | null
+          water_cutting: boolean | null
+          week_start_day: string | null
+          weekday_cooking_minutes: number | null
+          weekend_activity: string | null
+          weekend_cooking_minutes: number | null
+          weekly_exercise_minutes: number | null
+          weekly_food_budget: number | null
+          weight: number | null
+          weight_change_rate: string | null
+          work_hours: Json | null
+          work_style: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "user_profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       normalize_dish_name: { Args: { name: string }; Returns: string }
+      operator_force_dissolve_family: {
+        Args: { p_family_id: string; p_reason: string }
+        Returns: {
+          created_at: string
+          dissolved_at: string | null
+          id: string
+          member_limit: number
+          name: string
+          plan_key: string
+          representative_id: string
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_groups"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      operator_force_dissolve_org: {
+        Args: { p_organization_id: string; p_reason?: string }
+        Returns: {
+          contact_email: string | null
+          contact_name: string | null
+          created_at: string | null
+          dissolved_at: string | null
+          employee_count: number | null
+          id: string
+          industry: string | null
+          logo_url: string | null
+          name: string
+          owner_id: string | null
+          plan: string | null
+          settings: Json | null
+          status: string
+          subscription_expires_at: string | null
+          subscription_status: string | null
+          updated_at: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organizations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      operator_force_owner_transfer: {
+        Args: {
+          p_new_owner_id: string
+          p_organization_id: string
+          p_reason: string
+        }
+        Returns: {
+          contact_email: string | null
+          contact_name: string | null
+          created_at: string | null
+          dissolved_at: string | null
+          employee_count: number | null
+          id: string
+          industry: string | null
+          logo_url: string | null
+          name: string
+          owner_id: string | null
+          plan: string | null
+          settings: Json | null
+          status: string
+          subscription_expires_at: string | null
+          subscription_status: string | null
+          updated_at: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organizations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      operator_force_representative_transfer: {
+        Args: { p_family_id: string; p_new_rep_id: string; p_reason: string }
+        Returns: {
+          created_at: string
+          dissolved_at: string | null
+          id: string
+          member_limit: number
+          name: string
+          plan_key: string
+          representative_id: string
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_groups"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      paste_meal_to_family: {
+        Args: { p_source_meal_id: string; p_target_user_ids: string[] }
+        Returns: string
+      }
+      preview_family_invite: {
+        Args: { p_token: string }
+        Returns: {
+          email: string
+          expires_at: string
+          family_id: string
+          family_name: string
+          role: Database["public"]["Enums"]["family_role_enum"]
+        }[]
+      }
+      preview_org_invite: {
+        Args: { p_token: string }
+        Returns: {
+          email: string
+          expires_at: string
+          organization_id: string
+          organization_name: string
+          role: Database["public"]["Enums"]["org_role_enum"]
+        }[]
+      }
+      promote_child_to_user: {
+        Args: { p_member_id: string; p_user_id: string }
+        Returns: {
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
+          id: string
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      propose_family_representative_transfer: {
+        Args: { p_family_id: string; p_to_user_id: string }
+        Returns: string
+      }
+      propose_org_owner_transfer: {
+        Args: { p_organization_id: string; p_to_user_id: string }
+        Returns: string
+      }
+      reject_family_invite: {
+        Args: { p_token: string }
+        Returns: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string
+          custom_message: string | null
+          email: string
+          expires_at: string
+          family_id: string
+          id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["family_role_enum"]
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_invites"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      reject_org_invite: {
+        Args: { p_token: string }
+        Returns: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string | null
+          created_by: string | null
+          custom_message: string | null
+          department_id: string | null
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["org_role_enum"]
+          organization_id: string | null
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          role: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organization_invites"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      remove_family_member: {
+        Args: { p_family_id: string; p_member_id: string }
+        Returns: {
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
+          id: string
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      remove_org_member: {
+        Args: { p_organization_id: string; p_user_id: string }
+        Returns: {
+          age: number | null
+          age_group: string
+          ai_learning_enabled: boolean | null
+          alcohol_frequency: string | null
+          banned_at: string | null
+          banned_reason: string | null
+          basal_body_temp: number | null
+          body_fat_percentage: number | null
+          bowel_movement: string | null
+          business_trip_frequency: string | null
+          caffeine_intake: string | null
+          carb_cycling: boolean | null
+          cheat_day_config: Json | null
+          children_ages: number[] | null
+          climate_sensitivity: string | null
+          cold_sensitivity: boolean | null
+          commute: Json | null
+          competition_date: string | null
+          cooking_experience: string | null
+          costco_member: boolean | null
+          created_at: string | null
+          cuisine_preferences: Json | null
+          daily_water_ml: number | null
+          department: string | null
+          desk_hours_per_day: number | null
+          diet_flags: Json | null
+          diet_style: string | null
+          disliked_cooking: string[] | null
+          disliked_cooking_methods: string[] | null
+          entertainment_frequency: string | null
+          exercise_duration_per_session: number | null
+          exercise_frequency: number | null
+          exercise_intensity: string | null
+          exercise_types: string[] | null
+          family_config: Json | null
+          family_id: string | null
+          family_size: number | null
+          favorite_dishes: string[] | null
+          favorite_ingredients: string[] | null
+          fitness_goals: string[] | null
+          freezer_capacity: string | null
+          frozen_at: string | null
+          frozen_by: string | null
+          frozen_reason: string | null
+          gender: string
+          goal_text: string | null
+          gym_member: boolean | null
+          handson_tour_completed_at: string | null
+          handson_tour_skipped_at: string | null
+          has_children: boolean | null
+          has_elderly: boolean | null
+          health_checkup_guidance: Json | null
+          health_checkup_results: Json | null
+          health_conditions: string[] | null
+          height: number | null
+          hobbies: string[] | null
+          household_members: Json | null
+          id: string
+          industry: string | null
+          is_active_in_org: boolean
+          is_banned: boolean | null
+          joined_org_at: string | null
+          kitchen_appliances: string[] | null
+          last_login_at: string | null
+          last_profile_update: string | null
+          lifestyle: Json | null
+          login_count: number | null
+          meal_prep_ok: boolean | null
+          meal_times: Json | null
+          meal_timing_preference: string | null
+          medications: string[] | null
+          menopause: boolean | null
+          muscle_mass: number | null
+          nickname: string
+          nutrition_goal: string | null
+          occupation: string | null
+          onboarding_completed_at: string | null
+          onboarding_progress: Json | null
+          onboarding_started_at: string | null
+          online_grocery: boolean | null
+          org_role: Database["public"]["Enums"]["org_role_enum"] | null
+          organic_preference: string | null
+          organization_id: string | null
+          outdoor_activities: string[] | null
+          overtime_frequency: string | null
+          perf_modes: string[] | null
+          performance_profile: Json | null
+          personal_trainer: boolean | null
+          pets: string[] | null
+          plan_key_cached: string | null
+          preferred_stores: string[] | null
+          pregnancy_status: string | null
+          presentation_importance: string | null
+          profile_completeness: number | null
+          radar_chart_nutrients: string[] | null
+          region: string | null
+          religious_restrictions: string | null
+          roles: string[] | null
+          servings_config: Json | null
+          shopping_frequency: string | null
+          skin_condition: string | null
+          sleep_quality: string | null
+          sleep_time: string | null
+          smoking: boolean | null
+          snacking_habit: string | null
+          sns_food_posting: boolean | null
+          specialty_cuisines: string[] | null
+          sports_activities: Json | null
+          stress_level: string | null
+          supplement_use: string[] | null
+          swelling_prone: boolean | null
+          target_body_fat: number | null
+          target_date: string | null
+          target_weight: number | null
+          taste_preferences: Json | null
+          temperature_preference: string | null
+          texture_preferences: string[] | null
+          travel_frequency: string | null
+          updated_at: string | null
+          wake_time: string | null
+          water_cutting: boolean | null
+          week_start_day: string | null
+          weekday_cooking_minutes: number | null
+          weekend_activity: string | null
+          weekend_cooking_minutes: number | null
+          weekly_exercise_minutes: number | null
+          weekly_food_budget: number | null
+          weight: number | null
+          weight_change_rate: string | null
+          work_hours: Json | null
+          work_style: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "user_profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       reset_e2e_test_users: { Args: never; Returns: undefined }
       search_dataset_ingredients_by_embedding: {
         Args: { match_count?: number; query_embedding: string }
@@ -7003,7 +8190,8 @@ export type Database = {
       user_has_non_sandbox_activity: { Args: never; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      family_role_enum: "representative" | "adult" | "child"
+      org_role_enum: "owner" | "admin" | "member"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -7129,10 +8317,10 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
-    Enums: {},
+    Enums: {
+      family_role_enum: ["representative", "adult", "child"],
+      org_role_enum: ["owner", "admin", "member"],
+    },
   },
 } as const
