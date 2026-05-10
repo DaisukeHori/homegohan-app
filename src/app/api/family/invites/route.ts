@@ -5,7 +5,8 @@ import { createClient } from '@/lib/supabase/server';
 import { CreateFamilyInviteBodySchema } from '@/schemas/membership/family-invite';
 import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
-import { renderFamilyInviteEmail } from '@/lib/emails/membership/family-invite';
+import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
+import { renderFamilyInviteNewEmail } from '@/lib/emails/membership/family-invite-new';
 import { buildFamilyInviteUrl } from '@/lib/membership/urls';
 
 // 招待一覧取得
@@ -141,25 +142,41 @@ export async function POST(request: Request) {
   const scopeName = familyGroup?.name ?? '家族グループ';
   const expiresDate = invite.expires_at.slice(0, 10); // YYYY-MM-DD
 
-  // Resend でメール送信
+  // 既存ユーザー判定: get_invite_details で is_existing_user を確認
+  let isExistingUser = false;
+  let inviteeDisplayName: string | null = null;
   try {
-    const envelope = renderFamilyInviteEmail({
-      display_name: null,   // 受領者名は不明 (invite 時点では)
+    const { data: inviteDetails } = await supabase.rpc('get_invite_details', {
+      p_token: invite.token,
+    });
+    if (inviteDetails) {
+      const details = inviteDetails as { is_existing_user?: boolean; invitee_display_name?: string | null };
+      isExistingUser = details.is_existing_user ?? false;
+      inviteeDisplayName = details.invitee_display_name ?? null;
+    }
+  } catch (detailsError) {
+    // 詳細取得失敗は警告のみ。既存ユーザー判定できない場合は新規向けテンプレートにフォールバック
+    console.warn('[api/family/invites] get_invite_details failed:', detailsError);
+  }
+
+  // Resend でメール送信 (失敗は warn のみ)
+  try {
+    const emailVars = {
+      display_name: isExistingUser ? inviteeDisplayName : null,
       email_address: email,
       inviter_name: inviterName,
       scope_name: scopeName,
       invite_url,
       expires_at: expiresDate,
       custom_message: custom_message ?? null,
-    });
+    };
+    const envelope = isExistingUser
+      ? renderFamilyInviteExistingEmail(emailVars)
+      : renderFamilyInviteNewEmail(emailVars);
     await sendEmail(envelope);
   } catch (emailError) {
     // メール送信失敗は警告のみ (invite row は残す)
-    console.error('[api/family/invites] email send failed:', emailError);
-    return NextResponse.json(
-      { error: { code: MembershipErrorCode.EMAIL_SEND_FAILED, message: 'メールの送信に失敗しました。招待リンクを直接共有してください。' } },
-      { status: 500 },
-    );
+    console.warn('[api/family/invites] email send failed (invite row kept):', emailError);
   }
 
   return NextResponse.json(
