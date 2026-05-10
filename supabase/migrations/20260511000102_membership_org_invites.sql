@@ -1,8 +1,17 @@
 -- migration: 20260511000102_membership_org_invites.sql
 -- (設計書 01-data-model.md §2.3)
 -- 番号: 設計書指定 000002 → 000102 にシフト
+-- P0 Critical Fix F3: status/invited_by 不在カラムを ADD COLUMN IF NOT EXISTS で補完
 
--- status enum を CHECK 制約として標準化
+-- ★ status カラムが存在しない場合に追加 (既存テーブルの状況によっては必要)
+ALTER TABLE organization_invites
+  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+
+-- ★ invited_by カラムが存在しない場合に追加
+ALTER TABLE organization_invites
+  ADD COLUMN IF NOT EXISTS invited_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+
+-- status CHECK 制約を標準化 (既存制約を先に DROP)
 ALTER TABLE organization_invites
   DROP CONSTRAINT IF EXISTS organization_invites_status_check;
 

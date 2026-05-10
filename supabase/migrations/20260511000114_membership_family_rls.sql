@@ -62,3 +62,24 @@ CREATE POLICY family_invites_select_adult ON family_invites
         AND fm.role IN ('representative','adult') AND fm.status = 'active'
     )
   );
+
+-- P0 Critical Fix F10: INSERT/UPDATE policy 追加 (欠如により RLS 有効時に招待発行不可)
+DROP POLICY IF EXISTS family_invites_insert_adult ON family_invites;
+CREATE POLICY family_invites_insert_adult ON family_invites
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_id = family_invites.family_id AND fm.user_id = auth.uid()
+        AND fm.role IN ('representative','adult') AND fm.status = 'active'
+    )
+  );
+
+DROP POLICY IF EXISTS family_invites_update_adult ON family_invites;
+CREATE POLICY family_invites_update_adult ON family_invites
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.family_id = family_invites.family_id AND fm.user_id = auth.uid()
+        AND fm.role IN ('representative','adult') AND fm.status = 'active'
+    )
+  );

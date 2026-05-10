@@ -1,9 +1,16 @@
 -- migration: 20260511000103_membership_org_rls.sql
 -- (設計書 01-data-model.md §2.4)
 -- 番号: 設計書指定 000003 → 000103 にシフト
+-- P0 Critical Fix F13: 既存 RLS policy を明示的に DROP (重複防止)
 
 -- organizations: メンバ自身は SELECT 可、owner/admin は UPDATE 可、owner だけ DELETE 可
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
+
+-- ★ 旧 org/ ドメイン (schema_org.sql) 由来の policy を先に DROP
+DROP POLICY IF EXISTS "Org admins can view own organization" ON organizations;
+DROP POLICY IF EXISTS organizations_select_org_admin ON organizations;
+DROP POLICY IF EXISTS organizations_select_admin ON organizations;
+DROP POLICY IF EXISTS organizations_mutate_admin ON organizations;
 
 DROP POLICY IF EXISTS organizations_select_member ON organizations;
 CREATE POLICY organizations_select_member ON organizations

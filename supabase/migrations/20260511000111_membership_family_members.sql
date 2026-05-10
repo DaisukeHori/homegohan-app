@@ -1,10 +1,16 @@
 -- migration: 20260511000111_membership_family_members.sql
 -- (設計書 01-data-model.md §3.2)
 -- 番号: 設計書指定 000011 → 000111 にシフト
+-- P0 Critical Fix F15: CREATE TYPE は DO block、CREATE TABLE/INDEX は IF NOT EXISTS
 
-CREATE TYPE family_role_enum AS ENUM ('representative','adult','child');
+-- CREATE TYPE は冪等にするため DO block でラップ
+DO $$ BEGIN
+  CREATE TYPE family_role_enum AS ENUM ('representative','adult','child');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TABLE family_members (
+CREATE TABLE IF NOT EXISTS family_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   family_id UUID NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,  -- NULL は子供の auth account なし
@@ -26,17 +32,17 @@ CREATE TABLE family_members (
 );
 
 -- 1 user は 1 family のみ (NULL の子供は除外)
-CREATE UNIQUE INDEX uniq_family_members_user
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_family_members_user
   ON family_members(user_id)
   WHERE user_id IS NOT NULL AND status = 'active';
 
 -- 1 family につき representative は 1 名のみ
-CREATE UNIQUE INDEX uniq_family_representative
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_family_representative
   ON family_members(family_id)
   WHERE role = 'representative' AND status = 'active';
 
-CREATE INDEX idx_family_members_family ON family_members(family_id);
-CREATE INDEX idx_family_members_user ON family_members(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_family_members_family ON family_members(family_id);
+CREATE INDEX IF NOT EXISTS idx_family_members_user ON family_members(user_id) WHERE user_id IS NOT NULL;
 
 -- 整合性: child_profile は role='child' AND user_id IS NULL のときのみ
 ALTER TABLE family_members

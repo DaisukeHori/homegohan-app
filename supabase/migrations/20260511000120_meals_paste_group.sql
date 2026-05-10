@@ -8,6 +8,12 @@ ALTER TABLE meals
 -- 同一ペーストグループの全レコードに対して bulk update 可能にする index
 CREATE INDEX IF NOT EXISTS idx_meals_paste_group ON meals(paste_group_id) WHERE paste_group_id IS NOT NULL;
 
+-- P0 Critical Fix F14: 既存 meals RLS policy を明示的に DROP (重複防止)
+DROP POLICY IF EXISTS "Users can view own meals" ON meals;
+DROP POLICY IF EXISTS "Users can insert own meals" ON meals;
+DROP POLICY IF EXISTS "Users can update own meals" ON meals;
+DROP POLICY IF EXISTS "Users can delete own meals" ON meals;
+
 -- meals の閲覧 RLS — 自分 + 家族 (share_meals=TRUE のメンバ) の meals を見る
 CREATE OR REPLACE FUNCTION public.can_view_user_meals(p_target_user_id UUID)
 RETURNS BOOLEAN
