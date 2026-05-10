@@ -207,19 +207,6 @@ const QUESTIONS = [
     ]
   },
   {
-    id: 'exercise_duration',
-    text: '1回の運動時間は？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => 
-      !answers.exercise_types?.includes('none'),
-    options: [
-      { label: '⏱️ 30分未満', value: '30' },
-      { label: '⏱️ 30分〜1時間', value: '60' },
-      { label: '⏱️ 1〜2時間', value: '90' },
-      { label: '⏱️ 2時間以上', value: '120' },
-    ]
-  },
-  {
     id: 'work_style',
     text: '普段の仕事・活動スタイルは？',
     type: 'choice',
@@ -601,6 +588,11 @@ function OnboardingQuestionsContent() {
       }, 600);
     } else {
       setIsCalculating(true);
+
+      // Fix 2: exercise_duration を削除しデフォルト値 60 を固定送信
+      if (!computedAnswers.exercise_duration) {
+        computedAnswers.exercise_duration = '60';
+      }
 
       // Fix 1: weight_change_rate を target_weight + target_date から自動算出
       const computedAnswers = { ...newAnswers };
