@@ -74,7 +74,7 @@ export async function getHandsonTourStatusInternal(userId: string): Promise<Hand
   }
 
   const { data: hasActivity } = await supabase
-    .rpc('user_has_non_sandbox_activity', { p_user_id: userId });
+    .rpc('user_has_non_sandbox_activity');
 
   if (hasActivity) {
     const skippedAt = new Date().toISOString();

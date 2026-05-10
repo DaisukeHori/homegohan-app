@@ -39,7 +39,7 @@ export async function POST() {
     }
 
     const { data: hasActivity } = await supabase
-      .rpc('user_has_non_sandbox_activity', { p_user_id: user.id });
+      .rpc('user_has_non_sandbox_activity');
 
     if (hasActivity && !profile.handson_tour_completed_at) {
       return NextResponse.json(
