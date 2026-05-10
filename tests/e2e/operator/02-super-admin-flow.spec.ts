@@ -18,7 +18,7 @@
  *   npm run test:e2e -- tests/e2e/operator
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../fixtures/fresh-user";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 
@@ -28,6 +28,7 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
+// super_admin は fresh-user fixture では提供しないため、引き続き環境変数から取得する
 const SUPER_ADMIN_USER = process.env.SUPER_ADMIN_USER_EMAIL
   ? {
       email: process.env.SUPER_ADMIN_USER_EMAIL,
@@ -45,6 +46,7 @@ const TEST_COUPON_CODE = `E2ETEST${Date.now().toString(36).toUpperCase()}`;
 
 /**
  * Supabase Auth API でセッショントークンを取得し、Cookie をページに注入する。
+ * super_admin のログインに使用する。
  */
 async function injectSupabaseSession(
   page: import("@playwright/test").Page,
@@ -191,28 +193,20 @@ test.describe("operator/super-admin: クーポン作成 → プラン PATCH → 
 
   /**
    * T14-S2: 一般ユーザーは super-admin API に 401/403 で弾かれる
+   *
+   * onboardingPendingUser fixture = super_admin ロールを持たない fresh user。
    */
-  test("T14-S2: 一般ユーザーは super-admin API に 401/403 で弾かれる", async ({ page }) => {
-    const email = process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
-    const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
-
-    const loggedIn = await injectSupabaseSession(page, email, password);
-    if (!loggedIn) {
-      await uiLogin(page, email, password).catch(() => {
-        test.skip(true, "E2E_USER ログイン失敗のためスキップ");
-      });
-    }
-
+  test("T14-S2: 一般ユーザーは super-admin API に 401/403 で弾かれる", async ({ onboardingPendingUser }) => {
     // クーポン一覧
-    const couponRes = await apiFetch(page, "/api/super-admin/coupons");
+    const couponRes = await apiFetch(onboardingPendingUser, "/api/super-admin/coupons");
     expect([401, 403]).toContain(couponRes.status);
 
     // プラン一覧
-    const planRes = await apiFetch(page, "/api/super-admin/plans");
+    const planRes = await apiFetch(onboardingPendingUser, "/api/super-admin/plans");
     expect([401, 403]).toContain(planRes.status);
 
     // フラグ一覧
-    const flagRes = await apiFetch(page, "/api/super-admin/flags");
+    const flagRes = await apiFetch(onboardingPendingUser, "/api/super-admin/flags");
     expect([401, 403]).toContain(flagRes.status);
   });
 

@@ -194,8 +194,135 @@ export async function injectSession(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ヘルパー: user_profiles を service_role で REST API 経由 UPSERT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * user_profiles レコードを service_role REST API 経由で UPSERT する。
+ * roles / onboarding_completed_at / organization_id を指定して作成する汎用ヘルパー。
+ */
+async function upsertUserProfile(
+  userId: string,
+  fields: {
+    nickname?: string;
+    age_group?: string;
+    gender?: string;
+    roles?: string[];
+    organization_id?: string | null;
+    onboarding_completed_at?: string | null;
+  },
+): Promise<void> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  const body = {
+    id: userId,
+    nickname: fields.nickname ?? "E2E Test User",
+    age_group: fields.age_group ?? "30s",
+    gender: fields.gender ?? "unspecified",
+    roles: fields.roles ?? ["user"],
+    onboarding_completed_at: fields.onboarding_completed_at ?? new Date().toISOString(),
+    ...(fields.organization_id !== undefined
+      ? { organization_id: fields.organization_id }
+      : {}),
+  };
+
+  const resp = await fetch(`${supabaseUrl}/rest/v1/user_profiles`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(
+      `[fresh-user fixture] user_profiles UPSERT 失敗 (${resp.status}): ${text.substring(0, 300)}`,
+    );
+  }
+}
+
+/**
+ * organizations テーブルに test 用 fresh org を作成する。
+ * service_role REST API 経由で INSERT し、新規作成された org の id を返す。
+ */
+async function createFreshOrganization(nameSuffix?: string): Promise<string> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  const orgName = `E2E Test Org ${nameSuffix ?? Date.now()}`;
+
+  const resp = await fetch(`${supabaseUrl}/rest/v1/organizations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({ name: orgName, plan: "standard" }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(
+      `[fresh-user fixture] organizations INSERT 失敗 (${resp.status}): ${text.substring(0, 300)}`,
+    );
+  }
+
+  const rows = (await resp.json()) as Array<{ id: string }>;
+  if (!rows[0]?.id) {
+    throw new Error("[fresh-user fixture] organizations INSERT: id が返却されませんでした");
+  }
+  return rows[0].id;
+}
+
+/**
+ * organizations テーブルから指定 ID の組織を削除する。
+ */
+async function deleteFreshOrganization(orgId: string): Promise<void> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  const resp = await fetch(
+    `${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`,
+    {
+      method: "DELETE",
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        Prefer: "return=minimal",
+      },
+    },
+  );
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    console.warn(
+      `[fresh-user fixture] organizations DELETE 失敗 (orgId: ${orgId}, status: ${resp.status}): ${text.substring(0, 200)}`,
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Fixture 型定義
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * adminUser / operatorUser で use() に渡す情報
+ */
+export type RoleUserFixtureValue = {
+  page: Page;
+  userId: string;
+  email: string;
+  password: string;
+  /** operatorUser のみ非 null */
+  organizationId: string | null;
+};
 
 type FreshUserFixtures = {
   /**
@@ -218,6 +345,25 @@ type FreshUserFixtures = {
    * onboarding 完了済み + tour 未起動状態。
    */
   tourPendingUser: Page;
+
+  /**
+   * admin ロールを持つ fresh user。
+   * - createFreshUser + user_profiles に roles=['admin'] / onboarding 完了 を UPSERT
+   * - session inject 済み
+   * - afterAll で admin.deleteUser (cascade で user_profiles も削除)
+   */
+  adminUser: RoleUserFixtureValue;
+
+  /**
+   * org_admin ロールを持つ fresh user。
+   * - createFreshUser + organizations に fresh org を INSERT
+   * - user_profiles に roles=['org_admin'] / organization_id / onboarding 完了 を UPSERT
+   * - session inject 済み
+   * - afterAll で admin.deleteUser + organizations DELETE
+   *
+   * family/01-invite-accept-share.spec.ts など org 招待 API テストで使用する。
+   */
+  operatorUser: RoleUserFixtureValue;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -353,6 +499,102 @@ export const test = base.extend<FreshUserFixtures>({
     } finally {
       // admin.deleteUser で cascade 削除 (user_profiles も消える)
       await cleanupFreshUser(supabaseAdmin, user.id);
+    }
+  },
+
+  /**
+   * adminUser: admin ロールを持つ fresh user。
+   *
+   * 1. admin.createUser (email_confirm: true) で即時ユーザー作成
+   * 2. user_profiles に roles=['admin'] / onboarding 完了 を UPSERT
+   *    (service_role REST API 経由 — RLS をバイパス)
+   * 3. session inject
+   * 4. afterAll: admin.deleteUser (cascade で user_profiles も削除)
+   *
+   * admin ロール判定: src/lib/auth/helpers.ts の requireRole(['admin']) が
+   * user_profiles.roles TEXT[] に 'admin' が含まれるかで確認する。
+   */
+  adminUser: async ({ page }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, {
+      emailPrefix: "e2e-fresh-admin",
+    });
+
+    try {
+      // user_profiles: roles=['admin'] + onboarding 完了で UPSERT
+      await upsertUserProfile(user.id, {
+        nickname: "E2E Admin User",
+        roles: ["admin"],
+      });
+
+      // session inject
+      await injectSession(page, user.email, user.password);
+
+      await use({
+        page,
+        userId: user.id,
+        email: user.email,
+        password: user.password,
+        organizationId: null,
+      });
+    } finally {
+      // admin.deleteUser で cascade 削除 (user_profiles も消える)
+      await cleanupFreshUser(supabaseAdmin, user.id);
+    }
+  },
+
+  /**
+   * operatorUser: org_admin ロールを持つ fresh user + fresh organization。
+   *
+   * 1. admin.createUser (email_confirm: true) で即時ユーザー作成
+   * 2. organizations テーブルに fresh org を INSERT (service_role REST API)
+   * 3. user_profiles に roles=['org_admin'] / organization_id / onboarding 完了 を UPSERT
+   * 4. session inject
+   * 5. afterAll: admin.deleteUser (cascade) + organizations DELETE
+   *
+   * org_admin ロール判定: src/app/api/org/invites/route.ts が
+   * user_profiles.roles に 'org_admin' が含まれるか AND
+   * user_profiles.organization_id が非 null かで確認する。
+   *
+   * family/01-invite-accept-share.spec.ts の org 招待 API テストに適切。
+   */
+  operatorUser: async ({ page }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, {
+      emailPrefix: "e2e-fresh-operator",
+    });
+
+    let orgId: string | null = null;
+
+    try {
+      // organizations に fresh org を作成
+      orgId = await createFreshOrganization(
+        `${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      );
+
+      // user_profiles: roles=['org_admin'] + organization_id + onboarding 完了 で UPSERT
+      await upsertUserProfile(user.id, {
+        nickname: "E2E Operator User",
+        roles: ["org_admin"],
+        organization_id: orgId,
+      });
+
+      // session inject
+      await injectSession(page, user.email, user.password);
+
+      await use({
+        page,
+        userId: user.id,
+        email: user.email,
+        password: user.password,
+        organizationId: orgId,
+      });
+    } finally {
+      // user を先に削除 (user_profiles.organization_id FK を解除してから org 削除)
+      await cleanupFreshUser(supabaseAdmin, user.id);
+      if (orgId) {
+        await deleteFreshOrganization(orgId);
+      }
     }
   },
 });

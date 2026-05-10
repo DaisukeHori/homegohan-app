@@ -18,7 +18,7 @@
  *   npm run test:e2e -- tests/e2e/family
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../fixtures/fresh-user";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 
@@ -28,74 +28,12 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
-const ORG_ADMIN_USER = process.env.ORG_ADMIN_USER_EMAIL
-  ? {
-      email: process.env.ORG_ADMIN_USER_EMAIL,
-      password: process.env.ORG_ADMIN_USER_PASSWORD ?? "",
-    }
-  : null;
-
-// org_admin ではなく service_role key 経由で直接 API を叩くケース
+// service_role key 経由で直接 API を叩くケース (T14-F5)
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
 // テスト用招待先メールアドレス（ランダムサフィックスで衝突回避）
 const TEST_INVITE_EMAIL = `e2e-family-invite-${Date.now()}@homegohan.test`;
-
-// ─── ヘルパー ─────────────────────────────────────────────────────────────────
-
-/**
- * Supabase Auth API でセッショントークンを取得し、Cookie をページに注入する。
- */
-async function injectSupabaseSession(
-  page: import("@playwright/test").Page,
-  email: string,
-  password: string,
-): Promise<boolean> {
-  if (!SUPABASE_URL || !ANON_KEY) return false;
-
-  try {
-    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: ANON_KEY },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) return false;
-
-    const session = (await resp.json()) as Record<string, unknown>;
-    if (!session.access_token) return false;
-
-    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
-    const cookieName = `sb-${supabaseRef}-auth-token`;
-    const domain = new URL(BASE_URL).hostname;
-    const cookieValue = encodeURIComponent(JSON.stringify(session));
-    const expiresAt = (session.expires_at as number) ?? Date.now() / 1000 + 3600;
-
-    await page.context().clearCookies();
-    await page.context().addCookies([
-      {
-        name: cookieName,
-        value: cookieValue,
-        domain,
-        path: "/",
-        expires: expiresAt,
-        httpOnly: false,
-        secure: BASE_URL.startsWith("https"),
-        sameSite: "Lax",
-      },
-    ]);
-
-    await page.goto(`${BASE_URL}/home`);
-    await page.waitForURL(
-      (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-      { timeout: 30_000 },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * API fetch を page コンテキストで実行する (認証 Cookie を自動送信するため)。
@@ -147,20 +85,10 @@ test.describe("family: 招待発行 → 承認 → 共有メニュー閲覧 happ
   /**
    * T14-F2: org_admin 権限なしユーザーは招待 API を利用できない (403)
    *
-   * 一般ユーザー (E2E_USER) では org_admin ロールがないため 403 になる。
+   * onboardingPendingUser fixture = org_admin ロールを持たない fresh user。
    */
-  test("T14-F2: org_admin 権限なしで招待 API を叩くと 403 が返る", async ({ page }) => {
-    const email =
-      process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
-    const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
-
-    const loggedIn = await injectSupabaseSession(page, email, password);
-    if (!loggedIn) {
-      test.skip(true, "E2E_USER セッション取得失敗のためスキップ");
-      return;
-    }
-
-    const { status } = await apiFetch(page, "/api/org/invites", {
+  test("T14-F2: org_admin 権限なしで招待 API を叩くと 403 が返る", async ({ onboardingPendingUser }) => {
+    const { status } = await apiFetch(onboardingPendingUser, "/api/org/invites", {
       method: "POST",
       body: { email: TEST_INVITE_EMAIL, role: "member" },
     });
@@ -172,32 +100,14 @@ test.describe("family: 招待発行 → 承認 → 共有メニュー閲覧 happ
   /**
    * T14-F3: org_admin ユーザーが招待を発行する happy path
    *
-   * ORG_ADMIN_USER_EMAIL が設定されている場合のみ実行。
-   * 1. org_admin としてログイン
+   * operatorUser fixture: createFreshUser + organizations INSERT + user_profiles.roles=['org_admin'] で自動生成。
+   * 1. org_admin としてログイン (fixture が session inject 済み)
    * 2. POST /api/org/invites で招待を作成
    * 3. 返却された invite_url に token が含まれることを確認
    * 4. GET /api/org/invites で招待一覧に追加されていることを確認
    */
-  test("T14-F3: org_admin が招待を発行し invite_token を取得する", async ({ page }) => {
-    if (!ORG_ADMIN_USER) {
-      test.skip(true, "ORG_ADMIN_USER_EMAIL 未設定のためスキップ (CI Secret を確認してください)");
-      return;
-    }
-
-    const loggedIn = await injectSupabaseSession(page, ORG_ADMIN_USER.email, ORG_ADMIN_USER.password);
-    if (!loggedIn) {
-      // フォールバック: UI ログイン
-      await page.goto(`${BASE_URL}/login`);
-      await page.locator("#email").fill(ORG_ADMIN_USER.email);
-      await page.locator("#password").fill(ORG_ADMIN_USER.password);
-      await Promise.all([
-        page.waitForURL(
-          (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-          { timeout: 30_000 },
-        ),
-        page.locator("button[type=submit]").click(),
-      ]);
-    }
+  test("T14-F3: org_admin が招待を発行し invite_token を取得する", async ({ operatorUser }) => {
+    const { page } = operatorUser;
 
     // 招待を発行する
     const createResult = await apiFetch(page, "/api/org/invites", {
@@ -245,27 +155,10 @@ test.describe("family: 招待発行 → 承認 → 共有メニュー閲覧 happ
   /**
    * T14-F4: 招待 UI 画面 (/org/invites) が表示される (org_admin)
    *
-   * ORG_ADMIN_USER が設定されている場合に UI 遷移を確認する。
+   * operatorUser fixture: createFreshUser + organizations INSERT + user_profiles.roles=['org_admin'] で自動生成。
    */
-  test("T14-F4: /org/invites 画面にアクセスして招待管理 UI が表示される", async ({ page }) => {
-    if (!ORG_ADMIN_USER) {
-      test.skip(true, "ORG_ADMIN_USER_EMAIL 未設定のためスキップ");
-      return;
-    }
-
-    const loggedIn = await injectSupabaseSession(page, ORG_ADMIN_USER.email, ORG_ADMIN_USER.password);
-    if (!loggedIn) {
-      await page.goto(`${BASE_URL}/login`);
-      await page.locator("#email").fill(ORG_ADMIN_USER.email);
-      await page.locator("#password").fill(ORG_ADMIN_USER.password);
-      await Promise.all([
-        page.waitForURL(
-          (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-          { timeout: 30_000 },
-        ),
-        page.locator("button[type=submit]").click(),
-      ]);
-    }
+  test("T14-F4: /org/invites 画面にアクセスして招待管理 UI が表示される", async ({ operatorUser }) => {
+    const { page } = operatorUser;
 
     await page.goto(`${BASE_URL}/org/invites`);
 
