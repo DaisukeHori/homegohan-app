@@ -11,6 +11,8 @@ export default function TabsLayout() {
   const { session, isLoading } = useAuth();
   const { isLoading: profileLoading, profile } = useProfile();
 
+  if (!session) return <Redirect href="/" />;
+
   if (isLoading || profileLoading) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>
@@ -18,8 +20,6 @@ export default function TabsLayout() {
       </View>
     );
   }
-
-  if (!session) return <Redirect href="/" />;
 
   // profileがnullの場合（ロード直後等）はリダイレクトせずそのまま表示
   if (profile && !profile.onboardingCompletedAt) {

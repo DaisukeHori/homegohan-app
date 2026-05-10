@@ -169,7 +169,7 @@ export default function ProfilePage() {
   async function handleLogout() {
     await clearUserScopedAsyncStorage(user?.id ?? null);
     await supabase.auth.signOut();
-    router.replace("/login");
+    router.replace("/");
   }
 
   const displayName = profileData?.nickname || ctxProfile?.nickname || user?.email?.split("@")[0] || "ゲスト";
