@@ -24,6 +24,8 @@ const PRE_REFRESH_BUFFER_SECONDS = 600; // 10 分
 // password grant の retry 設定
 const PASSWORD_GRANT_MAX_RETRIES = 3;
 const PASSWORD_GRANT_BASE_DELAY_MS = 2_000;
+// waitForURL タイムアウト (Vercel cold-start 対応: 60s)
+const WAIT_FOR_URL_TIMEOUT_MS = 60_000;
 
 /** 分散対象ユーザー数 (global-setup と合わせる) */
 const MULTI_USER_COUNT = 4;
@@ -239,11 +241,29 @@ async function refreshSessionViaCookie(
     ]);
 
     const targetBase = baseURL || "";
-    await page.goto(`${targetBase}/home`);
-    await page.waitForURL(
-      (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-      { timeout: 30_000 },
-    );
+    await page.goto(`${targetBase}/home`, { timeout: WAIT_FOR_URL_TIMEOUT_MS });
+
+    // C: waitForURL リトライ (Vercel cold-start 対応)
+    let navigated = false;
+    for (let navAttempt = 1; navAttempt <= 2; navAttempt++) {
+      try {
+        await page.waitForURL(
+          (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
+          { timeout: WAIT_FOR_URL_TIMEOUT_MS },
+        );
+        navigated = true;
+        break;
+      } catch (navErr) {
+        if (navAttempt < 2) {
+          console.warn(`[auth fixture] refreshSessionViaCookie waitForURL attempt ${navAttempt} timeout, retrying...`);
+          await page.goto(`${targetBase}/home`, { timeout: WAIT_FOR_URL_TIMEOUT_MS });
+        } else {
+          throw navErr;
+        }
+      }
+    }
+    if (!navigated) throw new Error("[auth fixture] refreshSessionViaCookie: /home に遷移できませんでした");
+
     console.log("[auth fixture] refresh_token でセッション更新成功");
     return true;
   } catch (err) {
@@ -332,11 +352,29 @@ async function injectSessionViaCookie(
 
       // /home に遷移して認証済み状態を確認
       const targetBase = baseURL || "";
-      await page.goto(`${targetBase}/home`);
-      await page.waitForURL(
-        (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-        { timeout: 30_000 },
-      );
+      await page.goto(`${targetBase}/home`, { timeout: WAIT_FOR_URL_TIMEOUT_MS });
+
+      // C: waitForURL リトライ (Vercel cold-start 対応)
+      let navigated = false;
+      for (let navAttempt = 1; navAttempt <= 2; navAttempt++) {
+        try {
+          await page.waitForURL(
+            (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
+            { timeout: WAIT_FOR_URL_TIMEOUT_MS },
+          );
+          navigated = true;
+          break;
+        } catch (navErr) {
+          if (navAttempt < 2) {
+            console.warn(`[auth fixture] injectSessionViaCookie waitForURL attempt ${navAttempt} timeout, retrying...`);
+            await page.goto(`${targetBase}/home`, { timeout: WAIT_FOR_URL_TIMEOUT_MS });
+          } else {
+            throw navErr;
+          }
+        }
+      }
+      if (!navigated) throw new Error("[auth fixture] injectSessionViaCookie: /home に遷移できませんでした");
+
       return true;
     } catch (err) {
       console.warn(`[auth fixture] injectSessionViaCookie error (attempt ${attempt}/${PASSWORD_GRANT_MAX_RETRIES}): ${err}`);
@@ -512,9 +550,29 @@ type AuthFixtures = {
 };
 
 export const test = base.extend<AuthFixtures>({
+  /**
+   * B: worker 別 fresh login fixture。
+   *
+   * storageState 共有による refresh_token race (複数 worker が同一 refresh_token を
+   * 並行使用して invalid になる問題) を解消するため、毎回 password grant で
+   * 独立した refresh_token を持つセッションを取得する。
+   *
+   * Speed cost: 1 worker あたり +~3s (Supabase REST 往復) だが、
+   * auth 失敗による retry > timeout > リトライ連鎖より大幅に速い。
+   */
   authedPage: async ({ page, baseURL }, use) => {
     const workerIndex = test.info().workerIndex;
-    await login(page, baseURL ?? "", workerIndex);
+    const resolvedBase = baseURL ?? "";
+    const { email, password } = getUserCredentials(workerIndex);
+
+    // password grant で毎回 fresh なセッションを取得 (refresh_token race を回避)
+    const cookieLoginOk = await injectSessionViaCookie(page, resolvedBase, email, password);
+    if (!cookieLoginOk) {
+      // フォールバック: storageState ベースの login (既存フロー)
+      console.warn(`[auth fixture] worker${workerIndex}: fresh login 失敗、storageState フォールバックを使用`);
+      await login(page, resolvedBase, workerIndex);
+    }
+
     await use(page);
   },
 });

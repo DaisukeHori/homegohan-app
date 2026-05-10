@@ -200,11 +200,27 @@ async function setupUserSession(
             console.log(`[global-setup] refresh_token saved to ${refreshTokenPath}`);
           }
 
-          await page.goto(`${baseURL}/home`);
-          await page.waitForURL(
-            (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
-            { timeout: 30_000 },
-          );
+          await page.goto(`${baseURL}/home`, { timeout: 60_000 });
+          // C: waitForURL リトライ (Vercel cold-start 対応)
+          let navigated = false;
+          for (let navAttempt = 1; navAttempt <= 2; navAttempt++) {
+            try {
+              await page.waitForURL(
+                (url) => !url.pathname.startsWith("/login") && !url.pathname.startsWith("/auth"),
+                { timeout: 60_000 },
+              );
+              navigated = true;
+              break;
+            } catch (navErr) {
+              if (navAttempt < 2) {
+                console.warn(`[global-setup] waitForURL attempt ${navAttempt} timeout for ${email}, retrying...`);
+                await page.goto(`${baseURL}/home`, { timeout: 60_000 });
+              } else {
+                throw navErr;
+              }
+            }
+          }
+          if (!navigated) throw new Error(`[global-setup] ${email}: /home に遷移できませんでした`);
           console.log(`[global-setup] 認証確認成功 (${email}): ${page.url()}`);
           sessionInjected = true;
         }
