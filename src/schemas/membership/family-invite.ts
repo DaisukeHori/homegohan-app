@@ -20,7 +20,7 @@ export const FamilyInviteSchema = z.object({
   status: FamilyInviteStatusSchema,
   expires_at: z.string().datetime(),
   created_at: z.string().datetime(),
-  invited_by: z.string().uuid(),
+  invited_by: z.string().uuid().nullable(),
   accepted_by: z.string().uuid().nullable(),
   accepted_at: z.string().datetime().nullable(),
   rejected_at: z.string().datetime().nullable(),

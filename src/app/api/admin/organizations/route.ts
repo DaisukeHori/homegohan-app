@@ -11,7 +11,19 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { z } from 'zod';
+
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    throw new Error('Supabase admin env is missing (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
+  }
+  return createAdminClient(url, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -149,18 +161,7 @@ export async function POST(request: Request) {
   const effectiveOwnerId = owner_id ?? actor.id;
 
   // owner が既に他組織に所属しているかチェック (user_profiles_org_consistency 制約対応)
-  const { createClient: createAdminSupabaseClient } = await import('@supabase/supabase-js');
-  const supabaseAdminUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAdminKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseAdminUrl || !supabaseAdminKey) {
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'サーバー設定エラーです' } },
-      { status: 500 },
-    );
-  }
-  const supabaseAdmin = createAdminSupabaseClient(supabaseAdminUrl, supabaseAdminKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const supabaseAdmin = getSupabaseAdmin();
 
   const { data: ownerProfile } = await supabaseAdmin
     .from('user_profiles')
@@ -187,6 +188,24 @@ export async function POST(request: Request) {
       { error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } },
       { status: 500 },
     );
+  }
+
+  // Round 3 C-3: 新規 org 作成時に org_license_pools 行を INSERT
+  // service_role クライアントで RLS をバイパスして確実に挿入
+  try {
+    const { error: poolErr } = await supabaseAdmin
+      .from('org_license_pools')
+      .insert({
+        organization_id: org.id,
+        total_licenses: null, // unlimited by default
+        used_licenses: 0,
+      });
+    if (poolErr) {
+      console.error('[admin/organizations] org_license_pools INSERT failed', poolErr);
+      // 致命ではないが警告 (ライセンス管理は後続で補完可能)
+    }
+  } catch (adminErr) {
+    console.error('[admin/organizations] supabaseAdmin init failed', adminErr);
   }
 
   // owner の user_profiles を更新 (org_role='owner', organization_id 設定)

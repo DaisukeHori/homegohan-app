@@ -207,7 +207,8 @@ BEGIN
   END IF;
 
   SELECT * INTO v_target FROM user_profiles WHERE id = p_user_id;
-  IF v_target.organization_id <> p_organization_id THEN
+  -- ★ Round 3 C-2: NOT FOUND チェック追加 (NULL dereference 防止)
+  IF NOT FOUND OR v_target.organization_id IS DISTINCT FROM p_organization_id THEN
     RAISE EXCEPTION 'USER_NOT_IN_ORG' USING ERRCODE = 'P0001';
   END IF;
 
