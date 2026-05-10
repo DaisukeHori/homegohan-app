@@ -17,14 +17,14 @@
  *
  * 参照: docs/refactor/2026-05-08-tech-debt-elimination.md § F
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly, openShoppingModal, openFridgeModal, findFirstMealCard } from "./_helpers";
 
 // ============================================================
 // シナリオ 1: 週送り / 週戻し
 // ============================================================
 test.describe("scenario-1: 週送り/週戻し", () => {
-  test("「翌週」ボタンをクリックすると週インジケーターが変わる", async ({ authedPage: page }) => {
+  test("「翌週」ボタンをクリックすると週インジケーターが変わる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -58,7 +58,7 @@ test.describe("scenario-1: 週送り/週戻し", () => {
     await expect(prevWeekBtn).toBeVisible({ timeout: 5_000 });
   });
 
-  test("「前の週」ボタンをクリックしても献立表が維持される", async ({ authedPage: page }) => {
+  test("「前の週」ボタンをクリックしても献立表が維持される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -84,7 +84,7 @@ test.describe("scenario-1: 週送り/週戻し", () => {
 // シナリオ 2: 食事追加 (add モーダル)
 // ============================================================
 test.describe("scenario-2: 食事追加モーダル", () => {
-  test("「+ 朝食を追加」ボタンタップで食事追加フローが始まる", async ({ authedPage: page }) => {
+  test("「+ 朝食を追加」ボタンタップで食事追加フローが始まる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -128,7 +128,7 @@ test.describe("scenario-2: 食事追加モーダル", () => {
     expect(modalResult).toBe("modal-open");
   });
 
-  test("add モーダル内に調理モードのボタン群が表示される", async ({ authedPage: page }) => {
+  test("add モーダル内に調理モードのボタン群が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -197,7 +197,7 @@ test.describe("scenario-2: 食事追加モーダル", () => {
 // シナリオ 3: 食事編集 (manualEdit モーダル)
 // ============================================================
 test.describe("scenario-3: 食事手動編集モーダル", () => {
-  test("「手動で修正」ボタンをタップすると manualEdit モーダルが開く", async ({ authedPage: page }) => {
+  test("「手動で修正」ボタンをタップすると manualEdit モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -228,7 +228,7 @@ test.describe("scenario-3: 食事手動編集モーダル", () => {
     ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("manualEdit モーダルでタイプ変更して保存できること (UI 遷移のみ確認)", async ({ authedPage: page }) => {
+  test("manualEdit モーダルでタイプ変更して保存できること (UI 遷移のみ確認)", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -280,7 +280,7 @@ test.describe("scenario-3: 食事手動編集モーダル", () => {
 // シナリオ 4: 冷蔵庫追加 / 削除 (fridge / addFridge モーダル)
 // ============================================================
 test.describe("scenario-4: 冷蔵庫モーダル", () => {
-  test("「冷蔵庫を確認」ボタンで fridge モーダルが開く", async ({ authedPage: page }) => {
+  test("「冷蔵庫を確認」ボタンで fridge モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -292,7 +292,7 @@ test.describe("scenario-4: 冷蔵庫モーダル", () => {
     ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("「食材を追加」ボタンで addFridge モーダルが開き、食材を入力できる", async ({ authedPage: page }) => {
+  test("「食材を追加」ボタンで addFridge モーダルが開き、食材を入力できる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openFridgeModal(page);
@@ -349,7 +349,7 @@ test.describe("scenario-4: 冷蔵庫モーダル", () => {
 // シナリオ 5: 買い物リスト生成 (addShopping モーダル + generate)
 // ============================================================
 test.describe("scenario-5: 買い物リストモーダル", () => {
-  test("「買い物リストを開く」で shopping モーダルが開く", async ({ authedPage: page }) => {
+  test("「買い物リストを開く」で shopping モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -360,7 +360,7 @@ test.describe("scenario-5: 買い物リストモーダル", () => {
     ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("「追加」ボタンで addShopping モーダルが開く", async ({ authedPage: page }) => {
+  test("「追加」ボタンで addShopping モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -381,7 +381,7 @@ test.describe("scenario-5: 買い物リストモーダル", () => {
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
   });
 
-  test("「献立から再生成」ボタンで shoppingRange モーダルが開くか成功メッセージが出る", async ({ authedPage: page }) => {
+  test("「献立から再生成」ボタンで shoppingRange モーダルが開くか成功メッセージが出る", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
     await openShoppingModal(page);
@@ -411,7 +411,7 @@ test.describe("scenario-5: 買い物リストモーダル", () => {
 // シナリオ 6: レシピモーダル (recipe)
 // ============================================================
 test.describe("scenario-6: レシピモーダル", () => {
-  test("「レシピを見る」ボタンでレシピモーダルが開く", async ({ authedPage: page }) => {
+  test("「レシピを見る」ボタンでレシピモーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -443,7 +443,7 @@ test.describe("scenario-6: レシピモーダル", () => {
     expect(modalVisible).toBe(true);
   });
 
-  test("レシピモーダルにお気に入りボタン (favorite-button) が表示される", async ({ authedPage: page }) => {
+  test("レシピモーダルにお気に入りボタン (favorite-button) が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -485,7 +485,7 @@ test.describe("scenario-6: レシピモーダル", () => {
 // シナリオ 7: 削除確認モーダル
 // ============================================================
 test.describe("scenario-7: 食事削除確認モーダル", () => {
-  test("「食事を削除」ボタン (meal-delete-button) で confirmDelete モーダルが開く", async ({ authedPage: page }) => {
+  test("「食事を削除」ボタン (meal-delete-button) で confirmDelete モーダルが開く", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -522,7 +522,7 @@ test.describe("scenario-7: 食事削除確認モーダル", () => {
     ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("confirmDelete モーダルでキャンセルするとモーダルが閉じる", async ({ authedPage: page }) => {
+  test("confirmDelete モーダルでキャンセルするとモーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 

@@ -35,7 +35,7 @@
  *   - API mock: page.route() で /api/ai/analyze-meal-photo と /api/ai/image/generate を intercept。
  *   - 画像 fixture: tests/e2e/fixtures/karaage.jpg を使用。
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import path from "node:path";
 import { gotoWeekly, findFirstMealCard } from "./_helpers";
 
@@ -119,7 +119,7 @@ async function openImageGenerateModal(page: import("@playwright/test").Page): Pr
 
 test.describe("PhotoEditModal", () => {
   // P-1: オープン → file upload エリア表示
-  test("P-1: PhotoEditModal が開くと「撮影する」「選択する」ボタンが表示される", async ({ authedPage: page }) => {
+  test("P-1: PhotoEditModal が開くと「撮影する」「選択する」ボタンが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -144,7 +144,7 @@ test.describe("PhotoEditModal", () => {
   });
 
   // P-2: 画像ファイル添付 → preview 表示
-  test("P-2: 画像ファイルを添付すると preview が表示される", async ({ authedPage: page }) => {
+  test("P-2: 画像ファイルを添付すると preview が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -172,7 +172,7 @@ test.describe("PhotoEditModal", () => {
   });
 
   // P-3: 複数画像追加 → preview 増加
-  test("P-3: 複数枚の画像を追加すると preview が増える", async ({ authedPage: page }) => {
+  test("P-3: 複数枚の画像を追加すると preview が増える", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -198,7 +198,7 @@ test.describe("PhotoEditModal", () => {
   });
 
   // P-4: 削除 (1 枚 cancel) → preview 数が減る
-  test("P-4: preview の X ボタンをクリックすると preview が減る", async ({ authedPage: page }) => {
+  test("P-4: preview の X ボタンをクリックすると preview が減る", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -232,7 +232,7 @@ test.describe("PhotoEditModal", () => {
   });
 
   // P-5: 「AIで解析する」ボタン押下 → loading 表示 (API mock)
-  test("P-5: 解析ボタン押下後に loading スピナーが表示される (API mock)", async ({ authedPage: page }) => {
+  test("P-5: 解析ボタン押下後に loading スピナーが表示される (API mock)", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
 
     // API mock: analyze-meal-photo を永続 pending にして loading 状態を維持する
@@ -273,7 +273,7 @@ test.describe("PhotoEditModal", () => {
   });
 
   // P-6: 添付なしで解析押下 → disabled
-  test("P-6: 画像未添付の場合、解析ボタンが disabled になる", async ({ authedPage: page }) => {
+  test("P-6: 画像未添付の場合、解析ボタンが disabled になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -296,7 +296,7 @@ test.describe("PhotoEditModal", () => {
   });
 
   // P-7: キャンセル → モーダルが閉じる
-  test("P-7: X ボタンでキャンセルするとモーダルが閉じる", async ({ authedPage: page }) => {
+  test("P-7: X ボタンでキャンセルするとモーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -338,7 +338,7 @@ test.describe("PhotoEditModal", () => {
 
 test.describe("ImageGenerateModal", () => {
   // I-1: オープン → prompt textarea 表示
-  test("I-1: ImageGenerateModal が開くと prompt textarea が表示される", async ({ authedPage: page }) => {
+  test("I-1: ImageGenerateModal が開くと prompt textarea が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -367,7 +367,7 @@ test.describe("ImageGenerateModal", () => {
   });
 
   // I-2: prompt 入力 → 「料理画像を生成する」ボタン enable
-  test("I-2: prompt を入力すると生成ボタンが enabled になる", async ({ authedPage: page }) => {
+  test("I-2: prompt を入力すると生成ボタンが enabled になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -397,7 +397,7 @@ test.describe("ImageGenerateModal", () => {
   });
 
   // I-3: 参考画像添付 → preview 表示
-  test("I-3: 参考画像を添付すると preview が表示される", async ({ authedPage: page }) => {
+  test("I-3: 参考画像を添付すると preview が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -425,7 +425,7 @@ test.describe("ImageGenerateModal", () => {
   });
 
   // I-4: 「料理画像を生成する」ボタン押下 → loading 表示 (API mock)
-  test("I-4: 生成ボタン押下後に loading スピナーが表示される (API mock)", async ({ authedPage: page }) => {
+  test("I-4: 生成ボタン押下後に loading スピナーが表示される (API mock)", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
 
     // API mock: /api/ai/image/generate を永続 pending にして loading 状態を維持する
@@ -468,7 +468,7 @@ test.describe("ImageGenerateModal", () => {
   });
 
   // I-5: prompt 空で生成押下 → disabled
-  test("I-5: prompt が空の場合、生成ボタンが disabled になる", async ({ authedPage: page }) => {
+  test("I-5: prompt が空の場合、生成ボタンが disabled になる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -496,7 +496,7 @@ test.describe("ImageGenerateModal", () => {
   });
 
   // I-6: キャンセル → モーダルが閉じる
-  test("I-6: X ボタンでキャンセルするとモーダルが閉じる", async ({ authedPage: page }) => {
+  test("I-6: X ボタンでキャンセルするとモーダルが閉じる", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -534,7 +534,7 @@ test.describe("ImageGenerateModal", () => {
   });
 
   // I-7: 生成済み imageUrl がある場合の「現在の画像」プレビュー (mock 経由)
-  test("I-7: imageUrl を持つ食事の ImageGenerateModal には「現在の画像」が表示される", async ({ authedPage: page }) => {
+  test("I-7: imageUrl を持つ食事の ImageGenerateModal には「現在の画像」が表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
 
     // imageGenerateMeal.imageUrl が設定されている場合、

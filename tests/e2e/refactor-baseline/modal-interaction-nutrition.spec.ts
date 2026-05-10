@@ -30,7 +30,7 @@
  *   - canvas 描画は data-testid="radar-average-display" の存在で verify
  *   - 食事データ未生成環境は skip-reason アノテーションで明示スキップ
  */
-import { test, expect } from "../fixtures/auth";
+import { test, expect } from "../fixtures/fresh-user";
 import { gotoWeekly } from "./_helpers";
 
 // ============================================================
@@ -95,7 +95,7 @@ async function openNutritionDetailViaStats(
 // ============================================================
 test.describe("SM-1: StatsModal オープン", () => {
   test("「栄養分析を見る」ボタンで StatsModal が開き、今日タブのコンテンツが表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -129,7 +129,7 @@ test.describe("SM-1: StatsModal オープン", () => {
 // ============================================================
 test.describe("SM-2: StatsModal タブ切替", () => {
   test("「今週」タブをクリックすると週間コンテンツが表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -157,7 +157,7 @@ test.describe("SM-2: StatsModal タブ切替", () => {
   });
 
   test("「今週」→「今日」に戻すと今日コンテンツが再表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -189,7 +189,7 @@ test.describe("SM-2: StatsModal タブ切替", () => {
 // ============================================================
 test.describe("SM-3: StatsModal レーダーチャート描画", () => {
   test("今日タブで radar-average-display が描画されている", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -214,7 +214,7 @@ test.describe("SM-3: StatsModal レーダーチャート描画", () => {
   });
 
   test("今週タブでも radar-average-display が描画されている", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -237,7 +237,7 @@ test.describe("SM-3: StatsModal レーダーチャート描画", () => {
 // ============================================================
 test.describe("SM-4: StatsModal 数値カード表示", () => {
   test("自炊率・平均kcal・合計食数の統計カードが表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -256,7 +256,7 @@ test.describe("SM-4: StatsModal 数値カード表示", () => {
   });
 
   test("今週タブで PFC 週間平均の数値カードが表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -283,7 +283,7 @@ test.describe("SM-4: StatsModal 数値カード表示", () => {
 // ============================================================
 test.describe("SM-5: StatsModal → NutritionDetailModal 連携", () => {
   test("「詳細を見る / 献立を改善」ボタンをクリックすると NutritionDetailModal が開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -321,7 +321,7 @@ test.describe("SM-5: StatsModal → NutritionDetailModal 連携", () => {
 // ============================================================
 test.describe("SM-6: StatsModal 閉じる", () => {
   test("X ボタンで StatsModal を閉じると週ナビゲーションが表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
@@ -349,7 +349,7 @@ test.describe("SM-6: StatsModal 閉じる", () => {
 // ============================================================
 test.describe("ND-1: NutritionDetailModal 栄養素一覧", () => {
   test("NutritionDetailModal が開くと全栄養素一覧と AI コメントエリアが表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -381,7 +381,7 @@ test.describe("ND-1: NutritionDetailModal 栄養素一覧", () => {
   });
 
   test("NutritionDetailModal でレーダーチャートの達成率表示が存在する", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -408,7 +408,7 @@ test.describe("ND-1: NutritionDetailModal 栄養素一覧", () => {
 // ============================================================
 test.describe("ND-2: NutritionDetailModal 編集モード ON", () => {
   test("「変更」ボタンをクリックすると栄養素選択ボタン群が表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -463,7 +463,7 @@ test.describe("ND-2: NutritionDetailModal 編集モード ON", () => {
 // ============================================================
 test.describe("ND-3: NutritionDetailModal nutrient 選択/解除", () => {
   test("編集モードで栄養素ボタンをクリックすると順番バッジが変わる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -540,7 +540,7 @@ test.describe("ND-3: NutritionDetailModal nutrient 選択/解除", () => {
 // ============================================================
 test.describe("ND-4: NutritionDetailModal 保存", () => {
   test("保存ボタンをクリックすると isSavingRadarNutrients (loading) または完了状態になる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -619,7 +619,7 @@ test.describe("ND-4: NutritionDetailModal 保存", () => {
 // ============================================================
 test.describe("ND-5: NutritionDetailModal キャンセル", () => {
   test("編集モードで「キャンセル」をクリックすると編集が破棄されて元の表示に戻る", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -688,7 +688,7 @@ test.describe("ND-5: NutritionDetailModal キャンセル", () => {
 // ============================================================
 test.describe("ND-6: NutritionDetailModal → ImproveMealModal 連携", () => {
   test("「この提案で献立を改善」ボタンをクリックすると ImproveMealModal が開く", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -742,7 +742,7 @@ test.describe("ND-6: NutritionDetailModal → ImproveMealModal 連携", () => {
 // ============================================================
 test.describe("ND-7: NutritionDetailModal AI フィードバック", () => {
   test("NutritionDetailModal 内に AI フィードバックエリア (loading または取得済み) が存在する", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
@@ -791,7 +791,7 @@ test.describe("ND-7: NutritionDetailModal AI フィードバック", () => {
   });
 
   test("「再分析」ボタンが AI フィードバック取得後に表示される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     test.setTimeout(90_000);
     await gotoWeekly(page);
