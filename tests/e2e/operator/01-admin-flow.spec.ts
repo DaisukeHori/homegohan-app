@@ -18,7 +18,7 @@
  *   npm run test:e2e -- tests/e2e/operator
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../fixtures/fresh-user";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 
@@ -28,13 +28,7 @@ dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
-const ADMIN_USER = process.env.ADMIN_USER_EMAIL
-  ? {
-      email: process.env.ADMIN_USER_EMAIL,
-      password: process.env.ADMIN_USER_PASSWORD ?? "",
-    }
-  : null;
-
+// super_admin は fresh-user fixture では提供しないため、引き続き環境変数から取得する
 const SUPER_ADMIN_USER = process.env.SUPER_ADMIN_USER_EMAIL
   ? {
       email: process.env.SUPER_ADMIN_USER_EMAIL,
@@ -49,6 +43,7 @@ const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
 /**
  * Supabase Auth API でセッショントークンを取得し、Cookie をページに注入する。
+ * super_admin / E2E_USER の旧スタイルログインで使用する。
  */
 async function injectSupabaseSession(
   page: import("@playwright/test").Page,
@@ -174,19 +169,11 @@ test.describe("operator/admin: ログイン → モデレーション → audit_
 
   /**
    * T14-A2: 一般ユーザーは /api/admin/moderation/queue にアクセスできない (401/403)
+   *
+   * onboardingPendingUser fixture = admin ロールを持たない fresh user。
    */
-  test("T14-A2: 一般ユーザーは moderation queue API に 401/403 で弾かれる", async ({ page }) => {
-    const email = process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
-    const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
-
-    const loggedIn = await injectSupabaseSession(page, email, password);
-    if (!loggedIn) {
-      await uiLogin(page, email, password).catch(() => {
-        test.skip(true, "E2E_USER ログイン失敗のためスキップ");
-      });
-    }
-
-    const { status } = await apiFetch(page, "/api/admin/moderation/queue");
+  test("T14-A2: 一般ユーザーは moderation queue API に 401/403 で弾かれる", async ({ onboardingPendingUser }) => {
+    const { status } = await apiFetch(onboardingPendingUser, "/api/admin/moderation/queue");
 
     // admin/content_moderator 権限なしユーザーは 401 または 403
     expect([401, 403]).toContain(status);
@@ -195,19 +182,10 @@ test.describe("operator/admin: ログイン → モデレーション → audit_
   /**
    * T14-A3: admin ユーザーがモデレーションキューを取得する
    *
-   * ADMIN_USER が設定されている場合のみ実行。
+   * adminUser fixture: createFreshUser + user_profiles.roles=['admin'] で自動生成。
    */
-  test("T14-A3: admin がモデレーションキュー API に 200 でアクセスできる", async ({ page }) => {
-    if (!ADMIN_USER) {
-      test.skip(true, "ADMIN_USER_EMAIL 未設定のためスキップ (CI Secret を確認してください)");
-      return;
-    }
-
-    const loggedIn = await injectSupabaseSession(page, ADMIN_USER.email, ADMIN_USER.password);
-    if (!loggedIn) {
-      await uiLogin(page, ADMIN_USER.email, ADMIN_USER.password);
-    }
-
+  test("T14-A3: admin がモデレーションキュー API に 200 でアクセスできる", async ({ adminUser }) => {
+    const { page } = adminUser;
     const { status, body } = await apiFetch(page, "/api/admin/moderation/queue");
 
     expect(status).toBe(200);
@@ -223,18 +201,10 @@ test.describe("operator/admin: ログイン → モデレーション → audit_
   /**
    * T14-A4: admin ユーザーが /admin/moderation にアクセスして UI を確認する
    *
-   * ADMIN_USER が設定されている場合のみ実行。
+   * adminUser fixture: createFreshUser + user_profiles.roles=['admin'] で自動生成。
    */
-  test("T14-A4: admin が /admin/moderation 画面を表示できる", async ({ page }) => {
-    if (!ADMIN_USER) {
-      test.skip(true, "ADMIN_USER_EMAIL 未設定のためスキップ");
-      return;
-    }
-
-    const loggedIn = await injectSupabaseSession(page, ADMIN_USER.email, ADMIN_USER.password);
-    if (!loggedIn) {
-      await uiLogin(page, ADMIN_USER.email, ADMIN_USER.password);
-    }
+  test("T14-A4: admin が /admin/moderation 画面を表示できる", async ({ adminUser }) => {
+    const { page } = adminUser;
 
     await page.goto(`${BASE_URL}/admin/moderation`);
     await page.waitForLoadState("networkidle");
@@ -255,19 +225,10 @@ test.describe("operator/admin: ログイン → モデレーション → audit_
   /**
    * T14-A5: admin がモデレーションキューのフィルタを操作する
    *
-   * ADMIN_USER が設定されている場合のみ実行。
-   * キューにアイテムがある場合は審査リンクも確認する。
+   * adminUser fixture: createFreshUser + user_profiles.roles=['admin'] で自動生成。
    */
-  test("T14-A5: admin がモデレーションキューのステータスフィルタを操作する", async ({ page }) => {
-    if (!ADMIN_USER) {
-      test.skip(true, "ADMIN_USER_EMAIL 未設定のためスキップ");
-      return;
-    }
-
-    const loggedIn = await injectSupabaseSession(page, ADMIN_USER.email, ADMIN_USER.password);
-    if (!loggedIn) {
-      await uiLogin(page, ADMIN_USER.email, ADMIN_USER.password);
-    }
+  test("T14-A5: admin がモデレーションキューのステータスフィルタを操作する", async ({ adminUser }) => {
+    const { page } = adminUser;
 
     await page.goto(`${BASE_URL}/admin/moderation`);
     await page.waitForLoadState("networkidle");
@@ -338,19 +299,11 @@ test.describe("operator/admin: ログイン → モデレーション → audit_
 
   /**
    * T14-A7: 一般ユーザーは audit_log API にアクセスできない (403)
+   *
+   * onboardingPendingUser fixture = admin ロールを持たない fresh user。
    */
-  test("T14-A7: 一般ユーザーは audit_log API に 401/403 で弾かれる", async ({ page }) => {
-    const email = process.env.E2E_USER_EMAIL ?? "claude-debug-1777477826@homegohan.local";
-    const password = process.env.E2E_USER_PASSWORD ?? "ClaudeDebug2026!";
-
-    const loggedIn = await injectSupabaseSession(page, email, password);
-    if (!loggedIn) {
-      await uiLogin(page, email, password).catch(() => {
-        test.skip(true, "E2E_USER ログイン失敗のためスキップ");
-      });
-    }
-
-    const { status } = await apiFetch(page, "/api/super-admin/audit-logs?per_page=5&page=1");
+  test("T14-A7: 一般ユーザーは audit_log API に 401/403 で弾かれる", async ({ onboardingPendingUser }) => {
+    const { status } = await apiFetch(onboardingPendingUser, "/api/super-admin/audit-logs?per_page=5&page=1");
 
     expect([401, 403]).toContain(status);
   });
@@ -358,22 +311,13 @@ test.describe("operator/admin: ログイン → モデレーション → audit_
   /**
    * T14-A8: admin ユーザーも audit_log API は閲覧できない (super_admin 専用)
    *
-   * ADMIN_USER が設定されている場合のみ実行。
+   * adminUser fixture: createFreshUser + user_profiles.roles=['admin'] で自動生成。
    * audit_log の閲覧は super_admin のみ許可 (admin が自分の操作を消せない設計)。
    */
   test("T14-A8: admin ユーザーは audit_log API に 403 で弾かれる (super_admin 専用)", async ({
-    page,
+    adminUser,
   }) => {
-    if (!ADMIN_USER) {
-      test.skip(true, "ADMIN_USER_EMAIL 未設定のためスキップ");
-      return;
-    }
-
-    const loggedIn = await injectSupabaseSession(page, ADMIN_USER.email, ADMIN_USER.password);
-    if (!loggedIn) {
-      await uiLogin(page, ADMIN_USER.email, ADMIN_USER.password);
-    }
-
+    const { page } = adminUser;
     const { status } = await apiFetch(page, "/api/super-admin/audit-logs?per_page=5&page=1");
 
     // admin ロールは super_admin audit log を閲覧できない
