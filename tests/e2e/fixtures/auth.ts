@@ -533,3 +533,10 @@ export const E2E_USER = {
     return process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
   },
 };
+
+// fresh-user fixture の re-export (signup/onboarding/tour 系テスト向け)
+export {
+  createFreshUser,
+  cleanupFreshUser,
+  injectSession as injectFreshSession,
+} from "./fresh-user";
