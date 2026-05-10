@@ -123,17 +123,6 @@ const QUESTIONS = [
       answers.nutrition_goal === 'athlete_performance' && answers.sport_type === 'custom',
   },
   {
-    id: 'sport_experience',
-    text: '競技経験はどのくらいですか？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => answers.nutrition_goal === 'athlete_performance',
-    options: [
-      { label: '🔰 初心者（1年未満）', value: 'beginner', description: '始めたばかり' },
-      { label: '📈 中級者（1〜3年）', value: 'intermediate', description: '基礎は身についている' },
-      { label: '🏆 上級者（3年以上）', value: 'advanced', description: '競技会・大会出場レベル' },
-    ]
-  },
-  {
     id: 'training_phase',
     text: '現在のトレーニング期は？',
     type: 'choice',
