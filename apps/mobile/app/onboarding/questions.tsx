@@ -179,17 +179,6 @@ const QUESTIONS: Question[] = [
       answers.nutrition_goal === "athlete_performance" && answers.sport_type === "custom",
   },
   {
-    id: "sport_experience",
-    text: "競技経験はどのくらいですか？",
-    type: "choice",
-    showIf: (answers) => answers.nutrition_goal === "athlete_performance",
-    options: [
-      { label: "🔰 初心者（1年未満）", value: "beginner", description: "始めたばかり" },
-      { label: "📈 中級者（1〜3年）", value: "intermediate", description: "基礎は身についている" },
-      { label: "🏆 上級者（3年以上）", value: "advanced", description: "競技会・大会出場レベル" },
-    ],
-  },
-  {
     id: "training_phase",
     text: "現在のトレーニング期は？",
     type: "choice",
@@ -225,17 +214,6 @@ const QUESTIONS: Question[] = [
     type: "date",
     allowSkip: true,
     showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
-  },
-  {
-    id: "weight_change_rate",
-    text: "どのくらいのペースで変えたいですか？",
-    type: "choice",
-    showIf: (answers) => answers.nutrition_goal === "lose_weight" || answers.nutrition_goal === "gain_muscle",
-    options: [
-      { label: "🐢 ゆっくり（月1-2kg）", value: "slow", description: "無理なく長期的に" },
-      { label: "🚶 普通（月2-3kg）", value: "moderate", description: "バランス重視" },
-      { label: "🚀 積極的（月3kg以上）", value: "aggressive", description: "短期集中で" },
-    ],
   },
   {
     id: "exercise_types",
@@ -280,18 +258,6 @@ const QUESTIONS: Question[] = [
     ],
   },
   {
-    id: "exercise_duration",
-    text: "1回の運動時間は？",
-    type: "choice",
-    showIf: (answers) => !answers.exercise_types?.includes("none"),
-    options: [
-      { label: "⏱️ 30分未満", value: "30" },
-      { label: "⏱️ 30分〜1時間", value: "60" },
-      { label: "⏱️ 1〜2時間", value: "90" },
-      { label: "⏱️ 2時間以上", value: "120" },
-    ],
-  },
-  {
     id: "work_style",
     text: "普段の仕事・活動スタイルは？",
     type: "choice",
@@ -319,8 +285,6 @@ const QUESTIONS: Question[] = [
       { label: "🩺 貧血", value: "貧血" },
       { label: "🦶 痛風", value: "痛風" },
       { label: "🌿 便秘・下痢", value: "消化器系" },
-      { label: "😪 不眠・睡眠障害", value: "睡眠障害" },
-      { label: "🤧 花粉症・アレルギー", value: "アレルギー" },
       { label: "🌡️ 甲状腺疾患", value: "甲状腺疾患" },
       { label: "🧠 自律神経失調", value: "自律神経" },
       { label: "😰 うつ・不安障害", value: "メンタル" },
@@ -460,16 +424,8 @@ const QUESTIONS: Question[] = [
     ],
   },
   {
-    id: "family_size",
-    text: "何人分の食事を作りますか？（1〜10人）",
-    type: "number",
-    placeholder: "例: 4",
-    min: 1,
-    max: 10,
-  },
-  {
     id: "servings_config",
-    text: "曜日ごとの食事人数を設定してください\n（0人＝作らない/外食）",
+    text: "食事の基本人数と曜日別設定をしてください\n（0人＝作らない/外食）",
     type: "servings_grid",
   },
   {
@@ -559,11 +515,27 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.nutrition_goal) profile.nutritionGoal = ans.nutrition_goal;
   if (ans.target_weight) profile.targetWeight = parseFloat(ans.target_weight);
   if (ans.target_date) profile.targetDate = ans.target_date;
-  if (ans.weight_change_rate) profile.weightChangeRate = ans.weight_change_rate;
+  // weight_change_rate: target_weight + target_date から自動算出
+  if (ans.nutrition_goal === "lose_weight" || ans.nutrition_goal === "gain_muscle") {
+    const currentWeight = ans.weight ? parseFloat(ans.weight) : null;
+    const targetWeight = ans.target_weight ? parseFloat(ans.target_weight) : null;
+    if (currentWeight !== null && targetWeight !== null && ans.target_date) {
+      const monthsToTarget = (new Date(ans.target_date).getTime() - Date.now()) / (30 * 24 * 3600 * 1000);
+      if (monthsToTarget > 0) {
+        const kgPerMonth = Math.abs(currentWeight - targetWeight) / monthsToTarget;
+        profile.weightChangeRate = kgPerMonth < 1.5 ? "slow" : kgPerMonth < 2.5 ? "moderate" : "aggressive";
+      } else {
+        profile.weightChangeRate = "normal";
+      }
+    } else {
+      profile.weightChangeRate = "moderate";
+    }
+  }
   if (ans.exercise_types?.length && !ans.exercise_types.includes("none")) profile.exerciseTypes = ans.exercise_types;
   if (ans.exercise_frequency) profile.exerciseFrequency = parseInt(ans.exercise_frequency);
   if (ans.exercise_intensity) profile.exerciseIntensity = ans.exercise_intensity;
-  if (ans.exercise_duration) profile.exerciseDurationPerSession = parseInt(ans.exercise_duration);
+  // exercise_duration は質問削除のため中央値 60 分を固定送信
+  profile.exerciseDurationPerSession = 60;
   if (ans.work_style) profile.workStyle = ans.work_style;
   if (ans.health_conditions?.length && !ans.health_conditions.includes("none")) profile.healthConditions = ans.health_conditions;
   if (ans.medications?.length && !ans.medications.includes("none")) profile.medications = ans.medications;
@@ -578,7 +550,12 @@ function transformAnswersToProfile(ans: Record<string, any>) {
     ans.cuisine_preference.forEach((c: string) => { prefs[c] = 5; });
     profile.cuisinePreferences = prefs;
   }
-  if (ans.family_size) profile.familySize = parseInt(ans.family_size);
+  // family_size は servings_config.default から導出 (質問削除のため)
+  if (ans.servings_config?.default) {
+    profile.familySize = ans.servings_config.default;
+  } else {
+    profile.familySize = 1;
+  }
   if (ans.servings_config) profile.servingsConfig = ans.servings_config;
   if (ans.shopping_frequency) profile.shoppingFrequency = ans.shopping_frequency;
   if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") profile.weeklyFoodBudget = parseInt(ans.weekly_food_budget);
@@ -821,13 +798,29 @@ export default function OnboardingQuestions() {
       if (ans.nutrition_goal) updates.nutrition_goal = ans.nutrition_goal;
       if (ans.target_weight) updates.target_weight = parseFloat(ans.target_weight);
       if (ans.target_date) updates.target_date = ans.target_date;
-      if (ans.weight_change_rate) updates.weight_change_rate = ans.weight_change_rate;
+      // weight_change_rate: target_weight + target_date から自動算出
+      if (ans.nutrition_goal === "lose_weight" || ans.nutrition_goal === "gain_muscle") {
+        const currentWeight = ans.weight ? parseFloat(ans.weight) : null;
+        const targetWeight = ans.target_weight ? parseFloat(ans.target_weight) : null;
+        if (currentWeight !== null && targetWeight !== null && ans.target_date) {
+          const monthsToTarget = (new Date(ans.target_date).getTime() - Date.now()) / (30 * 24 * 3600 * 1000);
+          if (monthsToTarget > 0) {
+            const kgPerMonth = Math.abs(currentWeight - targetWeight) / monthsToTarget;
+            updates.weight_change_rate = kgPerMonth < 1.5 ? "slow" : kgPerMonth < 2.5 ? "moderate" : "aggressive";
+          } else {
+            updates.weight_change_rate = "moderate";
+          }
+        } else {
+          updates.weight_change_rate = "moderate";
+        }
+      }
       if (ans.exercise_types && !ans.exercise_types.includes("none")) {
         updates.exercise_types = ans.exercise_types;
       }
       if (ans.exercise_frequency) updates.exercise_frequency = parseInt(ans.exercise_frequency);
       if (ans.exercise_intensity) updates.exercise_intensity = ans.exercise_intensity;
-      if (ans.exercise_duration) updates.exercise_duration_per_session = parseInt(ans.exercise_duration);
+      // exercise_duration は質問削除のため中央値 60 分を固定送信
+      updates.exercise_duration_per_session = 60;
       if (ans.work_style) updates.work_style = ans.work_style;
       if (ans.health_conditions && !ans.health_conditions.includes("none")) {
         updates.health_conditions = ans.health_conditions;
@@ -859,7 +852,10 @@ export default function OnboardingQuestions() {
         });
         updates.cuisine_preferences = prefs;
       }
-      if (ans.family_size) updates.family_size = parseInt(ans.family_size);
+      // family_size は servings_config.default から導出 (質問削除のため)
+      if (ans.servings_config?.default) {
+        updates.family_size = ans.servings_config.default;
+      }
       if (ans.servings_config) updates.servings_config = ans.servings_config;
       if (ans.shopping_frequency) updates.shopping_frequency = ans.shopping_frequency;
       if (ans.weekly_food_budget && ans.weekly_food_budget !== "none") {
@@ -1301,6 +1297,40 @@ export default function OnboardingQuestions() {
       {/* Servings grid */}
       {currentQuestion.type === "servings_grid" ? (
         <View testID="onboarding-servings-screen" style={{ gap: spacing.md }}>
+          {/* 基本人数入力 (family_size の代替) */}
+          <View style={styles.defaultServingsRow}>
+            <Text style={styles.defaultServingsLabel}>基本人数</Text>
+            <View style={styles.defaultServingsControl}>
+              <Pressable
+                onPress={() => {
+                  const current = answers.servings_config?.default ?? 2;
+                  if (current <= 1) return;
+                  const newDefault = current - 1;
+                  const newConfig = createDefaultServingsConfig(newDefault);
+                  setAnswers((prev) => ({ ...prev, servings_config: newConfig }));
+                }}
+                style={styles.gridButton}
+              >
+                <Ionicons name="remove" size={18} color={colors.success} />
+              </Pressable>
+              <Text style={styles.defaultServingsValue}>
+                {answers.servings_config?.default ?? 2}人
+              </Text>
+              <Pressable
+                onPress={() => {
+                  const current = answers.servings_config?.default ?? 2;
+                  if (current >= 10) return;
+                  const newDefault = current + 1;
+                  const newConfig = createDefaultServingsConfig(newDefault);
+                  setAnswers((prev) => ({ ...prev, servings_config: newConfig }));
+                }}
+                style={styles.gridButton}
+              >
+                <Ionicons name="add" size={18} color={colors.success} />
+              </Pressable>
+            </View>
+          </View>
+
           <Text style={styles.gridHint}>
             各セルをタップして人数を変更できます
           </Text>
@@ -1330,9 +1360,9 @@ export default function OnboardingQuestions() {
                   </Text>
                 </View>
                 {MEAL_TYPES.map((meal) => {
-                  const familySize = parseInt(answers.family_size) || 2;
-                  const currentConfig = answers.servings_config || createDefaultServingsConfig(familySize);
-                  const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? familySize;
+                  const defaultPeople = answers.servings_config?.default ?? 2;
+                  const currentConfig = answers.servings_config || createDefaultServingsConfig(defaultPeople);
+                  const value = currentConfig.byDayMeal?.[day.key]?.[meal.key] ?? defaultPeople;
 
                   const updateValue = (newValue: number) => {
                     const clampedValue = Math.max(0, Math.min(10, newValue));
@@ -1401,8 +1431,8 @@ export default function OnboardingQuestions() {
           <Pressable
             testID={isLastStep ? "onboarding-submit-button" : "onboarding-next-button"}
             onPress={() => {
-              const familySize = parseInt(answers.family_size) || 2;
-              const config = answers.servings_config || createDefaultServingsConfig(familySize);
+              const defaultPeople = answers.servings_config?.default ?? 2;
+              const config = answers.servings_config || createDefaultServingsConfig(defaultPeople);
               handleAnswer(config);
             }}
             style={styles.nextButton}
@@ -1807,5 +1837,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#9CA3AF",
     marginTop: spacing.md,
+  },
+  /* ── Default servings (family_size 代替) ── */
+  defaultServingsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: "#fff",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  defaultServingsLabel: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  defaultServingsControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  defaultServingsValue: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: colors.text,
+    minWidth: 36,
+    textAlign: "center",
   },
 });
