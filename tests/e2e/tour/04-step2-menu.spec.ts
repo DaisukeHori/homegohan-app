@@ -13,34 +13,19 @@
  * 注意: API モック禁止。実 Supabase に接続する。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect } from "../fixtures/fresh-user";
 
 test.describe("Tour - Step 2: AI 献立生成", () => {
   test.setTimeout(60_000);
-
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
 
   // TODO: testID tour-step-2-intro 未実装、別 PR で対応
   test.skip("Step 2 intro 吹き出しが表示される (tour-step-2-intro)", () => {
     // tour-step-2-intro が実装されたら有効化する
   });
 
-  test("Step 2: v4-no-cook-toggle が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s2-toggle");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 2: v4-no-cook-toggle が表示される", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();
@@ -75,14 +60,9 @@ test.describe("Tour - Step 2: AI 献立生成", () => {
     }
   });
 
-  test("Step 2: v4-generate-button → v4-result-card 表示", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s2-gen");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 2: v4-generate-button → v4-result-card 表示", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();
@@ -135,14 +115,9 @@ test.describe("Tour - Step 2: AI 献立生成", () => {
     await expect(page.getByTestId("v4-result-card")).toBeVisible({ timeout: 30_000 });
   });
 
-  test("Step 2: v4-add-to-menu-button → Step 3 遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s2-add");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 2: v4-add-to-menu-button → Step 3 遷移", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();

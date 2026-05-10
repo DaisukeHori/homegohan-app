@@ -14,34 +14,19 @@
  * ユーザー操作は meal-save-button のタップのみ。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect } from "../fixtures/fresh-user";
 
 test.describe("Tour - Step 1: 写真追加", () => {
   test.setTimeout(60_000);
-
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
 
   // TODO: testID tour-step-1-intro 未実装、別 PR で対応
   test.skip("Step 1 intro 吹き出しが表示される (tour-step-1-intro)", () => {
     // intro 吹き出し (tour-step-1-intro) が実装されたら有効化する
   });
 
-  test("Step 1: meal-camera-button が Spotlight ターゲットとして表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s1-camera");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 1: meal-camera-button が Spotlight ターゲットとして表示される", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     // Step 0 表示確認
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
@@ -54,14 +39,9 @@ test.describe("Tour - Step 1: 写真追加", () => {
     await expect(page.getByTestId("meal-camera-button")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Step 1: meal-save-button タップ → Step 2 へ遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s1-save");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 1: meal-save-button タップ → Step 2 へ遷移", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();
@@ -107,14 +87,9 @@ test.describe("Tour - Step 1: 写真追加", () => {
     }
   });
 
-  test("Step 1: meal-result-dish-name が表示される (サンドボックス固定値)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s1-dish");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 1: meal-result-dish-name が表示される (サンドボックス固定値)", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();

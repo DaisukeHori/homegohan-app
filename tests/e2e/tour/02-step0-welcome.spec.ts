@@ -10,29 +10,14 @@
  * 注意: API モック禁止。実 Supabase に接続して新規ユーザーを作成する。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect } from "../fixtures/fresh-user";
 
 test.describe("Tour - Step 0: Welcome", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
-
-  test("Step 0 が表示される (tour-step-0 / title / subtitle)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s0-display");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 0 が表示される (tour-step-0 / title / subtitle)", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     // Step 0 コンテナが表示される
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
@@ -45,14 +30,9 @@ test.describe("Tour - Step 0: Welcome", () => {
     await expect(page.getByTestId("tour-step-0-title")).toContainText("ようこそ");
   });
 
-  test("Step 0 で「はじめる」タップ → Step 1 へ遷移 (tour-step-0-start)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s0-start");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 0 で「はじめる」タップ → Step 1 へ遷移 (tour-step-0-start)", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     // Step 0 表示を確認
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
@@ -76,14 +56,9 @@ test.describe("Tour - Step 0: Welcome", () => {
     expect(hasCameraButton || hasOverlay).toBe(true);
   });
 
-  test("Step 0 で「あとで」ボタンが表示される (tour-step-0-skip)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s0-skipbtn");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 0 で「あとで」ボタンが表示される (tour-step-0-skip)", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
 

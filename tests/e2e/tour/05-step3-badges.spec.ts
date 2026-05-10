@@ -15,8 +15,7 @@
  * /api/handson-tour のサンドボックスバッジ付与済み状態を前提とする。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect } from "../fixtures/fresh-user";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 
@@ -71,32 +70,32 @@ async function awardBadgeDirectly(userId: string, badgeCode: string): Promise<vo
 test.describe("Tour - Step 3: バッジ確認", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
-
   // TODO: testID tour-step-3-intro 未実装、別 PR で対応
   test.skip("Step 3 intro 吹き出しが表示される (tour-step-3-intro)", () => {
     // tour-step-3-intro が実装されたら有効化する
   });
 
-  test("Step 3: tour-step-3-loading が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-load");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
+  test("Step 3: tour-step-3-loading が表示される", async ({ tourPendingUser: page, context }) => {
+    // ユーザー ID を取得するため Cookie からセッションを読み取る
+    const cookies = await context.cookies();
+    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
+    const authCookie = cookies.find((c) => c.name === `sb-${supabaseRef}-auth-token`);
+    let userId = "";
+    if (authCookie) {
+      try {
+        const session = JSON.parse(decodeURIComponent(authCookie.value)) as { user?: { id?: string } };
+        userId = session.user?.id ?? "";
+      } catch { /* ignore */ }
     }
 
-    // サンドボックスバッジを直接付与して Step 3 の前提条件を作る
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
+    if (userId) {
+      // サンドボックスバッジを直接付与して Step 3 の前提条件を作る
+      await awardBadgeDirectly(userId, "first_bite");
+      await awardBadgeDirectly(userId, "planner");
+    }
+
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     // Step 0 → Step 1 → Step 2 を通過して Step 3 に到達する
     // (ハンズオンツアーの実際のフローを通じて確認)
@@ -165,17 +164,25 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     await expect(page.getByTestId("tour-step-3-loading")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Step 3: badge-card-first_bite が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-badge");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
+  test("Step 3: badge-card-first_bite が表示される", async ({ tourPendingUser: page, context }) => {
+    const cookies = await context.cookies();
+    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
+    const authCookie = cookies.find((c) => c.name === `sb-${supabaseRef}-auth-token`);
+    let userId = "";
+    if (authCookie) {
+      try {
+        const session = JSON.parse(decodeURIComponent(authCookie.value)) as { user?: { id?: string } };
+        userId = session.user?.id ?? "";
+      } catch { /* ignore */ }
     }
 
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
+    if (userId) {
+      await awardBadgeDirectly(userId, "first_bite");
+      await awardBadgeDirectly(userId, "planner");
+    }
+
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();
@@ -229,17 +236,25 @@ test.describe("Tour - Step 3: バッジ確認", () => {
     await expect(page.getByTestId("badge-card-first_bite")).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s3-next");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
+  test("Step 3: 「次へ」タップ → Step 4 (tour-step-4-saving) へ遷移", async ({ tourPendingUser: page, context }) => {
+    const cookies = await context.cookies();
+    const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
+    const authCookie = cookies.find((c) => c.name === `sb-${supabaseRef}-auth-token`);
+    let userId = "";
+    if (authCookie) {
+      try {
+        const session = JSON.parse(decodeURIComponent(authCookie.value)) as { user?: { id?: string } };
+        userId = session.user?.id ?? "";
+      } catch { /* ignore */ }
     }
 
-    await awardBadgeDirectly(userId, "first_bite");
-    await awardBadgeDirectly(userId, "planner");
+    if (userId) {
+      await awardBadgeDirectly(userId, "first_bite");
+      await awardBadgeDirectly(userId, "planner");
+    }
+
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-start").click();

@@ -12,29 +12,14 @@
  * 注意: API モック禁止。実 Supabase に接続する。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect } from "../fixtures/fresh-user";
 
 test.describe("Tour - Skip and Replay", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
-    if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
-    }
-  });
-
-  test("Step 0 で「あとで」タップ → /home へ即遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-skip-later");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("Step 0 で「あとで」タップ → /home へ即遷移", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     // Step 0 表示を確認
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
@@ -47,14 +32,9 @@ test.describe("Tour - Skip and Replay", () => {
     expect(page.url()).toContain("/home");
   });
 
-  test("「あとで」後に /handson-tour に戻っても tour-step-0 が表示されない (skipped)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-skip-noshow");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("「あとで」後に /handson-tour に戻っても tour-step-0 が表示されない (skipped)", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("tour-step-0-skip").click();
@@ -73,14 +53,9 @@ test.describe("Tour - Skip and Replay", () => {
     expect(isOnHome || !isTourStep0Visible).toBe(true);
   });
 
-  test("/settings から settings-restart-handson-tour タップ → Step 0 再表示", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-replay");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("/settings から settings-restart-handson-tour タップ → Step 0 再表示", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     // まず「あとで」でスキップ
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
@@ -115,14 +90,9 @@ test.describe("Tour - Skip and Replay", () => {
     }
   });
 
-  test("settings-restart-handson-tour が /settings ページに存在する", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-settings-check");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
+  test("settings-restart-handson-tour が /settings ページに存在する", async ({ tourPendingUser: page }) => {
+    await page.goto("/handson-tour");
+    await page.waitForLoadState("domcontentloaded");
 
     // スキップして /settings に移動
     await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });

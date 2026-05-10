@@ -12,8 +12,7 @@
  * 可能な場合は service_role 経由で状態を直接設定して /handson-tour?step=4 等に遷移する。
  */
 
-import { test, expect } from "@playwright/test";
-import { signupAsNewUser, cleanupTestUser, generateTestEmail } from "./helpers";
+import { test, expect } from "../fixtures/fresh-user";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
 
@@ -59,8 +58,25 @@ async function awardBadge(userId: string, badgeCode: string): Promise<void> {
   }
 }
 
+/** Cookie からユーザー ID を取得するヘルパー */
+async function getUserIdFromContext(context: import("@playwright/test").BrowserContext): Promise<string> {
+  const cookies = await context.cookies();
+  const supabaseRef = SUPABASE_URL.replace("https://", "").split(".")[0];
+  const authCookie = cookies.find((c) => c.name === `sb-${supabaseRef}-auth-token`);
+  if (authCookie) {
+    try {
+      const session = JSON.parse(decodeURIComponent(authCookie.value)) as { user?: { id?: string } };
+      return session.user?.id ?? "";
+    } catch { /* ignore */ }
+  }
+  return "";
+}
+
 /** フルフローを高速に通過するためのヘルパー */
-async function reachStep4(page: typeof test.info extends (...args: infer _) => infer _ ? never : import("@playwright/test").Page): Promise<boolean> {
+async function reachStep4(page: import("@playwright/test").Page): Promise<boolean> {
+  await page.goto("/handson-tour");
+  await page.waitForLoadState("domcontentloaded");
+
   await expect(page.getByTestId("tour-step-0")).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("tour-step-0-start").click();
 
@@ -114,26 +130,12 @@ async function reachStep4(page: typeof test.info extends (...args: infer _) => i
 test.describe("Tour - Step 4: 卒業画面", () => {
   test.setTimeout(60_000);
 
-  let userId: string | null = null;
-
-  test.afterEach(async () => {
+  test("Step 4: tour-step-4-saving → tour-step-4-graduate が表示される", async ({ tourPendingUser: page, context }) => {
+    const userId = await getUserIdFromContext(context);
     if (userId) {
-      await cleanupTestUser(userId);
-      userId = null;
+      await awardBadge(userId, "first_bite");
+      await awardBadge(userId, "planner");
     }
-  });
-
-  test("Step 4: tour-step-4-saving → tour-step-4-graduate が表示される", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s4-grad");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
-    }
-
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
 
     const reached = await reachStep4(page);
     if (!reached) {
@@ -148,17 +150,12 @@ test.describe("Tour - Step 4: 卒業画面", () => {
     await expect(page.getByTestId("tour-step-4-graduate")).toBeVisible({ timeout: 15_000 });
   });
 
-  test("Step 4: tour-step-4-badge-disclaimer が表示される (PR #834 追加済)", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s4-disc");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
+  test("Step 4: tour-step-4-badge-disclaimer が表示される (PR #834 追加済)", async ({ tourPendingUser: page, context }) => {
+    const userId = await getUserIdFromContext(context);
+    if (userId) {
+      await awardBadge(userId, "first_bite");
+      await awardBadge(userId, "planner");
     }
-
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
 
     const reached = await reachStep4(page);
     if (!reached) {
@@ -173,17 +170,12 @@ test.describe("Tour - Step 4: 卒業画面", () => {
     await expect(page.getByTestId("tour-step-4-badge-disclaimer")).toBeVisible({ timeout: 10_000 });
   });
 
-  test("Step 4: tour-step-4-go-home タップ → /home へ遷移", async ({ page }) => {
-    const email = generateTestEmail("e2e-tour-s4-home");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
+  test("Step 4: tour-step-4-go-home タップ → /home へ遷移", async ({ tourPendingUser: page, context }) => {
+    const userId = await getUserIdFromContext(context);
+    if (userId) {
+      await awardBadge(userId, "first_bite");
+      await awardBadge(userId, "planner");
     }
-
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
 
     const reached = await reachStep4(page);
     if (!reached) {
@@ -205,19 +197,14 @@ test.describe("Tour - Step 4: 卒業画面", () => {
     expect(page.url()).toContain("/home");
   });
 
-  test("Step 4: エラー時に tour-step-4-error と tour-step-4-retry が表示される構造確認", async ({ page }) => {
+  test("Step 4: エラー時に tour-step-4-error と tour-step-4-retry が表示される構造確認", async ({ tourPendingUser: page, context }) => {
     // このテストは実際にエラーを起こすのではなく、エラー UI の testID が実装されていることを確認
     // 実際のエラー誘発は API モックなしでは困難なため、存在チェックのみ
-    const email = generateTestEmail("e2e-tour-s4-err");
-    userId = await signupAsNewUser(page, email);
-
-    if (!userId) {
-      test.skip(true, "新規ユーザー作成失敗 - Supabase 接続を確認");
-      return;
+    const userId = await getUserIdFromContext(context);
+    if (userId) {
+      await awardBadge(userId, "first_bite");
+      await awardBadge(userId, "planner");
     }
-
-    await awardBadge(userId, "first_bite");
-    await awardBadge(userId, "planner");
 
     const reached = await reachStep4(page);
     if (!reached) {
