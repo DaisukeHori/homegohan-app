@@ -1,3 +1,6 @@
+// NOTE: preview モデルを使用中。本番安定運用には環境変数での上書きを推奨。
+// 例: GEMINI_CLASSIFY_MODEL=gemini-2.5-flash または GEMINI_CLASSIFY_MODEL=gemini-2.0-flash-exp
+// preview は機能改善が早い一方、突然のレスポンス形式変更リスクがある。
 export const DEFAULT_GEMINI_FLASH_LITE_MODEL = 'gemini-3.1-flash-lite-preview';
 export const DEFAULT_GEMINI_VISION_MODEL = DEFAULT_GEMINI_FLASH_LITE_MODEL;
 export const DEFAULT_GEMINI_FLASH_MODEL = DEFAULT_GEMINI_FLASH_LITE_MODEL;

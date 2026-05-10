@@ -67,6 +67,13 @@ function buildPrompt(imageCount: number): string {
 3. "health_checkup" - 健康診断結果や検査票など紙の書類のみ
 4. "weight_scale" - 体重計や体組成計のディスプレイ写真のみ
 
+以下は必ず "unknown" とすること:
+- 白紙・無地・抽象的なアート画像
+- テキストや看板のみで食事の写っていない画像
+- 風景写真（海・山・空のみ）
+- 動物写真（ペット・野生動物）
+- 人物のみで食事が写っていない画像
+
 判定ルール:
 - 複数枚ある場合は、画像全体を見て最も一貫したカテゴリを選んでください
 - 体重計ディスプレイ写真は必ず "weight_scale" を最優先で判定してください
@@ -202,8 +209,11 @@ async function requestClassificationWithRetry(
 
   const candidates = [first, ...retries.filter((r): r is NonNullable<typeof r> => r !== null)];
 
-  // unknown でなく confidence が最も高いものを優先
-  const nonUnknown = candidates.filter((c) => c.result.type !== 'unknown');
+  // unknown でなく confidence >= CLASSIFY_CONFIDENCE_THRESHOLD かつ最も高いものを優先
+  // 低 confidence の誤分類がリトライで採用されることを防ぐ二重ガード
+  const nonUnknown = candidates.filter(
+    (c) => c.result.type !== 'unknown' && c.result.confidence >= CLASSIFY_CONFIDENCE_THRESHOLD,
+  );
   if (nonUnknown.length > 0) {
     const best = nonUnknown.sort((a, b) => b.result.confidence - a.result.confidence)[0];
     console.info('Photo Classification: low-confidence retry picked better result', {
