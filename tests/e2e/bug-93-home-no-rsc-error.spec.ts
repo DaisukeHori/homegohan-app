@@ -10,10 +10,10 @@
  *   - /home をロードし、コンソールに "Failed to fetch RSC payload for /health" が
  *     出力されないことを確認する。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test("bug-93: /home load does not emit RSC fetch error for /health", async ({
-  authedPage: page,
+  tourPendingUser: page,
 }) => {
   const rscErrors: string[] = [];
 

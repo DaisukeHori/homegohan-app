@@ -9,11 +9,11 @@
  *   2. POST /api/health/insights が 200 または 400 (データ不足) を返す
  *      (デッドコードではないことを確認)
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("Bug-108: グラフページが健診データを反映する", () => {
   test("グラフページが /api/health/checkups を fetch する", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     let checkupsFetched = false;
 
@@ -63,7 +63,7 @@ test.describe("Bug-108: グラフページが健診データを反映する", ()
 
 test.describe("Bug-129: POST /api/health/insights エンドポイント", () => {
   test("POST /api/health/insights が 200 か 400 を返す (デッドコードでない)", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     const result = await page.evaluate(async () => {
       const res = await fetch("/api/health/insights", {
@@ -92,7 +92,7 @@ test.describe("Bug-129: POST /api/health/insights エンドポイント", () => 
     expect(result.status, "エンドポイントが 404 — POST /api/health/insights が未実装").not.toBe(404);
   });
 
-  test("GET /api/health/insights は 200 を返す", async ({ authedPage: page }) => {
+  test("GET /api/health/insights は 200 を返す", async ({ tourPendingUser: page }) => {
     const result = await page.evaluate(async () => {
       const res = await fetch("/api/health/insights", {
         credentials: "include",

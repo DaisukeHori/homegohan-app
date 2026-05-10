@@ -8,16 +8,16 @@
  *    （テストユーザーはプロフィールが未設定のため defaults_applied が返される）
  * 3. プロフィール編集モーダル「基本」タブで年齢/身長/体重の入力欄が表示されること (#18)
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("栄養目標の一貫性 (#17, #18, #42)", () => {
-  test("マイページと根拠ページの目標 kcal が一致する", async ({ authedPage }) => {
+  test("マイページと根拠ページの目標 kcal が一致する", async ({ tourPendingUser }) => {
     // /profile を開いて目標 kcal を取得（timeout 短縮でハング防止）
-    await authedPage.goto("/profile", { timeout: 15_000 }).catch(() => {});
-    await authedPage.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+    await tourPendingUser.goto("/profile", { timeout: 15_000 }).catch(() => {});
+    await tourPendingUser.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 
     // 目標 kcal の表示を探す（"-" の場合は栄養目標未設定なのでスキップ）
-    const profileKcalLocator = authedPage
+    const profileKcalLocator = tourPendingUser
       .locator("p.text-orange-500")
       .filter({ hasText: /^\d+$/ })
       .first();
@@ -38,11 +38,11 @@ test.describe("栄養目標の一貫性 (#17, #18, #42)", () => {
     expect(profileKcal).toBeGreaterThan(0);
 
     // /profile/nutrition-targets を開いて同じ kcal を確認（timeout 短縮）
-    await authedPage.goto("/profile/nutrition-targets", { timeout: 15_000 }).catch(() => {});
-    await authedPage.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+    await tourPendingUser.goto("/profile/nutrition-targets", { timeout: 15_000 }).catch(() => {});
+    await tourPendingUser.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 
     // サマリーカードの目標カロリー
-    const targetsKcalLocator = authedPage
+    const targetsKcalLocator = tourPendingUser
       .locator("p.text-2xl.font-bold.text-orange-500")
       .first();
 
@@ -57,18 +57,18 @@ test.describe("栄養目標の一貫性 (#17, #18, #42)", () => {
   });
 
   test("根拠ページに概算バッジが表示される（プロフィール未入力ユーザー）", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/profile/nutrition-targets");
-    await authedPage.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    await tourPendingUser.goto("/profile/nutrition-targets");
+    await tourPendingUser.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
 
     // data-testid="defaults-applied-badge" または data-testid="missing-fields-warning" が表示されること
-    const badgeVisible = await authedPage
+    const badgeVisible = await tourPendingUser
       .locator('[data-testid="defaults-applied-badge"]')
       .isVisible()
       .catch(() => false);
 
-    const warningVisible = await authedPage
+    const warningVisible = await tourPendingUser
       .locator('[data-testid="missing-fields-warning"]')
       .isVisible()
       .catch(() => false);
@@ -87,19 +87,19 @@ test.describe("栄養目標の一貫性 (#17, #18, #42)", () => {
   });
 
   test("プロフィール編集「基本」タブで年齢/身長/体重の入力欄が表示される (#18)", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/profile");
-    await authedPage.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    await tourPendingUser.goto("/profile");
+    await tourPendingUser.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
 
     // 編集モーダルを開く（ガイドモードかプロフィール編集ボタン）
-    const ageInput = authedPage.locator("#profile-age-input");
-    const heightInput = authedPage.locator("#profile-height-input");
-    const weightInput = authedPage.locator("#profile-weight-input");
+    const ageInput = tourPendingUser.locator("#profile-age-input");
+    const heightInput = tourPendingUser.locator("#profile-height-input");
+    const weightInput = tourPendingUser.locator("#profile-weight-input");
 
     if (!(await ageInput.isVisible().catch(() => false))) {
       // 編集ボタンを探してクリック
-      const editBtn = authedPage.locator("button").filter({ hasText: /編集|プロフィール/ }).first();
+      const editBtn = tourPendingUser.locator("button").filter({ hasText: /編集|プロフィール/ }).first();
       await editBtn.click({ timeout: 8_000 }).catch(() => {});
     }
 

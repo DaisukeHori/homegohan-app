@@ -7,15 +7,15 @@
  *   3. 過去日セルをクリックすると、その日の記録セクションが表示されること
  *      (記録があれば内容表示、なければ「記録なし + 追加ボタン」表示)
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("past-day calendar cells are clickable and show that day's record section", async ({ authedPage }) => {
-  await authedPage.goto("/health");
-  await authedPage.waitForLoadState("networkidle");
+test("past-day calendar cells are clickable and show that day's record section", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/health");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 週間カレンダーの存在確認
   // セルは button role を持つはず
-  const calendarButtons = authedPage.locator('button[aria-pressed]');
+  const calendarButtons = tourPendingUser.locator('button[aria-pressed]');
   const count = await calendarButtons.count();
 
   if (count === 0) {
@@ -26,7 +26,7 @@ test("past-day calendar cells are clickable and show that day's record section",
 
   // 過去日のセルを探す: aria-pressed="false" かつ aria-pressed 属性を持つ最初のボタン
   // (今日のセルは aria-pressed="true")
-  const pastDayButtons = calendarButtons.filter({ hasNot: authedPage.locator('[aria-pressed="true"]') });
+  const pastDayButtons = calendarButtons.filter({ hasNot: tourPendingUser.locator('[aria-pressed="true"]') });
   const pastCount = await pastDayButtons.count();
 
   if (pastCount === 0) {
@@ -46,19 +46,19 @@ test("past-day calendar cells are clickable and show that day's record section",
 
   // クリック後、その日の記録セクションが表示されることを確認
   // 「の記録」というテキストを含むセクション、または「記録はありません」のいずれかが出る
-  const recordSection = authedPage
+  const recordSection = tourPendingUser
     .locator('text=の記録')
-    .or(authedPage.locator('text=この日の記録はありません'))
+    .or(tourPendingUser.locator('text=この日の記録はありません'))
     .first();
 
   await expect(recordSection).toBeVisible({ timeout: 10_000 });
 });
 
-test("clicking today's calendar cell (or re-clicking same day) dismisses past record panel", async ({ authedPage }) => {
-  await authedPage.goto("/health");
-  await authedPage.waitForLoadState("networkidle");
+test("clicking today's calendar cell (or re-clicking same day) dismisses past record panel", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/health");
+  await tourPendingUser.waitForLoadState("networkidle");
 
-  const calendarButtons = authedPage.locator('button[aria-pressed]');
+  const calendarButtons = tourPendingUser.locator('button[aria-pressed]');
   const count = await calendarButtons.count();
 
   if (count === 0) {
@@ -67,7 +67,7 @@ test("clicking today's calendar cell (or re-clicking same day) dismisses past re
   }
 
   // 過去日セルをクリック
-  const pastDayButtons = calendarButtons.filter({ hasNot: authedPage.locator('[aria-pressed="true"]') });
+  const pastDayButtons = calendarButtons.filter({ hasNot: tourPendingUser.locator('[aria-pressed="true"]') });
   const pastCount = await pastDayButtons.count();
   if (pastCount === 0) {
     console.warn("No past-day buttons — skipping test");
@@ -76,20 +76,20 @@ test("clicking today's calendar cell (or re-clicking same day) dismisses past re
 
   await pastDayButtons.first().click();
 
-  const recordSection = authedPage
+  const recordSection = tourPendingUser
     .locator('text=の記録')
-    .or(authedPage.locator('text=この日の記録はありません'))
+    .or(tourPendingUser.locator('text=この日の記録はありません'))
     .first();
   await expect(recordSection).toBeVisible({ timeout: 10_000 });
 
   // 今日のセル (aria-pressed="true") をクリックしてパネルを閉じる
-  const todayButton = authedPage.locator('button[aria-pressed="true"]').first();
+  const todayButton = tourPendingUser.locator('button[aria-pressed="true"]').first();
 
   const todayVisible = await todayButton.isVisible().catch(() => false);
   if (todayVisible) {
     await todayButton.click();
     // 過去日パネルが非表示になることを確認 (アニメーション後)
-    await authedPage.waitForTimeout(400);
+    await tourPendingUser.waitForTimeout(400);
     // パネルが閉じない実装の場合はスキップ (production 動作に依存)
     const stillVisible = await recordSection.isVisible().catch(() => false);
     if (stillVisible) {

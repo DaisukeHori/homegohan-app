@@ -8,18 +8,18 @@
  *     meal-plans API への再フェッチが発生すること。
  *   - 現在生成中のセッションがない場合は静的な UI 不変量のみ確認 (smoke-only)。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("success modal OK triggers a meal-plans refetch (refreshOnDismiss)", async ({ authedPage }) => {
+test("success modal OK triggers a meal-plans refetch (refreshOnDismiss)", async ({ tourPendingUser }) => {
   // meal-plans API への呼び出しを記録する
   const mealPlanRequests: string[] = [];
-  await authedPage.route("**/api/meal-plans*", async (route) => {
+  await tourPendingUser.route("**/api/meal-plans*", async (route) => {
     mealPlanRequests.push(route.request().url());
     await route.continue();
   });
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 初回フェッチ回数を記録
   const requestsBeforeModal = mealPlanRequests.length;
@@ -39,7 +39,7 @@ test("success modal OK triggers a meal-plans refetch (refreshOnDismiss)", async 
   const weekStr = weekStartDate.toISOString().slice(0, 10);
 
   // ステータス API: completed を返す
-  await authedPage.route(`**/api/ai/menu/weekly/status*`, async (route) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route) => {
     const url = route.request().url();
     if (url.includes(fakeRequestId)) {
       await route.fulfill({
@@ -53,7 +53,7 @@ test("success modal OK triggers a meal-plans refetch (refreshOnDismiss)", async 
   });
 
   // v4MenuGenerating フラグをセットしてリロード（復元フロー経由で完了モーダルを出す）
-  await authedPage.addInitScript(
+  await tourPendingUser.addInitScript(
     ([reqId, weekKey]) => {
       localStorage.setItem(
         "v4MenuGenerating",
@@ -64,47 +64,47 @@ test("success modal OK triggers a meal-plans refetch (refreshOnDismiss)", async 
   );
 
   // ページ再ロード（addInitScript の後にリロードが必要）
-  await authedPage.reload();
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.reload();
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 完了モーダルが表示されるか確認
-  const successModal = authedPage
+  const successModal = tourPendingUser
     .getByText("献立が完成しました！")
-    .or(authedPage.getByRole("dialog").filter({ hasText: /献立が完成/ }));
+    .or(tourPendingUser.getByRole("dialog").filter({ hasText: /献立が完成/ }));
 
   const modalVisible = await successModal.first().isVisible({ timeout: 8_000 }).catch(() => false);
 
   if (!modalVisible) {
     // 完了モーダルが表示されない場合（v4 復元フローが変更されている可能性）
     // 静的確認のみ: AI バナーが表示されていれば生成状態でないことが分かる
-    const aiBanner = authedPage.locator('button:has(svg.lucide-sparkles)').first();
+    const aiBanner = tourPendingUser.locator('button:has(svg.lucide-sparkles)').first();
     const isAiBannerVisible = await aiBanner.isVisible({ timeout: 5_000 }).catch(() => false);
     expect(isAiBannerVisible).toBe(true);
     return;
   }
 
   // OK ボタンをクリック
-  const okButton = authedPage.getByRole("button", { name: "OK" });
+  const okButton = tourPendingUser.getByRole("button", { name: "OK" });
   await expect(okButton).toBeVisible();
 
   const requestsBeforeOK = mealPlanRequests.length;
   await okButton.click();
 
   // OK 押下後に meal-plans API が呼ばれることを確認
-  await authedPage.waitForTimeout(2000); // 非同期フェッチの完了を待つ
+  await tourPendingUser.waitForTimeout(2000); // 非同期フェッチの完了を待つ
   const requestsAfterOK = mealPlanRequests.length;
 
   expect(requestsAfterOK).toBeGreaterThan(requestsBeforeOK);
 });
 
-test("navigating away and back does not show 0 kcal for a just-generated day", async ({ authedPage }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+test("navigating away and back does not show 0 kcal for a just-generated day", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 翌週ボタンを探す
-  const nextWeekButton = authedPage
+  const nextWeekButton = tourPendingUser
     .getByRole("button", { name: /翌週/ })
-    .or(authedPage.locator("button[aria-label='翌週']"))
+    .or(tourPendingUser.locator("button[aria-label='翌週']"))
     .first();
 
   const isNextWeekVisible = await nextWeekButton.isVisible({ timeout: 8_000 }).catch(() => false);
@@ -117,19 +117,19 @@ test("navigating away and back does not show 0 kcal for a just-generated day", a
 
   // 翌週に移動して戻る
   await nextWeekButton.click();
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.waitForLoadState("networkidle");
 
-  const prevWeekButton = authedPage
+  const prevWeekButton = tourPendingUser
     .getByRole("button", { name: /前の週|前週/ })
-    .or(authedPage.locator("button[aria-label='前の週']"))
-    .or(authedPage.locator("button[aria-label='前週']"))
+    .or(tourPendingUser.locator("button[aria-label='前の週']"))
+    .or(tourPendingUser.locator("button[aria-label='前週']"))
     .first();
   await prevWeekButton.click();
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 献立データがある場合のみ「0 kcal が混在していない」ことを確認
   // (データが空 = 0 kcal のみの週は正常なのでチェックしない)
-  const calorieCells = await authedPage.locator("text=/\\d+ kcal/").all();
+  const calorieCells = await tourPendingUser.locator("text=/\\d+ kcal/").all();
 
   // 全テキストを収集
   const allTexts: string[] = [];

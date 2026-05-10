@@ -9,38 +9,38 @@
  * モーダルを開いた際に、デフォルトの「今日」のまま「作成する」を
  * 押して当日の献立を誤って上書きするリスクを回避する。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("day-regenerate modal does not default the date input to today", async ({ authedPage }) => {
-  await authedPage.goto("/menus/weekly");
+test("day-regenerate modal does not default the date input to today", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/menus/weekly");
 
   // 週間献立ページがロードされ、選択中の日付が window に公開されるまで待つ
   // __weeklyCurrentDate が設定されないとモーダルが「今日」を使ってしまうため、必ず待つ
-  await authedPage.waitForLoadState("networkidle");
-  await authedPage.waitForFunction(
+  await tourPendingUser.waitForLoadState("networkidle");
+  await tourPendingUser.waitForFunction(
     () => typeof (window as any).__weeklyCurrentDate === "string",
     undefined,
     { timeout: 15_000 },
   );
 
   // 週間ビューが現在保持している選択日（fallback 計算と比較するために取得）
-  const weeklyCurrentDate = await authedPage.evaluate(
+  const weeklyCurrentDate = await tourPendingUser.evaluate(
     () => (window as any).__weeklyCurrentDate ?? null,
   );
 
   // フローティング AI アシスタントボタンを開く
-  const aiBubble = authedPage.locator('button:has(svg.lucide-sparkles)').first();
+  const aiBubble = tourPendingUser.locator('button:has(svg.lucide-sparkles)').first();
   await expect(aiBubble).toBeVisible({ timeout: 10_000 });
   await aiBubble.click();
 
   // 「1日献立変更」クイックアクションをクリック
-  const dayMenuButton = authedPage.getByRole("button", { name: /1日献立変更/ });
+  const dayMenuButton = tourPendingUser.getByRole("button", { name: /1日献立変更/ });
   await expect(dayMenuButton).toBeVisible({ timeout: 10_000 });
   await dayMenuButton.click();
 
   // モーダルが開き、日付入力が出現するのを待つ
-  await expect(authedPage.getByText("日付を選択")).toBeVisible();
-  const dateInput = authedPage.locator('input[type="date"]');
+  await expect(tourPendingUser.getByText("日付を選択")).toBeVisible();
+  const dateInput = tourPendingUser.locator('input[type="date"]');
   await expect(dateInput).toBeVisible();
 
   const value = await dateInput.inputValue();

@@ -11,20 +11,20 @@
  *   - ローカル dev server ではログイン後 cookie を使って直接 API を叩く
  *   - 本番 (PLAYWRIGHT_BASE_URL=https://...) の場合も同様
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 import type { Page } from "@playwright/test";
 
 const RECORD_DATE = "2000-01-01"; // 過去の固定日付でテスト用レコードを使用
 
 /**
  * 認証済みページのコンテキストを使って health/records/quick エンドポイントを直接 fetch する
- * (authedPage は Playwright の Page オブジェクト。evaluate 経由でブラウザ内 fetch を実行する)
+ * (tourPendingUser は Playwright の Page オブジェクト。evaluate 経由でブラウザ内 fetch を実行する)
  */
 async function postQuickRecord(
-  authedPage: Page,
+  tourPendingUser: Page,
   body: Record<string, unknown>,
 ): Promise<{ status: number; json: unknown }> {
-  return authedPage.evaluate(
+  return tourPendingUser.evaluate(
     async ({ url, payload }: { url: string; payload: Record<string, unknown> }) => {
       const res = await fetch(url, {
         method: "POST",
@@ -45,8 +45,8 @@ async function postQuickRecord(
 }
 
 test.describe("Bug-90: health records weight server-side validation", () => {
-  test("weight=-1 は 400 を返し DB に保存されない", async ({ authedPage }) => {
-    const { status, json } = await postQuickRecord(authedPage, {
+  test("weight=-1 は 400 を返し DB に保存されない", async ({ tourPendingUser }) => {
+    const { status, json } = await postQuickRecord(tourPendingUser, {
       weight: -1,
       record_date: RECORD_DATE,
     });
@@ -58,8 +58,8 @@ test.describe("Bug-90: health records weight server-side validation", () => {
     expect(errorMsg).toMatch(/体重|weight/i);
   });
 
-  test("weight=0 は 400 を返し DB に保存されない", async ({ authedPage }) => {
-    const { status, json } = await postQuickRecord(authedPage, {
+  test("weight=0 は 400 を返し DB に保存されない", async ({ tourPendingUser }) => {
+    const { status, json } = await postQuickRecord(tourPendingUser, {
       weight: 0,
       record_date: RECORD_DATE,
     });
@@ -70,8 +70,8 @@ test.describe("Bug-90: health records weight server-side validation", () => {
     expect(errorMsg).toMatch(/体重|weight/i);
   });
 
-  test("weight=999999 は 400 を返し DB に保存されない", async ({ authedPage }) => {
-    const { status, json } = await postQuickRecord(authedPage, {
+  test("weight=999999 は 400 を返し DB に保存されない", async ({ tourPendingUser }) => {
+    const { status, json } = await postQuickRecord(tourPendingUser, {
       weight: 999999,
       record_date: RECORD_DATE,
     });
@@ -82,8 +82,8 @@ test.describe("Bug-90: health records weight server-side validation", () => {
     expect(errorMsg).toMatch(/体重|weight/i);
   });
 
-  test("weight=65 (有効値) は 200 を返す", async ({ authedPage }) => {
-    const { status, json } = await postQuickRecord(authedPage, {
+  test("weight=65 (有効値) は 200 を返す", async ({ tourPendingUser }) => {
+    const { status, json } = await postQuickRecord(tourPendingUser, {
       weight: 65,
       record_date: RECORD_DATE,
     });

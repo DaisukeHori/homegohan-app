@@ -8,103 +8,103 @@
  * - 「削除します」入力後に削除ボタンが enabled になる
  * - 削除実行で POST /api/account/delete が呼ばれ /login にリダイレクト
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("アカウント削除 UI (#215)", () => {
-  test("削除ボタンが /settings に表示される", async ({ authedPage }) => {
-    await authedPage.goto("/settings");
+  test("削除ボタンが /settings に表示される", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/settings");
 
-    const deleteButton = authedPage.getByRole("button", {
+    const deleteButton = tourPendingUser.getByRole("button", {
       name: /アカウントを削除する/,
     });
     await expect(deleteButton).toBeVisible();
   });
 
-  test("削除ボタン押下で確認モーダルが表示される", async ({ authedPage }) => {
-    await authedPage.goto("/settings");
+  test("削除ボタン押下で確認モーダルが表示される", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/settings");
 
-    await authedPage
+    await tourPendingUser
       .getByRole("button", { name: /アカウントを削除する/ })
       .click();
 
     await expect(
-      authedPage.getByText("アカウントを削除しますか？")
+      tourPendingUser.getByText("アカウントを削除しますか？")
     ).toBeVisible();
   });
 
   test("確認テキスト未入力では削除ボタンが disabled", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/settings");
+    await tourPendingUser.goto("/settings");
 
-    await authedPage
+    await tourPendingUser
       .getByRole("button", { name: /アカウントを削除する/ })
       .click();
 
-    const confirmButton = authedPage.getByRole("button", {
+    const confirmButton = tourPendingUser.getByRole("button", {
       name: /アカウントを完全に削除する/,
     });
     await expect(confirmButton).toBeDisabled();
   });
 
   test("「削除します」入力後に削除ボタンが enabled になる", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/settings");
+    await tourPendingUser.goto("/settings");
 
-    await authedPage
+    await tourPendingUser
       .getByRole("button", { name: /アカウントを削除する/ })
       .click();
 
-    await authedPage
+    await tourPendingUser
       .getByRole("textbox", { name: /削除確認テキスト入力/ })
       .fill("削除します");
 
-    const confirmButton = authedPage.getByRole("button", {
+    const confirmButton = tourPendingUser.getByRole("button", {
       name: /アカウントを完全に削除する/,
     });
     await expect(confirmButton).toBeEnabled();
   });
 
   test("モーダルのキャンセルボタンでモーダルが閉じる", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/settings");
+    await tourPendingUser.goto("/settings");
 
-    await authedPage
+    await tourPendingUser
       .getByRole("button", { name: /アカウントを削除する/ })
       .click();
 
     await expect(
-      authedPage.getByText("アカウントを削除しますか？")
+      tourPendingUser.getByText("アカウントを削除しますか？")
     ).toBeVisible();
 
-    await authedPage.getByRole("button", { name: /キャンセル/ }).click();
+    await tourPendingUser.getByRole("button", { name: /キャンセル/ }).click();
 
     await expect(
-      authedPage.getByText("アカウントを削除しますか？")
+      tourPendingUser.getByText("アカウントを削除しますか？")
     ).not.toBeVisible();
   });
 
   test("削除実行で POST /api/account/delete が呼ばれ /login にリダイレクト", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/settings");
+    await tourPendingUser.goto("/settings");
 
-    await authedPage
+    await tourPendingUser
       .getByRole("button", { name: /アカウントを削除する/ })
       .click();
 
-    await authedPage
+    await tourPendingUser
       .getByRole("textbox", { name: /削除確認テキスト入力/ })
       .fill("削除します");
 
-    const requestPromise = authedPage.waitForRequest(
+    const requestPromise = tourPendingUser.waitForRequest(
       (req) =>
         req.url().includes("/api/account/delete") && req.method() === "POST"
     );
 
-    await authedPage
+    await tourPendingUser
       .getByRole("button", { name: /アカウントを完全に削除する/ })
       .click();
 
@@ -114,7 +114,7 @@ test.describe("アカウント削除 UI (#215)", () => {
     const body = JSON.parse(request.postData() ?? "{}");
     expect(body.confirm).toBe(true);
 
-    await authedPage.waitForURL(/\/login/, { timeout: 15_000 });
-    await expect(authedPage).toHaveURL(/\/login/);
+    await tourPendingUser.waitForURL(/\/login/, { timeout: 15_000 });
+    await expect(tourPendingUser).toHaveURL(/\/login/);
   });
 });

@@ -4,19 +4,19 @@
  *
  * 確認: getByRole('button', { name: ... }) で全てのナビ + 右上3アイコンが取得できる。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("weekly menu aria-labels", () => {
-  test("week navigation buttons expose aria-label", async ({ authedPage }) => {
-    await authedPage.goto("/menus/weekly");
-    await expect(authedPage.getByRole("button", { name: "前の週" })).toBeVisible();
-    await expect(authedPage.getByRole("button", { name: "翌週" })).toBeVisible();
+  test("week navigation buttons expose aria-label", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/menus/weekly");
+    await expect(tourPendingUser.getByRole("button", { name: "前の週" })).toBeVisible();
+    await expect(tourPendingUser.getByRole("button", { name: "翌週" })).toBeVisible();
   });
 
-  test("top-right action icons expose aria-label", async ({ authedPage }) => {
-    await authedPage.goto("/menus/weekly");
-    await expect(authedPage.getByRole("button", { name: "栄養分析を見る" })).toBeVisible();
-    await expect(authedPage.getByRole("button", { name: "冷蔵庫を確認" })).toBeVisible();
-    await expect(authedPage.getByRole("button", { name: "買い物リストを開く" })).toBeVisible();
+  test("top-right action icons expose aria-label", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/menus/weekly");
+    await expect(tourPendingUser.getByRole("button", { name: "栄養分析を見る" })).toBeVisible();
+    await expect(tourPendingUser.getByRole("button", { name: "冷蔵庫を確認" })).toBeVisible();
+    await expect(tourPendingUser.getByRole("button", { name: "買い物リストを開く" })).toBeVisible();
   });
 });

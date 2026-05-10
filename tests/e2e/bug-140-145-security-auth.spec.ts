@@ -3,7 +3,7 @@
  *   #140 セキュリティヘッダー (CSP / X-Frame-Options / X-Content-Type-Options) 確認
  *   #145 signOut が別タブの /home に伝播するか確認
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 // ---------------------------------------------------------------------------
 // #140: セキュリティヘッダー
@@ -44,13 +44,13 @@ test.describe("#140 セキュリティヘッダー", () => {
     expect(headers["x-content-type-options"]).toMatch(/nosniff/i);
   });
 
-  test("/home がセキュリティヘッダーを返す", async ({ authedPage, request }) => {
-    // authedPage でログイン済みセッションを確立
-    await authedPage.goto("/home");
-    await authedPage.waitForLoadState("networkidle");
+  test("/home がセキュリティヘッダーを返す", async ({ tourPendingUser, request }) => {
+    // tourPendingUser でログイン済みセッションを確立
+    await tourPendingUser.goto("/home");
+    await tourPendingUser.waitForLoadState("networkidle");
 
     // APIリクエストでヘッダーを直接確認（ブラウザの認証クッキーを利用）
-    const res = await authedPage.request.get("/home");
+    const res = await tourPendingUser.request.get("/home");
     const headers = res.headers();
     expect(headers["x-frame-options"]).toMatch(/DENY/i);
     expect(headers["x-content-type-options"]).toMatch(/nosniff/i);
@@ -61,10 +61,10 @@ test.describe("#140 セキュリティヘッダー", () => {
 // #145: signOut タブ間伝播
 // ---------------------------------------------------------------------------
 test.describe("#145 signOut タブ間伝播", () => {
-  test("signOut すると BroadcastChannel 経由で別タブが /login にリダイレクトされる", async ({ authedPage, context }) => {
+  test("signOut すると BroadcastChannel 経由で別タブが /login にリダイレクトされる", async ({ tourPendingUser, context }) => {
     // Tab A: 既にログイン済み (/home に遷移)
-    await authedPage.goto("/home");
-    await authedPage.waitForLoadState("networkidle");
+    await tourPendingUser.goto("/home");
+    await tourPendingUser.waitForLoadState("networkidle");
 
     // Tab B: 同じ context (= 同じクッキー) で /home を開く
     const tabB = await context.newPage();
@@ -76,20 +76,20 @@ test.describe("#145 signOut タブ間伝播", () => {
     // ここでは Tab B の JS でリスナーを注入して受信できるか確認する
 
     // Tab A: Settings からログアウトを実行
-    await authedPage.goto("/settings");
-    await authedPage.waitForLoadState("networkidle");
+    await tourPendingUser.goto("/settings");
+    await tourPendingUser.waitForLoadState("networkidle");
 
     // ログアウトボタンを探す
-    const logoutButton = authedPage
+    const logoutButton = tourPendingUser
       .getByRole("button", { name: /ログアウト/ })
-      .or(authedPage.locator("button").filter({ hasText: /ログアウト/ }))
+      .or(tourPendingUser.locator("button").filter({ hasText: /ログアウト/ }))
       .first();
 
     const logoutVisible = await logoutButton.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!logoutVisible) {
       console.warn("#145: ログアウトボタンが見つかりません — スモークテストに切り替え");
       // BroadcastChannel が利用可能かスモークテスト
-      const bcAvailable = await authedPage.evaluate(
+      const bcAvailable = await tourPendingUser.evaluate(
         () => typeof BroadcastChannel !== "undefined"
       );
       expect(bcAvailable, "BroadcastChannel should be available").toBe(true);
@@ -97,21 +97,21 @@ test.describe("#145 signOut タブ間伝播", () => {
       return;
     }
 
-    authedPage.on("dialog", (dialog) => dialog.accept());
+    tourPendingUser.on("dialog", (dialog) => dialog.accept());
     await logoutButton.click();
 
     // 確認モーダルがある場合は承認
-    const confirmButton = authedPage.locator("button").filter({ hasText: /^ログアウト$/ }).last();
+    const confirmButton = tourPendingUser.locator("button").filter({ hasText: /^ログアウト$/ }).last();
     const confirmVisible = await confirmButton.isVisible({ timeout: 3_000 }).catch(() => false);
     if (confirmVisible) {
       await confirmButton.click();
     }
 
     // Tab A: /login にリダイレクト待ち
-    await authedPage.waitForURL((url) => url.pathname.startsWith("/login"), {
+    await tourPendingUser.waitForURL((url) => url.pathname.startsWith("/login"), {
       timeout: 15_000,
     });
-    expect(authedPage.url()).toContain("/login");
+    expect(tourPendingUser.url()).toContain("/login");
 
     // Tab B: BroadcastChannel 経由で /login にリダイレクトされることを確認
     // (signOut 後 最大 5 秒で伝播)
@@ -129,13 +129,13 @@ test.describe("#145 signOut タブ間伝播", () => {
     await tabB.close();
   });
 
-  test("MainLayout の onAuthStateChange リスナーが SIGNED_OUT で /login にリダイレクトする", async ({ authedPage }) => {
-    await authedPage.goto("/home");
-    await authedPage.waitForLoadState("networkidle");
+  test("MainLayout の onAuthStateChange リスナーが SIGNED_OUT で /login にリダイレクトする", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/home");
+    await tourPendingUser.waitForLoadState("networkidle");
 
     // supabase.auth.signOut() を直接 JS 経由で呼び出して onAuthStateChange を発火させる
     // これにより MainLayout のリスナーが SIGNED_OUT イベントを受け取るかテスト
-    await authedPage.evaluate(async () => {
+    await tourPendingUser.evaluate(async () => {
       // supabase client を動的 import (クライアントサイド)
       const { createClient } = await import("/src/lib/supabase/client.ts" as never as string).catch(() => ({
         createClient: null,
@@ -150,14 +150,14 @@ test.describe("#145 signOut タブ間伝播", () => {
     });
 
     // リダイレクトまで最大 8 秒待つ (MainLayout のリスナーが発火する時間)
-    await authedPage.waitForURL((url) => url.pathname.startsWith("/login"), {
+    await tourPendingUser.waitForURL((url) => url.pathname.startsWith("/login"), {
       timeout: 8_000,
     }).catch(() => {
       console.warn("#145: onAuthStateChange redirect did not fire within 8s");
     });
 
     // 最低限: BroadcastChannel が利用可能
-    const bcAvailable = await authedPage.evaluate(() => typeof BroadcastChannel !== "undefined");
+    const bcAvailable = await tourPendingUser.evaluate(() => typeof BroadcastChannel !== "undefined");
     expect(bcAvailable).toBe(true);
   });
 });

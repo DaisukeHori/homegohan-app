@@ -4,14 +4,14 @@
  * 確認: ホームの「30秒チェックイン」を入力 → 「✓ チェックイン完了」を押下すると、
  *       成功メッセージ (data-testid="checkin-feedback") が表示される。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("30-second check-in shows success feedback after submit", async ({ authedPage }) => {
-  await authedPage.goto("/home");
+test("30-second check-in shows success feedback after submit", async ({ tourPendingUser }) => {
+  await tourPendingUser.goto("/home");
 
   // 既に今日のチェックインが完了している場合はスキップ
-  const startButton = authedPage.getByRole("button", { name: /記録する/ }).first();
-  const alreadyDone = await authedPage
+  const startButton = tourPendingUser.getByRole("button", { name: /記録する/ }).first();
+  const alreadyDone = await tourPendingUser
     .getByText("今日のチェックイン完了！")
     .isVisible()
     .catch(() => false);
@@ -23,12 +23,12 @@ test("30-second check-in shows success feedback after submit", async ({ authedPa
   }
 
   // 「✓ チェックイン完了」ボタンをクリック (フォームのデフォルト値でOK)
-  const submit = authedPage.getByRole("button", { name: /チェックイン完了/ });
+  const submit = tourPendingUser.getByRole("button", { name: /チェックイン完了/ });
   await expect(submit).toBeVisible();
   await submit.click();
 
   // 成功フィードバックが表示されること
-  const feedback = authedPage.getByTestId("checkin-feedback");
+  const feedback = tourPendingUser.getByTestId("checkin-feedback");
   await expect(feedback).toBeVisible({ timeout: 5_000 });
   await expect(feedback).toHaveText(/チェックイン|保存/);
 });
