@@ -5,19 +5,19 @@
  * 確認: 両ボタンが button 要素で、aria-label を持ち、エクスポートは API へ GET、
  *       トレーナー共有は alert() を発火する。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("settings data & privacy actions", () => {
-  test("export button calls /api/account/export and downloads JSON", async ({ authedPage }) => {
-    await authedPage.goto("/settings");
+  test("export button calls /api/account/export and downloads JSON", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/settings");
 
-    const exportButton = authedPage.getByRole("button", { name: /データをエクスポート/ });
+    const exportButton = tourPendingUser.getByRole("button", { name: /データをエクスポート/ });
     await expect(exportButton).toBeVisible();
 
-    const requestPromise = authedPage.waitForRequest((req) =>
+    const requestPromise = tourPendingUser.waitForRequest((req) =>
       req.url().includes("/api/account/export") && req.method() === "GET",
     );
-    const downloadPromise = authedPage.waitForEvent("download", { timeout: 30_000 });
+    const downloadPromise = tourPendingUser.waitForEvent("download", { timeout: 30_000 });
 
     await exportButton.click();
     const request = await requestPromise;
@@ -27,14 +27,14 @@ test.describe("settings data & privacy actions", () => {
     expect(download.suggestedFilename()).toMatch(/^homegohan-export-.*\.json$/);
   });
 
-  test("trainer share button shows coming-soon alert (not a div)", async ({ authedPage }) => {
-    await authedPage.goto("/settings");
+  test("trainer share button shows coming-soon alert (not a div)", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/settings");
 
-    const trainerButton = authedPage.getByRole("button", { name: /トレーナーと共有/ });
+    const trainerButton = tourPendingUser.getByRole("button", { name: /トレーナーと共有/ });
     await expect(trainerButton).toBeVisible();
 
     let dialogMessage: string | null = null;
-    authedPage.once("dialog", async (dialog) => {
+    tourPendingUser.once("dialog", async (dialog) => {
       dialogMessage = dialog.message();
       await dialog.dismiss();
     });

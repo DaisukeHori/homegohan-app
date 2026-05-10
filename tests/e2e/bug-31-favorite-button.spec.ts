@@ -7,17 +7,17 @@
  *   2. ボタンにクリック前は aria-pressed="false"、クリック後は aria-pressed="true"
  *   3. ページリロード後も状態が保持されること (API persist 確認)
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("recipe modal favorite button (Bug-31)", () => {
   /**
    * ハートボタンが存在し、クリックで aria-pressed と SVG fill が変化する
    */
-  test("clicking heart button toggles aria-pressed and heart fill color", async ({ authedPage }) => {
-    await authedPage.goto("/menus/weekly");
-    await authedPage.waitForLoadState("networkidle");
+  test("clicking heart button toggles aria-pressed and heart fill color", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/menus/weekly");
+    await tourPendingUser.waitForLoadState("networkidle");
 
-    const recipeButton = authedPage.locator('text=レシピを見る').first();
+    const recipeButton = tourPendingUser.locator('text=レシピを見る').first();
     if (!(await recipeButton.isVisible({ timeout: 2000 }).catch(() => false))) {
       test.skip(true, 'No recipe available for E2E user');
       return;
@@ -36,7 +36,7 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     await recipeButton.click();
 
     // ハートボタンを取得
-    const favBtn = authedPage.locator('[data-testid="favorite-button"]');
+    const favBtn = tourPendingUser.locator('[data-testid="favorite-button"]');
     await expect(favBtn).toBeVisible({ timeout: 5_000 });
 
     // モーダルオープン直後は API でお気に入り状態を取得中のため disabled になる場合がある
@@ -72,11 +72,11 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
    * お気に入り登録後にリロードしても状態が保持される (API が persist していること)
    */
   // 修正: モーダルクローズに Escape キーを優先使用してページ遷移を回避
-  test("favorite state persists after page reload", async ({ authedPage }) => {
-    await authedPage.goto("/menus/weekly");
-    await authedPage.waitForLoadState("networkidle");
+  test("favorite state persists after page reload", async ({ tourPendingUser }) => {
+    await tourPendingUser.goto("/menus/weekly");
+    await tourPendingUser.waitForLoadState("networkidle");
 
-    const recipeButton = authedPage.locator('text=レシピを見る').first();
+    const recipeButton = tourPendingUser.locator('text=レシピを見る').first();
     if (!(await recipeButton.isVisible({ timeout: 2000 }).catch(() => false))) {
       test.skip(true, 'No recipe available for E2E user');
       return;
@@ -94,7 +94,7 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
 
     await recipeButton.click();
 
-    const favBtn = authedPage.locator('[data-testid="favorite-button"]');
+    const favBtn = tourPendingUser.locator('[data-testid="favorite-button"]');
     await expect(favBtn).toBeVisible({ timeout: 5_000 });
 
     // まず disabled でないことを確認 (disabled なら API未完了でスキップ)
@@ -119,15 +119,15 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     // モーダルを閉じる: recipe モーダルの閉じるボタンはアイコンのみ (テキスト "閉じる" なし)
     // getByRole('button', { name: /閉じる/ }) は別ボタンにヒットしてページ遷移を起こす (#240)
     // Escape キーで確実にクローズする
-    await authedPage.keyboard.press('Escape');
-    await authedPage.waitForTimeout(500);
+    await tourPendingUser.keyboard.press('Escape');
+    await tourPendingUser.waitForTimeout(500);
 
     // ページをリロード
-    await authedPage.reload();
-    await authedPage.waitForLoadState("domcontentloaded");
+    await tourPendingUser.reload();
+    await tourPendingUser.waitForLoadState("domcontentloaded");
 
     // 再びレシピモーダルを開く
-    const recipeButton2 = authedPage.locator('text=レシピを見る').first();
+    const recipeButton2 = tourPendingUser.locator('text=レシピを見る').first();
     const available2 = await recipeButton2.waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false);
     if (!available2) {
       test.skip(true, 'リロード後にレシピボタンが見つからない');
@@ -135,7 +135,7 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     }
     await recipeButton2.click();
 
-    const favBtn2 = authedPage.locator('[data-testid="favorite-button"]');
+    const favBtn2 = tourPendingUser.locator('[data-testid="favorite-button"]');
     await expect(favBtn2).toBeVisible({ timeout: 5_000 });
 
     // リロード後も aria-pressed="true" のまま

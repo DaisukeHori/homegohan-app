@@ -12,9 +12,9 @@
  * 注意: 実際に LLM 生成を起動することはしない。ステータス API のレスポンスを
  *       モックして UI の挙動のみを検証する。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
-test("progress bar is restored from localStorage when request is still pending", async ({ authedPage }) => {
+test("progress bar is restored from localStorage when request is still pending", async ({ tourPendingUser }) => {
   // 偽の requestId で localStorage に生成中フラグをセット
   const fakeRequestId = "00000000-0000-0000-0000-000000000001";
   const weekStartDate = new Date();
@@ -23,7 +23,7 @@ test("progress bar is restored from localStorage when request is still pending",
   const weekStr = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
 
   // ステータス API が 'processing' を返すようにモック
-  await authedPage.route(`**/api/ai/menu/weekly/status*`, async (route) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route) => {
     const url = route.request().url();
     if (url.includes(fakeRequestId)) {
       await route.fulfill({
@@ -40,7 +40,7 @@ test("progress bar is restored from localStorage when request is still pending",
   });
 
   // pending API のモック (checkPendingRequests が呼ぶ)
-  await authedPage.route(`**/api/ai/menu/weekly/pending*`, async (route) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/pending*`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -49,7 +49,7 @@ test("progress bar is restored from localStorage when request is still pending",
   });
 
   // localStorage に生成中フラグをセットしてからページを開く
-  await authedPage.addInitScript(
+  await tourPendingUser.addInitScript(
     ([reqId, weekKey]) => {
       localStorage.setItem(
         "weeklyMenuGenerating",
@@ -59,15 +59,15 @@ test("progress bar is restored from localStorage when request is still pending",
     [fakeRequestId, weekStr],
   );
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // ステータス API のモックが 'processing' を返すため進捗バーが表示されるはず
   // (ステータス確認が非同期のため少し待つ)
-  const progressBar = authedPage
+  const progressBar = tourPendingUser
     .locator("text=/生成中/")
-    .or(authedPage.locator("[data-testid='generation-progress']"))
-    .or(authedPage.locator("text=/献立を生成中/"));
+    .or(tourPendingUser.locator("[data-testid='generation-progress']"))
+    .or(tourPendingUser.locator("text=/献立を生成中/"));
 
   // 10秒以内に進捗バーが現れるか確認（Realtime なしでもポーリング UI が維持されることを確認）
   const appeared = await progressBar.first().isVisible({ timeout: 10_000 }).catch(() => false);
@@ -81,7 +81,7 @@ test("progress bar is restored from localStorage when request is still pending",
   expect(appeared).toBe(true);
 });
 
-test("progress bar is NOT shown when server status is completed on restore", async ({ authedPage }) => {
+test("progress bar is NOT shown when server status is completed on restore", async ({ tourPendingUser }) => {
   const fakeRequestId = "00000000-0000-0000-0000-000000000002";
   const weekStartDate = new Date();
   weekStartDate.setDate(weekStartDate.getDate() - weekStartDate.getDay() + 1);
@@ -89,7 +89,7 @@ test("progress bar is NOT shown when server status is completed on restore", asy
   const weekStr = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
 
   // ステータス API が 'completed' を返すようにモック
-  await authedPage.route(`**/api/ai/menu/weekly/status*`, async (route) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route) => {
     const url = route.request().url();
     if (url.includes(fakeRequestId)) {
       await route.fulfill({
@@ -102,7 +102,7 @@ test("progress bar is NOT shown when server status is completed on restore", asy
     }
   });
 
-  await authedPage.route(`**/api/ai/menu/weekly/pending*`, async (route) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/pending*`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -111,7 +111,7 @@ test("progress bar is NOT shown when server status is completed on restore", asy
   });
 
   // localStorage に 30秒前のタイムスタンプで生成中フラグをセット
-  await authedPage.addInitScript(
+  await tourPendingUser.addInitScript(
     ([reqId, weekKey]) => {
       localStorage.setItem(
         "weeklyMenuGenerating",
@@ -121,12 +121,12 @@ test("progress bar is NOT shown when server status is completed on restore", asy
     [fakeRequestId, weekStr],
   );
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // completed なので進捗バーは表示されないこと
   // 代わりに通常の AI バナーボタン（「AIに埋めてもらう」等）が表示される
-  const aiBanner = authedPage
+  const aiBanner = tourPendingUser
     .locator('button:has(svg.lucide-sparkles)')
     .first();
 
@@ -134,7 +134,7 @@ test("progress bar is NOT shown when server status is completed on restore", asy
   const isBannerVisible = await aiBanner.isVisible({ timeout: 8_000 }).catch(() => false);
 
   // localStorage から weeklyMenuGenerating が消去されているか確認
-  const localStorageValue = await authedPage.evaluate(
+  const localStorageValue = await tourPendingUser.evaluate(
     () => localStorage.getItem("weeklyMenuGenerating"),
   );
 

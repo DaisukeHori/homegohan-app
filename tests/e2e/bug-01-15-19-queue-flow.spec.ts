@@ -10,7 +10,7 @@
  * 注意: 実際に LLM 生成・DB 書き込みは行わない。各 API のレスポンスをモックして
  *       UI の挙動のみを検証する。
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 const FAKE_REQUEST_ID = "00000000-0000-0000-0000-000000000099";
 
@@ -30,13 +30,13 @@ function getThisMonday(): string {
  * テスト共通: pending/weekly API をモックする
  */
 async function mockPendingApi(
-  authedPage: any,
+  tourPendingUser: any,
   status: "queued" | "processing" | "failed" | "none",
   errorMessage?: string,
 ) {
   const weekStr = getThisMonday();
 
-  await authedPage.route(`**/api/ai/menu/weekly/pending*`, async (route: any) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/pending*`, async (route: any) => {
     if (status === "none") {
       await route.fulfill({
         status: 200,
@@ -58,7 +58,7 @@ async function mockPendingApi(
     }
   });
 
-  await authedPage.route(`**/api/ai/menu/weekly/status*`, async (route: any) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route: any) => {
     const url = route.request().url();
     if (url.includes(FAKE_REQUEST_ID)) {
       await route.fulfill({
@@ -82,13 +82,13 @@ async function mockPendingApi(
 // =========================================================
 // Test 1: queued → 進捗バーが表示される
 // =========================================================
-test("queued status shows progress bar on page load", async ({ authedPage }) => {
+test("queued status shows progress bar on page load", async ({ tourPendingUser }) => {
   const weekStr = getThisMonday();
 
-  await mockPendingApi(authedPage, "queued");
+  await mockPendingApi(tourPendingUser, "queued");
 
   // localStorage に queued フラグをセットしてページを開く
-  await authedPage.addInitScript(
+  await tourPendingUser.addInitScript(
     ([reqId, weekKey]: [string, string]) => {
       localStorage.setItem(
         "weeklyMenuGenerating",
@@ -98,15 +98,15 @@ test("queued status shows progress bar on page load", async ({ authedPage }) => 
     [FAKE_REQUEST_ID, weekStr],
   );
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 進捗バーまたは「生成中」テキストが表示されるか確認
-  const progressBar = authedPage
+  const progressBar = tourPendingUser
     .locator("text=/生成中/")
-    .or(authedPage.locator("[data-testid='generation-progress']"))
-    .or(authedPage.locator("text=/献立を生成中/"))
-    .or(authedPage.locator("text=/キューに追加/"));
+    .or(tourPendingUser.locator("[data-testid='generation-progress']"))
+    .or(tourPendingUser.locator("text=/献立を生成中/"))
+    .or(tourPendingUser.locator("text=/キューに追加/"));
 
   const appeared = await progressBar.first().isVisible({ timeout: 10_000 }).catch(() => false);
 
@@ -122,12 +122,12 @@ test("queued status shows progress bar on page load", async ({ authedPage }) => 
 // =========================================================
 // Test 2: processing 中にタブ切替 → 戻る → 進捗バー復元
 // =========================================================
-test("progress bar is restored after tab switch when status is processing", async ({ authedPage }) => {
+test("progress bar is restored after tab switch when status is processing", async ({ tourPendingUser }) => {
   const weekStr = getThisMonday();
 
-  await mockPendingApi(authedPage, "processing");
+  await mockPendingApi(tourPendingUser, "processing");
 
-  await authedPage.addInitScript(
+  await tourPendingUser.addInitScript(
     ([reqId, weekKey]: [string, string]) => {
       localStorage.setItem(
         "weeklyMenuGenerating",
@@ -137,18 +137,18 @@ test("progress bar is restored after tab switch when status is processing", asyn
     [FAKE_REQUEST_ID, weekStr],
   );
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 別ページへ遷移して戻る（タブ切替のシミュレーション）
-  await authedPage.goto("/");
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.goto("/");
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
-  const progressBar = authedPage
+  const progressBar = tourPendingUser
     .locator("text=/生成中/")
-    .or(authedPage.locator("[data-testid='generation-progress']"))
-    .or(authedPage.locator("text=/献立を生成中/"));
+    .or(tourPendingUser.locator("[data-testid='generation-progress']"))
+    .or(tourPendingUser.locator("text=/献立を生成中/"));
 
   const appeared = await progressBar.first().isVisible({ timeout: 12_000 }).catch(() => false);
 
@@ -163,12 +163,12 @@ test("progress bar is restored after tab switch when status is processing", asyn
 // =========================================================
 // Test 3: status='failed' → エラーモーダル + リトライボタン
 // =========================================================
-test("failed status shows error modal with retry button", async ({ authedPage }) => {
+test("failed status shows error modal with retry button", async ({ tourPendingUser }) => {
   const weekStr = getThisMonday();
 
-  await mockPendingApi(authedPage, "failed", "テスト用エラーメッセージ");
+  await mockPendingApi(tourPendingUser, "failed", "テスト用エラーメッセージ");
 
-  await authedPage.addInitScript(
+  await tourPendingUser.addInitScript(
     ([reqId, weekKey]: [string, string]) => {
       localStorage.setItem(
         "weeklyMenuGenerating",
@@ -178,22 +178,22 @@ test("failed status shows error modal with retry button", async ({ authedPage })
     [FAKE_REQUEST_ID, weekStr],
   );
 
-  await authedPage.goto("/menus/weekly");
+  await tourPendingUser.goto("/menus/weekly");
   // networkidle の代わりに domcontentloaded で待機 (SSE 等で networkidle にならない場合がある)
-  await authedPage.waitForLoadState("domcontentloaded");
+  await tourPendingUser.waitForLoadState("domcontentloaded");
 
   // エラーモーダルか「もう一度試す」ボタンが表示されるか確認
-  const retryButton = authedPage
+  const retryButton = tourPendingUser
     .locator("[data-testid='generation-retry-button']")
-    .or(authedPage.locator("text=/もう一度試す/"));
+    .or(tourPendingUser.locator("text=/もう一度試す/"));
 
-  const errorModal = authedPage
+  const errorModal = tourPendingUser
     .locator("[data-testid='generation-failed-modal']")
-    .or(authedPage.locator("text=/生成に失敗/"))
-    .or(authedPage.locator("text=/献立生成に失敗/"));
+    .or(tourPendingUser.locator("text=/生成に失敗/"))
+    .or(tourPendingUser.locator("text=/献立生成に失敗/"));
 
   // 失敗の場合は進捗バーが消えるので待機後に確認
-  await authedPage.waitForTimeout(3000);
+  await tourPendingUser.waitForTimeout(3000);
 
   const retryVisible = await retryButton.first().isVisible({ timeout: 8_000 }).catch(() => false);
   const errorVisible = await errorModal.first().isVisible({ timeout: 8_000 }).catch(() => false);
@@ -210,10 +210,10 @@ test("failed status shows error modal with retry button", async ({ authedPage })
 // =========================================================
 // Test 4: status='completed' → 進捗バーなし、localStorage クリア
 // =========================================================
-test("completed status does not show progress bar and clears localStorage", async ({ authedPage }) => {
+test("completed status does not show progress bar and clears localStorage", async ({ tourPendingUser }) => {
   const weekStr = getThisMonday();
 
-  await authedPage.route(`**/api/ai/menu/weekly/pending*`, async (route: any) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/pending*`, async (route: any) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -221,7 +221,7 @@ test("completed status does not show progress bar and clears localStorage", asyn
     });
   });
 
-  await authedPage.route(`**/api/ai/menu/weekly/status*`, async (route: any) => {
+  await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route: any) => {
     const url = route.request().url();
     if (url.includes(FAKE_REQUEST_ID)) {
       await route.fulfill({
@@ -234,7 +234,7 @@ test("completed status does not show progress bar and clears localStorage", asyn
     }
   });
 
-  await authedPage.addInitScript(
+  await tourPendingUser.addInitScript(
     ([reqId, weekKey]: [string, string]) => {
       localStorage.setItem(
         "weeklyMenuGenerating",
@@ -244,13 +244,13 @@ test("completed status does not show progress bar and clears localStorage", asyn
     [FAKE_REQUEST_ID, weekStr],
   );
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  await tourPendingUser.goto("/menus/weekly");
+  await tourPendingUser.waitForLoadState("networkidle");
 
   // 進捗バーは表示されないこと
-  await authedPage.waitForTimeout(3000);
+  await tourPendingUser.waitForTimeout(3000);
 
-  const localStorageValue = await authedPage.evaluate(
+  const localStorageValue = await tourPendingUser.evaluate(
     () => localStorage.getItem("weeklyMenuGenerating"),
   );
 
@@ -258,7 +258,7 @@ test("completed status does not show progress bar and clears localStorage", asyn
   const isCleared = localStorageValue === null;
 
   // AI バナーボタン（通常表示）が見えているか確認
-  const aiBanner = authedPage.locator("text=/AIに埋めてもらう/").or(authedPage.locator("text=/AI献立/"));
+  const aiBanner = tourPendingUser.locator("text=/AIに埋めてもらう/").or(tourPendingUser.locator("text=/AI献立/"));
   const isBannerVisible = await aiBanner.first().isVisible({ timeout: 8_000 }).catch(() => false);
 
   expect(isCleared || isBannerVisible).toBe(true);

@@ -7,7 +7,12 @@
  *   2. /auth/verify 画面に「すでにアカウントをお持ちの場合はログインへ」リンクを追加
  */
 import { test, expect } from "@playwright/test";
-import { E2E_USER } from "./fixtures/auth";
+
+// 重複チェック用の既存ユーザー認証情報 (E2E_USER 廃止対応)
+const EXISTING_EMAIL =
+  process.env.E2E_USER_EMAIL ?? "e2e-user-01@homegohan.test";
+const EXISTING_PASSWORD =
+  process.env.E2E_USER_PASSWORD ?? "TestE2E2026!secure";
 
 // ────────────────────────────────────────────────────────
 // シナリオ A: 重複メールアドレスで signup → エラー表示
@@ -19,8 +24,8 @@ test.describe("Bug-92: 重複メールアドレスの signup 処理", () => {
     await page.goto("/signup");
 
     // 既存 E2E ユーザーのメールで signup を試みる
-    await page.locator("#email").fill(E2E_USER.email);
-    await page.locator("#password").fill(E2E_USER.password);
+    await page.locator("#email").fill(EXISTING_EMAIL);
+    await page.locator("#password").fill(EXISTING_PASSWORD);
 
     await page.locator('form button[type="submit"]').click();
 

@@ -10,23 +10,23 @@
  * For Bug-7 (weekly /menus/weekly AI condition buttons resolving to multiple
  * elements): each button now has a unique `data-testid` per modal context.
  */
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 // ── Bug-15: Profile modal tab buttons ──────────────────────────────────────
 
 test.describe("Bug-15 - profile modal tab buttons are clickable through backdrop", () => {
   test("profile edit modal tabs receive clicks without pointer-events interception", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/profile");
+    await tourPendingUser.goto("/profile");
 
     // Open the edit modal via the edit (pencil) icon button
-    const editBtn = authedPage.locator('button:has([data-lucide="pencil"]), button:has(svg)').first();
+    const editBtn = tourPendingUser.locator('button:has([data-lucide="pencil"]), button:has(svg)').first();
     // More robust: find the edit button near the top of the profile header area
-    const profileEditBtn = authedPage.getByRole("button").filter({ has: authedPage.locator('svg') }).first();
+    const profileEditBtn = tourPendingUser.getByRole("button").filter({ has: tourPendingUser.locator('svg') }).first();
 
     // Try to find the edit icon button - it's a ghost button in the profile header
-    const headerEditBtn = authedPage
+    const headerEditBtn = tourPendingUser
       .locator('button[class*="ghost"], button[class*="white"]')
       .first();
 
@@ -47,7 +47,7 @@ test.describe("Bug-15 - profile modal tab buttons are clickable through backdrop
     await headerEditBtn.click();
 
     // Wait for the modal content to appear
-    const modalContent = authedPage.locator('.bg-white.rounded-t-3xl, .bg-white.rounded-3xl').first();
+    const modalContent = tourPendingUser.locator('.bg-white.rounded-t-3xl, .bg-white.rounded-3xl').first();
     const modalVisible = await modalContent
       .waitFor({ state: "visible", timeout: 8_000 })
       .then(() => true)
@@ -62,7 +62,7 @@ test.describe("Bug-15 - profile modal tab buttons are clickable through backdrop
     }
 
     // Verify the tab buttons are visible inside the modal
-    const tabButtons = authedPage.locator('button').filter({ hasText: '目標' });
+    const tabButtons = tourPendingUser.locator('button').filter({ hasText: '目標' });
     const tabVisible = await tabButtons
       .first()
       .waitFor({ state: "visible", timeout: 5_000 })
@@ -98,15 +98,15 @@ test.describe("Bug-15 - profile modal tab buttons are clickable through backdrop
 
 test.describe("Bug-7 - AI condition buttons are uniquely selectable via data-testid", () => {
   test("AI condition buttons in weekly page have unique data-testid attributes", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/menus/weekly");
+    await tourPendingUser.goto("/menus/weekly");
 
     // Wait for the page to load
-    await authedPage.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    await tourPendingUser.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
     // Open the AI assistant modal (look for the AI button in the action bar)
-    const aiButton = authedPage
+    const aiButton = tourPendingUser
       .getByRole("button")
       .filter({ hasText: /AI|献立|アシスタント/ })
       .first();
@@ -127,7 +127,7 @@ test.describe("Bug-7 - AI condition buttons are uniquely selectable via data-tes
     await aiButton.click();
 
     // Wait for any condition button with data-testid to appear
-    const conditionBtn = authedPage
+    const conditionBtn = tourPendingUser
       .locator('[data-testid="ai-condition-ヘルシーに"]')
       .first();
 

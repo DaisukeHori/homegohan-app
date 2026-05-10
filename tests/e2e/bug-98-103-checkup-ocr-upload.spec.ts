@@ -12,7 +12,7 @@
  *   6. OCR レスポンスの値が confirm ステップのフォームフィールドに反映される
  *
  * 戦略:
- *   - authedPage でページを開く
+ *   - tourPendingUser でページを開く
  *   - page.route で /api/ai/analyze-health-checkup をモック
  *   - input[type=file] にテスト用ファイルを setInputFiles する
  *   - ボタンクリック後に confirm ステップへ遷移し、フォーム値を確認
@@ -20,7 +20,7 @@
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 const MOCK_OCR_RESPONSE = {
   extractedData: {
@@ -78,7 +78,7 @@ startxref
 
 test.describe("Bug-98/103: 健診アップロード OCR フロー", () => {
   test("画像アップロード → OCR API が呼ばれ → フォームに値が反映される", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     // OCR エンドポイントをモック
     let ocrCalled = false;
@@ -135,7 +135,7 @@ test.describe("Bug-98/103: 健診アップロード OCR フロー", () => {
   });
 
   test("PDF アップロード → PDF 選択済み表示 → OCR API が呼ばれる", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     // OCR エンドポイントをモック
     let ocrCalledWithPdf = false;
@@ -188,7 +188,7 @@ test.describe("Bug-98/103: 健診アップロード OCR フロー", () => {
   });
 
   test("/api/ai/analyze-health-checkup は imageBase64 なしで 400 を返す", async ({
-    authedPage: page,
+    tourPendingUser: page,
   }) => {
     const result = await page.evaluate(async () => {
       const res = await fetch("/api/ai/analyze-health-checkup", {

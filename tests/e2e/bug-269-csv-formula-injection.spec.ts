@@ -5,17 +5,17 @@
  * /api/export/meals エンドポイントに直接リクエストして CSV レスポンスを検証する。
  */
 
-import { test, expect } from "./fixtures/auth";
+import { test, expect } from "./fixtures/fresh-user";
 
 test.describe("#269 CSV formula injection 防止", () => {
   test("API レスポンスの CSV にクォートなしで formula 先頭文字が現れない", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
     // ログイン済みセッションのコンテキストで API を叩く
-    await authedPage.goto("/settings");
+    await tourPendingUser.goto("/settings");
 
     // /api/export/meals へ直接 fetch してレスポンス本文を検証
-    const csvText = await authedPage.evaluate(async () => {
+    const csvText = await tourPendingUser.evaluate(async () => {
       const res = await fetch("/api/export/meals");
       if (!res.ok) return null;
       return res.text();
@@ -45,12 +45,12 @@ test.describe("#269 CSV formula injection 防止", () => {
   });
 
   test("escapeCsv の formula injection 防止ロジック (ブラウザ内検証)", async ({
-    authedPage,
+    tourPendingUser,
   }) => {
-    await authedPage.goto("/settings");
+    await tourPendingUser.goto("/settings");
 
     // ブラウザ内で escapeCsv と同等のロジックを実行して結果を検証
-    const result = await authedPage.evaluate(() => {
+    const result = await tourPendingUser.evaluate(() => {
       function escapeCsv(value: unknown): string {
         if (value === null || value === undefined) return "";
         const str = String(value);
