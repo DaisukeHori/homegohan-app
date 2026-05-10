@@ -245,11 +245,11 @@ test.describe("SM-4: StatsModal 数値カード表示", () => {
     const opened = await openStatsModal(page);
     expect(opened).toBe(true);
 
-    // 自炊率カード
-    await expect(page.getByText("自炊率")).toBeVisible({ timeout: 5_000 });
+    // 自炊率カード (StatsModal 内の exact match — weekly page の「自炊率 N%」とは区別)
+    await expect(page.getByText("自炊率", { exact: true }).first()).toBeVisible({ timeout: 5_000 });
 
     // 平均kcal/日カード
-    await expect(page.getByText("平均kcal/日")).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText("平均kcal/日", { exact: true })).toBeVisible({ timeout: 5_000 });
 
     // 今週の献立カード
     await expect(page.getByText("今週の献立")).toBeVisible({ timeout: 5_000 });
@@ -334,8 +334,9 @@ test.describe("SM-6: StatsModal 閉じる", () => {
     await xBtn.waitFor({ state: "visible", timeout: 5_000 });
     await xBtn.click();
 
-    // StatsModal が閉じること (「栄養分析」テキストが消える)
-    await expect(page.getByText("自炊率")).toBeHidden({ timeout: 5_000 });
+    // StatsModal が閉じること (「自炊率」exact match が非表示になる)
+    // weekly page の「自炊率 N%」は別テキストのため exact: true で区別する
+    await expect(page.getByText("自炊率", { exact: true }).first()).toBeHidden({ timeout: 5_000 });
 
     // 週ナビゲーションが引き続き表示されること
     await expect(page.locator('[aria-label="前の週"]')).toBeVisible({

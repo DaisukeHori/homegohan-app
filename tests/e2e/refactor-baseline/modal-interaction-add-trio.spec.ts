@@ -301,7 +301,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     return false;
   }
 
-  test("AddMealSlotModal に朝食・昼食・夕食・間食・夜食の 5 種別ボタンが表示される", async ({ tourPendingUser: page }) => {
+  test("AddMealSlotModal に朝食・昼食・夕食・おやつ・夜食の 5 種別ボタンが表示される", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -323,8 +323,9 @@ test.describe("AddMealSlotModal インタラクション", () => {
 
     if (!isMealSlotModal) return;
 
-    // 5 種別ボタン (MEAL_LABELS に対応: 朝食/昼食/夕食/間食/夜食)
-    const mealLabels = ["朝食", "昼食", "夕食", "間食", "夜食"];
+    // 5 種別ボタン (MEAL_LABELS に対応: 朝食/昼食/夕食/おやつ/夜食)
+    // snack の MEAL_LABELS は「間食」ではなく「おやつ」
+    const mealLabels = ["朝食", "昼食", "夕食", "おやつ", "夜食"];
     for (const label of mealLabels) {
       const btn = page.getByRole("button", { name: new RegExp(label) }).first();
       const visible = await btn
@@ -476,7 +477,7 @@ test.describe("AddMealSlotModal インタラクション", () => {
     }
   });
 
-  test("間食・夜食ボタンが AddMealSlotModal 内に存在する", async ({ tourPendingUser: page }) => {
+  test("おやつ・夜食ボタンが AddMealSlotModal 内に存在する", async ({ tourPendingUser: page }) => {
     test.setTimeout(60_000);
     await gotoWeekly(page);
 
@@ -496,8 +497,9 @@ test.describe("AddMealSlotModal インタラクション", () => {
 
     if (!isMealSlotModal) return;
 
-    // 間食 (snack) と夜食 (midnight_snack) は基本 3 食以外の追加種別
-    const snackVisible = await page.getByText("間食").first()
+    // おやつ (snack) と夜食 (midnight_snack) は基本 3 食以外の追加種別
+    // snack の MEAL_LABELS は「間食」ではなく「おやつ」
+    const snackVisible = await page.getByText("おやつ").first()
       .waitFor({ state: "visible", timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
