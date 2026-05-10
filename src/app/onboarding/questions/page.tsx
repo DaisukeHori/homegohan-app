@@ -163,18 +163,6 @@ const QUESTIONS = [
     allowSkip: true,
   },
   {
-    id: 'weight_change_rate',
-    text: 'どのくらいのペースで変えたいですか？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => 
-      answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
-    options: [
-      { label: '🐢 ゆっくり（月1-2kg）', value: 'slow', description: '無理なく長期的に' },
-      { label: '🚶 普通（月2-3kg）', value: 'moderate', description: 'バランス重視' },
-      { label: '🚀 積極的（月3kg以上）', value: 'aggressive', description: '短期集中で' },
-    ]
-  },
-  {
     id: 'exercise_types',
     text: '普段どんな運動をしていますか？\n（複数選択可）',
     type: 'multi_choice',
@@ -614,8 +602,48 @@ function OnboardingQuestionsContent() {
     } else {
       setIsCalculating(true);
 
+      // Fix 1: weight_change_rate を target_weight + target_date から自動算出
+      const computedAnswers = { ...newAnswers };
+      if (
+        (computedAnswers.nutrition_goal === 'lose_weight' || computedAnswers.nutrition_goal === 'gain_muscle') &&
+        !computedAnswers.weight_change_rate
+      ) {
+        if (computedAnswers.target_weight && computedAnswers.target_date) {
+          const nowDate = new Date();
+          const targetDate = new Date(computedAnswers.target_date);
+          const monthsDiff = (targetDate.getTime() - nowDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+          const weightDiff = Math.abs(
+            parseFloat(computedAnswers.target_weight) - parseFloat(computedAnswers.weight || '0')
+          );
+          if (monthsDiff > 0) {
+            const kgPerMonth = weightDiff / monthsDiff;
+            if (kgPerMonth < 2) {
+              computedAnswers.weight_change_rate = 'slow';
+            } else if (kgPerMonth < 3) {
+              computedAnswers.weight_change_rate = 'moderate';
+            } else {
+              computedAnswers.weight_change_rate = 'aggressive';
+            }
+          } else {
+            computedAnswers.weight_change_rate = 'moderate';
+          }
+        } else {
+          computedAnswers.weight_change_rate = 'moderate';
+        }
+      }
+
       // 完了処理
       try {
+        // 算出した weight_change_rate を progress に保存してから complete を呼ぶ
+        await fetch('/api/onboarding/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            currentStep: currentStep,
+            answers: computedAnswers,
+            totalQuestions: calculateTotalQuestions(computedAnswers),
+          }),
+        });
         await fetch('/api/onboarding/complete', { method: 'POST' });
       } catch (e) {
         console.error(e);
