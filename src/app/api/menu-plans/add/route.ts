@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       }
 
       const { data: hasActivity } = await supabase
-        .rpc('user_has_non_sandbox_activity', { p_user_id: user.id });
+        .rpc('user_has_non_sandbox_activity');
       if (hasActivity) {
         return NextResponse.json(
           { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'existing_user' } },

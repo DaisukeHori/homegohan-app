@@ -6846,7 +6846,7 @@ export type Database = {
         }[]
       }
       user_has_non_sandbox_activity: {
-        Args: { p_user_id: string }
+        Args: Record<PropertyKey, never>
         Returns: boolean
       }
     }
