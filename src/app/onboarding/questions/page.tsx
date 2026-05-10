@@ -615,7 +615,13 @@ function OnboardingQuestionsContent() {
             totalQuestions: calculateTotalQuestions(computedAnswers),
           }),
         });
-        await fetch('/api/onboarding/complete', { method: 'POST' });
+        const res = await fetch('/api/onboarding/complete', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.next_route) {
+            sessionStorage.setItem('onboarding_next_route', data.next_route);
+          }
+        }
       } catch (e) {
         console.error(e);
       }
