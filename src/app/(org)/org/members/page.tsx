@@ -1,117 +1,216 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 
 interface Member {
   id: string;
-  nickname: string;
-  role: string;
-  created_at: string;
+  nickname: string | null;
+  org_role: string;
+  joined_org_at: string | null;
+}
+
+interface CurrentUser {
+  id: string;
+  org_role: string;
 }
 
 export default function MembersPage() {
+  const router = useRouter();
+  const supabase = createClient();
   const [members, setMembers] = useState<Member[]>([]);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [form, setForm] = useState({ email: "", password: "", nickname: "" });
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
 
-  const fetchMembers = async () => {
+  const fetchData = async () => {
     setLoading(true);
-    const res = await fetch('/api/org/members');
-    if (res.ok) {
-      const data = await res.json();
-      setMembers(data.members);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('org_role, organization_id')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile?.organization_id) {
+        setLoading(false);
+        return;
+      }
+
+      setCurrentUser({ id: user.id, org_role: profile.org_role ?? 'member' });
+
+      const { data: membersData } = await supabase
+        .from('user_profiles')
+        .select('id, nickname, org_role, joined_org_at')
+        .eq('organization_id', profile.organization_id)
+        .order('joined_org_at', { ascending: true });
+
+      setMembers(membersData ?? []);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
-    fetchMembers();
+    fetchData();
   }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
+  const handleRemove = async (memberId: string, memberNickname: string | null) => {
+    if (!confirm(`「${memberNickname ?? 'このメンバー'}」を組織から除名しますか？`)) return;
+    setRemovingId(memberId);
     try {
-      const res = await fetch('/api/org/members', {
+      const res = await fetch(`/api/org/members/${memberId}/remove`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
       });
-
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error);
+        alert(`除名失敗: ${err.error?.message ?? '不明なエラー'}`);
+        return;
       }
-
-      alert("メンバーを作成しました。\nログイン情報を共有してください。");
-      setForm({ email: "", password: "", nickname: "" });
-      setShowAddModal(false);
-      fetchMembers();
-    } catch (error: any) {
-      alert(`作成失敗: ${error.message}`);
+      await fetchData();
     } finally {
-      setIsSubmitting(false);
+      setRemovingId(null);
     }
   };
+
+  const handleLeave = async () => {
+    if (!confirm('組織から脱退しますか？この操作は元に戻せません。')) return;
+    setLeaving(true);
+    try {
+      const res = await fetch('/api/org/leave', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(`脱退失敗: ${err.error?.message ?? '不明なエラー'}`);
+        return;
+      }
+      router.push('/home');
+    } finally {
+      setLeaving(false);
+    }
+  };
+
+  const roleLabel = (role: string) => {
+    switch (role) {
+      case 'owner': return 'オーナー';
+      case 'admin': return '管理者';
+      default: return 'メンバー';
+    }
+  };
+
+  const canRemove = (targetRole: string, targetId: string): boolean => {
+    if (!currentUser) return false;
+    if (targetId === currentUser.id) return false;
+    if (targetRole === 'owner') return false;
+    if (currentUser.org_role === 'owner') return true;
+    if (currentUser.org_role === 'admin' && targetRole === 'member') return true;
+    return false;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-8">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Members</h1>
-          <p className="text-gray-500 text-sm">所属メンバーの管理と招待</p>
+          <h1 className="text-2xl font-bold text-gray-900">組織メンバー ({members.length} 名)</h1>
+          <p className="text-gray-500 text-sm">メンバーの管理・除名・脱退</p>
         </div>
-        <Button onClick={() => setShowAddModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 rounded-xl shadow-lg shadow-blue-200">
-          + Add Member
-        </Button>
+        <div className="flex gap-3">
+          {currentUser?.org_role === 'owner' && (
+            <Link
+              href="/org/settings/owner-transfer"
+              className="px-4 py-2 rounded-xl border border-amber-300 text-amber-700 font-medium hover:bg-amber-50 transition-colors text-sm"
+            >
+              オーナーを譲渡
+            </Link>
+          )}
+          {currentUser && currentUser.org_role !== 'owner' && (
+            <button
+              onClick={handleLeave}
+              disabled={leaving}
+              className="px-4 py-2 rounded-xl border border-red-300 text-red-600 font-medium hover:bg-red-50 transition-colors text-sm disabled:opacity-50"
+            >
+              {leaving ? '処理中...' : '組織を脱退'}
+            </button>
+          )}
+          <Link
+            href="/org/invites"
+            className="px-4 py-2 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors text-sm shadow-sm shadow-blue-200"
+          >
+            + メンバーを招待
+          </Link>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-left">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              <th className="p-4 text-xs font-bold text-gray-500 uppercase">ニックネーム</th>
-              <th className="p-4 text-xs font-bold text-gray-500 uppercase">役職</th>
+              <th className="p-4 text-xs font-bold text-gray-500 uppercase">ユーザー</th>
+              <th className="p-4 text-xs font-bold text-gray-500 uppercase">役割</th>
               <th className="p-4 text-xs font-bold text-gray-500 uppercase">参加日</th>
-              <th className="p-4 text-xs font-bold text-gray-500 uppercase text-right">ステータス</th>
+              <th className="p-4 text-xs font-bold text-gray-500 uppercase text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={4} className="p-8 text-center text-gray-400">Loading...</td></tr>
-            ) : members.length === 0 ? (
-              <tr><td colSpan={4} className="p-8 text-center text-gray-400">No members yet.</td></tr>
+            {members.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="p-8 text-center text-gray-400">メンバーがいません</td>
+              </tr>
             ) : (
               members.map((member) => (
                 <tr key={member.id} className="hover:bg-gray-50 transition-colors">
                   <td className="p-4">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-100 to-blue-50 flex items-center justify-center font-bold text-blue-500 text-xs">
-                        {member.nickname[0]}
+                        {(member.nickname ?? 'U')[0].toUpperCase()}
                       </div>
-                      <span className="font-bold text-gray-900">{member.nickname}</span>
+                      <span className="font-medium text-gray-900">
+                        {member.nickname ?? '(名前なし)'}
+                        {member.id === currentUser?.id && (
+                          <span className="ml-2 text-xs text-gray-400">(あなた)</span>
+                        )}
+                      </span>
                     </div>
                   </td>
                   <td className="p-4">
                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                      member.role === 'org_admin' 
-                        ? 'bg-blue-100 text-blue-700' 
+                      member.org_role === 'owner'
+                        ? 'bg-amber-100 text-amber-700'
+                        : member.org_role === 'admin'
+                        ? 'bg-blue-100 text-blue-700'
                         : 'bg-gray-100 text-gray-600'
                     }`}>
-                      {member.role.replace('_', ' ')}
+                      {roleLabel(member.org_role)}
                     </span>
                   </td>
                   <td className="p-4 text-sm text-gray-500 font-mono">
-                    {new Date(member.created_at).toLocaleDateString('ja-JP')}
+                    {member.joined_org_at
+                      ? new Date(member.joined_org_at).toLocaleDateString('ja-JP')
+                      : '-'}
                   </td>
                   <td className="p-4 text-right">
-                    <span className="inline-block w-2 h-2 rounded-full bg-green-400" />
+                    {canRemove(member.org_role, member.id) && (
+                      <button
+                        onClick={() => handleRemove(member.id, member.nickname)}
+                        disabled={removingId === member.id}
+                        className="px-3 py-1 rounded-lg text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-50"
+                      >
+                        {removingId === member.id ? '処理中...' : '除名'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))
@@ -119,84 +218,6 @@ export default function MembersPage() {
           </tbody>
         </table>
       </div>
-
-      {/* メンバー追加モーダル */}
-      <AnimatePresence>
-        {showAddModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          >
-            <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl"
-            >
-              <h2 className="text-xl font-bold text-gray-900 mb-6">Create New Member</h2>
-              <form onSubmit={handleCreate} className="space-y-4">
-                <div>
-                  <Label htmlFor="nickname">Nickname</Label>
-                  <Input
-                    id="nickname"
-                    value={form.nickname}
-                    onChange={(e) => setForm({ ...form, nickname: e.target.value })}
-                    className="mt-1"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={form.email}
-                    onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    className="mt-1"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="password">仮パスワード</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    className="mt-1"
-                    minLength={6}
-                    required
-                  />
-                  <p className="text-xs text-gray-400 mt-1">※ユーザーに共有してください</p>
-                </div>
-                
-                <div className="flex gap-3 pt-4">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setShowAddModal(false)}
-                    className="flex-1 rounded-xl"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200"
-                  >
-                    {isSubmitting ? "Creating..." : "Create Account"}
-                  </Button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
-
-
-
