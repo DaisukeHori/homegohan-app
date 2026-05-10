@@ -28,6 +28,9 @@ import remarkGfm from "remark-gfm";
 // ProfileReminderBanner は "use client" + isVisible:false 初期値のため SSR でも安全
 import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
 import { ProgressTodoCard } from "./_components/ProgressTodoCard";
+import { FamilyViewSwitcher } from "@/components/membership/FamilyViewSwitcher";
+import { useFamilyView } from "@/hooks/useFamilyView";
+import type { FamilyMember } from "@/schemas/membership";
 import { FridgeModal } from "./_components/modals/FridgeModal";
 import { AddFridgeModal } from "./_components/modals/AddFridgeModal";
 import { ShoppingModal } from "./_components/modals/ShoppingModal";
@@ -1015,6 +1018,42 @@ export default function WeeklyMenuPage() {
       dispatchWeekView({ type: 'MEAL_AUTO_EXPANDED', payload: { mealId: fallbackDay.meals[0].id, dayIndex: fallbackDayIdx } });
     }
   };
+
+  // -------------------------------------------------------
+  // Membership: Family view switcher state
+  // -------------------------------------------------------
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [familyId, setFamilyId] = useState<string | null>(null);
+  const { viewState, setView } = useFamilyView(familyId);
+
+  // 家族情報ロード (家族に所属している場合のみ switcher 表示)
+  useEffect(() => {
+    const loadFamilyData = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      setCurrentUserId(user.id);
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('family_id')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (!profile?.family_id) return;
+      setFamilyId(profile.family_id);
+
+      const { data: members } = await supabase
+        .from('family_members')
+        .select('id, family_id, user_id, role, display_name, relationship, tags, share_meals, share_health, share_menu, child_profile, avatar_color, status, joined_at, removed_at')
+        .eq('family_id', profile.family_id)
+        .eq('status', 'active');
+      if (members) {
+        setFamilyMembers(members as FamilyMember[]);
+      }
+    };
+    loadFamilyData();
+  }, []);
 
   // Form States (aiChat/addMeal/conditions は Phase B-3 で formDraftStore に移行予定)
   const [aiChatInput, setAiChatInput] = useState("");
@@ -5246,6 +5285,18 @@ export default function WeeklyMenuPage() {
 
       {/* === Profile Reminder Banner === */}
       <ProfileReminderBanner />
+
+      {/* === Family View Switcher (家族所属時のみ表示) === */}
+      {familyMembers.length > 0 && currentUserId && (
+        <div className="mx-3 mt-2">
+          <FamilyViewSwitcher
+            familyMembers={familyMembers}
+            currentUserId={currentUserId}
+            value={viewState}
+            onChange={setView}
+          />
+        </div>
+      )}
 
       {/* === 生成失敗エラーモーダル === */}
       {generationFailedError && (
