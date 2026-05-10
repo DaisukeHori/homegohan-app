@@ -7424,10 +7424,12 @@ export type Database = {
           weight_start: number
         }[]
       }
+      get_invite_details: { Args: { p_token: string }; Returns: Json }
       invoke_catalog_import: {
         Args: { p_function_name: string }
         Returns: number
       }
+      is_inactive_user: { Args: { p_user_id: string }; Returns: boolean }
       leave_family: {
         Args: never
         Returns: {
@@ -7595,6 +7597,28 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      list_families_with_inactive_representative: {
+        Args: never
+        Returns: {
+          family_id: string
+          family_name: string
+          member_count: number
+          representative_email: string
+          representative_user_id: string
+        }[]
+      }
+      list_orgs_with_inactive_owner: {
+        Args: never
+        Returns: {
+          dissolved: boolean
+          member_count: number
+          organization_id: string
+          organization_name: string
+          owner_email: string
+          owner_last_sign_in: string
+          owner_user_id: string
+        }[]
       }
       normalize_dish_name: { Args: { name: string }; Returns: string }
       operator_force_dissolve_family: {
@@ -7977,6 +8001,61 @@ export type Database = {
         }
       }
       reset_e2e_test_users: { Args: never; Returns: undefined }
+      revoke_family_invite: {
+        Args: { p_invite_id: string }
+        Returns: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string
+          custom_message: string | null
+          email: string
+          expires_at: string
+          family_id: string
+          id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["family_role_enum"]
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_invites"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      revoke_org_invite: {
+        Args: { p_invite_id: string }
+        Returns: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string | null
+          created_by: string | null
+          custom_message: string | null
+          department_id: string | null
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string | null
+          invited_role: Database["public"]["Enums"]["org_role_enum"]
+          organization_id: string | null
+          rejected_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          role: string | null
+          status: string
+          token: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organization_invites"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       search_dataset_ingredients_by_embedding: {
         Args: { match_count?: number; query_embedding: string }
         Returns: {
@@ -8186,6 +8265,36 @@ export type Database = {
           name: string
           similarity: number
         }[]
+      }
+      update_my_share_settings: {
+        Args: {
+          p_share_health: boolean
+          p_share_meals: boolean
+          p_share_menu: boolean
+        }
+        Returns: {
+          avatar_color: string
+          child_profile: Json | null
+          display_name: string | null
+          family_id: string
+          id: string
+          joined_at: string
+          relationship: string | null
+          removed_at: string | null
+          role: Database["public"]["Enums"]["family_role_enum"]
+          share_health: boolean
+          share_meals: boolean
+          share_menu: boolean
+          status: string
+          tags: string[]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       user_has_non_sandbox_activity: { Args: never; Returns: boolean }
     }
