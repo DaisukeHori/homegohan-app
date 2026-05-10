@@ -43,7 +43,9 @@ async function openAddMealModal(page: import("@playwright/test").Page): Promise<
 
   if (hasEmptySlot) {
     await emptySlot.click();
-    const opened = await page.getByText(/を追加|AIに提案/).first()
+    // AddMealModal が開いたことを「AIに提案してもらう」ボタンで確認
+    // (週ページの空スロット「〇〇を追加」ボタンとは区別)
+    const opened = await page.getByRole("button", { name: /AIに提案してもらう/ }).first()
       .waitFor({ state: "visible", timeout: 8_000 })
       .then(() => true)
       .catch(() => false);
@@ -71,7 +73,8 @@ async function openAddMealModal(page: import("@playwright/test").Page): Promise<
   if (!hasBreakfastChoice) return false;
 
   await breakfastChoice.click();
-  const opened = await page.getByText(/を追加|AIに提案/).first()
+  // AddMealModal が開いたことを「AIに提案してもらう」ボタンで確認
+  const opened = await page.getByRole("button", { name: /AIに提案してもらう/ }).first()
     .waitFor({ state: "visible", timeout: 8_000 })
     .then(() => true)
     .catch(() => false);
