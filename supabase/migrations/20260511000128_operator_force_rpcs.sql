@@ -1,4 +1,4 @@
--- migration: 20260511000125_operator_force_rpcs.sql
+-- migration: 20260511000128_operator_force_rpcs.sql
 -- operator 緊急操作 RPC 群
 -- Round 3 監査 C-4: operator_force_dissolve_org で used_licenses リセット +
 --   organizations.status = 'dissolved' / dissolved_at = NOW() を更新
