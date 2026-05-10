@@ -2,6 +2,7 @@
 // (設計書 01-data-model.md §0.3)
 // 全 membership スキーマの re-export
 
+export * from './organization';
 export * from './organization-invite';
 export * from './organization-invite-action';
 export * from './organization-member';
@@ -11,6 +12,8 @@ export * from './family-invite';
 export * from './family-invite-action';
 export * from './family-member';
 export * from './family-representative-transfer';
+export * from './ownership-transfer';
+export * from './membership-audit';
 export * from './meal-paste';
 export * from './share-settings';
 export * from './operator-membership';
