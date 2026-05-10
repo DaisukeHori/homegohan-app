@@ -1,4 +1,4 @@
--- migration: 20260511000104_membership_org_rpc.sql
+-- migration: 20260511000105_membership_org_rpc.sql
 -- (設計書 01-data-model.md §2.5)
 -- 番号: 設計書指定 000004 → 000104 にシフト
 -- SECURITY DEFINER/INVOKER 使い分け: 設計書通り
@@ -32,7 +32,8 @@ BEGIN
   SELECT organization_id, org_role INTO v_caller_org_id, v_caller_role
     FROM user_profiles WHERE id = auth.uid();
 
-  IF v_caller_org_id IS DISTINCT FROM p_organization_id OR v_caller_role NOT IN ('owner','admin') THEN
+  -- ★ P0 Fix F7: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_org_id IS DISTINCT FROM p_organization_id OR v_caller_role IS NULL OR v_caller_role NOT IN ('owner','admin') THEN
     RAISE EXCEPTION 'NOT_ORG_ADMIN' USING ERRCODE = 'P0001';
   END IF;
 
@@ -195,7 +196,8 @@ DECLARE
 BEGIN
   SELECT org_role INTO v_caller_role FROM user_profiles
     WHERE id = auth.uid() AND organization_id = p_organization_id;
-  IF v_caller_role NOT IN ('owner','admin') THEN
+  -- ★ P0 Fix F7: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('owner','admin') THEN
     RAISE EXCEPTION 'NOT_ORG_ADMIN' USING ERRCODE = 'P0001';
   END IF;
 
@@ -267,6 +269,7 @@ REVOKE EXECUTE ON FUNCTION public.leave_org FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.leave_org TO authenticated;
 
 -- owner 譲渡 (2 step: propose → accept)
+-- P0 Critical Fix F9: ownership_transfer_proposals テーブル経由で二重実行防止
 CREATE OR REPLACE FUNCTION public.propose_org_owner_transfer(p_organization_id UUID, p_to_user_id UUID)
 RETURNS UUID  -- proposal id
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -274,7 +277,8 @@ DECLARE v_caller_role org_role_enum; v_target_role org_role_enum; v_proposal_id 
 BEGIN
   SELECT org_role INTO v_caller_role FROM user_profiles
     WHERE id = auth.uid() AND organization_id = p_organization_id;
-  IF v_caller_role <> 'owner' THEN
+  -- ★ P0 Fix F7: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_role IS NULL OR v_caller_role <> 'owner' THEN
     RAISE EXCEPTION 'NOT_ORG_OWNER' USING ERRCODE = 'P0001';
   END IF;
 
@@ -284,11 +288,19 @@ BEGIN
     RAISE EXCEPTION 'TARGET_NOT_IN_ORG' USING ERRCODE = 'P0001';
   END IF;
 
-  v_proposal_id := gen_random_uuid();
-  INSERT INTO membership_audit (id, scope, scope_id, action, actor_id, target_user_id, metadata)
-  VALUES (v_proposal_id, 'organization', p_organization_id, 'owner_transfer_proposed',
+  -- 既存 pending proposal を expired に更新してから新規作成
+  UPDATE ownership_transfer_proposals
+    SET status = 'expired', resolved_at = NOW()
+    WHERE scope = 'organization' AND scope_id = p_organization_id AND status = 'pending';
+
+  INSERT INTO ownership_transfer_proposals (scope, scope_id, from_user_id, to_user_id)
+  VALUES ('organization', p_organization_id, auth.uid(), p_to_user_id)
+  RETURNING id INTO v_proposal_id;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES ('organization', p_organization_id, 'owner_transfer_proposed',
           auth.uid(), p_to_user_id,
-          jsonb_build_object('proposal_id', v_proposal_id, 'expires_at', NOW() + INTERVAL '7 days'));
+          jsonb_build_object('proposal_id', v_proposal_id));
 
   RETURN v_proposal_id;
 END $$;
@@ -299,19 +311,26 @@ GRANT EXECUTE ON FUNCTION public.propose_org_owner_transfer TO authenticated;
 CREATE OR REPLACE FUNCTION public.accept_org_owner_transfer(p_proposal_id UUID)
 RETURNS organizations
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_proposal membership_audit; v_org_id UUID; v_old_owner_id UUID;
+DECLARE v_proposal ownership_transfer_proposals; v_org_id UUID; v_old_owner_id UUID;
 BEGIN
-  SELECT * INTO v_proposal FROM membership_audit
-    WHERE id = p_proposal_id AND action = 'owner_transfer_proposed' AND target_user_id = auth.uid();
+  -- ★ P0 Fix F9: ownership_transfer_proposals テーブル経由で参照 (二重実行防止)
+  SELECT * INTO v_proposal FROM ownership_transfer_proposals
+    WHERE id = p_proposal_id AND status = 'pending' AND to_user_id = auth.uid();
   IF NOT FOUND THEN
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_NOT_FOUND' USING ERRCODE = 'P0001';
   END IF;
-  IF (v_proposal.metadata->>'expires_at')::TIMESTAMPTZ < NOW() THEN
+  IF v_proposal.expires_at < NOW() THEN
+    UPDATE ownership_transfer_proposals SET status = 'expired', resolved_at = NOW() WHERE id = p_proposal_id;
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_EXPIRED' USING ERRCODE = 'P0001';
   END IF;
 
   v_org_id := v_proposal.scope_id;
-  v_old_owner_id := v_proposal.actor_id;
+  v_old_owner_id := v_proposal.from_user_id;
+
+  -- proposal を accepted に更新 (UNIQUE 制約で二重受諾防止)
+  UPDATE ownership_transfer_proposals
+    SET status = 'accepted', resolved_at = NOW()
+    WHERE id = p_proposal_id;
 
   -- role swap
   UPDATE user_profiles SET org_role = 'admin' WHERE id = v_old_owner_id;

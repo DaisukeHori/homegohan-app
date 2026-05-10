@@ -27,6 +27,42 @@ export async function POST(request: Request) {
 
   try {
     const supabaseAdmin = getSupabaseAdmin();
+
+    // P0 Critical Fix F12: 削除前に owner/representative チェック
+    // organizations の owner であれば削除不可 (譲渡または解散が必要)
+    const { data: ownedOrgs } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name')
+      .eq('owner_id', userId)
+      .limit(1);
+    if (ownedOrgs && ownedOrgs.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER',
+          message: '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。',
+          organization: ownedOrgs[0],
+        },
+        { status: 409 },
+      );
+    }
+
+    // family_groups の representative であれば削除不可 (譲渡または解散が必要)
+    const { data: representedFamilies } = await supabaseAdmin
+      .from('family_groups')
+      .select('id, name')
+      .eq('representative_id', userId)
+      .limit(1);
+    if (representedFamilies && representedFamilies.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+          message: '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。',
+          family_group: representedFamilies[0],
+        },
+        { status: 409 },
+      );
+    }
+
     // CASCADEされない/NO ACTION な参照を先に解消
     await supabaseAdmin.from('ai_content_logs').delete().eq('user_id', userId);
 

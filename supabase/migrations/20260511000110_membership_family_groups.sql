@@ -2,7 +2,7 @@
 -- (設計書 01-data-model.md §3.1)
 -- 番号: 設計書指定 000010 → 000110 にシフト
 
-CREATE TABLE family_groups (
+CREATE TABLE IF NOT EXISTS family_groups (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 60),
   representative_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
@@ -14,5 +14,5 @@ CREATE TABLE family_groups (
   dissolved_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_family_groups_representative ON family_groups(representative_id);
-CREATE INDEX idx_family_groups_status ON family_groups(status);
+CREATE INDEX IF NOT EXISTS idx_family_groups_representative ON family_groups(representative_id);
+CREATE INDEX IF NOT EXISTS idx_family_groups_status ON family_groups(status);

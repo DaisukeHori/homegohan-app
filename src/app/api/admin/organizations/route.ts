@@ -25,6 +25,9 @@ const OrgSearchSchema = z.object({
 const OrgCreateSchema = z.object({
   name: z.string().min(1, { message: 'name は必須です' }).max(200),
   plan: z.enum(['standard', 'premium', 'enterprise']).optional().default('standard'),
+  // P0 Critical Fix F11: owner_id は必須 (organizations.owner_id NOT NULL)
+  // 未指定時は呼び出し元 admin を owner にする
+  owner_id: z.string().uuid().optional(),
 });
 
 export async function GET(request: Request) {
@@ -138,13 +141,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, plan } = parseResult.data;
+  const { name, plan, owner_id } = parseResult.data;
   const supabase = await createClient();
+
+  // P0 Critical Fix F11: owner_id を INSERT に含める (NOT NULL 制約対応)
+  // 明示的に指定がない場合は呼び出し元 admin を owner とする
+  const effectiveOwnerId = owner_id ?? actor.id;
 
   const { data: org, error: insertError } = await supabase
     .from('organizations')
-    .insert({ name, plan })
-    .select('id, name, plan, created_at, updated_at')
+    .insert({ name, plan, owner_id: effectiveOwnerId })
+    .select('id, name, plan, owner_id, created_at, updated_at')
     .single();
 
   if (insertError || !org) {

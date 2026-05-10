@@ -2,7 +2,7 @@
 -- (設計書 01-data-model.md §3.3)
 -- 番号: 設計書指定 000012 → 000112 にシフト
 
-CREATE TABLE family_invites (
+CREATE TABLE IF NOT EXISTS family_invites (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   family_id UUID NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
@@ -22,8 +22,8 @@ CREATE TABLE family_invites (
   revoked_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
 );
 
-CREATE UNIQUE INDEX uniq_family_invites_pending
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_family_invites_pending
   ON family_invites(family_id, lower(email))
   WHERE status = 'pending';
 
-CREATE INDEX idx_family_invites_token ON family_invites(token);
+CREATE INDEX IF NOT EXISTS idx_family_invites_token ON family_invites(token);

@@ -4,7 +4,7 @@
 -- membership_audit テーブルを INSERT するため、RPC より前に apply が必要。
 -- → 000104 に前倒し (org_rls=000103 の直後、org_rpc=000105 の直前)
 
-CREATE TABLE membership_audit (
+CREATE TABLE IF NOT EXISTS membership_audit (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   scope TEXT NOT NULL CHECK (scope IN ('organization','family')),
   scope_id UUID NOT NULL,
@@ -25,19 +25,21 @@ CREATE TABLE membership_audit (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_membership_audit_scope ON membership_audit(scope, scope_id);
-CREATE INDEX idx_membership_audit_actor ON membership_audit(actor_id);
-CREATE INDEX idx_membership_audit_target ON membership_audit(target_user_id);
-CREATE INDEX idx_membership_audit_action ON membership_audit(action);
-CREATE INDEX idx_membership_audit_created_at ON membership_audit(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_membership_audit_scope ON membership_audit(scope, scope_id);
+CREATE INDEX IF NOT EXISTS idx_membership_audit_actor ON membership_audit(actor_id);
+CREATE INDEX IF NOT EXISTS idx_membership_audit_target ON membership_audit(target_user_id);
+CREATE INDEX IF NOT EXISTS idx_membership_audit_action ON membership_audit(action);
+CREATE INDEX IF NOT EXISTS idx_membership_audit_created_at ON membership_audit(created_at DESC);
 
 ALTER TABLE membership_audit ENABLE ROW LEVEL SECURITY;
 
 -- メンバ自身は自身に関するログのみ閲覧可
+DROP POLICY IF EXISTS membership_audit_select_self ON membership_audit;
 CREATE POLICY membership_audit_select_self ON membership_audit
   FOR SELECT USING (actor_id = auth.uid() OR target_user_id = auth.uid());
 
 -- admin/owner は自 scope の全ログ閲覧可
+DROP POLICY IF EXISTS membership_audit_select_admin ON membership_audit;
 CREATE POLICY membership_audit_select_admin ON membership_audit
   FOR SELECT USING (
     (scope = 'organization' AND EXISTS (
@@ -51,6 +53,7 @@ CREATE POLICY membership_audit_select_admin ON membership_audit
   );
 
 -- 運営管理者は全ログ閲覧可 (super_admin role)
+DROP POLICY IF EXISTS membership_audit_select_operator ON membership_audit;
 CREATE POLICY membership_audit_select_operator ON membership_audit
   FOR SELECT USING (
     EXISTS (

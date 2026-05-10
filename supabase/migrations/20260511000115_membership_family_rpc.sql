@@ -49,7 +49,8 @@ DECLARE v_caller_role family_role_enum; v_member family_members; v_count INT; v_
 BEGIN
   SELECT role INTO v_caller_role FROM family_members
     WHERE family_id = p_family_id AND user_id = auth.uid() AND status = 'active';
-  IF v_caller_role NOT IN ('representative','adult') THEN
+  -- ★ P0 Fix F8: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
     RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
   END IF;
 
@@ -83,7 +84,8 @@ BEGIN
   SELECT * INTO v_member FROM family_members WHERE id = p_member_id;
   SELECT role INTO v_caller_role FROM family_members
     WHERE family_id = v_member.family_id AND user_id = auth.uid() AND status = 'active';
-  IF v_caller_role NOT IN ('representative','adult') THEN
+  -- ★ P0 Fix F8: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
     RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
   END IF;
   IF v_member.user_id IS NOT NULL THEN
@@ -123,7 +125,8 @@ DECLARE
 BEGIN
   SELECT role INTO v_caller_role FROM family_members
     WHERE family_id = p_family_id AND user_id = auth.uid() AND status = 'active';
-  IF v_caller_role NOT IN ('representative','adult') THEN
+  -- ★ P0 Fix F8: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
     RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
   END IF;
 
@@ -274,7 +277,8 @@ DECLARE v_caller_role family_role_enum; v_target family_members;
 BEGIN
   SELECT role INTO v_caller_role FROM family_members
     WHERE family_id = p_family_id AND user_id = auth.uid() AND status = 'active';
-  IF v_caller_role NOT IN ('representative','adult') THEN
+  -- ★ P0 Fix F8: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
     RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
   END IF;
 
@@ -342,6 +346,7 @@ REVOKE EXECUTE ON FUNCTION public.leave_family FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.leave_family TO authenticated;
 
 -- 代表者譲渡 propose
+-- P0 Critical Fix F8+F9: NULL ロールバイパス防止 + ownership_transfer_proposals テーブル経由
 CREATE OR REPLACE FUNCTION public.propose_family_representative_transfer(
   p_family_id UUID,
   p_to_user_id UUID
@@ -351,8 +356,9 @@ DECLARE v_caller_role family_role_enum; v_target_role family_role_enum; v_propos
 BEGIN
   SELECT role INTO v_caller_role FROM family_members
     WHERE family_id = p_family_id AND user_id = auth.uid() AND status = 'active';
-  IF v_caller_role <> 'representative' THEN
-    RAISE EXCEPTION 'IS_FAMILY_REPRESENTATIVE' USING ERRCODE = 'P0001';  -- caller must be representative
+  -- ★ P0 Fix F8: IS NULL チェックを明示 (NULL ロールバイパス防止)
+  IF v_caller_role IS NULL OR v_caller_role <> 'representative' THEN
+    RAISE EXCEPTION 'NOT_FAMILY_REPRESENTATIVE' USING ERRCODE = 'P0001';
   END IF;
 
   SELECT role INTO v_target_role FROM family_members
@@ -364,11 +370,20 @@ BEGIN
     RAISE EXCEPTION 'CANNOT_TRANSFER_TO_CHILD' USING ERRCODE = 'P0001';
   END IF;
 
-  v_proposal_id := gen_random_uuid();
-  INSERT INTO membership_audit (id, scope, scope_id, action, actor_id, target_user_id, metadata)
-  VALUES (v_proposal_id, 'family', p_family_id, 'representative_transfer_proposed',
+  -- ★ P0 Fix F9: ownership_transfer_proposals テーブルで二重実行防止
+  -- 既存 pending proposal を expired に更新してから新規作成
+  UPDATE ownership_transfer_proposals
+    SET status = 'expired', resolved_at = NOW()
+    WHERE scope = 'family' AND scope_id = p_family_id AND status = 'pending';
+
+  INSERT INTO ownership_transfer_proposals (scope, scope_id, from_user_id, to_user_id)
+  VALUES ('family', p_family_id, auth.uid(), p_to_user_id)
+  RETURNING id INTO v_proposal_id;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES ('family', p_family_id, 'representative_transfer_proposed',
           auth.uid(), p_to_user_id,
-          jsonb_build_object('proposal_id', v_proposal_id, 'expires_at', NOW() + INTERVAL '7 days'));
+          jsonb_build_object('proposal_id', v_proposal_id));
 
   RETURN v_proposal_id;
 END $$;
@@ -377,22 +392,29 @@ REVOKE EXECUTE ON FUNCTION public.propose_family_representative_transfer FROM PU
 GRANT EXECUTE ON FUNCTION public.propose_family_representative_transfer TO authenticated;
 
 -- 代表者譲渡 accept
+-- P0 Critical Fix F9: ownership_transfer_proposals テーブル経由で参照 (二重実行防止)
 CREATE OR REPLACE FUNCTION public.accept_family_representative_transfer(p_proposal_id UUID)
 RETURNS family_groups
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_proposal membership_audit; v_family_id UUID; v_old_rep_id UUID;
+DECLARE v_proposal ownership_transfer_proposals; v_family_id UUID; v_old_rep_id UUID;
 BEGIN
-  SELECT * INTO v_proposal FROM membership_audit
-    WHERE id = p_proposal_id AND action = 'representative_transfer_proposed' AND target_user_id = auth.uid();
+  SELECT * INTO v_proposal FROM ownership_transfer_proposals
+    WHERE id = p_proposal_id AND status = 'pending' AND to_user_id = auth.uid();
   IF NOT FOUND THEN
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_NOT_FOUND' USING ERRCODE = 'P0001';
   END IF;
-  IF (v_proposal.metadata->>'expires_at')::TIMESTAMPTZ < NOW() THEN
+  IF v_proposal.expires_at < NOW() THEN
+    UPDATE ownership_transfer_proposals SET status = 'expired', resolved_at = NOW() WHERE id = p_proposal_id;
     RAISE EXCEPTION 'TRANSFER_PROPOSAL_EXPIRED' USING ERRCODE = 'P0001';
   END IF;
 
   v_family_id := v_proposal.scope_id;
-  v_old_rep_id := v_proposal.actor_id;
+  v_old_rep_id := v_proposal.from_user_id;
+
+  -- proposal を accepted に更新 (UNIQUE 制約で二重受諾防止)
+  UPDATE ownership_transfer_proposals
+    SET status = 'accepted', resolved_at = NOW()
+    WHERE id = p_proposal_id;
 
   -- role swap
   UPDATE family_members SET role = 'adult' WHERE family_id = v_family_id AND user_id = v_old_rep_id AND status = 'active';
