@@ -11,7 +11,13 @@ export const EmailEnvelopeSchema = z.object({
 });
 export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;
 
-const resend = new Resend(process.env.RESEND_API_KEY ?? '');
+let resendInstance: Resend | null = null;
+function getResend(): Resend {
+  if (!resendInstance) {
+    resendInstance = new Resend(process.env.RESEND_API_KEY ?? 're_dev_placeholder');
+  }
+  return resendInstance;
+}
 
 export async function sendEmail(envelope: EmailEnvelope) {
   const v = EmailEnvelopeSchema.parse(envelope);
@@ -19,7 +25,7 @@ export async function sendEmail(envelope: EmailEnvelope) {
     console.warn('[email] RESEND_API_KEY 未設定、送信スキップ', { to: v.to, subject: v.subject });
     return { id: 'dev-no-send', skipped: true };
   }
-  const result = await resend.emails.send({
+  const result = await getResend().emails.send({
     from: v.from,
     to: v.to,
     subject: v.subject,
