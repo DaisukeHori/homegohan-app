@@ -74,7 +74,8 @@ export async function POST(request: Request) {
     await supabaseAdmin.from('recipe_flags').update({ reporter_id: null }).eq('reporter_id', userId);
     await supabaseAdmin.from('recipe_flags').update({ reviewed_by: null }).eq('reviewed_by', userId);
     await supabaseAdmin.from('organization_challenges').update({ created_by: null }).eq('created_by', userId);
-    await supabaseAdmin.from('organization_invites').update({ created_by: null }).eq('created_by', userId);
+    // Round 3 W-NEW-2: created_by → invited_by に統一 (organization_invites の正式カラム名)
+    await supabaseAdmin.from('organization_invites').update({ invited_by: null }).eq('invited_by', userId);
     await supabaseAdmin.from('system_settings').update({ updated_by: null }).eq('updated_by', userId);
     await supabaseAdmin.from('departments').update({ manager_id: null }).eq('manager_id', userId);
 
