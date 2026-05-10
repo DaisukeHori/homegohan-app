@@ -29,7 +29,7 @@ family/09 ハンズオンチュートリアル (90 秒オンボーディング) 
 App Store Connect → My Apps → homegohan → App Store → 該当 Version → "App Review Information" → "Notes" 欄に貼り付け。
 
 ```
-=== homegohan v<VERSION> Review Notes ===
+=== ほめゴハン v<VERSION> Review Notes ===
 
 == Onboarding Tutorial (90 seconds) — IMPORTANT FOR REVIEWERS ==
 
@@ -100,11 +100,11 @@ Google Play Console → アプリ → リリース → 製品版リリース →
 App Store の本文と概ね同一だが、Google Play 向けに以下調整:
 
 ```
-=== homegohan v<VERSION> Reviewer Notes (Google Play) ===
+=== ほめゴハン v<VERSION> Reviewer Notes (Google Play) ===
 
 [App Store と同じ本文 §2 を貼り付け、ただし以下を冒頭に追記]
 
-This app is the Android port of homegohan (iOS), built with React
+This app is the Android port of ほめゴハン (homegohan) (iOS), built with React
 Native + Expo. The native module list is identical to iOS.
 
 [残り §2 と同じ]
