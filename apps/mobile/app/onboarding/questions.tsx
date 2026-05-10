@@ -269,18 +269,6 @@ const QUESTIONS: Question[] = [
     ],
   },
   {
-    id: "exercise_duration",
-    text: "1回の運動時間は？",
-    type: "choice",
-    showIf: (answers) => !answers.exercise_types?.includes("none"),
-    options: [
-      { label: "⏱️ 30分未満", value: "30" },
-      { label: "⏱️ 30分〜1時間", value: "60" },
-      { label: "⏱️ 1〜2時間", value: "90" },
-      { label: "⏱️ 2時間以上", value: "120" },
-    ],
-  },
-  {
     id: "work_style",
     text: "普段の仕事・活動スタイルは？",
     type: "choice",
@@ -567,7 +555,8 @@ function transformAnswersToProfile(ans: Record<string, any>) {
   if (ans.exercise_types?.length && !ans.exercise_types.includes("none")) profile.exerciseTypes = ans.exercise_types;
   if (ans.exercise_frequency) profile.exerciseFrequency = parseInt(ans.exercise_frequency);
   if (ans.exercise_intensity) profile.exerciseIntensity = ans.exercise_intensity;
-  if (ans.exercise_duration) profile.exerciseDurationPerSession = parseInt(ans.exercise_duration);
+  // exercise_duration は質問削除のため中央値 60 分を固定送信
+  profile.exerciseDurationPerSession = 60;
   if (ans.work_style) profile.workStyle = ans.work_style;
   if (ans.health_conditions?.length && !ans.health_conditions.includes("none")) profile.healthConditions = ans.health_conditions;
   if (ans.medications?.length && !ans.medications.includes("none")) profile.medications = ans.medications;
@@ -846,7 +835,8 @@ export default function OnboardingQuestions() {
       }
       if (ans.exercise_frequency) updates.exercise_frequency = parseInt(ans.exercise_frequency);
       if (ans.exercise_intensity) updates.exercise_intensity = ans.exercise_intensity;
-      if (ans.exercise_duration) updates.exercise_duration_per_session = parseInt(ans.exercise_duration);
+      // exercise_duration は質問削除のため中央値 60 分を固定送信
+      updates.exercise_duration_per_session = 60;
       if (ans.work_style) updates.work_style = ans.work_style;
       if (ans.health_conditions && !ans.health_conditions.includes("none")) {
         updates.health_conditions = ans.health_conditions;
