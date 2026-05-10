@@ -64,7 +64,21 @@ export function useTourOverlayLogic(
       return;
     }
     const merged = mergeRects(rects);
-    setTargetRect(merged);
+    // 値が変わっていない場合は state 更新をスキップして不要な再レンダーを防ぐ。
+    // 100ms ごとの scroll recalc が毎回新しいオブジェクトを生成すると、
+    // onAutoAdvance の参照が変わりタイマーがリセットされて自動進行が止まる問題を防ぐ。
+    setTargetRect((prev) => {
+      if (
+        prev !== null &&
+        prev.x === merged.x &&
+        prev.y === merged.y &&
+        prev.width === merged.width &&
+        prev.height === merged.height
+      ) {
+        return prev;
+      }
+      return merged;
+    });
   }, [targetTestId, targetTestIds]);
 
   useEffect(() => {

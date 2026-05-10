@@ -103,7 +103,7 @@ export default function HandsonTourPhotoPage() {
       supabase
         .from('user_profiles')
         .select('nickname, target_kcal_per_day')
-        .eq('user_id', user.id)
+        .eq('id', user.id)
         .single()
         .then(({ data }) => {
           if (data) {
@@ -141,14 +141,18 @@ export default function HandsonTourPhotoPage() {
     if (userId) {
       const now = new Date().toISOString();
       const dwell_ms = Date.now() - mountTimeRef.current;
-      fireAnalytics('handson_tour_step_completed', {
-        user_id: userId,
-        timestamp: now,
-        platform: 'web' as const,
-        app_version: '1.0.0',
-        step: 1,
-        dwell_ms,
-      });
+      try {
+        fireAnalytics('handson_tour_step_completed', {
+          user_id: userId,
+          timestamp: now,
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 1,
+          dwell_ms,
+        });
+      } catch {
+        // analytics エラーは無視
+      }
     }
     try {
       await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
