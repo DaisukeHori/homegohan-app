@@ -20,7 +20,7 @@ import {
   injectSession,
 } from '../fixtures/fresh-user';
 import { createClient } from '@supabase/supabase-js';
-import { getUserProfile } from '../helpers/membership';
+import { getUserProfile, setupUserProfile } from '../helpers/membership';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
 
@@ -69,6 +69,8 @@ freshOrgTest.describe('org 招待 — 既存ユーザ', () => {
 
     // 招待先ユーザー作成 (既存ユーザー)
     const invitee = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-invite-existing' });
+    // middleware の onboarding チェックを回避するために user_profiles を作成しておく
+    await setupUserProfile({ userId: invitee.id });
 
     try {
       // 1. owner が POST /api/org/invites で招待発行
@@ -164,6 +166,8 @@ freshOrgTest.describe('org 招待 — 既存ユーザ', () => {
 
     // 招待先ユーザー作成
     const invitee = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-invite-loggedin' });
+    // middleware の onboarding チェックを回避するために user_profiles を作成しておく
+    await setupUserProfile({ userId: invitee.id });
 
     try {
       // 1. owner が招待発行

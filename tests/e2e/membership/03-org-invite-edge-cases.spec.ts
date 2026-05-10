@@ -17,6 +17,7 @@ import {
   cleanup,
   extractInviteUrl,
   normalizeInviteUrl,
+  setupUserProfile,
 } from '../helpers/membership';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
@@ -75,6 +76,9 @@ test.describe('org 招待 — エッジケース', () => {
 
     const alice = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-alice-invitee' });
     const bob = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-bob-wrong' });
+    // middleware の onboarding チェックを回避するために user_profiles を作成
+    await setupUserProfile({ userId: alice.id });
+    await setupUserProfile({ userId: bob.id });
 
     try {
       const { inviteUrl } = await postInvite(ownerPage, alice.email);
@@ -115,6 +119,7 @@ test.describe('org 招待 — エッジケース', () => {
     const supabaseAdmin = getAdminClient();
 
     const invitee = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-expired-invitee' });
+    // α-7 は未認証アクセスで期限切れ表示を確認 (user_profiles 不要)
 
     try {
       const { inviteUrl, token } = await postInvite(ownerPage, invitee.email);
@@ -173,6 +178,8 @@ test.describe('org 招待 — エッジケース', () => {
     const supabaseAdmin = getAdminClient();
 
     const invitee = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-accepted-invitee' });
+    // middleware の onboarding チェックを回避するために user_profiles を作成
+    await setupUserProfile({ userId: invitee.id });
 
     try {
       const { inviteUrl, token } = await postInvite(ownerPage, invitee.email);
@@ -213,6 +220,8 @@ test.describe('org 招待 — エッジケース', () => {
     const supabaseAdmin = getAdminClient();
 
     const invitee = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-reject-invitee' });
+    // middleware の onboarding チェックを回避するために user_profiles を作成
+    await setupUserProfile({ userId: invitee.id });
 
     try {
       const { inviteUrl, token } = await postInvite(ownerPage, invitee.email);
@@ -312,6 +321,8 @@ test.describe('org 招待 — エッジケース', () => {
     const supabaseAdmin = getAdminClient();
 
     const invitee = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-revoke-invitee' });
+    // middleware の onboarding チェックを回避するために user_profiles を作成
+    await setupUserProfile({ userId: invitee.id });
 
     try {
       const { inviteUrl, token } = await postInvite(ownerPage, invitee.email);

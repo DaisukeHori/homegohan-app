@@ -11,6 +11,7 @@ import { createClient } from '@supabase/supabase-js';
 import {
   getUserProfile,
   setUserOrgRole,
+  setupUserProfile,
 } from '../helpers/membership';
 import * as path from 'path';
 import { config as dotenvConfig } from 'dotenv';
@@ -45,6 +46,8 @@ test.describe('org メンバ管理', () => {
 
     // member として組織に追加
     const member = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-remove-member' });
+    // user_profiles が存在しないと setUserOrgRole の PATCH が 0 行マッチになるため先に作成
+    await setupUserProfile({ userId: member.id });
 
     try {
       // member を org に追加 (service_role で直接 UPSERT)
@@ -79,6 +82,8 @@ test.describe('org メンバ管理', () => {
     const supabaseAdmin = getAdminClient();
 
     const member = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-leave-member' });
+    // user_profiles が存在しないと setUserOrgRole の PATCH が 0 行マッチになるため先に作成
+    await setupUserProfile({ userId: member.id });
 
     try {
       // member を org に追加
@@ -120,6 +125,8 @@ test.describe('org メンバ管理', () => {
 
     // Bob: admin として org に追加 (譲渡先)
     const bob = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-transfer-target' });
+    // user_profiles が存在しないと setUserOrgRole の PATCH が 0 行マッチになるため先に作成
+    await setupUserProfile({ userId: bob.id });
 
     try {
       // Bob を admin として追加
@@ -177,6 +184,8 @@ test.describe('org メンバ管理', () => {
     const supabaseAdmin = getAdminClient();
 
     const bob = await createFreshUser(supabaseAdmin, { emailPrefix: 'e2e-decline-target' });
+    // user_profiles が存在しないと setUserOrgRole の PATCH が 0 行マッチになるため先に作成
+    await setupUserProfile({ userId: bob.id });
 
     try {
       await setUserOrgRole({ userId: bob.id, orgId, orgRole: 'admin' });

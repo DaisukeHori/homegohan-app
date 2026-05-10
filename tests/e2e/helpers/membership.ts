@@ -259,6 +259,52 @@ export async function acceptOrgInvite(options: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// setupUserProfile
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * service_role で user_profiles を UPSERT して onboarding 完了状態にする。
+ * middleware が onboarding_completed_at を確認するため、
+ * テスト用 invitee は /invite/{token} にアクセスする前にこのヘルパーで
+ * プロフィールを作成する必要がある。
+ */
+export async function setupUserProfile(options: {
+  userId: string;
+  nickname?: string;
+  organizationId?: string | null;
+  orgRole?: string | null;
+}): Promise<void> {
+  const { supabaseUrl, serviceRoleKey } = getEnv();
+
+  const body = {
+    id: options.userId,
+    nickname: options.nickname ?? 'E2E Invitee',
+    age_group: '30s',
+    gender: 'unspecified',
+    roles: ['user'],
+    onboarding_completed_at: new Date().toISOString(),
+    ...(options.organizationId !== undefined ? { organization_id: options.organizationId } : {}),
+    ...(options.orgRole !== undefined ? { org_role: options.orgRole } : {}),
+  };
+
+  const resp = await fetch(`${supabaseUrl}/rest/v1/user_profiles`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`[setupUserProfile] UPSERT 失敗 (${resp.status}): ${text.substring(0, 300)}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // getUserProfile
 // ─────────────────────────────────────────────────────────────────────────────
 
