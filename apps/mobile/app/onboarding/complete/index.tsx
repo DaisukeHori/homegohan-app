@@ -371,7 +371,7 @@ export default function OnboardingComplete() {
       {/* ホームへ CTA */}
       <Pressable
         testID="onboarding-complete-cta-button"
-        onPress={() => router.replace("/(tabs)/home")}
+        onPress={() => router.replace("/handson-tour")}
         style={({ pressed }) => [
           styles.ctaButton,
           pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] },
