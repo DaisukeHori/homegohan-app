@@ -1,3 +1,18 @@
+> ⚠️ **重要**: 本ディレクトリは部分的に [`docs/design/membership/`](../membership/) によって supersede されました (2026-05-10)。
+>
+> ### membership/ で canonical となった範囲 (本ドキュメントの記述は参考用)
+> - 招待発行・受諾・拒否フロー
+> - メンバ管理 (追加・除名・脱退)
+> - 役割定義 (org: owner/admin/member)
+> - Owner 譲渡フロー
+> - 閲覧権限 (share_meals/share_health/share_menu — 該当する場合)
+> - 運営強制操作
+>
+> ### 本ドキュメントが引き続き有効な範囲
+> - データモデルの core 構造 (テーブル基本定義、関連カラム)
+> - plan_key / 課金関連 (operator/ 設計と整合)
+> - その他の運用・UI ガイドライン (招待関連以外: ライセンス管理、産業医機能、HR Webhook、チャレンジ、SSO/SAML 等)
+
 # org/ 組織管理ドメイン 開発指針
 
 要件定義 `docs/requirements/02-organization-management.md` の詳細設計。

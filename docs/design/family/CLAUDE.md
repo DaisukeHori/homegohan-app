@@ -1,3 +1,19 @@
+> ⚠️ **重要**: 本ディレクトリは部分的に [`docs/design/membership/`](../membership/) によって supersede されました (2026-05-10)。
+>
+> ### membership/ で canonical となった範囲 (本ドキュメントの記述は参考用)
+> - 招待発行・受諾・拒否フロー
+> - メンバ管理 (追加・除名・脱退)
+> - 役割定義 (family: representative/adult/child)
+> - 代表譲渡フロー
+> - ペースト機能 (家族間レコード共有)
+> - 閲覧権限 (share_meals/share_health/share_menu)
+> - 運営強制操作
+>
+> ### 本ドキュメントが引き続き有効な範囲
+> - データモデルの core 構造 (テーブル基本定義、関連カラム)
+> - plan_key / member_limit / 課金関連 (operator/ 設計と整合)
+> - その他の運用・UI ガイドライン (招待関連以外: 献立リクエスト、買い物リスト、子供メンバー管理、18 歳移行、グループ分割等)
+
 # family/ 家族管理ドメイン 開発指針
 
 要件定義 `docs/requirements/01-family-management.md` の詳細設計。
