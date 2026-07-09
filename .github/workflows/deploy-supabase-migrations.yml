@@ -53,6 +53,51 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
+      - name: Detect migration drift
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          npx --yes supabase@2.62.10 migration list --linked | tee /tmp/migration_list.txt
+          python3 - <<'PY'
+          import re
+          import sys
+
+          with open("/tmp/migration_list.txt", encoding="utf-8") as fh:
+              lines = fh.readlines()
+
+          drift = []
+          for raw_line in lines:
+              line = raw_line.rstrip("\n")
+              # supabase CLI の pretty 出力は `|Local|Remote|Time (UTC)|` 形式で
+              # 各行が "|" で始まり "|" で終わる。先頭/末尾のちょうど1個だけを
+              # 取り除いてから分割しないと、空セル(local-only/remote-only 行)の
+              # 位置がずれて誤検知・見逃しの原因になる。
+              if not (line.startswith("|") and line.endswith("|")):
+                  continue
+              inner = line[1:-1]
+              cols = [c.strip() for c in inner.split("|")]
+              if len(cols) < 2:
+                  continue
+              local, remote = cols[0], cols[1]
+              # ヘッダー行・区切り行 (LOCAL/REMOTE 文字列や ---- ) は除外し、
+              # migration バージョン (数値) の行のみを対象にする
+              if not (re.fullmatch(r"[0-9]*", local) and re.fullmatch(r"[0-9]*", remote)):
+                  continue
+              if local == "" and remote == "":
+                  continue
+              # 片方のみ埋まっている行 = remote-only または local-only のドリフト
+              if (local == "") != (remote == ""):
+                  drift.append(line)
+
+          if drift:
+              print("::error::Migration drift detected. See #1064.", file=sys.stderr)
+              for line in drift:
+                  print(line, file=sys.stderr)
+              sys.exit(1)
+          PY
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
       - name: Apply migrations
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
