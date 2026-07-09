@@ -1779,28 +1779,33 @@ export default function WeeklyMenuPage() {
 
   // Pantry & Shopping (#1031: pantryStore/shoppingStore に一本化。page は selector 購読のみ)
   const fridgeItems = usePantryStore((s) => s.fridgeItems);
-  const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
-  const [activeShoppingList, setActiveShoppingList] = useState<ShoppingList | null>(null);
-  const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
-  const [shoppingListProgress, setShoppingListProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
-  const [shoppingListRequestId, setShoppingListRequestId] = useState<string | null>(null);
-  const [shoppingListTotalServings, setShoppingListTotalServings] = useState<number | null>(null);
+  const shoppingList = useShoppingStore((s) => s.shoppingList);
+  // setShoppingList はストアの素の setter (関数型更新非対応)。
+  // prev => の呼び出し箇所は getState().shoppingList を都度読んで機械展開する (#1031 §2)。
+  const setShoppingList = useShoppingStore((s) => s.setShoppingList);
+  const activeShoppingList = useShoppingStore((s) => s.activeShoppingList);
+  const setActiveShoppingList = useShoppingStore((s) => s.setActiveShoppingList);
+  const isRegeneratingShoppingList = useShoppingStore((s) => s.isRegeneratingShoppingList);
+  const setIsRegeneratingShoppingList = useShoppingStore((s) => s.setIsRegeneratingShoppingList);
+  const shoppingListProgress = useShoppingStore((s) => s.shoppingListProgress);
+  const setShoppingListProgress = useShoppingStore((s) => s.setShoppingListProgress);
+  const shoppingListRequestId = useShoppingStore((s) => s.shoppingListRequestId);
+  const setShoppingListRequestId = useShoppingStore((s) => s.setShoppingListRequestId);
+  const shoppingListTotalServings = useShoppingStore((s) => s.shoppingListTotalServings);
+  const setShoppingListTotalServings = useShoppingStore((s) => s.setShoppingListTotalServings);
 
-  // 曜日別人数設定 (servingsConfig → Phase B-3 servingsConfigStore)
-  const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
-  const [isLoadingServingsConfig, setIsLoadingServingsConfig] = useState(false);
+  // 曜日別人数設定 (#1031: servingsConfigStore に一本化)
+  const servingsConfig = useServingsConfigStore((s) => s.servingsConfig);
+  const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
+  const setIsLoadingServingsConfig = useServingsConfigStore((s) => s.setIsLoadingServingsConfig);
 
   // feedbackChannelRef (nutrition 系は nutritionReducer 管理)
   // RealtimeChannel か、ポーリング用のカスタムクリーンアップオブジェクトのどちらかを保持する
   const feedbackChannelRef = useRef<RealtimeChannel | { unsubscribe: () => void } | null>(null);
 
-  // 買い物リスト範囲選択 (Phase B-3 shoppingStore 予定)
-  const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
-    type: 'week',
-    todayMeals: ['breakfast', 'lunch', 'dinner'],
-    daysCount: 3,
-  });
-  const [shoppingRangeStep, setShoppingRangeStep] = useState<'range' | 'servings'>('range');
+  // 買い物リスト範囲選択 (#1031: shoppingStore に一本化)
+  const shoppingRange = useShoppingStore((s) => s.shoppingRange);
+  const setShoppingRangeStep = useShoppingStore((s) => s.setShoppingRangeStep);
 
   // スーパーの動線に合わせたカテゴリ順序
   const CATEGORY_ORDER = [
@@ -2978,8 +2983,8 @@ export default function WeeklyMenuPage() {
       });
       if (res.ok) {
         const { item } = await res.json();
-        setShoppingList(prev => [...prev, item]);
-        setNewShoppingName(""); 
+        setShoppingList([...useShoppingStore.getState().shoppingList, item]);
+        setNewShoppingName("");
         setNewShoppingAmount(""); 
         setNewShoppingCategory("食材");
         setActiveModal('shopping');
@@ -2990,24 +2995,24 @@ export default function WeeklyMenuPage() {
   // チェックボックスのトグル（楽観的更新）
   const toggleShoppingItem = (id: string, currentChecked: boolean) => {
     // 即座にUIを更新
-    setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
-    
+    setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
+
     // 裏でAPI呼び出し（永続化）- レスポンスを待たない
-    fetch(`/api/shopping-list/${id}`, { 
-        method: 'PATCH', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ isChecked: !currentChecked }) 
-    }).catch(e => { 
+    fetch(`/api/shopping-list/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isChecked: !currentChecked })
+    }).catch(e => {
       console.error('Failed to save check state:', e);
       // エラー時はロールバック
-      setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i)); 
+      setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i));
     });
   };
 
   const deleteShoppingItem = async (id: string) => {
     // 楽観的UI更新
-    const previousList = shoppingList;
-    setShoppingList(prev => prev.filter(i => i.id !== id));
+    const previousList = useShoppingStore.getState().shoppingList;
+    setShoppingList(previousList.filter(i => i.id !== id));
     try {
       const res = await fetch(`/api/shopping-list/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
@@ -3378,12 +3383,12 @@ export default function WeeklyMenuPage() {
     const newQuantity = item.quantityVariants[nextIndex]?.display || item.quantity;
     
     // 即座にUIを更新（楽観的更新）
-    setShoppingList(prev => prev.map(i => 
-      i.id === itemId 
+    setShoppingList(useShoppingStore.getState().shoppingList.map(i =>
+      i.id === itemId
         ? { ...i, selectedVariantIndex: nextIndex, quantity: newQuantity }
         : i
     ));
-    
+
     // 裏でAPIを呼び出し（永続化）- レスポンスを待たない
     fetch(`/api/shopping-list/${itemId}`, {
       method: 'PATCH',
@@ -3392,8 +3397,8 @@ export default function WeeklyMenuPage() {
     }).catch(e => {
       console.error('Failed to save variant change:', e);
       // エラー時はロールバック
-      setShoppingList(prev => prev.map(i => 
-        i.id === itemId 
+      setShoppingList(useShoppingStore.getState().shoppingList.map(i =>
+        i.id === itemId
           ? { ...i, selectedVariantIndex: item.selectedVariantIndex, quantity: item.quantity }
           : i
       ));
@@ -3470,7 +3475,7 @@ export default function WeeklyMenuPage() {
       });
       if (res.ok) {
         const { items } = await res.json();
-        setShoppingList(prev => [...prev, ...items]);
+        setShoppingList([...useShoppingStore.getState().shoppingList, ...items]);
         setActiveModal(null);
         setSuccessMessage({ 
           title: '買い物リストに追加しました ✓', 
