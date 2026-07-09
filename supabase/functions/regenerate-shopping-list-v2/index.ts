@@ -25,6 +25,16 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
+// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないようここで付け直す。
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    headers.set(key, value);
+  }
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 // ============================================
 // 型定義
 // ============================================
@@ -619,11 +629,6 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // 認証必須（署名検証されたユーザーJWTのみ許可、body.userIdは信用しない）
-  const authResult = await requireAuth(req);
-  if (authResult instanceof Response) return authResult;
-  const authenticatedUserId = authResult.userId;
-
   try {
     const { requestId, userId: bodyUserId, startDate, endDate, servingsConfig } = await req.json();
 
@@ -637,17 +642,44 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (bodyUserId && bodyUserId !== authenticatedUserId) {
-      return new Response(
-        JSON.stringify({ error: "userId does not match authenticated user" }),
-        {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
+    // 認証: 二系統を許可する
+    // 1) 信頼された内部呼び出し（src/app/api/shopping-list/regenerate/route.ts が
+    //    サーバー側で getUser 済みのうえ SUPABASE_SERVICE_ROLE_KEY を Bearer に付けて呼ぶ）
+    //    → body.userId をそのまま採用（必須）
+    // 2) それ以外はユーザーJWTを requireAuth で検証し、authResult.userId を採用
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const isTrustedInternalCall = serviceRoleKey.length > 0 && accessToken === serviceRoleKey;
 
-    const userId = authenticatedUserId;
+    let userId: string;
+
+    if (isTrustedInternalCall) {
+      if (!bodyUserId || typeof bodyUserId !== "string") {
+        return new Response(
+          JSON.stringify({ error: "userId is required for service-role calls" }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      userId = bodyUserId;
+    } else {
+      const authResult = await requireAuth(req);
+      if (authResult instanceof Response) return withCors(authResult);
+
+      if (bodyUserId && bodyUserId !== authResult.userId) {
+        return new Response(
+          JSON.stringify({ error: "userId does not match authenticated user" }),
+          {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      userId = authResult.userId;
+    }
 
     // Service Role Keyでクライアント作成（RLSバイパス）
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -656,7 +688,9 @@ Deno.serve(async (req: Request) => {
 
     // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）
     const backgroundTask = processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);
+    // @ts-ignore EdgeRuntime
     if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      // @ts-ignore EdgeRuntime
       EdgeRuntime.waitUntil(backgroundTask);
     }
 

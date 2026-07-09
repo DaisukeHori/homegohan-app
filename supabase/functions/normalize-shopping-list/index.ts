@@ -20,6 +20,16 @@ import { requireAuth } from "../_shared/auth.ts";
 // 過大入力によるLLMコスト濫用/DoS防止のための上限
 const MAX_INGREDIENTS = 500;
 
+// 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
+// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないようここで付け直す。
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    headers.set(key, value);
+  }
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 // ============================================
 // 型定義
 // ============================================
@@ -281,7 +291,7 @@ Deno.serve(async (req: Request) => {
 
   // 認証必須
   const authResult = await requireAuth(req);
-  if (authResult instanceof Response) return authResult;
+  if (authResult instanceof Response) return withCors(authResult);
 
   const requestId = generateRequestId();
   const executionId = generateExecutionId();

@@ -75,9 +75,14 @@ Deno.serve(async (req) => {
     });
   }
 
-  // cron/内部専用: service role key または CRON_SECRET のみ許可
-  const authError = requireServiceRole(req);
-  if (authError) return authError;
+  // cron/内部専用: service role key の完全一致、または CRON_SECRET/SERVICE_ROLE_SECRET のいずれかを満たせば許可
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const isServiceRoleKey = SUPABASE_SERVICE_ROLE_KEY.length > 0 && bearerToken === SUPABASE_SERVICE_ROLE_KEY;
+  if (!isServiceRoleKey) {
+    const authError = requireServiceRole(req);
+    if (authError) return authError;
+  }
 
   try {
     const body = await req.json().catch(() => ({}));

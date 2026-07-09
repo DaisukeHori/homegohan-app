@@ -8,8 +8,14 @@ import { DATASET_EMBEDDING_DIMENSIONS, DATASET_EMBEDDING_MODEL } from "../shared
 import { buildProgressSnapshot } from "../shared/progress-reporting.mjs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://flmeolcfutuwwbjmzyoz.supabase.co";
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU";
+// regenerate-embeddings は service role key（または CRON_SECRET/SERVICE_ROLE_SECRET）以外を拒否するため、
+// anon key ではなく service role key を使用する。
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+if (!SERVICE_ROLE_KEY) {
+  console.error("❌ SUPABASE_SERVICE_ROLE_KEY environment variable is required");
+  process.exit(1);
+}
 
 const BATCH_LIMIT = 100;
 const RETRY_DELAY = 5000; // リトライ間隔（5秒）
@@ -140,7 +146,7 @@ async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDIN
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${ANON_KEY}`,
+          "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
         },
         body: JSON.stringify({
           table: tableName,
