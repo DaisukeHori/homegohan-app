@@ -13,6 +13,7 @@ import type {
 } from '@/types/domain';
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
@@ -108,6 +109,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     _userId = user.id;
+
+    const rateLimitResult = await checkRateLimit(user.id, 'generation');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     const targetSlots = body?.resolveExistingMeals
       ? await resolveExistingTargetSlots({

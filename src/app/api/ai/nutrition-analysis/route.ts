@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 /**
  * 栄養分析API
@@ -24,6 +25,13 @@ export async function GET(request: Request) {
   const period = searchParams.get('period') || 'today';
   const includeAdvice = searchParams.get('includeAdvice') === 'true';
   const includeSuggestion = searchParams.get('includeSuggestion') === 'true';
+
+  // #1022 このGETはincludeAdvice/includeSuggestionがtrueの場合のみAIを呼ぶ安価なDB読み取りエンドポイント。
+  // フロントの頻繁なポーリングで正常系が壊れないよう、AIを実際に呼ぶ場合のみレート制限する。
+  if (includeAdvice || includeSuggestion) {
+    const rateLimitResult = await checkRateLimit(user.id, 'analysis');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
+  }
 
   try {
     // 1. ユーザープロフィールと栄養目標を取得
@@ -321,6 +329,9 @@ export async function POST(request: Request) {
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const rateLimitResult = await checkRateLimit(user.id, 'generation');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     const body = await request.json();

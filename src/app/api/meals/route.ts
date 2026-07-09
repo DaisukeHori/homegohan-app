@@ -6,6 +6,8 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../lib/meal-image-jobs';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { createLogger } from '@/lib/db-logger';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -168,22 +170,53 @@ export async function POST(request: Request) {
 
     if (mealError) throw mealError;
 
-    await enqueueMealImageJobs({
-      supabase,
-      plannedMealId: meal.id,
-      userId: user.id,
-      triggerSource,
-      jobSeeds: dishImagePayload.jobs,
-      requestId,
-    });
+    let imageGenerationThrottled = false;
     if (dishImagePayload.jobs.length > 0) {
-      await triggerMealImageJobProcessing({
-        plannedMealId: meal.id,
-        limit: dishImagePayload.jobs.length,
-      });
+      // #1022 画像副作用（enqueue + trigger）は meal 本体の成否から独立させる。
+      // - rate 超過時は enqueue 自体もスキップし、孤児 pending ジョブ（掃かれず永久欠落する行）を作らない。
+      // - checkRateLimit が例外（Upstash 到達不能等）を投げても、ここではローカルで握りつぶし
+      //   画像生成をスキップするだけに留める。meal 作成自体の成否（200）には波及させない。
+      //   ※ この緩和は画像副作用サイト限定。主目的が AI 呼び出しの route は fail-close を維持する。
+      let imageAllowed = false;
+      try {
+        const rl = await checkRateLimit(user.id, 'image');
+        imageAllowed = rl.success;
+      } catch (rlError) {
+        createLogger('api/meals').warn('Image rate-limit check failed; skipping image generation', {
+          userId: user.id,
+          plannedMealId: meal.id,
+          error: rlError instanceof Error ? rlError.message : String(rlError),
+        });
+        imageAllowed = false;
+      }
+
+      if (imageAllowed) {
+        await enqueueMealImageJobs({
+          supabase,
+          plannedMealId: meal.id,
+          userId: user.id,
+          triggerSource,
+          jobSeeds: dishImagePayload.jobs,
+          requestId,
+        });
+        await triggerMealImageJobProcessing({
+          plannedMealId: meal.id,
+          limit: dishImagePayload.jobs.length,
+        });
+      } else {
+        imageGenerationThrottled = true;
+        console.warn('[meals] Image generation skipped due to rate limit', {
+          userId: user.id,
+          plannedMealId: meal.id,
+        });
+      }
     }
 
-    return NextResponse.json({ meal });
+    return NextResponse.json({
+      meal,
+      // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
+      ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+    });
 
   } catch (error: any) {
     console.error('Error creating meal:', error);

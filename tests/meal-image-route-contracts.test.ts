@@ -16,11 +16,20 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// #1022: 画像生成ジョブの同期トリガーには image カテゴリのレート制限が挿入されているが、
+// このテストはジョブ生成・reconcile ロジックの検証が目的のためレート制限自体は常に許可する
+// （具体的な mockResolvedValue は resetAllMocks 後の beforeEach で設定する）。
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimit: vi.fn(),
+  rateLimitExceededResponse: vi.fn(),
+}));
+
 import {
   buildDishImagePayload,
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../src/lib/meal-image-jobs';
+import { checkRateLimit } from '@/lib/rate-limit';
 import { PATCH as mealPlansPatch } from '../src/app/api/meal-plans/meals/[id]/route';
 import { POST as mealPlansPost } from '../src/app/api/meal-plans/meals/route';
 
@@ -44,6 +53,14 @@ describe('meal image route contracts', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+    // #1022: 画像生成ジョブの同期トリガーは image カテゴリのレート制限対象だが、
+    // このテストは reconcile ロジックの検証が目的のため常に許可する
+    vi.mocked(checkRateLimit).mockResolvedValue({
+      success: true,
+      limit: 1,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    });
   });
 
   it('meal-plans PATCH reconciles dishes and enqueues jobs', async () => {

@@ -7,6 +7,7 @@ import {
 } from '../../../../lib/ai/image-recognition';
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 function buildPrompt(): string {
   return `この健康診断結果の画像から、読み取れる検査値を抽出してください。
@@ -24,6 +25,9 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const rateLimitResult = await checkRateLimit(user.id, 'analysis');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     const body = await request.json();

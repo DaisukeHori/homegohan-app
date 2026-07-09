@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // メッセージ一覧取得
 export async function GET(
@@ -902,6 +903,9 @@ export async function POST(
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const rateLimitResult = await checkRateLimit(user.id, 'generation');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     const openai = getFastLLMClient();

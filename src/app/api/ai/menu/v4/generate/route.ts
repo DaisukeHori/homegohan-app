@@ -17,6 +17,7 @@ import type {
 import type { Tables } from '@homegohan/shared';
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -115,6 +116,9 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const rateLimitResult = await checkRateLimit(user.id, 'generation');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     const targetSlots = body?.resolveExistingMeals
       ? await resolveExistingTargetSlots({

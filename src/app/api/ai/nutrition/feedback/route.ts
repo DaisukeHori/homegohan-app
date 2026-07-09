@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { getNutrientDefinition, calculateDriPercentage } from '@homegohan/shared';
 import crypto from 'crypto';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -157,6 +158,9 @@ export async function POST(request: Request) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const rateLimitResult = await checkRateLimit(user.id, 'analysis');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     const body = await request.json();
     const { date, nutrition, mealCount, weekData, forceRefresh } = body;

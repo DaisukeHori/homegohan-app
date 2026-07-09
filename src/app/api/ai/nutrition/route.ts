@@ -3,6 +3,7 @@ import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { buildPhotoDishList } from '../../../../lib/meal-image';
 import { cancelPendingMealImageJobs } from '../../../../lib/meal-image-jobs';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 /**
  * 献立の栄養情報を更新
@@ -21,6 +22,9 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const rateLimitResult = await checkRateLimit(user.id, 'analysis');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     if (!plannedMealId) {
       return NextResponse.json({ error: 'plannedMealId is required' }, { status: 400 });

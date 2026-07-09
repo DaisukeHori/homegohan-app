@@ -11,6 +11,8 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../../../lib/meal-image-jobs';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { createLogger } from '@/lib/db-logger';
 
 export async function PATCH(
   request: Request,
@@ -136,19 +138,47 @@ export async function PATCH(
 
     if (error) throw error;
 
-    await enqueueMealImageJobs({
-      supabase,
-      plannedMealId: data.id,
-      userId: user.id,
-      triggerSource,
-      jobSeeds: jobs,
-      requestId,
-    });
+    let imageGenerationThrottled = false;
     if (jobs.length > 0) {
-      await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
+      // #1022 画像副作用（enqueue + trigger）は献立更新の成否から独立させる（詳細は meals/route.ts 参照）
+      let imageAllowed = false;
+      try {
+        const rl = await checkRateLimit(user.id, 'image');
+        imageAllowed = rl.success;
+      } catch (rlError) {
+        createLogger('api/meal-plans/meals/[id]').warn('Image rate-limit check failed; skipping image generation', {
+          userId: user.id,
+          plannedMealId: data.id,
+          error: rlError instanceof Error ? rlError.message : String(rlError),
+        });
+        imageAllowed = false;
+      }
+
+      if (imageAllowed) {
+        await enqueueMealImageJobs({
+          supabase,
+          plannedMealId: data.id,
+          userId: user.id,
+          triggerSource,
+          jobSeeds: jobs,
+          requestId,
+        });
+        await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
+      } else {
+        imageGenerationThrottled = true;
+        console.warn('[meal-plans/meals/[id]] Image generation skipped due to rate limit', {
+          userId: user.id,
+          plannedMealId: data.id,
+        });
+      }
     }
 
-    return NextResponse.json({ success: true, meal: data });
+    return NextResponse.json({
+      success: true,
+      meal: data,
+      // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
+      ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

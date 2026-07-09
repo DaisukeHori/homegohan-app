@@ -6,6 +6,8 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../../lib/meal-image-jobs';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { createLogger } from '@/lib/db-logger';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -117,22 +119,45 @@ export async function POST(request: Request) {
 
     if (mealError) throw mealError;
 
-    await enqueueMealImageJobs({
-      supabase,
-      plannedMealId: newMeal.id,
-      userId: user.id,
-      triggerSource,
-      jobSeeds: dishImagePayload.jobs,
-      requestId,
-    });
+    let imageGenerationThrottled = false;
     if (dishImagePayload.jobs.length > 0) {
-      await triggerMealImageJobProcessing({
-        plannedMealId: newMeal.id,
-        limit: dishImagePayload.jobs.length,
-      });
+      // #1022 画像副作用（enqueue + trigger）は献立作成の成否から独立させる（詳細は meals/route.ts 参照）
+      let imageAllowed = false;
+      try {
+        const rl = await checkRateLimit(user.id, 'image');
+        imageAllowed = rl.success;
+      } catch (rlError) {
+        createLogger('api/meal-plans/meals').warn('Image rate-limit check failed; skipping image generation', {
+          userId: user.id,
+          plannedMealId: newMeal.id,
+          error: rlError instanceof Error ? rlError.message : String(rlError),
+        });
+        imageAllowed = false;
+      }
+
+      if (imageAllowed) {
+        await enqueueMealImageJobs({
+          supabase,
+          plannedMealId: newMeal.id,
+          userId: user.id,
+          triggerSource,
+          jobSeeds: dishImagePayload.jobs,
+          requestId,
+        });
+        await triggerMealImageJobProcessing({
+          plannedMealId: newMeal.id,
+          limit: dishImagePayload.jobs.length,
+        });
+      } else {
+        imageGenerationThrottled = true;
+        console.warn('[meal-plans/meals] Image generation skipped due to rate limit', {
+          userId: user.id,
+          plannedMealId: newMeal.id,
+        });
+      }
     }
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       success: true,
       meal: {
         id: newMeal.id,
@@ -148,7 +173,9 @@ export async function POST(request: Request) {
         isCompleted: newMeal.is_completed,
         createdAt: newMeal.created_at,
         updatedAt: newMeal.updated_at
-      }
+      },
+      // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
+      ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
     });
   } catch (error: any) {
     console.error('Add meal error:', error);

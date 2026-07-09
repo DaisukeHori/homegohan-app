@@ -1,10 +1,14 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const rateLimitResult = await checkRateLimit(user.id, 'analysis');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     const { cookRate, avgCal, cookCount, buyCount, outCount, expiringItems } = await request.json();

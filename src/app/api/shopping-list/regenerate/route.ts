@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 /**
  * 買い物リスト再生成API（日付ベースモデル）
@@ -11,6 +12,10 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // #1022 regenerate-shopping-list-v2 Edge Function が内部で OpenAI を呼ぶため generation カテゴリで制限する
+  const rateLimitResult = await checkRateLimit(user.id, 'generation');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     const { startDate, endDate, servingsConfig } = await request.json();
