@@ -1,0 +1,117 @@
+name: Migration Drift Inspect (read-only)
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SUPABASE_PROJECT_ID: flmeolcfutuwwbjmzyoz
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+
+      - name: Verify Supabase CLI version
+        run: npx --yes supabase@2.62.10 --version
+
+      - name: Link Supabase project
+        run: |
+          npx --yes supabase@2.62.10 link --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Fetch migration list (read-only)
+        run: |
+          npx --yes supabase@2.62.10 migration list --linked | tee artifacts/migration_list.txt
+          {
+            echo "## migration list --linked"
+            echo ""
+            echo "\`\`\`"
+            cat artifacts/migration_list.txt
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import re
+
+          with open("artifacts/migration_list.txt", encoding="utf-8") as fh:
+              lines = fh.readlines()
+
+          # supabase CLI の pretty 出力は `|Local|Remote|Time (UTC)|` 形式で
+          # 各行が "|" で始まり "|" で終わる。先頭/末尾のちょうど1個だけを
+          # 取り除いてから分割しないと、空セル(local-only/remote-only 行)の
+          # 位置がずれて誤検知・見逃しの原因になる。
+          local_only = []
+          remote_only = []
+          for raw_line in lines:
+              line = raw_line.rstrip("\n")
+              if not (line.startswith("|") and line.endswith("|")):
+                  continue
+              inner = line[1:-1]
+              cols = [c.strip() for c in inner.split("|")]
+              if len(cols) < 2:
+                  continue
+              local, remote = cols[0], cols[1]
+              # ヘッダー行・区切り行 (LOCAL/REMOTE 文字列や ---- ) は除外し、
+              # migration バージョン (数値) の行のみを対象にする
+              if not (re.fullmatch(r"[0-9]*", local) and re.fullmatch(r"[0-9]*", remote)):
+                  continue
+              if local == "" and remote == "":
+                  continue
+              if local == "" and remote != "":
+                  remote_only.append(remote)
+              elif local != "" and remote == "":
+                  local_only.append(local)
+
+          with open("artifacts/drift_summary.txt", "w", encoding="utf-8") as out:
+              out.write("# Migration Drift Summary (read-only, informational; #1064)\n\n")
+              if local_only:
+                  for v in local_only:
+                      out.write(f"LOCAL_ONLY: {v}\n")
+              else:
+                  out.write("LOCAL_ONLY: (none)\n")
+              if remote_only:
+                  for v in remote_only:
+                      out.write(f"REMOTE_ONLY: {v}\n")
+              else:
+                  out.write("REMOTE_ONLY: (none)\n")
+          PY
+          {
+            echo ""
+            echo "## drift summary"
+            echo ""
+            echo "\`\`\`"
+            cat artifacts/drift_summary.txt
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Dump production schema (read-only)
+        run: |
+          npx --yes supabase@2.62.10 db dump --linked --schema public -f artifacts/prod_public.sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Diff production schema against local migrations (read-only)
+        run: |
+          npx --yes supabase@2.62.10 db diff --linked --schema public > artifacts/db_diff.txt 2>&1 || true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-drift-inspect
+          path: artifacts/
+          retention-days: 14
