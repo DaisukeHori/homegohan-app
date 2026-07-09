@@ -40,7 +40,8 @@ describe('POST /api/family/invites/[token]/accept', () => {
     mockRpc.mockResolvedValue({
       data: {
         family_id: 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
-        member_id: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
+        // accept_family_invite RPC は family_members 行を返す (主キーは id)
+        id: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
         role: 'adult',
       },
       error: null,
@@ -57,7 +58,8 @@ describe('POST /api/family/invites/[token]/accept', () => {
 
     expect(res.status).toBe(200);
     expect(json.data.family_id).toBeDefined();
-    expect(json.data.member_id).toBeDefined();
+    // F3-15: RPC が返す family_members.id を member_id にマップすること
+    expect(json.data.member_id).toBe('c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33');
     expect(json.data.role).toBe('adult');
   });
 
@@ -162,7 +164,8 @@ describe('POST /api/family/invites/[token]/accept', () => {
     mockRpc.mockResolvedValue({
       data: {
         family_id: 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
-        member_id: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
+        // accept_family_invite RPC は family_members 行を返す (主キーは id)
+        id: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
         role: 'adult',
       },
       error: null,
