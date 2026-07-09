@@ -29,7 +29,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create PR and merge
+      # supabase/migrations/ を含む変更は人手レビュー必須のため自動マージしない (#1064)
+      - name: Check for migration changes
+        id: check_migrations
+        run: |
+          git fetch origin main --quiet
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+          echo "$CHANGED_FILES"
+          if echo "$CHANGED_FILES" | grep -q '^supabase/migrations/'; then
+            echo "has_migrations=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_migrations=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR
+        id: create_pr
         run: |
           BRANCH_NAME="${GITHUB_REF#refs/heads/}"
 
@@ -47,10 +61,22 @@ jobs:
             echo "PR already exists: $PR_URL"
           fi
 
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip auto-merge for migration changes
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        run: |
+          echo "::warning::supabase/migrations/ に変更が含まれるため自動マージをスキップします。人手レビューが必要です。(#1064)"
+
+      - name: Merge PR
+        if: steps.check_migrations.outputs.has_migrations == 'false'
+        run: |
           # 即マージ（squash）- 承認不要の場合
           # 注意: ブランチ保護で承認必須の場合は Settings > Actions > General で
           # "Allow GitHub Actions to create and approve pull requests" を有効にしてください
-          gh pr merge --squash "$PR_URL" --delete-branch || echo "Merge failed - may need manual approval"
+          gh pr merge --squash "${{ steps.create_pr.outputs.pr_url }}" --delete-branch || echo "Merge failed - may need manual approval"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   # Dependabotの場合は承認不要で自動マージ（patch/minor のみ）
@@ -141,13 +167,35 @@ jobs:
       github.event.action == 'opened' &&
       startsWith(github.head_ref, 'claude/')
     steps:
+      # supabase/migrations/ を含む変更は人手レビュー必須のため自動承認・自動マージしない (#1064)
+      - name: Check for migration changes
+        id: check_migrations
+        run: |
+          CHANGED_FILES=$(gh pr diff "$PR_URL" --name-only)
+          echo "$CHANGED_FILES"
+          if echo "$CHANGED_FILES" | grep -q '^supabase/migrations/'; then
+            echo "has_migrations=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_migrations=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip auto-approve/merge for migration changes
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        run: |
+          echo "::warning::supabase/migrations/ に変更が含まれるため自動承認・自動マージをスキップします。人手レビューが必要です。(#1064)"
+
       - name: Auto-approve Claude PR
+        if: steps.check_migrations.outputs.has_migrations == 'false'
         run: gh pr review --approve "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge for Claude PR
+        if: steps.check_migrations.outputs.has_migrations == 'false'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

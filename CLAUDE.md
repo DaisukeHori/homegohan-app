@@ -58,6 +58,16 @@ CI では GitHub Secrets に登録する。
 
 ---
 
+## Supabase 本番スキーマ変更ポリシー
+
+本番 Supabase (project `flmeolcfutuwwbjmzyoz`) へのスキーマ変更は、必ず `supabase/migrations/*.sql` をファイル化して PR 経由でコミットすること。
+
+**禁止**: Supabase MCP の `apply_migration` やダッシュボードの SQL Editor で本番に直接 DDL を当てること。
+
+理由: #1064 で、秒精度のタイムスタンプ版 migration (MCP `apply_migration` 由来) とリポジトリの丸め連番版 migration がズレて `supabase db push` が全ブロックし、2 ヶ月間デプロイできない状態になった実例がある。スキーマ変更は必ずファイル化 → PR → CI の migration drift 検知を通すこと。
+
+---
+
 ## Claude Code Cloud (claude.ai/code) 動作要件
 
 ### 起動時 setup
