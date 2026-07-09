@@ -19,6 +19,177 @@ import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
 
+// ==================== mass assignment 対策: サニタイザ ====================
+// AIが生成した action_params は信頼できない入力（プロンプトインジェクションの
+// ターゲットになり得る）ため、DB更新に使用するキーは明示的なホワイトリストで
+// 抽出し、非許可キーは fail-close で無条件に破棄する。
+
+type PlainRecord = Record<string, unknown>;
+
+function isPlainObject(value: unknown): value is PlainRecord {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+// nutrition_targets: daily_calories/protein_g/fat_g/carbs_g/fiber_g/sodium_g のみ許可。
+// 範囲は DRI2020 の目標量レンジ（packages/core/src/nutrition/dri-tables.ts, calculate.ts）
+// を大きく上回らない程度で、かつユーザーが自由に設定し得る範囲を許容する上限とした。
+const NUTRITION_TARGET_RANGES: Record<string, { min: number; max: number }> = {
+  daily_calories: { min: 500, max: 6000 },
+  protein_g: { min: 0, max: 500 },
+  fat_g: { min: 0, max: 300 },
+  carbs_g: { min: 0, max: 800 },
+  fiber_g: { min: 0, max: 100 },
+  sodium_g: { min: 0, max: 30 },
+};
+
+function sanitizeNutritionTargetUpdate(input: unknown): { data: Record<string, number>; errors: string[] } {
+  const data: Record<string, number> = {};
+  const errors: string[] = [];
+
+  if (!isPlainObject(input)) {
+    return { data, errors: ['targets must be an object'] };
+  }
+
+  for (const [key, range] of Object.entries(NUTRITION_TARGET_RANGES)) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    const value = input[key];
+    if (!isFiniteNumber(value)) {
+      errors.push(`${key} must be a finite number`);
+      continue;
+    }
+    if (value < range.min || value > range.max) {
+      errors.push(`${key} は ${range.min} 〜 ${range.max} の範囲で指定してください`);
+      continue;
+    }
+    data[key] = value;
+  }
+
+  return { data, errors };
+}
+
+// planned_meals の update_meal: システムプロンプトで AI に許可しているフィールド
+// （dish_name/calories_kcal/protein_g/fat_g/carbs_g/memo/mode/dishes）に加え、
+// 既存コードが個別に参照している image_url のみ許可する。
+function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string[] } {
+  const data: PlainRecord = {};
+  const errors: string[] = [];
+
+  if (!isPlainObject(input)) {
+    return { data, errors: ['updates must be an object'] };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'dish_name')) {
+    const value = input.dish_name;
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 200) {
+      data.dish_name = value;
+    } else {
+      errors.push('dish_name must be a non-empty string (max 200 chars)');
+    }
+  }
+
+  const numericFieldRanges: Record<string, { min: number; max: number }> = {
+    calories_kcal: { min: 0, max: 5000 },
+    protein_g: { min: 0, max: 500 },
+    fat_g: { min: 0, max: 300 },
+    carbs_g: { min: 0, max: 800 },
+  };
+  for (const [key, range] of Object.entries(numericFieldRanges)) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    const value = input[key];
+    if (!isFiniteNumber(value) || value < range.min || value > range.max) {
+      errors.push(`${key} は ${range.min} 〜 ${range.max} の範囲の数値で指定してください`);
+      continue;
+    }
+    data[key] = value;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'memo')) {
+    const value = input.memo;
+    if (value === null) {
+      data.memo = null;
+    } else if (typeof value === 'string' && value.length <= 1000) {
+      data.memo = value;
+    } else {
+      errors.push('memo must be a string (max 1000 chars) or null');
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'mode')) {
+    const value = input.mode;
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 50) {
+      data.mode = value;
+    } else {
+      errors.push('mode must be a non-empty string (max 50 chars)');
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'dishes')) {
+    const value = input.dishes;
+    if (Array.isArray(value)) {
+      data.dishes = value;
+    } else {
+      errors.push('dishes must be an array');
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'image_url')) {
+    const value = input.image_url;
+    if (typeof value === 'string') {
+      data.image_url = value;
+    } else {
+      errors.push('image_url must be a string');
+    }
+  }
+
+  return { data, errors };
+}
+
+// shopping_list_items の update_shopping_item: システムプロンプトで AI に許可
+// している item_name/quantity/category のみ許可する。
+function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors: string[] } {
+  const data: PlainRecord = {};
+  const errors: string[] = [];
+
+  if (!isPlainObject(input)) {
+    return { data, errors: ['updates must be an object'] };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'item_name')) {
+    const value = input.item_name;
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 200) {
+      data.item_name = value;
+    } else {
+      errors.push('item_name must be a non-empty string (max 200 chars)');
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'quantity')) {
+    const value = input.quantity;
+    if (value === null) {
+      data.quantity = null;
+    } else if (typeof value === 'string' && value.length <= 100) {
+      data.quantity = value;
+    } else {
+      errors.push('quantity must be a string (max 100 chars) or null');
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'category')) {
+    const value = input.category;
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 100) {
+      data.category = value;
+    } else {
+      errors.push('category must be a non-empty string (max 100 chars)');
+    }
+  }
+
+  return { data, errors };
+}
+
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 async function getOrCreateDailyMeal(supabase: any, userId: string, dayDate: string): Promise<{ id: string } | null> {
   // 既存のレコードを探す
@@ -454,22 +625,33 @@ export async function POST(
           break;
         }
 
+        // mass assignment対策: 許可キーのみ抽出（プロンプトインジェクション経由の任意列書き込みを防止）
+        const { data: safeMealUpdates, errors: mealUpdateErrors } = sanitizeMealUpdate(updates);
+        if (mealUpdateErrors.length > 0) {
+          result = { error: mealUpdateErrors.join(', ') };
+          break;
+        }
+        if (Object.keys(safeMealUpdates).length === 0) {
+          result = { error: '更新可能な項目がありません' };
+          break;
+        }
+
         // updated_atを明示的に追加
         const updateData: Record<string, any> = {
-          ...updates,
+          ...safeMealUpdates,
           updated_at: new Date().toISOString(),
         };
-        
+
         // dishesの処理
-        if (updates.dishes && Array.isArray(updates.dishes) && updates.dishes.length > 0) {
+        if (safeMealUpdates.dishes && Array.isArray(safeMealUpdates.dishes) && safeMealUpdates.dishes.length > 0) {
           // AIからdishes配列が提供された場合はそのまま使用
-          updateData.dishes = updates.dishes;
-          updateData.is_simple = updates.dishes.length === 1;
-          console.log('Using AI-provided dishes:', updates.dishes);
+          updateData.dishes = safeMealUpdates.dishes;
+          updateData.is_simple = safeMealUpdates.dishes.length === 1;
+          console.log('Using AI-provided dishes:', safeMealUpdates.dishes);
         }
 
         const triggerSource = `consultation:update_meal:${action.id}`;
-        const manualImageUrl = typeof updates.image_url === 'string' ? updates.image_url : undefined;
+        const manualImageUrl = typeof safeMealUpdates.image_url === 'string' ? safeMealUpdates.image_url : undefined;
         const hasImageManagedDishes =
           (Array.isArray(meal.dishes) && meal.dishes.length > 0) ||
           (Array.isArray(updateData.dishes) && updateData.dishes.length > 0);
@@ -489,8 +671,8 @@ export async function POST(
           updateData.dishes = reconciledDishes;
           updateData.image_url = mealCoverImageUrl;
           jobs = nextJobs;
-        } else if (updates.image_url !== undefined) {
-          updateData.image_url = updates.image_url;
+        } else if (safeMealUpdates.image_url !== undefined) {
+          updateData.image_url = safeMealUpdates.image_url;
         }
 
         const { data: updatedMeal, error: updateError } = await supabase
@@ -635,9 +817,20 @@ export async function POST(
           break;
         }
 
+        // mass assignment対策: 許可キーのみ抽出（プロンプトインジェクション経由の任意列書き込みを防止）
+        const { data: safeShoppingItemUpdates, errors: shoppingItemUpdateErrors } = sanitizeShoppingItemUpdate(updates);
+        if (shoppingItemUpdateErrors.length > 0) {
+          result = { error: shoppingItemUpdateErrors.join(', ') };
+          break;
+        }
+        if (Object.keys(safeShoppingItemUpdates).length === 0) {
+          result = { error: '更新可能な項目がありません' };
+          break;
+        }
+
         const { error: updateError } = await supabase
           .from('shopping_list_items')
-          .update(updates)
+          .update(safeShoppingItemUpdates)
           .eq('id', itemId);
         success = !updateError;
         result = { itemId, updated: success };
@@ -916,11 +1109,23 @@ export async function POST(
       // ==================== 栄養目標関連 ====================
       case 'update_nutrition_target': {
         const { targets } = action.action_params;
+        // mass assignment対策: 許可キーのみ抽出し、user_idはspreadの後に固定して
+        // targets.user_id による上書き（他人の栄養目標の改ざん）を防止する
+        const { data: safeTargets, errors: targetErrors } = sanitizeNutritionTargetUpdate(targets);
+        if (targetErrors.length > 0) {
+          result = { error: targetErrors.join(', ') };
+          break;
+        }
+        if (Object.keys(safeTargets).length === 0) {
+          result = { error: '更新可能な栄養目標項目がありません' };
+          break;
+        }
+
         const { error: updateError } = await supabase
           .from('nutrition_targets')
           .upsert({
+            ...safeTargets,
             user_id: user.id,
-            ...targets,
           }, { onConflict: 'user_id' });
         success = !updateError;
         result = { updated: success };
@@ -1154,19 +1359,48 @@ export async function DELETE(
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { data: action } = await supabase
+    // actionIdはメッセージIDまたはアクションログIDの可能性がある（POSTと同じ探索順・同じ所有権検証）
+    let { data: action, error: actionError } = await supabase
       .from('ai_action_logs')
-      .select('id')
-      .eq('message_id', params.actionId)
-      .eq('status', 'pending')
+      .select(`
+        *,
+        ai_consultation_sessions!inner(user_id)
+      `)
+      .eq('id', params.actionId)
       .single();
 
-    const actionId = action?.id || params.actionId;
+    // 見つからない場合はメッセージIDとして検索
+    if (actionError || !action) {
+      const { data: actionByMessage, error: msgError } = await supabase
+        .from('ai_action_logs')
+        .select(`
+          *,
+          ai_consultation_sessions!inner(user_id)
+        `)
+        .eq('message_id', params.actionId)
+        .eq('status', 'pending')
+        .single();
+
+      if (msgError || !actionByMessage) {
+        return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+      }
+      action = actionByMessage;
+    }
+
+    if (!action) {
+      return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+    }
+
+    // セキュリティ: 却下対象アクションが自分のセッションに属することを確認
+    // （不一致/不存在いずれも404とし、他ユーザーのactionId存在有無を推測させない）
+    if (action.ai_consultation_sessions.user_id !== user.id) {
+      return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+    }
 
     const { error } = await supabase
       .from('ai_action_logs')
       .update({ status: 'rejected' })
-      .eq('id', actionId);
+      .eq('id', action.id);
 
     if (error) throw error;
 
