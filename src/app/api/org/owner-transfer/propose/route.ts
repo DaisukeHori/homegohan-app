@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   const { data: proposalId, error: rpcError } = await supabase.rpc('propose_org_owner_transfer', {
     p_organization_id: body.organization_id,
     p_to_user_id: body.to_user_id,
-    p_reason: body.reason ?? null,
+    // p_reason は DB 関数に存在しないため送らない
   });
 
   if (rpcError) {

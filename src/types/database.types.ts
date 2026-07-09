@@ -7744,7 +7744,7 @@ export type Database = {
         }[]
       }
       promote_child_to_user: {
-        Args: { p_member_id: string; p_user_id: string }
+        Args: { p_email: string; p_member_id: string }
         Returns: {
           avatar_color: string
           child_profile: Json | null
