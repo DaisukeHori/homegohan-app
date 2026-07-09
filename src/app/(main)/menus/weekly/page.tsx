@@ -20,7 +20,8 @@ import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
+// #1031: PantryItem/ShoppingList は store selector 経由の型推論に一本化したため import 不要になった
+import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
@@ -126,18 +127,7 @@ interface WeekPlan {
   days: MealPlanDay[];
 }
 
-// 買い物リスト範囲選択の型
-type ShoppingRangeType = 'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'custom';
-interface ShoppingRangeSelection {
-  type: ShoppingRangeType;
-  // today選択時の食事タイプ
-  todayMeals: ('breakfast' | 'lunch' | 'dinner')[];
-  // days選択時の日数
-  daysCount: number;
-  // custom選択時の開始・終了日
-  customStartDate?: string;
-  customEndDate?: string;
-}
+// 買い物リスト範囲選択の型は #1031 で shoppingStore (_state/shoppingStore.ts) に一本化
 
 // 全ての食事タイプ
 const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
