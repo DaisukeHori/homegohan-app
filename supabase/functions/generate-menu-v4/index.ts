@@ -2741,7 +2741,14 @@ Deno.serve(async (req: Request) => {
     if (!requestId) throw new Error("request_id is required");
 
     // 継続呼び出し（_continue=true）は SERVICE_ROLE_KEY で呼ばれる（自関数からの内部呼び出しのみ）
-    const isServiceRoleCaller = Boolean(supabaseServiceKey) && accessToken === supabaseServiceKey;
+    // SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらが設定されていても一致を許容する
+    // （呼び出し元は常に SUPABASE_SERVICE_ROLE_KEY を送るが、Edge 側の env 優先順位と食い違うと
+    //   全呼び出しが 401 になる退行を防ぐため、両方の設定値を許容リストとして扱う）
+    const configuredServiceRoleKeys = [
+      Deno.env.get("SERVICE_ROLE_JWT"),
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+    ].filter((key): key is string => Boolean(key));
+    const isServiceRoleCaller = Boolean(accessToken) && configuredServiceRoleKeys.includes(accessToken);
 
     if (isContinue) {
       // 継続呼び出しは service role key を提示した場合のみ許可（誰でも継続を名乗れる穴を防ぐ）
@@ -2768,6 +2775,26 @@ Deno.serve(async (req: Request) => {
         );
       }
       userId = userData.user.id;
+
+      // request_id の所有権検証（IDOR対策）: 認証済みユーザーが他人の request_id を渡して
+      // weekly_menu_requests 行（status/progress/generated_data）を書き換えられないよう、
+      // mutation を始める前に検証する。service role 経由（isServiceRoleCaller）は body.userId を
+      // 信頼する設計のため対象外。
+      const ownerRow = await runSupabaseQuery<{ user_id: string } | null>(
+        () => (supabase as any)
+          .from("weekly_menu_requests")
+          .select("user_id")
+          .eq("id", requestId)
+          .maybeSingle(),
+        `weekly_menu_requests.owner_check:${requestId}`,
+        null,
+      );
+      if (!ownerRow || String(ownerRow.user_id) !== String(userId)) {
+        return new Response(
+          JSON.stringify({ error: "Not Found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
 
     // 現在のステップを取得

@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import { createLogger } from '@/lib/db-logger';
 import type { Tables } from '@homegohan/shared';
 
 // Vercel Proプランでは最大300秒まで延長可能
@@ -38,7 +39,12 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (plannedMealError) {
-      return NextResponse.json({ error: plannedMealError.message }, { status: 500 });
+      createLogger('api/ai/menu/meal/regenerate').withUser(user.id).error(
+        'planned_meal の所有権確認に失敗しました',
+        plannedMealError,
+        { mealId },
+      );
+      return NextResponse.json({ error: '献立の取得に失敗しました' }, { status: 500 });
     }
 
     const day = (plannedMeal?.user_daily_meals as unknown as Pick<Tables<'user_daily_meals'>, 'day_date'> | null) ?? null;

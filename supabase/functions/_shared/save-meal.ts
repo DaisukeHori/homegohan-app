@@ -275,7 +275,7 @@ export async function saveMealToDb(
     ? await runSupabaseQuery(
         () => supabase
           .from("planned_meals")
-          .select("id, dishes, image_url, meal_type, user_daily_meals!inner(user_id)")
+          .select("id, dishes, image_url, user_daily_meals!inner(user_id)")
           .eq("id", targetSlot.plannedMealId)
           .maybeSingle(),
         `planned_meals.lookup:${targetSlot.plannedMealId}`,
