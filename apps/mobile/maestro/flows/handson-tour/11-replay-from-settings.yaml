@@ -38,7 +38,7 @@ tags: ["handson-tour", "P2"]
 # home-screen に遷移 (完走済みなのでツアーはスキップ)
 - extendedWaitUntil:
     visible:
-      id: "home-screen"
+      id: "webview-home"
     timeout: 15000
 
 # tour-step-0 は表示されない (完走済み)
@@ -51,7 +51,7 @@ tags: ["handson-tour", "P2"]
 
 - extendedWaitUntil:
     visible:
-      id: "profile-screen"
+      id: "webview-profile"
     timeout: 10000
 
 - tapOn:

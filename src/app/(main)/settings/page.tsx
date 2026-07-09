@@ -469,15 +469,21 @@ export default function SettingsPage() {
         </div>
 
         {/* セクション 5: アクション */}
+        {/* Round-2 レビュー指摘 #1: native アプリ内でこのログアウトを踏むと Web 側
+            (localStorage) のセッションのみ消え、ネイティブ側 (AsyncStorage) の
+            セッションが残る不整合を起こすため、native アプリ内では非表示にする。
+            ネイティブの導線 (profile タブ歯車 → /(tabs)/settings のネイティブ実装) を正として使わせる。 */}
         <div>
-          <Button
-            variant="outline"
-            data-testid="logout-button"
-            onClick={() => setShowLogoutModal(true)}
-            className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
-          >
-            ログアウト
-          </Button>
+          {!isNativeApp && (
+            <Button
+              variant="outline"
+              data-testid="logout-button"
+              onClick={() => setShowLogoutModal(true)}
+              className="w-full py-6 rounded-2xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 font-bold mb-4"
+            >
+              ログアウト
+            </Button>
+          )}
           <p className="text-center text-xs text-gray-400">
             Version {process.env.NEXT_PUBLIC_APP_VERSION ?? 'v1.0.0'} (Build {process.env.NEXT_PUBLIC_BUILD_DATE ?? '20260430'})<br/>
             &copy; {new Date().getFullYear()} ほめゴハン
@@ -485,34 +491,41 @@ export default function SettingsPage() {
         </div>
 
         {/* セクション 6: アカウント削除 */}
-        <div>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">危険ゾーン</h2>
-          <div className="bg-white rounded-2xl shadow-sm border border-red-100 overflow-hidden">
-            <div className="p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center text-red-500" aria-hidden="true">🗑️</div>
-                <div>
-                  <p className="font-bold text-gray-700">アカウントを削除</p>
-                  <p className="text-xs text-gray-400">すべてのデータが完全に削除されます。この操作は取り消せません。</p>
+        {/* Round-2 レビュー指摘 #1: native アプリ内でこの削除を実行すると、サーバー側で
+            アカウントが削除された後もネイティブ側 (AsyncStorage) のセッションが残り
+            「ログイン中」のまま振る舞う重大な不整合が起きるため native アプリ内では非表示にする。
+            アカウント削除はネイティブ実装 (apps/mobile/app/settings/account.tsx) を正として使わせる。 */}
+        {!isNativeApp && (
+          <div>
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">危険ゾーン</h2>
+            <div className="bg-white rounded-2xl shadow-sm border border-red-100 overflow-hidden">
+              <div className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center text-red-500" aria-hidden="true">🗑️</div>
+                  <div>
+                    <p className="font-bold text-gray-700">アカウントを削除</p>
+                    <p className="text-xs text-gray-400">すべてのデータが完全に削除されます。この操作は取り消せません。</p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(true)}
+                  className="w-full py-3 rounded-xl border border-red-300 text-red-600 font-bold hover:bg-red-50 transition-colors text-sm"
+                  aria-label="アカウントを削除する"
+                >
+                  アカウントを削除する
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowDeleteModal(true)}
-                className="w-full py-3 rounded-xl border border-red-300 text-red-600 font-bold hover:bg-red-50 transition-colors text-sm"
-                aria-label="アカウントを削除する"
-              >
-                アカウントを削除する
-              </button>
             </div>
           </div>
-        </div>
+        )}
 
       </div>
 
       {/* ログアウト確認モーダル */}
+      {/* Round-2 レビュー指摘 #1: トリガーボタンを隠していても念のため二重にガードする */}
       <AnimatePresence>
-        {showLogoutModal && (
+        {!isNativeApp && showLogoutModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -554,8 +567,9 @@ export default function SettingsPage() {
       </AnimatePresence>
 
       {/* アカウント削除確認モーダル */}
+      {/* Round-2 レビュー指摘 #1: トリガーボタンを隠していても念のため二重にガードする */}
       <AnimatePresence>
-        {showDeleteModal && (
+        {!isNativeApp && showDeleteModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

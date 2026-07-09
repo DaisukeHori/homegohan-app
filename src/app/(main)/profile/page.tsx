@@ -12,6 +12,7 @@ import { toUserProfile } from "@/lib/converter";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
 import { ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
+import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 
 type TabType = 'basic' | 'goals' | 'sports' | 'health' | 'diet' | 'cooking' | 'lifestyle';
 
@@ -102,6 +103,9 @@ function getIncompleteTabs(profile: UserProfile | null): TabType[] {
 function ProfilePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Round-2 レビュー指摘 #1: native アプリ内かどうかで Web 側ログアウト/削除/設定遷移 UI の
+  // 表示を切り替えるため使用 (native アプリ内では非表示にし、ネイティブ側の導線を使わせる)。
+  const isNativeApp = useNativeAppMode();
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [badgeCount, setBadgeCount] = useState(0);
@@ -328,13 +332,18 @@ function ProfilePageContent() {
         <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl from-orange-200/30 to-transparent rounded-full blur-3xl" />
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-rose-200/30 to-transparent rounded-full blur-3xl" />
         <div className="relative px-6 pt-10 pb-24 z-10 flex justify-between">
-          <Button
-            variant="ghost"
-            className="text-gray-600 hover:bg-black/5"
-            onClick={() => router.push('/settings')}
-          >
-            <Icons.Settings className="w-6 h-6" />
-          </Button>
+          {/* Round-2 レビュー指摘 #1: native アプリ内では Web 側の設定遷移/ログアウトは
+              ネイティブ側の AsyncStorage セッションを破棄できず不整合になるため非表示にする。
+              ネイティブの導線 (profile タブ歯車 → /(tabs)/settings) を正として使わせる。 */}
+          {!isNativeApp && (
+            <Button
+              variant="ghost"
+              className="text-gray-600 hover:bg-black/5"
+              onClick={() => router.push('/settings')}
+            >
+              <Icons.Settings className="w-6 h-6" />
+            </Button>
+          )}
           <div className="flex gap-2">
             <Button
               variant="ghost"
@@ -343,20 +352,22 @@ function ProfilePageContent() {
             >
               <Icons.Edit className="w-6 h-6" />
             </Button>
-            <Button
-              variant="ghost"
-              className="text-gray-600 hover:bg-black/5"
-              onClick={async () => {
-                if (!confirm('ログアウトしますか？')) return;
-                clearUserScopedLocalStorage();
-                const supabase = createClient();
-                await supabase.auth.signOut();
-                broadcastSignOut();
-                router.push('/login');
-              }}
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-            </Button>
+            {!isNativeApp && (
+              <Button
+                variant="ghost"
+                className="text-gray-600 hover:bg-black/5"
+                onClick={async () => {
+                  if (!confirm('ログアウトしますか？')) return;
+                  clearUserScopedLocalStorage();
+                  const supabase = createClient();
+                  await supabase.auth.signOut();
+                  broadcastSignOut();
+                  router.push('/login');
+                }}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -566,44 +577,50 @@ function ProfilePageContent() {
         </div>
 
         {/* アプリ設定リンク */}
-        <div className="space-y-4 mt-8">
-          <h2 className="font-bold text-gray-900 px-2">アプリ設定</h2>
+        {/* Round-2 レビュー指摘 #1: この設定遷移/ログアウトは native アプリ内で踏むと
+            Web 側 (localStorage) のセッションのみ消え、ネイティブ側 (AsyncStorage) の
+            セッションが残る不整合を起こすため、native アプリ内ではセクションごと非表示にする。
+            ネイティブの導線 (profile タブ歯車 → /(tabs)/settings) を正として使わせる。 */}
+        {!isNativeApp && (
+          <div className="space-y-4 mt-8">
+            <h2 className="font-bold text-gray-900 px-2">アプリ設定</h2>
 
-          <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
-            <button
-              onClick={() => router.push('/settings')}
-              className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors text-left border-b border-gray-50"
-            >
-              <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-xl">
-                ⚙️
-              </div>
-              <div className="flex-1">
-                <p className="font-bold text-gray-900 text-sm">設定</p>
-                <p className="text-xs text-gray-400 truncate">通知、週の開始日、データとプライバシー</p>
-              </div>
-              <div className="text-gray-300">
-                <Icons.ChevronRight className="w-5 h-5" />
-              </div>
-            </button>
-            <button
-              onClick={async () => {
-                clearUserScopedLocalStorage();
-                const supabase = createClient();
-                await supabase.auth.signOut();
-                broadcastSignOut();
-                router.push('/login');
-              }}
-              className="w-full flex items-center gap-4 p-4 hover:bg-red-50 transition-colors text-left"
-            >
-              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center text-xl">
-                👋
-              </div>
-              <div className="flex-1">
-                <p className="font-bold text-red-500 text-sm">ログアウト</p>
-              </div>
-            </button>
+            <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+              <button
+                onClick={() => router.push('/settings')}
+                className="w-full flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors text-left border-b border-gray-50"
+              >
+                <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-xl">
+                  ⚙️
+                </div>
+                <div className="flex-1">
+                  <p className="font-bold text-gray-900 text-sm">設定</p>
+                  <p className="text-xs text-gray-400 truncate">通知、週の開始日、データとプライバシー</p>
+                </div>
+                <div className="text-gray-300">
+                  <Icons.ChevronRight className="w-5 h-5" />
+                </div>
+              </button>
+              <button
+                onClick={async () => {
+                  clearUserScopedLocalStorage();
+                  const supabase = createClient();
+                  await supabase.auth.signOut();
+                  broadcastSignOut();
+                  router.push('/login');
+                }}
+                className="w-full flex items-center gap-4 p-4 hover:bg-red-50 transition-colors text-left"
+              >
+                <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center text-xl">
+                  👋
+                </div>
+                <div className="flex-1">
+                  <p className="font-bold text-red-500 text-sm">ログアウト</p>
+                </div>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* 編集モーダル */}
