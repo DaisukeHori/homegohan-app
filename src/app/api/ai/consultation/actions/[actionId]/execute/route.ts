@@ -16,6 +16,7 @@ import {
 } from '../../../../../../../lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { createLogger } from '@/lib/db-logger';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -692,21 +693,55 @@ export async function POST(
           break;
         }
 
-        await enqueueMealImageJobs({
-          supabase,
-          plannedMealId: mealId,
-          userId: user.id,
-          triggerSource,
-          jobSeeds: jobs,
-          requestId: action.id,
-        });
+        let imageGenerationThrottled = false;
         if (jobs.length > 0) {
-          await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
+          // #1022 execute の update_meal も他の4 meal route と同じく image カテゴリで制限する
+          // （relayチャットの連打で image の1min/20day上限をバイパスされないようにする）。
+          // 画像副作用（enqueue + trigger）は update_meal 本体の成否から独立させる（詳細は meals/route.ts 参照）。
+          let imageAllowed = false;
+          try {
+            const rl = await checkRateLimit(user.id, 'image');
+            imageAllowed = rl.success;
+          } catch (rlError) {
+            createLogger('api/ai/consultation/actions/execute').warn(
+              'Image rate-limit check failed; skipping image generation',
+              {
+                userId: user.id,
+                plannedMealId: mealId,
+                error: rlError instanceof Error ? rlError.message : String(rlError),
+              },
+            );
+            imageAllowed = false;
+          }
+
+          if (imageAllowed) {
+            await enqueueMealImageJobs({
+              supabase,
+              plannedMealId: mealId,
+              userId: user.id,
+              triggerSource,
+              jobSeeds: jobs,
+              requestId: action.id,
+            });
+            await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobs.length });
+          } else {
+            imageGenerationThrottled = true;
+            console.warn('[consultation/actions/execute] Image generation skipped due to rate limit', {
+              userId: user.id,
+              plannedMealId: mealId,
+            });
+          }
         }
 
         console.log('Meal updated successfully:', updatedMeal);
         success = true;
-        result = { mealId, updated: true, newDishName: updatedMeal?.dish_name };
+        result = {
+          mealId,
+          updated: true,
+          newDishName: updatedMeal?.dish_name,
+          // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
+          ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+        };
         break;
       }
 
