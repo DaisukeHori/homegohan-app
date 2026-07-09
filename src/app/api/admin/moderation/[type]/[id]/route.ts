@@ -192,6 +192,7 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   // BAN アクションの場合、ユーザーの roles を更新
+  let banApplied: boolean | null = null;
   if (
     contentUserId &&
     (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban' || action === 'delete_and_warn')
@@ -204,10 +205,14 @@ export async function POST(request: Request, { params }: Params) {
 
     if (userProfile && (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban')) {
       const currentRoles: string[] = Array.isArray(userProfile.roles) ? userProfile.roles : ['user'];
-      await supabase
-        .from('user_profiles')
-        .update({ roles: [...new Set([...currentRoles, 'banned'])] } as Record<string, unknown>)
-        .eq('id', contentUserId);
+      const { error: banError } = await supabase.rpc('admin_set_user_roles', {
+        p_user_id: contentUserId,
+        p_roles: [...new Set([...currentRoles, 'banned'])],
+      });
+      banApplied = !banError;
+      if (banError) {
+        console.error('[api/admin/moderation/[type]/[id]] BAN role update failed:', banError.message);
+      }
     }
   }
 
@@ -223,6 +228,7 @@ export async function POST(request: Request, { params }: Params) {
       ban_duration_days,
       resolution_note,
       content_user_id: contentUserId,
+      ban_applied: banApplied,
     },
     severity: action.includes('ban') ? 'warn' : 'info',
     ip_address: request.headers.get('x-forwarded-for'),
@@ -344,6 +350,7 @@ export async function PUT(request: Request, { params }: Params) {
   }
 
   // BAN アクションの場合、ユーザーの roles を更新
+  let banApplied: boolean | null = null;
   if (
     contentUserId &&
     (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban' || action === 'delete_and_warn')
@@ -356,10 +363,14 @@ export async function PUT(request: Request, { params }: Params) {
 
     if (userProfile && (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban')) {
       const currentRoles: string[] = Array.isArray(userProfile.roles) ? userProfile.roles : ['user'];
-      await supabase
-        .from('user_profiles')
-        .update({ roles: [...new Set([...currentRoles, 'banned'])] } as Record<string, unknown>)
-        .eq('id', contentUserId);
+      const { error: banError } = await supabase.rpc('admin_set_user_roles', {
+        p_user_id: contentUserId,
+        p_roles: [...new Set([...currentRoles, 'banned'])],
+      });
+      banApplied = !banError;
+      if (banError) {
+        console.error('[api/admin/moderation/[type]/[id]] BAN role update failed:', banError.message);
+      }
     }
   }
 
@@ -375,6 +386,7 @@ export async function PUT(request: Request, { params }: Params) {
       ban_duration_days,
       resolution_note,
       content_user_id: contentUserId,
+      ban_applied: banApplied,
     },
     severity: action.includes('ban') ? 'warn' : 'info',
     ip_address: request.headers.get('x-forwarded-for'),

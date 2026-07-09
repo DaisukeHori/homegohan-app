@@ -88,12 +88,25 @@ async function handleRoleChange(request: Request, params: Params) {
 
   // ロール更新
   const { error: updateError } = await supabase
-    .from('user_profiles')
-    .update({ roles } as Record<string, unknown>)
-    .eq('id', id);
+    .rpc('admin_set_user_roles', { p_user_id: id, p_roles: roles });
 
   if (updateError) {
     console.error('[api/admin/users/[id]/role] update error:', updateError.message);
+    if (updateError.message.includes('USER_NOT_FOUND')) {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
+        { status: 404 },
+      );
+    }
+    if (
+      updateError.message.includes('FORBIDDEN') ||
+      updateError.message.includes('CANNOT_MODIFY_OWN_ROLES')
+    ) {
+      return NextResponse.json(
+        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { status: 403 },
+      );
+    }
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: 'ロール更新に失敗しました' } },
       { status: 500 },
