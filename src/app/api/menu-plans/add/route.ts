@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { awardBadge } from '@/lib/badges/awardBadge';
+import type { Database, Json } from '@/types/database.types';
 
 const ADMIN_ROLES = ['admin', 'super_admin', 'org_admin', 'org_industrial_doctor'] as const;
+
+type WeeklyMenuRequestInsert = Database['public']['Tables']['weekly_menu_requests']['Insert'];
+type WeeklyMenuInsert = Database['public']['Tables']['weekly_menus']['Insert'];
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -55,25 +59,56 @@ export async function POST(request: Request) {
       }
     }
 
-    const insertData: Record<string, unknown> = {
+    // weekly_menus の実列は content(jsonb NOT NULL) / request_id(uuid NOT NULL, FK) /
+    // start_date(date NOT NULL) / user_id のみ (#1025)。body は MOCK_MENU_RESPONSE 由来の
+    // フラットな献立データ (dish_name/calories/...) であり、旧実装が使っていた
+    // week_start_date/menu_data/status/generation_id/is_sandbox という列は実在しない。
+    const { sandbox: _sandbox, source: _bodySource, ...menuContent } = body as Record<string, unknown>;
+    const content = { ...menuContent, source } as Json;
+
+    const offsetDays = typeof body.date_offset_days === 'number' ? body.date_offset_days : 0;
+    const startDate = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+
+    // weekly_menus.request_id は weekly_menu_requests への NOT NULL FK。
+    // ここでの追加は AI 生成フローを経ない単発追加なので、コンテナ用に
+    // 完了済みリクエストを1件作る。status='completed' 固定なので
+    // cron の claim_menu_request (status='queued'/'processing' のみ拾う) には
+    // 拾われない。
+    const requestInsert: WeeklyMenuRequestInsert = {
       user_id: user.id,
-      is_sandbox: isSandbox,
-      source: source,
+      start_date: startDate,
+      status: 'completed',
     };
 
-    const allowedFields = [
-      'week_start_date',
-      'menu_data',
-      'status',
-      'generation_id',
-    ];
-    for (const field of allowedFields) {
-      if (field in body && body[field] !== undefined) {
-        insertData[field] = body[field];
-      }
+    const { data: requestRow, error: requestError } = await supabase
+      .from('weekly_menu_requests')
+      .insert(requestInsert)
+      .select('id')
+      .single();
+
+    if (requestError || !requestRow) {
+      console.error('weekly_menu_requests insert error:', requestError);
+      return NextResponse.json(
+        { error: { code: 'internal_error', message: 'サーバーエラーが発生しました', details: requestError?.message } },
+        { status: 500 },
+      );
     }
 
-    const { data: newMenu, error: insertError } = await supabase
+    const insertData: WeeklyMenuInsert = {
+      user_id: user.id,
+      request_id: requestRow.id,
+      start_date: startDate,
+      content,
+    };
+
+    // weekly_menus には SELECT 用の RLS ポリシーしか存在せず INSERT ポリシーが無いため、
+    // authenticated セッションでの insert は常に RLS 違反 (42501) になる。ここまでで
+    // sandbox 適格性など本人認可チェックは完了済みなので、この insert のみ service_role を
+    // 使う (#1025: migration 禁止のためポリシー追加ではなくコード側で対応。#1028 と同一パターン)。
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: newMenu, error: insertError } = await supabaseAdmin
       .from('weekly_menus')
       .insert(insertData)
       .select()
