@@ -632,17 +632,7 @@ Deno.serve(async (req: Request) => {
   try {
     const { requestId, userId: bodyUserId, startDate, endDate, servingsConfig } = await req.json();
 
-    if (!requestId || !startDate || !endDate) {
-      return new Response(
-        JSON.stringify({ error: "requestId, startDate, endDate are required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // 認証: 二系統を許可する
+    // 認証（auth-first: body必須フィールドのバリデーションより先に行う）: 二系統を許可する
     // 1) 信頼された内部呼び出し（src/app/api/shopping-list/regenerate/route.ts が
     //    サーバー側で getUser 済みのうえ SUPABASE_SERVICE_ROLE_KEY を Bearer に付けて呼ぶ）
     //    → body.userId をそのまま採用（必須）
@@ -679,6 +669,16 @@ Deno.serve(async (req: Request) => {
         );
       }
       userId = authResult.userId;
+    }
+
+    if (!requestId || !startDate || !endDate) {
+      return new Response(
+        JSON.stringify({ error: "requestId, startDate, endDate are required" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
 
     // Service Role Keyでクライアント作成（RLSバイパス）

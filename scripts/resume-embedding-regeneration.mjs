@@ -51,7 +51,14 @@ async function fetchWithRetry(url, options) {
       
       if (!res.ok) {
         const errText = await res.text();
-        
+
+        // 認証系の恒久エラー（401/403）はリトライしても解決しないため即座に中断する
+        if (res.status === 401 || res.status === 403) {
+          const authError = new Error(`Authentication failed (HTTP ${res.status}): ${errText}`);
+          authError.isAuthFailure = true;
+          throw authError;
+        }
+
         // 一時的なエラーの場合、5秒待ってリトライ
         if (isTemporaryError(errText)) {
           retryCount++;
@@ -60,18 +67,23 @@ async function fetchWithRetry(url, options) {
           await new Promise(r => setTimeout(r, RETRY_DELAY));
           continue; // 無限にリトライ
         }
-        
+
         throw new Error(errText);
       }
-      
+
       // 成功したらリトライカウンターをリセット
       if (retryCount > 0) {
         console.log(`\n   ✅ リトライ成功！処理を続行します。`);
         retryCount = 0;
       }
-      
+
       return res;
     } catch (error) {
+      // 認証系の恒久エラーはリトライせず、そのまま呼び出し元に伝播させる
+      if (error.isAuthFailure) {
+        throw error;
+      }
+
       // ネットワークエラーの場合、5秒待ってリトライ
       if (error.message.includes('fetch') || error.message.includes('network') || error.message.includes('ECONNREFUSED')) {
         retryCount++;
@@ -80,7 +92,7 @@ async function fetchWithRetry(url, options) {
         await new Promise(r => setTimeout(r, RETRY_DELAY));
         continue; // 無限にリトライ
       }
-      
+
       // 永続的なエラーの場合はスロー
       throw error;
     }
@@ -218,6 +230,13 @@ async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDIN
       await new Promise(r => setTimeout(r, 500));
       
     } catch (error) {
+      // 認証系の恒久エラー（401/403）はリトライしても解決しないため中断する（run側の `!res.ok` → break と挙動を揃える）
+      if (error.isAuthFailure) {
+        console.error(`\n   ❌ 認証エラーのため中断します: ${error.message}`);
+        console.error(`   SUPABASE_SERVICE_ROLE_KEY が正しく設定されているか確認してください。`);
+        break;
+      }
+
       // すべてのエラーに対して5秒待ってリトライ（無限）
       console.error(`\n   ❌ エラー発生: ${error.message.substring(0, 200)}`);
       console.error(`   ⏳ ${RETRY_DELAY / 1000}秒待機してからリトライします...`);
@@ -225,7 +244,7 @@ async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDIN
       continue; // 同じoffsetでリトライ（無限）
     }
   }
-  
+
   console.log(`\n   ✅ Completed ${tableName}: ${totalProcessed} rows`);
 }
 
