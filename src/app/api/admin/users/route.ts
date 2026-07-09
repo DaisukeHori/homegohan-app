@@ -6,7 +6,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { UsersSearchSchema } from '@/lib/admin/users-schemas';
 
 export const dynamic = 'force-dynamic';
@@ -40,7 +40,9 @@ export async function GET(request: Request) {
   }
 
   const params = parseResult.data;
-  const supabase = await createClient();
+  // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
+  // ポリシーしか無いため、admin/support 向け一覧取得には service_role が必須 (#1028)。
+  const supabase = getSupabaseAdmin();
 
   // ユーザープロファイルを検索
   let query = supabase
@@ -117,7 +119,7 @@ export async function GET(request: Request) {
 
   const users = (data ?? []).map((u) => ({
     id: u.id,
-    email: null, // email は auth.users から取得が必要 (service_role キー使用不可のため省略)
+    email: null, // email は auth.users から取得が必要 (#1028 のスコープ外。別 Issue で対応)
     nickname: u.nickname,
     plan_key: u.plan_key_cached ?? 'free',
     roles: u.roles ?? ['user'],

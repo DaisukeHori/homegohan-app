@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { UserPatchBodySchema } from '@/lib/admin/users-schemas';
 
 export const dynamic = 'force-dynamic';
@@ -35,10 +35,15 @@ export async function GET(_request: Request, { params }: Params) {
   }
 
   const { id } = params;
+  // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
+  // ポリシーしか無いため、他ユーザーの詳細取得には service_role が必須 (#1028)。
+  const supabaseAdmin = getSupabaseAdmin();
+  // support_tickets / personal_subscriptions / admin_audit_logs は本 Issue の対象外
+  // (既存の RLS・graceful degradation のまま session client を使用)。
   const supabase = await createClient();
 
   // ユーザープロファイル取得
-  const { data: profile, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .select('*')
     .eq('id', id)
@@ -175,19 +180,31 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   const { admin_note } = parseResult.data;
+  // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
+  // ポリシーしか無いため、他ユーザーの admin_note 更新には service_role が必須 (#1028)。
+  const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
 
   // admin_note をプロファイルに保存
-  const { error: updateError } = await supabase
+  const { data: updated, error: updateError } = await supabaseAdmin
     .from('user_profiles')
     .update({ admin_note } as Record<string, unknown>)
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
 
   if (updateError) {
     console.error('[api/admin/users/[id]] PATCH error:', updateError.message);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '更新に失敗しました' } },
       { status: 500 },
+    );
+  }
+
+  // 更新0行 = 対象ユーザーが存在しない (#1028: 以前は 0 行でも 200 偽成功していた)
+  if (!updated || updated.length === 0) {
+    return NextResponse.json(
+      { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
+      { status: 404 },
     );
   }
 

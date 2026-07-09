@@ -13,7 +13,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { RoleChangeBodySchema } from '@/lib/admin/users-schemas';
 
 export const dynamic = 'force-dynamic';
@@ -70,10 +70,16 @@ async function handleRoleChange(request: Request, params: Params) {
     );
   }
 
+  // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
+  // ポリシーしか無いため、他ユーザーの存在確認には service_role が必須 (#1028)。
+  const supabaseAdmin = getSupabaseAdmin();
+  // admin_set_user_roles は SECURITY DEFINER 関数で auth.uid() から呼び出し元の
+  // 権限・自己変更禁止を判定するため、RPC 呼び出しは session client のまま維持する
+  // (service_role で呼ぶと auth.uid() が NULL になり常に FORBIDDEN になる)。
   const supabase = await createClient();
 
   // 対象ユーザー存在確認
-  const { data: profile, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .select('id, roles')
     .eq('id', id)
@@ -86,7 +92,7 @@ async function handleRoleChange(request: Request, params: Params) {
     );
   }
 
-  // ロール更新
+  // ロール更新 (auth.uid() 依存の SECURITY DEFINER 関数のため session client で呼ぶ)
   const { error: updateError } = await supabase
     .rpc('admin_set_user_roles', { p_user_id: id, p_roles: roles });
 
