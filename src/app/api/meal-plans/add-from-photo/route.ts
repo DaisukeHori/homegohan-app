@@ -83,6 +83,7 @@ export async function POST(request: Request) {
           user_id: user.id,
           day_date: dayDate,
           is_cheat_day: false,
+          is_sandbox: isSandbox,
         })
         .select('id')
         .single();
@@ -149,7 +150,6 @@ export async function POST(request: Request) {
       dishes: photoDishes.length > 0 ? photoDishes : null,
       is_simple: photoDishes.length <= 1,
       source_type: source === 'handson_tour' ? 'handson_tour' : 'manual',
-      is_sandbox: isSandbox,
     };
 
     if (catalogProductId) {
