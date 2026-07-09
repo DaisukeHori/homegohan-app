@@ -1033,11 +1033,14 @@ export default function WeeklyMenuPage() {
     loadFamilyData();
   }, []);
 
-  // Form States (aiChat/addMeal/conditions は Phase B-3 で formDraftStore に移行予定)
-  const [aiChatInput, setAiChatInput] = useState("");
-  const [addMealKey, setAddMealKey] = useState<MealType | null>(null);
-  const [addMealDayIndex, setAddMealDayIndex] = useState<number>(0);
-  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
+  // Form States (#1031: formDraftStore に一本化。
+  // aiChatInput/addMealKey/addMealDayIndex/selectedConditions はハンドラ内でのみ読むため
+  // 各ハンドラ冒頭で useFormDraftStore.getState() から都度読む (§2 方針)。
+  // setter だけはここで selector 購読して呼び出し側を変更せずに済ませる。
+  const setAiChatInput = useFormDraftStore((s) => s.setAiChatInput);
+  const setAddMealKey = useFormDraftStore((s) => s.setAddMealKey);
+  const setAddMealDayIndex = useFormDraftStore((s) => s.setAddMealDayIndex);
+  const setSelectedConditions = useFormDraftStore((s) => s.setSelectedConditions);
   // isGenerating / generatingMeal / generationProgress / generationFailedError / generationFailedRequestId
   // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
@@ -1865,14 +1868,16 @@ export default function WeeklyMenuPage() {
   const [newShoppingCategory, setNewShoppingCategory] = useState("食材");
 
   // Recipe / AI / manualEdit / photo / imageGenerate → reducers 管理 (Phase B-2 移行済み)
-  // formDraft 系 (manualDishes/mode/catalogQuery 等) → Phase B-3 formDraftStore 予定
+  // formDraft 系 (#1031: formDraftStore に一本化)
   const [manualDishes, setManualDishes] = useState<LegacyDishDetail[]>([]);
   const [manualMode, setManualMode] = useState<MealMode>('cook');
-  const [catalogQuery, setCatalogQuery] = useState('');
-  const [catalogResults, setCatalogResults] = useState<CatalogProductSummary[]>([]);
-  const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<CatalogProductSummary | null>(null);
-  const [isCatalogSearching, setIsCatalogSearching] = useState(false);
-  const [catalogSearchError, setCatalogSearchError] = useState('');
+  // catalogQuery は検索 effect の deps で参照するため selector 購読が必要
+  const catalogQuery = useFormDraftStore((s) => s.catalogQuery);
+  const setCatalogQuery = useFormDraftStore((s) => s.setCatalogQuery);
+  const setCatalogResults = useFormDraftStore((s) => s.setCatalogResults);
+  const setSelectedCatalogProduct = useFormDraftStore((s) => s.setSelectedCatalogProduct);
+  const setIsCatalogSearching = useFormDraftStore((s) => s.setIsCatalogSearching);
+  const setCatalogSearchError = useFormDraftStore((s) => s.setCatalogSearchError);
 
   // Photo edit files (reducer に移せない File[] は Phase B-3 まで維持)
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
@@ -3496,8 +3501,9 @@ export default function WeeklyMenuPage() {
     const weekStartDate = formatLocalDate(weekStart);
     setIsGenerating(true);
     setActiveModal(null); // モーダルを閉じて一覧画面に戻る
-    
+
     try {
+      const { aiChatInput, selectedConditions } = useFormDraftStore.getState();
       const preferences = {
         useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
         quickMeals: selectedConditions.includes('時短メニュー中心'),
@@ -3508,8 +3514,8 @@ export default function WeeklyMenuPage() {
       const response = await fetch("/api/ai/menu/weekly/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          startDate: weekDates[0]?.dateStr, 
+        body: JSON.stringify({
+          startDate: weekDates[0]?.dateStr,
           note: aiChatInput + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
           preferences,
         }),
@@ -3547,20 +3553,21 @@ export default function WeeklyMenuPage() {
 
   // Generate single meal with AI
   const handleGenerateSingleMeal = async () => {
+    const { addMealKey, addMealDayIndex, selectedConditions, aiChatInput } = useFormDraftStore.getState();
     if (!addMealKey) return;
-    
+
     const dayDate = weekDates[addMealDayIndex]?.dateStr;
-    
+
     // 生成開始前の該当食事タイプの数を記録
     const currentDay = currentPlan?.days?.find((d: any) => d.dayDate === dayDate);
     const initialMealCount = currentDay?.meals?.filter((m: any) => m.mealType === addMealKey).length || 0;
-    
+
     setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
     setActiveModal(null);
-    
+
     try {
       const preferences: Record<string, boolean> = {};
-      selectedConditions.forEach(c => {
+      selectedConditions.forEach((c: string) => {
         if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
         if (c === '時短メニュー中心') preferences.quickMeals = true;
         if (c === '和食多め') preferences.japaneseStyle = true;
@@ -3618,8 +3625,9 @@ export default function WeeklyMenuPage() {
 
   // Add meal with specific mode
   const handleAddMealWithMode = async (mode: MealMode) => {
+    const { addMealKey, addMealDayIndex, selectedCatalogProduct } = useFormDraftStore.getState();
     if (!addMealKey) return;
-    
+
     const dayDate = weekDates[addMealDayIndex]?.dateStr;
     const defaultNames: Record<MealMode, string> = {
       cook: '自炊メニュー',
@@ -3687,10 +3695,11 @@ export default function WeeklyMenuPage() {
     
     setIsRegenerating(true);
     setRegeneratingMealId(regeneratingMeal.id);
-    
+
     try {
+      const { selectedConditions, aiChatInput } = useFormDraftStore.getState();
       const preferences: Record<string, boolean> = {};
-      selectedConditions.forEach(c => {
+      selectedConditions.forEach((c: string) => {
         if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
         if (c === '時短メニュー中心') preferences.quickMeals = true;
         if (c === '和食多め') preferences.japaneseStyle = true;
@@ -3959,7 +3968,8 @@ export default function WeeklyMenuPage() {
     
     const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? d.cal ?? 0), 0);
     const dishName = validDishes.map(d => d.name).join('、');
-    
+    const { selectedCatalogProduct } = useFormDraftStore.getState();
+
     try {
       await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
         method: 'PATCH',
