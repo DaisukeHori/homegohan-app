@@ -152,18 +152,3 @@ jobs:
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # 全てのPRを自動マージ（PR作成時に auto-merge を有効化）
-  auto-merge-all:
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' &&
-      github.event.action == 'opened' &&
-      !startsWith(github.head_ref, 'claude/') &&
-      github.actor != 'dependabot[bot]'
-    steps:
-      - name: Enable auto-merge
-        run: gh pr merge --auto --squash "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
