@@ -62,8 +62,15 @@ export async function POST(request: Request) {
         );
       }
 
-      const { data: hasActivity } = await supabase
+      const { data: hasActivity, error: activityError } = await supabase
         .rpc('user_has_non_sandbox_activity');
+      if (activityError) {
+        // 判定不能は拒否側に倒す(fail-closed、#1025 round-3)
+        return NextResponse.json(
+          { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'existing_user' } },
+          { status: 409 },
+        );
+      }
       if (hasActivity) {
         return NextResponse.json(
           { error: { code: 'sandbox_not_eligible', message: 'サンドボックスの利用条件を満たしていません', reason: 'existing_user' } },
