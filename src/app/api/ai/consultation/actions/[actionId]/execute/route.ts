@@ -1360,6 +1360,7 @@ export async function DELETE(
 
   try {
     // actionIdはメッセージIDまたはアクションログIDの可能性がある（POSTと同じ探索順・同じ所有権検証）
+    // idパスもmessage_idパスと同様にpending限定（両パスの対称性を確保し、処理済みactionの再却下を防止）
     let { data: action, error: actionError } = await supabase
       .from('ai_action_logs')
       .select(`
@@ -1367,6 +1368,7 @@ export async function DELETE(
         ai_consultation_sessions!inner(user_id)
       `)
       .eq('id', params.actionId)
+      .eq('status', 'pending')
       .single();
 
     // 見つからない場合はメッセージIDとして検索
