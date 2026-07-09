@@ -1880,9 +1880,9 @@ export default function WeeklyMenuPage() {
   const setIsCatalogSearching = useFormDraftStore((s) => s.setIsCatalogSearching);
   const setCatalogSearchError = useFormDraftStore((s) => s.setCatalogSearchError);
 
-  // Photo edit files (reducer に移せない File[] は Phase B-3 まで維持)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
-  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  // Photo edit files (#1031: formDraftStore に一本化。photoFiles はハンドラ内でのみ読む)
+  const setPhotoFiles = useFormDraftStore((s) => s.setPhotoFiles);
+  const setPhotoPreviews = useFormDraftStore((s) => s.setPhotoPreviews);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Image generation files
@@ -4026,31 +4026,32 @@ export default function WeeklyMenuPage() {
     const files = e.target.files;
     if (files && files.length > 0) {
       const newFiles = Array.from(files);
-      setPhotoFiles(prev => [...prev, ...newFiles]);
-      
+      setPhotoFiles([...useFormDraftStore.getState().photoFiles, ...newFiles]);
+
       // プレビュー画像を生成
       newFiles.forEach(file => {
         const reader = new FileReader();
         reader.onloadend = () => {
-          setPhotoPreviews(prev => [...prev, reader.result as string]);
+          setPhotoPreviews([...useFormDraftStore.getState().photoPreviews, reader.result as string]);
         };
         reader.readAsDataURL(file);
       });
     }
   };
-  
+
   // 写真を削除
   const removePhoto = (index: number) => {
-    setPhotoFiles(prev => prev.filter((_, i) => i !== index));
-    setPhotoPreviews(prev => prev.filter((_, i) => i !== index));
+    setPhotoFiles(useFormDraftStore.getState().photoFiles.filter((_, i) => i !== index));
+    setPhotoPreviews(useFormDraftStore.getState().photoPreviews.filter((_, i) => i !== index));
   };
 
   // Analyze photo with AI（複数枚対応）
   const analyzePhotoWithAI = async () => {
+    const { photoFiles } = useFormDraftStore.getState();
     if (photoFiles.length === 0 || !photoEditMeal || !currentPlan) return;
-    
+
     setIsAnalyzingPhoto(true);
-    
+
     try {
       // 複数枚の写真をBase64に変換して送信
       const imageDataArray = await Promise.all(photoFiles.map(async (file) => {
@@ -5860,12 +5861,12 @@ export default function WeeklyMenuPage() {
                 onClose={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }}
                 onPhotoSelect={(files: FileList) => {
                   const newFiles = Array.from(files);
-                  setPhotoFiles(prev => [...prev, ...newFiles]);
+                  setPhotoFiles([...useFormDraftStore.getState().photoFiles, ...newFiles]);
                   newFiles.forEach(file => {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                       if (e.target?.result) {
-                        setPhotoPreviews(prev => [...prev, e.target!.result as string]);
+                        setPhotoPreviews([...useFormDraftStore.getState().photoPreviews, e.target!.result as string]);
                       }
                     };
                     reader.readAsDataURL(file);
