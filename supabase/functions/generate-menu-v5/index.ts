@@ -399,6 +399,7 @@ async function executeStep3_Save(
   console.log("💾 V5 Step 3: Nutrition & saving (direct)...");
 
   const reqRow = await loadRequestRow(supabase, requestId);
+  if (String(reqRow.user_id) !== String(userId)) throw new Error("userId mismatch for request");
   const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
   const ultimateMode = generatedData.ultimateMode ?? false;
   const totalSteps = ultimateMode ? 6 : 3;
@@ -2911,6 +2912,7 @@ async function executeStep4_NutritionFeedback(
   console.log("📊 V5 Step 4: Nutrition feedback analysis...");
 
   const reqRow = await loadRequestRow(supabase, requestId);
+  if (String(reqRow.user_id) !== String(userId)) throw new Error("userId mismatch for request");
   const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
   const dates = generatedData.dates ?? [];
   const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
@@ -3035,6 +3037,7 @@ async function executeStep5_RegenerateWithAdvice(
   console.log("🔄 V5 Step 5: Regenerating meals with advice...");
 
   const reqRow = await loadRequestRow(supabase, requestId);
+  if (String(reqRow.user_id) !== String(userId)) throw new Error("userId mismatch for request");
   const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
   const generatedMeals: Record<string, GeneratedMeal> = (generatedData.generatedMeals ?? {}) as any;
   const targetSlots = generatedData.targetSlots ?? [];
@@ -3220,6 +3223,7 @@ async function executeStep6_FinalSave(
   console.log("💾 V5 Step 6: Final save...");
 
   const reqRow = await loadRequestRow(supabase, requestId);
+  if (String(reqRow.user_id) !== String(userId)) throw new Error("userId mismatch for request");
   const generatedData: V5GeneratedData = (reqRow.generated_data ?? {}) as any;
   const targetSlots = sortTargetSlots(generatedData.targetSlots ?? normalizeTargetSlots(reqRow.target_slots ?? []));
   const totalSlots = targetSlots.length;
@@ -3401,16 +3405,61 @@ Deno.serve(async (req: Request) => {
     const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
     if (!requestId) throw new Error("request_id is required");
 
+    // 継続呼び出し（_continue=true）は SERVICE_ROLE_KEY で呼ばれる（自関数からの内部呼び出しのみ）
+    // SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらが設定されていても一致を許容する
+    // （呼び出し元は常に SUPABASE_SERVICE_ROLE_KEY を送るが、Edge 側の env 優先順位と食い違うと
+    //   全呼び出しが 401 になる退行を防ぐため、両方の設定値を許容リストとして扱う）
+    const configuredServiceRoleKeys = [
+      Deno.env.get("SERVICE_ROLE_JWT"),
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+    ].filter((key): key is string => Boolean(key));
+    const isServiceRoleCaller = Boolean(accessToken) && configuredServiceRoleKeys.includes(accessToken);
+
     if (isContinue) {
+      // 継続呼び出しは service role key を提示した場合のみ許可（誰でも継続を名乗れる穴を防ぐ）
+      if (!isServiceRoleCaller) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized: continuation requires service role authorization" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       if (!body.userId) throw new Error("userId is required for continuation calls");
       userId = body.userId;
-    } else if (body.userId) {
+    } else if (isServiceRoleCaller && body.userId) {
+      // 信頼済みバックエンド（Next.js API route）からの呼び出し。userId はサーバ側で検証済み。
       userId = body.userId;
     } else {
+      // 非継続かつ service role 以外の呼び出しは、Authorization トークンから必ず userId を導出する
+      // （body.userId はなりすまし防止のため採用しない）
       if (!accessToken) throw new Error("Missing access token");
       const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
-      if (userErr || !userData?.user) throw new Error(`Auth failed: ${userErr?.message ?? "no user"}`);
+      if (userErr || !userData?.user) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       userId = userData.user.id;
+
+      // request_id の所有権検証（IDOR対策）: 認証済みユーザーが他人の request_id を渡して
+      // weekly_menu_requests 行（status/progress/generated_data）を書き換えられないよう、
+      // mutation を始める前に検証する。service role 経由（isServiceRoleCaller）は body.userId を
+      // 信頼する設計のため対象外。
+      const ownerRow = await runSupabaseQuery<{ user_id: string } | null>(
+        () => supabase
+          .from("weekly_menu_requests")
+          .select("user_id")
+          .eq("id", requestId)
+          .maybeSingle(),
+        `weekly_menu_requests.owner_check:${requestId}`,
+        null,
+      );
+      if (!ownerRow || String(ownerRow.user_id) !== String(userId)) {
+        return new Response(
+          JSON.stringify({ error: "Not Found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
 
     let currentStep = 1;

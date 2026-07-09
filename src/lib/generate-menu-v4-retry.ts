@@ -150,10 +150,12 @@ export async function callGenerateMenuV4WithRetry(params: GenerateMenuV4CallPara
   const { timeoutMs, maxAttempts, baseDelayMs, maxDelayMs } = normalizeRetryOptions(params.retry);
   const supabaseUrl = params.supabaseUrl.replace(/\/+$/, '');
   const url = `${supabaseUrl}/functions/v1/generate-menu-v4`;
+  // Authorization は service-role 信頼モデルの根幹のため、extraHeaders による
+  // 上書きを許さない（意図せぬ extraHeaders.Authorization 混入で権限判定が壊れるのを防ぐ）。
   const headers: Record<string, string> = {
+    ...params.extraHeaders,
     'Content-Type': 'application/json',
     Authorization: `Bearer ${params.serviceRoleKey}`,
-    ...params.extraHeaders,
   };
 
   let lastFailure: AttemptFailure | null = null;
