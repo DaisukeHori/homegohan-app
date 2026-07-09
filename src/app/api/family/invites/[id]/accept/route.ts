@@ -106,11 +106,12 @@ export async function POST(
     );
   }
 
-  const result = data as { family_id: string; member_id: string; role: string };
+  // accept_family_invite RPC は family_members 行を返す (主キーは member_id ではなく id)
+  const result = data as { id: string; family_id: string; role: string };
   return NextResponse.json({
     data: {
       family_id: result.family_id,
-      member_id: result.member_id,
+      member_id: result.id,
       role: result.role,
     },
   });

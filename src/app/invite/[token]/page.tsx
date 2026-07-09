@@ -2,7 +2,7 @@
 
 // src/app/invite/[token]/page.tsx
 // (設計書 03-ui-spec.md §2 — 5 パターン分岐)
-// org/family 共通版: invite_type ('family'|'organization') による分岐
+// org/family 共通版: scope ('family'|'organization') による分岐
 
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
@@ -12,12 +12,12 @@ import { InviteLayout } from '@/components/membership/InviteLayout';
 
 interface InviteDetails {
   status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'revoked';
-  invite_type: 'family' | 'organization';
+  // get_invite_details RPC (supabase/migrations/20260511000133_membership_remaining_rpcs.sql) の実返却キーに合わせる
+  scope: 'family' | 'organization';
   email: string;
   scope_name: string;
-  inviter_name: string;
+  invited_by_name: string;
   expires_at: string;
-  custom_message: string | null;
   is_existing_user?: boolean;
 }
 
@@ -142,7 +142,7 @@ export default function InvitePage({ params }: PageProps) {
     );
   }
 
-  const scope = invite.invite_type === 'family' ? 'family' : 'organization';
+  const scope = invite.scope === 'family' ? 'family' : 'organization';
 
   if (invite.status !== 'pending') {
     const statusMessages: Record<string, string> = {
@@ -174,7 +174,7 @@ export default function InvitePage({ params }: PageProps) {
   // パターン A: pending + 未ログイン
   if (!isLoggedIn) {
     return (
-      <InviteLayout scope={scope} scopeName={invite.scope_name} inviterName={invite.inviter_name} expiresAt={invite.expires_at}>
+      <InviteLayout scope={scope} scopeName={invite.scope_name} inviterName={invite.invited_by_name} expiresAt={invite.expires_at}>
         <div className="max-w-sm w-full rounded-2xl bg-white shadow-lg border border-gray-100 overflow-hidden">
           <div className="bg-green-50 px-6 py-5 border-b border-green-100">
             <div className="text-3xl mb-2">🏠</div>
@@ -230,13 +230,13 @@ export default function InvitePage({ params }: PageProps) {
   }
 
   // パターン B: pending + ログイン中 + email 一致 (family)
-  if (invite.invite_type === 'family') {
+  if (invite.scope === 'family') {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
         <FamilyInviteAcceptModal
           token={token}
           familyName={invite.scope_name}
-          inviterName={invite.inviter_name}
+          inviterName={invite.invited_by_name}
           expiresAt={invite.expires_at}
           onAccepted={() => router.push('/family/dashboard')}
           onRejected={() => router.push('/')}
@@ -248,7 +248,7 @@ export default function InvitePage({ params }: PageProps) {
 
   // パターン B: pending + ログイン中 + email 一致 (organization)
   return (
-    <InviteLayout scope="organization" scopeName={invite.scope_name} inviterName={invite.inviter_name} expiresAt={invite.expires_at}>
+    <InviteLayout scope="organization" scopeName={invite.scope_name} inviterName={invite.invited_by_name} expiresAt={invite.expires_at}>
       <div className="max-w-sm w-full rounded-2xl bg-white shadow-lg border border-gray-100 overflow-hidden">
         <div className="bg-blue-50 px-6 py-5 border-b border-blue-100">
           <div className="text-3xl mb-2">🏢</div>
@@ -256,17 +256,11 @@ export default function InvitePage({ params }: PageProps) {
             {invite.scope_name}への招待
           </h2>
           <p className="text-sm text-gray-500 mt-1">
-            {invite.inviter_name} 様から招待が届いています
+            {invite.invited_by_name} 様から招待が届いています
           </p>
         </div>
 
         <div className="px-6 py-5 space-y-5">
-          {invite.custom_message && (
-            <div className="rounded-xl bg-gray-50 p-3 text-sm text-gray-600 italic">
-              「{invite.custom_message}」
-            </div>
-          )}
-
           <p className="text-xs text-gray-400">
             期限: {new Date(invite.expires_at).toLocaleDateString('ja-JP')} まで
           </p>
