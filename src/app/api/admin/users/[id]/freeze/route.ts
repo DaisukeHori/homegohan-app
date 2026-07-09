@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { FreezeBodySchema, UnfreezeBodySchema } from '@/lib/admin/users-schemas';
 
 export const dynamic = 'force-dynamic';
@@ -74,10 +74,13 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
+  // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
+  // ポリシーしか無いため、他ユーザーの存在確認・凍結更新には service_role が必須 (#1028)。
+  const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
 
   // 対象ユーザーが存在するか確認
-  const { data: profile, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .select('id, roles')
     .eq('id', id)
@@ -99,7 +102,7 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   // frozen_at / frozen_reason / frozen_by を UPDATE (roles には手を加えない)
-  const { error: updateError } = await supabase
+  const { error: updateError } = await supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: new Date().toISOString(),
@@ -193,10 +196,13 @@ export async function DELETE(request: Request, { params }: Params) {
   }
 
   const { reason } = parseResult.data;
+  // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
+  // ポリシーしか無いため、他ユーザーの存在確認・凍結解除には service_role が必須 (#1028)。
+  const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
 
   // 対象ユーザーが存在するか確認
-  const { data: profile, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .select('id')
     .eq('id', id)
@@ -210,7 +216,7 @@ export async function DELETE(request: Request, { params }: Params) {
   }
 
   // frozen_at / frozen_reason / frozen_by を NULL にリセット (凍結解除)
-  const { error: updateError } = await supabase
+  const { error: updateError } = await supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: null,
