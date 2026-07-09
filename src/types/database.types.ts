@@ -7282,6 +7282,13 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      admin_set_user_roles: {
+        Args: { p_roles: string[]; p_user_id: string }
+        Returns: {
+          id: string
+          roles: string[]
+        }[]
+      }
       can_view_user_meals: {
         Args: { p_target_user_id: string }
         Returns: boolean
