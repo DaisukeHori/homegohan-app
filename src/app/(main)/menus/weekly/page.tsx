@@ -1777,8 +1777,8 @@ export default function WeeklyMenuPage() {
   const [editMealName, setEditMealName] = useState("");
   const [editMealMode, setEditMealMode] = useState<MealMode>('cook');
 
-  // Pantry & Shopping (fridgeItems/shoppingList 等 → Phase B-3 pantryStore/shoppingStore)
-  const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
+  // Pantry & Shopping (#1031: pantryStore/shoppingStore に一本化。page は selector 購読のみ)
+  const fridgeItems = usePantryStore((s) => s.fridgeItems);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
   const [activeShoppingList, setActiveShoppingList] = useState<ShoppingList | null>(null);
   const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
@@ -2512,7 +2512,7 @@ export default function WeeklyMenuPage() {
         const res = await fetch('/api/pantry');
         if (res.ok) {
           const data = await res.json();
-          setFridgeItems(data.items || []);
+          usePantryStore.getState().setFridgeItems(data.items || []);
         }
       } catch (e) {
         console.error("Failed to fetch pantry:", e);
@@ -2946,9 +2946,9 @@ export default function WeeklyMenuPage() {
       });
       if (res.ok) {
         const { item } = await res.json();
-        setFridgeItems(prev => [...prev, item]);
-        setNewFridgeName(""); 
-        setNewFridgeAmount(""); 
+        usePantryStore.getState().addFridgeItem(item);
+        setNewFridgeName("");
+        setNewFridgeAmount("");
         setNewFridgeExpiry("");
         setActiveModal('fridge');
       }
@@ -2958,7 +2958,7 @@ export default function WeeklyMenuPage() {
   const deletePantryItem = async (id: string) => {
     try {
       await fetch(`/api/pantry/${id}`, { method: 'DELETE' });
-      setFridgeItems(prev => prev.filter(i => i.id !== id));
+      usePantryStore.getState().removeFridgeItem(id);
     } catch (e) { alert("削除に失敗しました"); }
   };
 
