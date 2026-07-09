@@ -15,6 +15,7 @@ import {
   triggerMealImageJobProcessing,
 } from '../../../../../../../lib/meal-image-jobs';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -258,6 +259,9 @@ export async function POST(
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const rateLimitResult = await checkRateLimit(user.id, 'generation');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     // actionIdはメッセージIDまたはアクションログIDの可能性がある

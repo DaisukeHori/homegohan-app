@@ -6,6 +6,7 @@ import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 import { createLogger } from '@/lib/db-logger';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -132,6 +133,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     _userId = user.id;
+
+    const rateLimitResult = await checkRateLimit(user.id, 'generation');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = getTodayStr();

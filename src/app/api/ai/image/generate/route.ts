@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, createUserContent } from '@google/genai';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 interface ReferenceImageInput {
   base64: string;
@@ -53,6 +54,9 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const rateLimitResult = await checkRateLimit(user.id, 'image');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY || process.env.GOOGLE_GEN_AI_API_KEY;
     if (!apiKey) {

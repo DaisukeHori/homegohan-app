@@ -5,6 +5,7 @@ import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -25,6 +26,9 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const rateLimitResult = await checkRateLimit(user.id, 'generation');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     // 2. user_daily_meals を取得または作成（日付ベースモデル）
     let { data: dailyMeal, error: dailyMealError } = await supabase

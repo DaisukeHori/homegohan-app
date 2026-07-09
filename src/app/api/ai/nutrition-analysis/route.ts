@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 /**
  * 栄養分析API
@@ -19,6 +20,9 @@ export async function GET(request: Request) {
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const rateLimitResult = await checkRateLimit(user.id, 'analysis');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   const { searchParams } = new URL(request.url);
   const period = searchParams.get('period') || 'today';
@@ -321,6 +325,9 @@ export async function POST(request: Request) {
   if (userError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const rateLimitResult = await checkRateLimit(user.id, 'generation');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     const body = await request.json();

@@ -6,6 +6,7 @@ import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { createLogger } from '@/lib/db-logger';
 import type { Tables } from '@homegohan/shared';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -23,6 +24,9 @@ export async function POST(request: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const rateLimitResult = await checkRateLimit(user.id, 'generation');
+    if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     // 2. mealIdが必須 + UUID形式チェック
     if (!mealId || typeof mealId !== 'string' || !UUID_RE.test(mealId)) {

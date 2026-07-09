@@ -6,6 +6,7 @@ import {
 } from '../../../../lib/ai/image-recognition';
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 function buildPrompt(imageCount: number): string {
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
@@ -24,6 +25,9 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const rateLimitResult = await checkRateLimit(user.id, 'analysis');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
     const body = await request.json();
