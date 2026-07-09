@@ -1,0 +1,27 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # typecheck は現状 green のためブロッキング（このジョブの成否＝typecheck）
+      - run: npm run typecheck
+      # lint / test は現状ベースラインが赤（apps/mobile の Jest 混入・integration の env 依存・
+      # eslint プラグイン版不整合・既存失敗数件）のため当面は非ブロッキング（可視化のみ）。
+      # 緑化して required 化する作業はフォローアップ Issue を参照。
+      - run: npm run lint
+        continue-on-error: true
+      - run: npm test
+        continue-on-error: true
