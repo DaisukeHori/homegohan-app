@@ -3401,15 +3401,33 @@ Deno.serve(async (req: Request) => {
     const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
     if (!requestId) throw new Error("request_id is required");
 
+    // 継続呼び出し（_continue=true）は SERVICE_ROLE_KEY で呼ばれる（自関数からの内部呼び出しのみ）
+    const isServiceRoleCaller = Boolean(supabaseServiceKey) && accessToken === supabaseServiceKey;
+
     if (isContinue) {
+      // 継続呼び出しは service role key を提示した場合のみ許可（誰でも継続を名乗れる穴を防ぐ）
+      if (!isServiceRoleCaller) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized: continuation requires service role authorization" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       if (!body.userId) throw new Error("userId is required for continuation calls");
       userId = body.userId;
-    } else if (body.userId) {
+    } else if (isServiceRoleCaller && body.userId) {
+      // 信頼済みバックエンド（Next.js API route）からの呼び出し。userId はサーバ側で検証済み。
       userId = body.userId;
     } else {
+      // 非継続かつ service role 以外の呼び出しは、Authorization トークンから必ず userId を導出する
+      // （body.userId はなりすまし防止のため採用しない）
       if (!accessToken) throw new Error("Missing access token");
       const { data: userData, error: userErr } = await supabase.auth.getUser(accessToken);
-      if (userErr || !userData?.user) throw new Error(`Auth failed: ${userErr?.message ?? "no user"}`);
+      if (userErr || !userData?.user) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       userId = userData.user.id;
     }
 

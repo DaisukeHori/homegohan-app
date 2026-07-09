@@ -275,13 +275,24 @@ export async function saveMealToDb(
     ? await runSupabaseQuery(
         () => supabase
           .from("planned_meals")
-          .select("id, dishes, image_url")
+          .select("id, dishes, image_url, meal_type, user_daily_meals!inner(user_id)")
           .eq("id", targetSlot.plannedMealId)
           .maybeSingle(),
         `planned_meals.lookup:${targetSlot.plannedMealId}`,
         null,
       )
     : null;
+
+  // 最終防衛線: service-role クライアントは RLS を通らないため、ここで明示的に所有権を検証する。
+  // （#1017/#1019 共通ガード。他ユーザーの planned_meal を誤って/悪意を持って更新しないための最後の砦）
+  if (targetSlot.plannedMealId && existingMeal) {
+    const ownerUserId = (existingMeal as any)?.user_daily_meals?.user_id;
+    if (String(ownerUserId ?? "") !== String(userId)) {
+      throw new Error(
+        `Ownership check failed: planned_meal ${targetSlot.plannedMealId} does not belong to userId ${userId}`,
+      );
+    }
+  }
 
   if (targetSlot.plannedMealId && !existingMeal?.id) {
     console.warn(`planned_meal ${targetSlot.plannedMealId} not found (may have been cleared), will insert new`);

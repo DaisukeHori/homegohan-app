@@ -4,15 +4,18 @@ import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
+import type { Tables } from '@homegohan/shared';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const { mealId, dayDate, mealType, preferences, note } = await request.json();
+    const { mealId, preferences, note } = await request.json();
 
     // 1. ユーザー認証
     const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -20,10 +23,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. mealIdが必須
-    if (!mealId) {
-      return NextResponse.json({ error: 'mealId is required' }, { status: 400 });
+    // 2. mealIdが必須 + UUID形式チェック
+    if (!mealId || typeof mealId !== 'string' || !UUID_RE.test(mealId)) {
+      return NextResponse.json({ error: 'mealId must be a valid UUID' }, { status: 400 });
     }
+
+    // 2.5 所有権検証（IDOR対策）: 自分が所有する planned_meal かどうかを確認し、
+    // meal_type / dayDate はクライアント入力ではなく DB から取得した値を正とする
+    const { data: plannedMeal, error: plannedMealError } = await supabase
+      .from('planned_meals')
+      .select('id, meal_type, user_daily_meals!inner(day_date, user_id)')
+      .eq('id', mealId)
+      .eq('user_daily_meals.user_id', user.id)
+      .maybeSingle();
+
+    if (plannedMealError) {
+      return NextResponse.json({ error: plannedMealError.message }, { status: 500 });
+    }
+
+    const day = (plannedMeal?.user_daily_meals as unknown as Pick<Tables<'user_daily_meals'>, 'day_date'> | null) ?? null;
+    if (!plannedMeal || !day?.day_date || !plannedMeal.meal_type) {
+      return NextResponse.json({ error: 'Meal not found' }, { status: 404 });
+    }
+
+    const dayDate = day.day_date;
+    const mealType = plannedMeal.meal_type;
 
     console.log(`📝 Regenerating meal: ${mealId}`);
 
