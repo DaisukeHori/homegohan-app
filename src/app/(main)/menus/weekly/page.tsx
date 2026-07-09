@@ -1869,8 +1869,9 @@ export default function WeeklyMenuPage() {
 
   // Recipe / AI / manualEdit / photo / imageGenerate → reducers 管理 (Phase B-2 移行済み)
   // formDraft 系 (#1031: formDraftStore に一本化)
-  const [manualDishes, setManualDishes] = useState<LegacyDishDetail[]>([]);
-  const [manualMode, setManualMode] = useState<MealMode>('cook');
+  // manualDishes/manualMode はハンドラ内でのみ読むため useFormDraftStore.getState() を都度参照
+  const setManualDishes = useFormDraftStore((s) => s.setManualDishes);
+  const setManualMode = useFormDraftStore((s) => s.setManualMode);
   // catalogQuery は検索 effect の deps で参照するため selector 購読が必要
   const catalogQuery = useFormDraftStore((s) => s.catalogQuery);
   const setCatalogQuery = useFormDraftStore((s) => s.setCatalogQuery);
@@ -3920,26 +3921,27 @@ export default function WeeklyMenuPage() {
   // Add dish to manual edit
   const addManualDish = () => {
     setSelectedCatalogProduct(null);
-    setManualDishes(prev => [...prev, { name: '', calories_kcal: 0, role: 'side' }]);
+    setManualDishes([...useFormDraftStore.getState().manualDishes, { name: '', calories_kcal: 0, role: 'side' }]);
   };
 
   // Remove dish from manual edit
   const removeManualDish = (index: number) => {
     setSelectedCatalogProduct(null);
-    setManualDishes(prev => prev.filter((_, i) => i !== index));
+    setManualDishes(useFormDraftStore.getState().manualDishes.filter((_, i) => i !== index));
   };
 
   // Update dish in manual edit
   const updateManualDish = (index: number, field: keyof DishDetail, value: string | number) => {
     setSelectedCatalogProduct(null);
-    setManualDishes(prev => prev.map((dish, i) => 
+    setManualDishes(useFormDraftStore.getState().manualDishes.map((dish, i) =>
       i === index ? { ...dish, [field]: value } : dish
     ));
   };
 
   const applyCatalogProductToManualEdit = (product: CatalogProductSummary) => {
     setSelectedCatalogProduct(product);
-    setManualMode((prev) => (prev === 'out' ? 'out' : 'buy'));
+    const prevManualMode = useFormDraftStore.getState().manualMode;
+    setManualMode(prevManualMode === 'out' ? 'out' : 'buy');
     setCatalogQuery(product.name);
     setManualDishes([
       {
@@ -3959,16 +3961,16 @@ export default function WeeklyMenuPage() {
   // Save manual edit
   const saveManualEdit = async () => {
     if (!manualEditMeal || !currentPlan) return;
-    
+
+    const { manualDishes, manualMode, selectedCatalogProduct } = useFormDraftStore.getState();
     const validDishes = manualDishes.filter(d => d.name.trim());
     if (validDishes.length === 0) {
       alert('少なくとも1つの料理名を入力してください');
       return;
     }
-    
+
     const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? d.cal ?? 0), 0);
     const dishName = validDishes.map(d => d.name).join('、');
-    const { selectedCatalogProduct } = useFormDraftStore.getState();
 
     try {
       await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
@@ -4122,7 +4124,7 @@ export default function WeeklyMenuPage() {
   const openImageGenerate = () => {
     if (!manualEditMeal) return;
 
-    const promptSource = manualDishes
+    const promptSource = useFormDraftStore.getState().manualDishes
       .map((dish) => dish.name.trim())
       .filter(Boolean)
       .join('、');
