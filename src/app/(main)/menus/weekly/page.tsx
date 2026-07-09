@@ -1859,13 +1859,13 @@ export default function WeeklyMenuPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shoppingList]);  // CATEGORY_ORDER はコンポーネント内定数配列のため deps に含めるとメモ化が無効になる。本来はモジュールスコープに移動すべきだが挙動変更を避けるため個別 disable
   
-  // Add fridge/shopping form (Phase B-3 で formDraftStore 予定、今は useState 維持)
-  const [newFridgeName, setNewFridgeName] = useState("");
-  const [newFridgeAmount, setNewFridgeAmount] = useState("");
-  const [newFridgeExpiry, setNewFridgeExpiry] = useState("");
-  const [newShoppingName, setNewShoppingName] = useState("");
-  const [newShoppingAmount, setNewShoppingAmount] = useState("");
-  const [newShoppingCategory, setNewShoppingCategory] = useState("食材");
+  // Add fridge/shopping form (#1031: formDraftStore に一本化。ハンドラ内でのみ読む)
+  const setNewFridgeName = useFormDraftStore((s) => s.setNewFridgeName);
+  const setNewFridgeAmount = useFormDraftStore((s) => s.setNewFridgeAmount);
+  const setNewFridgeExpiry = useFormDraftStore((s) => s.setNewFridgeExpiry);
+  const setNewShoppingName = useFormDraftStore((s) => s.setNewShoppingName);
+  const setNewShoppingAmount = useFormDraftStore((s) => s.setNewShoppingAmount);
+  const setNewShoppingCategory = useFormDraftStore((s) => s.setNewShoppingCategory);
 
   // Recipe / AI / manualEdit / photo / imageGenerate → reducers 管理 (Phase B-2 移行済み)
   // formDraft 系 (#1031: formDraftStore に一本化)
@@ -2943,16 +2943,17 @@ export default function WeeklyMenuPage() {
 
   // Add pantry item
   const addPantryItem = async () => {
+    const { newFridgeName, newFridgeAmount, newFridgeExpiry } = useFormDraftStore.getState();
     if (!newFridgeName) return;
     try {
       const res = await fetch('/api/pantry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          name: newFridgeName, 
-          amount: newFridgeAmount, 
-          category: "other", 
-          expirationDate: newFridgeExpiry || null 
+        body: JSON.stringify({
+          name: newFridgeName,
+          amount: newFridgeAmount,
+          category: "other",
+          expirationDate: newFridgeExpiry || null
         })
       });
       if (res.ok) {
@@ -2975,15 +2976,16 @@ export default function WeeklyMenuPage() {
 
   // Add shopping item
   const addShoppingItem = async () => {
+    const { newShoppingName, newShoppingAmount, newShoppingCategory } = useFormDraftStore.getState();
     if (!newShoppingName || !currentPlan) return;
     try {
       const res = await fetch('/api/shopping-list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           shoppingListId: activeShoppingList?.id,
-          itemName: newShoppingName, 
-          quantity: newShoppingAmount, 
+          itemName: newShoppingName,
+          quantity: newShoppingAmount,
           category: newShoppingCategory
         })
       });
