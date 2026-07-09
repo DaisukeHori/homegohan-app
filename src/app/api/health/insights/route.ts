@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateGeminiJson } from '@/lib/ai/gemini-json';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // AI分析結果の取得
 export async function GET(request: NextRequest) {
@@ -68,6 +69,10 @@ export async function POST(request: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // #1022 LLM でインサイトを生成するため generation カテゴリで制限する
+  const rateLimitResult = await checkRateLimit(user.id, 'generation');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   // ユーザーの最近の health_records, health_checkups, planned_meals を集約
   const [recordsResult, checkupsResult, mealsResult] = await Promise.all([

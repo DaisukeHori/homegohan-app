@@ -11,6 +11,7 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../../../lib/meal-image-jobs';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 export async function PATCH(
   request: Request,
@@ -145,7 +146,16 @@ export async function PATCH(
       requestId,
     });
     if (jobs.length > 0) {
-      await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
+      // #1022 画像生成ジョブの同期トリガーは image カテゴリで制限する（献立更新自体は壊さない）
+      const imageRateLimit = await checkRateLimit(user.id, 'image');
+      if (imageRateLimit.success) {
+        await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobs.length });
+      } else {
+        console.warn('[meal-plans/meals/[id]] Image generation trigger skipped due to rate limit', {
+          userId: user.id,
+          plannedMealId: data.id,
+        });
+      }
     }
 
     return NextResponse.json({ success: true, meal: data });

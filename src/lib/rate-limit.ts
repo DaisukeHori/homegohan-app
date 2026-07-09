@@ -38,7 +38,9 @@ const CATEGORY_PRESETS: Record<RateLimitCategory, CategoryPreset> = {
   image: { max: 1, windowSec: 60 },
 };
 
-// image カテゴリのみ、分あたり制限に加えて日次クォータを追加で課す
+// image カテゴリのみ、分あたり制限に加えて日次クォータを追加で課す。
+// 「日次」は暦日（0時リセット）ではなく、直近24時間のローリングウィンドウで判定する
+// （sliding window / in-memory どちらの実装も「初回リクエスト時刻 + 24h」を基準にするため）。
 const IMAGE_DAILY_QUOTA: CategoryPreset = { max: 20, windowSec: 24 * 60 * 60 };
 
 export interface RateLimitResult {
@@ -130,6 +132,12 @@ async function checkSingleLimit(
 ): Promise<RateLimitResult> {
   const limiter = getUpstashLimiter(category, preset);
   if (limiter) {
+    // 【意図的な設計判断: fail-close】
+    // ここで `limiter.limit(key)` が例外を投げた場合（Upstash env は設定済みだが実行時に
+    // Redis へ到達できない等）、あえて try/catch で握りつぶさず呼び出し元まで例外を伝播させる。
+    // 呼び出し元の route は既存の catch ブロック（またはフレームワークの実行時エラー処理）で
+    // 500 を返すため、結果的に「判定不能なら拒否する」fail-close になる。
+    // fail-open（例外時は success: true 扱いにする）は #1022 のセキュリティ目的に反するため禁止。
     const result = await limiter.limit(key);
     return {
       success: result.success,

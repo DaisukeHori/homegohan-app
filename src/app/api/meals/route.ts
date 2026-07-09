@@ -6,6 +6,7 @@ import {
   enqueueMealImageJobs,
   triggerMealImageJobProcessing,
 } from '../../../lib/meal-image-jobs';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -177,10 +178,22 @@ export async function POST(request: Request) {
       requestId,
     });
     if (dishImagePayload.jobs.length > 0) {
-      await triggerMealImageJobProcessing({
-        plannedMealId: meal.id,
-        limit: dishImagePayload.jobs.length,
-      });
+      // #1022 画像生成ジョブの同期トリガーはコスト最大の経路のため image カテゴリで制限する。
+      // 献立自体（meal 作成）は制限対象にせず、正常な献立作成フローは壊さない。
+      // ジョブ自体は enqueueMealImageJobs 済みで DB に pending のまま残るため、
+      // 制限超過時はトリガーのみスキップし、レスポンスは通常どおり 200 を返す。
+      const imageRateLimit = await checkRateLimit(user.id, 'image');
+      if (imageRateLimit.success) {
+        await triggerMealImageJobProcessing({
+          plannedMealId: meal.id,
+          limit: dishImagePayload.jobs.length,
+        });
+      } else {
+        console.warn('[meals] Image generation trigger skipped due to rate limit', {
+          userId: user.id,
+          plannedMealId: meal.id,
+        });
+      }
     }
 
     return NextResponse.json({ meal });

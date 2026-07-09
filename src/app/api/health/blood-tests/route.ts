@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 
 // 血液検査結果一覧の取得（+ 経年レビュー）
 export async function GET(request: NextRequest) {
@@ -45,6 +46,10 @@ export async function POST(request: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // #1022 個別レビュー + 経年レビューで LLM を2回叩くため generation カテゴリで制限する
+  const rateLimitResult = await checkRateLimit(user.id, 'generation');
+  if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   const body = await request.json().catch(() => null);
   const { data: resultData, errors } = sanitizeBloodTestPayload(body);
