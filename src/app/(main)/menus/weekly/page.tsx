@@ -1776,9 +1776,9 @@ export default function WeeklyMenuPage() {
     restoreShoppingListRegeneration();
   }, []);
   
-  // Edit meal state (editingMeal → modalReducer, editMealName/Mode → Phase B-3 formDraftStore)
-  const [editMealName, setEditMealName] = useState("");
-  const [editMealMode, setEditMealMode] = useState<MealMode>('cook');
+  // Edit meal state (editingMeal → modalReducer, editMealName/Mode → #1031 formDraftStore に一本化)
+  const setEditMealName = useFormDraftStore((s) => s.setEditMealName);
+  const setEditMealMode = useFormDraftStore((s) => s.setEditMealMode);
 
   // Pantry & Shopping (#1031: pantryStore/shoppingStore に一本化。page は selector 購読のみ)
   const fridgeItems = usePantryStore((s) => s.fridgeItems);
@@ -3825,7 +3825,9 @@ export default function WeeklyMenuPage() {
 
   const saveEditMeal = async () => {
     if (!editingMeal || !currentPlan) return;
-    
+
+    const { editMealName, editMealMode } = useFormDraftStore.getState();
+
     try {
       await fetch(`/api/meal-plans/meals/${editingMeal.id}`, {
         method: 'PATCH',
@@ -3835,12 +3837,12 @@ export default function WeeklyMenuPage() {
           mode: editMealMode
         })
       });
-      
+
       // Update local state
       const updatedDays = currentPlan.days?.map(day => ({
         ...day,
-        meals: day.meals?.map(m => 
-          m.id === editingMeal.id 
+        meals: day.meals?.map(m =>
+          m.id === editingMeal.id
             ? { ...m, dishName: editMealName, mode: editMealMode }
             : m
         )
