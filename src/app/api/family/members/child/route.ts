@@ -36,6 +36,7 @@ export async function POST(request: Request) {
 
   const { data, error } = await supabase.rpc('add_family_child', {
     p_family_id: parsed.family_id,
+    p_display_name: parsed.display_name,
     p_child_profile: parsed.child_profile ?? {},
   });
 

@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   const { data, error } = await supabase.rpc('propose_family_representative_transfer', {
     p_family_id: parsed.family_id,
     p_to_user_id: parsed.to_user_id,
-    p_reason: parsed.reason ?? null,
+    // p_reason は DB 関数に存在しないため送らない
   });
 
   if (error) {
