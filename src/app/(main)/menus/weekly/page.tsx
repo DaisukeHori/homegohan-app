@@ -9,6 +9,10 @@ import {
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
   useServingsConfigStore,
+  usePantryStore,
+  useShoppingStore,
+  useFormDraftStore,
+  type LegacyDishDetail,
 } from './_state';
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -138,33 +142,7 @@ interface ShoppingRangeSelection {
 // 全ての食事タイプ
 const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
-// 旧形式（cal/protein/fat/carbs 等の短縮キー）との後方互換のための型拡張
-// dish データが古いスキーマで保存されている可能性があるため
-type LegacyDishDetail = DishDetail & {
-  cal?: number;
-  protein?: number;
-  fat?: number;
-  carbs?: number;
-  fiber?: number;
-  sugar?: number;
-  sodium?: number;
-  potassium?: number;
-  calcium?: number;
-  phosphorus?: number;
-  iron?: number;
-  zinc?: number;
-  cholesterol?: number;
-  vitaminA?: number;
-  vitaminB1?: number;
-  vitaminB2?: number;
-  vitaminB6?: number;
-  vitaminB12?: number;
-  vitaminC?: number;
-  vitaminD?: number;
-  vitaminE?: number;
-  vitaminK?: number;
-  folicAcid?: number;
-};
+// LegacyDishDetail は _state/types.ts (Issue #1031 Step 0 で移設、formDraftStore と共有)
 
 // Reference UI Color Palette
 const colors = {
