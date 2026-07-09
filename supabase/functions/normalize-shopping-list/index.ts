@@ -15,6 +15,10 @@ import { createLogger, generateRequestId } from "../_shared/db-logger.ts";
 import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { fetchWithRetry } from "../_shared/network-retry.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
+import { requireAuth } from "../_shared/auth.ts";
+
+// 過大入力によるLLMコスト濫用/DoS防止のための上限
+const MAX_INGREDIENTS = 500;
 
 // ============================================
 // 型定義
@@ -275,6 +279,10 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // 認証必須
+  const authResult = await requireAuth(req);
+  if (authResult instanceof Response) return authResult;
+
   const requestId = generateRequestId();
   const executionId = generateExecutionId();
   const logger = createLogger("normalize-shopping-list", requestId);
@@ -293,6 +301,18 @@ Deno.serve(async (req: Request) => {
     if (!ingredients || !Array.isArray(ingredients)) {
       return new Response(
         JSON.stringify({ error: "ingredients array is required" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    if (ingredients.length > MAX_INGREDIENTS) {
+      return new Response(
+        JSON.stringify({
+          error: `ingredients array exceeds maximum length of ${MAX_INGREDIENTS}`,
+        }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },

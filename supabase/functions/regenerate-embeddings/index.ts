@@ -8,6 +8,7 @@ import {
   fetchDatasetEmbeddings,
   isDatasetEmbeddingConfig,
 } from "../../../shared/dataset-embedding.mjs";
+import { requireServiceRole } from "../_shared/auth.ts";
 
 /**
  * 埋め込みベクトル再生成 Edge Function
@@ -73,6 +74,10 @@ Deno.serve(async (req) => {
       },
     });
   }
+
+  // cron/内部専用: service role key または CRON_SECRET のみ許可
+  const authError = requireServiceRole(req);
+  if (authError) return authError;
 
   try {
     const body = await req.json().catch(() => ({}));

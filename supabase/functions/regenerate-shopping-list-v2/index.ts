@@ -12,6 +12,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
+import { requireAuth } from "../_shared/auth.ts";
 
 // ============================================
 // CORS
@@ -618,12 +619,17 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  try {
-    const { requestId, userId, startDate, endDate, servingsConfig } = await req.json();
+  // 認証必須（署名検証されたユーザーJWTのみ許可、body.userIdは信用しない）
+  const authResult = await requireAuth(req);
+  if (authResult instanceof Response) return authResult;
+  const authenticatedUserId = authResult.userId;
 
-    if (!requestId || !userId || !startDate || !endDate) {
+  try {
+    const { requestId, userId: bodyUserId, startDate, endDate, servingsConfig } = await req.json();
+
+    if (!requestId || !startDate || !endDate) {
       return new Response(
-        JSON.stringify({ error: "requestId, userId, startDate, endDate are required" }),
+        JSON.stringify({ error: "requestId, startDate, endDate are required" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -631,13 +637,28 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    if (bodyUserId && bodyUserId !== authenticatedUserId) {
+      return new Response(
+        JSON.stringify({ error: "userId does not match authenticated user" }),
+        {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const userId = authenticatedUserId;
+
     // Service Role Keyでクライアント作成（RLSバイパス）
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 非同期で処理開始（即座にレスポンス返す）
-    processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);
+    // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）
+    const backgroundTask = processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      EdgeRuntime.waitUntil(backgroundTask);
+    }
 
     return new Response(
       JSON.stringify({ success: true, requestId }),
