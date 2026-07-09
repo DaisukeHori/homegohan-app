@@ -1885,10 +1885,10 @@ export default function WeeklyMenuPage() {
   const setPhotoPreviews = useFormDraftStore((s) => s.setPhotoPreviews);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Image generation files
-  const [imageGenerationPrompt, setImageGenerationPrompt] = useState('');
-  const [imageReferenceFiles, setImageReferenceFiles] = useState<File[]>([]);
-  const [imageReferencePreviews, setImageReferencePreviews] = useState<string[]>([]);
+  // Image generation files (#1031: formDraftStore に一本化。ハンドラ内でのみ読む)
+  const setImageGenerationPrompt = useFormDraftStore((s) => s.setImageGenerationPrompt);
+  const setImageReferenceFiles = useFormDraftStore((s) => s.setImageReferenceFiles);
+  const setImageReferencePreviews = useFormDraftStore((s) => s.setImageReferencePreviews);
   const imageGenerateInputRef = useRef<HTMLInputElement>(null);
 
   // レシピモーダルが開いたとき、お気に入り状態を取得
@@ -4147,12 +4147,12 @@ export default function WeeklyMenuPage() {
     if (!files || files.length === 0) return;
 
     const newFiles = Array.from(files);
-    setImageReferenceFiles((prev) => [...prev, ...newFiles]);
+    setImageReferenceFiles([...useFormDraftStore.getState().imageReferenceFiles, ...newFiles]);
 
     newFiles.forEach((file) => {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImageReferencePreviews((prev) => [...prev, reader.result as string]);
+        setImageReferencePreviews([...useFormDraftStore.getState().imageReferencePreviews, reader.result as string]);
       };
       reader.readAsDataURL(file);
     });
@@ -4161,13 +4161,14 @@ export default function WeeklyMenuPage() {
   };
 
   const removeImageReference = (index: number) => {
-    setImageReferenceFiles((prev) => prev.filter((_, i) => i !== index));
-    setImageReferencePreviews((prev) => prev.filter((_, i) => i !== index));
+    setImageReferenceFiles(useFormDraftStore.getState().imageReferenceFiles.filter((_, i) => i !== index));
+    setImageReferencePreviews(useFormDraftStore.getState().imageReferencePreviews.filter((_, i) => i !== index));
   };
 
   const generateMealImage = async () => {
     if (!imageGenerateMeal || !currentPlan) return;
 
+    const { imageGenerationPrompt, imageReferenceFiles } = useFormDraftStore.getState();
     const prompt = imageGenerationPrompt.trim();
     if (!prompt) {
       alert('生成したい料理の説明を入力してください');
@@ -5838,12 +5839,12 @@ export default function WeeklyMenuPage() {
                 onClose={() => closeImageGenerateModal(true)}
                 onAddReferenceImages={(files: FileList) => {
                   const newFiles = Array.from(files);
-                  setImageReferenceFiles(prev => [...prev, ...newFiles]);
+                  setImageReferenceFiles([...useFormDraftStore.getState().imageReferenceFiles, ...newFiles]);
                   newFiles.forEach(file => {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                       if (e.target?.result) {
-                        setImageReferencePreviews(prev => [...prev, e.target!.result as string]);
+                        setImageReferencePreviews([...useFormDraftStore.getState().imageReferencePreviews, e.target!.result as string]);
                       }
                     };
                     reader.readAsDataURL(file);
