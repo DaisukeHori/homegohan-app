@@ -230,11 +230,13 @@ async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDIN
       await new Promise(r => setTimeout(r, 500));
       
     } catch (error) {
-      // 認証系の恒久エラー（401/403）はリトライしても解決しないため中断する（run側の `!res.ok` → break と挙動を揃える）
+      // 認証系の恒久エラー（401/403）はリトライしても解決しないため中断する。
+      // ここで握り潰さず main() まで伝播させ、ジョブステータスに "failed" を記録させたうえで
+      // 非0 exit させる（"completed" として誤って正常終了扱いにしないため）。
       if (error.isAuthFailure) {
         console.error(`\n   ❌ 認証エラーのため中断します: ${error.message}`);
         console.error(`   SUPABASE_SERVICE_ROLE_KEY が正しく設定されているか確認してください。`);
-        break;
+        throw error;
       }
 
       // すべてのエラーに対して5秒待ってリトライ（無限）
@@ -297,8 +299,39 @@ async function main() {
     }
   }
   
-  await processTable(table, startOffset, model, dimensions, jobId, onlyMissing);
-  
+  try {
+    await processTable(table, startOffset, model, dimensions, jobId, onlyMissing);
+  } catch (error) {
+    if (error.isAuthFailure) {
+      console.error(`\n❌ 認証エラーのため処理を中断しました: ${error.message}`);
+      // "completed" と誤って記録しないよう、失敗ステータスを明示的に保存する
+      if (jobId && SERVICE_ROLE_KEY) {
+        try {
+          await fetch(`${SUPABASE_URL}/rest/v1/embedding_jobs`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+              "apikey": SERVICE_ROLE_KEY,
+              "Prefer": "resolution=merge-duplicates",
+            },
+            body: JSON.stringify({
+              job_id: jobId,
+              status: "failed",
+              error_message: error.message,
+              completed_at: new Date().toISOString(),
+            }),
+          }).catch(() => {});
+        } catch (e) {
+          // 無視
+        }
+      }
+      process.exit(1);
+    }
+    // 認証失敗以外は従来どおり main().catch() に伝播させる
+    throw error;
+  }
+
   const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
   console.log(`\n🎉 All done! Total time: ${elapsed} minutes`);
   
