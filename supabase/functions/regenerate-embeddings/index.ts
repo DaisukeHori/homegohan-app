@@ -8,6 +8,7 @@ import {
   fetchDatasetEmbeddings,
   isDatasetEmbeddingConfig,
 } from "../../../shared/dataset-embedding.mjs";
+import { requireServiceRole } from "../_shared/auth.ts";
 
 /**
  * 埋め込みベクトル再生成 Edge Function
@@ -72,6 +73,18 @@ Deno.serve(async (req) => {
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
       },
     });
+  }
+
+  // cron/内部専用: service role key の完全一致（SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY のどちらでも可）、
+  // または CRON_SECRET/SERVICE_ROLE_SECRET のいずれかを満たせば許可
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const isServiceRoleKey =
+    !!bearerToken &&
+    (bearerToken === Deno.env.get("SERVICE_ROLE_JWT") || bearerToken === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+  if (!isServiceRoleKey) {
+    const authError = requireServiceRole(req);
+    if (authError) return authError;
   }
 
   try {

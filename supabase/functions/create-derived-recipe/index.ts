@@ -45,21 +45,6 @@ function getBearerToken(req: Request): string | null {
   return auth.trim();
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-    const payload = parts[1];
-    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-    const json = atob(padded);
-    const obj = JSON.parse(json);
-    return obj && typeof obj === "object" ? (obj as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
@@ -487,12 +472,11 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // service_role JWT only
+  // service_role key の完全一致のみで判定（署名未検証のJWTペイロードは信用しない）
   const token = getBearerToken(req);
-  if (!token) return jsonResponse({ error: "unauthorized" }, 401);
-  const payload = decodeJwtPayload(token);
-  const role = String(payload?.role ?? "");
-  if (role !== "service_role") return jsonResponse({ error: "unauthorized" }, 401);
+  if (!token || !SERVICE_ROLE_KEY || token !== SERVICE_ROLE_KEY) {
+    return jsonResponse({ error: "unauthorized" }, 401);
+  }
 
   if (req.method !== "POST") {
     return jsonResponse({ error: "method_not_allowed" }, 405);

@@ -8,8 +8,14 @@ import { DATASET_EMBEDDING_DIMENSIONS, DATASET_EMBEDDING_MODEL } from "../shared
 import { buildProgressSnapshot } from "../shared/progress-reporting.mjs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://flmeolcfutuwwbjmzyoz.supabase.co";
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU";
+// regenerate-embeddings は service role key（または CRON_SECRET/SERVICE_ROLE_SECRET）以外を拒否するため、
+// anon key ではなく service role key を使用する。
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+if (!SERVICE_ROLE_KEY) {
+  console.error("❌ SUPABASE_SERVICE_ROLE_KEY environment variable is required");
+  process.exit(1);
+}
 
 const BATCH_LIMIT = 100;
 const RETRY_DELAY = 5000; // リトライ間隔（5秒）
@@ -45,7 +51,14 @@ async function fetchWithRetry(url, options) {
       
       if (!res.ok) {
         const errText = await res.text();
-        
+
+        // 認証系の恒久エラー（401/403）はリトライしても解決しないため即座に中断する
+        if (res.status === 401 || res.status === 403) {
+          const authError = new Error(`Authentication failed (HTTP ${res.status}): ${errText}`);
+          authError.isAuthFailure = true;
+          throw authError;
+        }
+
         // 一時的なエラーの場合、5秒待ってリトライ
         if (isTemporaryError(errText)) {
           retryCount++;
@@ -54,18 +67,23 @@ async function fetchWithRetry(url, options) {
           await new Promise(r => setTimeout(r, RETRY_DELAY));
           continue; // 無限にリトライ
         }
-        
+
         throw new Error(errText);
       }
-      
+
       // 成功したらリトライカウンターをリセット
       if (retryCount > 0) {
         console.log(`\n   ✅ リトライ成功！処理を続行します。`);
         retryCount = 0;
       }
-      
+
       return res;
     } catch (error) {
+      // 認証系の恒久エラーはリトライせず、そのまま呼び出し元に伝播させる
+      if (error.isAuthFailure) {
+        throw error;
+      }
+
       // ネットワークエラーの場合、5秒待ってリトライ
       if (error.message.includes('fetch') || error.message.includes('network') || error.message.includes('ECONNREFUSED')) {
         retryCount++;
@@ -74,7 +92,7 @@ async function fetchWithRetry(url, options) {
         await new Promise(r => setTimeout(r, RETRY_DELAY));
         continue; // 無限にリトライ
       }
-      
+
       // 永続的なエラーの場合はスロー
       throw error;
     }
@@ -140,7 +158,7 @@ async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDIN
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${ANON_KEY}`,
+          "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
         },
         body: JSON.stringify({
           table: tableName,
@@ -212,6 +230,15 @@ async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDIN
       await new Promise(r => setTimeout(r, 500));
       
     } catch (error) {
+      // 認証系の恒久エラー（401/403）はリトライしても解決しないため中断する。
+      // ここで握り潰さず main() まで伝播させ、ジョブステータスに "failed" を記録させたうえで
+      // 非0 exit させる（"completed" として誤って正常終了扱いにしないため）。
+      if (error.isAuthFailure) {
+        console.error(`\n   ❌ 認証エラーのため中断します: ${error.message}`);
+        console.error(`   SUPABASE_SERVICE_ROLE_KEY が正しく設定されているか確認してください。`);
+        throw error;
+      }
+
       // すべてのエラーに対して5秒待ってリトライ（無限）
       console.error(`\n   ❌ エラー発生: ${error.message.substring(0, 200)}`);
       console.error(`   ⏳ ${RETRY_DELAY / 1000}秒待機してからリトライします...`);
@@ -219,7 +246,7 @@ async function processTable(tableName, startOffset = 0, model = DATASET_EMBEDDIN
       continue; // 同じoffsetでリトライ（無限）
     }
   }
-  
+
   console.log(`\n   ✅ Completed ${tableName}: ${totalProcessed} rows`);
 }
 
@@ -272,8 +299,39 @@ async function main() {
     }
   }
   
-  await processTable(table, startOffset, model, dimensions, jobId, onlyMissing);
-  
+  try {
+    await processTable(table, startOffset, model, dimensions, jobId, onlyMissing);
+  } catch (error) {
+    if (error.isAuthFailure) {
+      console.error(`\n❌ 認証エラーのため処理を中断しました: ${error.message}`);
+      // "completed" と誤って記録しないよう、失敗ステータスを明示的に保存する
+      if (jobId && SERVICE_ROLE_KEY) {
+        try {
+          await fetch(`${SUPABASE_URL}/rest/v1/embedding_jobs`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+              "apikey": SERVICE_ROLE_KEY,
+              "Prefer": "resolution=merge-duplicates",
+            },
+            body: JSON.stringify({
+              job_id: jobId,
+              status: "failed",
+              error_message: error.message,
+              completed_at: new Date().toISOString(),
+            }),
+          }).catch(() => {});
+        } catch (e) {
+          // 無視
+        }
+      }
+      process.exit(1);
+    }
+    // 認証失敗以外は従来どおり main().catch() に伝播させる
+    throw error;
+  }
+
   const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
   console.log(`\n🎉 All done! Total time: ${elapsed} minutes`);
   

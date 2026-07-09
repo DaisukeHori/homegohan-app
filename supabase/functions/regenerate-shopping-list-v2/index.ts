@@ -12,6 +12,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from "../_shared/fast-llm.ts";
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
+import { requireAuth } from "../_shared/auth.ts";
 
 // ============================================
 // CORS
@@ -23,6 +24,16 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+// 認証ヘルパー（_shared/auth.ts）が返す Response には CORS ヘッダーが付与されていないため、
+// ブラウザからの呼び出し（functions.invoke）でも CORS エラーにならないようここで付け直す。
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    headers.set(key, value);
+  }
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
 
 // ============================================
 // 型定義
@@ -619,11 +630,50 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { requestId, userId, startDate, endDate, servingsConfig } = await req.json();
+    const { requestId, userId: bodyUserId, startDate, endDate, servingsConfig } = await req.json();
 
-    if (!requestId || !userId || !startDate || !endDate) {
+    // 認証（auth-first: body必須フィールドのバリデーションより先に行う）: 二系統を許可する
+    // 1) 信頼された内部呼び出し（src/app/api/shopping-list/regenerate/route.ts が
+    //    サーバー側で getUser 済みのうえ SUPABASE_SERVICE_ROLE_KEY を Bearer に付けて呼ぶ）
+    //    → body.userId をそのまま採用（必須）
+    // 2) それ以外はユーザーJWTを requireAuth で検証し、authResult.userId を採用
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const isTrustedInternalCall = serviceRoleKey.length > 0 && accessToken === serviceRoleKey;
+
+    let userId: string;
+
+    if (isTrustedInternalCall) {
+      if (!bodyUserId || typeof bodyUserId !== "string") {
+        return new Response(
+          JSON.stringify({ error: "userId is required for service-role calls" }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      userId = bodyUserId;
+    } else {
+      const authResult = await requireAuth(req);
+      if (authResult instanceof Response) return withCors(authResult);
+
+      if (bodyUserId && bodyUserId !== authResult.userId) {
+        return new Response(
+          JSON.stringify({ error: "userId does not match authenticated user" }),
+          {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      userId = authResult.userId;
+    }
+
+    if (!requestId || !startDate || !endDate) {
       return new Response(
-        JSON.stringify({ error: "requestId, userId, startDate, endDate are required" }),
+        JSON.stringify({ error: "requestId, startDate, endDate are required" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -636,8 +686,13 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 非同期で処理開始（即座にレスポンス返す）
-    processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);
+    // 非同期で処理開始（即座にレスポンス返す。レスポンス後も処理が打ち切られないようwaitUntilに委ねる）
+    const backgroundTask = processRegeneration(supabase, requestId, userId, startDate, endDate, servingsConfig || null);
+    // @ts-ignore EdgeRuntime
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      // @ts-ignore EdgeRuntime
+      EdgeRuntime.waitUntil(backgroundTask);
+    }
 
     return new Response(
       JSON.stringify({ success: true, requestId }),
