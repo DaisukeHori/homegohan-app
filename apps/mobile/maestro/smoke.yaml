@@ -99,21 +99,16 @@ appId: com.homegohan.app
     timeout: 15000
 
 # ─── 9. ログアウト ───────────────────────────────────────────────────────────
-# プロファイルタブ → 設定 → ログアウト
+# プロファイルタブ (WebView) → ヘッダー歯車アイコン → ネイティブ設定タブ → ログアウト
+# Issue #1037: マイページタブは WebView 実装のため "profile-screen" ではなく
+# "webview-profile" が表示される。設定画面へはヘッダーの歯車アイコン
+# (testID: profile-settings-button) から遷移する。
 - tapOn:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
-      id: "profile-screen"
+      id: "webview-profile"
     timeout: 15000
-- scroll
-- waitForAnimationToEnd:
-    timeout: 2000
-- scrollUntilVisible:
-    element:
-      id: "profile-settings-button"
-    direction: DOWN
-    timeout: 10000
 - tapOn:
     id: "profile-settings-button"
 - extendedWaitUntil:
