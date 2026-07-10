@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
-import { PlanUpdateSchema } from '@/lib/super-admin/plans-schemas';
+import { PlanUpdateSchema, isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
 
 type RouteContext = { params: { id: string } };
 
@@ -85,10 +85,49 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     const input = parseResult.data;
 
+    // status 遷移が指定されている場合は許可された遷移か検証する
+    // (#1041 修正: public/private 到達後に status 変更が恒久ロックされていたバグ)
+    if (input.status !== undefined && input.status !== existing.status) {
+      if (!isAllowedPlanStatusTransition(existing.status, input.status)) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'OP_PLAN_INVALID_TRANSITION',
+              message: `${existing.status} から ${input.status} への遷移は許可されていません`,
+            },
+          },
+          { status: 422 }
+        );
+      }
+
+      // deprecated への遷移は ends_at (廃止予定日) が既存または今回のリクエストで
+      // 必要 (subscription_plans.ends_at 列。migration_message は未実装の列のため要 migration)
+      if (input.status === 'deprecated' && existing.ends_at == null && input.ends_at == null) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED',
+              message: '廃止移行には ends_at (廃止予定日) の指定が必要です',
+            },
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     // status 別の更新可能フィールド制限 (operator/04-plan-management.md §3.1)
+    // status 自体は上記の遷移許可チェックを通過済みであれば許可する。
     if (existing.status === 'public' || existing.status === 'private') {
-      // public/private では display_name / description / banner_url / feature_packages のみ
-      const allowedKeys = ['display_name', 'description', 'banner_url', 'feature_package_ids', 'display_order'];
+      // public/private では display_name / description / banner_url / feature_packages / status(遷移) / ends_at(廃止時) のみ
+      const allowedKeys = [
+        'display_name',
+        'description',
+        'banner_url',
+        'feature_package_ids',
+        'display_order',
+        'status',
+        'ends_at',
+      ];
       const inputKeys = Object.keys(input).filter((k) => input[k as keyof typeof input] !== undefined);
       const disallowedKeys = inputKeys.filter((k) => !allowedKeys.includes(k));
       if (disallowedKeys.length > 0) {
@@ -105,8 +144,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     if (existing.status === 'deprecated') {
-      // deprecated では migration_message のみ
-      const allowedKeys: string[] = [];
+      // deprecated では private への遷移 (un-deprecate) のみ許可 (それ以外は変更不可)
+      const allowedKeys: string[] = ['status'];
       const inputKeys = Object.keys(input).filter((k) => input[k as keyof typeof input] !== undefined);
       const disallowedKeys = inputKeys.filter((k) => !allowedKeys.includes(k));
       if (disallowedKeys.length > 0) {

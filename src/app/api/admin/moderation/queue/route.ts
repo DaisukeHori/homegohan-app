@@ -2,6 +2,12 @@
  * GET /api/admin/moderation/queue — モデレーションキュー一覧
  * operator/02-api-spec.md §5 準拠
  * 権限: admin, super_admin, content_moderator
+ *
+ * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
+ * 実テーブル (moderation_flags / recipe_flags) を参照する。
+ * `type` 未指定時は両テーブルをマージしてページングする。
+ * ai_content はバックエンドテーブル未実装のため常に空 (要 migration)。
+ * DB エラー時は空配列にフォールバックせず 500 を返す (fail-closed)。
  */
 
 import { NextResponse } from 'next/server';
@@ -9,8 +15,18 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { ModerationQueueSearchSchema } from '@/lib/admin/moderation-schemas';
+import {
+  countModeration,
+  fetchModerationList,
+  isModerationBacked,
+  type ModerationBackedType,
+  type NormalizedModerationItem,
+} from '@/lib/admin/moderation-backend';
 
 export const dynamic = 'force-dynamic';
+
+// 1 タイプあたりの安全上限 (メモリ内マージ・ソートのためのフェッチ件数)
+const PER_TYPE_FETCH_CAP = 500;
 
 export async function GET(request: Request) {
   try {
@@ -43,44 +59,43 @@ export async function GET(request: Request) {
   const params = parseResult.data;
   const supabase = await createClient();
 
-  // moderation_items テーブルからキューを取得 (未作成の場合は空を返す)
-  try {
-    let query = supabase
-      .from('moderation_items')
-      .select('*', { count: 'exact' })
-      .eq('status', params.status);
-
-    if (params.type) {
-      query = query.eq('type', params.type);
-    }
-
-    const from = (params.page - 1) * params.per_page;
-    const to = from + params.per_page - 1;
-    query = query.range(from, to).order('created_at', { ascending: true });
-
-    const { data, error, count } = await query;
-
-    if (error) {
-      // テーブル未作成の場合は空配列を返す
-      return NextResponse.json({
-        data: [],
-        meta: { total: 0, page: params.page, per_page: params.per_page },
-      });
-    }
-
-    return NextResponse.json({
-      data: data ?? [],
-      meta: {
-        total: count ?? 0,
-        page: params.page,
-        per_page: params.per_page,
-      },
-    });
-  } catch {
-    // テーブル不在時のフォールバック
+  // ai_content (または将来追加され得る未サポートタイプ) は空を返す (要 migration、捏造しない)
+  if (params.type && !isModerationBacked(params.type)) {
     return NextResponse.json({
       data: [],
       meta: { total: 0, page: params.page, per_page: params.per_page },
     });
+  }
+
+  const typesToQuery: ModerationBackedType[] = params.type ? [params.type] : ['food', 'recipe'];
+
+  try {
+    let combined: NormalizedModerationItem[] = [];
+    let total = 0;
+
+    for (const type of typesToQuery) {
+      const [items, count] = await Promise.all([
+        fetchModerationList(supabase, type, params.status, PER_TYPE_FETCH_CAP),
+        countModeration(supabase, type, params.status),
+      ]);
+      combined = combined.concat(items);
+      total += count;
+    }
+
+    combined.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''));
+
+    const from = (params.page - 1) * params.per_page;
+    const paged = combined.slice(from, from + params.per_page);
+
+    return NextResponse.json({
+      data: paged,
+      meta: { total, page: params.page, per_page: params.per_page },
+    });
+  } catch (err) {
+    console.error('[api/admin/moderation/queue] fetch error:', err instanceof Error ? err.message : err);
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'モデレーションキューの取得に失敗しました' } },
+      { status: 500 },
+    );
   }
 }

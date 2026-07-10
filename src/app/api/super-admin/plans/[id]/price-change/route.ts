@@ -58,16 +58,18 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
     let newStripePriceId: string | null = null;
 
-    // Stripe Price 作成 (STRIPE_SECRET_KEY が設定されている場合のみ)
-    if (process.env.STRIPE_SECRET_KEY && plan.stripe_product_id) {
+    // #1041 (F4-06) 修正: STRIPE_SECRET_KEY が設定されている場合は「本番で Stripe 同期が
+    // 必須」という明示的な状態であり、Edge Function 呼び出しに失敗した場合はそれを
+    // 偽成功 (DB のみ更新して 200 を返す) にせず 502 で失敗させる (fail-closed)。
+    // STRIPE_SECRET_KEY が未設定の場合のみ、意図された dev/mock モードとして続行する。
+    const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
+
+    if (stripeSyncExpected) {
+      const edgeFnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/stripe-price-sync`;
+      let edgeRes: Response;
       try {
         // Edge Function stripe-price-sync を呼ぶ (operator/04-plan-management.md §3.3 準拠)
-        const baseUrl =
-          process.env.NEXT_PUBLIC_APP_URL ??
-          (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-
-        const edgeFnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/stripe-price-sync`;
-        const edgeRes = await fetch(edgeFnUrl, {
+        edgeRes = await fetch(edgeFnUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -83,18 +85,52 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
             reason: input.reason,
           }),
         });
-
-        if (edgeRes.ok) {
-          const edgeData = (await edgeRes.json()) as { new_stripe_price_id?: string };
-          newStripePriceId = edgeData.new_stripe_price_id ?? null;
-        } else {
-          console.warn('[super-admin/price-change] Edge Function stripe-price-sync failed, continuing with DB-only update');
-        }
       } catch (stripeErr) {
-        console.warn('[super-admin/price-change] Stripe integration error (graceful degradation):', stripeErr);
+        console.error('[super-admin/price-change] Stripe Edge Function fetch failed:', stripeErr);
+        return NextResponse.json(
+          {
+            error: {
+              code: 'OP_STRIPE_SYNC_FAILED',
+              message: 'Stripe との価格同期に失敗しました。DB は更新していません。',
+            },
+          },
+          { status: 502 },
+        );
+      }
+
+      if (!edgeRes.ok) {
+        const errBody = await edgeRes.text().catch(() => '');
+        console.error('[super-admin/price-change] Edge Function stripe-price-sync failed:', edgeRes.status, errBody);
+        return NextResponse.json(
+          {
+            error: {
+              code: 'OP_STRIPE_SYNC_FAILED',
+              message: `Stripe との価格同期に失敗しました (HTTP ${edgeRes.status})。DB は更新していません。`,
+            },
+          },
+          { status: 502 },
+        );
+      }
+
+      const edgeData = (await edgeRes.json()) as { new_stripe_price_id?: string };
+      newStripePriceId = edgeData.new_stripe_price_id ?? null;
+
+      if (!newStripePriceId) {
+        // Edge Function が 200 を返したのに Price ID が取得できない場合も
+        // 同期未完了とみなし、偽成功にしない。
+        console.error('[super-admin/price-change] Edge Function returned ok but no new_stripe_price_id');
+        return NextResponse.json(
+          {
+            error: {
+              code: 'OP_STRIPE_SYNC_FAILED',
+              message: 'Stripe Price の作成結果を確認できませんでした。DB は更新していません。',
+            },
+          },
+          { status: 502 },
+        );
       }
     } else {
-      console.warn('[super-admin/price-change] STRIPE_SECRET_KEY not set or stripe_product_id missing — mock mode');
+      console.warn('[super-admin/price-change] STRIPE_SECRET_KEY not set or stripe_product_id missing — mock mode (dev/test)');
     }
 
     // DB 更新: subscription_plans

@@ -5,6 +5,11 @@
  * レスポンス形式:
  *   { mealFlags: [], recipeFlags: [], aiFlags: [] }
  *
+ * #1041 (F4-04) 修正: 実在しない `moderation_items` テーブル参照を廃止し、
+ * 実テーブル (moderation_flags / recipe_flags) を参照するよう修正。
+ * ai_content はバックエンドテーブルが未実装のため常に空配列 (要 migration、捏造しない)。
+ * DB エラー発生時は空配列にフォールバックせず 500 を返す (fail-closed)。
+ *
  * E2E: w5-12-admin-adversarial G-27, G-27b
  */
 
@@ -13,6 +18,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { z } from 'zod';
+import { fetchModerationList } from '@/lib/admin/moderation-backend';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,53 +57,22 @@ export async function GET(request: Request) {
   const { status } = parseResult.data;
   const supabase = await createClient();
 
-  // meal フラグ (food タイプ)
-  let mealFlags: unknown[] = [];
-  let recipeFlags: unknown[] = [];
-  let aiFlags: unknown[] = [];
-
   try {
-    const { data: mealData } = await supabase
-      .from('moderation_items')
-      .select('*')
-      .eq('type', 'food')
-      .eq('status', status)
-      .order('created_at', { ascending: true })
-      .limit(50);
-    mealFlags = mealData ?? [];
-  } catch {
-    // moderation_items テーブル未作成の場合は空配列
-  }
+    const [mealFlags, recipeFlags] = await Promise.all([
+      fetchModerationList(supabase, 'food', status, 50),
+      fetchModerationList(supabase, 'recipe', status, 50),
+    ]);
 
-  try {
-    const { data: recipeData } = await supabase
-      .from('moderation_items')
-      .select('*')
-      .eq('type', 'recipe')
-      .eq('status', status)
-      .order('created_at', { ascending: true })
-      .limit(50);
-    recipeFlags = recipeData ?? [];
-  } catch {
-    // graceful degradation
-  }
+    // ai_content はバックエンドテーブル未実装 (要 migration)。既存レスポンス形式との
+    // 互換のため空配列を返すが、これは「該当なし」ではなく「未サポート」を意味する。
+    const aiFlags: never[] = [];
 
-  try {
-    const { data: aiData } = await supabase
-      .from('moderation_items')
-      .select('*')
-      .eq('type', 'ai_content')
-      .eq('status', status)
-      .order('created_at', { ascending: true })
-      .limit(50);
-    aiFlags = aiData ?? [];
-  } catch {
-    // graceful degradation
+    return NextResponse.json({ mealFlags, recipeFlags, aiFlags });
+  } catch (err) {
+    console.error('[api/admin/moderation] fetch error:', err instanceof Error ? err.message : err);
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'モデレーションデータの取得に失敗しました' } },
+      { status: 500 },
+    );
   }
-
-  return NextResponse.json({
-    mealFlags,
-    recipeFlags,
-    aiFlags,
-  });
 }
