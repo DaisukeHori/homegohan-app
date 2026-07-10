@@ -412,7 +412,10 @@ export default function SettingsPage() {
             <button
               type="button"
               data-testid="settings-restart-handson-tour"
-              onClick={() => router.push('/handson-tour?force=1')}
+              // #1045 (F6-05): /handson-tour/layout.tsx (Server Component) は searchParams を
+              // 受け取れないため ?force=1 は無視されていた。専用ルート (Cookie 発行 + redirect)
+              // をフルナビゲーションで叩く必要があるため router.push ではなく location 遷移を使う。
+              onClick={() => { window.location.href = '/handson-tour/replay'; }}
               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
             >
               <div className="flex items-center gap-3">

@@ -67,8 +67,16 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
 };
 
 export function mapPgErrorToHttp(message: string): { code: MembershipErrorCode | 'UNKNOWN'; status: number } {
+  // #1045 (F6-16): message.includes(code) による部分一致だと、列挙順で先に評価された
+  // 短いコードが誤ってヒットしてしまう (例: 'USER_NOT_IN_ORG' というメッセージに対して
+  // 'NOT_IN_ORG' が部分文字列として先にマッチし、本来の 404/USER_NOT_IN_ORG ではなく
+  // 403/NOT_IN_ORG に化けてしまっていた)。
+  // コードは `[A-Z0-9_]+` の単語であり、区切り文字である '_' も \w に含まれるため、
+  // 単語境界 (\b) で照合すれば "NOT_IN_ORG" は "USER_NOT_IN_ORG" の内部にはマッチしない
+  // (境界の両側が \w である地点では \b は成立しない)。
   for (const code of Object.values(MembershipErrorCode)) {
-    if (message.includes(code)) {
+    const pattern = new RegExp(`\\b${code}\\b`);
+    if (pattern.test(message)) {
       return { code, status: ErrorStatusMap[code] };
     }
   }

@@ -1,16 +1,16 @@
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { TourProvider } from '@/contexts/TourContext';
 import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus';
+import { HANDSON_TOUR_FORCE_COOKIE } from '@/lib/handson-tour/force-cookie';
 
 interface HandsonTourLayoutProps {
   children: React.ReactNode;
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export default async function HandsonTourLayout({
   children,
-  searchParams,
 }: HandsonTourLayoutProps) {
   const supabase = await createClient();
   const {
@@ -22,12 +22,21 @@ export default async function HandsonTourLayout({
     redirect('/login');
   }
 
-  const resolvedParams = searchParams ? await searchParams : {};
-  const forceParam = resolvedParams['force'];
-  const isForce = forceParam === '1';
+  // #1045 (F6-05): Next.js の layout は searchParams を受け取れない
+  // (Pages と異なり、共有レイアウトはナビゲーション毎に再レンダーされないため searchParams が
+  // 保証されない設計になっている)。そのため ?force=1 の判定を layout で行うことはできず、
+  // 常に isForce=false になってしまっていた。/handson-tour/replay 専用ルートが発行する
+  // Cookie 経由で force 判定を行う。
+  const cookieStore = await cookies();
+  const isForce = cookieStore.get(HANDSON_TOUR_FORCE_COOKIE)?.value === '1';
   const entrySource: 'auto' | 'settings_force' = isForce ? 'settings_force' : 'auto';
 
   if (!isForce) {
+    // #1045 (F6-05): redirect() は内部的に NEXT_REDIRECT という特殊な例外を投げて
+    // Next.js に処理させる仕組みのため、try/catch の中で呼ぶと catch に握り潰されて
+    // リダイレクトが発生しなくなる (= 完了済みユーザーにもツアーが表示され続ける)。
+    // ステータス判定のみ try/catch に閉じ込め、redirect() は try の外で呼ぶ。
+    let shouldRedirectHome = false;
     try {
       // ステータスチェックに最大 5 秒のタイムアウトを設定する。
       // RPC 呼び出しが遅延した場合でもツアー画面を表示し続けるための安全策。
@@ -38,11 +47,14 @@ export default async function HandsonTourLayout({
         getHandsonTourStatusInternal(user.id),
         timeoutPromise,
       ]);
-      if (!status.should_show) {
-        redirect('/home');
-      }
+      shouldRedirectHome = !status.should_show;
     } catch {
       // プロファイル未取得・タイムアウト時はそのまま表示する
+      shouldRedirectHome = false;
+    }
+
+    if (shouldRedirectHome) {
+      redirect('/home');
     }
   }
 

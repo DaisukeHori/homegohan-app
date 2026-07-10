@@ -1,18 +1,15 @@
 import { createClient } from '@/lib/supabase/server'
 import { createLogger, generateRequestId } from '@/lib/db-logger'
 import { NextResponse } from 'next/server'
+import { OnboardingAnswersSchema } from '@/schemas/onboarding'
 
-// #277: XSS ペイロードを除去するシンプルなサニタイズ関数
-function sanitizeText(value: unknown): string {
+// #1045 (F6-12): ニックネームは HTML エスケープせず raw のまま保存する。
+// 画面表示は必ず React の JSX テキストノード経由 (dangerouslySetInnerHTML は不使用) のため
+// React の自動エスケープで XSS は防げる。ここで &lt;script&gt; のようにエスケープして保存すると
+// 表示時に二重エスケープされてユーザーには文字化けした文字列として見えてしまっていた。
+function normalizeNickname(value: unknown): string {
   if (typeof value !== 'string') return ''
-  return value
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;')
-    .replace(/\//g, '&#x2F;')
-    .trim()
-    .slice(0, 100) // ニックネームの最大長を制限
+  return value.trim().slice(0, 100) // ニックネームの最大長を制限
 }
 
 // オンボーディング進捗保存API (OB-API-01)
@@ -37,6 +34,16 @@ export async function POST(request: Request) {
 
     if (typeof currentStep !== 'number' || !answers || typeof totalQuestions !== 'number') {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+    }
+
+    // #1045 (F6-12): age="abc" のような型崩れ・許可されていない enum 値を保存前に弾く。
+    // 未知フィールドはエラーにしない (z.object のデフォルト strip 挙動)。
+    const answersValidation = OnboardingAnswersSchema.safeParse(answers)
+    if (!answersValidation.success) {
+      return NextResponse.json(
+        { error: 'Invalid answers', details: answersValidation.error.flatten() },
+        { status: 400 },
+      )
     }
 
     const now = new Date().toISOString()
@@ -73,12 +80,17 @@ export async function POST(request: Request) {
     }
 
     // 回答内容を対応カラムにも反映（リアルタイム同期）
-    // #277: nickname は XSS ペイロードを除去してから保存
-    if (answers.nickname) updates.nickname = sanitizeText(answers.nickname)
+    // #1045 (F6-12): nickname は raw 保存 (表示側の React エスケープに任せる)
+    if (answers.nickname) updates.nickname = normalizeNickname(answers.nickname)
     if (answers.gender) updates.gender = answers.gender
     if (answers.age) {
-      updates.age = parseInt(answers.age)
-      updates.age_group = `${Math.floor(parseInt(answers.age) / 10) * 10}s`
+      // #1045 (F6-12): 上の Zod バリデーションで非数値は既に 400 で弾かれるが、
+      // 念のため NaN が age_group ("NaNs" 等) に混入しないよう二重に防御する
+      const parsedAge = parseInt(answers.age)
+      if (Number.isFinite(parsedAge)) {
+        updates.age = parsedAge
+        updates.age_group = `${Math.floor(parsedAge / 10) * 10}s`
+      }
     }
     if (answers.occupation) updates.occupation = answers.occupation
     if (answers.height) updates.height = parseFloat(answers.height)
@@ -181,6 +193,11 @@ export async function POST(request: Request) {
       }
 
       updates.performance_profile = performanceProfile
+    } else if (answers.nutrition_goal) {
+      // #1045 (F6-13): 「戻る」で nutrition_goal を athlete_performance から
+      // 別の目標に変更した場合、前回保存された performance_profile が upsert で
+      // 上書きされず残留し、矛盾したプロフィールが確定してしまうのを防ぐ
+      updates.performance_profile = null
     }
 
     // デフォルト値の補完

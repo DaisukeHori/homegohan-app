@@ -14,6 +14,7 @@ export default function OnboardingResumePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -59,8 +60,25 @@ export default function OnboardingResumePage() {
     }
   };
 
-  const progressPercent = progress 
-    ? Math.round((progress.currentStep / progress.totalQuestions) * 100) 
+  // #1045 (F6-11): 「あとで設定する」は素の /home Link だったため、
+  // onboarding_completed_at が未設定のまま middleware の resolveOnboardingRedirect が
+  // /onboarding/resume へ差し戻し、永久ループになっていた。
+  // welcome page の handleSkip と同様に complete API (共通 skip ハンドラ) を呼んでから
+  // 遷移することで、onboarding_completed_at を設定してループを断ち切る。
+  const handleSkipForNow = async () => {
+    if (isSkipping) return;
+    setIsSkipping(true);
+    try {
+      await fetch('/api/onboarding/complete', { method: 'POST' });
+    } catch (error) {
+      console.error('Failed to skip onboarding:', error);
+    } finally {
+      window.location.href = '/home';
+    }
+  };
+
+  const progressPercent = progress
+    ? Math.round((progress.currentStep / progress.totalQuestions) * 100)
     : 0;
 
   if (isLoading) {
@@ -177,12 +195,13 @@ export default function OnboardingResumePage() {
           animate={{ opacity: 1 }}
           transition={{ delay: 1.2 }}
         >
-          <Link
-            href="/home"
-            className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          <button
+            onClick={handleSkipForNow}
+            disabled={isSkipping}
+            className="text-sm text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
           >
-            あとで設定する
-          </Link>
+            {isSkipping ? 'しばらくお待ちください...' : 'あとで設定する'}
+          </button>
         </motion.div>
 
       </motion.div>

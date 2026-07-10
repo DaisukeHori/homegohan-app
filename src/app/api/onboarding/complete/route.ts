@@ -22,15 +22,46 @@ export async function POST() {
     const now = new Date().toISOString()
 
     // 現在のプロファイルを取得
-    const { data: profile, error: fetchError } = await supabase
+    // #1045 (F6-11): welcome 画面の「あとで設定する」は質問に一つも答えないまま
+    // このAPIを呼ぶため、user_profiles 行がまだ存在しないことがある。
+    // .single() は 0 行のとき error を返してしまうため .maybeSingle() に変更する。
+    const { data: fetchedProfile, error: fetchError } = await supabase
       .from('user_profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
     if (fetchError) {
       console.error('Profile fetch error:', fetchError)
       return NextResponse.json({ error: fetchError.message }, { status: 500 })
+    }
+
+    let profile = fetchedProfile
+
+    if (!profile) {
+      // #1045 (F6-11): プロファイル行が存在しない場合は最低限のデフォルト値で作成してから
+      // 完了処理を続行する (行が無いまま update すると 0 行更新で完了扱いになれない)
+      const { data: upsertedProfile, error: upsertError } = await supabase
+        .from('user_profiles')
+        .upsert({
+          id: user.id,
+          nickname: 'Guest',
+          gender: 'unspecified',
+          age_group: 'unspecified',
+          onboarding_started_at: now,
+        })
+        .select('*')
+        .single()
+
+      if (upsertError || !upsertedProfile) {
+        console.error('Profile upsert error:', upsertError)
+        return NextResponse.json(
+          { error: upsertError?.message ?? 'Failed to initialize profile' },
+          { status: 500 },
+        )
+      }
+
+      profile = upsertedProfile
     }
 
     // ===== 自動変換処理 =====
