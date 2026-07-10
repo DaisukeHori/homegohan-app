@@ -136,6 +136,8 @@ describe("#1058 focus-visible / skip-link コントラスト修正 (WCAG 1.4.11 
   const background = extractHex("background");
   const accent = extractHex("accent");
   const white: [number, number, number] = [255, 255, 255];
+  // super-admin / operator/membership レイアウトの管理画面サイドバー背景 (bg-slate-900, Tailwind既定値)
+  const slate900: [number, number, number] = [0x0f, 0x17, 0x2a];
 
   it(":focus-visible の outline が低コントラストな --accent ではなく --foreground を使う", () => {
     const block = css.match(/:focus-visible\s*\{[^}]*\}/)?.[0] ?? "";
@@ -163,5 +165,26 @@ describe("#1058 focus-visible / skip-link コントラスト修正 (WCAG 1.4.11 
 
   it("白文字 on --foreground は WCAG AA 通常テキスト 4.5:1 を満たす (skip-link, 14px bold は large text 基準未満のため normal 基準で判定)", () => {
     expect(contrastRatio(white, foreground)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("--foreground 単色は bg-slate-900 (#0f172a, 管理画面サイドバー) では WCAG 1.4.11 (非テキスト3:1) 未達であることを回帰確認する (2トーン化が必要な理由)", () => {
+    expect(contrastRatio(foreground, slate900)).toBeLessThan(3);
+  });
+
+  it(":focus-visible に box-shadow の白リングが定義されている (bg-slate-900 サイドバーでの不可視化対策)", () => {
+    const block = css.match(/:focus-visible\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(block).toMatch(/box-shadow:\s*0 0 0 6px #FFFFFF/i);
+  });
+
+  it("box-shadow の白リングは bg-slate-900 (#0f172a, 管理画面サイドバー) に対して WCAG 1.4.11 (非テキスト3:1) を満たす", () => {
+    expect(contrastRatio(white, slate900)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("2トーン構成により 白背景・アクセント背景・ダーク背景(#0f172a) の3面すべてで focus-visible インジケーターが 3:1 以上を確保する", () => {
+    // 明るい背景 (白・アクセント) は内側の --foreground リングが担保
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(3);
+    expect(contrastRatio(foreground, accent)).toBeGreaterThanOrEqual(3);
+    // 暗い背景 (#0f172a) は外側の白リングが担保
+    expect(contrastRatio(white, slate900)).toBeGreaterThanOrEqual(3);
   });
 });
