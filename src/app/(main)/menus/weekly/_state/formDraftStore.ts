@@ -103,7 +103,11 @@ const initialState: FormDraftState = {
   newFridgeExpiry: '',
   newShoppingName: '',
   newShoppingAmount: '',
-  newShoppingCategory: '',
+  // #1031 round-2: 旧 page.tsx local useState の既定値 "食材" と一致させる。
+  // AddShoppingModal の <select> に空文字値の <option> は無く (catch-all は
+  // value="食材" のため)、'' のままだとフルリロード直後にカテゴリ未選択で
+  // 追加した場合に API へ category: "" が送られる退行が発生する。
+  newShoppingCategory: '食材',
   aiChatInput: '',
   selectedConditions: [],
   addMealKey: null,

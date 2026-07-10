@@ -81,10 +81,10 @@ describe('useFormDraftStore', () => {
     expect(s.newFridgeExpiry).toBe('');
     expect(s.newShoppingName).toBe('');
     expect(s.newShoppingAmount).toBe('');
-    // formDraftStore の初期値は '' (AddShoppingModal の <select> は明示選択待ち)。
-    // page.tsx 旧 local useState のデフォルト "食材" とは異なるが、store 側の
-    // initialState は本 refactor (#1031) 対象外のため変更しない。
-    expect(s.newShoppingCategory).toBe('');
+    // #1031 round-2: formDraftStore の初期値/リセット値は旧 page.tsx local
+    // useState のデフォルト "食材" と一致させる (AddShoppingModal の <select>
+    // に空文字値の <option> は無く、catch-all の value は "食材" のため)。
+    expect(s.newShoppingCategory).toBe('食材');
   });
 
   it('resetPhotoEdit / resetImageGenerate で File 系 state が初期値に戻る', () => {
