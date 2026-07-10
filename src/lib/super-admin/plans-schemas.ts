@@ -29,6 +29,37 @@ export const PLAN_TYPES = ['personal', 'family', 'org'] as const;
 export const PLAN_STATUSES = ['draft', 'public', 'private', 'deprecated'] as const;
 export const PRICE_APPLIES_TO = ['new_only', 'on_renewal', 'immediately'] as const;
 
+/**
+ * プランステータス遷移マップ (operator/04-plan-management.md §3.4 ライフサイクル準拠)
+ *
+ * #1041 (プラン状態遷移一方向ロック) 修正: 従来は public/private 到達後、
+ * status キー自体が恒久的に disallowedKeys 扱いとなり publish/unpublish/deprecate
+ * が一切できなくなっていた。ここで許可される遷移を明示的に定義し、
+ * それ以外の遷移のみを拒否するようにする。
+ *
+ *   draft --> public   : 新規申込受付開始
+ *   public --> private  : 新規申込停止 (既存契約は継続)
+ *   private --> public  : 再公開
+ *   public --> deprecated  : 廃止
+ *   private --> deprecated : 廃止
+ *   deprecated --> private : 緊急ロールバック (un-deprecate、public には戻さない)
+ */
+export const PLAN_STATUS_TRANSITIONS: Record<(typeof PLAN_STATUSES)[number], ReadonlyArray<(typeof PLAN_STATUSES)[number]>> = {
+  draft: ['public', 'private'],
+  public: ['private', 'deprecated'],
+  private: ['public', 'deprecated'],
+  deprecated: ['private'],
+};
+
+export function isAllowedPlanStatusTransition(
+  from: string,
+  to: string,
+): boolean {
+  if (from === to) return true;
+  const allowed = PLAN_STATUS_TRANSITIONS[from as (typeof PLAN_STATUSES)[number]];
+  return Array.isArray(allowed) && (allowed as readonly string[]).includes(to);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // スキーマ定義
 // ─────────────────────────────────────────────────────────────────────────────

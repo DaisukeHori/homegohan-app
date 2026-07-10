@@ -81,3 +81,16 @@ export const CouponRedemptionsQuerySchema = z.object({
 });
 
 export type CouponRedemptionsQueryInput = z.infer<typeof CouponRedemptionsQuerySchema>;
+
+/**
+ * クーポン適用 (遡及適用、super_admin 承認) リクエスト
+ * #1041 (F4-07) 修正: クーポン作成のみで償却・適用ロジックが存在しなかった問題への対応。
+ * operator/04-plan-management.md §4.1 「新クーポン適用フロー」準拠。
+ */
+export const CouponApplySchema = z.object({
+  subscription_target: z.enum(['personal', 'org']),
+  subscription_id: z.string().uuid(),
+  reason: z.string().min(1).max(1000).optional(),
+});
+
+export type CouponApplyInput = z.infer<typeof CouponApplySchema>;

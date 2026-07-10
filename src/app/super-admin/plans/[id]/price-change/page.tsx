@@ -66,9 +66,24 @@ export default function PriceChangePage() {
     fetchPlan();
   }, [planId]);
 
+  // #1041 round-4 (W1): 月額・年額入力欄は常に現在価格で prefill されているため、
+  // 何も変更していない状態でシミュレーション/実行を叩けてしまっていた
+  // (handleExecute 内で送信直前に検知していたが、UI 上はボタンが有効なままだった)。
+  // ここで算出し、シミュレーション/実行ボタンの有効・無効判定と handleSimulate/
+  // handleExecute の全てで同じ値を使う (ロジック重複を避ける)。
+  const monthlyChanged = newMonthlyPrice !== '' && Number(newMonthlyPrice) !== plan?.monthly_price_jpy;
+  const yearlyChanged = newYearlyPrice !== '' && Number(newYearlyPrice) !== plan?.yearly_price_jpy;
+  const hasAnyChange = monthlyChanged || yearlyChanged;
+
   const handleSimulate = useCallback(async () => {
     if (!newMonthlyPrice && !newYearlyPrice) {
       setSimulateError('月額または年額を入力してください');
+      return;
+    }
+    // #1041 round-4 (W1): ボタンの disabled 判定と同じ条件を関数内でも検証する
+    // (defense in depth。プログラム的な呼び出しでも変更なしでは実行させない)。
+    if (!hasAnyChange) {
+      setSimulateError('変更がありません');
       return;
     }
     setIsSimulating(true);
@@ -89,22 +104,36 @@ export default function PriceChangePage() {
     } finally {
       setIsSimulating(false);
     }
-  }, [newMonthlyPrice, newYearlyPrice, appliesTo, planId]);
+  }, [newMonthlyPrice, newYearlyPrice, appliesTo, planId, hasAnyChange]);
 
   const handleExecute = async () => {
     if (!reason) {
       setError('変更理由を入力してください');
       return;
     }
+    if (!plan) {
+      setError('プラン情報の読み込みに失敗しました');
+      return;
+    }
+    if (!hasAnyChange) {
+      setError('変更がありません');
+      return;
+    }
     setIsExecuting(true);
     setError('');
     try {
+      // #1041 round-3 (C2): 月額・年額入力欄は常に現在価格で prefill されているため、
+      // 変更していない方までそのまま送ると「両方変更」扱いになり、Stripe 同期が
+      // 必須なプランでは (stripe_price_id が1本しか無いため) 片方が黙って
+      // 無視される偽成功の原因になっていた。変更されたフィールドのみ送る。
+      // (monthlyChanged/yearlyChanged はコンポーネント本体で算出済みのものを使う
+      // #1041 round-4 (W1))
       const res = await fetch(`/api/super-admin/plans/${planId}/price-change`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          new_monthly_price_jpy: newMonthlyPrice ? Number(newMonthlyPrice) : null,
-          new_yearly_price_jpy: newYearlyPrice ? Number(newYearlyPrice) : null,
+          new_monthly_price_jpy: monthlyChanged ? Number(newMonthlyPrice) : null,
+          new_yearly_price_jpy: yearlyChanged ? Number(newYearlyPrice) : null,
           applies_to: appliesTo,
           reason,
           effective_at: new Date(effectiveAt).toISOString(),
@@ -205,9 +234,14 @@ export default function PriceChangePage() {
               </div>
             )}
 
+            {/* #1041 round-4 (W1): 何も変更していない状態で叩けないよう無効化する */}
+            {!hasAnyChange && (
+              <p className="text-xs text-slate-400">変更がありません (月額または年額を変更してください)</p>
+            )}
+
             <button
               onClick={handleSimulate}
-              disabled={isSimulating}
+              disabled={isSimulating || !hasAnyChange}
               className="w-full py-2.5 border-2 border-orange-500 text-orange-600 rounded-lg text-sm font-medium hover:bg-orange-50 transition-colors disabled:opacity-50"
             >
               {isSimulating ? 'シミュレーション中...' : '影響をシミュレーション'}
@@ -262,10 +296,31 @@ export default function PriceChangePage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-orange-600">旧月額 → 新月額:</span>
-                <strong>
-                  ¥{(plan.monthly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newMonthlyPrice).toLocaleString()}
-                </strong>
+                {monthlyChanged ? (
+                  <strong>
+                    ¥{(plan.monthly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newMonthlyPrice).toLocaleString()}
+                  </strong>
+                ) : (
+                  <span className="text-slate-400">変更なし (¥{(plan.monthly_price_jpy ?? 0).toLocaleString()})</span>
+                )}
               </div>
+              {/* #1041 round-4 (W2): 年額の旧 → 新も確認画面に表示する (従来は月額のみ表示され、
+                  年額のみ変更した場合に確認画面から変更内容が読み取れなかった) */}
+              <div className="flex justify-between">
+                <span className="text-orange-600">旧年額 → 新年額:</span>
+                {yearlyChanged ? (
+                  <strong>
+                    ¥{(plan.yearly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newYearlyPrice).toLocaleString()}
+                  </strong>
+                ) : (
+                  <span className="text-slate-400">変更なし (¥{(plan.yearly_price_jpy ?? 0).toLocaleString()})</span>
+                )}
+              </div>
+              {yearlyChanged && (
+                <p className="text-xs text-orange-400">
+                  ※影響シミュレーション (影響契約数・MRR変化) は月額の変更のみ反映されます
+                </p>
+              )}
               <div className="flex justify-between">
                 <span className="text-orange-600">適用範囲:</span>
                 <strong>{APPLIES_TO_LABELS[appliesTo]}</strong>
@@ -313,6 +368,14 @@ export default function PriceChangePage() {
               </div>
             )}
 
+            {/* #1041 round-4 (W1): Step1 で加えたガードを回避して (例: 戻って価格を
+                元に戻してから再度進む) 変更なし状態のまま実行できないようにする */}
+            {!hasAnyChange && (
+              <div className="bg-slate-50 border border-slate-200 text-slate-500 px-4 py-3 rounded-lg text-sm">
+                変更がありません
+              </div>
+            )}
+
             <div className="flex gap-3 justify-between">
               <button
                 onClick={() => setStep(1)}
@@ -322,7 +385,7 @@ export default function PriceChangePage() {
               </button>
               <button
                 onClick={handleExecute}
-                disabled={isExecuting || !reason}
+                disabled={isExecuting || !reason || !hasAnyChange}
                 className="px-6 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
               >
                 {isExecuting ? '実行中...' : '価格変更を実行する'}
