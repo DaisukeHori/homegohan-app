@@ -68,7 +68,12 @@ async function sendAdminNotification(inquiry: {
 }
 
 // #274 レートリミット: Upstash Redis があれば分散 ratelimit、なければ in-memory フォールバック
-// #1044 (F6-19): 本番環境では in-memory フォールバックを許容せず、Upstash env 未設定時は POST を 503 で拒否する
+// #1044 round-2: Upstash env 未設定時に POST を hard 503 で拒否すると、本番で Upstash が
+// 未接続の間 (docs/design/cross/06-perf-cache.md #549, .env.example, ENV_SETUP.md いずれも
+// 本番未設定を示す) 問い合わせフォームが全壊してしまう。同日実装の src/lib/rate-limit.ts が
+// 採用する canonical 方針 (fail-open は避けるが hard-block もしない = in-memory フォールバック
+// + warn ログ) に揃え、Upstash 未設定時も in-memory レートリミットで最低限の制限をかけつつ
+// リクエストは通す。
 
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_SEC = 60;
@@ -121,16 +126,6 @@ async function checkRateLimit(ip: string): Promise<boolean> {
 }
 
 export async function POST(request: NextRequest) {
-  // #1044 (F6-19): 本番環境では分散レートリミット (Upstash) を必須とする。
-  // 未設定のまま in-memory フォールバックで動かすと Vercel サーバーレス環境では実質無効化されるため。
-  if (process.env.NODE_ENV === 'production' && !upstashRatelimiter) {
-    console.error('[contact] 本番環境で Upstash Redis が未設定のためリクエストを拒否します。');
-    return NextResponse.json(
-      { error: 'サービスが一時的に利用できません。しばらくしてから再度お試しください。' },
-      { status: 503 },
-    );
-  }
-
   // レートリミットチェック
   const ip =
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??

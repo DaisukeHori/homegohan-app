@@ -54,6 +54,21 @@ describe('maskSecrets (#1044 F6-20)', () => {
     const result = maskSecrets(input);
     expect(result).toEqual({ message: 'hello', count: 3 });
   });
+
+  it('#1044 round-2: 深さ上限を超えるネストは値ごとマスクされる (生値を返さない fail-safe)', () => {
+    // MAX_MASK_DEPTH = 6 を超える深さでネストされたオブジェクトを作る
+    let nested: any = { leaked_password: 'super-secret-at-the-bottom' };
+    for (let i = 0; i < 8; i++) {
+      nested = { level: i, child: nested };
+    }
+
+    const result = maskSecrets(nested) as any;
+    const serialized = JSON.stringify(result);
+
+    // 生の秘密値が結果のどこにも残っていないこと
+    expect(serialized).not.toContain('super-secret-at-the-bottom');
+    expect(serialized).toContain('***');
+  });
 });
 
 describe('truncateMetadata (#1044 F6-20)', () => {

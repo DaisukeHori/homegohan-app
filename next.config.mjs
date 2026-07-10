@@ -57,7 +57,8 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: *.supabase.co images.unsplash.com",
               // #1044 (F6-09): PostHog の capture/identify 送信先を許可 (未設定だと全ブロックされていた)
-              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${posthogHost}`,
+              // #1044 round-2: session replay 等で使う PostHog アセットホストも予防的に許可
+              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${posthogHost} https://us-assets.i.posthog.com`,
               "frame-ancestors 'none'",
               "font-src 'self'",
               "object-src 'none'",

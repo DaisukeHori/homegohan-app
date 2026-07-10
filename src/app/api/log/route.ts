@@ -31,16 +31,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid metadata' }, { status: 400 });
     }
 
-    // 秘密情報マスキング + サイズ切り詰め (F6-20)
-    const sanitizedMetadata = sanitizeMetadata(metadata ?? undefined);
-
     // 認証チェック: 未認証リクエストは拒否 (fail-closed)
+    // #1044 round-2: sanitizeMetadata (metadata 全体の JSON.stringify を伴う) より前に
+    // 認証チェックを行い、未認証者が巨大な metadata を送って CPU を消費させる DoS を軽減する。
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const userId = user.id;
+
+    // 秘密情報マスキング + サイズ切り詰め (F6-20)
+    const sanitizedMetadata = sanitizeMetadata(metadata ?? undefined);
 
     // service_roleでログを保存
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

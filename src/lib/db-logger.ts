@@ -29,7 +29,9 @@ const MAX_MASK_DEPTH = 6;
  * 循環参照や深いネストで無限ループしないよう深さ上限を設ける。
  */
 export function maskSecrets<T>(value: T, depth = 0): T {
-  if (depth >= MAX_MASK_DEPTH) return value;
+  // #1044 round-2: 深さ上限に達した場合、生値をそのまま返すと上限より深いネストに
+  // 潜む秘密情報がマスクされずに漏洩する。fail-safe として値ごとマスクする。
+  if (depth >= MAX_MASK_DEPTH) return MASK_VALUE as unknown as T;
 
   if (Array.isArray(value)) {
     return value.map((item) => maskSecrets(item, depth + 1)) as unknown as T;
@@ -130,16 +132,19 @@ export function createLogger(routeName: string, requestId?: string) {
   const log = (level: LogLevel, message: string, metadata?: Record<string, unknown>) => {
     const timestamp = new Date().toISOString();
     const logLine = `[${timestamp}] [${level.toUpperCase()}] [${routeName}] ${message}`;
-    
+    // #1044 round-2: DB保存時と同様、コンソール出力にも秘密情報マスキングを適用する
+    // (Vercel の関数ログにも生の metadata が残らないようにする)
+    const sanitizedMetadata = sanitizeMetadata(metadata);
+
     // コンソール出力
     if (level === 'error') {
-      console.error(logLine, metadata || '');
+      console.error(logLine, sanitizedMetadata || '');
     } else if (level === 'warn') {
-      console.warn(logLine, metadata || '');
+      console.warn(logLine, sanitizedMetadata || '');
     } else {
-      console.log(logLine, metadata || '');
+      console.log(logLine, sanitizedMetadata || '');
     }
-    
+
     // DB保存（非同期、待たない）
     saveLog({
       ...baseEntry,
@@ -158,8 +163,8 @@ export function createLogger(routeName: string, requestId?: string) {
       const errorStack = error instanceof Error ? error.stack : undefined;
       
       const timestamp = new Date().toISOString();
-      console.error(`[${timestamp}] [ERROR] [${routeName}] ${message}`, error, metadata || '');
-      
+      console.error(`[${timestamp}] [ERROR] [${routeName}] ${message}`, error, sanitizeMetadata(metadata) || '');
+
       saveLog({
         ...baseEntry,
         level: 'error',
@@ -178,8 +183,8 @@ export function createLogger(routeName: string, requestId?: string) {
       
       const userLog = (level: LogLevel, message: string, metadata?: Record<string, unknown>) => {
         const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] [${level.toUpperCase()}] [${routeName}] [user:${userId}] ${message}`, metadata || '');
-        
+        console.log(`[${timestamp}] [${level.toUpperCase()}] [${routeName}] [user:${userId}] ${message}`, sanitizeMetadata(metadata) || '');
+
         saveLog({
           ...userEntry,
           level,
@@ -195,9 +200,9 @@ export function createLogger(routeName: string, requestId?: string) {
         error: (message: string, error?: Error | unknown, metadata?: Record<string, unknown>) => {
           const errorMessage = error instanceof Error ? error.message : String(error);
           const errorStack = error instanceof Error ? error.stack : undefined;
-          
-          console.error(`[${new Date().toISOString()}] [ERROR] [${routeName}] [user:${userId}] ${message}`, error, metadata || '');
-          
+
+          console.error(`[${new Date().toISOString()}] [ERROR] [${routeName}] [user:${userId}] ${message}`, error, sanitizeMetadata(metadata) || '');
+
           saveLog({
             ...userEntry,
             level: 'error',

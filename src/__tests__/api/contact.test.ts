@@ -87,14 +87,18 @@ describe('POST /api/contact (#1044 F6-19)', () => {
     expect(res.status).toBe(200);
   });
 
-  it('本番環境で Upstash 未設定 (テスト環境の常態) の場合は 503 を返す', async () => {
+  it('本番環境で Upstash 未設定 (テスト環境の常態) でも in-memory フォールバックで受け付ける', async () => {
     // このテストスイートは UPSTASH_REDIS_REST_URL/TOKEN を設定していないため
-    // upstashRatelimiter は null のまま。NODE_ENV を production に切り替えると
-    // in-memory フォールバックへの依存を許さず 503 で拒否するはず (F6-19)。
+    // upstashRatelimiter は null のまま。#1044 round-2: Upstash 未設定を理由に
+    // hard 503 で拒否すると本番で問い合わせフォームが全壊するため、
+    // src/lib/rate-limit.ts と同じ canonical 方針 (in-memory フォールバック + warn ログ)
+    // に揃え、NODE_ENV=production でもリクエストを通す。
     vi.stubEnv('NODE_ENV', 'production');
     const res = await POST(makeRequest(validBody));
-    expect(res.status).toBe(503);
-    expect(mockInsert).not.toHaveBeenCalled();
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(mockInsert).toHaveBeenCalled();
   });
 });
 

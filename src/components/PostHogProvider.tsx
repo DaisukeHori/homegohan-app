@@ -101,7 +101,18 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       }
 
       // PostHog init (production + 同意あり、initPostHog 冒頭でも同意ガードあり)
-      initPostHog();
+      // #1044 round-2: すでに init 済み (__loaded) の場合、initPostHog() は no-op のため
+      // opt-out → opt-in を跨いだ際に capturing が再開されない。src/lib/posthog.ts の
+      // optInPostHog() と等価に、__loaded 済みなら opt_in_capturing を明示的に呼ぶ。
+      try {
+        if (posthog.__loaded) {
+          posthog.opt_in_capturing();
+        } else {
+          initPostHog();
+        }
+      } catch {
+        // ignore
+      }
       identifyAndTrackVitals();
     };
 
