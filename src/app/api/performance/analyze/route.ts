@@ -1,8 +1,119 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan, toUserProfile, toPerformanceProfile } from '@/lib/converter'
-import { analyzeCheckinLoop, applyRecommendations, type CheckinAverages as CoreCheckinAverages } from '@homegohan/core'
+import {
+  analyzeCheckinLoop,
+  applyRecommendations,
+  type AdjustmentRecommendation,
+  type CheckinAverages as CoreCheckinAverages,
+} from '@homegohan/core'
 import type { NutritionGoal } from '@homegohan/core'
+import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
+
+type SupabaseLike = Awaited<ReturnType<typeof createClient>>
+
+type AnalysisRunResult =
+  | {
+      ok: true
+      eligible: boolean
+      eligibilityReason?: string
+      recommendations: AdjustmentRecommendation[]
+      trends: ReturnType<typeof analyzeCheckinLoop>['trends'] | null
+      nextAction: ReturnType<typeof analyzeCheckinLoop>['nextAction']
+      currentTargets: { calories: number; protein: number; fat: number; carbs: number }
+    }
+  | { ok: false; status: number; error: string }
+
+/**
+ * #1048 F2-18: GET/POST 双方で同じ「プロフィール→栄養目標→7日平均→分析」の
+ * 手順を共有する。POST はこの結果のみを信頼し、クライアントが送った
+ * recommendations は使用しない（サーバー側で再計算した提案だけを適用する）。
+ */
+async function runAnalysis(supabase: SupabaseLike, userId: string, date: string): Promise<AnalysisRunResult> {
+  // 1. ユーザープロフィールを取得（nutrition_goal含む）
+  const { data: profileData, error: profileError } = await supabase
+    .from('user_profiles')
+    .select('weight, nutrition_goal, performance_profile')
+    .eq('id', userId)
+    .single()
+
+  if (profileError || !profileData) {
+    return { ok: false, status: 404, error: 'Profile not found' }
+  }
+
+  // 2. 現在の栄養目標を取得
+  const { data: targetsData, error: targetsError } = await supabase
+    .from('nutrition_targets')
+    .select('daily_calories, protein_g, fat_g, carbs_g')
+    .eq('user_id', userId)
+    .single()
+
+  if (targetsError || !targetsData) {
+    return { ok: false, status: 404, error: 'Nutrition targets not found' }
+  }
+
+  const currentTargets = {
+    calories: targetsData.daily_calories,
+    protein: targetsData.protein_g,
+    fat: targetsData.fat_g,
+    carbs: targetsData.carbs_g,
+  }
+
+  // 3. 7日移動平均を取得
+  const { data: avgData, error: avgError } = await supabase.rpc('get_7d_checkin_averages', {
+    p_user_id: userId,
+    p_date: date,
+  })
+
+  if (avgError) {
+    console.error('Checkin averages error:', avgError)
+    return { ok: false, status: 500, error: avgError.message }
+  }
+
+  const rawAvg = avgData?.[0] || null
+  if (!rawAvg) {
+    return {
+      ok: true,
+      eligible: false,
+      eligibilityReason: 'チェックインデータがありません',
+      recommendations: [],
+      trends: null,
+      nextAction: null,
+      currentTargets,
+    }
+  }
+
+  // RPC結果をcore用の型に変換
+  const averages: CoreCheckinAverages = {
+    sleepHoursAvg: rawAvg.avg_sleep_hours ?? null,
+    sleepQualityAvg: rawAvg.avg_sleep_quality ?? null,
+    fatigueAvg: rawAvg.avg_fatigue ?? null,
+    focusAvg: rawAvg.avg_focus ?? null,
+    trainingLoadAvg: rawAvg.avg_training_rpe ?? null,
+    hungerAvg: rawAvg.avg_hunger ?? null,
+    weightStart: rawAvg.weight_start ?? null,
+    weightEnd: rawAvg.weight_end ?? null,
+    checkinCount: rawAvg.checkin_count ?? 0,
+  }
+
+  // 4. 分析を実行
+  const performanceProfile = toPerformanceProfile(profileData.performance_profile)
+  const analysis = analyzeCheckinLoop(averages, currentTargets, {
+    nutritionGoal: (profileData.nutrition_goal as NutritionGoal) || 'maintain',
+    weight: profileData.weight || 60,
+    performanceProfile,
+  })
+
+  return {
+    ok: true,
+    eligible: analysis.eligible,
+    eligibilityReason: analysis.eligibilityReason,
+    recommendations: analysis.recommendations,
+    trends: analysis.trends,
+    nextAction: analysis.nextAction,
+    currentTargets,
+  }
+}
 
 /**
  * GET /api/performance/analyze
@@ -21,95 +132,31 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const date = searchParams.get('date') || new Date().toISOString().split('T')[0]
+    const rawDate = searchParams.get('date')
+    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : new Date().toISOString().split('T')[0]
 
-    // 1. ユーザープロフィールを取得（nutrition_goal含む）
-    const { data: profileData, error: profileError } = await supabase
-      .from('user_profiles')
-      .select('weight, nutrition_goal, performance_profile')
-      .eq('id', user.id)
-      .single()
-
-    if (profileError || !profileData) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+    const run = await runAnalysis(supabase, user.id, date)
+    if (!run.ok) {
+      return NextResponse.json({ error: run.error }, { status: run.status })
     }
 
-    // 2. 現在の栄養目標を取得
-    const { data: targetsData, error: targetsError } = await supabase
-      .from('nutrition_targets')
-      .select('daily_calories, protein_g, fat_g, carbs_g')
-      .eq('user_id', user.id)
-      .single()
-
-    if (targetsError || !targetsData) {
-      return NextResponse.json({ error: 'Nutrition targets not found' }, { status: 404 })
-    }
-
-    // 3. 7日移動平均を取得
-    const { data: avgData, error: avgError } = await supabase.rpc('get_7d_checkin_averages', {
-      p_user_id: user.id,
-      p_date: date,
-    })
-
-    if (avgError) {
-      console.error('Checkin averages error:', avgError)
-      return NextResponse.json({ error: avgError.message }, { status: 500 })
-    }
-
-    const rawAvg = avgData?.[0] || null
-    if (!rawAvg) {
+    if (!run.eligible) {
       return NextResponse.json({
         eligible: false,
-        eligibilityReason: 'チェックインデータがありません',
+        eligibilityReason: run.eligibilityReason,
         analysis: null,
         date,
       })
     }
 
-    // RPC結果をcore用の型に変換
-    const averages: CoreCheckinAverages = {
-      sleepHoursAvg: rawAvg.avg_sleep_hours ?? null,
-      sleepQualityAvg: rawAvg.avg_sleep_quality ?? null,
-      fatigueAvg: rawAvg.avg_fatigue ?? null,
-      focusAvg: rawAvg.avg_focus ?? null,
-      trainingLoadAvg: rawAvg.avg_training_rpe ?? null,
-      hungerAvg: rawAvg.avg_hunger ?? null,
-      weightStart: rawAvg.weight_start ?? null,
-      weightEnd: rawAvg.weight_end ?? null,
-      checkinCount: rawAvg.checkin_count ?? 0,
-    }
-
-    // 4. 分析を実行
-    const performanceProfile = toPerformanceProfile(profileData.performance_profile)
-    const analysis = analyzeCheckinLoop(
-      averages,
-      {
-        calories: targetsData.daily_calories,
-        protein: targetsData.protein_g,
-        fat: targetsData.fat_g,
-        carbs: targetsData.carbs_g,
-      },
-      {
-        nutritionGoal: (profileData.nutrition_goal as NutritionGoal) || 'maintain',
-        weight: profileData.weight || 60,
-        performanceProfile,
-      }
-    )
-
     return NextResponse.json({
-      eligible: analysis.eligible,
-      eligibilityReason: analysis.eligibilityReason,
+      eligible: true,
       analysis: {
-        trends: analysis.trends,
-        recommendations: analysis.recommendations,
-        nextAction: analysis.nextAction,
+        trends: run.trends,
+        recommendations: run.recommendations,
+        nextAction: run.nextAction,
       },
-      currentTargets: {
-        calories: targetsData.daily_calories,
-        protein: targetsData.protein_g,
-        fat: targetsData.fat_g,
-        carbs: targetsData.carbs_g,
-      },
+      currentTargets: run.currentTargets,
       date,
     })
   } catch (error: any) {
@@ -122,6 +169,12 @@ export async function GET(request: NextRequest) {
  * POST /api/performance/analyze
  *
  * 分析結果に基づいて調整を適用し、performance_planを作成
+ *
+ * #1048 F2-18: 従来はクライアントが送った `recommendations`（delta を含む）を
+ * そのまま `applyRecommendations` に渡しており、クライアントが任意の delta を
+ * 捏造すれば nutrition_targets を無制限に書き換えられた。
+ * date のみを受け取り、GET と同じロジックでサーバー側が recommendations を
+ * 再計算し、その結果だけを適用する。
  */
 export async function POST(request: NextRequest) {
   try {
@@ -132,35 +185,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json()
-    const { recommendations, applyTop = 1 } = body
+    const body = await request.json().catch(() => ({}))
+    const rawDate = typeof body?.date === 'string' ? body.date : null
+    const date = rawDate && RECORD_DATE_PATTERN.test(rawDate) ? rawDate : new Date().toISOString().split('T')[0]
 
-    if (!recommendations || !Array.isArray(recommendations) || recommendations.length === 0) {
-      return NextResponse.json({ error: 'recommendations are required' }, { status: 400 })
+    const rawApplyTop = body?.applyTop
+    const applyTop =
+      typeof rawApplyTop === 'number' && Number.isInteger(rawApplyTop)
+        ? Math.min(Math.max(rawApplyTop, 1), 5)
+        : 1
+
+    // 1. サーバー側で分析を再計算する（クライアント入力の recommendations は使用しない）
+    const run = await runAnalysis(supabase, user.id, date)
+    if (!run.ok) {
+      return NextResponse.json({ error: run.error }, { status: run.status })
     }
-
-    // 1. 現在の栄養目標を取得
-    const { data: targetsData, error: targetsError } = await supabase
-      .from('nutrition_targets')
-      .select('daily_calories, protein_g, fat_g, carbs_g')
-      .eq('user_id', user.id)
-      .single()
-
-    if (targetsError || !targetsData) {
-      return NextResponse.json({ error: 'Nutrition targets not found' }, { status: 404 })
+    if (!run.eligible || run.recommendations.length === 0) {
+      return NextResponse.json(
+        { error: run.eligibilityReason || '調整可能な提案がありません' },
+        { status: 400 },
+      )
     }
 
     // 2. 調整を適用
-    const adjusted = applyRecommendations(
-      {
-        calories: targetsData.daily_calories,
-        protein: targetsData.protein_g,
-        fat: targetsData.fat_g,
-        carbs: targetsData.carbs_g,
-      },
-      recommendations,
-      { applyTop }
-    )
+    const adjusted = applyRecommendations(run.currentTargets, run.recommendations, { applyTop })
 
     // 3. 調整があれば栄養目標を更新
     if (adjusted.appliedRecommendations.length > 0) {

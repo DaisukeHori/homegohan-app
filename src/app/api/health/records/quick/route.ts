@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
+import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload, stripUndefined } from '@/lib/health-payloads';
 import { todayLocal, formatLocalDate } from '@/lib/date-utils';
+import { updateHealthStreak } from '@/lib/health-streaks';
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_PATTERN = RECORD_DATE_PATTERN;
 
 // クイック記録（体重・気分・睡眠のみ）
 export async function POST(request: NextRequest) {
@@ -33,20 +34,28 @@ export async function POST(request: NextRequest) {
   }
 
   const dataSource = body.source === 'photo' ? 'photo' : 'quick';
-  const { data: sanitizedRecord, errors } = sanitizeHealthRecordPayload({
+  // #1048 F2-19: `{ weight: body.weight }` のように未送信フィールドを undefined のまま
+  // 詰め替えると、オブジェクトにキー自体は残ってしまい sanitizeHealthRecordPayload の
+  // hasOwn 判定で「null が送られた」と誤認され、未送信の項目まで null 上書きされる
+  // （例: mood_score のみのクイック記録で weight が null に巻き戻る）。
+  // stripUndefined で未送信キーを事前に除去してから渡す。
+  const { data: sanitizedRecord, errors } = sanitizeHealthRecordPayload(stripUndefined({
     weight: body.weight,
     body_fat_percentage: body.bodyFat ?? body.body_fat_percentage,
     muscle_mass: body.muscleMass ?? body.muscle_mass,
     mood_score: body.mood_score,
     sleep_quality: body.sleep_quality,
-  });
+  }));
 
   if (errors.length > 0) {
     return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
   }
 
+  // #1048 F2-19: キー存在(`in`)だけで判定すると、値が null の項目しか
+  // 送られなかった場合でも「記録あり」扱いになり、streak が誤加算される。
+  // 実際に値が入っている（null でない）項目があるかどうかで判定する。
   const hasMetric = ['weight', 'body_fat_percentage', 'muscle_mass', 'mood_score', 'sleep_quality'].some(
-    (field) => field in sanitizedRecord,
+    (field) => sanitizedRecord[field as keyof typeof sanitizedRecord] != null,
   );
 
   if (!hasMetric) {
@@ -55,49 +64,33 @@ export async function POST(request: NextRequest) {
     }, { status: 400 });
   }
 
-  // 既存レコードを確認
-  const { data: existing } = await supabase
-    .from('health_records')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('record_date', recordDate)
-    .single();
-
   const updateData: Record<string, unknown> = {
     ...sanitizedRecord,
     data_source: dataSource,
     updated_at: new Date().toISOString(),
   };
 
-  let result;
-  
-  if (existing) {
-    // 更新（既存データを保持しつつ新しいデータをマージ）
-    result = await supabase
-      .from('health_records')
-      .update(updateData)
-      .eq('id', existing.id)
-      .select()
-      .single();
-  } else {
-    // 新規作成
-    result = await supabase
-      .from('health_records')
-      .insert({
+  // #1048 F2-19: 確認してから insert/update する check-then-act は同時リクエストで
+  // UNIQUE(user_id, record_date) 違反 500 を起こし得るため upsert に統一する。
+  const result = await supabase
+    .from('health_records')
+    .upsert(
+      {
         user_id: user.id,
         record_date: recordDate,
         ...updateData,
-      })
-      .select()
-      .single();
-  }
+      },
+      { onConflict: 'user_id,record_date' },
+    )
+    .select()
+    .single();
 
   if (result.error) {
     return NextResponse.json({ error: result.error.message }, { status: 500 });
   }
 
   // 連続記録を更新
-  await updateStreak(supabase, user.id, recordDate);
+  await updateHealthStreak(supabase, user.id, recordDate);
 
   // 前日との比較データを取得
   const yesterday = new Date(recordDate);
@@ -151,76 +144,6 @@ export async function POST(request: NextRequest) {
     streak: streak || { current_streak: 1, longest_streak: 1 },
     message: getEncouragementMessage(changes, streak?.current_streak || 1),
   });
-}
-
-// 連続記録の更新
-async function updateStreak(supabase: any, userId: string, recordDate: string) {
-  const streakType = 'daily_record';
-  
-  const { data: streak } = await supabase
-    .from('health_streaks')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('streak_type', streakType)
-    .single();
-
-  const today = new Date(recordDate);
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = formatLocalDate(yesterday);
-
-  if (streak) {
-    const lastDate = streak.last_activity_date;
-    
-    if (lastDate === recordDate) return;
-    
-    let newStreak = streak.current_streak;
-    let newStreakStart = streak.streak_start_date;
-    
-    if (lastDate === yesterdayStr) {
-      newStreak += 1;
-    } else {
-      newStreak = 1;
-      newStreakStart = recordDate;
-    }
-    
-    const longestStreak = Math.max(streak.longest_streak, newStreak);
-    const achievedBadges = streak.achieved_badges || [];
-    
-    const badgeMilestones = [7, 14, 30, 60, 100];
-    for (const milestone of badgeMilestones) {
-      const badgeCode = `${milestone}_days`;
-      if (newStreak >= milestone && !achievedBadges.includes(badgeCode)) {
-        achievedBadges.push(badgeCode);
-      }
-    }
-    
-    await supabase
-      .from('health_streaks')
-      .update({
-        current_streak: newStreak,
-        longest_streak: longestStreak,
-        last_activity_date: recordDate,
-        streak_start_date: newStreakStart,
-        achieved_badges: achievedBadges,
-        total_records: streak.total_records + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', streak.id);
-  } else {
-    await supabase
-      .from('health_streaks')
-      .insert({
-        user_id: userId,
-        streak_type: streakType,
-        current_streak: 1,
-        longest_streak: 1,
-        last_activity_date: recordDate,
-        streak_start_date: recordDate,
-        achieved_badges: [],
-        total_records: 1,
-      });
-  }
 }
 
 // 励ましメッセージを生成

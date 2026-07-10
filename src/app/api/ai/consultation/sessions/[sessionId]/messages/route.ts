@@ -593,7 +593,7 @@ ${importantMessagesInfo}
 - generate_single_meal: AIが栄養計算付きで1食を生成（推奨）
   params: {
     date: "YYYY-MM-DD",
-    mealType: "breakfast|lunch|dinner|snack|midnight_snack",
+    mealType: "breakfast|lunch|dinner|snack",
     specificDish?: "希望の料理名（例: 肉じゃが、カレー）",
     recipeId?: "uuid",              // レシピDB検索結果のUUID（search_recipesで取得）
     recipeExternalId?: "external_id", // レシピDBの外部ID（search_recipesで取得）

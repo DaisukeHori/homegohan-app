@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
+import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 import { todayLocal } from '@/lib/date-utils';
-
-const RECORD_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+import { updateHealthStreak } from '@/lib/health-streaks';
+import { clampIntParam } from '@/lib/http-params';
 
 // 健康記録の取得
 export async function GET(request: NextRequest) {
@@ -18,7 +18,9 @@ export async function GET(request: NextRequest) {
   const startDate = searchParams.get('start_date');
   const endDate = searchParams.get('end_date');
   // #265: limit に上限を設けて DoS を防ぐ
-  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '30'), 1), 200);
+  // #1048 F2-11: 1年グラフ(365日)が start_date + limit=365 で取得するため、
+  // 200 では末尾約165日が欠落していた。集計用途を考慮し上限を400に緩和。
+  const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 400, default: 30 });
 
   let query = supabase
     .from('health_records')
@@ -80,46 +82,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No valid health record fields were provided' }, { status: 400 });
   }
 
-  // 既存レコードを確認
-  const { data: existing } = await supabase
+  // #1048 F2-19: 確認してから insert/update する check-then-act は同時リクエストで
+  // UNIQUE(user_id, record_date) 違反 500 を起こし得るため upsert に統一する。
+  const result = await supabase
     .from('health_records')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('record_date', record_date)
-    .single();
-
-  let result;
-  
-  if (existing) {
-    // 更新
-    result = await supabase
-      .from('health_records')
-      .update({
-        ...sanitizedRecordData,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', existing.id)
-      .select()
-      .single();
-  } else {
-    // 新規作成
-    result = await supabase
-      .from('health_records')
-      .insert({
+    .upsert(
+      {
         user_id: user.id,
         record_date,
         ...sanitizedRecordData,
-      })
-      .select()
-      .single();
-  }
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,record_date' },
+    )
+    .select()
+    .single();
 
   if (result.error) {
     return NextResponse.json({ error: result.error.message }, { status: 500 });
   }
 
   // 連続記録を更新
-  await updateStreak(supabase, user.id, record_date);
+  await updateHealthStreak(supabase, user.id, record_date);
 
   // user_profilesの体重も更新（最新の記録の場合）
   if ('weight' in sanitizedRecordData && sanitizedRecordData.weight !== null) {
@@ -134,83 +118,4 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ record: result.data });
-}
-
-// 連続記録の更新
-async function updateStreak(supabase: any, userId: string, recordDate: string) {
-  const streakType = 'daily_record';
-  
-  // 現在の連続記録を取得
-  const { data: streak } = await supabase
-    .from('health_streaks')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('streak_type', streakType)
-    .single();
-
-  const today = new Date(recordDate);
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  if (streak) {
-    // 既存の連続記録がある場合
-    const lastDate = streak.last_activity_date;
-    
-    if (lastDate === recordDate) {
-      // 同じ日の記録は無視
-      return;
-    }
-    
-    let newStreak = streak.current_streak;
-    let newStreakStart = streak.streak_start_date;
-    
-    if (lastDate === yesterdayStr) {
-      // 連続している
-      newStreak += 1;
-    } else {
-      // 連続が途切れた
-      newStreak = 1;
-      newStreakStart = recordDate;
-    }
-    
-    const longestStreak = Math.max(streak.longest_streak, newStreak);
-    
-    // バッジ判定
-    const achievedBadges = streak.achieved_badges || [];
-    const badgeMilestones = [7, 14, 30, 60, 100];
-    for (const milestone of badgeMilestones) {
-      const badgeCode = `${milestone}_days`;
-      if (newStreak >= milestone && !achievedBadges.includes(badgeCode)) {
-        achievedBadges.push(badgeCode);
-      }
-    }
-    
-    await supabase
-      .from('health_streaks')
-      .update({
-        current_streak: newStreak,
-        longest_streak: longestStreak,
-        last_activity_date: recordDate,
-        streak_start_date: newStreakStart,
-        achieved_badges: achievedBadges,
-        total_records: streak.total_records + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', streak.id);
-  } else {
-    // 新規作成
-    await supabase
-      .from('health_streaks')
-      .insert({
-        user_id: userId,
-        streak_type: streakType,
-        current_streak: 1,
-        longest_streak: 1,
-        last_activity_date: recordDate,
-        streak_start_date: recordDate,
-        achieved_badges: [],
-        total_records: 1,
-      });
-  }
 }

@@ -5,6 +5,28 @@ type ValidationResult<T extends object> = {
 
 type PlainObject = Record<string, unknown>;
 
+/**
+ * #1048 F2-19: 呼び出し側が `{ weight: body.weight, ... }` のように別名フィールドから
+ * 値を詰め替えるとき、元の値が `undefined`（＝クライアントが送らなかった）でも
+ * オブジェクトリテラルには **キー自体は存在してしまう**
+ * （`Object.prototype.hasOwnProperty.call({ foo: undefined }, 'foo')` は true）。
+ *
+ * sanitizeHealthRecordPayload 等は「キーが存在するか」で送信有無を判定するため、
+ * これを素通しすると「未送信」が「null を送信」と誤認され、
+ * 既存の保存値を意図せず null で上書きしてしまう（例: mood のみのクイック記録が
+ * weight を null に巻き戻す）。値を詰め替える呼び出し側は、渡す前に本関数で
+ * `undefined` のキーを除去すること。
+ */
+export function stripUndefined<T extends PlainObject>(input: T): Partial<T> {
+  const result: Partial<T> = {};
+  for (const key of Object.keys(input) as (keyof T)[]) {
+    if (input[key] !== undefined) {
+      result[key] = input[key];
+    }
+  }
+  return result;
+}
+
 export interface NotificationPreferencesPayload {
   enabled: boolean;
   quiet_hours_start: string;
@@ -110,6 +132,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = {
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// #1048 F2-16: health/records/[date] 等、複数ルートで YYYY-MM-DD 検証を共有するため export する
+export const RECORD_DATE_PATTERN = DATE_PATTERN;
 const NOTIFICATION_RECORD_MODES = new Set(['standard', 'minimal', 'weekly', 'off']);
 const NOTIFICATION_PERSONALITY_TYPES = new Set(['positive', 'logical', 'gentle', 'competitive']);
 

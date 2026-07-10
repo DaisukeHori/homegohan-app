@@ -2,9 +2,13 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { TargetSlot } from '@/types/domain';
 import {
+  RECORD_DATE_PATTERN,
   sanitizeHealthGoalUpdate,
   sanitizeHealthRecordPayload,
+  stripUndefined,
 } from '@/lib/health-payloads';
+import { updateHealthStreak } from '@/lib/health-streaks';
+import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { loadFeatureFlags } from '@/lib/menu-generation-feature-flags';
 import type { MealImageJobSeed } from '../../../../../../../lib/meal-image';
@@ -20,6 +24,13 @@ import { createLogger } from '@/lib/db-logger';
 
 // セキュリティ上禁止されたフィールド
 const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
+
+// #1048 F2-23: planned_meals.meal_type / meals.meal_type には
+// CHECK (meal_type IN ('breakfast','lunch','dinner','snack')) が存在し、
+// 'midnight_snack' を挿入すると DB 制約違反で 500 になる
+// (supabase/migrations/20260430160000_db_audit_fixes.sql #221)。
+// AI 生成アクション経由でこの不整合値が渡らないようホワイトリストで防御する。
+const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 
 // ==================== mass assignment 対策: サニタイザ ====================
 // AIが生成した action_params は信頼できない入力（プロンプトインジェクションの
@@ -510,6 +521,14 @@ export async function POST(
 
         if (!date || !mealType) {
           result = { error: 'date と mealType は必須です' };
+          break;
+        }
+
+        // #1048 F2-23: DB CHECK 制約と矛盾する mealType(例: 'midnight_snack')を
+        // 拒否する。プロンプトからは既に除去済みだが、AI 出力は信頼できないため
+        // 実行時にも二重で防御する。
+        if (!AI_ALLOWED_MEAL_TYPES.includes(mealType)) {
+          result = { error: `mealType は ${AI_ALLOWED_MEAL_TYPES.join('/')} のいずれかである必要があります` };
           break;
         }
 
@@ -1257,17 +1276,21 @@ export async function POST(
       // ==================== 健康記録関連 ====================
       // health_recordsカラム: daily_note (notesではない)
       case 'add_health_record': {
-        const { date, weight, bodyFatPercentage, systolicBp, diastolicBp, sleepHours, 
+        const { date, weight, bodyFatPercentage, systolicBp, diastolicBp, sleepHours,
                 overallCondition, moodScore, stressLevel, stepCount, dailyNote, notes } = action.action_params;
-        
-        const recordDate = date || new Date().toISOString().split('T')[0];
-        
-        // 既存レコードがあればupsert
-        const { error: upsertError } = await supabase
-          .from('health_records')
-          .upsert({
-            user_id: user.id,
-            record_date: recordDate,
+
+        const recordDate = typeof date === 'string' && date.trim() ? date.trim() : todayLocal();
+        if (!RECORD_DATE_PATTERN.test(recordDate)) {
+          result = { error: 'date must be in YYYY-MM-DD format' };
+          break;
+        }
+
+        // #1048 F2-08: AI が生成した値をそのまま保存すると、レンジ検証（体重の異常値等）や
+        // streak・user_profiles 同期がバイパスされる（update_health_record は既に
+        // sanitizeHealthRecordPayload を通しているが、こちらは未対応だった）。
+        // stripUndefined で未送信キーを除去してから既存のサニタイザに通す。
+        const { data: safeRecord, errors: recordErrors } = sanitizeHealthRecordPayload(
+          stripUndefined({
             weight,
             body_fat_percentage: bodyFatPercentage,
             systolic_bp: systolicBp,
@@ -1277,13 +1300,45 @@ export async function POST(
             mood_score: moodScore,
             stress_level: stressLevel,
             step_count: stepCount,
-            daily_note: dailyNote || notes, // 後方互換性のためnotesもサポート
+            daily_note: dailyNote,
+            notes,
+          }),
+          { acceptLegacyNotes: true },
+        );
+
+        if (recordErrors.length > 0) {
+          result = { error: recordErrors.join(', ') };
+          break;
+        }
+        if (Object.keys(safeRecord).length === 0) {
+          result = { error: '保存可能な健康記録項目がありません' };
+          break;
+        }
+
+        // 既存レコードがあればupsert
+        const { error: upsertError } = await supabase
+          .from('health_records')
+          .upsert({
+            user_id: user.id,
+            record_date: recordDate,
+            ...safeRecord,
           }, { onConflict: 'user_id,record_date' });
         success = !upsertError;
         if (upsertError) {
           console.error('add_health_record error:', upsertError);
           result = { error: upsertError.message };
         } else {
+          // #1048 F2-08: update_health_record 同様、streak・user_profiles も同期する
+          await updateHealthStreak(supabase, user.id, recordDate);
+          if (typeof safeRecord.weight === 'number') {
+            const today = todayLocal();
+            if (recordDate === today) {
+              await supabase
+                .from('user_profiles')
+                .update({ weight: safeRecord.weight })
+                .eq('id', user.id);
+            }
+          }
           result = { date: recordDate, saved: success };
         }
         break;

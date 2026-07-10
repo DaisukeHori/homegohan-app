@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
+import { RECORD_DATE_PATTERN } from '@/lib/health-payloads'
+import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
 
 /**
  * GET /api/performance/checkins
@@ -120,15 +122,22 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { checkinDate, ...checkinData } = body
 
-    if (!checkinDate) {
-      return NextResponse.json({ error: 'checkinDate is required' }, { status: 400 })
+    if (typeof checkinDate !== 'string' || !RECORD_DATE_PATTERN.test(checkinDate.trim())) {
+      return NextResponse.json({ error: 'checkinDate must be in YYYY-MM-DD format' }, { status: 400 })
+    }
+
+    // #1048 F2-18: weight や resting_heart_rate 等は DB に CHECK 制約が無く、
+    // 異常値がそのまま保存され user_profiles.weight にも汚染が伝播していた。
+    const { data: safeCheckinData, errors: checkinErrors } = sanitizePerformanceCheckinPayload(checkinData)
+    if (checkinErrors.length > 0) {
+      return NextResponse.json({ error: checkinErrors.join(', ') }, { status: 400 })
     }
 
     // DBフォーマットに変換
     const dbData = fromPerformanceCheckin({
       userId: user.id,
-      checkinDate,
-      ...checkinData,
+      checkinDate: checkinDate.trim(),
+      ...safeCheckinData,
     })
 
     // Upsert（日付でユニーク制約あり）
@@ -146,11 +155,11 @@ export async function POST(request: NextRequest) {
     }
 
     // 体重が更新された場合、user_profiles.weightも更新
-    if (checkinData.weight !== undefined) {
+    if (typeof safeCheckinData.weight === 'number') {
       await supabase
         .from('user_profiles')
         .update({
-          weight: checkinData.weight,
+          weight: safeCheckinData.weight,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id)
