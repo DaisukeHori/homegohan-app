@@ -5,6 +5,8 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 const isDev = process.env.NODE_ENV === 'development';
+// #1044 (F6-09): PostHog の api_host は src/lib/posthog.ts のデフォルトと合わせる
+const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://us.i.posthog.com';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -15,7 +17,10 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: '/handson-tour/(.*)',
+        // #1044 (F6-08): '/handson-tour/(.*)' は認証必須ページ (例: /handson-tour/photo) にも
+        // マッチしてしまい、CDN が認証済み HTML を1年キャッシュする恐れがあった。
+        // public/handson-tour 配下の静的アセットのみに限定する。
+        source: '/handson-tour/sample-meal.webp',
         headers: [
           {
             key: 'Cache-Control',
@@ -51,7 +56,9 @@ const nextConfig = {
               `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} *.vercel-scripts.com`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: *.supabase.co images.unsplash.com",
-              "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co",
+              // #1044 (F6-09): PostHog の capture/identify 送信先を許可 (未設定だと全ブロックされていた)
+              // #1044 round-2: session replay 等で使う PostHog アセットホストも予防的に許可
+              `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${posthogHost} https://us-assets.i.posthog.com`,
               "frame-ancestors 'none'",
               "font-src 'self'",
               "object-src 'none'",

@@ -19,6 +19,68 @@ interface LogEntry {
   request_id?: string;
 }
 
+// #1044 (F6-20): metadata に混入した秘密情報をマスキングする
+const SECRET_KEY_PATTERN = /password|token|secret|authorization|api[_-]?key/i;
+const MASK_VALUE = '***';
+const MAX_MASK_DEPTH = 6;
+
+/**
+ * オブジェクト/配列を再帰的に走査し、キー名が秘密情報パターンに一致する値をマスクする。
+ * 循環参照や深いネストで無限ループしないよう深さ上限を設ける。
+ */
+export function maskSecrets<T>(value: T, depth = 0): T {
+  // #1044 round-2: 深さ上限に達した場合、生値をそのまま返すと上限より深いネストに
+  // 潜む秘密情報がマスクされずに漏洩する。fail-safe として値ごとマスクする。
+  if (depth >= MAX_MASK_DEPTH) return MASK_VALUE as unknown as T;
+
+  if (Array.isArray(value)) {
+    return value.map((item) => maskSecrets(item, depth + 1)) as unknown as T;
+  }
+
+  if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = SECRET_KEY_PATTERN.test(key) ? MASK_VALUE : maskSecrets(val, depth + 1);
+    }
+    return result as T;
+  }
+
+  return value;
+}
+
+const DEFAULT_MAX_METADATA_BYTES = 8 * 1024; // 8KB
+
+/**
+ * metadata のシリアライズ後サイズが上限を超える場合、プレビューのみを残して切り詰める。
+ */
+export function truncateMetadata(
+  metadata: Record<string, unknown> | undefined,
+  maxBytes: number = DEFAULT_MAX_METADATA_BYTES,
+): Record<string, unknown> | undefined {
+  if (!metadata) return metadata;
+
+  const json = JSON.stringify(metadata);
+  const byteLength = new TextEncoder().encode(json).length;
+  if (byteLength <= maxBytes) return metadata;
+
+  return {
+    _truncated: true,
+    _original_bytes: byteLength,
+    _preview: json.slice(0, Math.max(0, maxBytes - 200)),
+  };
+}
+
+/**
+ * metadata にマスキングとサイズ切り詰めをまとめて適用する。
+ */
+export function sanitizeMetadata(
+  metadata: Record<string, unknown> | undefined,
+  maxBytes: number = DEFAULT_MAX_METADATA_BYTES,
+): Record<string, unknown> | undefined {
+  if (!metadata) return metadata;
+  return truncateMetadata(maskSecrets(metadata), maxBytes);
+}
+
 // Supabase クライアント（service_role）
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -39,8 +101,14 @@ async function saveLog(entry: LogEntry): Promise<void> {
   try {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    
-    const { error } = await supabase.from('app_logs').insert(entry);
+
+    // #1044 (F6-20): 保存前に秘密情報マスキング + サイズ切り詰め
+    const sanitizedEntry: LogEntry = {
+      ...entry,
+      metadata: sanitizeMetadata(entry.metadata),
+    };
+
+    const { error } = await supabase.from('app_logs').insert(sanitizedEntry);
     
     if (error) {
       console.error('Failed to save log to DB:', error);
@@ -64,16 +132,19 @@ export function createLogger(routeName: string, requestId?: string) {
   const log = (level: LogLevel, message: string, metadata?: Record<string, unknown>) => {
     const timestamp = new Date().toISOString();
     const logLine = `[${timestamp}] [${level.toUpperCase()}] [${routeName}] ${message}`;
-    
+    // #1044 round-2: DB保存時と同様、コンソール出力にも秘密情報マスキングを適用する
+    // (Vercel の関数ログにも生の metadata が残らないようにする)
+    const sanitizedMetadata = sanitizeMetadata(metadata);
+
     // コンソール出力
     if (level === 'error') {
-      console.error(logLine, metadata || '');
+      console.error(logLine, sanitizedMetadata || '');
     } else if (level === 'warn') {
-      console.warn(logLine, metadata || '');
+      console.warn(logLine, sanitizedMetadata || '');
     } else {
-      console.log(logLine, metadata || '');
+      console.log(logLine, sanitizedMetadata || '');
     }
-    
+
     // DB保存（非同期、待たない）
     saveLog({
       ...baseEntry,
@@ -92,8 +163,8 @@ export function createLogger(routeName: string, requestId?: string) {
       const errorStack = error instanceof Error ? error.stack : undefined;
       
       const timestamp = new Date().toISOString();
-      console.error(`[${timestamp}] [ERROR] [${routeName}] ${message}`, error, metadata || '');
-      
+      console.error(`[${timestamp}] [ERROR] [${routeName}] ${message}`, error, sanitizeMetadata(metadata) || '');
+
       saveLog({
         ...baseEntry,
         level: 'error',
@@ -112,8 +183,8 @@ export function createLogger(routeName: string, requestId?: string) {
       
       const userLog = (level: LogLevel, message: string, metadata?: Record<string, unknown>) => {
         const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] [${level.toUpperCase()}] [${routeName}] [user:${userId}] ${message}`, metadata || '');
-        
+        console.log(`[${timestamp}] [${level.toUpperCase()}] [${routeName}] [user:${userId}] ${message}`, sanitizeMetadata(metadata) || '');
+
         saveLog({
           ...userEntry,
           level,
@@ -129,9 +200,9 @@ export function createLogger(routeName: string, requestId?: string) {
         error: (message: string, error?: Error | unknown, metadata?: Record<string, unknown>) => {
           const errorMessage = error instanceof Error ? error.message : String(error);
           const errorStack = error instanceof Error ? error.stack : undefined;
-          
-          console.error(`[${new Date().toISOString()}] [ERROR] [${routeName}] [user:${userId}] ${message}`, error, metadata || '');
-          
+
+          console.error(`[${new Date().toISOString()}] [ERROR] [${routeName}] [user:${userId}] ${message}`, error, sanitizeMetadata(metadata) || '');
+
           saveLog({
             ...userEntry,
             level: 'error',

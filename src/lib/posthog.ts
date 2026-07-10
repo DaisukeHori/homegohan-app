@@ -22,6 +22,13 @@ const FORBIDDEN_KEYS = [
 export const ANALYTICS_CONSENT_KEY = 'cookie_consent_analytics';
 
 /**
+ * 同意状態変更を同一タブ内で通知するための CustomEvent 名。
+ * 'storage' イベントは同一タブでは発火しないため (F6-15)、
+ * 同一タブの opt-in/opt-out を即時反映するために使用する。
+ */
+export const ANALYTICS_CONSENT_EVENT = 'homegohan:analytics-consent-changed';
+
+/**
  * 計測 Cookie への同意状態を確認する
  */
 export function getAnalyticsConsent(): boolean {
@@ -39,6 +46,11 @@ export function getAnalyticsConsent(): boolean {
  * - Cookie 同意なしの場合は init を呼ばない (cross/08 §13)
  */
 export function initPostHog(): void {
+  // 同意ガード: 呼び出し元の状態に関わらず、同意なしでは init しない (F6-15)
+  if (!getAnalyticsConsent()) {
+    return;
+  }
+
   const key = process.env['NEXT_PUBLIC_POSTHOG_KEY'];
   const host = process.env['NEXT_PUBLIC_POSTHOG_HOST'] ?? 'https://us.i.posthog.com';
 
@@ -85,6 +97,8 @@ export function optOutPostHog(): void {
   } catch {
     // ignore
   }
+  // 同一タブ内の listener (PostHogProvider 等) に即時通知する (F6-15)
+  window.dispatchEvent(new CustomEvent(ANALYTICS_CONSENT_EVENT));
 }
 
 /**
@@ -103,4 +117,6 @@ export function optInPostHog(): void {
   } else {
     initPostHog();
   }
+  // 同一タブ内の listener (PostHogProvider 等) に即時通知する (F6-15)
+  window.dispatchEvent(new CustomEvent(ANALYTICS_CONSENT_EVENT));
 }

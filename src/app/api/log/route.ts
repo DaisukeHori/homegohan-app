@@ -5,6 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeMetadata } from '@/lib/db-logger';
+
+// #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
+const ALLOWED_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+const MAX_MESSAGE_LENGTH = 2000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,13 +19,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    if (typeof level !== 'string' || !ALLOWED_LOG_LEVELS.includes(level as (typeof ALLOWED_LOG_LEVELS)[number])) {
+      return NextResponse.json({ error: 'Invalid level' }, { status: 400 });
+    }
+
+    if (typeof message !== 'string' || message.length > MAX_MESSAGE_LENGTH) {
+      return NextResponse.json({ error: 'Invalid message' }, { status: 400 });
+    }
+
+    if (metadata !== undefined && metadata !== null && typeof metadata !== 'object') {
+      return NextResponse.json({ error: 'Invalid metadata' }, { status: 400 });
+    }
+
     // 認証チェック: 未認証リクエストは拒否 (fail-closed)
+    // #1044 round-2: sanitizeMetadata (metadata 全体の JSON.stringify を伴う) より前に
+    // 認証チェックを行い、未認証者が巨大な metadata を送って CPU を消費させる DoS を軽減する。
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const userId = user.id;
+
+    // 秘密情報マスキング + サイズ切り詰め (F6-20)
+    const sanitizedMetadata = sanitizeMetadata(metadata ?? undefined);
 
     // service_roleでログを保存
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -36,7 +58,7 @@ export async function POST(request: NextRequest) {
       level,
       source: 'client',
       message,
-      metadata,
+      metadata: sanitizedMetadata,
       user_id: userId,
     });
 

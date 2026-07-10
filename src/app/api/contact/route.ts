@@ -2,6 +2,21 @@ import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+
+// #1044 (F6-19): 入力を Zod で厳密検証する
+const contactInquirySchema = z.object({
+  inquiryType: z.enum(['general', 'support', 'bug', 'feature'], {
+    message: 'inquiryType の値が不正です',
+  }),
+  email: z.string().email('有効なメールアドレスを入力してください'),
+  subject: z.string().min(1, '件名は必須です').max(100, '件名は100文字以内です'),
+  message: z.string().min(1, 'お問い合わせ内容は必須です').max(5000, 'お問い合わせ内容は5000文字以内です'),
+});
+
+// GET で返す列は必要最小限に限定する (admin_notes 等の内部情報は返さない)
+const INQUIRY_SAFE_COLUMNS =
+  'id, inquiry_type, subject, message, status, created_at, updated_at, resolved_at';
 
 async function sendAdminNotification(inquiry: {
   id: string;
@@ -53,7 +68,12 @@ async function sendAdminNotification(inquiry: {
 }
 
 // #274 レートリミット: Upstash Redis があれば分散 ratelimit、なければ in-memory フォールバック
-// TODO: env 設定後 ratelimit 有効化 — UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN を設定すること
+// #1044 round-2: Upstash env 未設定時に POST を hard 503 で拒否すると、本番で Upstash が
+// 未接続の間 (docs/design/cross/06-perf-cache.md #549, .env.example, ENV_SETUP.md いずれも
+// 本番未設定を示す) 問い合わせフォームが全壊してしまう。同日実装の src/lib/rate-limit.ts が
+// 採用する canonical 方針 (fail-open は避けるが hard-block もしない = in-memory フォールバック
+// + warn ログ) に揃え、Upstash 未設定時も in-memory レートリミットで最低限の制限をかけつつ
+// リクエストは通す。
 
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_SEC = 60;
@@ -122,24 +142,16 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { inquiryType, email, subject, message } = body;
 
-    // バリデーション
-    if (!inquiryType || !email || !subject || !message) {
+    // #1044 (F6-19): Zod による厳密バリデーション
+    const parseResult = contactInquirySchema.safeParse(body);
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: '必須項目が入力されていません' },
+        { error: '入力内容を確認してください', details: parseResult.error.flatten() },
         { status: 400 },
       );
     }
-
-    // メールアドレスの簡易バリデーション
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { error: '有効なメールアドレスを入力してください' },
-        { status: 400 },
-      );
-    }
+    const { inquiryType, email, subject, message } = parseResult.data;
 
     // ユーザーIDを取得（ログイン中の場合）
     const { data: { user } } = await supabase.auth.getUser();
@@ -197,7 +209,7 @@ export async function GET() {
   try {
     const { data, error } = await supabase
       .from('inquiries')
-      .select('*')
+      .select(INQUIRY_SAFE_COLUMNS)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
