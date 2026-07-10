@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 // ── 環境変数 ──────────────────────────────────────────────────────────────────
 const WEB_BASE_URL = 'https://homegohan-app.vercel.app';
@@ -78,8 +78,16 @@ const mockGetSession = mockSupabase.auth.getSession as jest.Mock;
 
 // ── テーマモック ──────────────────────────────────────────────────────────────
 jest.mock('../../src/theme/colors', () => ({
-  colors: { accent: '#FF6B35' },
+  colors: { accent: '#FF6B35', text: '#2D2D2D', border: '#E8E8E8' },
 }));
+
+// ── @expo/vector-icons モック ─────────────────────────────────────────────────
+jest.mock('@expo/vector-icons', () => {
+  const React = require('react');
+  return {
+    Ionicons: (props: any) => React.createElement('Ionicons', props),
+  };
+});
 
 import { WebViewScreen } from '../../src/components/web/WebViewScreen';
 
@@ -281,5 +289,69 @@ describe('ケース4: セッション無し時の直接 URL 遷移', () => {
     const uri: string = mockWebViewProps.source.uri;
     expect(uri).toContain('mode=app');
     expect(uri).toContain('tab=settings');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ケース 5: headerAction (Issue #1037 — 孤立ネイティブ画面への導線)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('ケース5: headerAction ボタン (Issue #1037)', () => {
+  it('headerAction が未指定の場合はヘッダーボタンを描画しない', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+
+    const { queryByTestId } = render(<WebViewScreen path="/home" />);
+
+    await waitFor(() => {
+      expect(mockWebViewProps.source?.uri).toBeDefined();
+    });
+
+    expect(queryByTestId('profile-settings-button')).toBeNull();
+  });
+
+  it('headerAction 指定時にヘッダーボタンが描画され、testID でタップできる', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+    const onPress = jest.fn();
+
+    const { getByTestId } = render(
+      <WebViewScreen
+        path="/profile"
+        testID="webview-profile"
+        headerAction={{
+          icon: 'settings-outline',
+          testID: 'profile-settings-button',
+          accessibilityLabel: '設定',
+          onPress,
+        }}
+      />,
+    );
+
+    // WebView 読み込み完了前 (ローディング中) でもヘッダーボタンは即座に表示される
+    expect(getByTestId('profile-settings-button')).toBeTruthy();
+
+    fireEvent.press(getByTestId('profile-settings-button'));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('headerAction は WebView 読み込み完了後も同じ testID で表示され続ける', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+    const onPress = jest.fn();
+
+    const { getByTestId } = render(
+      <WebViewScreen
+        path="/profile"
+        testID="webview-profile"
+        headerAction={{
+          icon: 'settings-outline',
+          testID: 'profile-settings-button',
+          onPress,
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockWebViewProps.source?.uri).toBeDefined();
+    });
+
+    expect(getByTestId('profile-settings-button')).toBeTruthy();
   });
 });

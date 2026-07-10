@@ -1,10 +1,11 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 
@@ -16,6 +17,14 @@ const PROJECT_REF = SUPABASE_URL.replace('https://', '').split('.')[0];
 interface Props {
   path: string;  // 例 '/home', '/menus/weekly'
   testID?: string;
+  // Issue #1037: WebView タブ内から到達不能なネイティブ画面 (設定/ログアウト/削除等) への
+  // 導線として、ヘッダーに 1 個だけアイコンボタンを追加できるオプション。
+  headerAction?: {
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    onPress: () => void;
+    testID?: string;
+    accessibilityLabel?: string;
+  };
 }
 
 // 各タブの「所有する」パス prefix と Expo Router タブルート のマッピング
@@ -103,7 +112,7 @@ true;
 `;
 };
 
-export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
+export const WebViewScreen: React.FC<Props> = ({ path, testID, headerAction }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [injectedJS, setInjectedJS] = useState<string>('');
@@ -196,9 +205,28 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
   // effectivePath からクエリ・ハッシュを除いた純粋なパス部分
   const currentTabRoot = effectivePath.split('?')[0].split('#')[0];
 
+  // Issue #1037: WebView タブの上に固定表示するヘッダーバー。
+  // WebView 読み込み前後どちらでも同じ場所から即座にタップできるよう、
+  // ローディング分岐より前の共通レンダリングとして扱う。
+  const headerBar = headerAction ? (
+    <View style={styles.headerBar}>
+      <Pressable
+        testID={headerAction.testID}
+        onPress={headerAction.onPress}
+        accessibilityRole="button"
+        accessibilityLabel={headerAction.accessibilityLabel}
+        hitSlop={8}
+        style={styles.headerButton}
+      >
+        <Ionicons name={headerAction.icon} size={22} color={colors.text} />
+      </Pressable>
+    </View>
+  ) : null;
+
   if (!uri) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
+        {headerBar}
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
@@ -208,6 +236,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
+      {headerBar}
       <WebView
         ref={webViewRef}
         testID={testID ?? 'webview-screen'}
@@ -290,3 +319,20 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
     </SafeAreaView>
   );
 };
+
+const styles = StyleSheet.create({
+  headerBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    height: 44,
+    paddingHorizontal: 12,
+    backgroundColor: '#FFF',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  headerButton: {
+    padding: 8,
+    borderRadius: 20,
+  },
+});
