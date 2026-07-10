@@ -685,10 +685,13 @@ describe('image route contracts', () => {
       }),
     }));
 
-    expect(response.status).toBe(200);
-    const payload = await response.json();
+    // #779 で「結果が空(unknown)のときも200で返し画面が真っ白になる」問題を修正し、
+    // unknown 判定は 422 + error: 'unknown_type' を返す契約に変更された。
     // 非食品画像は unknown を返す（meal への強制変換が行われていないことを確認）
+    expect(response.status).toBe(422);
+    const payload = await response.json();
     expect(payload.type).toBe('unknown');
+    expect(payload.error).toBe('unknown_type');
   });
 
   // #151: 1px ブランク JPEG が type:meal, confidence:1.0 で誤判別される問題の repro

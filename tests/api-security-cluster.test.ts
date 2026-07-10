@@ -11,6 +11,8 @@ const mockGetSession = vi.fn();
 const mockRefreshSession = vi.fn();
 const mockFrom = vi.fn();
 const mockStorageFrom = vi.fn();
+// #257: view_count インクリメントは単一アトミック RPC (increment_recipe_view_count) 経由
+const mockRpc = vi.fn().mockResolvedValue({ data: null, error: null });
 
 const supabaseClient = {
   auth: {
@@ -19,6 +21,7 @@ const supabaseClient = {
     refreshSession: mockRefreshSession,
   },
   from: mockFrom,
+  rpc: mockRpc,
   storage: { from: mockStorageFrom },
 };
 
@@ -180,7 +183,19 @@ import { GET as commentsGET } from '../src/app/api/recipes/[id]/comments/route';
 describe('#168 /api/recipes/[id]/comments GET', () => {
   beforeEach(() => vi.resetAllMocks());
 
-  it('未認証でもコメント一覧を取得できる', async () => {
+  it('未認証は401を返す', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await commentsGET(new Request('http://localhost/api/recipes/r1/comments'), {
+      params: { id: 'r1' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  // #948 でこのエンドポイントに認証必須化 (未認証401) が導入されたため、
+  // 認証済みユーザーでコメント一覧を取得するケースで検証する。
+  it('認証済みユーザーはコメント一覧を取得できる (user_id は含まれない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-reader' } }, error: null });
     const selectChain = {
       eq: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({
@@ -270,30 +285,24 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
 
   it('認証済みリクエストでは view_count を更新する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-reader' } }, error: null });
+    mockRpc.mockResolvedValue({ data: null, error: null });
 
-    const updateChain = { eq: vi.fn().mockResolvedValue({ error: null }) };
-    const updateFn = vi.fn().mockReturnValue(updateChain);
-    const singleForCount = vi.fn().mockResolvedValue({ data: { view_count: 5 }, error: null });
-    const singleForDetail = vi.fn().mockResolvedValue({ data: recipeRow, error: null });
-
-    let callCount = 0;
-    const eqChain = {
+    // #257: view_count 更新は SELECT+UPDATE ではなく単一アトミック RPC
+    // (increment_recipe_view_count) で行われるため、詳細取得の select().eq().single()
+    // は1回だけ呼ばれ、そのまま recipeRow を返す。
+    const selectChainDetail = {
       eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockImplementation(() => {
-        callCount++;
-        return callCount === 1 ? singleForCount() : singleForDetail();
-      }),
+      single: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
     };
     mockFrom.mockReturnValue({
-      select: vi.fn().mockReturnValue(eqChain),
-      update: updateFn,
+      select: vi.fn().mockReturnValue(selectChainDetail),
     });
 
     const res = await recipeGET(new Request('http://localhost/api/recipes/r1'), {
       params: { id: 'r1' },
     });
     expect(res.status).toBe(200);
-    expect(updateFn).toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith('increment_recipe_view_count', { recipe_id: 'r1' });
   });
 });
 

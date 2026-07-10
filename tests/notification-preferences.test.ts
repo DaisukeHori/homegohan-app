@@ -15,11 +15,13 @@ const mockEq = vi.fn();
 const mockSelect = vi.fn();
 const mockInsert = vi.fn();
 const mockUpdate = vi.fn();
+const mockUpsert = vi.fn();
 
 const buildChain = () => ({
   select: mockSelect,
   insert: mockInsert,
   update: mockUpdate,
+  upsert: mockUpsert,
   eq: mockEq,
   maybeSingle: mockMaybeSingle,
   single: mockSingle,
@@ -33,6 +35,9 @@ mockSelect.mockReturnValue({ eq: mockEq, maybeSingle: mockMaybeSingle, single: m
 mockEq.mockReturnValue({ maybeSingle: mockMaybeSingle, single: mockSingle, select: mockSelect });
 mockInsert.mockReturnValue({ select: mockSelect });
 mockUpdate.mockReturnValue({ eq: mockEq });
+// route.ts の PATCH は select→insert/update の分岐ではなく単一の upsert() を使う
+// (並列アクセス時の競合とレイテンシを解消するため)。upsert().select().single() の形。
+mockUpsert.mockReturnValue({ select: mockSelect });
 
 const mockSupabase = {
   auth: { getUser: mockGetUser },
@@ -110,6 +115,7 @@ describe('PATCH /api/notification-preferences', () => {
     mockEq.mockReturnValue({ maybeSingle: mockMaybeSingle, single: mockSingle, select: mockSelect });
     mockInsert.mockReturnValue({ select: mockSelect });
     mockUpdate.mockReturnValue({ eq: mockEq });
+    mockUpsert.mockReturnValue({ select: mockSelect });
   });
 
   it('未認証なら 401 を返す', async () => {
@@ -143,9 +149,7 @@ describe('PATCH /api/notification-preferences', () => {
 
   it('row が存在しない場合は INSERT する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    // maybeSingle (existing check) → null
-    mockMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
-    // insert().select().single() → saved row
+    // upsert().select().single() → 新規作成された row
     mockSingle.mockResolvedValueOnce({
       data: { notifications_enabled: false, auto_analyze_enabled: true, data_share_enabled: false },
       error: null,
@@ -155,16 +159,15 @@ describe('PATCH /api/notification-preferences', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.settings.notifications_enabled).toBe(false);
-    expect(mockInsert).toHaveBeenCalledWith(
+    expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({ user_id: 'user-1', notifications_enabled: false }),
+      { onConflict: 'user_id' },
     );
   });
 
   it('row が存在する場合は UPDATE する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    // maybeSingle (existing check) → existing row
-    mockMaybeSingle.mockResolvedValueOnce({ data: { id: 'row-1' }, error: null });
-    // update().eq().select().single() → updated row
+    // upsert().select().single() → 既存 row が更新された結果
     mockSingle.mockResolvedValueOnce({
       data: { notifications_enabled: false, auto_analyze_enabled: true, data_share_enabled: false },
       error: null,
@@ -172,6 +175,9 @@ describe('PATCH /api/notification-preferences', () => {
 
     const res = await PATCH(makeRequest('PATCH', { notifications_enabled: false }));
     expect(res.status).toBe(200);
-    expect(mockUpdate).toHaveBeenCalled();
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'user-1', notifications_enabled: false }),
+      { onConflict: 'user_id' },
+    );
   });
 });
