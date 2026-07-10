@@ -1,10 +1,14 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
+import { QUESTIONS, pruneStaleAnswers } from "./question-flow";
+import { finalizeOnboarding, parseErrorMessage, GENERIC_SAVE_ERROR_MESSAGE } from "./complete-flow";
+import { addTagsFromInput } from "./tag-input";
+import { NICKNAME_MAX_LENGTH, OCCUPATION_MAX_LENGTH, TAG_MAX_COUNT, AGE_MIN, AGE_MAX } from "@/schemas/onboarding";
 
 // 曜日別人数設定のデータ
 const DAYS_OF_WEEK = [
@@ -49,381 +53,6 @@ function createDefaultServingsConfig(familySize: number): ServingsConfig {
   return config;
 }
 
-// 質問データの定義（運動・目標・健康情報を詳細に収集）
-const QUESTIONS = [
-  {
-    id: 'nickname',
-    text: 'はじめまして！🍳\n私はあなたの食生活をサポートするAI栄養士です。\n\nお名前（ニックネーム）を教えてください',
-    type: 'text',
-    placeholder: '例: たろう',
-    required: true,
-  },
-  {
-    id: 'gender',
-    text: '{nickname}さん、よろしくお願いします！\n\n正確な栄養計算のために、性別を教えてください',
-    type: 'choice',
-    options: [
-      { label: '👨 男性', value: 'male' },
-      { label: '👩 女性', value: 'female' },
-      { label: '🙂 回答しない', value: 'unspecified' },
-    ]
-  },
-  {
-    id: 'body_stats',
-    text: '基礎代謝を計算するために、\n身体情報を教えてください',
-    type: 'custom_stats',
-  },
-  {
-    id: 'nutrition_goal',
-    text: '一番の目標は何ですか？',
-    type: 'choice',
-    options: [
-      { label: '🏃 減量・ダイエット', value: 'lose_weight', description: '体重を落としたい' },
-      { label: '💪 筋肉増量・バルクアップ', value: 'gain_muscle', description: '筋肉をつけたい' },
-      { label: '⚖️ 現状維持・健康管理', value: 'maintain', description: '今の体型を維持したい' },
-      { label: '🏆 競技パフォーマンス', value: 'athlete_performance', description: '大会・試合に向けて' },
-    ]
-  },
-  {
-    id: 'target_weight',
-    text: '目標体重を教えてください',
-    type: 'number',
-    placeholder: '例: 55',
-    min: 30,
-    max: 200,
-    showIf: (answers: Record<string, any>) =>
-      answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
-  },
-  // Performance OS v3: アスリート向け追加質問
-  {
-    id: 'sport_type',
-    text: '主に取り組んでいる競技は？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => answers.nutrition_goal === 'athlete_performance',
-    options: [
-      { label: '⚽ サッカー', value: 'soccer' },
-      { label: '🏀 バスケットボール', value: 'basketball' },
-      { label: '🏐 バレーボール', value: 'volleyball' },
-      { label: '⚾ 野球', value: 'baseball' },
-      { label: '🎾 テニス', value: 'tennis' },
-      { label: '🏊 水泳', value: 'swimming' },
-      { label: '🏃 陸上競技', value: 'track_and_field' },
-      { label: '🚴 自転車', value: 'road_cycling' },
-      { label: '🥊 格闘技', value: 'martial_arts_general' },
-      { label: '🏋️ ウェイトリフティング', value: 'weightlifting' },
-      { label: '🎯 その他', value: 'custom' },
-    ]
-  },
-  {
-    id: 'sport_custom_name',
-    text: '競技名を入力してください',
-    type: 'text',
-    placeholder: '例: トライアスロン',
-    showIf: (answers: Record<string, any>) =>
-      answers.nutrition_goal === 'athlete_performance' && answers.sport_type === 'custom',
-  },
-  {
-    id: 'training_phase',
-    text: '現在のトレーニング期は？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => answers.nutrition_goal === 'athlete_performance',
-    options: [
-      { label: '🏋️ トレーニング期', value: 'training', description: '体力・技術向上中' },
-      { label: '🏆 試合期', value: 'competition', description: '大会・試合シーズン' },
-      { label: '⚖️ 減量期', value: 'cut', description: '体重調整中（階級制など）' },
-      { label: '🛌 回復期', value: 'recovery', description: 'オフシーズン・ケガからの復帰' },
-    ]
-  },
-  {
-    id: 'competition_date',
-    text: '次の大会・試合はいつですか？',
-    type: 'date',
-    showIf: (answers: Record<string, any>) =>
-      answers.nutrition_goal === 'athlete_performance' &&
-      (answers.training_phase === 'competition' || answers.training_phase === 'cut'),
-    allowSkip: true,
-  },
-  {
-    id: 'target_date',
-    text: 'いつまでに達成したいですか？',
-    type: 'date',
-    showIf: (answers: Record<string, any>) =>
-      answers.nutrition_goal === 'lose_weight' || answers.nutrition_goal === 'gain_muscle',
-    allowSkip: true,
-  },
-  {
-    id: 'exercise_types',
-    text: '普段どんな運動をしていますか？\n（複数選択可）',
-    type: 'multi_choice',
-    options: [
-      { label: '🏋️ 筋トレ・ウェイト', value: 'weight_training' },
-      { label: '🏃 ランニング・ジョギング', value: 'running' },
-      { label: '🚴 サイクリング', value: 'cycling' },
-      { label: '🏊 水泳', value: 'swimming' },
-      { label: '🧘 ヨガ・ピラティス', value: 'yoga' },
-      { label: '⚽ 球技・チームスポーツ', value: 'team_sports' },
-      { label: '🥊 格闘技・ボクシング', value: 'martial_arts' },
-      { label: '🚶 ウォーキング', value: 'walking' },
-      { label: '❌ 運動していない', value: 'none' },
-    ],
-  },
-  {
-    id: 'exercise_frequency',
-    text: '週に何日運動していますか？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => 
-      !answers.exercise_types?.includes('none'),
-    options: [
-      { label: '1日', value: '1' },
-      { label: '2日', value: '2' },
-      { label: '3日', value: '3' },
-      { label: '4日', value: '4' },
-      { label: '5日', value: '5' },
-      { label: '6日以上', value: '6' },
-    ]
-  },
-  {
-    id: 'exercise_intensity',
-    text: '運動の強度はどのくらいですか？',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => 
-      !answers.exercise_types?.includes('none'),
-    options: [
-      { label: '🚶 軽い（息が上がらない程度）', value: 'light', description: 'ウォーキング、軽いヨガなど' },
-      { label: '🏃 普通（少し息が上がる）', value: 'moderate', description: 'ジョギング、一般的な筋トレなど' },
-      { label: '🔥 激しい（かなり息が上がる）', value: 'intense', description: 'HIIT、高重量トレーニングなど' },
-      { label: '💪 アスリートレベル', value: 'athlete', description: '毎日ハードなトレーニング' },
-    ]
-  },
-  {
-    id: 'work_style',
-    text: '普段の仕事・活動スタイルは？',
-    type: 'choice',
-    options: [
-      { label: '💻 デスクワーク（座り仕事）', value: 'sedentary' },
-      { label: '🏢 オフィス（立ち座り半々）', value: 'light_active' },
-      { label: '🚶 立ち仕事・移動多め', value: 'moderately_active' },
-      { label: '🔨 肉体労働', value: 'very_active' },
-      { label: '📚 学生', value: 'student' },
-      { label: '🏠 主婦/主夫', value: 'homemaker' },
-    ]
-  },
-  {
-    id: 'health_conditions',
-    text: '気になる健康状態はありますか？\n（複数選択可、なければスキップ）',
-    type: 'multi_choice',
-    options: [
-      { label: '📈 高血圧', value: '高血圧' },
-      { label: '🍬 糖尿病・血糖値', value: '糖尿病' },
-      { label: '🩸 脂質異常症', value: '脂質異常症' },
-      { label: '🫀 心臓病', value: '心臓病' },
-      { label: '🫁 腎臓病', value: '腎臓病' },
-      { label: '🦴 骨粗しょう症', value: '骨粗しょう症' },
-      { label: '🩺 貧血', value: '貧血' },
-      { label: '🦶 痛風', value: '痛風' },
-      { label: '🌿 便秘・下痢', value: '消化器系' },
-      { label: '🌡️ 甲状腺疾患', value: '甲状腺疾患' },
-      { label: '🧠 自律神経失調', value: '自律神経' },
-      { label: '😰 うつ・不安障害', value: 'メンタル' },
-    ],
-    allowSkip: true,
-  },
-  {
-    id: 'body_concerns',
-    text: '体の悩みはありますか？\n（複数選択可、なければスキップ）',
-    type: 'multi_choice',
-    allowSkip: true,
-    options: [
-      { label: '🥶 冷え性', value: 'cold_sensitivity' },
-      { label: '🦵 むくみやすい', value: 'swelling_prone' },
-      { label: '💤 疲れやすい', value: 'fatigue' },
-      { label: '🤕 肩こり・腰痛', value: 'stiff_shoulders' },
-      { label: '😵 頭痛持ち', value: 'headache' },
-      { label: '🌡️ 汗をかきにくい', value: 'low_sweating' },
-      { label: '🍂 肌荒れ', value: 'skin_trouble' },
-      { label: '💇 髪のパサつき', value: 'dry_hair' },
-    ],
-  },
-  {
-    id: 'sleep_quality',
-    text: '睡眠の質はいかがですか？',
-    type: 'choice',
-    options: [
-      { label: '😴 良好', value: 'good', description: 'よく眠れている' },
-      { label: '😐 普通', value: 'average', description: '特に問題なし' },
-      { label: '😫 悪い', value: 'poor', description: '睡眠に問題がある' },
-    ]
-  },
-  {
-    id: 'stress_level',
-    text: '日々のストレスレベルは？',
-    type: 'choice',
-    options: [
-      { label: '😌 低い', value: 'low', description: 'リラックスできている' },
-      { label: '😐 普通', value: 'medium', description: '日常的なストレス' },
-      { label: '😰 高い', value: 'high', description: 'ストレスを感じている' },
-    ]
-  },
-  {
-    id: 'pregnancy_status',
-    text: '妊娠・授乳の状況を教えてください',
-    type: 'choice',
-    showIf: (answers: Record<string, any>) => answers.gender === 'female',
-    options: [
-      { label: '🙅‍♀️ 該当なし', value: 'none', description: '妊娠・授乳中ではない' },
-      { label: '🤰 妊娠中', value: 'pregnant', description: '現在妊娠中' },
-      { label: '🤱 授乳中', value: 'nursing', description: '現在授乳中' },
-    ]
-  },
-  {
-    id: 'medications',
-    text: '服用中の薬はありますか？\n（食事に影響するものを選択、なければスキップ）',
-    type: 'multi_choice',
-    options: [
-      { label: '💊 ワーファリン（血液サラサラ）', value: 'warfarin' },
-      { label: '💊 降圧剤', value: 'antihypertensive' },
-      { label: '💊 糖尿病薬', value: 'diabetes_medication' },
-      { label: '💊 利尿剤', value: 'diuretic' },
-      { label: '💊 抗生物質', value: 'antibiotics' },
-      { label: '💊 ステロイド', value: 'steroid' },
-    ],
-    allowSkip: true,
-  },
-  {
-    id: 'allergies',
-    text: '食物アレルギーはありますか？\n（なければスキップ）',
-    type: 'tags',
-    placeholder: '例: 卵、エビ、小麦',
-    suggestions: ['卵', 'エビ', 'カニ', '小麦', '乳製品', 'そば', '落花生', 'ナッツ類', '貝類', '魚卵', '大豆'],
-    allowSkip: true,
-  },
-  {
-    id: 'dislikes',
-    text: '苦手な食材はありますか？\n（アレルギー以外で避けたいもの）',
-    type: 'tags',
-    placeholder: '例: ピーマン、セロリ、レバー',
-    suggestions: ['ピーマン', 'セロリ', 'パクチー', 'レバー', 'ホルモン', 'なす', 'ゴーヤ', 'しいたけ', '納豆', 'グリンピース', 'にんじん', 'トマト'],
-    allowSkip: true,
-  },
-  {
-    id: 'favorite_ingredients',
-    text: '好きな食材を教えてください\n（献立に積極的に入れます）',
-    type: 'tags',
-    placeholder: '例: 鶏肉、ブロッコリー、アボカド',
-    suggestions: ['鶏肉', '豚肉', '牛肉', '魚', 'エビ', '豆腐', '卵', 'ブロッコリー', 'ほうれん草', 'トマト', 'アボカド', 'きのこ', 'さつまいも', 'キャベツ'],
-    allowSkip: true,
-  },
-  {
-    id: 'diet_style',
-    text: '食事スタイルを教えてください',
-    type: 'choice',
-    allowSkip: true,
-    options: [
-      { label: '🍽️ 通常', value: 'normal', description: '特に制限なし' },
-      { label: '🥬 ベジタリアン', value: 'vegetarian', description: '肉を食べない' },
-      { label: '🌱 ヴィーガン', value: 'vegan', description: '動物性食品を食べない' },
-      { label: '🐟 ペスカタリアン', value: 'pescatarian', description: '魚は食べる' },
-      { label: '🌾 グルテンフリー', value: 'gluten_free', description: '小麦を避ける' },
-      { label: '🥑 ケトジェニック', value: 'keto', description: '低糖質・高脂質' },
-    ]
-  },
-  {
-    id: 'cooking_experience',
-    text: '料理の経験は？',
-    type: 'choice',
-    options: [
-      { label: '🔰 初心者（1年未満）', value: 'beginner' },
-      { label: '👨‍🍳 中級者（1-3年）', value: 'intermediate' },
-      { label: '👨‍🍳 上級者（3年以上）', value: 'advanced' },
-    ]
-  },
-  {
-    id: 'cooking_time',
-    text: '平日の夕食にかけられる調理時間は？',
-    type: 'choice',
-    options: [
-      { label: '⚡ 15分以内', value: '15' },
-      { label: '🕐 30分以内', value: '30' },
-      { label: '🕑 45分以内', value: '45' },
-      { label: '🕒 1時間以上OK', value: '60' },
-    ]
-  },
-  {
-    id: 'cuisine_preference',
-    text: '好きな料理ジャンルは？\n（複数選択可）',
-    type: 'multi_choice',
-    options: [
-      { label: '🍱 和食', value: 'japanese' },
-      { label: '🍝 洋食', value: 'western' },
-      { label: '🥡 中華', value: 'chinese' },
-      { label: '🍕 イタリアン', value: 'italian' },
-      { label: '🌶️ エスニック', value: 'ethnic' },
-      { label: '🥘 韓国料理', value: 'korean' },
-    ]
-  },
-  {
-    id: 'servings_config',
-    text: '曜日ごとの食事人数を設定してください\n（0人＝作らない/外食）',
-    type: 'servings_grid',
-  },
-  {
-    id: 'shopping_frequency',
-    text: '普段の買い物の頻度は？',
-    type: 'choice',
-    options: [
-      { label: '🛒 毎日買い物に行く', value: 'daily' },
-      { label: '🛒 週2〜3回', value: '2-3_weekly' },
-      { label: '🛒 週1回まとめ買い', value: 'weekly' },
-      { label: '🛒 2週間に1回程度', value: 'biweekly' },
-    ],
-  },
-  {
-    id: 'weekly_food_budget',
-    text: '週の食費予算は？\n（任意）',
-    type: 'choice',
-    allowSkip: true,
-    options: [
-      { label: '💰 〜5,000円', value: '5000' },
-      { label: '💰 5,000〜10,000円', value: '10000' },
-      { label: '💰 10,000〜15,000円', value: '15000' },
-      { label: '💰 15,000〜20,000円', value: '20000' },
-      { label: '💰 20,000円以上', value: '25000' },
-      { label: '🤷 特に決めていない', value: 'none' },
-    ],
-  },
-  {
-    id: 'kitchen_appliances',
-    text: 'お持ちの調理器具は？\n（複数選択可、スキップ可）',
-    type: 'multi_choice',
-    allowSkip: true,
-    options: [
-      { label: '🔥 オーブン/オーブンレンジ', value: 'oven' },
-      { label: '🐟 魚焼きグリル', value: 'grill' },
-      { label: '⏱️ 圧力鍋', value: 'pressure_cooker' },
-      { label: '🤖 ホットクック/電気圧力鍋', value: 'slow_cooker' },
-      { label: '🍟 エアフライヤー', value: 'air_fryer' },
-      { label: '🥤 フードプロセッサー/ミキサー', value: 'food_processor' },
-    ],
-  },
-  {
-    id: 'stove_type',
-    text: 'お使いのコンロは？',
-    type: 'choice',
-    options: [
-      { label: '🔥 ガスコンロ', value: 'stove:gas' },
-      { label: '⚡ IHコンロ', value: 'stove:ih' },
-    ],
-  },
-  {
-    id: 'hobbies',
-    text: '趣味を教えてください\n（献立提案の参考にします）',
-    type: 'tags',
-    placeholder: '例: 読書、ヨガ、ランニング',
-    suggestions: ['読書', '料理', 'ヨガ', 'ランニング', '筋トレ', 'サイクリング', '登山', '映画', 'ゲーム', '旅行', '音楽', 'カフェ巡り', '釣り', 'キャンプ'],
-    allowSkip: true,
-  },
-];
-
 // OB-UI-02: 質問フロー（リアルタイム保存対応）
 function OnboardingQuestionsContent() {
   const router = useRouter();
@@ -441,6 +70,12 @@ function OnboardingQuestionsContent() {
   const [isLoading, setIsLoading] = useState(isResume);
   const [isSaving, setIsSaving] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
+  // #1045 round-2 (Sonnet Warning): 進捗保存/完了処理が失敗したことをユーザーに提示するための状態。
+  // saveError = 質問回答ごとのリアルタイム保存 (非ブロッキング) のエラー表示。
+  // completionError = 最終確定 (progress→complete) の fail-closed エラー画面用。
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [completionError, setCompletionError] = useState<string | null>(null);
+  const lastFinalAnswersRef = useRef<Record<string, any> | null>(null);
 
   // 再開時は進捗を復元
   useEffect(() => {
@@ -508,11 +143,15 @@ function OnboardingQuestionsContent() {
   };
 
   // リアルタイム保存
+  // #1045 round-2 (Sonnet Warning): res.ok を確認せずサイレントに失敗していたため、
+  // 400 (スキーマ違反等) が起きても気づかず進行してしまっていた。
+  // ここでは画面遷移はブロックしない (非同期・非ブロッキングな設計を維持) が、
+  // 失敗をユーザーに提示できるよう saveError に反映する。
   const saveProgress = async (step: number, ans: Record<string, any>) => {
     const totalQuestions = calculateTotalQuestions(ans);
     try {
       setIsSaving(true);
-      await fetch('/api/onboarding/progress', {
+      const res = await fetch('/api/onboarding/progress', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -521,8 +160,14 @@ function OnboardingQuestionsContent() {
           totalQuestions,
         }),
       });
+      if (!res.ok) {
+        setSaveError(await parseErrorMessage(res));
+        return;
+      }
+      setSaveError(null);
     } catch (error) {
       console.error('Failed to save progress:', error);
+      setSaveError(GENERIC_SAVE_ERROR_MESSAGE);
     } finally {
       setIsSaving(false);
     }
@@ -545,7 +190,12 @@ function OnboardingQuestionsContent() {
       return;
     }
 
-    const newAnswers = { ...answers, [currentQuestion.id]: value };
+    const mergedAnswers = { ...answers, [currentQuestion.id]: value };
+    // #1045 (F6-13): 「戻る」で上流の回答を変更した際、showIf が false になった
+    // 下流の回答 (例: nutrition_goal を athlete_performance → lose_weight に変更した
+    // 場合の sport_type/training_phase 等) を answers から取り除き、矛盾したプロフィールが
+    // 確定しないようにする
+    const newAnswers = pruneStaleAnswers(mergedAnswers);
     setAnswers(newAnswers);
     setInputValue("");
     setSelectedMulti([]);
@@ -603,33 +253,51 @@ function OnboardingQuestionsContent() {
         }
       }
 
-      // 完了処理
-      try {
-        // 算出した weight_change_rate を progress に保存してから complete を呼ぶ
-        await fetch('/api/onboarding/progress', {
+      // 完了処理 (fail-closed: progress 保存 → complete の両方が成功したときのみ画面遷移する)
+      await runCompletion(computedAnswers);
+    }
+  };
+
+  // #1045 round-2 (Sonnet Warning): 算出した weight_change_rate を progress に保存してから
+  // complete を呼ぶ。以前は両方とも res.ok を確認せず、失敗しても無条件に
+  // /onboarding/complete へ遷移していたため、progress が 400 を返すと
+  // (a) 回答が保存されないまま (b) complete が「プロフィール不在→デフォルト値で upsert」
+  // 分岐に入り、入力した全回答が失われた状態で完了成功の表示だけが出る事故が起きていた。
+  // finalizeOnboarding が res.ok を確認し、失敗時は success:false を返すため、
+  // その場合は画面遷移せずエラー画面を表示し、ユーザーが再試行できるようにする。
+  const runCompletion = async (finalAnswers: Record<string, any>) => {
+    setIsCalculating(true);
+    setCompletionError(null);
+    lastFinalAnswersRef.current = finalAnswers;
+
+    const result = await finalizeOnboarding({
+      saveProgress: () =>
+        fetch('/api/onboarding/progress', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            currentStep: currentStep,
-            answers: computedAnswers,
-            totalQuestions: calculateTotalQuestions(computedAnswers),
+            currentStep,
+            answers: finalAnswers,
+            totalQuestions: calculateTotalQuestions(finalAnswers),
           }),
-        });
-        const res = await fetch('/api/onboarding/complete', { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.next_route) {
-            sessionStorage.setItem('onboarding_next_route', data.next_route);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
+        }),
+      completeOnboarding: () => fetch('/api/onboarding/complete', { method: 'POST' }),
+    });
 
-      setTimeout(() => {
-        router.push("/onboarding/complete");
-      }, 2500);
+    if (!result.success) {
+      console.error(`Onboarding finalize failed at stage=${result.stage}: ${result.message}`);
+      setIsCalculating(false);
+      setCompletionError(result.message);
+      return;
     }
+
+    if (result.nextRoute) {
+      sessionStorage.setItem('onboarding_next_route', result.nextRoute);
+    }
+
+    setTimeout(() => {
+      router.push("/onboarding/complete");
+    }, 2500);
   };
 
   const handleMultiSelect = (value: string) => {
@@ -646,10 +314,13 @@ function OnboardingQuestionsContent() {
     }
   };
 
-  const handleAddTag = (tag: string) => {
-    if (tag && !tags.includes(tag)) {
-      setTags([...tags, tag]);
-    }
+  // #1045 round-2 (Sonnet Warning): プレースホルダ「例: 卵、エビ、小麦」がカンマ区切りで
+  // 1タグに複数の食材を詰め込む誘因になっており、freeTagList (30文字/件・最大30件) を
+  // 超えて Zod ゲートに弾かれる原因になっていた。addTagsFromInput (tag-input.ts) が
+  // 「、」「,」「，」区切りで自動的に複数タグへ分割し、件数/文字数上限をスキーマと同じ
+  // 定数 (TAG_MAX_LENGTH / TAG_MAX_COUNT) で強制する (単体テスト: onboarding-tag-input.test.ts)。
+  const handleAddTag = (rawInput: string) => {
+    setTags((prev) => addTagsFromInput(prev, rawInput));
     setTagInput("");
   };
 
@@ -705,6 +376,43 @@ function OnboardingQuestionsContent() {
     );
   }
 
+  // #1045 round-2 (Sonnet Warning): fail-closed — progress 保存 or complete が失敗した場合、
+  // 無言で /onboarding/complete へ遷移させず (= 回答喪失+偽の完了成功を防ぐ)、
+  // エラーを提示して再試行できるようにする。
+  if (completionError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex items-center justify-center px-4">
+        <div className="text-center space-y-4 max-w-sm">
+          <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center text-2xl">
+            ⚠️
+          </div>
+          <h2 className="text-xl font-bold text-gray-900">保存に失敗しました</h2>
+          <p className="text-sm text-gray-500 leading-relaxed">{completionError}</p>
+          <Button
+            onClick={() => {
+              if (lastFinalAnswersRef.current) {
+                runCompletion(lastFinalAnswersRef.current);
+              }
+            }}
+            className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold"
+          >
+            もう一度試す
+          </Button>
+          {/* #1045 round-3 (Fable Warning): 「もう一度試す」で直らない場合の唯一の
+              手段が再試行ループになっていた (デッドエンド)。answers/currentStep は
+              state に残っているため、質問画面へ戻して回答を修正できるようにする。 */}
+          <Button
+            variant="ghost"
+            onClick={() => setCompletionError(null)}
+            className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl text-gray-500 hover:text-gray-700 font-bold"
+          >
+            回答に戻る
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentQuestion) {
     return null;
   }
@@ -751,6 +459,12 @@ function OnboardingQuestionsContent() {
               </button>
             </div>
           </div>
+          {/* #1045 round-2 (Sonnet Warning): リアルタイム保存の失敗を提示するバナー (非ブロッキング) */}
+          {saveError && (
+            <p className="normal-case tracking-normal text-[11px] sm:text-xs text-red-500 mb-2">
+              {saveError}
+            </p>
+          )}
           {/* プログレスバー */}
           <div className="w-full h-2 sm:h-2.5 bg-gray-200 rounded-full overflow-hidden">
             <motion.div
@@ -828,6 +542,9 @@ function OnboardingQuestionsContent() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     placeholder={currentQuestion.placeholder}
+                    // #1045 round-2 (Sonnet Warning): nickname/sport_custom_name はスキーマ側
+                    // shortText.max(NICKNAME_MAX_LENGTH) と揃える。入力欄自体で超過を防ぐ。
+                    maxLength={NICKNAME_MAX_LENGTH}
                     className="py-5 sm:py-6 text-base sm:text-lg rounded-xl sm:rounded-2xl border-gray-200 focus:border-orange-400 focus:ring-orange-400/20"
                   />
                   <Button
@@ -998,12 +715,22 @@ function OnboardingQuestionsContent() {
                       value={tagInput}
                       onChange={(e) => setTagInput(e.target.value)}
                       placeholder={currentQuestion.placeholder}
+                      // #1045 round-2 (Sonnet Warning): 件数上限に達したら追加不可にする (TAG_MAX_COUNT はスキーマと共通)
+                      disabled={tags.length >= TAG_MAX_COUNT}
                       className="py-4 sm:py-5 rounded-lg sm:rounded-xl border-gray-200 text-sm sm:text-base"
                     />
-                    <Button type="submit" variant="outline" className="px-3 sm:px-4 rounded-lg sm:rounded-xl text-sm sm:text-base">
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      disabled={tags.length >= TAG_MAX_COUNT}
+                      className="px-3 sm:px-4 rounded-lg sm:rounded-xl text-sm sm:text-base"
+                    >
                       追加
                     </Button>
                   </form>
+                  {tags.length >= TAG_MAX_COUNT && (
+                    <p className="text-xs text-red-400">最大{TAG_MAX_COUNT}件まで登録できます</p>
+                  )}
 
                   <div className="flex gap-2 sm:gap-3">
                     <Button
@@ -1033,6 +760,11 @@ function OnboardingQuestionsContent() {
                       <Input
                         type="number"
                         placeholder="25"
+                        // #1045 round-3 (Fable Warning): スキーマ側 numericInRange(AGE_MIN, AGE_MAX)
+                        // と同じ範囲を UI 側にも設定し、範囲外値を入力してから 400 で
+                        // デッドエンドになる (回答できないが先にも進めない) 事態を防ぐ。
+                        min={AGE_MIN}
+                        max={AGE_MAX}
                         value={answers.age || ''}
                         className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, age: e.target.value})}
@@ -1044,6 +776,8 @@ function OnboardingQuestionsContent() {
                         type="text"
                         placeholder="会社員"
                         value={answers.occupation || ''}
+                        // #1045 round-2 (Sonnet Warning): スキーマ側 shortText.max(OCCUPATION_MAX_LENGTH) と揃える
+                        maxLength={OCCUPATION_MAX_LENGTH}
                         className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, occupation: e.target.value})}
                       />
@@ -1080,9 +814,12 @@ function OnboardingQuestionsContent() {
                   <Button
                     onClick={() => handleAnswer("completed")}
                     disabled={
-                      !answers.age ||
-                      !answers.height || Number(answers.height) < 50 || Number(answers.height) > 250 ||
-                      !answers.weight || Number(answers.weight) < 10 || Number(answers.weight) > 200
+                      // #1045 round-4 (Fable Suggestion): Number("abc") 等の非数値は NaN になり、
+                      // `NaN < AGE_MIN` も `NaN > AGE_MAX` も false になるため、範囲チェックを
+                      // すり抜けて disabled が解除されてしまっていた。Number.isFinite で NaN を先に弾く。
+                      !answers.age || !Number.isFinite(Number(answers.age)) || Number(answers.age) < AGE_MIN || Number(answers.age) > AGE_MAX ||
+                      !answers.height || !Number.isFinite(Number(answers.height)) || Number(answers.height) < 50 || Number(answers.height) > 250 ||
+                      !answers.weight || !Number.isFinite(Number(answers.weight)) || Number(answers.weight) < 10 || Number(answers.weight) > 200
                     }
                     className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-3 sm:mt-4 text-sm sm:text-base"
                   >

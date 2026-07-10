@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { parseErrorMessage } from "@/app/onboarding/questions/complete-flow";
 
 // 再開ウェルカム画面 (OB-UI-01)
 export default function OnboardingResumePage() {
@@ -14,6 +15,8 @@ export default function OnboardingResumePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
+  const [skipError, setSkipError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -59,8 +62,49 @@ export default function OnboardingResumePage() {
     }
   };
 
-  const progressPercent = progress 
-    ? Math.round((progress.currentStep / progress.totalQuestions) * 100) 
+  // #1045 (F6-11): 「あとで設定する」は素の /home Link だったため、
+  // onboarding_completed_at が未設定のまま middleware (src/middleware.ts →
+  // lib/supabase/middleware.ts の updateSession → lib/onboarding-routing.ts の
+  // resolveOnboardingRedirect) が status=in_progress の /home アクセスを
+  // /onboarding/resume へ差し戻し、永久ループになっていた。
+  // login ページ ((auth)/login/page.tsx) と auth コールバック
+  // ((auth)/auth/callback/route.ts) も同じ onboarding_completed_at を見て
+  // /onboarding/resume へ遷移させる同種のロジックを持つが、これらは
+  // ログイン直後の遷移先決定であり、本ループ (/home ⇔ /onboarding/resume) の
+  // 直接の原因は middleware 側である。
+  // welcome page の handleSkip と同様に complete API (共通 skip ハンドラ) を呼んでから
+  // 遷移することで、onboarding_completed_at を設定してループを断ち切る。
+  //
+  // #1045 round-2 (Suggestion): complete の res.ok を確認せず常に /home へ遷移していたため、
+  // complete が失敗すると onboarding_completed_at が未設定のままとなり、/home→resume の
+  // F6-11 ループが再現し得た (defense-in-depth)。fail-closed にし、失敗時はエラーを提示して
+  // 再試行できるようにする (/home へは進ませない)。
+  //
+  // #1045 round-4 (Sonnet Warning): res.json().error を無条件にそのまま表示しており、
+  // Supabase の生エラーメッセージ (テーブル名・カラム名等を含み得る) が画面に露出し得た。
+  // complete-flow.ts の parseErrorMessage (許可リスト + 日本語マッピング、範囲外は
+  // 汎用メッセージ) を使って表示内容を制御する。
+  const handleSkipForNow = async () => {
+    if (isSkipping) return;
+    setIsSkipping(true);
+    setSkipError(null);
+    try {
+      const res = await fetch('/api/onboarding/complete', { method: 'POST' });
+      if (!res.ok) {
+        setSkipError(await parseErrorMessage(res));
+        setIsSkipping(false);
+        return;
+      }
+      window.location.href = '/home';
+    } catch (error) {
+      console.error('Failed to skip onboarding:', error);
+      setSkipError('通信エラーが発生しました。もう一度お試しください。');
+      setIsSkipping(false);
+    }
+  };
+
+  const progressPercent = progress
+    ? Math.round((progress.currentStep / progress.totalQuestions) * 100)
     : 0;
 
   if (isLoading) {
@@ -177,12 +221,17 @@ export default function OnboardingResumePage() {
           animate={{ opacity: 1 }}
           transition={{ delay: 1.2 }}
         >
-          <Link
-            href="/home"
-            className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          <button
+            onClick={handleSkipForNow}
+            disabled={isSkipping}
+            className="text-sm text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
           >
-            あとで設定する
-          </Link>
+            {isSkipping ? 'しばらくお待ちください...' : 'あとで設定する'}
+          </button>
+          {/* #1045 round-2 (Suggestion): fail-closed — 失敗時はエラーを提示し再試行できるようにする */}
+          {skipError && (
+            <p className="text-xs text-red-500 mt-2">{skipError}</p>
+          )}
         </motion.div>
 
       </motion.div>
