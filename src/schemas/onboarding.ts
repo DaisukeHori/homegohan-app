@@ -61,6 +61,12 @@ export const NICKNAME_MAX_LENGTH = 100
 export const OCCUPATION_MAX_LENGTH = 100
 export const TAG_MAX_LENGTH = 30
 export const TAG_MAX_COUNT = 30
+// #1045 round-3 (Fable Warning): age 入力欄に上限が無く、0 や 500 等の範囲外値を
+// 入力してもクライアント側では気づけず、スキーマ側で 400 になるまでデッドエンドに
+// なっていた (progress 保存が失敗し「次へ」も押せるが進めない)。
+// age のスキーマ範囲 (numericInRange) と同じ値を UI 側の min/max・disabled 判定にも使う。
+export const AGE_MIN = 1
+export const AGE_MAX = 120
 
 const shortText = z.string().max(NICKNAME_MAX_LENGTH)
 // 自由入力タグ (アレルギー・苦手な食材・好きな食材・趣味) は enum 化できないため
@@ -92,7 +98,7 @@ const servingsConfigSchema = z.object({
 export const OnboardingAnswersSchema = z.object({
   nickname: shortText.optional(),
   gender: genderEnum.optional(),
-  age: numericInRange(1, 120).optional(),
+  age: numericInRange(AGE_MIN, AGE_MAX).optional(),
   occupation: shortText.optional(),
   height: numericInRange(30, 280).optional(),
   weight: numericInRange(2, 400).optional(),

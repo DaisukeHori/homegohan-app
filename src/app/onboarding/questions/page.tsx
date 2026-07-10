@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { QUESTIONS, pruneStaleAnswers } from "./question-flow";
 import { finalizeOnboarding, parseErrorMessage, GENERIC_SAVE_ERROR_MESSAGE } from "./complete-flow";
 import { addTagsFromInput } from "./tag-input";
-import { NICKNAME_MAX_LENGTH, OCCUPATION_MAX_LENGTH, TAG_MAX_COUNT } from "@/schemas/onboarding";
+import { NICKNAME_MAX_LENGTH, OCCUPATION_MAX_LENGTH, TAG_MAX_COUNT, AGE_MIN, AGE_MAX } from "@/schemas/onboarding";
 
 // 曜日別人数設定のデータ
 const DAYS_OF_WEEK = [
@@ -398,6 +398,16 @@ function OnboardingQuestionsContent() {
           >
             もう一度試す
           </Button>
+          {/* #1045 round-3 (Fable Warning): 「もう一度試す」で直らない場合の唯一の
+              手段が再試行ループになっていた (デッドエンド)。answers/currentStep は
+              state に残っているため、質問画面へ戻して回答を修正できるようにする。 */}
+          <Button
+            variant="ghost"
+            onClick={() => setCompletionError(null)}
+            className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl text-gray-500 hover:text-gray-700 font-bold"
+          >
+            回答に戻る
+          </Button>
         </div>
       </div>
     );
@@ -750,6 +760,11 @@ function OnboardingQuestionsContent() {
                       <Input
                         type="number"
                         placeholder="25"
+                        // #1045 round-3 (Fable Warning): スキーマ側 numericInRange(AGE_MIN, AGE_MAX)
+                        // と同じ範囲を UI 側にも設定し、範囲外値を入力してから 400 で
+                        // デッドエンドになる (回答できないが先にも進めない) 事態を防ぐ。
+                        min={AGE_MIN}
+                        max={AGE_MAX}
                         value={answers.age || ''}
                         className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, age: e.target.value})}
@@ -799,7 +814,7 @@ function OnboardingQuestionsContent() {
                   <Button
                     onClick={() => handleAnswer("completed")}
                     disabled={
-                      !answers.age ||
+                      !answers.age || Number(answers.age) < AGE_MIN || Number(answers.age) > AGE_MAX ||
                       !answers.height || Number(answers.height) < 50 || Number(answers.height) > 250 ||
                       !answers.weight || Number(answers.weight) < 10 || Number(answers.weight) > 200
                     }

@@ -62,8 +62,15 @@ export default function OnboardingResumePage() {
   };
 
   // #1045 (F6-11): 「あとで設定する」は素の /home Link だったため、
-  // onboarding_completed_at が未設定のまま middleware の resolveOnboardingRedirect が
+  // onboarding_completed_at が未設定のまま middleware (src/middleware.ts →
+  // lib/supabase/middleware.ts の updateSession → lib/onboarding-routing.ts の
+  // resolveOnboardingRedirect) が status=in_progress の /home アクセスを
   // /onboarding/resume へ差し戻し、永久ループになっていた。
+  // login ページ ((auth)/login/page.tsx) と auth コールバック
+  // ((auth)/auth/callback/route.ts) も同じ onboarding_completed_at を見て
+  // /onboarding/resume へ遷移させる同種のロジックを持つが、これらは
+  // ログイン直後の遷移先決定であり、本ループ (/home ⇔ /onboarding/resume) の
+  // 直接の原因は middleware 側である。
   // welcome page の handleSkip と同様に complete API (共通 skip ハンドラ) を呼んでから
   // 遷移することで、onboarding_completed_at を設定してループを断ち切る。
   //

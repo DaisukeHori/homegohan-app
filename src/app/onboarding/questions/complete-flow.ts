@@ -30,14 +30,33 @@ export type FinalizeOnboardingResult =
 export const GENERIC_SAVE_ERROR_MESSAGE =
   '保存に失敗しました。通信環境をご確認のうえ、もう一度お試しください。';
 
+// #1045 round-3 (Fable Suggestion): parseErrorMessage が data.error を無条件に
+// そのままユーザーへ表示していたため、/api/onboarding/progress や
+// /api/onboarding/complete が 500 で返す Supabase の生エラーメッセージ
+// (テーブル名・カラム名等を含み得る) や、想定外の英語のみの例外メッセージまで
+// 画面に露出してしまっていた。API 側が意図的に返す既知のエラーメッセージのみ
+// 許可リストで通し、それ以外 (内部実装依存の文字列) は汎用日本語メッセージに
+// フォールバックする。
+const KNOWN_CLIENT_ERROR_MESSAGES: ReadonlySet<string> = new Set([
+  'Unauthorized',
+  'Invalid JSON',
+  'Invalid request body',
+  'Invalid answers',
+]);
+
 /**
  * API のエラーレスポンス (`{ error: string }`) からユーザー向けメッセージを取り出す。
- * JSON が壊れている・error フィールドが無い場合は汎用メッセージにフォールバックする。
+ * JSON が壊れている・error フィールドが無い・許可リスト外の (内部実装依存の) 文字列の
+ * 場合は汎用メッセージにフォールバックする。
  */
 export async function parseErrorMessage(res: FinalizeResponseLike): Promise<string> {
   try {
     const data = await res.json();
-    if (data && typeof data.error === 'string' && data.error.trim().length > 0) {
+    if (
+      data &&
+      typeof data.error === 'string' &&
+      KNOWN_CLIENT_ERROR_MESSAGES.has(data.error)
+    ) {
       return data.error;
     }
   } catch {

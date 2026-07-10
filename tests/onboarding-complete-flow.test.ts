@@ -51,6 +51,9 @@ describe("finalizeOnboarding — fail-closed 動作", () => {
 
   it("progress は成功したが complete が失敗した場合、success:false を返し画面遷移させない", async () => {
     const saveProgress = vi.fn().mockResolvedValue(makeResponse(true, { success: true }));
+    // #1045 round-3 (Fable Suggestion): "Internal error" は API (route.ts) が実際に
+    // 返すことのある固定コードではなく (実際は Supabase の生エラーメッセージ等)、
+    // parseErrorMessage の許可リスト外なので汎用メッセージにフォールバックされる。
     const completeOnboarding = vi.fn().mockResolvedValue(
       makeResponse(false, { error: "Internal error" }),
     );
@@ -60,7 +63,7 @@ describe("finalizeOnboarding — fail-closed 動作", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.stage).toBe("complete");
-      expect(result.message).toBe("Internal error");
+      expect(result.message).toBe(GENERIC_SAVE_ERROR_MESSAGE);
     }
     expect(saveProgress).toHaveBeenCalledOnce();
     expect(completeOnboarding).toHaveBeenCalledOnce();
@@ -108,7 +111,7 @@ describe("finalizeOnboarding — fail-closed 動作", () => {
 });
 
 describe("parseErrorMessage", () => {
-  it("error フィールドがある場合はそのメッセージを返す", async () => {
+  it("error フィールドが既知のエラーメッセージ (API が意図的に返すもの) の場合はそのまま返す", async () => {
     const res = makeResponse(false, { error: "Invalid answers" });
     await expect(parseErrorMessage(res)).resolves.toBe("Invalid answers");
   });
@@ -125,6 +128,21 @@ describe("parseErrorMessage", () => {
 
   it("error フィールドが空文字の場合も汎用メッセージにフォールバックする", async () => {
     const res = makeResponse(false, { error: "" });
+    await expect(parseErrorMessage(res)).resolves.toBe(GENERIC_SAVE_ERROR_MESSAGE);
+  });
+
+  // #1045 round-3 (Fable Suggestion): 許可リスト外の error (Supabase の生エラー
+  // メッセージや想定外の例外メッセージ) は、内部実装の詳細をそのままユーザーに
+  // 見せないよう汎用日本語メッセージにフォールバックする。
+  it("許可リスト外の error (Supabase の生メッセージ相当) は汎用メッセージにフォールバックする", async () => {
+    const res = makeResponse(false, {
+      error: 'duplicate key value violates unique constraint "user_profiles_pkey"',
+    });
+    await expect(parseErrorMessage(res)).resolves.toBe(GENERIC_SAVE_ERROR_MESSAGE);
+  });
+
+  it("許可リスト外の英語例外メッセージも汎用メッセージにフォールバックする", async () => {
+    const res = makeResponse(false, { error: "Cannot read properties of undefined (reading 'id')" });
     await expect(parseErrorMessage(res)).resolves.toBe(GENERIC_SAVE_ERROR_MESSAGE);
   });
 });

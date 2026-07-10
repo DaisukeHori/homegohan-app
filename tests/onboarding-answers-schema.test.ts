@@ -12,6 +12,8 @@ import {
   OCCUPATION_MAX_LENGTH,
   TAG_MAX_LENGTH,
   TAG_MAX_COUNT,
+  AGE_MIN,
+  AGE_MAX,
 } from "../src/schemas/onboarding";
 
 describe("#1045 round-2: クライアント側 UI (questions/page.tsx) と共有する上限定数", () => {
@@ -26,6 +28,13 @@ describe("#1045 round-2: クライアント側 UI (questions/page.tsx) と共有
   it("タグの上限は 1件30文字・最大30件である", () => {
     expect(TAG_MAX_LENGTH).toBe(30);
     expect(TAG_MAX_COUNT).toBe(30);
+  });
+
+  // #1045 round-3 (Fable Warning): age 入力欄が範囲外値のデッドエンドになっていた対策で
+  // questions/page.tsx の min/max・disabled 判定が import するようになった定数。
+  it("age の範囲は 1〜120 である", () => {
+    expect(AGE_MIN).toBe(1);
+    expect(AGE_MAX).toBe(120);
   });
 });
 
@@ -43,6 +52,17 @@ describe("OnboardingAnswersSchema", () => {
   it("age が妥当な数値文字列の場合は有効", () => {
     expect(OnboardingAnswersSchema.safeParse({ age: "25" }).success).toBe(true);
     expect(OnboardingAnswersSchema.safeParse({ age: 25 }).success).toBe(true);
+  });
+
+  // #1045 round-3 (Fable Warning): questions/page.tsx の age 入力欄 (min/max・
+  // 「次へ」の disabled 判定) が AGE_MIN/AGE_MAX と一致していることの前提となる
+  // スキーマ側の境界値。UI 側で 0 や 121 を入力させない/次へを disabled にしても、
+  // 万一 UI をすり抜けた場合にサーバー側でも同じ境界で弾かれることを保証する。
+  it(`age の境界値: ${AGE_MIN - 1} と ${AGE_MAX + 1} は無効、${AGE_MIN} と ${AGE_MAX} は有効`, () => {
+    expect(OnboardingAnswersSchema.safeParse({ age: String(AGE_MIN - 1) }).success).toBe(false);
+    expect(OnboardingAnswersSchema.safeParse({ age: String(AGE_MAX + 1) }).success).toBe(false);
+    expect(OnboardingAnswersSchema.safeParse({ age: String(AGE_MIN) }).success).toBe(true);
+    expect(OnboardingAnswersSchema.safeParse({ age: String(AGE_MAX) }).success).toBe(true);
   });
 
   it("gender が enum 外の場合は無効", () => {

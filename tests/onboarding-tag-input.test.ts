@@ -74,4 +74,35 @@ describe("addTagsFromInput", () => {
     expect(current).toEqual(["卵"]);
     expect(result).toEqual(["卵", "エビ"]);
   });
+
+  // #1045 round-3 (Fable Suggestion): candidate.slice(0, TAG_MAX_LENGTH) は UTF-16
+  // code unit 単位でのスライスのため、サロゲートペア (絵文字等) の途中で切れると
+  // 孤立した高位サロゲートが末尾に残り、不正な文字列になり得ていた。
+  describe("サロゲートペア境界のケース", () => {
+    it("絵文字 (サロゲートペア) がちょうど上限文字数の境界にまたがる場合、ペアの手前で切り詰める", () => {
+      // 🎂 は U+1F382 (サロゲートペア = UTF-16 で2 code unit)
+      // "あ".repeat(TAG_MAX_LENGTH - 1) (29 code unit) + "🎂" (2 code unit) = 31 code unit
+      // slice(0, 30) だと 🎂 の前半 (高位サロゲート) だけが末尾に残ってしまう
+      const cake = "\u{1F382}"; // 🎂
+      const candidate = "あ".repeat(TAG_MAX_LENGTH - 1) + cake;
+      const result = addTagsFromInput([], candidate);
+      expect(result).toHaveLength(1);
+      const tag = result[0];
+      // 孤立した高位サロゲートで終わっていないこと
+      const lastCharCode = tag.charCodeAt(tag.length - 1);
+      expect(lastCharCode >= 0xd800 && lastCharCode <= 0xdbff).toBe(false);
+      // サロゲートペアの片割れが残らないよう、絵文字自体を含めずに切り詰められる
+      expect(tag).toBe("あ".repeat(TAG_MAX_LENGTH - 1));
+      expect(tag.length).toBeLessThanOrEqual(TAG_MAX_LENGTH);
+    });
+
+    it("サロゲートペアを含んでいても上限文字数ちょうどに収まる場合は分割しない", () => {
+      const cake = "\u{1F382}"; // 🎂 (2 code unit)
+      const candidate = "あ".repeat(TAG_MAX_LENGTH - 2) + cake; // 28 + 2 = 30 code unit
+      const result = addTagsFromInput([], candidate);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(candidate);
+      expect(result[0].length).toBe(TAG_MAX_LENGTH);
+    });
+  });
 });
