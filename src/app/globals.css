@@ -35,19 +35,23 @@ body {
 
 /* グローバル a11y 基盤 (#1058) */
 
-/* キーボードフォーカスの可視化 (全要素共通) */
+/* キーボードフォーカスの可視化 (全要素共通)
+   --accent (#FF8A65) は白背景比 約2.3:1 で WCAG 1.4.11 (非テキストコントラスト 3:1) 未達のため、
+   --foreground (#333333) に変更。白背景比 約12.63:1、--accent 背景比でも 約5.47:1 で 3:1 を確保 (#1058) */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--foreground);
   outline-offset: 2px;
 }
 
-/* スキップリンク: 通常は画面外、フォーカス時のみ表示 */
+/* スキップリンク: 通常は画面外、フォーカス時のみ表示
+   背景を --accent (#FF8A65) から --foreground (#333333) に変更。
+   白文字 (#FFFFFF) on --foreground のコントラスト比 約12.63:1 で 14px bold の WCAG AA (4.5:1) を満たす (#1058) */
 .skip-link {
   position: absolute;
   top: -100%;
   left: 0.5rem;
   z-index: 100;
-  background: var(--accent);
+  background: var(--foreground);
   color: #FFFFFF;
   padding: 0.5rem 1rem;
   border-radius: 0 0 0.5rem 0.5rem;

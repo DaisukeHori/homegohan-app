@@ -104,3 +104,64 @@ describe("#1058 グローバル a11y 基盤", () => {
     expect(css).toMatch(/--a11y-min-tap-size:\s*44px/);
   });
 });
+
+describe("#1058 focus-visible / skip-link コントラスト修正 (WCAG 1.4.11 / AA)", () => {
+  // WCAG 相対輝度 / コントラスト比の算出 (https://www.w3.org/TR/WCAG21/#dfn-relative-luminance)
+  const srgbToLinear = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const relativeLuminance = ([r, g, b]: [number, number, number]) =>
+    0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
+  const contrastRatio = (c1: [number, number, number], c2: [number, number, number]) => {
+    const l1 = relativeLuminance(c1);
+    const l2 = relativeLuminance(c2);
+    const [lighter, darker] = l1 > l2 ? [l1, l2] : [l2, l1];
+    return (lighter + 0.05) / (darker + 0.05);
+  };
+  const hexToRgb = (hex: string): [number, number, number] => [
+    parseInt(hex.slice(0, 2), 16),
+    parseInt(hex.slice(2, 4), 16),
+    parseInt(hex.slice(4, 6), 16),
+  ];
+
+  const css = read("src/app/globals.css");
+
+  const extractHex = (varName: string) => {
+    const m = css.match(new RegExp(`--${varName}:\\s*#([0-9A-Fa-f]{6})`));
+    if (!m) throw new Error(`--${varName} not found in globals.css`);
+    return hexToRgb(m[1]);
+  };
+  const foreground = extractHex("foreground");
+  const background = extractHex("background");
+  const accent = extractHex("accent");
+  const white: [number, number, number] = [255, 255, 255];
+
+  it(":focus-visible の outline が低コントラストな --accent ではなく --foreground を使う", () => {
+    const block = css.match(/:focus-visible\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(block).toMatch(/outline:\s*2px solid var\(--foreground\)/);
+    expect(block).not.toMatch(/var\(--accent\)/);
+  });
+
+  it(".skip-link の背景が低コントラストな --accent ではなく --foreground を使う", () => {
+    const block = css.match(/\.skip-link\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(block).toMatch(/background:\s*var\(--foreground\)/);
+    expect(block).not.toMatch(/var\(--accent\)/);
+  });
+
+  it("旧配色 (--accent on white) は WCAG 非テキストコントラスト 3:1 未達だったことを回帰確認する", () => {
+    expect(contrastRatio(accent, white)).toBeLessThan(3);
+  });
+
+  it("--foreground は白背景に対し WCAG 1.4.11 (非テキスト 3:1) を満たす (focus-visible outline)", () => {
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("--foreground は --accent 背景 (ボタン等) に対しても WCAG 1.4.11 (非テキスト 3:1) を満たす (focus-visible outline)", () => {
+    expect(contrastRatio(foreground, accent)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("白文字 on --foreground は WCAG AA 通常テキスト 4.5:1 を満たす (skip-link, 14px bold は large text 基準未満のため normal 基準で判定)", () => {
+    expect(contrastRatio(white, foreground)).toBeGreaterThanOrEqual(4.5);
+  });
+});
