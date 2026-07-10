@@ -27,6 +27,30 @@
  * #1041 round-3 (C2) 修正: subscription_plans.stripe_price_id は 1 プランにつき
  * 1 本しか保持できないため、月額・年額を同時に変更するリクエストは Stripe
  * 同期が必須な状況では拒否する (route/Edge Function/UI の 3 点セット)。
+ *
+ * #1041 round-4 (C・Critical) 修正: 上記の「1 本しか保持できない」制約により、
+ * subscription_plans.stripe_price_id は「直近に触った interval の Price」を
+ * 指す意味論になる (月額のみ変更した直後は月額 Price を指すが、その後年額のみ
+ * 変更すると DB 上は年額 Price を指すように置換され、月額 Price への参照は
+ * DB から失われる)。Edge Function (stripe-price-sync) 側で interval を確認して
+ * からでないと deactivate しない防御を入れているが (同ファイル参照)、この
+ * 「連続片方変更で参照が interval を跨いで置換される」こと自体は本 route の
+ * 責務では解消できないデータモデル上の制約であり、恒久対応には
+ * new_yearly_stripe_price_id 相当の列追加 (月額・年額を同時に保持できる
+ * migration) が必要 (round-3 C2 のコメントにある「別途 migration」と同一)。
+ *
+ * #1041 round-4 (W1) 修正: OP_INVALID_INPUT のメッセージに
+ * `parseResult.error.message` (issues 配列の生 JSON 文字列) をそのまま
+ * 返していたため、UI にエラーメッセージとして生 JSON がダンプされていた。
+ * 最初の issue の message のみを抽出して返す (details には引き続き全 issues
+ * を含める)。
+ *
+ * #1041 round-4 (W3) 修正: `plan_price_history` INSERT 失敗時のメッセージに
+ * 「価格は変更していません」と記載していたが、これは DB 上の
+ * subscription_plans.monthly_price_jpy/yearly_price_jpy を指しており、Stripe 側の
+ * Price 作成 (履歴 INSERT より前に実行済み) には触れていなかった。Stripe 同期が
+ * 必須な状況では、この時点で新 Price が Stripe 上に作成済みの可能性がある旨を
+ * 追記する (metadata の plan_key/changed_by で当該 Price を識別できる)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -49,8 +73,12 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const parseResult = PriceChangeSchema.safeParse(body);
 
     if (!parseResult.success) {
+      // #1041 round-4 (W1): parseResult.error.message は issues 配列の生 JSON 文字列
+      // であり、そのまま UI に表示すると意味不明なダンプになる。最初の issue の
+      // message のみを抽出して返す (details には引き続き全 issues を含める)。
+      const firstIssueMessage = parseResult.error.issues[0]?.message ?? '入力値が不正です';
       return NextResponse.json(
-        { error: { code: 'OP_INVALID_INPUT', message: parseResult.error.message, details: parseResult.error.issues } },
+        { error: { code: 'OP_INVALID_INPUT', message: firstIssueMessage, details: parseResult.error.issues } },
         { status: 400 }
       );
     }
@@ -80,6 +108,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     let newStripePriceId: string | null = null;
+    // #1041 round-4 (C): Edge Function 側の interval ガードによる deactivate 結果
+    // (監査ログ details に記録するため、DB 更新前に受け取っておく)。
+    let oldPriceDeactivated = false;
+    let oldPriceDeactivationSkippedReason: string | null = null;
 
     // #1041 (F4-06) 修正: STRIPE_SECRET_KEY が設定されている場合は「本番で Stripe 同期が
     // 必須」という明示的な状態であり、Edge Function 呼び出しに失敗した場合はそれを
@@ -172,8 +204,16 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         );
       }
 
-      const edgeData = (await edgeRes.json()) as { new_stripe_price_id?: string };
+      const edgeData = (await edgeRes.json()) as {
+        new_stripe_price_id?: string;
+        deactivated?: boolean;
+        deactivation_skipped_reason?: string;
+      };
       newStripePriceId = edgeData.new_stripe_price_id ?? null;
+      // #1041 round-4 (C): Edge Function が interval 不一致等で旧 Price の
+      // deactivate をスキップした場合、監査ログに残して運用者が把握できるようにする。
+      oldPriceDeactivated = edgeData.deactivated ?? false;
+      oldPriceDeactivationSkippedReason = edgeData.deactivation_skipped_reason ?? null;
 
       if (!newStripePriceId) {
         // Edge Function が 200 を返したのに Price ID が取得できない場合も
@@ -220,7 +260,14 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         {
           error: {
             code: 'OP_PRICE_HISTORY_INSERT_FAILED',
-            message: '価格変更履歴の記録に失敗しました。価格は変更していません。',
+            // #1041 round-4 (W3): Stripe 同期が必須な状況では、この時点で新
+            // Price が Stripe 上に作成済みの可能性がある (履歴 INSERT は Stripe
+            // Price 作成より後に実行される)。DB (subscription_plans) の価格は
+            // 未更新だが Stripe 側の状態と食い違い得るため、その旨を明示する。
+            message:
+              '価格変更履歴の記録に失敗しました。価格(DB)は変更していません。' +
+              '※Stripe 側では新価格(Price)が作成済みの可能性があります' +
+              '(metadata の plan_key/changed_by で識別可)。',
           },
         },
         { status: 500 },
@@ -228,6 +275,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
 
     // DB 更新: subscription_plans
+    // Note (#1041 round-4 W3 Sonnet Suggestion): plan_price_history への INSERT は
+    // 既に成功しているため、この後の UPDATE が失敗すると「価格変更履歴には記録
+    // されたが実際の価格 (DB) は変更されていない」非対称な状態が残り得る。
+    // UPDATE 失敗時は OP_DB_ERROR で明示的にエラーを返すため運用者は気づけるが、
+    // 履歴行の事後的な取消/訂正は行わない (履歴は「変更を試みた記録」として残す
+    // 設計。ロールバック処理自体が失敗し得る二重障害点を増やさないため採用しない
+    // — round-3 (C1) の historyErr 側の設計判断と対称)。
     const planUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (input.new_monthly_price_jpy != null) planUpdate.monthly_price_jpy = input.new_monthly_price_jpy;
     if (input.new_yearly_price_jpy != null) planUpdate.yearly_price_jpy = input.new_yearly_price_jpy;
@@ -262,6 +316,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           applies_to: input.applies_to,
           reason: input.reason,
           stripe_mock: !newStripePriceId,
+          // #1041 round-4 (C): 旧 Price の deactivate 結果 (interval 不一致等で
+          // スキップされた場合、運用者が気づけるよう監査ログに残す)。
+          old_stripe_price_deactivated: oldPriceDeactivated,
+          old_stripe_price_deactivation_skipped_reason: oldPriceDeactivationSkippedReason,
         },
         severity: 'warn',
         ip_address: request.headers.get('x-forwarded-for'),

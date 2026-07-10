@@ -34,6 +34,11 @@
  *    コンテンツ所有者が特定できない (削除済み等で null) 場合、従来は黙って BAN を
  *    スキップし 200 `{ ban_applied: null }` を返していた (status 更新のみ成功した
  *    偽成功)。422 `OP_BAN_TARGET_UNRESOLVED` を返すようにする。
+ *
+ * #1041 round-4 (S) 修正: BAN 適用条件に `|| action === 'delete_and_warn'` が
+ * 含まれていたが、`delete_and_warn` (BAN を伴わない警告) にはこのブロック内に
+ * 対応処理が無く (実体は常に実行される監査ログ INSERT のみ)、dead condition
+ * だった。挙動を変えず `banRequested` のみの条件に整理する。
  */
 
 import { NextResponse } from 'next/server';
@@ -255,21 +260,23 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // 明示する (status 更新は既に成功しているため取り消さない)。
   const banTargetUnresolved = banRequested && !contentUserId;
 
-  if (!banTargetUnresolved && contentUserId && (banRequested || action === 'delete_and_warn')) {
-    if (banRequested) {
-      const banResult = await applyUserBan(supabaseAdmin, {
-        userId: contentUserId,
-        actorId: actor.id,
-        banType: action === 'delete_and_perm_ban' ? 'permanent' : 'temporary',
-        reason: `[moderation:${type}] ${resolution_note ?? action}`,
-        durationDays: ban_duration_days,
-      });
-      banApplied = banResult.success;
-      banUnbanAt = banResult.unbanAt;
-      if (!banResult.success) {
-        banErrorMessage = banResult.error ?? 'BAN の適用に失敗しました';
-        console.error('[api/admin/moderation/[type]/[id]] BAN failed:', banErrorMessage);
-      }
+  // #1041 round-4 (S): 従来は `(banRequested || action === 'delete_and_warn')` の
+  // 条件だったが、`delete_and_warn` (BAN を伴わない警告) には対応処理が無く
+  // (実体は下の監査ログ INSERT のみで、それは action によらず常に実行される)、
+  // `delete_and_warn` 側は dead condition だった。挙動を変えず条件を整理する。
+  if (contentUserId && banRequested) {
+    const banResult = await applyUserBan(supabaseAdmin, {
+      userId: contentUserId,
+      actorId: actor.id,
+      banType: action === 'delete_and_perm_ban' ? 'permanent' : 'temporary',
+      reason: `[moderation:${type}] ${resolution_note ?? action}`,
+      durationDays: ban_duration_days,
+    });
+    banApplied = banResult.success;
+    banUnbanAt = banResult.unbanAt;
+    if (!banResult.success) {
+      banErrorMessage = banResult.error ?? 'BAN の適用に失敗しました';
+      console.error('[api/admin/moderation/[type]/[id]] BAN failed:', banErrorMessage);
     }
   }
 

@@ -1,6 +1,7 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from "../_shared/auth.ts";
+import { decideOldPriceDeactivation, fetchStripePriceInterval } from "./deactivation.ts";
 
 /**
  * Stripe Price 同期 Edge Function
@@ -48,6 +49,20 @@ import { requireServiceRole } from "../_shared/auth.ts";
  * #1041 round-3 (S) 修正: 作成する Stripe Price に metadata
  * (plan_key / changed_by / reason) を付与し、Stripe 側からもどのプラン・誰が・
  * なぜ変更したか追跡できるようにする。
+ *
+ * #1041 round-4 (C・Critical) 修正: `subscription_plans.stripe_price_id` は
+ * 1 プランにつき 1 本しか保持できない (単一列の構造的制約) ため、この列は
+ * 「直近に触った interval の Price」を指す意味論になる。従来は DB の
+ * stripe_price_id を interval 確認なしに「今回変更した interval の旧 Price」と
+ * みなして deactivate していたため、①月額のみ変更 (Price A=month 作成、
+ * stripe_price_id=A) → ②後日 年額のみ変更 (Price B=year 作成) という連続操作で、
+ * 現役の月額 Price A が無警告で deactivate される事故が起き得た (DB 参照も
+ * B に上書きされ、月額課金の実体が消える)。
+ * 修正: deactivate 前に旧 Price を Stripe から GET し、`recurring.interval` が
+ * 今回作成した interval と一致する場合のみ deactivate する (詳細は
+ * ./deactivation.ts)。不一致ならスキップし、レスポンスの `deactivated` /
+ * `deactivation_skipped_reason` で呼び出し元 (route.ts) に伝える。GET 失敗時も
+ * 安全側でスキップする (deactivate はベストエフォートのまま)。
  */
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -234,6 +249,9 @@ Deno.serve(async (req) => {
   }
 
   // 旧 Price の deactivate はベストエフォート (DB 参照は service-role で行う)。
+  // #1041 round-4 (C): interval が今回作成した Price と一致する場合のみ deactivate する。
+  let deactivated = false;
+  let deactivationSkippedReason: import("./deactivation.ts").DeactivationSkipReason | undefined;
   if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -243,13 +261,46 @@ Deno.serve(async (req) => {
         .eq("id", plan_id)
         .maybeSingle();
       const oldPriceId = (plan as { stripe_price_id?: string | null } | null)?.stripe_price_id;
+
+      let oldPriceFetch: Awaited<ReturnType<typeof fetchStripePriceInterval>> = { ok: false };
       if (oldPriceId && oldPriceId !== created.id) {
-        await deactivateStripePrice(oldPriceId);
+        oldPriceFetch = await fetchStripePriceInterval({
+          priceId: oldPriceId,
+          stripeApiBase: STRIPE_API_BASE,
+          stripeSecretKey: STRIPE_SECRET_KEY,
+        });
+      }
+
+      const decision = decideOldPriceDeactivation({
+        oldPriceId,
+        newPriceId: created.id,
+        newInterval: interval,
+        oldPriceFetch,
+      });
+
+      if (decision.deactivate) {
+        // decideOldPriceDeactivation が deactivate:true を返すのは oldPriceId が
+        // 非 null かつ interval 一致確認済みの場合のみ。
+        await deactivateStripePrice(oldPriceId as string);
+        deactivated = true;
+      } else {
+        deactivationSkippedReason = decision.reason;
+        if (decision.reason === "interval_mismatch") {
+          console.warn(
+            `[stripe-price-sync] 旧 Price (${oldPriceId}) は今回作成した interval (${interval}) と異なるため deactivate をスキップしました (現役 Price 保護)`,
+          );
+        }
       }
     } catch (err) {
       console.error("[stripe-price-sync] 旧 Price ID 取得に失敗 (non-fatal):", err);
+      deactivationSkippedReason = "old_price_fetch_failed";
     }
   }
 
-  return jsonResponse({ success: true, new_stripe_price_id: created.id });
+  return jsonResponse({
+    success: true,
+    new_stripe_price_id: created.id,
+    deactivated,
+    ...(deactivated ? {} : { deactivation_skipped_reason: deactivationSkippedReason }),
+  });
 });
