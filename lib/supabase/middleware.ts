@@ -13,10 +13,19 @@ export async function updateSession(request: NextRequest) {
     request,
   })
 
+  // #1030 (round-3 Critical fix): モバイルアプリ (apps/mobile/src/lib/api.ts) は
+  // Cookie セッションを持たず、Authorization: Bearer <token> ヘッダーのみで
+  // API を呼び出す。lib/supabase/server.ts の createClient() と同様に
+  // Authorization ヘッダーを Supabase クライアントへ転送しないと、cookies ハンドラ
+  // 経由のセッション解決に失敗し supabase.auth.getUser() が常に user: null を返す
+  // (=Bearer セッションの frozen_at チェックが no-op になる) ため、ここで転送する。
+  const authHeader = request.headers.get('authorization')
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
       cookies: {
         get(name: string) {
           return request.cookies.get(name)?.value
@@ -170,7 +179,18 @@ export async function updateSession(request: NextRequest) {
       })
 
       if (frozen) {
-        if (request.nextUrl.pathname !== '/frozen') {
+        // #1030 (round-3 Warning fix): /frozen ページの「サポートに問い合わせる」
+        // リンク (href="/contact") は publicPaths には含まれるが、この凍結リダイレクト
+        // 判定は isPublicPath を考慮せず無条件に実行されるため、ログイン中の凍結
+        // ユーザーが /contact に遷移しても即座に /frozen へ差し戻され、唯一の異議
+        // 申し立て導線が事実上のデッドリンクになっていた。/contact のみ除外する。
+        const frozenExemptPaths = ['/frozen', '/contact']
+        const isFrozenExemptPath = frozenExemptPaths.some(
+          (path) =>
+            request.nextUrl.pathname === path ||
+            request.nextUrl.pathname.startsWith(path + '/'),
+        )
+        if (!isFrozenExemptPath) {
           const url = request.nextUrl.clone()
           url.pathname = '/frozen'
           url.search = ''
