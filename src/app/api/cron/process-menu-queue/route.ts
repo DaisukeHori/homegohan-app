@@ -4,6 +4,23 @@ import { createClient } from '@supabase/supabase-js';
 export const runtime = 'edge';
 export const maxDuration = 60; // Vercel Pro: 60s OK
 
+// #1044 (cron timing suggestion): edge runtime では node:crypto の timingSafeEqual が
+// 使えないため、固定長で比較する簡易 constant-time 比較を実装する。
+function timingSafeEqualString(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(a);
+  const bBytes = encoder.encode(b);
+  const maxLength = Math.max(aBytes.length, bBytes.length);
+
+  let diff = aBytes.length ^ bBytes.length;
+  for (let i = 0; i < maxLength; i++) {
+    const x = i < aBytes.length ? aBytes[i] : 0;
+    const y = i < bBytes.length ? bBytes[i] : 0;
+    diff |= x ^ y;
+  }
+  return diff === 0;
+}
+
 export async function GET(req: Request) {
   // CRON 認証 (Vercel Cron の Authorization header をチェック)
   const cronSecret = process.env.CRON_SECRET;
@@ -12,7 +29,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'cron_disabled' }, { status: 503 });
   }
   const auth = req.headers.get('authorization');
-  if (auth !== `Bearer ${cronSecret}`) {
+  if (!auth || !timingSafeEqualString(auth, `Bearer ${cronSecret}`)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 

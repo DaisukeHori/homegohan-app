@@ -19,6 +19,66 @@ interface LogEntry {
   request_id?: string;
 }
 
+// #1044 (F6-20): metadata に混入した秘密情報をマスキングする
+const SECRET_KEY_PATTERN = /password|token|secret|authorization|api[_-]?key/i;
+const MASK_VALUE = '***';
+const MAX_MASK_DEPTH = 6;
+
+/**
+ * オブジェクト/配列を再帰的に走査し、キー名が秘密情報パターンに一致する値をマスクする。
+ * 循環参照や深いネストで無限ループしないよう深さ上限を設ける。
+ */
+export function maskSecrets<T>(value: T, depth = 0): T {
+  if (depth >= MAX_MASK_DEPTH) return value;
+
+  if (Array.isArray(value)) {
+    return value.map((item) => maskSecrets(item, depth + 1)) as unknown as T;
+  }
+
+  if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = SECRET_KEY_PATTERN.test(key) ? MASK_VALUE : maskSecrets(val, depth + 1);
+    }
+    return result as T;
+  }
+
+  return value;
+}
+
+const DEFAULT_MAX_METADATA_BYTES = 8 * 1024; // 8KB
+
+/**
+ * metadata のシリアライズ後サイズが上限を超える場合、プレビューのみを残して切り詰める。
+ */
+export function truncateMetadata(
+  metadata: Record<string, unknown> | undefined,
+  maxBytes: number = DEFAULT_MAX_METADATA_BYTES,
+): Record<string, unknown> | undefined {
+  if (!metadata) return metadata;
+
+  const json = JSON.stringify(metadata);
+  const byteLength = new TextEncoder().encode(json).length;
+  if (byteLength <= maxBytes) return metadata;
+
+  return {
+    _truncated: true,
+    _original_bytes: byteLength,
+    _preview: json.slice(0, Math.max(0, maxBytes - 200)),
+  };
+}
+
+/**
+ * metadata にマスキングとサイズ切り詰めをまとめて適用する。
+ */
+export function sanitizeMetadata(
+  metadata: Record<string, unknown> | undefined,
+  maxBytes: number = DEFAULT_MAX_METADATA_BYTES,
+): Record<string, unknown> | undefined {
+  if (!metadata) return metadata;
+  return truncateMetadata(maskSecrets(metadata), maxBytes);
+}
+
 // Supabase クライアント（service_role）
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -39,8 +99,14 @@ async function saveLog(entry: LogEntry): Promise<void> {
   try {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    
-    const { error } = await supabase.from('app_logs').insert(entry);
+
+    // #1044 (F6-20): 保存前に秘密情報マスキング + サイズ切り詰め
+    const sanitizedEntry: LogEntry = {
+      ...entry,
+      metadata: sanitizeMetadata(entry.metadata),
+    };
+
+    const { error } = await supabase.from('app_logs').insert(sanitizedEntry);
     
     if (error) {
       console.error('Failed to save log to DB:', error);

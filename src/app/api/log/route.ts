@@ -5,6 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { sanitizeMetadata } from '@/lib/db-logger';
+
+// #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
+const ALLOWED_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+const MAX_MESSAGE_LENGTH = 2000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,6 +18,21 @@ export async function POST(request: NextRequest) {
     if (!message || !level) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
+
+    if (typeof level !== 'string' || !ALLOWED_LOG_LEVELS.includes(level as (typeof ALLOWED_LOG_LEVELS)[number])) {
+      return NextResponse.json({ error: 'Invalid level' }, { status: 400 });
+    }
+
+    if (typeof message !== 'string' || message.length > MAX_MESSAGE_LENGTH) {
+      return NextResponse.json({ error: 'Invalid message' }, { status: 400 });
+    }
+
+    if (metadata !== undefined && metadata !== null && typeof metadata !== 'object') {
+      return NextResponse.json({ error: 'Invalid metadata' }, { status: 400 });
+    }
+
+    // 秘密情報マスキング + サイズ切り詰め (F6-20)
+    const sanitizedMetadata = sanitizeMetadata(metadata ?? undefined);
 
     // 認証チェック: 未認証リクエストは拒否 (fail-closed)
     const supabase = await createClient();
@@ -36,7 +56,7 @@ export async function POST(request: NextRequest) {
       level,
       source: 'client',
       message,
-      metadata,
+      metadata: sanitizedMetadata,
       user_id: userId,
     });
 
