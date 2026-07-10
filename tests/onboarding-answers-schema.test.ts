@@ -6,7 +6,28 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { OnboardingAnswersSchema } from "../src/schemas/onboarding";
+import {
+  OnboardingAnswersSchema,
+  NICKNAME_MAX_LENGTH,
+  OCCUPATION_MAX_LENGTH,
+  TAG_MAX_LENGTH,
+  TAG_MAX_COUNT,
+} from "../src/schemas/onboarding";
+
+describe("#1045 round-2: クライアント側 UI (questions/page.tsx) と共有する上限定数", () => {
+  // src/app/onboarding/questions/page.tsx の maxLength と
+  // src/app/onboarding/questions/tag-input.ts の addTagsFromInput が
+  // これらの定数を import しており、値が変わればクライアント側の入力上限も追従する。
+  it("nickname/occupation の上限は 100 文字である", () => {
+    expect(NICKNAME_MAX_LENGTH).toBe(100);
+    expect(OCCUPATION_MAX_LENGTH).toBe(100);
+  });
+
+  it("タグの上限は 1件30文字・最大30件である", () => {
+    expect(TAG_MAX_LENGTH).toBe(30);
+    expect(TAG_MAX_COUNT).toBe(30);
+  });
+});
 
 describe("OnboardingAnswersSchema", () => {
   it("age が数値文字列でない場合 (#1045: age='abc') は無効", () => {

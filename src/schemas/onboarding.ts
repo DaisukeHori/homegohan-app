@@ -53,10 +53,19 @@ const kitchenApplianceEnum = z.enum([
 const stoveTypeEnum = z.enum(['stove:gas', 'stove:ih'])
 const weightChangeRateEnum = z.enum(['slow', 'moderate', 'aggressive'])
 
-const shortText = z.string().max(100)
+// #1045 round-2 (Sonnet Warning): クライアント側入力欄 (src/app/onboarding/questions/page.tsx)
+// の maxLength/件数上限がこのスキーマの上限と食い違うと、スキーマ側だけが 400 を返して
+// user_profiles 行が作られず回答が失われる (詳細は同ファイルの fail-closed 対応コメント参照)。
+// 同じ値をクライアント側 UI からも import して単一ソース化する。
+export const NICKNAME_MAX_LENGTH = 100
+export const OCCUPATION_MAX_LENGTH = 100
+export const TAG_MAX_LENGTH = 30
+export const TAG_MAX_COUNT = 30
+
+const shortText = z.string().max(NICKNAME_MAX_LENGTH)
 // 自由入力タグ (アレルギー・苦手な食材・好きな食材・趣味) は enum 化できないため
 // 個数と1件あたりの文字数のみ上限を設ける。
-const freeTagList = z.array(z.string().max(30)).max(30)
+const freeTagList = z.array(z.string().max(TAG_MAX_LENGTH)).max(TAG_MAX_COUNT)
 const isoDateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'invalid date format')
 
 // フロントエンドは数値質問の値を文字列 (input.value) のまま送ってくることがあるため

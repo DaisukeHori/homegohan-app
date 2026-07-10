@@ -15,6 +15,7 @@ export default function OnboardingResumePage() {
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isSkipping, setIsSkipping] = useState(false);
+  const [skipError, setSkipError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -65,15 +66,34 @@ export default function OnboardingResumePage() {
   // /onboarding/resume へ差し戻し、永久ループになっていた。
   // welcome page の handleSkip と同様に complete API (共通 skip ハンドラ) を呼んでから
   // 遷移することで、onboarding_completed_at を設定してループを断ち切る。
+  //
+  // #1045 round-2 (Suggestion): complete の res.ok を確認せず常に /home へ遷移していたため、
+  // complete が失敗すると onboarding_completed_at が未設定のままとなり、/home→resume の
+  // F6-11 ループが再現し得た (defense-in-depth)。fail-closed にし、失敗時はエラーを提示して
+  // 再試行できるようにする (/home へは進ませない)。
   const handleSkipForNow = async () => {
     if (isSkipping) return;
     setIsSkipping(true);
+    setSkipError(null);
     try {
-      await fetch('/api/onboarding/complete', { method: 'POST' });
+      const res = await fetch('/api/onboarding/complete', { method: 'POST' });
+      if (!res.ok) {
+        let message = '完了処理に失敗しました。もう一度お試しください。';
+        try {
+          const data = await res.json();
+          if (data?.error) message = data.error;
+        } catch {
+          // JSON parse 失敗時は汎用メッセージのまま
+        }
+        setSkipError(message);
+        setIsSkipping(false);
+        return;
+      }
+      window.location.href = '/home';
     } catch (error) {
       console.error('Failed to skip onboarding:', error);
-    } finally {
-      window.location.href = '/home';
+      setSkipError('通信エラーが発生しました。もう一度お試しください。');
+      setIsSkipping(false);
     }
   };
 
@@ -202,6 +222,10 @@ export default function OnboardingResumePage() {
           >
             {isSkipping ? 'しばらくお待ちください...' : 'あとで設定する'}
           </button>
+          {/* #1045 round-2 (Suggestion): fail-closed — 失敗時はエラーを提示し再試行できるようにする */}
+          {skipError && (
+            <p className="text-xs text-red-500 mt-2">{skipError}</p>
+          )}
         </motion.div>
 
       </motion.div>

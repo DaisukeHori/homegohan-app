@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion, AnimatePresence } from "framer-motion";
 import { QUESTIONS, pruneStaleAnswers } from "./question-flow";
+import { finalizeOnboarding, parseErrorMessage, GENERIC_SAVE_ERROR_MESSAGE } from "./complete-flow";
+import { addTagsFromInput } from "./tag-input";
+import { NICKNAME_MAX_LENGTH, OCCUPATION_MAX_LENGTH, TAG_MAX_COUNT } from "@/schemas/onboarding";
 
 // 曜日別人数設定のデータ
 const DAYS_OF_WEEK = [
@@ -67,6 +70,12 @@ function OnboardingQuestionsContent() {
   const [isLoading, setIsLoading] = useState(isResume);
   const [isSaving, setIsSaving] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
+  // #1045 round-2 (Sonnet Warning): 進捗保存/完了処理が失敗したことをユーザーに提示するための状態。
+  // saveError = 質問回答ごとのリアルタイム保存 (非ブロッキング) のエラー表示。
+  // completionError = 最終確定 (progress→complete) の fail-closed エラー画面用。
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [completionError, setCompletionError] = useState<string | null>(null);
+  const lastFinalAnswersRef = useRef<Record<string, any> | null>(null);
 
   // 再開時は進捗を復元
   useEffect(() => {
@@ -134,11 +143,15 @@ function OnboardingQuestionsContent() {
   };
 
   // リアルタイム保存
+  // #1045 round-2 (Sonnet Warning): res.ok を確認せずサイレントに失敗していたため、
+  // 400 (スキーマ違反等) が起きても気づかず進行してしまっていた。
+  // ここでは画面遷移はブロックしない (非同期・非ブロッキングな設計を維持) が、
+  // 失敗をユーザーに提示できるよう saveError に反映する。
   const saveProgress = async (step: number, ans: Record<string, any>) => {
     const totalQuestions = calculateTotalQuestions(ans);
     try {
       setIsSaving(true);
-      await fetch('/api/onboarding/progress', {
+      const res = await fetch('/api/onboarding/progress', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -147,8 +160,14 @@ function OnboardingQuestionsContent() {
           totalQuestions,
         }),
       });
+      if (!res.ok) {
+        setSaveError(await parseErrorMessage(res));
+        return;
+      }
+      setSaveError(null);
     } catch (error) {
       console.error('Failed to save progress:', error);
+      setSaveError(GENERIC_SAVE_ERROR_MESSAGE);
     } finally {
       setIsSaving(false);
     }
@@ -234,33 +253,51 @@ function OnboardingQuestionsContent() {
         }
       }
 
-      // 完了処理
-      try {
-        // 算出した weight_change_rate を progress に保存してから complete を呼ぶ
-        await fetch('/api/onboarding/progress', {
+      // 完了処理 (fail-closed: progress 保存 → complete の両方が成功したときのみ画面遷移する)
+      await runCompletion(computedAnswers);
+    }
+  };
+
+  // #1045 round-2 (Sonnet Warning): 算出した weight_change_rate を progress に保存してから
+  // complete を呼ぶ。以前は両方とも res.ok を確認せず、失敗しても無条件に
+  // /onboarding/complete へ遷移していたため、progress が 400 を返すと
+  // (a) 回答が保存されないまま (b) complete が「プロフィール不在→デフォルト値で upsert」
+  // 分岐に入り、入力した全回答が失われた状態で完了成功の表示だけが出る事故が起きていた。
+  // finalizeOnboarding が res.ok を確認し、失敗時は success:false を返すため、
+  // その場合は画面遷移せずエラー画面を表示し、ユーザーが再試行できるようにする。
+  const runCompletion = async (finalAnswers: Record<string, any>) => {
+    setIsCalculating(true);
+    setCompletionError(null);
+    lastFinalAnswersRef.current = finalAnswers;
+
+    const result = await finalizeOnboarding({
+      saveProgress: () =>
+        fetch('/api/onboarding/progress', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            currentStep: currentStep,
-            answers: computedAnswers,
-            totalQuestions: calculateTotalQuestions(computedAnswers),
+            currentStep,
+            answers: finalAnswers,
+            totalQuestions: calculateTotalQuestions(finalAnswers),
           }),
-        });
-        const res = await fetch('/api/onboarding/complete', { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.next_route) {
-            sessionStorage.setItem('onboarding_next_route', data.next_route);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
+        }),
+      completeOnboarding: () => fetch('/api/onboarding/complete', { method: 'POST' }),
+    });
 
-      setTimeout(() => {
-        router.push("/onboarding/complete");
-      }, 2500);
+    if (!result.success) {
+      console.error(`Onboarding finalize failed at stage=${result.stage}: ${result.message}`);
+      setIsCalculating(false);
+      setCompletionError(result.message);
+      return;
     }
+
+    if (result.nextRoute) {
+      sessionStorage.setItem('onboarding_next_route', result.nextRoute);
+    }
+
+    setTimeout(() => {
+      router.push("/onboarding/complete");
+    }, 2500);
   };
 
   const handleMultiSelect = (value: string) => {
@@ -277,10 +314,13 @@ function OnboardingQuestionsContent() {
     }
   };
 
-  const handleAddTag = (tag: string) => {
-    if (tag && !tags.includes(tag)) {
-      setTags([...tags, tag]);
-    }
+  // #1045 round-2 (Sonnet Warning): プレースホルダ「例: 卵、エビ、小麦」がカンマ区切りで
+  // 1タグに複数の食材を詰め込む誘因になっており、freeTagList (30文字/件・最大30件) を
+  // 超えて Zod ゲートに弾かれる原因になっていた。addTagsFromInput (tag-input.ts) が
+  // 「、」「,」「，」区切りで自動的に複数タグへ分割し、件数/文字数上限をスキーマと同じ
+  // 定数 (TAG_MAX_LENGTH / TAG_MAX_COUNT) で強制する (単体テスト: onboarding-tag-input.test.ts)。
+  const handleAddTag = (rawInput: string) => {
+    setTags((prev) => addTagsFromInput(prev, rawInput));
     setTagInput("");
   };
 
@@ -336,6 +376,33 @@ function OnboardingQuestionsContent() {
     );
   }
 
+  // #1045 round-2 (Sonnet Warning): fail-closed — progress 保存 or complete が失敗した場合、
+  // 無言で /onboarding/complete へ遷移させず (= 回答喪失+偽の完了成功を防ぐ)、
+  // エラーを提示して再試行できるようにする。
+  if (completionError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-orange-50 to-white flex items-center justify-center px-4">
+        <div className="text-center space-y-4 max-w-sm">
+          <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center text-2xl">
+            ⚠️
+          </div>
+          <h2 className="text-xl font-bold text-gray-900">保存に失敗しました</h2>
+          <p className="text-sm text-gray-500 leading-relaxed">{completionError}</p>
+          <Button
+            onClick={() => {
+              if (lastFinalAnswersRef.current) {
+                runCompletion(lastFinalAnswersRef.current);
+              }
+            }}
+            className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold"
+          >
+            もう一度試す
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentQuestion) {
     return null;
   }
@@ -382,6 +449,12 @@ function OnboardingQuestionsContent() {
               </button>
             </div>
           </div>
+          {/* #1045 round-2 (Sonnet Warning): リアルタイム保存の失敗を提示するバナー (非ブロッキング) */}
+          {saveError && (
+            <p className="normal-case tracking-normal text-[11px] sm:text-xs text-red-500 mb-2">
+              {saveError}
+            </p>
+          )}
           {/* プログレスバー */}
           <div className="w-full h-2 sm:h-2.5 bg-gray-200 rounded-full overflow-hidden">
             <motion.div
@@ -459,6 +532,9 @@ function OnboardingQuestionsContent() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     placeholder={currentQuestion.placeholder}
+                    // #1045 round-2 (Sonnet Warning): nickname/sport_custom_name はスキーマ側
+                    // shortText.max(NICKNAME_MAX_LENGTH) と揃える。入力欄自体で超過を防ぐ。
+                    maxLength={NICKNAME_MAX_LENGTH}
                     className="py-5 sm:py-6 text-base sm:text-lg rounded-xl sm:rounded-2xl border-gray-200 focus:border-orange-400 focus:ring-orange-400/20"
                   />
                   <Button
@@ -629,12 +705,22 @@ function OnboardingQuestionsContent() {
                       value={tagInput}
                       onChange={(e) => setTagInput(e.target.value)}
                       placeholder={currentQuestion.placeholder}
+                      // #1045 round-2 (Sonnet Warning): 件数上限に達したら追加不可にする (TAG_MAX_COUNT はスキーマと共通)
+                      disabled={tags.length >= TAG_MAX_COUNT}
                       className="py-4 sm:py-5 rounded-lg sm:rounded-xl border-gray-200 text-sm sm:text-base"
                     />
-                    <Button type="submit" variant="outline" className="px-3 sm:px-4 rounded-lg sm:rounded-xl text-sm sm:text-base">
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      disabled={tags.length >= TAG_MAX_COUNT}
+                      className="px-3 sm:px-4 rounded-lg sm:rounded-xl text-sm sm:text-base"
+                    >
                       追加
                     </Button>
                   </form>
+                  {tags.length >= TAG_MAX_COUNT && (
+                    <p className="text-xs text-red-400">最大{TAG_MAX_COUNT}件まで登録できます</p>
+                  )}
 
                   <div className="flex gap-2 sm:gap-3">
                     <Button
@@ -675,6 +761,8 @@ function OnboardingQuestionsContent() {
                         type="text"
                         placeholder="会社員"
                         value={answers.occupation || ''}
+                        // #1045 round-2 (Sonnet Warning): スキーマ側 shortText.max(OCCUPATION_MAX_LENGTH) と揃える
+                        maxLength={OCCUPATION_MAX_LENGTH}
                         className="py-4 sm:py-5 rounded-lg sm:rounded-xl text-center text-base sm:text-lg"
                         onChange={(e) => setAnswers({...answers, occupation: e.target.value})}
                       />
