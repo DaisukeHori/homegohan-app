@@ -18,6 +18,21 @@ name: Deploy Supabase Migrations
 #   - 台帳(remote)が空の場合は比較対象が無いため、全 LOCAL_ONLY を新規として許容する。
 #
 # 詳細は "Detect migration drift" ステップのコメント/ログ出力を参照。
+#
+# --- round-2 是正 (#1064 レビュー指摘) ---
+# - workflow_dispatch は任意ブランチを選択して実行できてしまうため、apply 系の
+#   各ステップ (Detect drift / Dry-run / Apply / Verify migration list / diff
+#   summary) の if 条件に `github.ref == 'refs/heads/main'` を追加し、
+#   「未レビューの feature branch から手動実行して本番へ適用する」経路を
+#   構造的に閉じている。push トリガは元々 `branches: [main]` 限定のため無影響。
+# - ledger_max (台帳最大 version) は paired 行 (local/remote 両方に値がある行)
+#   の remote version のみから算出する。REMOTE_ONLY 行の version を含めると
+#   ログ上 LOCAL_ONLY 側にも無関係な "台帳以下" block 理由が付与され得るため。
+# - migration list コマンドが認証/ネットワーク障害等で失敗した際に fail-open
+#   (空出力 → 「remote 空 = 新規プロジェクト」と誤認して PASS) しないよう、
+#   `set -o pipefail` とパース結果 0 行時の sanity block を追加している。
+# - push と workflow_dispatch が短時間に重なった場合のレースを避けるため
+#   concurrency グループを追加している。
 on:
   push:
     branches:
@@ -30,6 +45,10 @@ on:
     paths:
       - 'supabase/migrations/**'
   workflow_dispatch:
+
+concurrency:
+  group: deploy-supabase-migrations
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -72,8 +91,10 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Detect migration drift
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        shell: bash
         run: |
+          set -o pipefail
           npx --yes supabase@2.62.10 migration list --linked | tee /tmp/migration_list.txt
           python3 - <<'PY'
           import re
@@ -87,7 +108,7 @@ jobs:
           # 形式(表示用の余白付き `|` 区切り)。単純に "|" を含む行を列分割する
           # 方式でパースする(#1064 実データ migration_list.txt で検証済み)。
           rows = []
-          remote_versions = []
+          remote_versions = []  # ledger_max の算出対象は paired 行の remote version のみ
           for raw_line in lines:
               line = raw_line.rstrip("\n")
               if "|" not in line:
@@ -103,10 +124,34 @@ jobs:
               if local == "" and remote == "":
                   continue
               rows.append((local, remote))
-              if remote != "":
+              # ledger_max は「local ファイルも remote 適用済みも両方確認できる」
+              # paired 行の remote version のみから算出する。REMOTE_ONLY 行の
+              # version まで含めると、REMOTE_ONLY 単独が原因の block なのに
+              # LOCAL_ONLY 側にも無関係な "台帳以下" という block 理由が付与され、
+              # ログの診断精度が落ちるため(REMOTE_ONLY の version が異常に新しい
+              # ケースがあり得るため #1064 レビュー指摘で是正)。
+              if local != "" and remote != "":
                   remote_versions.append(int(remote))
 
-          # 台帳(remote)の最大 version。remote が一件も無ければ比較対象なし(None)。
+          # migration list コマンドが認証/ネットワーク障害等で失敗すると stdout が
+          # 空になり得る。`set -o pipefail` で大半は本ステップ自体が失敗するが、
+          # 万一 rows が1件もパースできなかった場合(=完全な空出力、または
+          # 壊れた出力)を「remote 空の新規プロジェクト」と誤認して fail-open で
+          # PASS しないよう明示的に block する。この workflow は
+          # SUPABASE_PROJECT_ID が既存の本番プロジェクトに固定されており、
+          # local migration ファイルも多数存在するため、正常時に rows が完全に
+          # 空になることはない(remote が本当にゼロ件でも local-only の行は
+          # 必ず出力される)。
+          if not rows:
+              print(
+                  "::error::migration list の出力を1行もパースできませんでした。"
+                  " list コマンドの取得失敗の疑いがあります(本物の drift とは別"
+                  " 原因)。ワークフローの生ログを確認してください。",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          # 台帳(remote)の最大 version。paired 行が一件も無ければ比較対象なし(None)。
           ledger_max = max(remote_versions) if remote_versions else None
 
           remote_only = []       # remote にあり local ファイルが無い => 常に事故
@@ -128,8 +173,8 @@ jobs:
 
           print("## migration drift 判定内訳")
           print(
-              "台帳(remote)最大 version: "
-              + (str(ledger_max) if ledger_max is not None else "(remote空=新規プロジェクト、比較対象なし)")
+              "台帳(remote, paired行由来)最大 version: "
+              + (str(ledger_max) if ledger_max is not None else "(paired行なし=新規プロジェクト、比較対象なし)")
           )
           print(f"REMOTE_ONLY ({len(remote_only)}件): {fmt(remote_only)}")
           print(f"LOCAL_ONLY 新規・許容 ({len(local_only_new)}件): {fmt(local_only_new)}")
@@ -161,7 +206,7 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Dry-run migrations (preview)
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         run: |
           npx --yes supabase@2.62.10 db push --linked --dry-run
         env:
@@ -174,7 +219,7 @@ jobs:
       # migration まで強制適用されてしまい、drift guard の block 判定と矛盾する
       # 経路になるため構造的に排除する。
       - name: Apply migrations
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         run: |
           npx --yes supabase@2.62.10 db push --linked
         env:
@@ -182,7 +227,7 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Verify migration list
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         run: |
           npx --yes supabase@2.62.10 migration list --linked
         env:
@@ -217,7 +262,7 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file /tmp/db_diff_comment.txt
 
       - name: Report db diff to Step Summary (main push)
-        if: steps.db_diff.outputs.has_diff == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: steps.db_diff.outputs.has_diff == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
         env:
           DIFF_OUTPUT: ${{ steps.db_diff.outputs.diff_output }}
         run: |
