@@ -131,8 +131,12 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans antialiased">
+        {/* グローバル a11y 基盤 (#1058): キーボード操作でナビゲーションを飛ばして本文へ移動 */}
+        <a href="#main-content" className="skip-link">
+          メインコンテンツへスキップ
+        </a>
         <PostHogProvider>
-          {children}
+          <div id="main-content">{children}</div>
         </PostHogProvider>
       </body>
     </html>
