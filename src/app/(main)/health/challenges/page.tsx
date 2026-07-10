@@ -113,6 +113,8 @@ export default function HealthChallengesPage() {
 
   const activeChallenges = challenges.filter(c => c.status === 'active');
   const completedChallenges = challenges.filter(c => c.status === 'completed');
+  // #1055 UX3-16: 獲得ptの行き先が無かったため、達成したチャレンジの合計を表示する
+  const totalEarnedPoints = completedChallenges.reduce((sum, c) => sum + (c.reward_points || 0), 0);
 
   const getDaysRemaining = (endDate: string) => {
     const end = new Date(endDate);
@@ -161,6 +163,22 @@ export default function HealthChallengesPage() {
         </div>
       ) : (
         <>
+          {/* #1055 UX3-16: 獲得ptの行き先表示 */}
+          {totalEarnedPoints > 0 && (
+            <div className="px-4 mb-4">
+              <div
+                className="p-3 rounded-xl flex items-center gap-3"
+                style={{ backgroundColor: colors.warningLight }}
+              >
+                <Star size={20} style={{ color: colors.warning }} />
+                <div>
+                  <p className="text-xs" style={{ color: colors.textMuted }}>累計獲得ポイント</p>
+                  <p className="text-lg font-bold" style={{ color: colors.warning }}>{totalEarnedPoints} pt</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* アクティブなチャレンジ */}
           <div className="px-4 mb-6">
             <h2 className="font-semibold mb-3" style={{ color: colors.text }}>
@@ -191,13 +209,18 @@ export default function HealthChallengesPage() {
               <div className="space-y-3">
                 {activeChallenges.map((challenge) => {
                   const daysRemaining = getDaysRemaining(challenge.end_date);
+                  // #1055 UX3-16: 期限切れの場合「残り-3日」のような負数表示にせず、期限切れバッジ+グレーアウトにする
+                  const isExpired = daysRemaining < 0;
                   const progress = getProgressPercentage(challenge);
-                  
+
                   return (
                     <motion.div
                       key={challenge.id}
                       className="p-4 rounded-2xl"
-                      style={{ backgroundColor: colors.card }}
+                      style={{
+                        backgroundColor: colors.card,
+                        opacity: isExpired ? 0.6 : 1,
+                      }}
                     >
                       <div className="flex items-start justify-between mb-3">
                         <div>
@@ -208,12 +231,21 @@ export default function HealthChallengesPage() {
                             {challenge.description}
                           </p>
                         </div>
-                        <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ backgroundColor: colors.warningLight }}>
-                          <Clock size={12} style={{ color: colors.warning }} />
-                          <span className="text-xs font-medium" style={{ color: colors.warning }}>
-                            残り{daysRemaining}日
-                          </span>
-                        </div>
+                        {isExpired ? (
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ backgroundColor: colors.border }}>
+                            <Clock size={12} style={{ color: colors.textMuted }} />
+                            <span className="text-xs font-medium" style={{ color: colors.textMuted }}>
+                              期限切れ
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ backgroundColor: colors.warningLight }}>
+                            <Clock size={12} style={{ color: colors.warning }} />
+                            <span className="text-xs font-medium" style={{ color: colors.warning }}>
+                              残り{daysRemaining}日
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {/* 進捗バー */}

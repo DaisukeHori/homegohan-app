@@ -9,6 +9,7 @@ import {
   Target, Flame, Calendar, ChevronRight, Plus, Camera, Sparkles,
   Award, Clock, Smile, Frown, Meh, AlertTriangle, CheckCircle2
 } from 'lucide-react';
+import { getGoalTypeLabel } from "@/lib/health-goal-types";
 
 // カラーパレット
 const colors = {
@@ -571,8 +572,8 @@ export default function HealthDashboardPage() {
                   <div className="flex items-center gap-2">
                     <Target size={18} style={{ color: colors.accent }} />
                     <span className="font-medium" style={{ color: colors.text }}>
-                      {goal.goal_type === 'weight' ? '目標体重' : 
-                       goal.goal_type === 'body_fat' ? '目標体脂肪率' : goal.goal_type}
+                      {goal.goal_type === 'weight' ? '目標体重' :
+                       goal.goal_type === 'body_fat' ? '目標体脂肪率' : getGoalTypeLabel(goal.goal_type)}
                     </span>
                   </div>
                   <span className="text-sm font-bold" style={{ color: colors.accent }}>
