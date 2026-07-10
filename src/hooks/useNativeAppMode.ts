@@ -8,13 +8,31 @@ const COOKIE_NAME = 'is_native_app';
 /**
  * `document.cookie` 文字列から指定キーの値を取得するユーティリティ。
  * SSR 環境では `document` が存在しないため undefined を返す。
+ *
+ * Round-4 レビュー指摘: cookie 伝播ロジックの単体テストのために export する。
  */
-function getCookieValue(name: string): string | undefined {
+export function getCookieValue(name: string): string | undefined {
   if (typeof document === 'undefined') return undefined;
   const match = document.cookie
     .split('; ')
     .find((row) => row.startsWith(name + '='));
   return match ? match.split('=')[1] : undefined;
+}
+
+/**
+ * useNativeAppMode の初期 state を解決する優先順位ロジック。
+ *   1. server から渡された initialIsNativeApp (SSR Cookie 判定済み) が指定されて
+ *      いればそれを最優先で使う (undefined でない限り false も尊重する)。
+ *   2. 指定がなければ client 側の document.cookie から判定する。
+ *
+ * useState の初期化関数から切り出すことで、React レンダリングなしに単体テストできる
+ * ようにしている (Round-4 レビュー指摘: SSR seed 伝播の回帰防止)。
+ */
+export function resolveInitialNativeAppMode(
+  initialIsNativeApp: boolean | undefined,
+  cookieValue: string | undefined,
+): boolean {
+  return initialIsNativeApp ?? cookieValue === '1';
 }
 
 /**
@@ -32,7 +50,7 @@ export function useNativeAppMode(initialIsNativeApp?: boolean): boolean {
   //   2. クライアント側の document.cookie (ハイドレーション後の2回目以降)
   // これにより SSR → ハイドレーションのフラッシュを防止する。
   const [isNativeApp, setIsNativeApp] = useState<boolean>(
-    () => initialIsNativeApp ?? getCookieValue(COOKIE_NAME) === '1',
+    () => resolveInitialNativeAppMode(initialIsNativeApp, getCookieValue(COOKIE_NAME)),
   );
 
   useEffect(() => {

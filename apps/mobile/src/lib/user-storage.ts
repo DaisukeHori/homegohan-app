@@ -55,3 +55,36 @@ export async function clearUserScopedAsyncStorage(userId: string | null): Promis
     await AsyncStorage.multiRemove(keysToRemove);
   }
 }
+
+/**
+ * Supabase JS (auth-js) が AsyncStorage 上に保存するセッショントークンのキーを
+ * 直接検出して削除するフェイルセーフ。
+ *
+ * Round-4 レビュー指摘 (#1037): `supabase.auth.signOut()` はサーバー側のトークン失効
+ * API (`/auth/v1/logout`) を呼び出すが、ネットワークエラー等でこの呼び出しが失敗すると
+ * auth-js の内部実装 (`GoTrueClient#_signOut`) は `_removeSession()`
+ * (= AsyncStorage クリア + `SIGNED_OUT` イベント発火) をスキップしたまま
+ * `{ error }` を返す。しかもこの失敗は例外を投げず戻り値の `error` に入るだけなので、
+ * 呼び出し側が戻り値をチェックしないと気づけない。
+ *
+ * アカウント削除のように「サーバー側の状態は既に確定済みで、あとは端末側の
+ * 後片付けだけ」という場面では、ネットワークの成否に関わらずローカルの
+ * 認証トークンを確実に消し去る必要があるため、AsyncStorage を直接スキャンして
+ * `sb-<project-ref>-auth-token` (および `-code-verifier` / `-user` サフィックス)
+ * 形式のキーを削除する。
+ */
+export async function clearSupabaseAuthStorage(): Promise<void> {
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const authKeys = allKeys.filter(
+      (key) => key.startsWith("sb-") && key.includes("-auth-token"),
+    );
+    if (authKeys.length > 0) {
+      await AsyncStorage.multiRemove(authKeys);
+    }
+  } catch {
+    // スキャン/削除自体が失敗した場合は諦める。
+    // 呼び出し側 (account.tsx) は AuthProvider の in-memory session も
+    // 別途クリアするため、多少の取りこぼしがあってもホーム復帰は防げる。
+  }
+}

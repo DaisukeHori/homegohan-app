@@ -1,5 +1,5 @@
 import { type Session, type User } from "@supabase/supabase-js";
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { supabase } from "../lib/supabase";
 
@@ -7,6 +7,16 @@ type AuthState = {
   isLoading: boolean;
   session: Session | null;
   user: User | null;
+  /**
+   * ネットワークに依存せず in-memory の session を即座に破棄する。
+   *
+   * Round-4 レビュー指摘 (#1037): `supabase.auth.signOut()` はネットワークエラー等で
+   * 失敗すると `SIGNED_OUT` イベントを発火せず、`onAuthStateChange` 経由の自動クリアが
+   * 効かないことがある。アカウント削除後の後片付けのように、サーバー側の状態は既に
+   * 確定しているケースでこれを呼び、`app/index.tsx` が古い session を見てホームタブへ
+   * 戻すフラッシュを防ぐ。
+   */
+  clearSession: () => void;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -59,13 +69,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const clearSession = useCallback(() => {
+    setSession(null);
+  }, []);
+
   const value: AuthState = useMemo(
     () => ({
       isLoading,
       session,
       user: session?.user ?? null,
+      clearSession,
     }),
-    [isLoading, session]
+    [isLoading, session, clearSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

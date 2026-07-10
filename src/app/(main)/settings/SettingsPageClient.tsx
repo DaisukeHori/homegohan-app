@@ -202,6 +202,11 @@ export function SettingsPageClient({ initialIsNativeApp }: { initialIsNativeApp?
   };
 
   const handleLogout = async () => {
+    // Round-4 レビュー指摘 (Fable Suggestion): cookie 判定不能時 (SSR/クライアント双方で
+    // Cookie が読めない等) は isNativeApp が fail-open で false になり得るため、
+    // 非表示ロジック (!isNativeApp によるボタン非表示) だけに頼らず、ハンドラ本体にも
+    // native アプリ内では実行しないガードを二重に入れる。
+    if (isNativeApp) return;
     clearUserScopedLocalStorage();
     await supabase.auth.signOut();
     broadcastSignOut();
@@ -215,6 +220,9 @@ export function SettingsPageClient({ initialIsNativeApp }: { initialIsNativeApp?
   const DELETE_KEYWORD = '削除します';
 
   const handleDeleteAccount = async () => {
+    // Round-4 レビュー指摘 (Fable Suggestion): 上記 handleLogout と同様、非表示ロジックに
+    // 頼らずハンドラ本体にも native アプリ内では実行しないガードを二重に入れる。
+    if (isNativeApp) return;
     if (deleteConfirmText !== DELETE_KEYWORD || deleting) return;
     setDeleting(true);
     try {

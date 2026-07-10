@@ -362,6 +362,11 @@ function ProfilePageContent({ initialIsNativeApp }: { initialIsNativeApp?: boole
                 variant="ghost"
                 className="text-gray-600 hover:bg-black/5"
                 onClick={async () => {
+                  // Round-4 レビュー指摘 (Fable Suggestion): cookie 判定不能時は
+                  // isNativeApp が fail-open で false になり得るため、非表示ロジック
+                  // (!isNativeApp) だけに頼らずハンドラ本体にも native アプリ内では
+                  // 実行しないガードを二重に入れる。
+                  if (isNativeApp) return;
                   if (!confirm('ログアウトしますか？')) return;
                   clearUserScopedLocalStorage();
                   const supabase = createClient();
@@ -608,6 +613,9 @@ function ProfilePageContent({ initialIsNativeApp }: { initialIsNativeApp?: boole
               </button>
               <button
                 onClick={async () => {
+                  // Round-4 レビュー指摘 (Fable Suggestion): 上と同様、非表示ロジックに
+                  // 頼らずハンドラ本体にも native アプリ内では実行しないガードを入れる。
+                  if (isNativeApp) return;
                   clearUserScopedLocalStorage();
                   const supabase = createClient();
                   await supabase.auth.signOut();

@@ -8,6 +8,13 @@
  *  2. 削除 API が失敗した場合: ローカルセッション (AsyncStorage / signOut) は破棄されず、
  *     ログイン状態を維持したまま再試行できる
  *  3. 連打しても削除 API は 1 回しか呼ばれない (多重実行防止ガード)
+ *
+ * Issue #1037 round-4 レビュー指摘 (Sonnet Warning) の回帰防止:
+ *
+ *  4. サーバー削除は成功したが signOut() がネットワークエラー等で失敗した場合、
+ *     AsyncStorage の認証トークンを直接クリア + AuthProvider の in-memory session も
+ *     クリアしてからログイン画面へ確実に遷移する (削除済みアカウントがホームへ
+ *     戻るフラッシュを防ぐ)
  */
 
 import React from 'react';
@@ -37,8 +44,15 @@ jest.mock('../../src/lib/supabase', () => ({
 }));
 
 const mockClearUserScopedAsyncStorage = jest.fn();
+const mockClearSupabaseAuthStorage = jest.fn();
 jest.mock('../../src/lib/user-storage', () => ({
   clearUserScopedAsyncStorage: (...args: any[]) => mockClearUserScopedAsyncStorage(...args),
+  clearSupabaseAuthStorage: (...args: any[]) => mockClearSupabaseAuthStorage(...args),
+}));
+
+const mockClearSession = jest.fn();
+jest.mock('../../src/providers/AuthProvider', () => ({
+  useAuth: () => ({ clearSession: (...args: any[]) => mockClearSession(...args) }),
 }));
 
 const mockReplace = jest.fn();
@@ -190,5 +204,39 @@ describe('AccountSettingsPage — アカウント削除', () => {
 
     // 完了後も 1 回のまま増えていないこと
     expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('4. サーバー削除後 signOut が失敗(戻り値の error のみ・例外は投げない)しても、AsyncStorage の認証トークンと in-memory session を直接クリアしてログイン画面へ遷移する', async () => {
+    // auth-js の signOut() は throwOnError が既定 false のため、ネットワークエラー等の
+    // 失敗時も例外を投げず `{ error }` を返すだけのことがある (Round-4 レビュー指摘)。
+    mockSignOut.mockImplementation(async () => {
+      callOrder.push('signOut');
+      return { error: new Error('network error') };
+    });
+
+    render(<AccountSettingsPage />);
+
+    fireEvent.press(screen.getByTestId('account-delete-button'));
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/');
+    });
+
+    // サーバー削除自体は成功済みなので削除 API は 1 回だけ呼ばれる (再試行はしない)
+    expect(mockPost).toHaveBeenCalledTimes(1);
+
+    // signOut がエラーを返した (= auth-js が内部で _removeSession() をスキップした)
+    // 場合でも、ネットワークに依存しないフェイルセーフで AsyncStorage の認証トークンを
+    // 直接クリアし、AuthProvider の in-memory session も破棄していること。
+    expect(mockClearSupabaseAuthStorage).toHaveBeenCalledTimes(1);
+    expect(mockClearSession).toHaveBeenCalledTimes(1);
+
+    // 「削除失敗」ではなく「削除は完了した」旨の文言でアラートを出す
+    // (再試行してもサーバー側にアカウントが無いため削除 API は失敗するだけになる)
+    expect(alertSpy).toHaveBeenCalledWith(
+      'アカウントを削除しました',
+      expect.stringContaining('端末側のログアウト処理に失敗'),
+    );
+    expect(alertSpy).not.toHaveBeenCalledWith('削除失敗', expect.anything());
   });
 });

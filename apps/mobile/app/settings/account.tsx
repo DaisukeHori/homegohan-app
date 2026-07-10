@@ -6,11 +6,13 @@ import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
-import { clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { clearSupabaseAuthStorage, clearUserScopedAsyncStorage } from "../../src/lib/user-storage";
+import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing } from "../../src/theme";
 import { typography } from "../../src/theme/typography";
 
 export default function AccountSettingsPage() {
+  const { clearSession } = useAuth();
   // Round-2 レビュー指摘 #3: 多重タップでの二重削除実行を防止するガード。
   // deleting (state) は Button の disabled/ラベル表示用。
   // deletingRef (ref) は state 更新の再レンダー反映を待たずに効く同期ガードで、
@@ -64,7 +66,18 @@ export default function AccountSettingsPage() {
 
     try {
       await clearUserScopedAsyncStorage(user?.id ?? null);
-      await supabase.auth.signOut();
+      // Round-4 レビュー指摘 (Sonnet Warning): signOut() はネットワークエラー等で
+      // 失敗しても例外を投げず `{ error }` を返すだけのことがある (auth-js の
+      // `GoTrueClient#_signOut` はサーバー側のトークン失効 API が失敗すると
+      // `_removeSession()` をスキップして早期 return するが、throwOnError が
+      // 既定 false のため呼び出し側には戻り値でしか伝わらない)。戻り値を無視すると
+      // AsyncStorage の認証トークンも AuthProvider の in-memory session も
+      // 残ったまま router.replace("/") してしまい、下の catch のフェイルセーフを
+      // 通れないため、ここで明示的にチェックして throw する。
+      const { error: signOutError } = (await supabase.auth.signOut()) ?? {};
+      if (signOutError) {
+        throw signOutError;
+      }
       router.replace("/");
     } catch (e: any) {
       // Round-3 レビュー指摘 #3: ここに到達した時点でサーバー側の削除自体は成功済み。
@@ -72,6 +85,13 @@ export default function AccountSettingsPage() {
       // 削除 API は (アカウントが既に無いため) 失敗するだけなので、削除失敗と紛れない
       // 別文言で案内し、ログイン画面へは進める。
       console.error("[account delete] local cleanup failed after server delete succeeded", e);
+      // Round-4 レビュー指摘 (Sonnet Warning): signOut がネットワークエラー等で
+      // 失敗すると AsyncStorage の認証トークンも AuthProvider の in-memory session も
+      // 残ったままになり得る。router.replace("/") 後に app/index.tsx が session を
+      // truthy と判定してホームタブへ戻すフラッシュが起きるのを防ぐため、
+      // ネットワークに依存しないローカル専用クリアを保証してから遷移する。
+      await clearSupabaseAuthStorage();
+      clearSession();
       Alert.alert(
         "アカウントを削除しました",
         "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。",
