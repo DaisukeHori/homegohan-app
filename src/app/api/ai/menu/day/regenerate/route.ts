@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const { dailyMealId, dayDate, preferences } = await request.json();
+    const { dailyMealId, dayDate, preferences, includeCompleted } = await request.json();
 
     if (!dailyMealId && !dayDate) {
       return NextResponse.json({ error: 'Either dailyMealId or dayDate is required' }, { status: 400 });
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
 
     const { data: meals, error: mealsError } = await supabase
       .from('planned_meals')
-      .select('id, meal_type')
+      .select('id, meal_type, is_completed')
       .eq('daily_meal_id', targetDayId);
 
     if (mealsError) {
@@ -68,15 +68,30 @@ export async function POST(request: Request) {
     }
 
     // 4. target_slotsを生成（その日の全食事）
+    // #1042: 完食済み(is_completed)の食事は、明示的な includeCompleted:true 指定が
+    // ない限り生成対象から除外する。摂取実績・ストリークを遡って壊さないため。
+    const allowCompletedOverwrite = includeCompleted === true;
     const mealTypes = ['breakfast', 'lunch', 'dinner'];
-    const targetSlots = mealTypes.map(mealType => {
-      const existingMeal = (meals || []).find(m => m.meal_type === mealType);
-      return {
+    const targetSlots = mealTypes
+      .map(mealType => ({
+        mealType,
+        existingMeal: (meals || []).find(m => m.meal_type === mealType),
+      }))
+      .filter(({ existingMeal }) => allowCompletedOverwrite || !existingMeal?.is_completed)
+      .map(({ mealType, existingMeal }) => ({
         date: dailyMeal.day_date,
         mealType,
         plannedMealId: existingMeal?.id || undefined,
-      };
-    });
+      }));
+
+    if (targetSlots.length === 0) {
+      return NextResponse.json({
+        success: true,
+        status: 'skipped',
+        message: '完食済みのため再生成対象がありません',
+        mealsCount: 0,
+      });
+    }
 
     // 5. リクエストを作成
     const featureFlags = await loadFeatureFlags(supabase);

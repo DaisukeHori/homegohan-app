@@ -7,6 +7,7 @@ import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 import { createLogger } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -139,6 +140,9 @@ export async function POST(request: Request) {
 
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
     const todayStr = getTodayStr();
+    // #1042: 削除前に旧値をスナップショットしておく（生成失敗時のロールバック用）。
+    // 「先に削除→後で書き込み」を維持しつつ、失敗時に元の献立を復元できるようにする。
+    const deletedMealsSnapshot: PlannedMealSnapshotRow[] = [];
 
     for (let i = 0; i < 7; i++) {
       const dateStr = addDays(startDate, i);
@@ -154,10 +158,12 @@ export async function POST(request: Request) {
         if (existingDay) {
           const { data: existingMeals } = await supabase
             .from('planned_meals')
-            .select('id')
+            .select('*')
             .eq('daily_meal_id', existingDay.id);
 
           if (Array.isArray(existingMeals) && existingMeals.length > 0) {
+            deletedMealsSnapshot.push(...(existingMeals as PlannedMealSnapshotRow[]));
+
             await Promise.all(
               existingMeals.map((meal) =>
                 cancelPendingMealImageJobs({
@@ -179,8 +185,11 @@ export async function POST(request: Request) {
         }
       }
     }
-    
-    console.log(`📝 Cleared existing meals for week starting ${startDate}`);
+
+    console.log(
+      `📝 Cleared existing meals for week starting ${startDate}` +
+        (deletedMealsSnapshot.length > 0 ? ` (snapshot: ${deletedMealsSnapshot.length} meals)` : ''),
+    );
 
     // 3. リクエストをDBに保存（ステータス追跡用）
     const { data: requestData, error: insertError } = await supabase
@@ -192,6 +201,8 @@ export async function POST(request: Request) {
         status: 'processing',
         prompt: noteForAi || '',
         constraints,
+        // #1042: 生成失敗時に削除済み献立を復元するためのスナップショット（監査用途も兼ねる）
+        generated_data: deletedMealsSnapshot.length > 0 ? { snapshot: deletedMealsSnapshot } : null,
       })
       .select('id')
       .single();
@@ -248,10 +259,22 @@ export async function POST(request: Request) {
     }).then(async (result) => {
       if (!result.ok) {
         console.error('❌ Edge Function error:', result.errorMessage);
+        let errorMessage = result.errorMessage;
+
+        // #1042: 生成失敗時、削除済みの旧献立をスナップショットから復元する。
+        // 部分的に新しい献立が既に書き込まれているスロットは上書きしない（skip）。
+        if (deletedMealsSnapshot.length > 0) {
+          const restoreResult = await restorePlannedMealsSnapshot(supabase, deletedMealsSnapshot);
+          console.log(
+            `🔁 Restored meals after generation failure: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
+          );
+          errorMessage = `${result.errorMessage} (rollback: restored=${restoreResult.restored}, skipped=${restoreResult.skipped}, failed=${restoreResult.failed})`;
+        }
+
         await markWeeklyMenuRequestFailed({
           supabase,
           requestId: requestData.id,
-          errorMessage: result.errorMessage,
+          errorMessage,
         });
         return;
       }
