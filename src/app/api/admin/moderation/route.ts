@@ -10,13 +10,19 @@
  * ai_content はバックエンドテーブルが未実装のため常に空配列 (要 migration、捏造しない)。
  * DB エラー発生時は空配列にフォールバックせず 500 を返す (fail-closed)。
  *
+ * #1041 round-2 (F) 修正: `moderation_flags_admin_all` RLS ポリシーは
+ * admin/super_admin のみで content_moderator を許可しない。requireRole は
+ * content_moderator を許可しているため、user-scoped client では
+ * content_moderator が呼ぶと常に 0 件 (偽成功) になっていた。requireRole
+ * 通過後に service-role (`getSupabaseAdmin()`) へ切り替えて解消する。
+ *
  * E2E: w5-12-admin-adversarial G-27, G-27b
  */
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { fetchModerationList } from '@/lib/admin/moderation-backend';
 
@@ -55,12 +61,13 @@ export async function GET(request: Request) {
   }
 
   const { status } = parseResult.data;
-  const supabase = await createClient();
+  // requireRole 通過後のみ到達する (#1041 round-2 F)。
+  const supabaseAdmin = getSupabaseAdmin();
 
   try {
     const [mealFlags, recipeFlags] = await Promise.all([
-      fetchModerationList(supabase, 'food', status, 50),
-      fetchModerationList(supabase, 'recipe', status, 50),
+      fetchModerationList(supabaseAdmin, 'food', status, 50),
+      fetchModerationList(supabaseAdmin, 'recipe', status, 50),
     ]);
 
     // ai_content はバックエンドテーブル未実装 (要 migration)。既存レスポンス形式との

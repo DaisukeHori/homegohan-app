@@ -7,12 +7,23 @@
  * 基づく sticky な variant 割当を取得 (なければ新規作成) する。
  *
  * 権限: 認証済みユーザーであれば誰でも呼び出し可能 (自分自身の割当のみ取得)。
+ *
+ * #1041 round-2 (B) 修正: `experiments` は `experiments_select_super_admin`
+ * (FOR ALL, super_admin のみ) の RLS で守られており、`experiment_assignments`
+ * は SELECT/DELETE が super_admin のみで INSERT ポリシーが無い (service_role 前提)。
+ * requireUser() (一般ユーザー) + user-scoped client のままでは実験 SELECT が
+ * 常に空になり 404、assignment INSERT も拒否され、running にしても runtime で
+ * 完全に無効なままだった。requireUser() 通過後に service-role
+ * (`getSupabaseAdmin()`) へ切り替える。ただし呼び出し元の userId (session の
+ * user id) に厳密スコープし、他ユーザーの assignment を読み書きしない
+ * (IDOR 防止。getOrAssignVariant は常に渡された userId でのみ
+ * `experiment_assignments` を検索・作成する)。
  */
 
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth/helpers';
 import { AuthError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   ExperimentNotRunningError,
   InvalidVariantsError,
@@ -36,9 +47,12 @@ export async function GET(_request: Request, { params }: Params) {
     throw err;
   }
 
-  const supabase = await createClient();
+  // requireUser() 通過後のみ到達する。experiments/experiment_assignments は
+  // super_admin 専用 RLS (INSERT ポリシーすら無い) のため service-role が必須
+  // (#1041 round-2 B)。以降のクエリは全て userId (自分自身) にスコープする。
+  const supabaseAdmin = getSupabaseAdmin();
 
-  const { data: experiment, error } = await supabase
+  const { data: experiment, error } = await supabaseAdmin
     .from('experiments')
     .select('id, key, status, variants')
     .eq('key', params.key)
@@ -68,7 +82,7 @@ export async function GET(_request: Request, { params }: Params) {
 
   try {
     const variantKey = await getOrAssignVariant(
-      supabase,
+      supabaseAdmin,
       { id: experiment.id, status: experiment.status, variants: experiment.variants },
       userId,
     );

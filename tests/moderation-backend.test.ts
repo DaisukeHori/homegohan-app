@@ -71,7 +71,7 @@ describe('moderation-backend', () => {
       });
     });
 
-    it('recipe: recipe_flags を参照し、resolution_note は常に null (列が存在しないため)', async () => {
+    it('recipe: recipe_flags を参照し、resolution_note は常に null (列が存在しないため)。content_url は recipes.image_url を使う (#1041 round-2 G)', async () => {
       const supabase = createFakeSupabase({
         recipe_flags: [
           {
@@ -85,7 +85,7 @@ describe('moderation-backend', () => {
                 created_at: '2026-01-02T00:00:00Z',
                 reporter_id: 'reporter-2',
                 recipe_id: 'recipe-1',
-                recipes: { user_id: 'recipe-owner-1' },
+                recipes: { user_id: 'recipe-owner-1', image_url: 'https://example.com/recipe.jpg' },
               },
             ],
             error: null,
@@ -99,10 +99,36 @@ describe('moderation-backend', () => {
       expect(items[0]).toMatchObject({
         id: 'rflag-1',
         type: 'recipe',
-        content_url: null,
+        content_url: 'https://example.com/recipe.jpg',
         user_id: 'recipe-owner-1',
         resolution_note: null,
       });
+    });
+
+    it('recipe: recipes.image_url が無い場合は content_url を null にする (捏造しない)', async () => {
+      const supabase = createFakeSupabase({
+        recipe_flags: [
+          {
+            data: [
+              {
+                id: 'rflag-2',
+                status: 'pending',
+                reason: 'spam',
+                reviewed_by: null,
+                reviewed_at: null,
+                created_at: '2026-01-02T00:00:00Z',
+                reporter_id: 'reporter-3',
+                recipe_id: 'recipe-2',
+                recipes: { user_id: 'recipe-owner-2', image_url: null },
+              },
+            ],
+            error: null,
+          },
+        ],
+      });
+
+      const items = await fetchModerationList(supabase as never, 'recipe', 'pending', 50);
+      expect(items[0].content_url).toBeNull();
     });
 
     it('DB エラー時は空配列にフォールバックせず例外を throw する (fail-closed)', async () => {

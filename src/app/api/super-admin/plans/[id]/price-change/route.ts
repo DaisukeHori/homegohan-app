@@ -7,6 +7,13 @@
  * 権限: super_admin のみ
  *
  * Stripe Secret Key 未設定時はモック動作 (graceful degradation)
+ *
+ * #1041 round-2 (C) 修正: `supabase/functions/stripe-price-sync` を新規実装した
+ * (旧: 関数が存在せず常に 404→502)。Edge Function が未デプロイの間 (404) は
+ * 一時的な Stripe API 障害 (`OP_STRIPE_SYNC_FAILED`) と区別できるよう
+ * `OP_STRIPE_SYNC_UNAVAILABLE` を返し、運用者が `supabase functions deploy
+ * stripe-price-sync` の未実施に気づけるようにする。偽成功 (DB のみ更新して
+ * 200 を返す) には戻さない。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -101,6 +108,24 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       if (!edgeRes.ok) {
         const errBody = await edgeRes.text().catch(() => '');
         console.error('[super-admin/price-change] Edge Function stripe-price-sync failed:', edgeRes.status, errBody);
+
+        // #1041 round-2 (C): 404 は Edge Function 未デプロイの可能性が高く、
+        // 一時的な Stripe API 障害 (OP_STRIPE_SYNC_FAILED) とは原因が異なる。
+        // 運用者が supabase functions deploy stripe-price-sync の未実施に
+        // 気づけるよう区別する。
+        if (edgeRes.status === 404) {
+          return NextResponse.json(
+            {
+              error: {
+                code: 'OP_STRIPE_SYNC_UNAVAILABLE',
+                message:
+                  'Stripe価格同期機能が利用できません (Edge Function stripe-price-sync が未デプロイの可能性があります)。DB は更新していません。',
+              },
+            },
+            { status: 503 },
+          );
+        }
+
         return NextResponse.json(
           {
             error: {

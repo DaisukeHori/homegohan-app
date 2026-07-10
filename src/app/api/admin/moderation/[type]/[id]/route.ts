@@ -11,12 +11,26 @@
  * フラグが指すコンテンツの所有者 (meals.user_id / recipes.user_id) を用いる
  * (通報者を誤って BAN する事故を防ぐため)。
  * DB エラー時は 404 に丸めず 500 を返す (fail-closed)。
+ *
+ * #1041 round-2 (A/D/F) 修正:
+ *  - `NOT_FOUND_RESPONSE` を module スコープの単一 `NextResponse.json(...)` (body は
+ *    1 回しか読めない ReadableStream) にしていたため、複数リクエストで使い回すと
+ *    2 回目以降が 0 バイトの空 body になっていた (next dev で実証済み)。
+ *    `notFoundResponse()` として都度生成する。
+ *  - `meals`/`recipes` の embed は admin bypass 無し RLS で null 化され、
+ *    content_moderator は `moderation_flags_admin_all` (admin/super_admin のみ) に
+ *    阻まれ 0 件/0 行更新になっていた。requireRole 通過後に service-role
+ *    (`getSupabaseAdmin()`) へ切り替えて解消する。
+ *  - BAN は `admin_set_user_roles` で `roles=['banned']` にするだけで
+ *    管理画面 (`frozen_at` ベースの `is_banned`) に一切反映されなかった。
+ *    `/api/admin/users/[id]/freeze` と同じ frozen_at 機構に統一する
+ *    (`@/lib/admin/user-ban`)。BAN 失敗時は success:true を返さない。
  */
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   ModerationResolveBodySchema,
   MODERATION_TYPES,
@@ -27,15 +41,18 @@ import {
   isModerationBacked,
   resolveModerationItem,
 } from '@/lib/admin/moderation-backend';
+import { applyUserBan } from '@/lib/admin/user-ban';
 
 export const dynamic = 'force-dynamic';
 
 type Params = { params: { type: string; id: string } };
 
-const NOT_FOUND_RESPONSE = NextResponse.json(
-  { error: { code: 'NOT_FOUND', message: 'モデレーションアイテムが見つかりません' } },
-  { status: 404 },
-);
+function notFoundResponse() {
+  return NextResponse.json(
+    { error: { code: 'NOT_FOUND', message: 'モデレーションアイテムが見つかりません' } },
+    { status: 404 },
+  );
+}
 
 function internalErrorResponse() {
   return NextResponse.json(
@@ -76,15 +93,18 @@ export async function GET(_request: Request, { params }: Params) {
 
   // ai_content はバックエンドテーブル未実装 (要 migration)。該当アイテムは存在しない。
   if (!isModerationBacked(moderationType)) {
-    return NOT_FOUND_RESPONSE;
+    return notFoundResponse();
   }
 
-  const supabase = await createClient();
+  // requireRole 通過後のみ到達する。meals/recipes の embed は admin bypass 無し
+  // RLS で null 化され、content_moderator は moderation_flags_admin_all
+  // (admin/super_admin のみ) に阻まれるため service-role が必須 (#1041 round-2)。
+  const supabaseAdmin = getSupabaseAdmin();
 
   try {
-    const item = await fetchModerationSingle(supabase, moderationType, id);
+    const item = await fetchModerationSingle(supabaseAdmin, moderationType, id);
     if (!item) {
-      return NOT_FOUND_RESPONSE;
+      return notFoundResponse();
     }
     return NextResponse.json({ data: item });
   } catch (err) {
@@ -135,7 +155,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
 
   // ai_content はバックエンドテーブル未実装 (要 migration)。該当アイテムは存在しない。
   if (!isModerationBacked(moderationType)) {
-    return NOT_FOUND_RESPONSE;
+    return notFoundResponse();
   }
 
   let body: unknown;
@@ -174,19 +194,25 @@ async function handleResolve(request: Request, params: { type: string; id: strin
     );
   }
 
+  // requireRole 通過後のみ到達する。meals/recipes の embed 取得・
+  // moderation_flags/recipe_flags の更新・BAN (user_profiles.frozen_at 更新) は
+  // admin bypass 無し RLS で拒否/null 化されるため service-role が必須
+  // (#1041 round-2 D/F)。admin_audit_logs への INSERT のみ user-scoped
+  // client を使う (#1028 パターンに合わせる)。
+  const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
   const newStatus = action === 'approve' ? 'approved' : action === 'escalate' ? 'escalated' : 'rejected';
 
   let item;
   try {
-    item = await fetchModerationSingle(supabase, moderationType, id);
+    item = await fetchModerationSingle(supabaseAdmin, moderationType, id);
   } catch (err) {
     console.error('[api/admin/moderation/[type]/[id]] fetch error:', err instanceof Error ? err.message : err);
     return internalErrorResponse();
   }
 
   if (!item) {
-    return NOT_FOUND_RESPONSE;
+    return notFoundResponse();
   }
 
   // BAN 対象はフラグが指すコンテンツの所有者 (meals.user_id / recipes.user_id)。
@@ -194,7 +220,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   const contentUserId = item.user_id;
 
   try {
-    await resolveModerationItem(supabase, moderationType, id, {
+    await resolveModerationItem(supabaseAdmin, moderationType, id, {
       status: newStatus,
       resolvedBy: actor.id,
       resolutionNote: resolution_note ?? null,
@@ -207,27 +233,27 @@ async function handleResolve(request: Request, params: { type: string; id: strin
     );
   }
 
-  // BAN アクションの場合、ユーザーの roles を更新
+  // BAN アクションの場合、/api/admin/users/[id]/freeze と同じ frozen_at 機構で
+  // BAN を適用する (#1041 round-2 D: 'banned' roles 追加は管理画面に反映されない
+  // 偽成功だった)。
   let banApplied: boolean | null = null;
+  let banErrorMessage: string | null = null;
   if (
     contentUserId &&
     (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban' || action === 'delete_and_warn')
   ) {
-    const { data: userProfile } = await supabase
-      .from('user_profiles')
-      .select('roles')
-      .eq('id', contentUserId)
-      .single();
-
-    if (userProfile && (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban')) {
-      const currentRoles: string[] = Array.isArray(userProfile.roles) ? userProfile.roles : ['user'];
-      const { error: banError } = await supabase.rpc('admin_set_user_roles', {
-        p_user_id: contentUserId,
-        p_roles: [...new Set([...currentRoles, 'banned'])],
+    if (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban') {
+      const banResult = await applyUserBan(supabaseAdmin, {
+        userId: contentUserId,
+        actorId: actor.id,
+        banType: action === 'delete_and_perm_ban' ? 'permanent' : 'temporary',
+        reason: `[moderation:${type}] ${resolution_note ?? action}`,
+        durationDays: ban_duration_days,
       });
-      banApplied = !banError;
-      if (banError) {
-        console.error('[api/admin/moderation/[type]/[id]] BAN role update failed:', banError.message);
+      banApplied = banResult.success;
+      if (!banResult.success) {
+        banErrorMessage = banResult.error ?? 'BAN の適用に失敗しました';
+        console.error('[api/admin/moderation/[type]/[id]] BAN failed:', banErrorMessage);
       }
     }
   }
@@ -245,10 +271,26 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       resolution_note,
       content_user_id: contentUserId,
       ban_applied: banApplied,
+      ban_error: banErrorMessage,
     },
     severity: action.includes('ban') ? 'warn' : 'info',
     ip_address: request.headers.get('x-forwarded-for'),
   });
 
-  return NextResponse.json({ data: { success: true, status: newStatus } });
+  // #1041 round-2 (D): モデレーション自体 (status 更新) は既に成功しているが、
+  // BAN 適用に失敗した場合は success:true を返さず、部分失敗を明示する。
+  if (banApplied === false) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'OP_BAN_FAILED',
+          message: banErrorMessage ?? 'BAN の適用に失敗しました (モデレーション判定自体は保存されています)',
+        },
+        data: { status: newStatus, ban_applied: false },
+      },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ data: { success: true, status: newStatus, ban_applied: banApplied } });
 }

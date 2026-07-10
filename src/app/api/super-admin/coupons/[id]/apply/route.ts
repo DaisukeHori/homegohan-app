@@ -7,12 +7,19 @@
  * #1041 (F4-07) 修正: クーポンは作成のみで、実際に契約へ適用して
  * coupon_redemptions を作成する処理・uses_count / per_user_limit の
  * 上限強制が存在しなかった (偽成功)。本エンドポイントで実際の適用処理を提供する。
+ *
+ * #1041 round-2 (E) 修正: `coupon_redemptions` は SELECT ポリシーのみで
+ * INSERT/UPDATE ポリシーが無い (service_role 前提)。本 route は元々
+ * user-scoped client (`createClient()`) で `applyCoupon` を呼んでおり、
+ * 本番では redemption INSERT / uses_count increment / personal_subscriptions
+ * 更新が RLS で拒否され 500 になる可能性があった。requireRole(['super_admin'])
+ * 通過後に service-role (`getSupabaseAdmin()`) へ切り替える。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
 import { applyCoupon, CouponApplyError } from '@/lib/plan/coupon';
 
@@ -21,6 +28,11 @@ type RouteContext = { params: { id: string } };
 export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     const user = await requireRole(['super_admin']);
+    // requireRole 通過後のみ到達する (#1041 round-2 E)。coupon_redemptions
+    // INSERT/UPDATE, coupons.uses_count 更新, personal_subscriptions 更新は
+    // service-role が必須。admin_audit_logs への INSERT のみ user-scoped
+    // client を使う (#1028 パターン)。
+    const supabaseAdmin = getSupabaseAdmin();
     const supabase = await createClient();
 
     const body = await request.json();
@@ -37,7 +49,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
     let result;
     try {
-      result = await applyCoupon(supabase, {
+      result = await applyCoupon(supabaseAdmin, {
         couponId: params.id,
         subscriptionTarget: input.subscription_target,
         subscriptionId: input.subscription_id,

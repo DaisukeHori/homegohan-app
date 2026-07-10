@@ -8,6 +8,13 @@
  *
  * ここで決定的ハッシュに基づく割当 + upsert (sticky assignment) を実装する。
  * 同一 experiment_id + user_id には常に同じ variant_key が返る (再割当しない)。
+ *
+ * #1041 round-2 (B) 修正: `experiment_assignments` に INSERT ポリシーが無く
+ * (service_role 前提)、呼び出し元は requireUser() 通過後に
+ * `getSupabaseAdmin()` (service-role) を渡す。本関数のクエリは全て
+ * `userId` 引数でスコープされているため、呼び出し元が常に session の
+ * 自分自身の userId のみを渡す限り IDOR にはならない (他ユーザーの
+ * userId を渡せる経路を作らないこと)。
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';

@@ -13,6 +13,11 @@
  *
  * uses_count の原子的 increment は DB 関数 (migration) なしで実現するため、
  * 楽観的ロック (compare-and-swap: `.eq('uses_count', current)`) + リトライで代替する。
+ *
+ * #1041 round-2 (E) 修正: `coupon_redemptions` は SELECT ポリシーのみで
+ * INSERT/UPDATE ポリシーが無い (service_role 前提)。呼び出し元 (route) は
+ * 必ず authz (requireRole(['super_admin']) 等) を通した後に service-role
+ * クライアント (`getSupabaseAdmin()`) を渡すこと。
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';

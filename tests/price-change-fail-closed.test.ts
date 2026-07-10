@@ -83,6 +83,25 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     expect(fakeSupabase.from).toHaveBeenCalledTimes(1);
   });
 
+  it('#1041 round-2 (C): Edge Function が 404 を返したら OP_STRIPE_SYNC_UNAVAILABLE で 503 (未デプロイ検知、OP_STRIPE_SYNC_FAILED とは区別する)', async () => {
+    process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+    fakeSupabase = createFakeSupabase({
+      subscription_plans: [{ data: existingPlan(), error: null }],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 404, text: () => Promise.resolve('function not found') }),
+    );
+
+    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+
+    expect(res.status).toBe(503);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('OP_STRIPE_SYNC_UNAVAILABLE');
+    // subscription_plans は初回の select 1 回のみ呼ばれ、update には進まないこと
+    expect(fakeSupabase.from).toHaveBeenCalledTimes(1);
+  });
+
   it('STRIPE_SECRET_KEY 設定時、Edge Function が非 200 を返したら 502 を返す (偽成功にしない)', async () => {
     process.env.STRIPE_SECRET_KEY = 'sk_test_x';
     fakeSupabase = createFakeSupabase({

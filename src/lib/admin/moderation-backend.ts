@@ -10,6 +10,14 @@
  * recipes.user_id) を用いる。フラグテーブル側の user_id は通報者を指す可能性があり
  * 誤って通報者を BAN する重大な事故につながるため、meal_id / recipe_id 経由の
  * 参照を正とする。
+ *
+ * #1041 round-2 (D/F) 修正: `meals`/`recipes` は admin bypass 無しの RLS
+ * (所有者本人のみ参照可) のため、user-scoped client でこのモジュールの関数を
+ * 呼ぶと embed (`meals(...)`/`recipes(...)`) が null 化し、BAN 対象所有者が
+ * 取得できず BAN が skip される (偽成功)。加えて `moderation_flags_admin_all`
+ * は admin/super_admin のみのため、content_moderator が呼ぶと 0 件/0 行更新に
+ * なる。呼び出し側 (route) は **requireRole 等の authz を通した後** に
+ * `getSupabaseAdmin()` (service-role) を渡すこと。
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -58,12 +66,13 @@ function normalizeFoodRow(row: RawRow): NormalizedModerationItem {
 }
 
 function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
-  const recipe = (row.recipes as { user_id?: string | null } | null) ?? null;
+  const recipe = (row.recipes as { user_id?: string | null; image_url?: string | null } | null) ?? null;
   return {
     id: row.id as string,
     type: 'recipe',
-    // recipes テーブルに画像 URL 列がないため常に null (捏造しない)
-    content_url: null,
+    // #1041 round-2 (G) 修正: recipes.image_url が実在する (database.types.ts) ため、
+    // 常に null 固定にせず実データを反映する。
+    content_url: recipe?.image_url ?? null,
     reporter_count: 1,
     user_id: recipe?.user_id ?? null,
     status: (row.status as string | null) ?? 'pending',
@@ -103,7 +112,7 @@ export async function fetchModerationList(
 
   const { data, error } = await supabase
     .from('recipe_flags')
-    .select('*, recipes(user_id)')
+    .select('*, recipes(user_id, image_url)')
     .eq('status', status)
     .order('created_at', { ascending: true })
     .limit(limit);
@@ -148,7 +157,7 @@ export async function fetchModerationSingle(
 
   const { data, error } = await supabase
     .from('recipe_flags')
-    .select('*, recipes(user_id)')
+    .select('*, recipes(user_id, image_url)')
     .eq('id', id)
     .maybeSingle();
   if (error) throw error;
