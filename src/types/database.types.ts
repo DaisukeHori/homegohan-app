@@ -2440,6 +2440,42 @@ export type Database = {
           },
         ]
       }
+      feature_flags: {
+        Row: {
+          constraints: Json | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          enabled: boolean
+          id: string
+          key: string
+          rollout_strategy: Json | null
+          updated_at: string
+        }
+        Insert: {
+          constraints?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          key: string
+          rollout_strategy?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          constraints?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          key?: string
+          rollout_strategy?: Json | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       feature_packages: {
         Row: {
           created_at: string

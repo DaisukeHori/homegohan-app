@@ -52,6 +52,10 @@ afterAll(async () => {
     }
   }
 
+  // #1029: feature_flags テーブルの実データも掃除する (DELETE テストは 409 で
+  // ブロックされるため testFlagKey の行が残ったままになる)
+  await supabaseAdmin.from('feature_flags').delete().eq('key', testFlagKey);
+
   await Promise.all([
     cleanupAuditLogs(superAdminUser.userId),
     cleanupAuditLogs(adminUser.userId),
@@ -191,6 +195,40 @@ describe('PATCH /api/super-admin/flags/[key]', () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it('404 for a flag key that does not exist in feature_flags', async () => {
+    const res = await apiCall(
+      'PATCH',
+      `/api/super-admin/flags/nonexistent_flag_${TS}`,
+      superAdminUser.jwt,
+      { enabled: true }
+    );
+    expect(res.status).toBe(404);
+    const body = res.body as { error: { code: string } };
+    expect(body.error.code).toBe('OP_FEATURE_FLAG_NOT_FOUND');
+  });
+
+  // #1029: PATCH で保存した enabled 状態が実際に永続化され、GET で読み返せることを検証する
+  // (修正前は PATCH が監査ログを INSERT するだけの no-op で、GET は enabled:true を
+  // ハードコードして返していた)
+  it('persists enabled=false — a subsequent GET reflects the PATCH', async () => {
+    const patchRes = await apiCall(
+      'PATCH',
+      `/api/super-admin/flags/${testFlagKey}`,
+      superAdminUser.jwt,
+      { enabled: false }
+    );
+    expect(patchRes.status).toBe(200);
+    const patchBody = patchRes.body as { data: { key: string; enabled: boolean } };
+    expect(patchBody.data.enabled).toBe(false);
+
+    const getRes = await apiCall('GET', '/api/super-admin/flags', superAdminUser.jwt);
+    expect(getRes.status).toBe(200);
+    const getBody = getRes.body as { data: Array<{ key: string; enabled: boolean }> };
+    const persisted = getBody.data.find((f) => f.key === testFlagKey);
+    expect(persisted).toBeDefined();
+    expect(persisted?.enabled).toBe(false);
+  });
 });
 
 // ─────────────────────────────────────────
@@ -228,14 +266,14 @@ describe('DELETE /api/super-admin/flags/[key]', () => {
   });
 
   it('200 for super_admin deleting an orphan flag key (not in any package)', async () => {
-    // The DELETE route checks feature_packages for the key — orphanFlagKey has never been inserted
+    // orphanFlagKey was never created via POST, so it has no row in feature_flags and is
+    // not referenced by any feature_packages.feature_flags array. The DELETE FROM feature_flags
+    // affects 0 rows (no error) — the route still returns 200 with deleted:true (idempotent).
     const res = await apiCall(
       'DELETE',
       `/api/super-admin/flags/${orphanFlagKey}`,
       superAdminUser.jwt
     );
-    // The route does NOT check if the flag exists; it just confirms it is not in any package
-    // and returns 200 with deleted:true
     expect(res.status).toBe(200);
     const body = res.body as { data: { key: string; deleted: boolean } };
     expect(body.data.key).toBe(orphanFlagKey);
