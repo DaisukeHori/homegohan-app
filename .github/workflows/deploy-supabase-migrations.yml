@@ -1,18 +1,75 @@
 name: Deploy Supabase Migrations
 
-# --- 運用モデル変更の明記 (#1064 Phase 1, round-2 監査 #5 対応) ---
-# drift guard のパーサー修正 (下記 "Detect migration drift" ステップ) により、
-# 今後このワークフローは「新規に追加された migration ファイル (=まだ本番台帳に
-# 存在しない local-only な version)」を常に正しくドリフトとして検出し、exit 1 で
-# 後続の "Apply migrations" ステップをブロックするようになる。
+# --- drift guard の意味論修正 (#1064 Phase 1 完了後の追加是正) ---
+# 旧版は local/remote の差分すべてを一律ドリフト扱いし exit 1 していたため、
+# 正常にマージされた新規 migration (=台帳の最大 version より新しい local-only
+# ファイル) までブロックされ、本番適用の自動経路が事実上存在しなかった。
 #
-# これは意図的な仕様変更である: Phase 1 以降、migration の本番適用は
-# `migration-apply.yml` (workflow_dispatch, dry-run + environment 承認ゲート付き)
-# 経由に一本化する。この push トリガ workflow による自動 apply は今後実質的に
-# 常にドリフト検出で停止するため、通常運用では発火しない (意図的な無効化)。
-# 本ワークフローの役割は「db lint + drift 検出によるガード/レポート」のみとなり、
-# 実際の本番適用ロールは持たない。
-# (Phase 2 の squash で drift-free な定常状態に到達した後、運用モデルを再検討する)
+# 現行の判定は「本物の事故のみ block」の意味論に変更している:
+#   - REMOTE_ONLY (remote にあり local ファイルが無い)
+#       → 常に block。リネーム/削除事故または台帳汚染の疑い。
+#   - LOCAL_ONLY のうち version が台帳(remote)の最大 version 以下
+#       → block。out-of-band で挿入された古い migration であり、通常の
+#         `db push` では適用されない (`--include-all` が必要) 危険な状態。
+#         復旧は `migration-repair.yml` / `migration-apply.yml` の手動経路に委ねる。
+#   - LOCAL_ONLY のうち version が台帳の最大 version より新しい
+#       → 許容 (正常な新規 migration)。後続の "Apply migrations" ステップが
+#         `supabase db push --linked` (--include-all 無し) で適用する。
+#   - 台帳(remote)が空の場合は比較対象が無いため、全 LOCAL_ONLY を新規として許容する。
+#
+# 詳細は "Detect migration drift" ステップのコメント/ログ出力を参照。
+#
+# --- round-2 是正 (#1064 レビュー指摘) ---
+# - workflow_dispatch は任意ブランチを選択して実行できてしまうため、apply 系の
+#   各ステップ (Detect drift / Dry-run / Apply / Verify migration list / diff
+#   summary) の if 条件に `github.ref == 'refs/heads/main'` を追加し、
+#   「未レビューの feature branch から手動実行して本番へ適用する」経路を
+#   構造的に閉じている。push トリガは元々 `branches: [main]` 限定のため無影響。
+# - ledger_max (台帳最大 version) は paired 行 (local/remote 両方に値がある行)
+#   の remote version のみから算出する。REMOTE_ONLY 行の version を含めると
+#   ログ上 LOCAL_ONLY 側にも無関係な "台帳以下" block 理由が付与され得るため。
+# - migration list コマンドが認証/ネットワーク障害等で失敗した際に fail-open
+#   (空出力 → 「remote 空 = 新規プロジェクト」と誤認して PASS) しないよう、
+#   `set -o pipefail` とパース結果 0 行時の sanity block を追加している。
+# - push と workflow_dispatch が短時間に重なった場合のレースを避けるため
+#   concurrency グループを追加している。
+#
+# --- round-3 是正 (#1064 レビュー指摘) ---
+# - concurrency group を `deploy-supabase-migrations-${{ github.ref }}` (ref 別)
+#   に変更した。旧版は group 名が固定文字列で pull_request run と共有しており、
+#   GitHub 仕様上「同一 group の pending run は常に1つ」のため、main push の
+#   deploy run が pending 中に PR run が到着すると cancel-in-progress:false でも
+#   pending 側 (deploy run) が silent cancel され、マージ済み migration が次の
+#   trigger まで未適用になる確率的経路があった。ref 別 group にすることで
+#   main push/workflow_dispatch(main) は互いに直列化されたまま、PR run
+#   (ref=refs/pull/<N>/merge) とは完全に分離される。
+# - "Detect migration drift" step の version 検証に `^[0-9]{14}$` の形式チェック
+#   を追加した。旧版は version を int() に変換して数値比較するのみで、
+#   supabase CLI 側の push 適用可否判定 (文字列ソート) との間に、桁数が異なる
+#   version (10桁や先頭ゼロ付き15桁等) で大小関係が食い違うケースが存在した
+#   (誤適用は発生しないが guard の PASS/CLI の拒否が矛盾し得た)。非14桁 version
+#   を MALFORMED として一律 block することでこの不一致を構造的に排除している。
+# - "Detect migration drift" step を pull_request イベントでも実行するように
+#   条件を拡張した。旧版は push / workflow_dispatch(main) でのみ実行しており、
+#   PR 時点では drift (out-of-band の古い挿入や REMOTE_ONLY 化) が検知されず、
+#   merge 後の main push まで検知が遅延していた。この step は read-only
+#   (`supabase migration list --linked` の取得のみで DB に書き込みしない) の
+#   ため、PR 実行に追加しても安全である。
+# - deploy job に `environment: production-db-autodeploy` を追加した。
+#   migration-apply.yml が使う `production-db` environment (Required reviewers
+#   設定済み) とは意図的に別名にしている。同名を流用すると通常の push トリガー
+#   による自動 deploy まで承認待ちになり、この workflow の目的である「自動
+#   適用経路の維持」と矛盾するため。現時点で `production-db-autodeploy` は
+#   repo Settings 未作成 (未作成の environment 名を参照した場合、GitHub は
+#   保護ルール無しの状態で自動生成する) のため、現状の挙動に変化は無い。
+#   このジョブは単一 job 構成で pull_request イベント時にも同じ job
+#   (drift 検知等の読み取り専用ステップ) を実行しているため、将来 Settings 側
+#   で Deployment branch policy を `main` 限定に設定すると PR 実行時にも job
+#   全体がブロックされ、上記の PR 時点 drift 検知が機能しなくなる点に注意
+#   (guard 用 job と deploy 用 job を分離すればこの制約は解消できるが、本件は
+#   レビューで Suggestion 扱い・pre-existing residual risk と判定されているため
+#   本 round では job 分離までは行わない。実効的な防御は引き続き `main`
+#   ブランチ保護ルール (レビュー必須化等、repo Settings) に委ねる)。
 on:
   push:
     branches:
@@ -26,6 +83,10 @@ on:
       - 'supabase/migrations/**'
   workflow_dispatch:
 
+concurrency:
+  group: deploy-supabase-migrations-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   SUPABASE_PROJECT_ID: flmeolcfutuwwbjmzyoz
@@ -33,6 +94,16 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # round-3 是正 (#1064 レビュー指摘: environment 付与による防御対称化)。
+    # 詳細な設計判断はファイル冒頭コメント「round-3 是正」を参照。要点:
+    # - migration-apply.yml の `production-db` (Required reviewers 設定済み) とは
+    #   別名。同名流用は自動 push deploy まで承認待ちにしてしまうため避ける。
+    # - 現時点で未作成の environment 名のため、現状の挙動に変化は無い
+    #   (保護ルール無しで自動生成される)。
+    # - 将来 branch policy を設定する場合は、この job が pull_request イベントの
+    #   read-only drift 検知も兼ねている点に注意すること (`main` 限定にすると
+    #   PR 実行がブロックされ得る)。
+    environment: production-db-autodeploy
 
     steps:
       - name: Checkout repository
@@ -67,8 +138,13 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Detect migration drift
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        # round-3 是正: pull_request イベントでも実行する(read-only のため安全)。
+        # merge 前に drift(REMOTE_ONLY 化・台帳より古い out-of-band 挿入・
+        # MALFORMED version)を検知できるようにする。
+        if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        shell: bash
         run: |
+          set -o pipefail
           npx --yes supabase@2.62.10 migration list --linked | tee /tmp/migration_list.txt
           python3 - <<'PY'
           import re
@@ -77,14 +153,24 @@ jobs:
           with open("/tmp/migration_list.txt", encoding="utf-8") as fh:
               lines = fh.readlines()
 
-          drift = []
+          # migration version の正規形式は 14桁のタイムスタンプ (YYYYMMDDHHMMSS)。
+          # 本 guard は version を int() に変換して数値比較するが、supabase CLI 側の
+          # push 適用可否判定は文字列(レキシコグラフィック)ソートで行われる。桁数が
+          # 異なる version (例: 10桁の "9999999999" や、先頭ゼロ付き15桁の
+          # "020260801000000") が混入すると、int 比較と文字列比較で大小関係が
+          # 食い違い得る(誤適用は発生しないが guard PASS と CLI 拒否が矛盾し
+          # "自動適用経路の不在" が再発し得る。#1064 round-2 レビュー指摘)。14桁
+          # 固定の数字列であれば int 比較と文字列比較は常に一致するため、非14桁
+          # version は下で MALFORMED として構造的に block する。
+          VERSION_RE = re.compile(r"^[0-9]{14}$")
+
+          # supabase CLI の実際の出力は先頭に空白パディングがあり、行頭/行末に
+          # "|" は付かない ` 20260101000000 | 20260101000000 | 2026-01-01 00:00:00 `
+          # 形式(表示用の余白付き `|` 区切り)。単純に "|" を含む行を列分割する
+          # 方式でパースする(#1064 実データ migration_list.txt で検証済み)。
+          rows = []
           for raw_line in lines:
               line = raw_line.rstrip("\n")
-              # supabase CLI の実際の出力は先頭に空白パディングがあり、行頭/行末に
-              # "|" は付かない ` 20260101000000 | 20260101000000 | 2026-01-01 00:00:00 `
-              # 形式(表示用の余白付き `|` 区切り)。旧パーサーは `line.startswith("|")`
-              # 前提で全行スキップ=偽陰性になっていたため、単純に "|" を含む行を列分割する
-              # 方式に変更する(#1064 実データ migration_list.txt で検証済み)。
               if "|" not in line:
                   continue
               cols = [c.strip() for c in line.split("|")]
@@ -97,30 +183,126 @@ jobs:
                   continue
               if local == "" and remote == "":
                   continue
-              # 片方のみ埋まっている行 = remote-only または local-only のドリフト
-              if (local == "") != (remote == ""):
-                  drift.append(line)
+              rows.append((local, remote))
 
-          if drift:
-              print("::error::Migration drift detected. See #1064.", file=sys.stderr)
-              for line in drift:
-                  print(line, file=sys.stderr)
+          # migration list コマンドが認証/ネットワーク障害等で失敗すると stdout が
+          # 空になり得る。`set -o pipefail` で大半は本ステップ自体が失敗するが、
+          # 万一 rows が1件もパースできなかった場合(=完全な空出力、または
+          # 壊れた出力)を「remote 空の新規プロジェクト」と誤認して fail-open で
+          # PASS しないよう明示的に block する。この workflow は
+          # SUPABASE_PROJECT_ID が既存の本番プロジェクトに固定されており、
+          # local migration ファイルも多数存在するため、正常時に rows が完全に
+          # 空になることはない(remote が本当にゼロ件でも local-only の行は
+          # 必ず出力される)。
+          if not rows:
+              print(
+                  "::error::migration list の出力を1行もパースできませんでした。"
+                  " list コマンドの取得失敗の疑いがあります(本物の drift とは別"
+                  " 原因)。ワークフローの生ログを確認してください。",
+                  file=sys.stderr,
+              )
               sys.exit(1)
+
+          malformed = sorted(
+              {v for local, remote in rows for v in (local, remote) if v and not VERSION_RE.match(v)}
+          )
+
+          # 台帳(remote)の最大 version。malformed な local/remote を含む行は比較の
+          # 基準として信用できないため除外する。ledger_max の算出対象は「local
+          # ファイルも remote 適用済みも両方 well-formed に確認できる」paired 行の
+          # remote version のみ(REMOTE_ONLY 行の version まで含めると、
+          # REMOTE_ONLY 単独が原因の block なのに LOCAL_ONLY 側にも無関係な
+          # "台帳以下" という block 理由が付与され、ログの診断精度が落ちるため。
+          # #1064 round-2 レビュー指摘で是正)。
+          remote_versions = [
+              int(remote)
+              for local, remote in rows
+              if local and remote and VERSION_RE.match(local) and VERSION_RE.match(remote)
+          ]
+          ledger_max = max(remote_versions) if remote_versions else None
+
+          remote_only = []       # remote にあり local ファイルが無い => 常に事故
+          local_only_new = []    # local のみ、台帳最大より新しい => 正常な新規
+          local_only_old = []    # local のみ、台帳最大以下 => out-of-band の古い挿入
+
+          for local, remote in rows:
+              if (local and not VERSION_RE.match(local)) or (remote and not VERSION_RE.match(remote)):
+                  continue  # malformed 行は上で別集計済み。誤分類を避けるためここでは対象外。
+              if local == "" and remote != "":
+                  remote_only.append(remote)
+              elif local != "" and remote == "":
+                  if ledger_max is None or int(local) > ledger_max:
+                      local_only_new.append(local)
+                  else:
+                      local_only_old.append(local)
+              # 両方埋まっている行(paired)はドリフトではないためスキップ
+
+          def fmt(versions):
+              return ", ".join(versions) if versions else "(なし)"
+
+          print("## migration drift 判定内訳")
+          print(
+              "台帳(remote, paired行由来)最大 version: "
+              + (str(ledger_max) if ledger_max is not None else "(paired行なし=新規プロジェクト、比較対象なし)")
+          )
+          print(f"MALFORMED (非14桁・block対象) ({len(malformed)}件): {fmt(malformed)}")
+          print(f"REMOTE_ONLY ({len(remote_only)}件): {fmt(remote_only)}")
+          print(f"LOCAL_ONLY 新規・許容 ({len(local_only_new)}件): {fmt(local_only_new)}")
+          print(f"LOCAL_ONLY 台帳以下・block対象 ({len(local_only_old)}件): {fmt(local_only_old)}")
+
+          block_reasons = []
+          if malformed:
+              block_reasons.append(
+                  f"MALFORMED version (14桁の YYYYMMDDHHMMSS 形式ではない) が {len(malformed)} 件"
+                  f"あります(int 比較と supabase CLI の文字列比較が食い違い得るため block します): {fmt(malformed)}"
+              )
+          if remote_only:
+              block_reasons.append(
+                  f"REMOTE_ONLY が {len(remote_only)} 件あります(remote に version があり local "
+                  f"ファイルが無い = リネーム/削除事故または台帳汚染の疑い): {fmt(remote_only)}"
+              )
+          if local_only_old:
+              block_reasons.append(
+                  f"LOCAL_ONLY のうち台帳最大 version ({ledger_max}) 以下が {len(local_only_old)} 件"
+                  f"あります(out-of-band の古い挿入。通常の db push では適用されず"
+                  f" --include-all が必要な危険な状態です): {fmt(local_only_old)}"
+              )
+
+          if block_reasons:
+              print("::error::Migration drift detected (本物の事故). See #1064.", file=sys.stderr)
+              for reason in block_reasons:
+                  print(f"::error::{reason}", file=sys.stderr)
+              sys.exit(1)
+
+          print("Drift guard: PASS (LOCAL_ONLY は台帳より新しい正常な新規 migration のみ)")
           PY
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
-      - name: Apply migrations
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      - name: Dry-run migrations (preview)
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         run: |
-          npx --yes supabase@2.62.10 db push --linked --include-all
+          npx --yes supabase@2.62.10 db push --linked --dry-run
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # --include-all は付けない: 通常の db push は台帳(remote)の最大 version より
+      # 新しい migration のみを適用するため、drift guard を通過した LOCAL_ONLY 新規
+      # だけが対象になる。--include-all を付けると台帳より古い out-of-band な
+      # migration まで強制適用されてしまい、drift guard の block 判定と矛盾する
+      # 経路になるため構造的に排除する。
+      - name: Apply migrations
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        run: |
+          npx --yes supabase@2.62.10 db push --linked
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Verify migration list
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         run: |
           npx --yes supabase@2.62.10 migration list --linked
         env:
@@ -155,7 +337,7 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file /tmp/db_diff_comment.txt
 
       - name: Report db diff to Step Summary (main push)
-        if: steps.db_diff.outputs.has_diff == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: steps.db_diff.outputs.has_diff == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
         env:
           DIFF_OUTPUT: ${{ steps.db_diff.outputs.diff_output }}
         run: |
