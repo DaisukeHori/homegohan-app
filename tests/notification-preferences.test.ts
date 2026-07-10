@@ -147,7 +147,7 @@ describe('PATCH /api/notification-preferences', () => {
     expect(res.status).toBe(400);
   });
 
-  it('row が存在しない場合は INSERT する', async () => {
+  it('row が存在しない場合は upsert で新規作成する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
     // upsert().select().single() → 新規作成された row
     mockSingle.mockResolvedValueOnce({
@@ -165,7 +165,7 @@ describe('PATCH /api/notification-preferences', () => {
     );
   });
 
-  it('row が存在する場合は UPDATE する', async () => {
+  it('row が存在する場合は upsert で更新する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
     // upsert().select().single() → 既存 row が更新された結果
     mockSingle.mockResolvedValueOnce({

@@ -31,6 +31,7 @@ const config = [
       "build/**",
       "next-env.d.ts",
       "homegohan-app/**",
+      ".worktrees/**",
     ],
   },
   {

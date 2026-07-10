@@ -265,22 +265,21 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
   it('未認証リクエストでは view_count を更新しない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
-    const updateFn = vi.fn();
     const selectChainDetail = {
       eq: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
     };
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue(selectChainDetail),
-      update: updateFn,
     });
 
     const res = await recipeGET(new Request('http://localhost/api/recipes/r1'), {
       params: { id: 'r1' },
     });
     expect(res.status).toBe(200);
-    // update が呼ばれていないこと
-    expect(updateFn).not.toHaveBeenCalled();
+    // #257: view_count 更新は increment_recipe_view_count RPC 経由。
+    // 未認証時は当該 RPC が呼ばれていないこと(update モックは実装に存在せず検証にならないため RPC を直接検証)。
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   it('認証済みリクエストでは view_count を更新する', async () => {
