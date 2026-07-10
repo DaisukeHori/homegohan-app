@@ -8,7 +8,8 @@ import { createClient } from "@/lib/supabase/client";
 import { todayLocal } from "@/lib/date-utils";
 import {
   Camera, Upload, X, ChevronDown, ChevronUp, Loader2,
-  CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity
+  CheckCircle2, AlertTriangle, Sparkles, ArrowLeft, Activity,
+  Heart, Scale, Droplet, Filter, Info
 } from 'lucide-react';
 
 const colors = {
@@ -108,6 +109,13 @@ export default function NewHealthCheckupPage() {
   const [saving, setSaving] = useState(false);
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  // #1055 UX3-10: OCR失敗を無告知にせず、confirm画面でバナー表示する
+  // #1055 (wave-3b): OCR API が 200 を返しても抽出項目が0件の場合は
+  // 「success」ではなく「empty」として扱い、偽の成功表示を避ける
+  const [ocrStatus, setOcrStatus] = useState<'idle' | 'success' | 'empty' | 'failed' | 'skipped'>('idle');
+  const [ocrFilledCount, setOcrFilledCount] = useState(0);
+  // #1055 UX3-11: upload/confirm から離脱する際、入力済みデータがあれば確認する
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   const supabase = createClient();
 
@@ -168,9 +176,7 @@ export default function NewHealthCheckupPage() {
         const ocrData = await ocrRes.json();
         const extracted = ocrData.extractedData ?? {};
 
-        // camelCase → snake_case マッピングで formData に反映
-        setFormData(prev => ({
-          ...prev,
+        const patch = {
           ...(extracted.checkupDate ? { checkup_date: extracted.checkupDate } : {}),
           ...(extracted.facilityName ? { facility_name: extracted.facilityName } : {}),
           ...(extracted.checkupType ? { checkup_type: extracted.checkupType } : {}),
@@ -193,17 +199,28 @@ export default function NewHealthCheckupPage() {
           ...(extracted.creatinine != null ? { creatinine: String(extracted.creatinine) } : {}),
           ...(extracted.egfr != null ? { egfr: String(extracted.egfr) } : {}),
           ...(extracted.uricAcid != null ? { uric_acid: String(extracted.uricAcid) } : {}),
-        }));
+        };
+
+        // camelCase → snake_case マッピングで formData に反映
+        setFormData(prev => ({ ...prev, ...patch }));
+        // #1055 UX3-10: OCR成功時は「N項目を自動入力」と分かるようにする
+        // #1055 (wave-3b): 抽出項目が0件なら「読み取れる項目がありませんでした」の
+        // 警告扱いにし、「0項目を自動入力しました」という偽の成功表示を出さない
+        const filledCount = Object.keys(patch).length;
+        setOcrFilledCount(filledCount);
+        setOcrStatus(filledCount === 0 ? 'empty' : 'success');
       } else {
-        // OCR 失敗は非致命的。手動入力で続行
+        // #1055 UX3-10: OCR失敗を無告知にせず、confirm画面でバナー表示する
         console.warn('OCR failed, proceeding to manual entry');
+        setOcrStatus('failed');
       }
 
       setStep('confirm');
 
     } catch (err: any) {
-      // OCR エラーは非致命的。手動入力で続行
+      // #1055 UX3-10: OCRエラーも無告知にせず、confirm画面でバナー表示する
       console.warn('OCR error:', err);
+      setOcrStatus('failed');
       setStep('confirm');
     } finally {
       setUploading(false);
@@ -212,7 +229,36 @@ export default function NewHealthCheckupPage() {
   };
 
   const handleSkipUpload = () => {
+    setOcrStatus('skipped');
     setStep('confirm');
+  };
+
+  // #1055 UX3-11: 画像選択済み・入力済みの状態があるかどうか
+  const hasUnsavedInput = () => {
+    if (imageFile) return true;
+    return (Object.keys(initialFormData) as (keyof FormData)[]).some((key) => {
+      if (key === 'checkup_date') return false; // 常に初期値が入っているため対象外
+      if (key === 'checkup_type') return formData.checkup_type !== initialFormData.checkup_type;
+      return !!formData[key];
+    });
+  };
+
+  // #1055 UX3-11: 健診確認ステップの ← が router.back() で入力・OCR結果を全損していた問題を修正。
+  // confirm は upload ステップに戻すだけにし、実際にページを離れる時だけ確認する。
+  const handleBack = () => {
+    if (step === 'confirm') {
+      setStep('upload');
+      return;
+    }
+    if (step === 'review') {
+      router.back();
+      return;
+    }
+    if (hasUnsavedInput()) {
+      setShowLeaveConfirm(true);
+      return;
+    }
+    router.back();
   };
 
   const handleSave = async () => {
@@ -349,7 +395,7 @@ export default function NewHealthCheckupPage() {
       {/* ヘッダー */}
       <div className="sticky top-0 z-10 px-4 py-4" style={{ backgroundColor: colors.bg }}>
         <div className="flex items-center gap-3">
-          <button onClick={() => router.back()}>
+          <button onClick={handleBack}>
             <ArrowLeft size={24} style={{ color: colors.text }} />
           </button>
           <h1 className="text-xl font-bold" style={{ color: colors.text }}>
@@ -371,6 +417,13 @@ export default function NewHealthCheckupPage() {
             <p className="text-sm" style={{ color: colors.textLight }}>
               健康診断の結果票を撮影またはPDFをアップロードすると、AIが自動で数値を読み取ります。
             </p>
+            {/* #1055 UX3-12: 撮影した画像は現状 Storage に保存されず image_url が常に null になるため、明示しておく */}
+            <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.purpleLight }}>
+              <Info size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.purple }} />
+              <p className="text-xs leading-relaxed" style={{ color: colors.purple }}>
+                撮影・アップロードした画像は数値の自動読み取りにのみ使用され、記録には保存されません。
+              </p>
+            </div>
 
             {/* 画像プレビュー or アップロードエリア */}
             {imagePreview === '__pdf__' ? (
@@ -499,6 +552,34 @@ export default function NewHealthCheckupPage() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-4"
           >
+            {/* #1055 UX3-10: OCR結果を無告知にしない */}
+            {ocrStatus === 'failed' && (
+              <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.warningLight }}>
+                <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.warning }} />
+                <p className="text-sm" style={{ color: colors.warning }}>
+                  ⚠ 自動読み取りできませんでした。内容を確認し、手動で入力してください。
+                </p>
+              </div>
+            )}
+            {/* #1055 (wave-3b): OCRは成功したが抽出できた項目が0件のケース。
+                「success」バナーで「0項目を自動入力しました」と表示するのは偽の成功表示なので分離する */}
+            {ocrStatus === 'empty' && (
+              <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.warningLight }}>
+                <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.warning }} />
+                <p className="text-sm" style={{ color: colors.warning }}>
+                  ⚠ 読み取れる項目がありませんでした。内容を確認し、手動で入力してください。
+                </p>
+              </div>
+            )}
+            {ocrStatus === 'success' && (
+              <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.successLight }}>
+                <CheckCircle2 size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.success }} />
+                <p className="text-sm" style={{ color: colors.success }}>
+                  {ocrFilledCount}項目を自動入力しました。内容を確認してください。
+                </p>
+              </div>
+            )}
+
             {/* 基本情報 */}
             <div className="p-4 rounded-xl space-y-3" style={{ backgroundColor: colors.card }}>
               <div className="flex items-center gap-2">
@@ -544,8 +625,8 @@ export default function NewHealthCheckupPage() {
               </div>
             </div>
 
-            {/* 血圧・代謝 */}
-            {renderSection('basic', '血圧・代謝', <Activity size={20} style={{ color: colors.accent }} />, (
+            {/* 血圧・代謝 (#1055 UX3-35: セクションごとに異なるアイコンにして見分けやすくする) */}
+            {renderSection('basic', '血圧・代謝', <Heart size={20} style={{ color: colors.accent }} />, (
               <>
                 {renderInput('blood_pressure_systolic', '収縮期血圧', 'mmHg', '120')}
                 {renderInput('blood_pressure_diastolic', '拡張期血圧', 'mmHg', '80')}
@@ -555,7 +636,7 @@ export default function NewHealthCheckupPage() {
             ))}
 
             {/* 身体測定 */}
-            {renderSection('blood', '身体測定', <Camera size={20} style={{ color: colors.accent }} />, (
+            {renderSection('blood', '身体測定', <Scale size={20} style={{ color: colors.accent }} />, (
               <>
                 {renderInput('height', '身長', 'cm', '170')}
                 {renderInput('weight', '体重', 'kg', '65')}
@@ -565,7 +646,7 @@ export default function NewHealthCheckupPage() {
             ))}
 
             {/* 脂質 */}
-            {renderSection('lipid', '脂質', <Activity size={20} style={{ color: colors.accent }} />, (
+            {renderSection('lipid', '脂質', <Droplet size={20} style={{ color: colors.accent }} />, (
               <>
                 {renderInput('total_cholesterol', '総コレステロール', 'mg/dL', '200')}
                 {renderInput('ldl_cholesterol', 'LDL', 'mg/dL', '120')}
@@ -584,7 +665,7 @@ export default function NewHealthCheckupPage() {
             ))}
 
             {/* 腎機能 */}
-            {renderSection('kidney', '腎機能・尿酸', <Activity size={20} style={{ color: colors.accent }} />, (
+            {renderSection('kidney', '腎機能・尿酸', <Filter size={20} style={{ color: colors.accent }} />, (
               <>
                 {renderInput('creatinine', 'クレアチニン', 'mg/dL', '0.8')}
                 {renderInput('egfr', 'eGFR', '', '90')}
@@ -714,6 +795,48 @@ export default function NewHealthCheckupPage() {
           </motion.div>
         )}
       </div>
+
+      {/* #1055 UX3-11: 入力・OCR結果があるまま離脱しようとした時の確認モーダル */}
+      <AnimatePresence>
+        {showLeaveConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center px-4"
+            onClick={() => setShowLeaveConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-bold text-lg mb-2" style={{ color: colors.text }}>入力内容を破棄しますか？</h3>
+              <p className="text-sm mb-6" style={{ color: colors.textMuted }}>
+                ここまでの入力・読み取り結果は保存されていません。このまま離れると失われます。
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowLeaveConfirm(false)}
+                  className="flex-1 py-3 rounded-xl font-medium"
+                  style={{ backgroundColor: colors.border, color: colors.textLight }}
+                >
+                  入力に戻る
+                </button>
+                <button
+                  onClick={() => router.back()}
+                  className="flex-1 py-3 rounded-xl font-bold text-white"
+                  style={{ backgroundColor: colors.error }}
+                >
+                  破棄して戻る
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

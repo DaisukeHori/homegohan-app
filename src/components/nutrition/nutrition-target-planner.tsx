@@ -5,6 +5,9 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { deriveMacroTargets, estimateGoalProjection, type MacroRatios } from "@/lib/nutrition-target-planner";
+import {
+  MAX_MANUAL_CALORIES, MIN_MANUAL_CALORIES, getBmrWarning, getManualCalorieError,
+} from "@/lib/nutrition-target-validation";
 import type { CalculationBasis } from "@homegohan/core";
 
 type PlannerMode = "default" | "onboarding";
@@ -147,6 +150,17 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
     ? targets?.dailyCalories ?? 0
     : manualCaloriesNumber;
 
+  // #1055 UX3-19: 手動カロリー調整に範囲検証が無く 500kcal 等でも保存できてしまっていたための対応
+  const manualCalorieError = useMemo(() => {
+    if (autoCalculate) return null;
+    return getManualCalorieError(manualCalories, manualCaloriesNumber);
+  }, [autoCalculate, manualCalories, manualCaloriesNumber]);
+
+  const bmrWarning = useMemo(() => {
+    if (autoCalculate || manualCalorieError) return null;
+    return getBmrWarning(manualCaloriesNumber, targets?.calculationBasis?.energy?.bmr?.result_kcal);
+  }, [autoCalculate, manualCalorieError, manualCaloriesNumber, targets?.calculationBasis?.energy?.bmr?.result_kcal]);
+
   const previewMacros = useMemo(() => {
     if (!targets) return null;
     return deriveMacroTargets({
@@ -169,6 +183,8 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
 
   const handleSave = async () => {
     if (!targets || !previewMacros) return;
+    // #1055 UX3-19: 手動カロリー調整の範囲外保存を拒否する
+    if (manualCalorieError) return;
 
     setSaving(true);
     setSavedMessage(null);
@@ -382,13 +398,20 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
               <span className="text-sm font-medium text-gray-700">目標カロリー (kcal)</span>
               <Input
                 type="number"
-                min="1000"
-                max="5000"
+                min={MIN_MANUAL_CALORIES}
+                max={MAX_MANUAL_CALORIES}
                 step="1"
                 value={autoCalculate ? String(targets.dailyCalories) : manualCalories}
                 onChange={(event) => setManualCalories(event.target.value)}
                 disabled={autoCalculate}
               />
+              {/* #1055 UX3-19: HTML min/max だけでは保存を防げていなかったため、明示的なエラー・警告を表示する */}
+              {!autoCalculate && manualCalorieError && (
+                <p className="text-xs font-medium text-red-600">{manualCalorieError}</p>
+              )}
+              {!autoCalculate && !manualCalorieError && bmrWarning && (
+                <p className="text-xs font-medium text-amber-600">{bmrWarning}</p>
+              )}
             </label>
           </div>
 
@@ -414,7 +437,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <Button onClick={() => void handleSave()} disabled={saving}>
+            <Button onClick={() => void handleSave()} disabled={saving || !!manualCalorieError}>
               {saving ? "保存中..." : autoCalculate ? "自動計算に戻す" : "この設定を保存する"}
             </Button>
             <p className="text-xs text-gray-500">

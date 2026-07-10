@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  Flame, Award, ChevronRight, Activity, CheckCircle2, Calendar,
+  Flame, Award, ChevronRight, Activity, CheckCircle2, Calendar, X,
 } from "lucide-react";
 
 const colors = {
@@ -41,9 +41,17 @@ interface StreakData {
 
 const BADGE_MILESTONES = [7, 14, 30, 60, 100];
 
-function BadgeCard({ days, achieved }: { days: number; achieved: boolean }) {
+// #1055 UX3-25: 未獲得の条件がホバー依存にならないよう、タップで常に見えるモーダルにする
+function getBadgeCondition(days: number): string {
+  return `${days}日連続で記録を続けると獲得できます`;
+}
+
+function BadgeCard({ days, achieved, onSelect }: { days: number; achieved: boolean; onSelect: () => void }) {
   return (
-    <motion.div
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.95 }}
+      onClick={onSelect}
       className="p-3 rounded-xl flex flex-col items-center gap-1"
       style={{
         backgroundColor: achieved ? colors.accentLight : colors.bg,
@@ -59,7 +67,7 @@ function BadgeCard({ days, achieved }: { days: number; achieved: boolean }) {
       ) : (
         <p className="text-xs" style={{ color: colors.textMuted }}>未達成</p>
       )}
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -70,6 +78,8 @@ export default function StreaksPage() {
   const [weeklyRecords, setWeeklyRecords] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // #1055 UX3-25: タップでバッジ詳細 (アイコン+名前+条件) を確認できるようにする
+  const [selectedBadgeDays, setSelectedBadgeDays] = useState<number | null>(null);
 
   const fetchStreak = useCallback(async () => {
     setLoading(true);
@@ -225,6 +235,7 @@ export default function StreaksPage() {
               key={days}
               days={days}
               achieved={(streak?.achieved_badges ?? []).includes(`${days}_days`)}
+              onSelect={() => setSelectedBadgeDays(days)}
             />
           ))}
         </div>
@@ -251,6 +262,65 @@ export default function StreaksPage() {
           </motion.div>
         </Link>
       </div>
+
+      {/* #1055 UX3-25: バッジ詳細モーダル (アイコン+名前+条件をタップで確認できるようにする) */}
+      <AnimatePresence>
+        {selectedBadgeDays !== null && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center px-4"
+            onClick={() => setSelectedBadgeDays(null)}
+          >
+            {(() => {
+              const achieved = (streak?.achieved_badges ?? []).includes(`${selectedBadgeDays}_days`);
+              return (
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  className="relative bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl text-center"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => setSelectedBadgeDays(null)}
+                    className="absolute top-4 right-4"
+                  >
+                    <X size={20} style={{ color: colors.textMuted }} />
+                  </button>
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3"
+                    style={{ backgroundColor: achieved ? colors.accentLight : colors.bg, border: `2px solid ${achieved ? colors.accent : colors.border}` }}
+                  >
+                    <Award size={32} style={{ color: achieved ? colors.accent : colors.textMuted }} />
+                  </div>
+                  <h3 className="font-bold text-lg mb-1" style={{ color: colors.text }}>
+                    {selectedBadgeDays}日連続記録バッジ
+                  </h3>
+                  <p className="text-sm mb-4" style={{ color: colors.textMuted }}>
+                    {getBadgeCondition(selectedBadgeDays)}
+                  </p>
+                  {achieved ? (
+                    <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl" style={{ backgroundColor: colors.successLight }}>
+                      <CheckCircle2 size={18} style={{ color: colors.success }} />
+                      <span className="text-sm font-medium" style={{ color: colors.success }}>達成しました！</span>
+                    </div>
+                  ) : (
+                    <div className="py-2 px-4 rounded-xl" style={{ backgroundColor: colors.bg }}>
+                      <span className="text-sm font-medium" style={{ color: colors.textLight }}>
+                        {streak && streak.current_streak > 0
+                          ? `現在 ${streak.current_streak}日目 (あと${Math.max(0, selectedBadgeDays - streak.current_streak)}日)`
+                          : '未達成'}
+                      </span>
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })()}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

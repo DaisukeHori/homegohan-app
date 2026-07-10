@@ -7,6 +7,10 @@ import {
   Droplet, ChevronRight, Activity, AlertTriangle, CheckCircle2,
   Calendar, TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
+import {
+  BLOOD_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex,
+  type BiologicalSex,
+} from "@/lib/health-blood-test-reference";
 
 const colors = {
   bg: "#FAF9F7",
@@ -48,20 +52,12 @@ interface BloodTestResult {
   uric_acid?: number;
 }
 
-const METRICS: { key: keyof BloodTestResult; label: string; unit: string; normalRange?: string }[] = [
-  { key: "hemoglobin",       label: "ヘモグロビン",       unit: "g/dL",  normalRange: "12.0–16.0" },
-  { key: "hba1c",            label: "HbA1c",             unit: "%",     normalRange: "4.6–6.2" },
-  { key: "fasting_glucose",  label: "空腹時血糖",         unit: "mg/dL", normalRange: "70–109" },
-  { key: "total_cholesterol",label: "総コレステロール",   unit: "mg/dL", normalRange: "120–219" },
-  { key: "ldl_cholesterol",  label: "LDLコレステロール",  unit: "mg/dL", normalRange: "60–119" },
-  { key: "hdl_cholesterol",  label: "HDLコレステロール",  unit: "mg/dL", normalRange: "40–96" },
-  { key: "triglycerides",    label: "中性脂肪",           unit: "mg/dL", normalRange: "30–149" },
-  { key: "ast",              label: "AST (GOT)",          unit: "U/L",   normalRange: "10–40" },
-  { key: "alt",              label: "ALT (GPT)",          unit: "U/L",   normalRange: "5–45" },
-  { key: "gamma_gtp",        label: "γ-GTP",             unit: "U/L",   normalRange: "0–80" },
-  { key: "creatinine",       label: "クレアチニン",       unit: "mg/dL", normalRange: "0.46–1.04" },
-  { key: "egfr",             label: "eGFR",               unit: "mL/min/1.73m²" },
-  { key: "uric_acid",        label: "尿酸",               unit: "mg/dL", normalRange: "2.1–7.0" },
+// #1055 UX3-24: METRICS のキー一覧は BLOOD_METRIC_DEFS (性別依存・checkups詳細画面と共通) から生成する
+type NumericMetricKey = Exclude<keyof BloodTestResult, 'id' | 'test_date' | 'facility_name'>;
+const METRIC_KEYS: NumericMetricKey[] = [
+  "hemoglobin", "hba1c", "fasting_glucose",
+  "total_cholesterol", "ldl_cholesterol", "hdl_cholesterol", "triglycerides",
+  "ast", "alt", "gamma_gtp", "creatinine", "egfr", "uric_acid",
 ];
 
 function formatDate(dateStr: string): string {
@@ -74,6 +70,8 @@ export default function BloodTestsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // #1055 UX3-24: 基準値をプロフィールの性別で分岐させる
+  const [sex, setSex] = useState<BiologicalSex>(null);
 
   const fetchResults = useCallback(async () => {
     setLoading(true);
@@ -93,6 +91,20 @@ export default function BloodTestsPage() {
   useEffect(() => {
     void fetchResults();
   }, [fetchResults]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/profile", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          setSex(data?.gender ?? null);
+        }
+      } catch (e) {
+        console.error("Failed to fetch profile for reference ranges:", e);
+      }
+    })();
+  }, []);
 
   if (loading) {
     return (
@@ -119,6 +131,13 @@ export default function BloodTestsPage() {
         <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
           過去の血液検査データを一覧で確認できます
         </p>
+        {sex !== 'male' && sex !== 'female' && (
+          // #1055 (wave-3b): 性別未設定時は男女どちらでも確定的に異常と言える場合のみ
+          // フラグする一般基準であることを明示する
+          <p className="text-xs mt-1" style={{ color: colors.textMuted }}>
+            ※ 性別未設定のため一般基準で判定しています
+          </p>
+        )}
       </div>
 
       {error && (
@@ -150,7 +169,7 @@ export default function BloodTestsPage() {
           {results.map((result, idx) => {
             const isOpen = expanded === result.id;
             // 記録済み項目数
-            const filledCount = METRICS.filter((m) => result[m.key] != null).length;
+            const filledCount = METRIC_KEYS.filter((key) => result[key] != null).length;
 
             return (
               <motion.div
@@ -200,21 +219,36 @@ export default function BloodTestsPage() {
                   >
                     <div className="border-t pt-3" style={{ borderColor: colors.border }}>
                       <div className="grid grid-cols-2 gap-2">
-                        {METRICS.map((m) => {
-                          const value = result[m.key];
+                        {/* #1055 UX3-24: checkups詳細画面と同じ基準値モジュールで異常値をハイライトする (従来は範囲表示のみで判定が無かった) */}
+                        {METRIC_KEYS.map((key) => {
+                          const value = result[key];
                           if (value == null) return null;
+                          const def = BLOOD_METRIC_DEFS[key];
+                          const status = evaluateStatus(key, value, sex);
+                          const isAbnormal = status === "high" || status === "low";
+                          const rangeText = formatRangeText(getRangeForSex(key, sex));
                           return (
-                            <div key={m.key} className="p-3 rounded-xl" style={{ backgroundColor: colors.bg }}>
-                              <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{m.label}</p>
-                              <p className="font-bold text-base" style={{ color: colors.text }}>
-                                {String(value)}
-                                <span className="text-xs font-normal ml-1" style={{ color: colors.textMuted }}>{m.unit}</span>
-                              </p>
-                              {m.normalRange && (
-                                <p className="text-xs mt-0.5" style={{ color: colors.textMuted }}>
-                                  基準: {m.normalRange}
+                            <div
+                              key={key}
+                              className="p-3 rounded-xl"
+                              style={{ backgroundColor: isAbnormal ? colors.errorLight : colors.bg }}
+                            >
+                              <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{def.label}</p>
+                              <div className="flex items-center gap-1.5">
+                                <p
+                                  className="font-bold text-base"
+                                  style={{ color: isAbnormal ? colors.error : colors.text }}
+                                >
+                                  {String(value)}
+                                  <span className="text-xs font-normal ml-1" style={{ color: colors.textMuted }}>{def.unit}</span>
                                 </p>
-                              )}
+                                {isAbnormal && (
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.error }} />
+                                )}
+                              </div>
+                              <p className="text-xs mt-0.5" style={{ color: colors.textMuted }}>
+                                基準: {rangeText}
+                              </p>
                             </div>
                           );
                         })}

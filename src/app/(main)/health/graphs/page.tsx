@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { formatLocalDate } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
@@ -148,15 +149,16 @@ export default function HealthGraphsPage() {
   }, [fetchData]);
 
   // グラフデータを生成
+  // #1055 UX3-13/14: 血圧は収縮期のみ描画されていたため、拡張期 (value2) も持たせて2系列描画する
   const getGraphData = (): {
-    data: { date: string; value: number | null; fromCheckup?: boolean }[];
+    data: { date: string; value: number | null; value2?: number | null; fromCheckup?: boolean }[];
     min: number | null;
     max: number | null;
     avg: number | null;
   } => {
     if (records.length === 0) return { data: [], min: null, max: null, avg: null };
 
-    let values: { date: string; value: number | null; fromCheckup?: boolean }[] = [];
+    let values: { date: string; value: number | null; value2?: number | null; fromCheckup?: boolean }[] = [];
 
     // 期間内の全日付を生成
     const days = period === 'week' ? 7 : period === 'month' ? 30 : period === '3months' ? 90 : 365;
@@ -169,6 +171,7 @@ export default function HealthGraphsPage() {
       const record = records.find(r => r.record_date === dateStr);
 
       let value: number | null = null;
+      let value2: number | null = null;
       if (record) {
         switch (metric) {
           case 'weight':
@@ -179,27 +182,39 @@ export default function HealthGraphsPage() {
             break;
           case 'bp':
             value = record.systolic_bp || null;
+            value2 = record.diastolic_bp || null;
             break;
           case 'sleep':
             value = record.sleep_hours || null;
             break;
         }
       }
-      values.push({ date: dateStr, value, fromCheckup: record?.fromCheckup });
+      values.push({ date: dateStr, value, value2, fromCheckup: record?.fromCheckup });
     }
 
     const validValues = values.filter(v => v.value !== null).map(v => v.value as number);
-    if (validValues.length === 0) return { data: values, min: null, max: null, avg: null };
+    const validValues2 = metric === 'bp' ? values.filter(v => v.value2 != null).map(v => v.value2 as number) : [];
+    const allValues = [...validValues, ...validValues2];
+    if (allValues.length === 0) return { data: values, min: null, max: null, avg: null };
 
-    const min = Math.min(...validValues);
-    const max = Math.max(...validValues);
-    const avg = validValues.reduce((a, b) => a + b, 0) / validValues.length;
+    const min = Math.min(...allValues);
+    const max = Math.max(...allValues);
+    // 平均は主系列 (体重/体脂肪率/収縮期血圧/睡眠時間) のみで算出する
+    const avg = validValues.length > 0
+      ? validValues.reduce((a, b) => a + b, 0) / validValues.length
+      : null;
 
     return { data: values, min, max, avg };
   };
 
   const { data: graphData, min, max, avg } = getGraphData();
   const formatStat = (v: number | null) => (v === null ? '-' : v.toFixed(1));
+
+  // #1055 (wave-3b): 血圧は最小=拡張期/最大=収縮期/平均=収縮期の系列混在のまま
+  // 無ラベルで表示されていたため、どの系列の統計かを明示する
+  const statLabels = metric === 'bp'
+    ? { min: '最小（拡張期）', avg: '平均（収縮期）', max: '最大（収縮期）' }
+    : { min: '最小', avg: '平均', max: '最大' };
 
   // 変化を計算
   const getChange = () => {
@@ -242,6 +257,20 @@ export default function HealthGraphsPage() {
     const validPoints = points.filter(p => p.y >= 0) as { x: number; y: number; value: number | null; fromCheckup?: boolean }[];
     const pathD = validPoints.length > 1
       ? `M ${validPoints.map(p => `${p.x},${p.y}`).join(' L ')}`
+      : '';
+
+    // #1055 UX3-13/14: 血圧は拡張期 (value2) も同じスケールで第2系列として描画する
+    const points2 = metric === 'bp'
+      ? graphData.map((d, i) => ({
+          x: padding.left + (i / (graphData.length - 1)) * graphWidth,
+          y: d.value2 != null
+            ? padding.top + graphHeight - ((d.value2 - yMin) / (yMax - yMin)) * graphHeight
+            : -1,
+        }))
+      : [];
+    const validPoints2 = points2.filter(p => p.y >= 0);
+    const pathD2 = validPoints2.length > 1
+      ? `M ${validPoints2.map(p => `${p.x},${p.y}`).join(' L ')}`
       : '';
 
     // 目標ラインのY座標
@@ -287,7 +316,7 @@ export default function HealthGraphsPage() {
           </>
         )}
 
-        {/* グラフ線 */}
+        {/* グラフ線 (収縮期血圧 or 体重/体脂肪率/睡眠) */}
         <path
           d={pathD}
           fill="none"
@@ -296,6 +325,19 @@ export default function HealthGraphsPage() {
           strokeLinecap="round"
           strokeLinejoin="round"
         />
+
+        {/* 拡張期血圧 (血圧選択時のみ第2系列として描画) */}
+        {metric === 'bp' && (
+          <path
+            d={pathD2}
+            fill="none"
+            stroke={colors.blue}
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeDasharray="5,3"
+          />
+        )}
 
         {/* データポイント (健診由来は菱形で区別) */}
         {validPoints.map((p, i) =>
@@ -320,12 +362,25 @@ export default function HealthGraphsPage() {
           )
         )}
 
-        {/* Y軸ラベル */}
+        {/* 拡張期血圧のデータポイント */}
+        {metric === 'bp' && validPoints2.map((p, i) => (
+          <circle
+            key={`d-${i}`}
+            cx={p.x}
+            cy={p.y}
+            r={3.5}
+            fill={colors.card}
+            stroke={colors.blue}
+            strokeWidth={2}
+          />
+        ))}
+
+        {/* Y軸ラベル (単位付き) */}
         <text x={padding.left - 5} y={padding.top + 5} fontSize={10} fill={colors.textMuted} textAnchor="end">
-          {yMax.toFixed(1)}
+          {yMax.toFixed(1)}{currentMetric.unit}
         </text>
         <text x={padding.left - 5} y={padding.top + graphHeight} fontSize={10} fill={colors.textMuted} textAnchor="end">
-          {yMin.toFixed(1)}
+          {yMin.toFixed(1)}{currentMetric.unit}
         </text>
 
         {/* X軸ラベル */}
@@ -416,7 +471,8 @@ export default function HealthGraphsPage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-sm" style={{ color: colors.textMuted }}>
-                {currentMetric.label}の推移
+                {/* #1055 UX3-13/14: 血圧は収縮期のみのラベルにせず両方を明示する */}
+                {metric === 'bp' ? '血圧(収縮期/拡張期)の推移' : `${currentMetric.label}の推移`}
               </p>
               <div className="flex items-baseline gap-2">
                 <span className="text-3xl font-bold" style={{ color: colors.text }}>
@@ -424,6 +480,9 @@ export default function HealthGraphsPage() {
                 </span>
                 <span className="text-sm" style={{ color: colors.textMuted }}>
                   {currentMetric.unit}
+                  {metric === 'bp' && (
+                    <> / {graphData.filter(d => d.value2 != null).slice(-1)[0]?.value2?.toFixed(1) ?? '-'} {currentMetric.unit}</>
+                  )}
                 </span>
               </div>
             </div>
@@ -449,6 +508,20 @@ export default function HealthGraphsPage() {
             )}
           </div>
 
+          {/* #1055 UX3-13/14: 血圧選択時は収縮期/拡張期の凡例を表示する */}
+          {metric === 'bp' && (
+            <div className="flex items-center gap-4 mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-0.5 rounded-full" style={{ backgroundColor: colors.accent }} />
+                <span className="text-xs" style={{ color: colors.textLight }}>収縮期</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-0.5 rounded-full border-t-2 border-dashed" style={{ borderColor: colors.blue }} />
+                <span className="text-xs" style={{ color: colors.textLight }}>拡張期</span>
+              </div>
+            </div>
+          )}
+
           {/* グラフ */}
           <div className="h-48">
             {loading ? (
@@ -458,10 +531,18 @@ export default function HealthGraphsPage() {
             ) : graphData.filter(d => d.value !== null).length > 0 ? (
               renderGraph()
             ) : (
-              <div className="h-full flex items-center justify-center">
+              // #1055 UX3-36: 空状態に次アクションが無かったため、記録への導線を追加
+              <div className="h-full flex flex-col items-center justify-center gap-3">
                 <p className="text-sm" style={{ color: colors.textMuted }}>
                   データがありません
                 </p>
+                <Link
+                  href="/health/record"
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-white"
+                  style={{ backgroundColor: colors.accent }}
+                >
+                  今日の記録をつける
+                </Link>
               </div>
             )}
           </div>
@@ -475,7 +556,7 @@ export default function HealthGraphsPage() {
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
-            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>最小</p>
+            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{statLabels.min}</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
               {formatStat(min)}
             </p>
@@ -484,7 +565,7 @@ export default function HealthGraphsPage() {
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
-            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>平均</p>
+            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{statLabels.avg}</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
               {formatStat(avg)}
             </p>
@@ -493,7 +574,7 @@ export default function HealthGraphsPage() {
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
-            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>最大</p>
+            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{statLabels.max}</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
               {formatStat(max)}
             </p>

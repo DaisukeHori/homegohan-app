@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Bell, BellOff, Clock, Moon, Smile, Brain,
   Trophy, Zap, Heart, Save, ChevronRight, Calendar
@@ -58,23 +58,32 @@ interface Preferences {
   vacation_until: string | null;
 }
 
+const DEFAULT_PREFERENCES: Preferences = {
+  enabled: true,
+  quiet_hours_start: '22:00',
+  quiet_hours_end: '07:00',
+  record_mode: 'standard',
+  personality_type: 'positive',
+  morning_reminder_enabled: true,
+  morning_reminder_time: '07:30',
+  evening_reminder_enabled: false,
+  evening_reminder_time: '21:00',
+  vacation_mode: false,
+  vacation_until: null,
+};
+
 export default function HealthSettingsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [preferences, setPreferences] = useState<Preferences>({
-    enabled: true,
-    quiet_hours_start: '22:00',
-    quiet_hours_end: '07:00',
-    record_mode: 'standard',
-    personality_type: 'positive',
-    morning_reminder_enabled: true,
-    morning_reminder_time: '07:30',
-    evening_reminder_enabled: false,
-    evening_reminder_time: '21:00',
-    vacation_mode: false,
-    vacation_until: null,
-  });
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  // #1055 UX3-26: 保存成功が無言 back になっていた・戻るで未保存破棄されていた問題への対応
+  const [initialPreferences, setInitialPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
+  const isDirty = JSON.stringify(preferences) !== JSON.stringify(initialPreferences);
 
   useEffect(() => {
     fetchPreferences();
@@ -88,6 +97,7 @@ export default function HealthSettingsPage() {
         const data = await res.json();
         if (data.preferences) {
           setPreferences(data.preferences);
+          setInitialPreferences(data.preferences);
         }
       }
     } catch (error) {
@@ -98,6 +108,8 @@ export default function HealthSettingsPage() {
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
+    setSaveMessage(null);
     try {
       const res = await fetch('/api/health/notifications/preferences', {
         method: 'PUT',
@@ -106,12 +118,26 @@ export default function HealthSettingsPage() {
       });
 
       if (res.ok) {
-        router.back();
+        // #1055 UX3-26: 保存成功を無言で back せず、メッセージを見せてから戻る
+        setInitialPreferences(preferences);
+        setSaveMessage('設定を保存しました');
+        window.setTimeout(() => router.back(), 900);
+      } else {
+        setSaveError('保存に失敗しました。時間をおいて再度お試しください。');
       }
     } catch (error) {
       console.error('Failed to save preferences:', error);
+      setSaveError('保存に失敗しました。時間をおいて再度お試しください。');
     }
     setSaving(false);
+  };
+
+  const handleBackClick = () => {
+    if (isDirty) {
+      setShowLeaveConfirm(true);
+    } else {
+      router.back();
+    }
   };
 
   if (loading) {
@@ -127,7 +153,7 @@ export default function HealthSettingsPage() {
       {/* ヘッダー */}
       <div className="sticky top-0 z-10 px-4 py-4 flex items-center justify-between" style={{ backgroundColor: colors.bg }}>
         <div className="flex items-center">
-          <button onClick={() => router.back()} className="p-2 -ml-2">
+          <button onClick={handleBackClick} className="p-2 -ml-2">
             <ArrowLeft size={24} style={{ color: colors.text }} />
           </button>
           <h1 className="font-bold ml-2" style={{ color: colors.text }}>記録設定</h1>
@@ -135,13 +161,28 @@ export default function HealthSettingsPage() {
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={handleSave}
-          disabled={saving}
-          className="px-4 py-2 rounded-lg font-medium text-white"
+          disabled={saving || !isDirty}
+          className="px-4 py-2 rounded-lg font-medium text-white disabled:opacity-50"
           style={{ backgroundColor: colors.accent }}
         >
           {saving ? '保存中...' : '保存'}
         </motion.button>
       </div>
+
+      {/* #1055 UX3-26: 保存結果を無言にしないためのメッセージ */}
+      {(saveMessage || saveError) && (
+        <div className="px-4 mb-2">
+          <div
+            className="p-3 rounded-lg text-sm"
+            style={{
+              backgroundColor: saveMessage ? colors.successLight : colors.warningLight,
+              color: saveMessage ? colors.success : colors.warning,
+            }}
+          >
+            {saveMessage ?? saveError}
+          </div>
+        </div>
+      )}
 
       {/* 記録モード */}
       <div className="px-4 mb-6">
@@ -408,6 +449,48 @@ export default function HealthSettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* #1055 UX3-26: 未保存の変更があるまま戻ろうとした時の確認モーダル */}
+      <AnimatePresence>
+        {showLeaveConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center px-4"
+            onClick={() => setShowLeaveConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-bold text-lg mb-2" style={{ color: colors.text }}>変更を破棄しますか？</h3>
+              <p className="text-sm mb-6" style={{ color: colors.textMuted }}>
+                保存していない変更があります。このまま戻ると変更内容は失われます。
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowLeaveConfirm(false)}
+                  className="flex-1 py-3 rounded-xl font-medium"
+                  style={{ backgroundColor: colors.border, color: colors.textLight }}
+                >
+                  編集に戻る
+                </button>
+                <button
+                  onClick={() => router.back()}
+                  className="flex-1 py-3 rounded-xl font-bold text-white"
+                  style={{ backgroundColor: colors.accent }}
+                >
+                  破棄して戻る
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

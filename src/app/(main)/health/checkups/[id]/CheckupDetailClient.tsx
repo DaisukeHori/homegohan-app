@@ -8,6 +8,10 @@ import {
   ArrowLeft, Trash2, Activity, Heart, Droplet, AlertTriangle,
   CheckCircle2, Sparkles, Calendar, MapPin, Loader2
 } from 'lucide-react';
+import {
+  BLOOD_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex,
+  type BiologicalSex, type MetricStatus,
+} from '@/lib/health-blood-test-reference';
 
 const colors = {
   bg: '#FAF9F7',
@@ -64,23 +68,7 @@ interface HealthCheckup {
   };
 }
 
-// 基準値の定義
-const referenceValues: Record<string, { label: string; unit: string; normal: string; low?: number; high?: number }> = {
-  blood_pressure_systolic: { label: '収縮期血圧', unit: 'mmHg', normal: '<130', high: 130 },
-  blood_pressure_diastolic: { label: '拡張期血圧', unit: 'mmHg', normal: '<85', high: 85 },
-  hba1c: { label: 'HbA1c', unit: '%', normal: '<5.6', high: 5.6 },
-  fasting_glucose: { label: '空腹時血糖', unit: 'mg/dL', normal: '<100', high: 100 },
-  total_cholesterol: { label: '総コレステロール', unit: 'mg/dL', normal: '<220', high: 220 },
-  ldl_cholesterol: { label: 'LDL', unit: 'mg/dL', normal: '<140', high: 140 },
-  hdl_cholesterol: { label: 'HDL', unit: 'mg/dL', normal: '≥40', low: 40 },
-  triglycerides: { label: '中性脂肪', unit: 'mg/dL', normal: '<150', high: 150 },
-  ast: { label: 'AST(GOT)', unit: 'U/L', normal: '≤30', high: 30 },
-  alt: { label: 'ALT(GPT)', unit: 'U/L', normal: '≤30', high: 30 },
-  gamma_gtp: { label: 'γ-GTP', unit: 'U/L', normal: '≤50', high: 50 },
-  creatinine: { label: 'クレアチニン', unit: 'mg/dL', normal: '0.6-1.1', low: 0.6, high: 1.1 },
-  egfr: { label: 'eGFR', unit: '', normal: '≥60', low: 60 },
-  uric_acid: { label: '尿酸', unit: 'mg/dL', normal: '≤7.0', high: 7.0 },
-};
+// #1055 UX3-24: 基準値は @/lib/health-blood-test-reference (性別依存・blood-tests画面と共通) を単一ソースにする
 
 interface Props {
   id: string;
@@ -92,6 +80,8 @@ export default function CheckupDetailClient({ id }: Props) {
   const [checkup, setCheckup] = useState<HealthCheckup | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // #1055 UX3-24: 基準値をプロフィールの性別で分岐させる
+  const [sex, setSex] = useState<BiologicalSex>(null);
 
   const fetchCheckup = useCallback(async () => {
     setLoading(true);
@@ -110,6 +100,20 @@ export default function CheckupDetailClient({ id }: Props) {
   useEffect(() => {
     void fetchCheckup();
   }, [fetchCheckup]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/profile', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          setSex(data?.gender ?? null);
+        }
+      } catch (error) {
+        console.error('Failed to fetch profile for reference ranges:', error);
+      }
+    })();
+  }, []);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -131,22 +135,11 @@ export default function CheckupDetailClient({ id }: Props) {
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   };
 
-  const getValueStatus = (key: string, value: number | undefined): 'normal' | 'warning' | 'danger' => {
-    if (value === undefined) return 'normal';
-    const ref = referenceValues[key];
-    if (!ref) return 'normal';
-
-    if (ref.high && value > ref.high) return 'danger';
-    if (ref.low && value < ref.low) return 'danger';
-    return 'normal';
-  };
-
-  const getStatusStyle = (status: 'normal' | 'warning' | 'danger') => {
+  const getStatusStyle = (status: MetricStatus) => {
     switch (status) {
-      case 'danger':
+      case 'high':
+      case 'low':
         return { bg: colors.errorLight, text: colors.error };
-      case 'warning':
-        return { bg: colors.warningLight, text: colors.warning };
       default:
         return { bg: colors.successLight, text: colors.success };
     }
@@ -154,24 +147,28 @@ export default function CheckupDetailClient({ id }: Props) {
 
   const renderMetricRow = (key: string, value: number | undefined) => {
     if (value === undefined) return null;
-    const ref = referenceValues[key];
-    if (!ref) return null;
+    const def = BLOOD_METRIC_DEFS[key];
+    if (!def) return null;
 
-    const status = getValueStatus(key, value);
+    const status = evaluateStatus(key, value, sex);
     const statusStyle = getStatusStyle(status);
+    const rangeText = formatRangeText(getRangeForSex(key, sex));
 
     return (
       <div key={key} className="flex items-center justify-between py-2 border-b" style={{ borderColor: colors.border }}>
-        <span className="text-sm" style={{ color: colors.textLight }}>{ref.label}</span>
+        <div>
+          <span className="text-sm" style={{ color: colors.textLight }}>{def.label}</span>
+          <p className="text-xs" style={{ color: colors.textMuted }}>基準: {rangeText}</p>
+        </div>
         <div className="flex items-center gap-2">
           <span
             className="font-bold"
-            style={{ color: status === 'normal' ? colors.text : statusStyle.text }}
+            style={{ color: status === 'normal' || status === 'unknown' ? colors.text : statusStyle.text }}
           >
             {value}
           </span>
-          <span className="text-xs" style={{ color: colors.textMuted }}>{ref.unit}</span>
-          {status !== 'normal' && (
+          <span className="text-xs" style={{ color: colors.textMuted }}>{def.unit}</span>
+          {(status === 'high' || status === 'low') && (
             <div
               className="w-2 h-2 rounded-full"
               style={{ backgroundColor: statusStyle.text }}
@@ -368,6 +365,13 @@ export default function CheckupDetailClient({ id }: Props) {
           style={{ backgroundColor: colors.card }}
         >
           <h3 className="font-bold mb-4" style={{ color: colors.text }}>検査値</h3>
+          {sex !== 'male' && sex !== 'female' && (
+            // #1055 (wave-3b): 性別未設定時は男女どちらでも確定的に異常と言える場合のみ
+            // フラグする一般基準であることを明示する
+            <p className="text-xs mb-3" style={{ color: colors.textMuted }}>
+              ※ 性別未設定のため一般基準で判定しています
+            </p>
+          )}
 
           {/* 血圧・代謝 */}
           <div className="mb-4">
@@ -379,6 +383,8 @@ export default function CheckupDetailClient({ id }: Props) {
             {renderMetricRow('blood_pressure_diastolic', checkup.blood_pressure_diastolic)}
             {renderMetricRow('hba1c', checkup.hba1c)}
             {renderMetricRow('fasting_glucose', checkup.fasting_glucose)}
+            {/* #1055 UX3-24: hemoglobin は従来この画面で一切表示されていなかった */}
+            {renderMetricRow('hemoglobin', checkup.hemoglobin)}
           </div>
 
           {/* 脂質 */}
