@@ -7415,6 +7415,46 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      decline_family_representative_transfer: {
+        Args: { p_proposal_id: string }
+        Returns: {
+          expires_at: string
+          from_user_id: string
+          id: string
+          proposed_at: string
+          resolved_at: string | null
+          scope: string
+          scope_id: string
+          status: string
+          to_user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "ownership_transfer_proposals"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      decline_org_owner_transfer: {
+        Args: { p_proposal_id: string }
+        Returns: {
+          expires_at: string
+          from_user_id: string
+          id: string
+          proposed_at: string
+          resolved_at: string | null
+          scope: string
+          scope_id: string
+          status: string
+          to_user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "ownership_transfer_proposals"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
         Returns: {
@@ -7838,6 +7878,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      release_user_membership: {
+        Args: { p_user_id: string }
+        Returns: undefined
       }
       remove_family_member: {
         Args: { p_family_id: string; p_member_id: string }

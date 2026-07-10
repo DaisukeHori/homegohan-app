@@ -82,6 +82,16 @@ export async function POST(request: Request) {
     await supabaseAdmin.from('system_settings').update({ updated_by: null }).eq('updated_by', userId);
     await supabaseAdmin.from('departments').update({ manager_id: null }).eq('manager_id', userId);
 
+    // #1039 F3-09: org メンバーなら削除前にライセンス席を解放 (used_licenses リーク防止)
+    // leave_org/remove_org_member を経由しない削除フローのため専用 RPC で解放する。
+    const { error: releaseError } = await supabaseAdmin.rpc('release_user_membership', {
+      p_user_id: userId,
+    });
+    if (releaseError) {
+      // ライセンス解放の失敗でアカウント削除自体は止めない (ベストエフォート、要手動リコンサイル)
+      console.error('[account/delete] release_user_membership failed', releaseError);
+    }
+
     // Authユーザー削除（public側はFKでCASCADE/SET NULLされる）
     const { error: delError } = await supabaseAdmin.auth.admin.deleteUser(userId);
     if (delError) throw delError;

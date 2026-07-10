@@ -19,40 +19,30 @@ export async function POST(
     );
   }
 
-  // 提案の確認 (自分宛てか)
-  const { data: proposal, error: fetchError } = await supabase
-    .from('ownership_transfer_proposals')
-    .select('id, to_user_id, status')
-    .eq('id', proposal_id)
-    .single();
+  // #1039 F3-06/F3-07: 直接 UPDATE は RLS で0行に潰れる (責任は RPC に移す)
+  const { error: rpcError } = await supabase.rpc('decline_family_representative_transfer', {
+    p_proposal_id: proposal_id,
+  });
 
-  if (fetchError || !proposal) {
-    return NextResponse.json(
-      { error: { code: MembershipErrorCode.TRANSFER_NOT_FOUND, message: '譲渡提案が見つかりません' } },
-      { status: 404 },
-    );
-  }
-
-  if (proposal.to_user_id !== user.id) {
-    return NextResponse.json(
-      { error: { code: MembershipErrorCode.INSUFFICIENT_PERMISSION, message: 'この操作を行う権限がありません' } },
-      { status: 403 },
-    );
-  }
-
-  if (proposal.status !== 'pending') {
-    return NextResponse.json(
-      { error: { code: MembershipErrorCode.TRANSFER_NOT_PENDING, message: '譲渡提案は既に処理済みです' } },
-      { status: 409 },
-    );
-  }
-
-  const { error: updateError } = await supabase
-    .from('ownership_transfer_proposals')
-    .update({ status: 'rejected' })
-    .eq('id', proposal_id);
-
-  if (updateError) {
+  if (rpcError) {
+    if (rpcError.message?.includes('TRANSFER_NOT_FOUND')) {
+      return NextResponse.json(
+        { error: { code: MembershipErrorCode.TRANSFER_NOT_FOUND, message: '譲渡提案が見つかりません' } },
+        { status: 404 },
+      );
+    }
+    if (rpcError.message?.includes('INSUFFICIENT_PERMISSION')) {
+      return NextResponse.json(
+        { error: { code: MembershipErrorCode.INSUFFICIENT_PERMISSION, message: 'この操作を行う権限がありません' } },
+        { status: 403 },
+      );
+    }
+    if (rpcError.message?.includes('TRANSFER_NOT_PENDING')) {
+      return NextResponse.json(
+        { error: { code: MembershipErrorCode.TRANSFER_NOT_PENDING, message: '譲渡提案は既に処理済みです' } },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { error: { code: MembershipErrorCode.RPC_FAILED, message: '譲渡提案の拒否に失敗しました' } },
       { status: 500 },
