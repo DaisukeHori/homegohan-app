@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
@@ -123,8 +124,8 @@ function LoginContent() {
         const roles = profile?.roles || [];
 
         // セッション切れリダイレクト元の URL があれば優先して戻る
-        const nextParam = searchParams.get('next');
-        const safeNext = nextParam && nextParam.startsWith('/') ? nextParam : null;
+        // #1043: open redirect 防止のため共有ヘルパーで検証(同一オリジンの相対パスのみ許可)
+        const safeNext = getSafeRedirectPath(searchParams.get('next'));
 
         if (roles.includes('admin') || roles.includes('super_admin')) {
           router.push('/admin');

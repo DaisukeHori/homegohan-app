@@ -1,14 +1,19 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import { getSafeRedirectPathOrDefault } from '@/lib/auth/safe-redirect'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
 
-  // 全パラメータをログ出力（デバッグ用）
+  // #1043: token_hash/code/email 等の実値をログに出さないよう、
+  // URL 全体・パラメータ値ではなくパスとパラメータの有無(boolean)のみを記録する
   console.log('[auth/callback] ========== AUTH CALLBACK START ==========')
-  console.log('[auth/callback] Full URL:', requestUrl.toString())
-  console.log('[auth/callback] All params:', Object.fromEntries(requestUrl.searchParams.entries()))
+  console.log('[auth/callback] Path:', requestUrl.pathname)
+  console.log(
+    '[auth/callback] Param presence (no values):',
+    Object.fromEntries(Array.from(new Set(requestUrl.searchParams.keys())).map((key) => [key, true]))
+  )
 
   // クッキー情報をログ（PKCE code verifier の確認）
   const cookieStore = cookies()
@@ -38,7 +43,8 @@ export async function GET(request: Request) {
   const token_hash = requestUrl.searchParams.get('token_hash')
   const token = requestUrl.searchParams.get('token') // PKCE token
   const type = requestUrl.searchParams.get('type')
-  let next = requestUrl.searchParams.get('next') ?? '/home'
+  // #1043: open redirect 防止のため共有ヘルパーで検証(同一オリジンの相対パスのみ許可)
+  let next = getSafeRedirectPathOrDefault(requestUrl.searchParams.get('next'), '/home')
 
   console.log('[auth/callback] Auth params:', { code: !!code, token_hash: !!token_hash, token: !!token, type })
 
@@ -54,7 +60,7 @@ export async function GET(request: Request) {
       if (error) {
         console.error('[auth/callback] Code exchange error:', error.message, error)
       } else {
-        console.log('[auth/callback] Code exchange successful, user:', data.user?.email)
+        console.log('[auth/callback] Code exchange successful, hasUser:', !!data.user, 'hasEmail:', !!data.user?.email)
       }
     } catch (e) {
       console.error('[auth/callback] Code exchange exception:', e)
@@ -72,7 +78,7 @@ export async function GET(request: Request) {
       if (error) {
         console.error('[auth/callback] Email verification error:', error.message, error)
       } else {
-        console.log('[auth/callback] Email verification successful, user:', data.user?.email)
+        console.log('[auth/callback] Email verification successful, hasUser:', !!data.user, 'hasEmail:', !!data.user?.email)
       }
     } catch (e) {
       console.error('[auth/callback] Email verification exception:', e)
@@ -92,7 +98,7 @@ export async function GET(request: Request) {
       if (error) {
         console.error('[auth/callback] PKCE token verification error:', error.message, error)
       } else {
-        console.log('[auth/callback] PKCE token verification successful, user:', data.user?.email)
+        console.log('[auth/callback] PKCE token verification successful, hasUser:', !!data.user, 'hasEmail:', !!data.user?.email)
       }
     } catch (e) {
       console.error('[auth/callback] PKCE token verification exception:', e)
@@ -106,7 +112,7 @@ export async function GET(request: Request) {
   console.log('[auth/callback] getUser result:', {
     hasUser: !!user,
     userId: user?.id,
-    email: user?.email,
+    hasEmail: !!user?.email,
     userError: userError?.message
   })
 
