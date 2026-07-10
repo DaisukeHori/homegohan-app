@@ -40,27 +40,43 @@ export default function AccountSettingsPage() {
       return;
     }
 
-    try {
-      // 削除前にユーザー ID を確保しておく。
-      // サーバー側削除後は getUser() がセッション無効化により失敗しうるため、
-      // ローカルストレージのスコープ解除には削除前に取得した ID を使う。
-      const { data: { user } } = await supabase.auth.getUser();
+    // 削除前にユーザー ID を確保しておく。
+    // サーバー側削除後は getUser() がセッション無効化により失敗しうるため、
+    // ローカルストレージのスコープ解除には削除前に取得した ID を使う。
+    const { data: { user } } = await supabase.auth.getUser();
 
-      // Round-2 レビュー指摘 #3: サーバー側の削除 API が成功した場合のみ
-      // ローカルセッション (AsyncStorage / Supabase セッション) を破棄する。
-      // 削除に失敗した場合はログイン状態を維持し、ユーザーが再試行できるようにする
-      // (旧実装は削除前にローカルを消していたため、削除失敗時にログインしたまま
-      // ローカルデータだけ失われる不整合があった)。
+    // Round-2 レビュー指摘 #3: サーバー側の削除 API が成功した場合のみ
+    // ローカルセッション (AsyncStorage / Supabase セッション) を破棄する。
+    // 削除に失敗した場合はログイン状態を維持し、ユーザーが再試行できるようにする
+    // (旧実装は削除前にローカルを消していたため、削除失敗時にログインしたまま
+    // ローカルデータだけ失われる不整合があった)。
+    try {
       const api = getApi();
       await api.post("/api/account/delete", { confirm: true });
+    } catch (e: any) {
+      // Round-3 レビュー指摘 #3: サーバー側の削除 API 自体が失敗した場合は
+      // アカウントは未削除・再試行可能なので、その旨がわかる文言にする。
+      Alert.alert("削除失敗", e?.message ?? "アカウントの削除に失敗しました。時間をおいて再度お試しください。");
+      deletingRef.current = false;
+      setDeleting(false);
+      return;
+    }
 
+    try {
       await clearUserScopedAsyncStorage(user?.id ?? null);
       await supabase.auth.signOut();
       router.replace("/");
     } catch (e: any) {
-      Alert.alert("削除失敗", e?.message ?? "削除に失敗しました。");
-      deletingRef.current = false;
-      setDeleting(false);
+      // Round-3 レビュー指摘 #3: ここに到達した時点でサーバー側の削除自体は成功済み。
+      // 端末側の後片付け (ローカルクリア/signOut) にのみ失敗しており、再試行しても
+      // 削除 API は (アカウントが既に無いため) 失敗するだけなので、削除失敗と紛れない
+      // 別文言で案内し、ログイン画面へは進める。
+      console.error("[account delete] local cleanup failed after server delete succeeded", e);
+      Alert.alert(
+        "アカウントを削除しました",
+        "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。",
+      );
+      router.replace("/");
     }
   }
 
