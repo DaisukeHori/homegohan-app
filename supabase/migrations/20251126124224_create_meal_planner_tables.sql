@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS meal_plans (
   end_date DATE NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft', -- draft, active, completed, archived
   is_active BOOLEAN DEFAULT false, -- 現在進行中の献立かどうか
-  source_request_id UUID REFERENCES weekly_menu_requests(id) ON DELETE SET NULL, -- AI生成元のリクエストID
+  source_request_id UUID, -- AI生成元のリクエストID (weekly_menu_requests は本ファイルより後の 20260430160000 で作成されるため forward-ref エラーになる。REFERENCES 無しで列のみ残す)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS planned_meals (
   carbs_g NUMERIC,
   is_completed BOOLEAN DEFAULT false, -- 実際に食べたかどうか
   completed_at TIMESTAMPTZ, -- 食べた日時
-  actual_meal_id UUID REFERENCES meals(id) ON DELETE SET NULL, -- 実績テーブルとのリンク
+  actual_meal_id UUID, -- 実績テーブルとのリンク (meals は本ファイルより後の 20260430160000 で作成されるため forward-ref エラーになる。REFERENCES 無しで列のみ残す)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
