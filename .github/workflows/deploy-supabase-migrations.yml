@@ -1,5 +1,18 @@
 name: Deploy Supabase Migrations
 
+# --- 運用モデル変更の明記 (#1064 Phase 1, round-2 監査 #5 対応) ---
+# drift guard のパーサー修正 (下記 "Detect migration drift" ステップ) により、
+# 今後このワークフローは「新規に追加された migration ファイル (=まだ本番台帳に
+# 存在しない local-only な version)」を常に正しくドリフトとして検出し、exit 1 で
+# 後続の "Apply migrations" ステップをブロックするようになる。
+#
+# これは意図的な仕様変更である: Phase 1 以降、migration の本番適用は
+# `migration-apply.yml` (workflow_dispatch, dry-run + environment 承認ゲート付き)
+# 経由に一本化する。この push トリガ workflow による自動 apply は今後実質的に
+# 常にドリフト検出で停止するため、通常運用では発火しない (意図的な無効化)。
+# 本ワークフローの役割は「db lint + drift 検出によるガード/レポート」のみとなり、
+# 実際の本番適用ロールは持たない。
+# (Phase 2 の squash で drift-free な定常状態に到達した後、運用モデルを再検討する)
 on:
   push:
     branches:
@@ -67,19 +80,19 @@ jobs:
           drift = []
           for raw_line in lines:
               line = raw_line.rstrip("\n")
-              # supabase CLI の pretty 出力は `|Local|Remote|Time (UTC)|` 形式で
-              # 各行が "|" で始まり "|" で終わる。先頭/末尾のちょうど1個だけを
-              # 取り除いてから分割しないと、空セル(local-only/remote-only 行)の
-              # 位置がずれて誤検知・見逃しの原因になる。
-              if not (line.startswith("|") and line.endswith("|")):
+              # supabase CLI の実際の出力は先頭に空白パディングがあり、行頭/行末に
+              # "|" は付かない ` 20260101000000 | 20260101000000 | 2026-01-01 00:00:00 `
+              # 形式(表示用の余白付き `|` 区切り)。旧パーサーは `line.startswith("|")`
+              # 前提で全行スキップ=偽陰性になっていたため、単純に "|" を含む行を列分割する
+              # 方式に変更する(#1064 実データ migration_list.txt で検証済み)。
+              if "|" not in line:
                   continue
-              inner = line[1:-1]
-              cols = [c.strip() for c in inner.split("|")]
+              cols = [c.strip() for c in line.split("|")]
               if len(cols) < 2:
                   continue
               local, remote = cols[0], cols[1]
-              # ヘッダー行・区切り行 (LOCAL/REMOTE 文字列や ---- ) は除外し、
-              # migration バージョン (数値) の行のみを対象にする
+              # ヘッダー行("Local"/"Remote"等)・区切り線("----")は数値正規表現に
+              # マッチしないため自然に除外され、migration バージョン(数値)の行のみ残る
               if not (re.fullmatch(r"[0-9]*", local) and re.fullmatch(r"[0-9]*", remote)):
                   continue
               if local == "" and remote == "":
