@@ -1,0 +1,305 @@
+name: Migration Repair (#1064 Phase 1, push無し)
+
+# push は一切行わない repair 専用 workflow。台帳 (supabase_migrations.schema_migrations)
+# のステータスのみを付け替える (migration repair --status applied/reverted)。
+# applied37/reverted31 のバージョンリストは scratchpad/phase0/PHASE1-PLAN.md 由来。
+#
+# 2ジョブ構成 (round-2 監査 #2 対応): inspect (snapshot + gate, 停止) → repair
+# (environment 承認後に実行)。gate と repair の間に必ず人手承認を挟むための分割。
+# 特に 20260708005642 は「revert 前に中身確認が必須」の唯一の未確認 version。
+#
+# --- ロールバック手順 (round-2 監査 #4 対応 / 最終監査残課題 修正) ---
+# repair が途中失敗した場合 (例: applied37 の途中でエラー) は、台帳が中途半端な
+# 状態になり得る。ロールバックは以下の手順で行う:
+#   1. inspect job の artifact "migration-repair-pre" から ledger_snapshot.sql
+#      (repair 実行前の supabase_migrations.schema_migrations 全件、単一マルチ行
+#      INSERT 形式) を取得する。このダンプは schema_migrations テーブル単体に
+#      限定されており、同スキーマ内の他テーブル (supabase_migrations.seed_files 等)
+#      の行は含まれない (下記 Snapshot ステップ参照)。
+#   2. ledger_snapshot.sql は INSERT 文であり、そのまま現在の (repair 途中状態の)
+#      schema_migrations に流すと version が PK 衝突を起こして INSERT が全文失敗する。
+#      必ず先に `TRUNCATE supabase_migrations.schema_migrations;` で全行を空にしてから
+#      ledger_snapshot.sql を実行すること (`psql <接続文字列> -f ledger_snapshot.sql` 等)。
+#      ダンプが schema_migrations 単体に限定されているため、この TRUNCATE 対象も
+#      schema_migrations 単体のみで過不足なく整合する (seed_files 等の他テーブルは
+#      触れないため、そちらの既存データと PK 衝突する心配は無い)。
+#   3. 復元後は `supabase migration list --linked` で repair 前の状態に戻ったことを
+#      確認する。
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '実行確認。文字列 "REPAIR" を入力した場合のみ実行される'
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SUPABASE_PROJECT_ID: flmeolcfutuwwbjmzyoz
+
+jobs:
+  # --- job1: 台帳全件スナップショット + SELECT ゲート (repair はしない・ここで停止) ---
+  inspect:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'REPAIR' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Guard - confirm input must be REPAIR
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "REPAIR" ]; then
+            echo "::error::confirm 入力が 'REPAIR' ではありません。中止します。"
+            exit 1
+          fi
+
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+
+      - name: Verify Supabase CLI version
+        run: npx --yes supabase@2.62.10 --version
+
+      - name: Link Supabase project
+        run: |
+          npx --yes supabase@2.62.10 link --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # --- 台帳全件スナップショット (監査C Warning-3 対応 / ロールバック canonical 参照) ---
+      # supabase CLI 2.62.10 には任意 SQL を実行する汎用コマンドが無いため、
+      # `db dump --data-only -s supabase_migrations` を用いて schema_migrations
+      # テーブルの全行 (version, statements, name 含む全列) をダンプする。
+      #
+      # 【最終監査残課題 修正】`-s supabase_migrations` はスキーマ単位の指定であり、
+      # 同スキーマ内に schema_migrations 以外のテーブル (実測: CLI 2.62.10 は
+      # `supabase_migrations.seed_files` テーブルを内部で作成・使用する。PK は
+      # path 列であり schema_migrations の PK (version 列) とは無関係) が存在する
+      # 場合、それらの行もダンプに含まれてしまう。ロールバック手順は
+      # `TRUNCATE supabase_migrations.schema_migrations;` のみを先行させる設計の
+      # ため、ダンプに seed_files 等の行が混入していると、それらのテーブルは
+      # TRUNCATE されないまま再 INSERT されることになり、既存行との PK 衝突で
+      # ロールバック自体が失敗し得る。そのため `-x/--exclude` (schema.table を
+      # data-only ダンプ対象から除外する既存フラグ) で schema_migrations 以外を
+      # 明示的に除外し、ダンプ対象を schema_migrations テーブル単体に限定する。
+      # (supabase_migrations スキーマに将来新しいテーブルが追加された場合は、
+      # ここの -x にも追加すること。)
+      #
+      # CLI 内部は pg_dump に `--column-inserts --rows-per-insert 100000` を渡すため、
+      # 実際の出力は「1本の複数行 INSERT」形式になる:
+      #   INSERT INTO "supabase_migrations"."schema_migrations" ("version", "statements", "name") VALUES
+      #   \t('20260708005642', '{"..."}', 'some_name'),
+      #   \t('20260508143656', '{"..."}', 'some_name2'),
+      #   ...;
+      # (ローカル pg_dump --column-inserts --rows-per-insert 100000 で実出力形式を確認済み)
+      # これは "SELECT version,name,statements FROM schema_migrations ORDER BY version"
+      # の内容を実質的に包含し、かつそのまま再投入可能なロールバック canonical 参照になる。
+      # -x により seed_files 等の他テーブルが除外されるため、ダンプファイルには
+      # schema_migrations 用の INSERT 文が1本だけ含まれる (ロールバック手順の
+      # TRUNCATE 対象と過不足なく整合する)。
+      - name: Snapshot full ledger (schema_migrations) before repair
+        run: |
+          npx --yes supabase@2.62.10 db dump --linked --data-only \
+            -s supabase_migrations \
+            -x supabase_migrations.seed_files \
+            -f artifacts/ledger_snapshot.sql
+          {
+            echo "## ledger_snapshot.sql (schema_migrations 単体スナップショット, repair 前)"
+            echo ""
+            echo "行数: $(wc -l < artifacts/ledger_snapshot.sql)"
+            echo ""
+            echo "対象テーブル: supabase_migrations.schema_migrations のみ"
+            echo "(supabase_migrations.seed_files は -x で除外済み。ロールバック時の"
+            echo "TRUNCATE 対象と過不足なく一致させるため。)"
+            echo ""
+            echo "この artifact はロールバックの canonical 参照。repair/apply 前の台帳状態を必ず保持する。"
+            echo "ロールバック手順はこのファイル冒頭のコメントを参照。"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # --- SELECT ゲート (revert 対象のうち中身未確認の4本を repair 前に確認) ---
+      # ledger_snapshot.sql は上記の通り「1本の複数行 INSERT」形式であり、各 version は
+      # タブ字下げの継続行 `\t('VERSION', ...` として現れる (VALUES は先頭行に1回だけ)。
+      # そのため `grep -F "VALUES ('$v',"` は常に空振りする。`VALUES ` を落とし
+      # `('$v',` (先頭括弧+バージョン+カンマ) のみで一致させる。
+      - name: SELECT gate - inspect gate versions before revert
+        run: |
+          GATE_VERSIONS="20260708005642 20260508143656 20260508143738 20260510110015"
+          : > artifacts/gate_versions.txt
+          for v in $GATE_VERSIONS; do
+            if grep -F "('$v'," artifacts/ledger_snapshot.sql >> artifacts/gate_versions.txt; then
+              :
+            else
+              echo "-- NOT FOUND IN LEDGER: $v" >> artifacts/gate_versions.txt
+              # advisory annotation のみ (job は fail させない)。人手承認ゲートが本来の
+              # 砦であり、承認者が Actions UI 上でこの版数を見落とさないようにするための
+              # 可視化目的。exit 1 にはしない。
+              echo "::warning::gate version $v が台帳に見つかりません"
+            fi
+          done
+          {
+            echo "## gate_versions.txt (revert 対象のうち中身未確認 4 本の台帳内容)"
+            echo ""
+            echo '```'
+            cat artifacts/gate_versions.txt
+            echo '```'
+            echo ""
+            echo "上記が期待した version/statements/name と一致することを目視確認してから"
+            echo "repair job (environment 承認) を承認すること。特に 20260708005642 は"
+            echo "中身未確認のまま revert する唯一の version なので必ず確認する。"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "=== gate_versions.txt ==="
+          cat artifacts/gate_versions.txt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Upload pre-repair artifacts (ledger snapshot + gate)
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-repair-pre
+          path: artifacts/
+          retention-days: 90
+
+      # inspect job はここで終了。repair は行わない。
+
+  # --- job2: repair 本体。environment 承認 (required reviewers) を経てから実行 ---
+  repair:
+    needs: inspect
+    runs-on: ubuntu-latest
+    # required reviewers による承認ゲート。repo Settings > Environments で
+    # "production-db" environment を作成し、Required reviewers を設定しておくこと。
+    # 未設定の場合、このジョブは承認待ちにならず inspect 完了後に即実行される点に注意。
+    # 承認者は inspect job の artifact (migration-repair-pre, 特に gate_versions.txt の
+    # 20260708005642 の中身) をレビューしてから承認すること。
+    environment: production-db
+    if: ${{ github.event.inputs.confirm == 'REPAIR' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+
+      - name: Verify Supabase CLI version
+        run: npx --yes supabase@2.62.10 --version
+
+      - name: Link Supabase project
+        run: |
+          npx --yes supabase@2.62.10 link --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # --- repair --status applied (37本、20260511000136 は意図的に除外) ---
+      - name: Repair - mark 37 versions as applied (000136 excluded)
+        run: |
+          npx --yes supabase@2.62.10 migration repair --status applied --linked \
+            20260430280000 \
+            20260508160000 \
+            20260508180000 \
+            20260508190000 \
+            20260508210000 \
+            20260509000000 \
+            20260510120000 \
+            20260511000000 \
+            20260511000095 \
+            20260511000096 \
+            20260511000097 \
+            20260511000098 \
+            20260511000100 \
+            20260511000101 \
+            20260511000102 \
+            20260511000103 \
+            20260511000104 \
+            20260511000105 \
+            20260511000110 \
+            20260511000111 \
+            20260511000112 \
+            20260511000113 \
+            20260511000114 \
+            20260511000115 \
+            20260511000120 \
+            20260511000125 \
+            20260511000126 \
+            20260511000127 \
+            20260511000128 \
+            20260511000129 \
+            20260511000130 \
+            20260511000131 \
+            20260511000132 \
+            20260511000133 \
+            20260511000134 \
+            20260511000135 \
+            20260511000137
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # --- repair --status reverted (31本) ---
+      - name: Repair - mark 31 versions as reverted
+        run: |
+          npx --yes supabase@2.62.10 migration repair --status reverted --linked \
+            20260508143656 \
+            20260508143738 \
+            20260510110015 \
+            20260510174540 \
+            20260510174558 \
+            20260510174701 \
+            20260510174713 \
+            20260510174801 \
+            20260510174820 \
+            20260510174848 \
+            20260510174906 \
+            20260510174925 \
+            20260510175004 \
+            20260510175058 \
+            20260510175345 \
+            20260510175416 \
+            20260510175439 \
+            20260510175456 \
+            20260510175518 \
+            20260510175621 \
+            20260510175650 \
+            20260510175721 \
+            20260510175742 \
+            20260510175800 \
+            20260510175820 \
+            20260510175844 \
+            20260510175911 \
+            20260510175925 \
+            20260510175942 \
+            20260510190623 \
+            20260708005642
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      # --- repair 後の migration list を artifact 化 ---
+      - name: Verify migration list after repair
+        run: |
+          npx --yes supabase@2.62.10 migration list --linked | tee artifacts/migration_list_after_repair.txt
+          {
+            echo "## migration list (repair 後)"
+            echo ""
+            echo "\`\`\`"
+            cat artifacts/migration_list_after_repair.txt
+            echo "\`\`\`"
+            echo ""
+            echo "期待値: 20260511000136 と 20260710090000 以外は全て paired (Local/Remote 両方に同一 version)。"
+            echo "この2本のみ local-only のまま残っていれば正常 (次段の migration-apply.yml で push する)。"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Upload post-repair artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-repair-post
+          path: artifacts/migration_list_after_repair.txt
+          retention-days: 90
