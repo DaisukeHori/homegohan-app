@@ -124,9 +124,16 @@ export async function GET(request: Request) {
                   (newEarnedBadges.includes(badge.id) ? new Date().toISOString() : null)
     }));
 
-    return NextResponse.json({ 
-      badges, 
+    // #1055 (wave-3b): 新規獲得バッジの匿名性を解消するため、
+    // 件数だけでなくどのバッジを獲得したか (code) をレスポンスに含める
+    const newEarnedBadgeCodes = allBadges
+      .filter(badge => newEarnedBadges.includes(badge.id))
+      .map(badge => badge.code);
+
+    return NextResponse.json({
+      badges,
       newEarnedCount: newEarnedBadges.length,
+      newEarnedBadgeCodes,
       stats: {
         completedMeals: mealCount,
         cookMeals: cookCount || 0,

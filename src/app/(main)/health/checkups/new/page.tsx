@@ -110,7 +110,9 @@ export default function NewHealthCheckupPage() {
   const [savedCheckup, setSavedCheckup] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   // #1055 UX3-10: OCR失敗を無告知にせず、confirm画面でバナー表示する
-  const [ocrStatus, setOcrStatus] = useState<'idle' | 'success' | 'failed' | 'skipped'>('idle');
+  // #1055 (wave-3b): OCR API が 200 を返しても抽出項目が0件の場合は
+  // 「success」ではなく「empty」として扱い、偽の成功表示を避ける
+  const [ocrStatus, setOcrStatus] = useState<'idle' | 'success' | 'empty' | 'failed' | 'skipped'>('idle');
   const [ocrFilledCount, setOcrFilledCount] = useState(0);
   // #1055 UX3-11: upload/confirm から離脱する際、入力済みデータがあれば確認する
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
@@ -202,8 +204,11 @@ export default function NewHealthCheckupPage() {
         // camelCase → snake_case マッピングで formData に反映
         setFormData(prev => ({ ...prev, ...patch }));
         // #1055 UX3-10: OCR成功時は「N項目を自動入力」と分かるようにする
-        setOcrFilledCount(Object.keys(patch).length);
-        setOcrStatus('success');
+        // #1055 (wave-3b): 抽出項目が0件なら「読み取れる項目がありませんでした」の
+        // 警告扱いにし、「0項目を自動入力しました」という偽の成功表示を出さない
+        const filledCount = Object.keys(patch).length;
+        setOcrFilledCount(filledCount);
+        setOcrStatus(filledCount === 0 ? 'empty' : 'success');
       } else {
         // #1055 UX3-10: OCR失敗を無告知にせず、confirm画面でバナー表示する
         console.warn('OCR failed, proceeding to manual entry');
@@ -553,6 +558,16 @@ export default function NewHealthCheckupPage() {
                 <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.warning }} />
                 <p className="text-sm" style={{ color: colors.warning }}>
                   ⚠ 自動読み取りできませんでした。内容を確認し、手動で入力してください。
+                </p>
+              </div>
+            )}
+            {/* #1055 (wave-3b): OCRは成功したが抽出できた項目が0件のケース。
+                「success」バナーで「0項目を自動入力しました」と表示するのは偽の成功表示なので分離する */}
+            {ocrStatus === 'empty' && (
+              <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.warningLight }}>
+                <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" style={{ color: colors.warning }} />
+                <p className="text-sm" style={{ color: colors.warning }}>
+                  ⚠ 読み取れる項目がありませんでした。内容を確認し、手動で入力してください。
                 </p>
               </div>
             )}

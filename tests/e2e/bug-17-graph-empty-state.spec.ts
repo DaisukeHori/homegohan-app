@@ -34,7 +34,9 @@ test.describe("health graphs empty state", () => {
       if (hasEmptyMessage) {
         // データなし: 「最大 100.0」が表示されてはいけない
         // 統計カードは「最大」ラベルの直後に値テキストが入っている
-        const maxLabel = tourPendingUser.getByText("最大", { exact: true }).first();
+        // #1055 (wave-3b): 血圧タブは系列混在を避けるため「最大（収縮期）」等の
+        // ラベルになるため、前方一致で取得する（exact ではなくなる）
+        const maxLabel = tourPendingUser.getByText(/^最大/).first();
         await expect(maxLabel).toBeVisible();
 
         // 親カード内の値テキストを取得

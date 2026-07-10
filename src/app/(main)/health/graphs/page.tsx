@@ -210,6 +210,12 @@ export default function HealthGraphsPage() {
   const { data: graphData, min, max, avg } = getGraphData();
   const formatStat = (v: number | null) => (v === null ? '-' : v.toFixed(1));
 
+  // #1055 (wave-3b): 血圧は最小=拡張期/最大=収縮期/平均=収縮期の系列混在のまま
+  // 無ラベルで表示されていたため、どの系列の統計かを明示する
+  const statLabels = metric === 'bp'
+    ? { min: '最小（拡張期）', avg: '平均（収縮期）', max: '最大（収縮期）' }
+    : { min: '最小', avg: '平均', max: '最大' };
+
   // 変化を計算
   const getChange = () => {
     const validData = graphData.filter(d => d.value !== null);
@@ -550,7 +556,7 @@ export default function HealthGraphsPage() {
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
-            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>最小</p>
+            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{statLabels.min}</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
               {formatStat(min)}
             </p>
@@ -559,7 +565,7 @@ export default function HealthGraphsPage() {
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
-            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>平均</p>
+            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{statLabels.avg}</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
               {formatStat(avg)}
             </p>
@@ -568,7 +574,7 @@ export default function HealthGraphsPage() {
             className="p-4 rounded-xl text-center"
             style={{ backgroundColor: colors.card }}
           >
-            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>最大</p>
+            <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{statLabels.max}</p>
             <p className="text-lg font-bold" style={{ color: colors.text }}>
               {formatStat(max)}
             </p>

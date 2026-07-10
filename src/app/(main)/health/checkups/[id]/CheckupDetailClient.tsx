@@ -365,6 +365,13 @@ export default function CheckupDetailClient({ id }: Props) {
           style={{ backgroundColor: colors.card }}
         >
           <h3 className="font-bold mb-4" style={{ color: colors.text }}>検査値</h3>
+          {sex !== 'male' && sex !== 'female' && (
+            // #1055 (wave-3b): 性別未設定時は男女どちらでも確定的に異常と言える場合のみ
+            // フラグする一般基準であることを明示する
+            <p className="text-xs mb-3" style={{ color: colors.textMuted }}>
+              ※ 性別未設定のため一般基準で判定しています
+            </p>
+          )}
 
           {/* 血圧・代謝 */}
           <div className="mb-4">

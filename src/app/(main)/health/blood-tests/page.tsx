@@ -131,6 +131,13 @@ export default function BloodTestsPage() {
         <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
           過去の血液検査データを一覧で確認できます
         </p>
+        {sex !== 'male' && sex !== 'female' && (
+          // #1055 (wave-3b): 性別未設定時は男女どちらでも確定的に異常と言える場合のみ
+          // フラグする一般基準であることを明示する
+          <p className="text-xs mt-1" style={{ color: colors.textMuted }}>
+            ※ 性別未設定のため一般基準で判定しています
+          </p>
+        )}
       </div>
 
       {error && (

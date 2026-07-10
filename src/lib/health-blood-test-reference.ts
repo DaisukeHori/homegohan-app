@@ -49,7 +49,12 @@ function normalizeSex(sex: BiologicalSex): 'male' | 'female' | null {
   return null;
 }
 
-/** 性別が未設定の場合は男女どちらでも異常を見逃さないよう、範囲を合成 (低いlow, 高いhigh) して返す。 */
+/**
+ * 性別が未設定の場合は、男女どちらの基準で見ても正常範囲内という値まで
+ * 誤って異常扱い(誤警報)しないよう、範囲を合成 (低い方のlow, 高い方のhigh) して返す。
+ * ＝ 性別不明時は「どちらの性別であっても確定的に異常と言える場合」のみ high/low とフラグする設計。
+ * (代わりに、実際の性別なら異常と判定されたはずの値を見逃す可能性はある)
+ */
 function combinedRange(def: MetricDef): SexRange {
   const low =
     def.male.low != null && def.female.low != null

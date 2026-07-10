@@ -350,7 +350,9 @@ test.describe("5-7. /health/graphs — 4 タブ + Bug-17 回帰", () => {
 
       if (hasEmpty) {
         // 統計カード「最大」に "100.0" が表示されてはいけない
-        const maxLabel = page.getByText("最大", { exact: true }).first();
+        // #1055 (wave-3b): 血圧タブは系列混在を避けるため「最大（収縮期）」等の
+        // ラベルになるため、前方一致で取得する（exact ではなくなる）
+        const maxLabel = page.getByText(/^最大/).first();
         const maxCard = maxLabel.locator("..");
         const cardText = (await maxCard.innerText()).trim();
         expect(cardText, `[Bug-17 回帰] タブ「${tabLabel}」: 最大値に 100.0 が表示されている`).not.toMatch(/100\.0/);
@@ -358,7 +360,7 @@ test.describe("5-7. /health/graphs — 4 タブ + Bug-17 回帰", () => {
         console.log(`✓ [${tabLabel}] データなし: 最大 = ${cardText}`);
       } else {
         // データあり: 統計値が数値であること
-        const maxLabel = page.getByText("最大", { exact: true }).first();
+        const maxLabel = page.getByText(/^最大/).first();
         const maxCard = maxLabel.locator("..");
         const cardText = (await maxCard.innerText()).trim();
         console.log(`✓ [${tabLabel}] データあり: 最大 = ${cardText}`);

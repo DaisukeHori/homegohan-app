@@ -22,12 +22,21 @@ describe('health-blood-test-reference', () => {
     expect(evaluateStatus('hemoglobin', 12.5, 'female')).toBe('normal');
   });
 
-  it('falls back to a combined (widened) range when sex is unknown, avoiding false negatives', () => {
+  it('falls back to a combined (widened) range when sex is unknown, flagging only values that are definitively abnormal for either sex (avoiding false positives)', () => {
     const combined = getRangeForSex('hemoglobin', null);
     const male = getRangeForSex('hemoglobin', 'male');
     const female = getRangeForSex('hemoglobin', 'female');
     expect(combined?.low).toBe(Math.min(male!.low!, female!.low!));
     expect(combined?.high).toBe(Math.max(male!.high!, female!.high!));
+  });
+
+  // #1055 (wave-3b): combinedRange のコメント/テスト名が「見逃さない」設計だと誤って
+  // 逆方向に説明していたのを修正。実際の挙動 = 性別不明時は widened range により、
+  // 「片方の性別なら異常」という値でも誤って異常フラグを立てない (false positive 回避)。
+  // その代わり、実際の性別を知っていれば異常と判定できたはずの値を見逃す (false negative) 余地はある。
+  it('does not flag a value that is normal for one sex but low for the other when sex is unknown (avoids a false alarm)', () => {
+    // 12.5 g/dL は男性なら low、女性なら normal。性別不明時は誤警報を避け normal 扱いにする。
+    expect(evaluateStatus('hemoglobin', 12.5, null)).toBe('normal');
   });
 
   it('evaluates high/low/normal/unknown correctly', () => {
