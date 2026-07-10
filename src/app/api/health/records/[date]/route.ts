@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { sanitizeHealthRecordPayload } from '@/lib/health-payloads';
+import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 
 // 特定日の健康記録を取得
 export async function GET(
@@ -9,12 +9,18 @@ export async function GET(
 ) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  
+
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { date } = await params;
+
+  // #1048 F2-16: 不正な date パラメータは DB 側の型キャストエラー(500)や
+  // 意図しないクエリになり得るため、事前にフォーマット検証して400を返す。
+  if (!RECORD_DATE_PATTERN.test(date)) {
+    return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
+  }
 
   const { data, error } = await supabase
     .from('health_records')
@@ -58,6 +64,13 @@ export async function PUT(
   }
 
   const { date } = await params;
+
+  // #1048 F2-16: 不正な date パラメータは DB 側の型キャストエラー(500)になり得るため
+  // 事前にフォーマット検証して400を返す。
+  if (!RECORD_DATE_PATTERN.test(date)) {
+    return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
+  }
+
   const body = await request.json().catch(() => null);
   const { data: recordData, errors } = sanitizeHealthRecordPayload(body, {
     acceptLegacyNotes: true,
@@ -71,37 +84,21 @@ export async function PUT(
     return NextResponse.json({ error: 'No valid health record fields were provided' }, { status: 400 });
   }
 
-  // 既存レコードを確認
-  const { data: existing } = await supabase
+  // #1048 F2-19: 確認してから insert/update する check-then-act は同時リクエストで
+  // UNIQUE(user_id, record_date) 違反 500 を起こし得るため upsert に統一する。
+  const result = await supabase
     .from('health_records')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('record_date', date)
-    .single();
-
-  let result;
-  
-  if (existing) {
-    result = await supabase
-      .from('health_records')
-      .update({
-        ...recordData,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', existing.id)
-      .select()
-      .single();
-  } else {
-    result = await supabase
-      .from('health_records')
-      .insert({
+    .upsert(
+      {
         user_id: user.id,
         record_date: date,
         ...recordData,
-      })
-      .select()
-      .single();
-  }
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,record_date' },
+    )
+    .select()
+    .single();
 
   if (result.error) {
     return NextResponse.json({ error: result.error.message }, { status: 500 });
@@ -123,6 +120,10 @@ export async function DELETE(
   }
 
   const { date } = await params;
+
+  if (!RECORD_DATE_PATTERN.test(date)) {
+    return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
+  }
 
   const { error } = await supabase
     .from('health_records')

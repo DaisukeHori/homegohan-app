@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { clampIntParam } from '@/lib/http-params';
 
 // 健康診断一覧を取得
 export async function GET(request: NextRequest) {
@@ -14,7 +15,9 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const limit = parseInt(searchParams.get('limit') || '20');
+  // #1048 F2-16: limit が未クランプで DoS/意図しない大量取得が可能だった。
+  // グラフの「1年」表示（limit=365 リクエスト）も許容するため上限は400。
+  const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 400, default: 20 });
 
   const { data, error } = await supabase
     .from('health_checkups')
@@ -76,12 +79,17 @@ export async function POST(request: NextRequest) {
   }
 
   // #264: 健康診断を保存（UNIQUE 制約に対応するため upsert を使用）
+  // #1048 F2-26: 同じ checkup_date への再アップロード（数値の再OCR等）で upsert すると、
+  // individual_review を明示しない限り前回の古いレビューが残留し、新しい数値と
+  // 矛盾した内容が表示され続けてしまう。ここで一旦 null にリセットし、
+  // 生成成功時のみ下で書き戻す。
   const { data: checkup, error: insertError } = await supabase
     .from('health_checkups')
     .upsert(
       {
         user_id: user.id,
         ...checkupData,
+        individual_review: null,
       },
       { onConflict: 'user_id,checkup_date' },
     )

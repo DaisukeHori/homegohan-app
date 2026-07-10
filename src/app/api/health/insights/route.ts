@@ -2,18 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateGeminiJson } from '@/lib/ai/gemini-json';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { clampIntParam } from '@/lib/http-params';
 
 // AI分析結果の取得
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  
+
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
-  const limit = parseInt(searchParams.get('limit') || '20');
+  // #1048 F2-16: limit が未クランプで DoS/意図しない大量取得が可能だった。
+  const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 200, default: 20 });
   const unreadOnly = searchParams.get('unread') === 'true';
   const alertsOnly = searchParams.get('alerts') === 'true';
 
