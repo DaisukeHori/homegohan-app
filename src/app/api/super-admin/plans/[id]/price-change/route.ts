@@ -14,12 +14,25 @@
  * `OP_STRIPE_SYNC_UNAVAILABLE` を返し、運用者が `supabase functions deploy
  * stripe-price-sync` の未実施に気づけるようにする。偽成功 (DB のみ更新して
  * 200 を返す) には戻さない。
+ *
+ * #1041 round-3 (C1) 修正: `plan_price_history` は SELECT ポリシーのみで
+ * INSERT ポリシーが存在しない (default deny)。従来は user-scoped client で
+ * INSERT し、RLS 拒否を「非致命的: 続行」として握り潰していたため、本番では
+ * 毎回拒否され監査証跡 (価格変更履歴) が永久に空のまま 200 を返す偽成功に
+ * なっていた。service-role (`getSupabaseAdmin()`) に切替え、かつ
+ * subscription_plans の価格 UPDATE より「前」に実行することで、履歴 INSERT が
+ * 失敗した場合に価格 UPDATE 自体を行わせない (価格は変更したが監査証跡が無い
+ * 状態を構造的に発生させない)。
+ *
+ * #1041 round-3 (C2) 修正: subscription_plans.stripe_price_id は 1 プランにつき
+ * 1 本しか保持できないため、月額・年額を同時に変更するリクエストは Stripe
+ * 同期が必須な状況では拒否する (route/Edge Function/UI の 3 点セット)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 
 type RouteContext = { params: { id: string } };
@@ -28,6 +41,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
+    // requireRole 通過後のみ到達する。plan_price_history には INSERT ポリシーが
+    // 存在しないため service-role が必須 (#1041 round-3 C1)。
+    const supabaseAdmin = getSupabaseAdmin();
 
     const body = await request.json();
     const parseResult = PriceChangeSchema.safeParse(body);
@@ -71,6 +87,24 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // STRIPE_SECRET_KEY が未設定の場合のみ、意図された dev/mock モードとして続行する。
     const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
 
+    // #1041 round-3 (C2): subscription_plans.stripe_price_id は 1 本しか保持できない
+    // (月額用・年額用の Price ID を同時に保存する列が無い)。UI は月額・年額を常に
+    // prefill するため、両方変更するリクエストが来ると Edge Function は片方
+    // (月額優先) しか Stripe に反映せず、年額の変更が黙って無視されたまま 200 を
+    // 返す偽成功になっていた。Stripe 同期が必須な状況では明示的に拒否し、DB 更新・
+    // Stripe 呼び出しのどちらも実行しない (年額用 Price ID 列の追加は別途 migration)。
+    if (stripeSyncExpected && input.new_monthly_price_jpy != null && input.new_yearly_price_jpy != null) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'OP_STRIPE_SYNC_BOTH_INTERVALS_UNSUPPORTED',
+            message: '現データモデルでは月額と年額を同時に Stripe 同期できません。片方ずつ変更してください。',
+          },
+        },
+        { status: 422 },
+      );
+    }
+
     if (stripeSyncExpected) {
       const edgeFnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/stripe-price-sync`;
       let edgeRes: Response;
@@ -84,6 +118,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           },
           body: JSON.stringify({
             plan_id: params.id,
+            plan_key: plan.plan_key,
             stripe_product_id: plan.stripe_product_id,
             new_monthly_price_jpy: input.new_monthly_price_jpy,
             new_yearly_price_jpy: input.new_yearly_price_jpy,
@@ -158,6 +193,40 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       console.warn('[super-admin/price-change] STRIPE_SECRET_KEY not set or stripe_product_id missing — mock mode (dev/test)');
     }
 
+    // plan_price_history に INSERT (operator/01-data-model.md §3.4 準拠)。
+    // #1041 round-3 (C1): service-role (`supabaseAdmin`) を使用し、かつ
+    // subscription_plans の価格 UPDATE より前に実行する。ここで失敗した場合は
+    // DB の価格をまだ一切更新していないため、そのまま 500 を返せば「価格は
+    // 変更されたのに監査証跡が無い」という中途半端な状態を残さずに済む
+    // (UPDATE を先に行い失敗時にロールバックする方式は、ロールバック自体が
+    // 失敗し得る二重障害点を増やすため採用しない)。
+    const { error: historyErr } = await supabaseAdmin.from('plan_price_history').insert({
+      plan_id: params.id,
+      old_monthly_price_jpy: plan.monthly_price_jpy,
+      new_monthly_price_jpy: input.new_monthly_price_jpy ?? plan.monthly_price_jpy,
+      old_yearly_price_jpy: plan.yearly_price_jpy,
+      new_yearly_price_jpy: input.new_yearly_price_jpy ?? plan.yearly_price_jpy,
+      old_stripe_price_id: plan.stripe_price_id,
+      new_stripe_price_id: newStripePriceId,
+      changed_by: user.id,
+      reason: input.reason,
+      effective_at: input.effective_at,
+      applies_to: input.applies_to,
+    });
+
+    if (historyErr) {
+      console.error('[super-admin/price-change POST] price_history INSERT failed:', historyErr);
+      return NextResponse.json(
+        {
+          error: {
+            code: 'OP_PRICE_HISTORY_INSERT_FAILED',
+            message: '価格変更履歴の記録に失敗しました。価格は変更していません。',
+          },
+        },
+        { status: 500 },
+      );
+    }
+
     // DB 更新: subscription_plans
     const planUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (input.new_monthly_price_jpy != null) planUpdate.monthly_price_jpy = input.new_monthly_price_jpy;
@@ -175,26 +244,6 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         { error: { code: 'OP_DB_ERROR', message: updateErr.message } },
         { status: 500 }
       );
-    }
-
-    // plan_price_history に INSERT (operator/01-data-model.md §3.4 準拠)
-    const { error: historyErr } = await supabase.from('plan_price_history').insert({
-      plan_id: params.id,
-      old_monthly_price_jpy: plan.monthly_price_jpy,
-      new_monthly_price_jpy: input.new_monthly_price_jpy ?? plan.monthly_price_jpy,
-      old_yearly_price_jpy: plan.yearly_price_jpy,
-      new_yearly_price_jpy: input.new_yearly_price_jpy ?? plan.yearly_price_jpy,
-      old_stripe_price_id: plan.stripe_price_id,
-      new_stripe_price_id: newStripePriceId,
-      changed_by: user.id,
-      reason: input.reason,
-      effective_at: input.effective_at,
-      applies_to: input.applies_to,
-    });
-
-    if (historyErr) {
-      console.error('[super-admin/price-change POST] price_history INSERT failed:', historyErr);
-      // 非致命的: 続行
     }
 
     // 監査ログ記録 (severity='warn' — 課金影響操作)

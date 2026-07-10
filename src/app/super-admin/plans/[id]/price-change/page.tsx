@@ -96,15 +96,28 @@ export default function PriceChangePage() {
       setError('変更理由を入力してください');
       return;
     }
+    if (!plan) {
+      setError('プラン情報の読み込みに失敗しました');
+      return;
+    }
     setIsExecuting(true);
     setError('');
     try {
+      // #1041 round-3 (C2): 月額・年額入力欄は常に現在価格で prefill されているため、
+      // 変更していない方までそのまま送ると「両方変更」扱いになり、Stripe 同期が
+      // 必須なプランでは (stripe_price_id が1本しか無いため) 片方が黙って
+      // 無視される偽成功の原因になっていた。変更されたフィールドのみ送る。
+      const monthlyChanged =
+        newMonthlyPrice !== '' && Number(newMonthlyPrice) !== plan.monthly_price_jpy;
+      const yearlyChanged =
+        newYearlyPrice !== '' && Number(newYearlyPrice) !== plan.yearly_price_jpy;
+
       const res = await fetch(`/api/super-admin/plans/${planId}/price-change`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          new_monthly_price_jpy: newMonthlyPrice ? Number(newMonthlyPrice) : null,
-          new_yearly_price_jpy: newYearlyPrice ? Number(newYearlyPrice) : null,
+          new_monthly_price_jpy: monthlyChanged ? Number(newMonthlyPrice) : null,
+          new_yearly_price_jpy: yearlyChanged ? Number(newYearlyPrice) : null,
           applies_to: appliesTo,
           reason,
           effective_at: new Date(effectiveAt).toISOString(),

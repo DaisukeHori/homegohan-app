@@ -25,6 +25,15 @@
  *    管理画面 (`frozen_at` ベースの `is_banned`) に一切反映されなかった。
  *    `/api/admin/users/[id]/freeze` と同じ frozen_at 機構に統一する
  *    (`@/lib/admin/user-ban`)。BAN 失敗時は success:true を返さない。
+ *
+ * #1041 round-3 (W1/W2) 修正:
+ *  - (W1) `applyUserBan()` が返す一時 BAN の解除予定日時 (`unbanAt`) を監査ログに
+ *    記録していなかった (freeze route は `unban_at` を記録済み)。temp ban の期限は
+ *    永続化する列が無いため、監査ログが唯一の記録経路。パリティを合わせる。
+ *  - (W2) BAN を要求するアクション (delete_and_temp_ban/delete_and_perm_ban) で
+ *    コンテンツ所有者が特定できない (削除済み等で null) 場合、従来は黙って BAN を
+ *    スキップし 200 `{ ban_applied: null }` を返していた (status 更新のみ成功した
+ *    偽成功)。422 `OP_BAN_TARGET_UNRESOLVED` を返すようにする。
  */
 
 import { NextResponse } from 'next/server';
@@ -238,11 +247,16 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // 偽成功だった)。
   let banApplied: boolean | null = null;
   let banErrorMessage: string | null = null;
-  if (
-    contentUserId &&
-    (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban' || action === 'delete_and_warn')
-  ) {
-    if (action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban') {
+  let banUnbanAt: string | null = null;
+  const banRequested = action === 'delete_and_temp_ban' || action === 'delete_and_perm_ban';
+  // #1041 round-3 (W2): BAN を要求したのにコンテンツ所有者が特定できない
+  // (削除済み等で null) 場合、従来は黙ってスキップし 200 { ban_applied: null }
+  // を返していた。ここでは即座に返さず、まず監査ログに記録してから 422 で
+  // 明示する (status 更新は既に成功しているため取り消さない)。
+  const banTargetUnresolved = banRequested && !contentUserId;
+
+  if (!banTargetUnresolved && contentUserId && (banRequested || action === 'delete_and_warn')) {
+    if (banRequested) {
       const banResult = await applyUserBan(supabaseAdmin, {
         userId: contentUserId,
         actorId: actor.id,
@@ -251,6 +265,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
         durationDays: ban_duration_days,
       });
       banApplied = banResult.success;
+      banUnbanAt = banResult.unbanAt;
       if (!banResult.success) {
         banErrorMessage = banResult.error ?? 'BAN の適用に失敗しました';
         console.error('[api/admin/moderation/[type]/[id]] BAN failed:', banErrorMessage);
@@ -270,12 +285,34 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       ban_duration_days,
       resolution_note,
       content_user_id: contentUserId,
-      ban_applied: banApplied,
-      ban_error: banErrorMessage,
+      ban_applied: banTargetUnresolved ? null : banApplied,
+      ban_error: banTargetUnresolved
+        ? 'BAN 対象ユーザーを特定できませんでした (コンテンツ所有者不明)'
+        : banErrorMessage,
+      // #1041 round-3 (W1): freeze route (unban_at) とのパリティ。temp ban の
+      // 解除予定日時を永続化する列が無いため、監査ログが唯一の記録経路。
+      unban_at: banUnbanAt,
     },
     severity: action.includes('ban') ? 'warn' : 'info',
     ip_address: request.headers.get('x-forwarded-for'),
   });
+
+  // #1041 round-3 (W2): BAN を要求したがコンテンツ所有者を特定できない場合は、
+  // モデレーション判定 (status 更新) 自体は保存済みでも 200 (ban_applied: null
+  // の偽成功) を返さず 422 で明示する。
+  if (banTargetUnresolved) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'OP_BAN_TARGET_UNRESOLVED',
+          message:
+            'BAN 対象ユーザーを特定できませんでした (コンテンツ所有者が不明のため)。モデレーション判定自体は保存されています。',
+        },
+        data: { status: newStatus, ban_applied: null },
+      },
+      { status: 422 },
+    );
+  }
 
   // #1041 round-2 (D): モデレーション自体 (status 更新) は既に成功しているが、
   // BAN 適用に失敗した場合は success:true を返さず、部分失敗を明示する。

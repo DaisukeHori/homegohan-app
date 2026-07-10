@@ -370,4 +370,84 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'missing' } });
     expect(res.status).toBe(404);
   });
+
+  // #1041 round-3 (W1): unbanAt の監査ログ欠落
+  it('#1041 round-3 (W1): delete_and_temp_ban 成功時、unbanAt が admin_audit_logs.details.unban_at に記録される', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [
+        {
+          data: {
+            id: 'flag-1',
+            status: 'pending',
+            reason: null,
+            resolution_note: null,
+            resolved_by: null,
+            resolved_at: null,
+            created_at: '2026-01-01T00:00:00Z',
+            user_id: 'reporter-x',
+            meals: { user_id: 'owner-x', photo_url: null },
+          },
+          error: null,
+        },
+        { data: null, error: null },
+      ],
+      user_profiles: [
+        { data: { id: 'owner-x', roles: ['user'] }, error: null },
+        { data: null, error: null },
+      ],
+      admin_audit_logs: [{ data: null, error: null }],
+    });
+
+    const res = await POST(
+      postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7, resolution_note: 'bad content' }),
+      { params: { type: 'food', id: 'flag-1' } },
+    );
+
+    expect(res.status).toBe(200);
+
+    const auditCallIndex = fakeSupabase.from.mock.calls.findIndex((c) => c[0] === 'admin_audit_logs');
+    expect(auditCallIndex).toBeGreaterThanOrEqual(0);
+    const auditBuilder = fakeSupabase.from.mock.results[auditCallIndex]!.value as { insert: ReturnType<typeof vi.fn> };
+    const insertPayload = auditBuilder.insert.mock.calls[0]?.[0] as { details: Record<string, unknown> };
+    expect(insertPayload.details.unban_at).toEqual(expect.any(String));
+  });
+
+  // #1041 round-3 (W2): orphan 所有者時の BAN skip 偽成功
+  it('#1041 round-3 (W2): delete_and_temp_ban でコンテンツ所有者が特定できない (meals が null) 場合、422 OP_BAN_TARGET_UNRESOLVED を返す (200 偽成功にしない)', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [
+        {
+          data: {
+            id: 'flag-1',
+            status: 'pending',
+            reason: null,
+            resolution_note: null,
+            resolved_by: null,
+            resolved_at: null,
+            created_at: '2026-01-01T00:00:00Z',
+            user_id: 'reporter-orphan',
+            meals: null, // コンテンツ (meal) が削除済み等で所有者を特定できない
+          },
+          error: null,
+        },
+        { data: null, error: null }, // resolveModerationItem の update
+      ],
+      admin_audit_logs: [{ data: null, error: null }],
+    });
+
+    const res = await POST(
+      postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7, resolution_note: 'orphan content' }),
+      { params: { type: 'food', id: 'flag-1' } },
+    );
+
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { error: { code: string }; data: { status: string; ban_applied: boolean | null } };
+    expect(json.error.code).toBe('OP_BAN_TARGET_UNRESOLVED');
+    expect(json.data.ban_applied).toBeNull();
+    // モデレーション判定 (status 更新) 自体は保存されている
+    expect(json.data.status).toBe('rejected');
+
+    // user_profiles (applyUserBan) には一切触れないこと (所有者不明のため BAN を試みない)
+    expect(fakeSupabase.from.mock.calls.some((c) => c[0] === 'user_profiles')).toBe(false);
+  });
 });
