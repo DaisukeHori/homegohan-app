@@ -7726,6 +7726,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      organizations_owner_id_unchanged: {
+        Args: { p_new_owner_id: string; p_org_id: string }
+        Returns: boolean
+      }
       paste_meal_to_family: {
         Args: { p_source_meal_id: string; p_target_user_ids: string[] }
         Returns: string
