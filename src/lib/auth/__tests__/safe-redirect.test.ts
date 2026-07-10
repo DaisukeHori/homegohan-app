@@ -31,6 +31,18 @@ describe('getSafeRedirectPath', () => {
       expect(getSafeRedirectPath('%252F%252Fevil.com')).toBeNull();
     });
 
+    it('制御文字 (タブ・改行・復帰) で `//` 判定を回避する変種を拒否する', () => {
+      // WHATWG URL パーサはタブ・改行を除去するため、
+      // `/<制御文字>/evil.com` は new URL() 適用後に `//evil.com` と同義になる
+      expect(getSafeRedirectPath('/%09/evil.com')).toBeNull();
+      expect(getSafeRedirectPath('/%0A/evil.com')).toBeNull();
+      expect(getSafeRedirectPath('/%0D/evil.com')).toBeNull();
+      // 二重エンコード変種
+      expect(getSafeRedirectPath('/%2509/evil.com')).toBeNull();
+      expect(getSafeRedirectPath('/%250A/evil.com')).toBeNull();
+      expect(getSafeRedirectPath('/%250D/evil.com')).toBeNull();
+    });
+
     it('javascript: スキームを拒否する', () => {
       expect(getSafeRedirectPath('javascript:alert(1)')).toBeNull();
       expect(getSafeRedirectPath('JaVaScRiPt:alert(1)')).toBeNull();
@@ -62,6 +74,19 @@ describe('getSafeRedirectPath', () => {
 
     it('前後の空白をトリムした上で許可する', () => {
       expect(getSafeRedirectPath('  /home  ')).toBe('/home');
+    });
+  });
+
+  describe('戻り値は正規化済み(先頭が単一の `/`)である', () => {
+    it('先頭が単一のバックスラッシュの場合、正規化した `/` 始まりの文字列を返す', () => {
+      // \javascript:alert(1) は正規化すると /javascript:alert(1) となり、
+      // 先頭 `/` が単一で `//` にもスキームにもならないため許可されるが、
+      // 戻り値自体は生の candidate ではなく正規化済み文字列でなければならない
+      // (呼び出し側が「先頭 `/` = 内部パス」という契約を素朴に信頼できるようにするため)
+      const result = getSafeRedirectPath('\\javascript:alert(1)');
+      expect(result).toBe('/javascript:alert(1)');
+      expect(result?.startsWith('/')).toBe(true);
+      expect(result?.startsWith('\\')).toBe(false);
     });
   });
 });
