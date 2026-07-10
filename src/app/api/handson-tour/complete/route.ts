@@ -49,7 +49,7 @@ export async function POST() {
     }
 
     const { data: result, error: rpcError } = await supabase
-      .rpc('complete_handson_tour', { p_user_id: user.id });
+      .rpc('complete_handson_tour');
 
     if (rpcError) {
       console.error('complete_handson_tour RPC error:', rpcError);

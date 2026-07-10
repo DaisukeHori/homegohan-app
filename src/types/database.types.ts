@@ -7330,7 +7330,7 @@ export type Database = {
       }
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
-      complete_handson_tour: { Args: { p_user_id: string }; Returns: Json }
+      complete_handson_tour: { Args: never; Returns: Json }
       create_family_group: {
         Args: { p_name: string; p_plan_key?: string }
         Returns: {
