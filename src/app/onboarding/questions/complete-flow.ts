@@ -34,30 +34,39 @@ export const GENERIC_SAVE_ERROR_MESSAGE =
 // そのままユーザーへ表示していたため、/api/onboarding/progress や
 // /api/onboarding/complete が 500 で返す Supabase の生エラーメッセージ
 // (テーブル名・カラム名等を含み得る) や、想定外の英語のみの例外メッセージまで
-// 画面に露出してしまっていた。API 側が意図的に返す既知のエラーメッセージのみ
+// 画面に露出してしまっていた。API 側が意図的に返す既知のエラーコードのみ
 // 許可リストで通し、それ以外 (内部実装依存の文字列) は汎用日本語メッセージに
 // フォールバックする。
-const KNOWN_CLIENT_ERROR_MESSAGES: ReadonlySet<string> = new Set([
-  'Unauthorized',
-  'Invalid JSON',
-  'Invalid request body',
-  'Invalid answers',
+//
+// #1045 round-4 (Fable Suggestion): 上記の許可リストは既知コードを「英語のまま」
+// 素通ししていたため、resume/page.tsx 等 API を意識しないユーザー向け画面にまで
+// 英語のエラーコードがそのまま表示され得た。既知コード→日本語メッセージの
+// マッピング方式に変更し、progress/route.ts (Unauthorized / Invalid JSON /
+// Invalid request body / Invalid answers) と complete/route.ts (Failed to
+// initialize profile) が意図的に返す固定コードすべてを日本語化する。
+// 未知の文字列 (Supabase の生エラー等) は従来どおり汎用メッセージにフォールバック。
+export const KNOWN_CLIENT_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
+  ['Unauthorized', 'セッションが切れました。お手数ですが再度ログインしてください。'],
+  ['Invalid JSON', '送信内容の読み込みに失敗しました。ページを再読み込みしてもう一度お試しください。'],
+  ['Invalid request body', '送信内容が正しくありません。ページを再読み込みしてもう一度お試しください。'],
+  ['Invalid answers', '入力内容に誤りがあります。ご確認のうえもう一度お試しください。'],
+  ['Failed to initialize profile', 'プロフィールの初期化に失敗しました。もう一度お試しください。'],
 ]);
 
 /**
  * API のエラーレスポンス (`{ error: string }`) からユーザー向けメッセージを取り出す。
  * JSON が壊れている・error フィールドが無い・許可リスト外の (内部実装依存の) 文字列の
- * 場合は汎用メッセージにフォールバックする。
+ * 場合は汎用メッセージにフォールバックする。許可リスト内のコードは対応する
+ * 日本語メッセージに変換して返す (英語コードをそのまま画面に出さない)。
  */
 export async function parseErrorMessage(res: FinalizeResponseLike): Promise<string> {
   try {
     const data = await res.json();
-    if (
-      data &&
-      typeof data.error === 'string' &&
-      KNOWN_CLIENT_ERROR_MESSAGES.has(data.error)
-    ) {
-      return data.error;
+    if (data && typeof data.error === 'string') {
+      const mapped = KNOWN_CLIENT_ERROR_MESSAGES.get(data.error);
+      if (mapped) {
+        return mapped;
+      }
     }
   } catch {
     // JSON parse 失敗時は汎用メッセージにフォールバック

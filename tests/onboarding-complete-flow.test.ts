@@ -20,8 +20,18 @@ import {
   finalizeOnboarding,
   parseErrorMessage,
   GENERIC_SAVE_ERROR_MESSAGE,
+  KNOWN_CLIENT_ERROR_MESSAGES,
   type FinalizeResponseLike,
 } from "../src/app/onboarding/questions/complete-flow";
+
+// #1045 round-4: 許可リストのコードは日本語メッセージにマッピングされるため、
+// 期待値は KNOWN_CLIENT_ERROR_MESSAGES から取得し、マッピング内容の変更と
+// テスト側のハードコードがズレないようにする。
+function mappedMessage(code: string): string {
+  const message = KNOWN_CLIENT_ERROR_MESSAGES.get(code);
+  if (!message) throw new Error(`test setup error: unmapped code "${code}"`);
+  return message;
+}
 
 function makeResponse(ok: boolean, body: unknown = {}): FinalizeResponseLike {
   return {
@@ -42,7 +52,8 @@ describe("finalizeOnboarding — fail-closed 動作", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.stage).toBe("progress");
-      expect(result.message).toBe("Invalid answers");
+      // #1045 round-4: 許可リストのコードは日本語メッセージにマッピングされて返る
+      expect(result.message).toBe(mappedMessage("Invalid answers"));
     }
     // #1045 round-2: progress が失敗した時点で complete を呼んではいけない
     // (呼んでしまうと profile 不在時にデフォルト値で upsert され、回答が失われる)
@@ -111,9 +122,28 @@ describe("finalizeOnboarding — fail-closed 動作", () => {
 });
 
 describe("parseErrorMessage", () => {
-  it("error フィールドが既知のエラーメッセージ (API が意図的に返すもの) の場合はそのまま返す", async () => {
+  // #1045 round-4 (Fable Suggestion): 許可リストのコードは英語のまま素通りせず、
+  // 対応する日本語メッセージにマッピングされる (progress/route.ts の4種 +
+  // complete/route.ts の "Failed to initialize profile" の計5種)。
+  it("error フィールドが既知のエラーコード (API が意図的に返すもの) の場合は対応する日本語メッセージを返す", async () => {
     const res = makeResponse(false, { error: "Invalid answers" });
-    await expect(parseErrorMessage(res)).resolves.toBe("Invalid answers");
+    await expect(parseErrorMessage(res)).resolves.toBe(mappedMessage("Invalid answers"));
+  });
+
+  it("既知のエラーコード5種すべてが日本語メッセージにマッピングされている", async () => {
+    for (const code of [
+      "Unauthorized",
+      "Invalid JSON",
+      "Invalid request body",
+      "Invalid answers",
+      "Failed to initialize profile",
+    ]) {
+      const res = makeResponse(false, { error: code });
+      const message = await parseErrorMessage(res);
+      expect(message).toBe(mappedMessage(code));
+      // 英語コードそのものが画面に出ないことを保証する
+      expect(message).not.toBe(code);
+    }
   });
 
   it("JSON parse に失敗した場合は汎用メッセージにフォールバックする", async () => {

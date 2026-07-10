@@ -814,9 +814,12 @@ function OnboardingQuestionsContent() {
                   <Button
                     onClick={() => handleAnswer("completed")}
                     disabled={
-                      !answers.age || Number(answers.age) < AGE_MIN || Number(answers.age) > AGE_MAX ||
-                      !answers.height || Number(answers.height) < 50 || Number(answers.height) > 250 ||
-                      !answers.weight || Number(answers.weight) < 10 || Number(answers.weight) > 200
+                      // #1045 round-4 (Fable Suggestion): Number("abc") 等の非数値は NaN になり、
+                      // `NaN < AGE_MIN` も `NaN > AGE_MAX` も false になるため、範囲チェックを
+                      // すり抜けて disabled が解除されてしまっていた。Number.isFinite で NaN を先に弾く。
+                      !answers.age || !Number.isFinite(Number(answers.age)) || Number(answers.age) < AGE_MIN || Number(answers.age) > AGE_MAX ||
+                      !answers.height || !Number.isFinite(Number(answers.height)) || Number(answers.height) < 50 || Number(answers.height) > 250 ||
+                      !answers.weight || !Number.isFinite(Number(answers.weight)) || Number(answers.weight) < 10 || Number(answers.weight) > 200
                     }
                     className="w-full py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-gray-900 hover:bg-black text-white font-bold mt-3 sm:mt-4 text-sm sm:text-base"
                   >

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { parseErrorMessage } from "@/app/onboarding/questions/complete-flow";
 
 // 再開ウェルカム画面 (OB-UI-01)
 export default function OnboardingResumePage() {
@@ -78,6 +79,11 @@ export default function OnboardingResumePage() {
   // complete が失敗すると onboarding_completed_at が未設定のままとなり、/home→resume の
   // F6-11 ループが再現し得た (defense-in-depth)。fail-closed にし、失敗時はエラーを提示して
   // 再試行できるようにする (/home へは進ませない)。
+  //
+  // #1045 round-4 (Sonnet Warning): res.json().error を無条件にそのまま表示しており、
+  // Supabase の生エラーメッセージ (テーブル名・カラム名等を含み得る) が画面に露出し得た。
+  // complete-flow.ts の parseErrorMessage (許可リスト + 日本語マッピング、範囲外は
+  // 汎用メッセージ) を使って表示内容を制御する。
   const handleSkipForNow = async () => {
     if (isSkipping) return;
     setIsSkipping(true);
@@ -85,14 +91,7 @@ export default function OnboardingResumePage() {
     try {
       const res = await fetch('/api/onboarding/complete', { method: 'POST' });
       if (!res.ok) {
-        let message = '完了処理に失敗しました。もう一度お試しください。';
-        try {
-          const data = await res.json();
-          if (data?.error) message = data.error;
-        } catch {
-          // JSON parse 失敗時は汎用メッセージのまま
-        }
-        setSkipError(message);
+        setSkipError(await parseErrorMessage(res));
         setIsSkipping(false);
         return;
       }
