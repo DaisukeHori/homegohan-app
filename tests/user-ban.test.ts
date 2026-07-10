@@ -77,6 +77,8 @@ describe('applyUserBan (#1041 round-2 D)', () => {
     expect(payload.frozen_reason).toBe('[moderation:food] spam');
     expect(payload.frozen_by).toBe('admin-1');
     expect(payload).not.toHaveProperty('roles');
+    // #1030: unban_at も user_profiles に永続化されること (判定時比較による自動解除のため)
+    expect(payload.unban_at).toBe(result.unbanAt);
     // 対象ユーザーの id にスコープされていること
     expect(supabase.eqCallsAfterUpdate[0]).toEqual(['id', 'owner-1']);
   });
@@ -93,6 +95,9 @@ describe('applyUserBan (#1041 round-2 D)', () => {
 
     expect(result.success).toBe(true);
     expect(result.unbanAt).toBeNull();
+    // #1030: permanent BAN は unban_at も null で永続化されること
+    const payload = supabase.updateCalls[0] as Record<string, unknown>;
+    expect(payload.unban_at).toBeNull();
   });
 
   it('super_admin は BAN 対象から除外する (更新を実行しない)', async () => {

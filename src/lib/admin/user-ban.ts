@@ -11,6 +11,10 @@
  * `/api/admin/users/[id]/freeze` (POST/DELETE) と同じ
  * `frozen_at`/`frozen_reason`/`frozen_by` 更新機構に統一する。
  *
+ * #1030 修正: 一時 BAN の解除予定日時 (`unbanAt`) を `user_profiles.unban_at`
+ * (20260710210030 migration で追加) に永続化する。従来は監査ログにしか
+ * 記録されず、判定時比較による自動解除が不可能だった。
+ *
  * 呼び出し側は必ず authz (requireRole 等) を通した後に、service-role
  * クライアント (`getSupabaseAdmin()`) を渡すこと (user_profiles の他ユーザー
  * 行の更新は RLS で拒否されるため)。
@@ -36,8 +40,9 @@ export interface ApplyUserBanResult {
   success: boolean;
   /**
    * temporary BAN の解除予定日時 (呼び出し側の監査ログ記録用)。
-   * 注意: この値を永続化する列は存在しない (freeze route と同じ制約、要 migration)。
-   * 自動解除バッチは無いため、運用者が手動で unfreeze する必要がある。
+   * #1030: `user_profiles.unban_at` にも永続化されるため、requireUser/
+   * requireRole/middleware の判定時比較により unban_at 経過後は自動的に
+   * アクセスが回復する。
    */
   unbanAt: string | null;
   error?: string;
@@ -73,24 +78,25 @@ export async function applyUserBan(
     return { success: false, unbanAt: null, error: 'super_admin ユーザーを BAN することはできません' };
   }
 
+  let unbanAt: string | null = null;
+  if (banType === 'temporary' && durationDays) {
+    const unbanDate = new Date();
+    unbanDate.setDate(unbanDate.getDate() + durationDays);
+    unbanAt = unbanDate.toISOString();
+  }
+
   const { error: updateError } = await supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: new Date().toISOString(),
       frozen_reason: reason,
       frozen_by: actorId,
+      unban_at: unbanAt,
     } as Record<string, unknown>)
     .eq('id', userId);
 
   if (updateError) {
     return { success: false, unbanAt: null, error: updateError.message };
-  }
-
-  let unbanAt: string | null = null;
-  if (banType === 'temporary' && durationDays) {
-    const unbanDate = new Date();
-    unbanDate.setDate(unbanDate.getDate() + durationDays);
-    unbanAt = unbanDate.toISOString();
   }
 
   return { success: true, unbanAt };

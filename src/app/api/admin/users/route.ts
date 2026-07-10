@@ -8,6 +8,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { UsersSearchSchema } from '@/lib/admin/users-schemas';
+import { isAccountFrozen } from '@/lib/auth/frozen';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,7 +59,8 @@ export async function GET(request: Request) {
       created_at,
       frozen_at,
       frozen_reason,
-      frozen_by
+      frozen_by,
+      unban_at
     `,
       { count: 'exact' },
     );
@@ -123,10 +125,15 @@ export async function GET(request: Request) {
     nickname: u.nickname,
     plan_key: u.plan_key_cached ?? 'free',
     roles: u.roles ?? ['user'],
-    is_banned: (u as { frozen_at?: string | null }).frozen_at != null,
+    // #1030: 一時 BAN は unban_at 経過後に自動解除扱いとする (判定時比較)。
+    is_banned: isAccountFrozen({
+      frozenAt: (u as { frozen_at?: string | null }).frozen_at ?? null,
+      unbanAt: (u as { unban_at?: string | null }).unban_at ?? null,
+    }),
     frozen_at: (u as { frozen_at?: string | null }).frozen_at ?? null,
     frozen_reason: (u as { frozen_reason?: string | null }).frozen_reason ?? null,
     frozen_by: (u as { frozen_by?: string | null }).frozen_by ?? null,
+    unban_at: (u as { unban_at?: string | null }).unban_at ?? null,
     last_login_at: u.last_login_at,
     registered_at: u.created_at,
     meal_count: 0, // 集計は別クエリが必要

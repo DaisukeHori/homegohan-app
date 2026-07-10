@@ -71,9 +71,11 @@ function setupUserProfile(
   userId: string,
   roles: string[],
   organization_id: string | null = null,
+  frozen_at: string | null = null,
+  unban_at: string | null = null,
 ) {
   const profileBuilder = makeQueryBuilder({
-    data: { roles, organization_id },
+    data: { roles, organization_id, frozen_at, unban_at },
     error: null,
   });
   supabaseClient.from = vi.fn().mockImplementation((table: string) => {
@@ -100,6 +102,7 @@ describe('requireUser', () => {
 
   it('認証済みユーザーを返す', async () => {
     setupGetUser(fakeUser);
+    setupUserProfile(fakeUser.id, ['user'], null);
     const user = await requireUser();
     expect(user.id).toBe(fakeUser.id);
     expect(user.email).toBe(fakeUser.email);
@@ -114,6 +117,34 @@ describe('requireUser', () => {
   it('Supabase エラーがある場合 AuthError を throw する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: { message: 'auth error' } });
     await expect(requireUser()).rejects.toThrow(AuthError);
+  });
+
+  // #1030: frozen_at enforcement
+  it('frozen_at がセット (無期限 BAN) されている場合 ForbiddenError(AUTH_ACCOUNT_FROZEN) を throw する', async () => {
+    setupGetUser(fakeUser);
+    setupUserProfile(fakeUser.id, ['user'], null, '2026-07-01T00:00:00.000Z', null);
+    await expect(requireUser()).rejects.toThrow(ForbiddenError);
+    await expect(requireUser()).rejects.toMatchObject({ code: 'AUTH_ACCOUNT_FROZEN' });
+  });
+
+  it('frozen_at がセットされていても unban_at が過去 (一時 BAN 期限切れ) なら成功する', async () => {
+    setupGetUser(fakeUser);
+    setupUserProfile(
+      fakeUser.id,
+      ['user'],
+      null,
+      '2026-07-01T00:00:00.000Z',
+      '2026-07-02T00:00:00.000Z', // 過去
+    );
+    const user = await requireUser();
+    expect(user.id).toBe(fakeUser.id);
+  });
+
+  it('frozen_at がセットされ unban_at が未来 (一時 BAN 継続中) なら ForbiddenError を throw する', async () => {
+    setupGetUser(fakeUser);
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    setupUserProfile(fakeUser.id, ['user'], null, '2026-07-01T00:00:00.000Z', future);
+    await expect(requireUser()).rejects.toMatchObject({ code: 'AUTH_ACCOUNT_FROZEN' });
   });
 });
 
@@ -169,6 +200,16 @@ describe('requireRole', () => {
 
     const profile = await requireRole(['admin', 'super_admin', 'finance']);
     expect(profile.roles).toContain('finance');
+  });
+
+  // #1030: frozen_at enforcement (allowedRoles を満たしていても凍結中なら拒否)
+  it('allowedRoles を満たしていても frozen_at がセットされていれば ForbiddenError(AUTH_ACCOUNT_FROZEN) を throw する', async () => {
+    setupGetUser(fakeUser);
+    setupUserProfile(fakeUser.id, ['admin'], null, '2026-07-01T00:00:00.000Z', null);
+
+    await expect(requireRole(['admin', 'super_admin'])).rejects.toMatchObject({
+      code: 'AUTH_ACCOUNT_FROZEN',
+    });
   });
 });
 

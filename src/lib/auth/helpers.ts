@@ -10,6 +10,7 @@ import { type User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError, ImpersonationError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
+import { isAccountFrozen } from './frozen';
 
 export { type RoleName, type OrgRoleName, type UserProfile };
 
@@ -31,13 +32,18 @@ async function getAuthUser(): Promise<User> {
 }
 
 /**
- * user_profiles テーブルから roles と organization_id を取得する。
+ * user_profiles テーブルから roles と organization_id、凍結状態 (frozen_at/unban_at) を取得する。
  */
-async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; organization_id: string | null }> {
+async function getUserProfile(userId: string): Promise<{
+  roles: RoleName[];
+  organization_id: string | null;
+  frozen_at: string | null;
+  unban_at: string | null;
+}> {
   const supabase = createClient();
   const { data: profile, error } = await supabase
     .from('user_profiles')
-    .select('roles, organization_id')
+    .select('roles, organization_id, frozen_at, unban_at')
     .eq('id', userId)
     .single();
 
@@ -48,7 +54,20 @@ async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; orga
   return {
     roles: (profile.roles ?? ['user']) as RoleName[],
     organization_id: profile.organization_id ?? null,
+    frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
+    unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
   };
+}
+
+/**
+ * #1030: frozen_at がセットされ、かつ一時 BAN の unban_at が未到来の場合に
+ * ForbiddenError('AUTH_ACCOUNT_FROZEN') を throw する。
+ * unban_at 経過後 (一時 BAN の自動解除) は許可する (判定時比較)。
+ */
+function assertNotFrozen(frozenAt: string | null, unbanAt: string | null): void {
+  if (isAccountFrozen({ frozenAt, unbanAt })) {
+    throw new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,9 +76,14 @@ async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; orga
 
 /**
  * Supabase auth で取得した user を返す。未認証なら 401 相当の AuthError を throw する。
+ * #1030: frozen_at がセットされている(かつ一時 BAN 未解除)場合は 403 相当の
+ * ForbiddenError('AUTH_ACCOUNT_FROZEN') を throw する。
  */
 export async function requireUser(): Promise<User> {
-  return getAuthUser();
+  const user = await getAuthUser();
+  const { frozen_at, unban_at } = await getUserProfile(user.id);
+  assertNotFrozen(frozen_at, unban_at);
+  return user;
 }
 
 /**
@@ -69,13 +93,14 @@ export async function requireUser(): Promise<User> {
  * @param allowedRoles - 許可するロールの配列
  * @returns 認証済みユーザーの UserProfile
  * @throws AuthError (401) - 未認証の場合
- * @throws ForbiddenError (403) - ロール不足の場合
+ * @throws ForbiddenError (403) - ロール不足の場合、または #1030: アカウント凍結中の場合
  */
 export async function requireRole(
   allowedRoles: ReadonlyArray<RoleName>,
 ): Promise<UserProfile> {
   const user = await getAuthUser();
-  const { roles, organization_id } = await getUserProfile(user.id);
+  const { roles, organization_id, frozen_at, unban_at } = await getUserProfile(user.id);
+  assertNotFrozen(frozen_at, unban_at);
 
   if (!roles.some((r) => allowedRoles.includes(r))) {
     throw new ForbiddenError(

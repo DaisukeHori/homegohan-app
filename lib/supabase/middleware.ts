@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { resolveOnboardingRedirect } from '@/lib/onboarding-routing'
+import { isAccountFrozen } from '@/lib/auth/frozen'
 
 export async function updateSession(request: NextRequest) {
   // APIルートの場合は、セッション更新のみ行い、リダイレクトはしない
@@ -113,17 +114,34 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user) {
-    // user_profiles からオンボーディング状態を取得
+    // user_profiles からオンボーディング状態・凍結状態を取得
     // #348: error を必ず捕捉し、DB 参照失敗時はリダイレクト判定をスキップする
     // (RLS 拒否・カラム不在・ネットワーク障害などで data=null になった場合に
     //  not_started 扱いで /onboarding/welcome へ飛ばしてしまうバグを防ぐ)
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('roles, onboarding_started_at, onboarding_completed_at')
+      .select('roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at')
       .eq('id', user.id)
       .maybeSingle()
 
     if (!profileError) {
+      // #1030: frozen_at がセットされ (かつ一時 BAN が未解除の) アカウントは
+      // /frozen へリダイレクトする。無限リダイレクトを避けるため /frozen 自体は除外。
+      const frozen = isAccountFrozen({
+        frozenAt: profile?.frozen_at ?? null,
+        unbanAt: profile?.unban_at ?? null,
+      })
+
+      if (frozen) {
+        if (request.nextUrl.pathname !== '/frozen') {
+          const url = request.nextUrl.clone()
+          url.pathname = '/frozen'
+          url.search = ''
+          return NextResponse.redirect(url)
+        }
+        return supabaseResponse
+      }
+
       const redirectPath = resolveOnboardingRedirect({
         pathname: request.nextUrl.pathname,
         roles: profile?.roles || [],
