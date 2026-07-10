@@ -227,11 +227,17 @@ export async function POST(request: Request) {
 
       // #1042: ロールバック（新規分の削除・旧データの復元）自体が失敗した場合、
       // 「元のデータへロールバックしました」という誤ったメッセージを返してはいけない。
-      // rollbackSucceeded をレスポンスに反映し、失敗時はデータ消失の可能性を明示する。
+      // rollbackSucceeded をレスポンスに反映し、失敗内容に応じてメッセージを分岐する。
+      // - restoreFailed（旧データ復元insert自体が失敗）: 旧データが失われた可能性がある
+      //   （delete が成功していれば新旧どちらも無い状態、失敗していても旧データは戻っていない）
+      // - rollbackDeleteFailed のみ（旧データ復元は成功、新規挿入分の削除だけ失敗）: 旧データは
+      //   無事だが新規挿入分が残留しており、重複している可能性がある（データ消失ではない）
       const rollbackSucceeded = !rollbackDeleteFailed && !restoreFailed;
       const message = rollbackSucceeded
         ? 'Pantry replace が部分的に失敗したため、元のデータへロールバックしました'
-        : 'Pantry replace が部分的に失敗し、ロールバックにも失敗しました。冷蔵庫データが失われた可能性があります。サポートへ連絡してください';
+        : restoreFailed
+          ? 'Pantry replace が部分的に失敗し、旧データの復元にも失敗しました。冷蔵庫データが失われた可能性があります。サポートへ連絡してください'
+          : 'Pantry replace が部分的に失敗し、新規追加分の削除ロールバックに失敗しました。旧データは復元済みのため、新規追加分と重複している可能性があります。内容をご確認ください';
 
       return NextResponse.json(
         {

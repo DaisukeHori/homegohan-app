@@ -8,6 +8,11 @@
  * - stale でない場合はそのまま状態を返し、復元は呼ばれないこと
  * - stale かつ snapshot が残っている場合は復元を実行し、結果を response に含めること
  * - stale だが snapshot がない場合は復元を呼ばず、response に restore を含めないこと
+ *
+ * #1042 性能退行修正: 3秒間隔ポーリングの通常 select から生成中に肥大化する
+ * generated_data(jsonb) を外し、stale 判定成立時のみ二次クエリで取得することの確認。
+ * - 非 stale ポーリングでは generated_data を select しないこと
+ * - stale 判定成立時は generated_data のみを対象にした二次クエリを発行すること
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -18,7 +23,7 @@ const selectResultQueue: Array<{ data: any; error: any }> = [];
 const mockMaybeSingle = vi.fn(() => Promise.resolve(selectResultQueue.shift() ?? { data: null, error: null }));
 const mockSelectEq2 = vi.fn(() => ({ maybeSingle: mockMaybeSingle }));
 const mockSelectEq1 = vi.fn(() => ({ eq: mockSelectEq2 }));
-const mockSelect = vi.fn(() => ({ eq: mockSelectEq1 }));
+const mockSelect = vi.fn((..._args: any[]) => ({ eq: mockSelectEq1 }));
 
 const updateEqQueue: Array<{ error: any }> = [];
 const mockUpdateEq2 = vi.fn(() => Promise.resolve(updateEqQueue.shift() ?? { error: null }));
@@ -76,7 +81,6 @@ describe('GET /api/ai/menu/weekly/status', () => {
         start_date: '2026-07-06',
         target_meal_id: null,
         progress: 5,
-        generated_data: { snapshot: [] },
       },
       error: null,
     });
@@ -88,6 +92,29 @@ describe('GET /api/ai/menu/weekly/status', () => {
     expect(json.status).toBe('processing');
     expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('非 stale ポーリングでは generated_data を select しない(二次クエリも発行しない)', async () => {
+    selectResultQueue.push({
+      data: {
+        id: 'req-1',
+        status: 'processing',
+        error_message: null,
+        updated_at: new Date().toISOString(),
+        mode: 'v4',
+        start_date: '2026-07-06',
+        target_meal_id: null,
+        progress: 5,
+      },
+      error: null,
+    });
+
+    await GET(makeRequest('req-1'));
+
+    // 通常ポーリングでの select は1回のみで、generated_data を含まないこと
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(mockSelect.mock.calls[0][0]).not.toContain('generated_data');
+    expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
   });
 
   it('stale な processing リクエストは failed 化し、snapshot があれば復元して response に反映する', async () => {
@@ -103,8 +130,12 @@ describe('GET /api/ai/menu/weekly/status', () => {
         start_date: '2026-07-06',
         target_meal_id: null,
         progress: 5,
-        generated_data: { snapshot: [snapshotRow] },
       },
+      error: null,
+    });
+    // stale 判定成立後に発行される generated_data 専用の二次クエリの結果
+    selectResultQueue.push({
+      data: { generated_data: { snapshot: [snapshotRow] } },
       error: null,
     });
     mockRestorePlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
@@ -124,6 +155,11 @@ describe('GET /api/ai/menu/weekly/status', () => {
     expect(mockUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed', error_message: 'stale_request_timeout' }),
     );
+
+    // stale 判定成立時のみ generated_data 専用の二次クエリが発行されること
+    expect(mockSelect).toHaveBeenCalledTimes(2);
+    expect(mockSelect.mock.calls[0][0]).not.toContain('generated_data');
+    expect(mockSelect.mock.calls[1][0]).toContain('generated_data');
   });
 
   it('stale だが snapshot がない場合は復元を呼ばず response に restore を含めない', async () => {
@@ -138,8 +174,12 @@ describe('GET /api/ai/menu/weekly/status', () => {
         start_date: '2026-07-06',
         target_meal_id: null,
         progress: null,
-        generated_data: null,
       },
+      error: null,
+    });
+    // stale 判定成立後に発行される generated_data 専用の二次クエリの結果(snapshot なし)
+    selectResultQueue.push({
+      data: { generated_data: null },
       error: null,
     });
 

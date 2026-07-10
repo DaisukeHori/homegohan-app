@@ -9,7 +9,10 @@
  * - 全て成功した場合はロールバックが発生しないこと
  * - ロールバック（新規分の削除・旧データの復元）自体が失敗した場合は、
  *   「元のデータへロールバックしました」という誤ったメッセージを返さず、
- *   rollbackSucceeded=false とデータ消失の可能性を明示すること
+ *   rollbackSucceeded=false を明示すること
+ * - 旧データの復元insert自体が失敗した場合（データ消失の可能性）と、
+ *   新規分の削除ロールバックのみ失敗した場合（旧データは復元済みで新規分と
+ *   重複している可能性）とでメッセージを分岐すること
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -145,7 +148,8 @@ describe('POST /api/pantry/from-photo (mode=replace)', () => {
 
     expect(res.status).toBe(500);
     expect(json.rollbackSucceeded).toBe(false);
-    expect(json.error).toContain('ロールバックにも失敗');
+    expect(json.error).toContain('旧データの復元にも失敗');
+    expect(json.error).toContain('冷蔵庫データが失われた可能性があります');
     expect(json.error).not.toContain('元のデータへロールバックしました');
   });
 
@@ -167,7 +171,9 @@ describe('POST /api/pantry/from-photo (mode=replace)', () => {
 
     expect(res.status).toBe(500);
     expect(json.rollbackSucceeded).toBe(false);
-    expect(json.error).toContain('ロールバックにも失敗');
+    expect(json.error).toContain('削除ロールバックに失敗');
+    expect(json.error).toContain('重複している可能性');
+    expect(json.error).not.toContain('冷蔵庫データが失われた可能性');
     expect(json.error).not.toContain('元のデータへロールバックしました');
   });
 

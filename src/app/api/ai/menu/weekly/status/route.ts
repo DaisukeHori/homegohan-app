@@ -19,9 +19,11 @@ export async function GET(request: Request) {
   }
 
   try {
+    // #1042: 通常ポーリング（3秒間隔）では生成中に肥大化する generated_data(jsonb) を
+    // select しない。stale 判定が成立した場合のみ、下記で二次クエリして取得する。
     const { data: request, error } = await supabase
       .from('weekly_menu_requests')
-      .select('id, status, error_message, updated_at, mode, start_date, target_meal_id, progress, generated_data')
+      .select('id, status, error_message, updated_at, mode, start_date, target_meal_id, progress')
       .eq('id', requestId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -59,7 +61,17 @@ export async function GET(request: Request) {
 
       // #1042: waitUntil 消失等で生成コールバックが実行されず stale になったケースでも、
       // 削除済み献立のスナップショットが残っていれば復元する（sweeper 経由の救済ロールバック）。
-      const snapshot = extractPlannedMealsSnapshot(request.generated_data);
+      // generated_data は stale 判定成立時のみここで二次クエリして取得する。
+      const { data: snapshotRow, error: snapshotError } = await supabase
+        .from('weekly_menu_requests')
+        .select('generated_data')
+        .eq('id', requestId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (snapshotError) {
+        console.error('Failed to fetch generated_data for stale restore:', snapshotError);
+      }
+      const snapshot = extractPlannedMealsSnapshot(snapshotRow?.generated_data);
       let restoreResult: { restored: number; skipped: number; failed: number } | null = null;
       if (snapshot.length > 0) {
         restoreResult = await restorePlannedMealsSnapshot(supabase, snapshot);
