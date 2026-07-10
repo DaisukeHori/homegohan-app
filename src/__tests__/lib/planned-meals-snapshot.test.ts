@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
+import {
+  restorePlannedMealsSnapshot,
+  extractPlannedMealsSnapshot,
+  type PlannedMealSnapshotRow,
+} from '@/lib/planned-meals-snapshot';
 
 type LookupResult = { data: { id: string } | null; error: { message: string } | null };
 
@@ -144,5 +148,38 @@ describe('restorePlannedMealsSnapshot', () => {
     const result = await restorePlannedMealsSnapshot(supabase, []);
     expect(result).toEqual({ restored: 0, skipped: 0, failed: 0 });
     expect(mockFrom).not.toHaveBeenCalled();
+  });
+});
+
+describe('extractPlannedMealsSnapshot', () => {
+  // #1042: sweeper (status/pending/cleanup) が weekly_menu_requests.generated_data
+  // から復元用スナップショットを安全に取り出せることを確認する。
+
+  it('request/route.ts が保存する { snapshot: [...] } 形式から配列を取り出す', () => {
+    const snapshot = [makeRow()];
+    expect(extractPlannedMealsSnapshot({ snapshot })).toEqual(snapshot);
+  });
+
+  it('generated_data が null の場合は空配列を返す', () => {
+    expect(extractPlannedMealsSnapshot(null)).toEqual([]);
+  });
+
+  it('generated_data が snapshot を持たないオブジェクトの場合は空配列を返す', () => {
+    expect(extractPlannedMealsSnapshot({ version: 'v4', someOtherField: 1 })).toEqual([]);
+  });
+
+  it('snapshot が配列でない場合は空配列を返す', () => {
+    expect(extractPlannedMealsSnapshot({ snapshot: 'not-an-array' })).toEqual([]);
+  });
+
+  it('id/daily_meal_id/meal_type を欠いた不正な行は除外する', () => {
+    const validRow = makeRow({ id: 'valid-1' });
+    const invalidRow = { id: 'broken' }; // daily_meal_id / meal_type 欠如
+    expect(extractPlannedMealsSnapshot({ snapshot: [validRow, invalidRow] })).toEqual([validRow]);
+  });
+
+  it('generated_data がオブジェクトでない場合(文字列・数値等)は空配列を返す', () => {
+    expect(extractPlannedMealsSnapshot('unexpected-string')).toEqual([]);
+    expect(extractPlannedMealsSnapshot(42)).toEqual([]);
   });
 });

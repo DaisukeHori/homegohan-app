@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 
 // 週間生成中のリクエストがあるか確認
 export async function GET(request: Request) {
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
     // mode='weekly', mode='v4', mode='v5', mode=null のすべてを対象
     const { data: pendingRequest, error } = await supabase
       .from('weekly_menu_requests')
-      .select('id, status, mode, start_date, created_at, updated_at')
+      .select('id, status, mode, start_date, created_at, updated_at, generated_data')
       .eq('user_id', user.id)
       .or('mode.eq.weekly,mode.eq.v4,mode.eq.v5,mode.is.null')
       .in('status', ['queued', 'pending', 'processing'])
@@ -63,10 +64,24 @@ export async function GET(request: Request) {
         if (staleError) {
           console.error('Failed to mark stale weekly request as failed:', staleError);
         }
-        
+
         // プレースホルダーは使用しないので、is_generating のクリアは不要
-        
-        return NextResponse.json({ hasPending: false });
+
+        // #1042: waitUntil 消失等で生成コールバックが実行されず stale になったケースでも、
+        // 削除済み献立のスナップショットが残っていれば復元する（sweeper 経由の救済ロールバック）。
+        const snapshot = extractPlannedMealsSnapshot(pendingRequest.generated_data);
+        let restoreResult: { restored: number; skipped: number; failed: number } | null = null;
+        if (snapshot.length > 0) {
+          restoreResult = await restorePlannedMealsSnapshot(supabase, snapshot);
+          console.log(
+            `🔁 [stale sweeper/pending] Restored meals for request ${pendingRequest.id}: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
+          );
+        }
+
+        return NextResponse.json({
+          hasPending: false,
+          ...(restoreResult ? { restore: restoreResult } : {}),
+        });
       }
 
       if (pendingRequest.start_date && pendingRequest.start_date !== date) {

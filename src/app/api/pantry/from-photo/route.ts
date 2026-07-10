@@ -202,6 +202,9 @@ export async function POST(request: Request) {
     // 削除済みの旧データと新規データが混在した中途半端な状態を残さないため、
     // 今回新規挿入した分を削除し、退避しておいた旧データを復元する。
     if (mode === 'replace' && replaceWriteFailures > 0) {
+      let rollbackDeleteFailed = false;
+      let restoreFailed = false;
+
       if (insertedPantryItemIds.length > 0) {
         const { error: rollbackDeleteError } = await supabase
           .from('pantry_items')
@@ -209,6 +212,7 @@ export async function POST(request: Request) {
           .in('id', insertedPantryItemIds);
         if (rollbackDeleteError) {
           console.error('Failed to roll back partially inserted pantry items:', rollbackDeleteError);
+          rollbackDeleteFailed = true;
         }
       }
       if (previousPantryItems.length > 0) {
@@ -217,12 +221,22 @@ export async function POST(request: Request) {
           .insert(previousPantryItems);
         if (restoreError) {
           console.error('Failed to restore previous pantry items after partial replace failure:', restoreError);
+          restoreFailed = true;
         }
       }
 
+      // #1042: ロールバック（新規分の削除・旧データの復元）自体が失敗した場合、
+      // 「元のデータへロールバックしました」という誤ったメッセージを返してはいけない。
+      // rollbackSucceeded をレスポンスに反映し、失敗時はデータ消失の可能性を明示する。
+      const rollbackSucceeded = !rollbackDeleteFailed && !restoreFailed;
+      const message = rollbackSucceeded
+        ? 'Pantry replace が部分的に失敗したため、元のデータへロールバックしました'
+        : 'Pantry replace が部分的に失敗し、ロールバックにも失敗しました。冷蔵庫データが失われた可能性があります。サポートへ連絡してください';
+
       return NextResponse.json(
         {
-          error: 'Pantry replace が部分的に失敗したため、元のデータへロールバックしました',
+          error: message,
+          rollbackSucceeded,
           results,
         },
         { status: 500 },

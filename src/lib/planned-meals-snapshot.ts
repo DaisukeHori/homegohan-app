@@ -80,3 +80,26 @@ export async function restorePlannedMealsSnapshot(
 
   return { restored, skipped, failed };
 }
+
+/**
+ * weekly_menu_requests.generated_data (jsonb, request/route.ts が
+ * `{ snapshot: PlannedMealSnapshotRow[] }` の形で保存) から復元用スナップショットを
+ * 安全に取り出す。
+ *
+ * #1042: 生成が waitUntil 消失等で止まり stale sweeper (status/pending/cleanup)
+ * が status='failed' にするだけで終わっていたケースの救済に使う。
+ * 想定外の形（null / 他フィールドのみ等）の場合は空配列を返す。
+ */
+export function extractPlannedMealsSnapshot(generatedData: unknown): PlannedMealSnapshotRow[] {
+  if (!generatedData || typeof generatedData !== 'object') return [];
+  const snapshot = (generatedData as Record<string, unknown>).snapshot;
+  if (!Array.isArray(snapshot)) return [];
+  return snapshot.filter(
+    (row): row is PlannedMealSnapshotRow =>
+      !!row &&
+      typeof row === 'object' &&
+      typeof (row as Record<string, unknown>).id === 'string' &&
+      typeof (row as Record<string, unknown>).daily_meal_id === 'string' &&
+      typeof (row as Record<string, unknown>).meal_type === 'string',
+  );
+}

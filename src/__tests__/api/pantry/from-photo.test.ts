@@ -7,6 +7,9 @@
  * - replace モードで insert が部分的に失敗した場合、今回挿入した分をロールバックし
  *   削除前の旧データを復元すること（既存データが無傷であること）
  * - 全て成功した場合はロールバックが発生しないこと
+ * - ロールバック（新規分の削除・旧データの復元）自体が失敗した場合は、
+ *   「元のデータへロールバックしました」という誤ったメッセージを返さず、
+ *   rollbackSucceeded=false とデータ消失の可能性を明示すること
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -107,6 +110,7 @@ describe('POST /api/pantry/from-photo (mode=replace)', () => {
 
     expect(res.status).toBe(500);
     expect(json.error).toContain('ロールバック');
+    expect(json.rollbackSucceeded).toBe(true);
     expect(json.results.created).toBe(1);
     expect(json.results.skipped).toBe(1);
 
@@ -121,6 +125,50 @@ describe('POST /api/pantry/from-photo (mode=replace)', () => {
 
     // 失敗時は fridge_snapshots への履歴保存は行わない
     expect(mockFridgeSnapshotsInsert).not.toHaveBeenCalled();
+  });
+
+  it('旧データの復元insert自体が失敗したらロールバック失敗として rollbackSucceeded=false を返す', async () => {
+    selectEqQueue.push({ data: previousPantryItems, error: null }); // 削除前スナップショット
+    deleteEqQueue.push({ error: null }); // 全削除 成功
+    singleInsertQueue.push({ data: { id: 'new-1', name: 'にんじん' }, error: null }); // 1件目 成功
+    singleInsertQueue.push({ data: null, error: { message: 'insert failed' } }); // 2件目 失敗
+    deleteInQueue.push({ error: null }); // ロールバック削除(新規分) 成功
+    bulkInsertQueue.push({ error: { message: 'restore insert failed' } }); // 旧データ復元 失敗
+
+    const res = await POST(
+      makeRequest({
+        mode: 'replace',
+        ingredients: [{ name: 'にんじん' }, { name: 'たまねぎ' }],
+      }),
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.rollbackSucceeded).toBe(false);
+    expect(json.error).toContain('ロールバックにも失敗');
+    expect(json.error).not.toContain('元のデータへロールバックしました');
+  });
+
+  it('新規分のロールバック削除自体が失敗したらロールバック失敗として rollbackSucceeded=false を返す', async () => {
+    selectEqQueue.push({ data: previousPantryItems, error: null }); // 削除前スナップショット
+    deleteEqQueue.push({ error: null }); // 全削除 成功
+    singleInsertQueue.push({ data: { id: 'new-1', name: 'にんじん' }, error: null }); // 1件目 成功
+    singleInsertQueue.push({ data: null, error: { message: 'insert failed' } }); // 2件目 失敗
+    deleteInQueue.push({ error: { message: 'rollback delete failed' } }); // ロールバック削除(新規分) 失敗
+    bulkInsertQueue.push({ error: null }); // 旧データ復元 成功
+
+    const res = await POST(
+      makeRequest({
+        mode: 'replace',
+        ingredients: [{ name: 'にんじん' }, { name: 'たまねぎ' }],
+      }),
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.rollbackSucceeded).toBe(false);
+    expect(json.error).toContain('ロールバックにも失敗');
+    expect(json.error).not.toContain('元のデータへロールバックしました');
   });
 
   it('全て成功すればロールバックせず通常のレスポンスを返す', async () => {
