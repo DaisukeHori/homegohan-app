@@ -69,6 +69,10 @@ describe.skipIf(!shouldRunIntegration())(
       const badge = data.badge_awarded as Record<string, unknown>;
       expect(badge.code).toBe('tutorial_complete');
       expect(badge.obtained_at).toBeTruthy();
+      // #1027 round-2: badges.icon_url は実在しない列 (実列は icon) だったため
+      // RPC 内の SELECT が column-not-exist で常時失敗していた。icon_url キー自体は
+      // 維持しつつ、値が string か null であること (SELECT が例外なく完走したこと) を検証する。
+      expect(badge.icon_url === null || typeof badge.icon_url === 'string').toBe(true);
 
       // Verify profile was actually updated in DB (service_role で確認)
       const { data: profile } = await admin
@@ -112,12 +116,19 @@ describe.skipIf(!shouldRunIntegration())(
       expect(data2.completed_at).toBeTruthy();
     });
 
-    it('3. anon (セッションなし) からの呼び出しは permission エラー', async () => {
+    it('3. anon (セッションなし) からの呼び出しは permission エラー (EXECUTE 権限自体が無い)', async () => {
       const client = anonSessionlessClient();
 
       const { error } = await client.rpc('complete_handson_tour');
 
+      // #1027 round-2: anon には REVOKE EXECUTE ... FROM anon を明示しているため
+      // 「関数内部の auth.uid() IS NULL チェック (unauthorized 例外)」ではなく
+      // Postgres レベルの EXECUTE 権限拒否 (permission denied) になるはず。
+      // 前者と後者を区別できないと、anon への default privilege 由来の暗黙
+      // EXECUTE 残存 (#1027 round-2 Warning) を検出できない。
       expect(error).toBeDefined();
+      expect(error?.message).toMatch(/permission denied/i);
+      expect(error?.message).not.toMatch(/unauthorized/i);
     });
   },
 );

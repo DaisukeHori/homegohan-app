@@ -18,6 +18,17 @@
 --     組み合わせで「安全かつ動作する」両立を取る。
 --   - REVOKE EXECUTE FROM PUBLIC で暗黙付与を明示的に外し、authenticated にのみ GRANT。
 --
+-- round-2 修正 (2モデル敵対レビュー指摘):
+--   - [Critical] badges テーブルの実列は icon であり icon_url ではない (旧関数から
+--     継承していたバグ)。authenticated で RPC 実行すると
+--     `ERROR: column "icon_url" does not exist` で UPDATE ごとロールバックし
+--     500 症状が残存していた。SELECT 対象列を icon に修正 (JSON レスポンスの
+--     キー名 icon_url は zod 契約のため維持)。
+--   - [Warning] 本番は `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+--     GRANT ALL ON FUNCTIONS TO anon` があり、CREATE 時に anon へ EXECUTE が
+--     暗黙付与される。REVOKE FROM PUBLIC だけでは剥がれないため、
+--     REVOKE EXECUTE ... FROM anon を明示追加。
+--
 -- Idempotent: yes (DROP FUNCTION IF EXISTS → CREATE OR REPLACE、REVOKE/GRANT は何度実行してもエラー0)
 -- =====================================================
 
@@ -61,7 +72,10 @@ BEGIN
   WHERE id = v_user_id
   RETURNING handson_tour_completed_at INTO v_completed_at;
 
-  SELECT id, name, icon_url INTO v_badge_id, v_badge_name, v_badge_icon_url
+  -- badges テーブルの列は icon (icon_url ではない。#1027 round-2 実測で判明:
+  -- 旧関数から継承していた誤り。JSON レスポンスキーは icon_url を維持する
+  -- (src/lib/handson-tour/schemas.ts の zod 契約に合わせる)。
+  SELECT id, name, icon INTO v_badge_id, v_badge_name, v_badge_icon_url
   FROM badges WHERE code = 'tutorial_complete';
 
   IF v_badge_id IS NULL THEN
@@ -89,9 +103,15 @@ END;
 $$;
 
 COMMENT ON FUNCTION complete_handson_tour() IS
-  'family/09 卒業処理: profile UPDATE + tutorial_complete バッジ INSERT を atomic に実行。#1027 修正: 引数を廃止し auth.uid() を内部参照 (他人のツアーを完了させる書き込み穴を防止)、authenticated に EXECUTE を明示的に GRANT (卒業不能バグを解消)。';
+  'family/09 卒業処理: profile UPDATE + tutorial_complete バッジ INSERT を atomic に実行。#1027 修正: 引数を廃止し auth.uid() を内部参照 (他人のツアーを完了させる書き込み穴を防止)、authenticated に EXECUTE を明示的に GRANT (卒業不能バグを解消)。round-2: badges.icon_url→icon 列名修正、anon への default privilege 由来の暗黙 EXECUTE を明示 REVOKE。';
 
+-- 本番は `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+-- GRANT ALL ON FUNCTIONS TO anon` が設定されているため、CREATE 時に anon へ
+-- EXECUTE が暗黙付与される。REVOKE FROM PUBLIC だけではこの明示的な anon
+-- 付与は剥がれない (#1027 round-2 実測で確認)。anon を named role として
+-- 明示的に REVOKE することで実質的に無効化する。
 REVOKE EXECUTE ON FUNCTION complete_handson_tour() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION complete_handson_tour() FROM anon;
 GRANT EXECUTE ON FUNCTION complete_handson_tour() TO authenticated;
 GRANT EXECUTE ON FUNCTION complete_handson_tour() TO service_role;
 
