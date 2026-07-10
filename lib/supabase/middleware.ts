@@ -51,12 +51,49 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  // APIルートの場合はセッション更新のみ（getUser()は各ルートで行う）
+  // APIルートの場合はセッション更新のみ（詳細な認可は各ルートで行う）
   // これにより、ミドルウェアでの認証チェックを最小限に抑える
   if (isApiRoute) {
     // getSession()でセッションを取得し、必要に応じてトークンをリフレッシュ
     // getUser()よりも軽量で、サーバーへの追加リクエストを行わない
     await supabase.auth.getSession()
+
+    // #1030 (round-2 Critical fix): requireUser/requireRole を経由せず
+    // supabase.auth.getUser() を直接呼ぶだけの API route が多数存在し
+    // (meal-plans/pantry/recipes/health 等)、frozen_at を一切検査しないまま
+    // 素通りしていた。ページナビゲーションと同様にここで凍結判定を行い、
+    // 凍結中のアカウントは全 API 呼び出しを 403 で拒否する。
+    // 認証・プロフィール取得自体に失敗した場合は各 route 側のチェックに委ねる
+    // (#348 と同様、一時的な DB/ネットワーク障害で全 API を誤って止めないための
+    // fail-open。frozen かどうか確定できた場合のみブロックする)。
+    try {
+      const { data: { user: apiUser }, error: apiUserError } = await supabase.auth.getUser()
+
+      if (!apiUserError && apiUser) {
+        const { data: apiProfile, error: apiProfileError } = await supabase
+          .from('user_profiles')
+          .select('frozen_at, unban_at')
+          .eq('id', apiUser.id)
+          .maybeSingle()
+
+        if (!apiProfileError) {
+          const apiFrozen = isAccountFrozen({
+            frozenAt: apiProfile?.frozen_at ?? null,
+            unbanAt: apiProfile?.unban_at ?? null,
+          })
+
+          if (apiFrozen) {
+            return NextResponse.json(
+              { error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } },
+              { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
+            )
+          }
+        }
+      }
+    } catch {
+      // 認証基盤の一時障害時は各 route 側の getUser()/requireUser() チェックに委ねる
+    }
+
     return supabaseResponse
   }
 
