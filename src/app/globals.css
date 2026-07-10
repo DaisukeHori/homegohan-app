@@ -5,8 +5,14 @@
   --foreground: #333333;
   --accent: #FF8A65;     /* Coral Orange */
   --accent-soft: #FFCCBC;
-  --text-muted: #666666;
+  --text-muted: #666666; /* 白背景比コントラスト比 約5.74:1、WCAG AA (4.5:1) 通過を確認済み (#1058) */
   --border-light: #F0F0F0;
+
+  /* a11y 下限値トークン (#1058)。#1050/#1051/#1052 の個別コントラスト/フォント/タップ領域修正はここを参照する */
+  --a11y-min-font-size: 14px;      /* 本文の最小フォントサイズ */
+  --a11y-min-contrast-normal: 4.5; /* WCAG AA 通常テキストの最小コントラスト比 (参考値) */
+  --a11y-min-contrast-large: 3;    /* WCAG AA 大きいテキスト/UI部品の最小コントラスト比 (参考値) */
+  --a11y-min-tap-size: 44px;       /* タップ/クリック領域の最小サイズ (WCAG 2.5.5 相当) */
 }
 
 @theme inline {
@@ -25,6 +31,51 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* グローバル a11y 基盤 (#1058) */
+
+/* キーボードフォーカスの可視化 (全要素共通) */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* スキップリンク: 通常は画面外、フォーカス時のみ表示 */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0.5rem;
+  z-index: 100;
+  background: var(--accent);
+  color: #FFFFFF;
+  padding: 0.5rem 1rem;
+  border-radius: 0 0 0.5rem 0.5rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  transition: top 0.15s ease-in-out;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* タップ/クリック領域の最小サイズを保証するユーティリティ */
+.a11y-tap-target {
+  min-width: var(--a11y-min-tap-size);
+  min-height: var(--a11y-min-tap-size);
+}
+
+/* prefers-reduced-motion の尊重: 装飾アニメーション・トランジションを短縮 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* 繊細なスクロールバー */
