@@ -5,6 +5,9 @@ export { useShoppingStore } from './shoppingStore';
 export type { ShoppingRangeType, ShoppingRangeSelection } from './shoppingStore';
 export { useServingsConfigStore } from './servingsConfigStore';
 
+// Issue #1031 Step 0: page.tsx / formDraftStore 共有型
+export type { LegacyDishDetail } from './types';
+
 // Refactor B Phase B-2: useReducer 群
 export { weekViewReducer, initialWeekViewState } from './reducers/weekViewReducer';
 export type { WeekViewState, WeekViewAction } from './reducers/weekViewReducer';

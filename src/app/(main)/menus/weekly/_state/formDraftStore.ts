@@ -1,7 +1,8 @@
 // Refactor B Phase B-1: モーダル内編集 state 集約 store
 import { create } from 'zustand';
-import type { MealMode, DishDetail, MealType } from '@/types/domain';
+import type { MealMode, MealType } from '@/types/domain';
 import type { CatalogProductSummary } from '@/types/catalog';
+import type { LegacyDishDetail } from './types';
 
 interface FormDraftState {
   // 食事名・モード
@@ -9,7 +10,10 @@ interface FormDraftState {
   editMealMode: MealMode;
 
   // 手動入力
-  manualDishes: DishDetail[];
+  // #1031: page.tsx の manualDishes は旧形式(cal/protein等の短縮キー)との
+  // 後方互換のため LegacyDishDetail[] を使う。DishDetail[] に狭めると
+  // saveManualEdit 等の d.cal 参照が型エラーになる。
+  manualDishes: LegacyDishDetail[];
   manualMode: MealMode;
 
   // カタログ検索
@@ -52,7 +56,7 @@ interface FormDraftState {
 interface FormDraftActions {
   setEditMealName: (name: string) => void;
   setEditMealMode: (mode: MealMode) => void;
-  setManualDishes: (dishes: DishDetail[]) => void;
+  setManualDishes: (dishes: LegacyDishDetail[]) => void;
   setManualMode: (mode: MealMode) => void;
   setCatalogQuery: (query: string) => void;
   setCatalogResults: (results: CatalogProductSummary[]) => void;
@@ -99,7 +103,11 @@ const initialState: FormDraftState = {
   newFridgeExpiry: '',
   newShoppingName: '',
   newShoppingAmount: '',
-  newShoppingCategory: '',
+  // #1031 round-2: 旧 page.tsx local useState の既定値 "食材" と一致させる。
+  // AddShoppingModal の <select> に空文字値の <option> は無く (catch-all は
+  // value="食材" のため)、'' のままだとフルリロード直後にカテゴリ未選択で
+  // 追加した場合に API へ category: "" が送られる退行が発生する。
+  newShoppingCategory: '食材',
   aiChatInput: '',
   selectedConditions: [],
   addMealKey: null,

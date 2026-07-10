@@ -39,6 +39,15 @@ export default defineConfig({
       ),
     },
   },
+  // tsconfig.json は Next.js の SWC コンパイラ向けに jsx: "preserve" を指定しているが、
+  // このバージョンの Vite (rolldown-vite, oxc ベース) は tsconfig の jsx: "preserve" を
+  // そのまま引き継いでしまい .tsx の変換に失敗する
+  // ("Failed to parse source... jsx to preserve" エラー)。
+  // tsconfig.json 自体は Next.js ビルド/tsc の都合で変更せず、Vitest 専用の
+  // oxc 設定だけを上書きしてコンポーネントの render テストを可能にする (#1031)。
+  oxc: {
+    jsx: { runtime: "automatic" },
+  },
   test: {
     exclude: [
       "**/node_modules/**",

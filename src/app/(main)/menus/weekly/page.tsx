@@ -9,6 +9,10 @@ import {
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
   useServingsConfigStore,
+  usePantryStore,
+  useShoppingStore,
+  useFormDraftStore,
+  type LegacyDishDetail,
 } from './_state';
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,7 +20,8 @@ import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { DailyMeal, PlannedMeal, PantryItem, ShoppingListItem, ShoppingList, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
+// #1031: PantryItem/ShoppingList は store selector 経由の型推論に一本化したため import 不要になった
+import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
@@ -122,49 +127,12 @@ interface WeekPlan {
   days: MealPlanDay[];
 }
 
-// 買い物リスト範囲選択の型
-type ShoppingRangeType = 'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'custom';
-interface ShoppingRangeSelection {
-  type: ShoppingRangeType;
-  // today選択時の食事タイプ
-  todayMeals: ('breakfast' | 'lunch' | 'dinner')[];
-  // days選択時の日数
-  daysCount: number;
-  // custom選択時の開始・終了日
-  customStartDate?: string;
-  customEndDate?: string;
-}
+// 買い物リスト範囲選択の型は #1031 で shoppingStore (_state/shoppingStore.ts) に一本化
 
 // 全ての食事タイプ
 const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
-// 旧形式（cal/protein/fat/carbs 等の短縮キー）との後方互換のための型拡張
-// dish データが古いスキーマで保存されている可能性があるため
-type LegacyDishDetail = DishDetail & {
-  cal?: number;
-  protein?: number;
-  fat?: number;
-  carbs?: number;
-  fiber?: number;
-  sugar?: number;
-  sodium?: number;
-  potassium?: number;
-  calcium?: number;
-  phosphorus?: number;
-  iron?: number;
-  zinc?: number;
-  cholesterol?: number;
-  vitaminA?: number;
-  vitaminB1?: number;
-  vitaminB2?: number;
-  vitaminB6?: number;
-  vitaminB12?: number;
-  vitaminC?: number;
-  vitaminD?: number;
-  vitaminE?: number;
-  vitaminK?: number;
-  folicAcid?: number;
-};
+// LegacyDishDetail は _state/types.ts (Issue #1031 Step 0 で移設、formDraftStore と共有)
 
 // Reference UI Color Palette
 const colors = {
@@ -1055,11 +1023,14 @@ export default function WeeklyMenuPage() {
     loadFamilyData();
   }, []);
 
-  // Form States (aiChat/addMeal/conditions は Phase B-3 で formDraftStore に移行予定)
-  const [aiChatInput, setAiChatInput] = useState("");
-  const [addMealKey, setAddMealKey] = useState<MealType | null>(null);
-  const [addMealDayIndex, setAddMealDayIndex] = useState<number>(0);
-  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
+  // Form States (#1031: formDraftStore に一本化。
+  // aiChatInput/addMealKey/addMealDayIndex/selectedConditions はハンドラ内でのみ読むため
+  // 各ハンドラ冒頭で useFormDraftStore.getState() から都度読む (§2 方針)。
+  // setter だけはここで selector 購読して呼び出し側を変更せずに済ませる。
+  const setAiChatInput = useFormDraftStore((s) => s.setAiChatInput);
+  const setAddMealKey = useFormDraftStore((s) => s.setAddMealKey);
+  const setAddMealDayIndex = useFormDraftStore((s) => s.setAddMealDayIndex);
+  const setSelectedConditions = useFormDraftStore((s) => s.setSelectedConditions);
   // isGenerating / generatingMeal / generationProgress / generationFailedError / generationFailedRequestId
   // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
@@ -1795,34 +1766,39 @@ export default function WeeklyMenuPage() {
     restoreShoppingListRegeneration();
   }, []);
   
-  // Edit meal state (editingMeal → modalReducer, editMealName/Mode → Phase B-3 formDraftStore)
-  const [editMealName, setEditMealName] = useState("");
-  const [editMealMode, setEditMealMode] = useState<MealMode>('cook');
+  // Edit meal state (editingMeal → modalReducer, editMealName/Mode → #1031 formDraftStore に一本化)
+  const setEditMealName = useFormDraftStore((s) => s.setEditMealName);
+  const setEditMealMode = useFormDraftStore((s) => s.setEditMealMode);
 
-  // Pantry & Shopping (fridgeItems/shoppingList 等 → Phase B-3 pantryStore/shoppingStore)
-  const [fridgeItems, setFridgeItems] = useState<PantryItem[]>([]);
-  const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
-  const [activeShoppingList, setActiveShoppingList] = useState<ShoppingList | null>(null);
-  const [isRegeneratingShoppingList, setIsRegeneratingShoppingList] = useState(false);
-  const [shoppingListProgress, setShoppingListProgress] = useState<{ phase: string; message: string; percentage: number } | null>(null);
-  const [shoppingListRequestId, setShoppingListRequestId] = useState<string | null>(null);
-  const [shoppingListTotalServings, setShoppingListTotalServings] = useState<number | null>(null);
+  // Pantry & Shopping (#1031: pantryStore/shoppingStore に一本化。page は selector 購読のみ)
+  const fridgeItems = usePantryStore((s) => s.fridgeItems);
+  const shoppingList = useShoppingStore((s) => s.shoppingList);
+  // setShoppingList はストアの素の setter (関数型更新非対応)。
+  // prev => の呼び出し箇所は getState().shoppingList を都度読んで機械展開する (#1031 §2)。
+  const setShoppingList = useShoppingStore((s) => s.setShoppingList);
+  const activeShoppingList = useShoppingStore((s) => s.activeShoppingList);
+  const setActiveShoppingList = useShoppingStore((s) => s.setActiveShoppingList);
+  const isRegeneratingShoppingList = useShoppingStore((s) => s.isRegeneratingShoppingList);
+  const setIsRegeneratingShoppingList = useShoppingStore((s) => s.setIsRegeneratingShoppingList);
+  const shoppingListProgress = useShoppingStore((s) => s.shoppingListProgress);
+  const setShoppingListProgress = useShoppingStore((s) => s.setShoppingListProgress);
+  const shoppingListRequestId = useShoppingStore((s) => s.shoppingListRequestId);
+  const setShoppingListRequestId = useShoppingStore((s) => s.setShoppingListRequestId);
+  const shoppingListTotalServings = useShoppingStore((s) => s.shoppingListTotalServings);
+  const setShoppingListTotalServings = useShoppingStore((s) => s.setShoppingListTotalServings);
 
-  // 曜日別人数設定 (servingsConfig → Phase B-3 servingsConfigStore)
-  const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
-  const [isLoadingServingsConfig, setIsLoadingServingsConfig] = useState(false);
+  // 曜日別人数設定 (#1031: servingsConfigStore に一本化)
+  const servingsConfig = useServingsConfigStore((s) => s.servingsConfig);
+  const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
+  const setIsLoadingServingsConfig = useServingsConfigStore((s) => s.setIsLoadingServingsConfig);
 
   // feedbackChannelRef (nutrition 系は nutritionReducer 管理)
   // RealtimeChannel か、ポーリング用のカスタムクリーンアップオブジェクトのどちらかを保持する
   const feedbackChannelRef = useRef<RealtimeChannel | { unsubscribe: () => void } | null>(null);
 
-  // 買い物リスト範囲選択 (Phase B-3 shoppingStore 予定)
-  const [shoppingRange, setShoppingRange] = useState<ShoppingRangeSelection>({
-    type: 'week',
-    todayMeals: ['breakfast', 'lunch', 'dinner'],
-    daysCount: 3,
-  });
-  const [shoppingRangeStep, setShoppingRangeStep] = useState<'range' | 'servings'>('range');
+  // 買い物リスト範囲選択 (#1031: shoppingStore に一本化)
+  const shoppingRange = useShoppingStore((s) => s.shoppingRange);
+  const setShoppingRangeStep = useShoppingStore((s) => s.setShoppingRangeStep);
 
   // スーパーの動線に合わせたカテゴリ順序
   const CATEGORY_ORDER = [
@@ -1873,33 +1849,36 @@ export default function WeeklyMenuPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shoppingList]);  // CATEGORY_ORDER はコンポーネント内定数配列のため deps に含めるとメモ化が無効になる。本来はモジュールスコープに移動すべきだが挙動変更を避けるため個別 disable
   
-  // Add fridge/shopping form (Phase B-3 で formDraftStore 予定、今は useState 維持)
-  const [newFridgeName, setNewFridgeName] = useState("");
-  const [newFridgeAmount, setNewFridgeAmount] = useState("");
-  const [newFridgeExpiry, setNewFridgeExpiry] = useState("");
-  const [newShoppingName, setNewShoppingName] = useState("");
-  const [newShoppingAmount, setNewShoppingAmount] = useState("");
-  const [newShoppingCategory, setNewShoppingCategory] = useState("食材");
+  // Add fridge/shopping form (#1031: formDraftStore に一本化。ハンドラ内でのみ読む)
+  const setNewFridgeName = useFormDraftStore((s) => s.setNewFridgeName);
+  const setNewFridgeAmount = useFormDraftStore((s) => s.setNewFridgeAmount);
+  const setNewFridgeExpiry = useFormDraftStore((s) => s.setNewFridgeExpiry);
+  const setNewShoppingName = useFormDraftStore((s) => s.setNewShoppingName);
+  const setNewShoppingAmount = useFormDraftStore((s) => s.setNewShoppingAmount);
+  const setNewShoppingCategory = useFormDraftStore((s) => s.setNewShoppingCategory);
 
   // Recipe / AI / manualEdit / photo / imageGenerate → reducers 管理 (Phase B-2 移行済み)
-  // formDraft 系 (manualDishes/mode/catalogQuery 等) → Phase B-3 formDraftStore 予定
-  const [manualDishes, setManualDishes] = useState<LegacyDishDetail[]>([]);
-  const [manualMode, setManualMode] = useState<MealMode>('cook');
-  const [catalogQuery, setCatalogQuery] = useState('');
-  const [catalogResults, setCatalogResults] = useState<CatalogProductSummary[]>([]);
-  const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<CatalogProductSummary | null>(null);
-  const [isCatalogSearching, setIsCatalogSearching] = useState(false);
-  const [catalogSearchError, setCatalogSearchError] = useState('');
+  // formDraft 系 (#1031: formDraftStore に一本化)
+  // manualDishes/manualMode はハンドラ内でのみ読むため useFormDraftStore.getState() を都度参照
+  const setManualDishes = useFormDraftStore((s) => s.setManualDishes);
+  const setManualMode = useFormDraftStore((s) => s.setManualMode);
+  // catalogQuery は検索 effect の deps で参照するため selector 購読が必要
+  const catalogQuery = useFormDraftStore((s) => s.catalogQuery);
+  const setCatalogQuery = useFormDraftStore((s) => s.setCatalogQuery);
+  const setCatalogResults = useFormDraftStore((s) => s.setCatalogResults);
+  const setSelectedCatalogProduct = useFormDraftStore((s) => s.setSelectedCatalogProduct);
+  const setIsCatalogSearching = useFormDraftStore((s) => s.setIsCatalogSearching);
+  const setCatalogSearchError = useFormDraftStore((s) => s.setCatalogSearchError);
 
-  // Photo edit files (reducer に移せない File[] は Phase B-3 まで維持)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
-  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  // Photo edit files (#1031: formDraftStore に一本化。photoFiles はハンドラ内でのみ読む)
+  const setPhotoFiles = useFormDraftStore((s) => s.setPhotoFiles);
+  const setPhotoPreviews = useFormDraftStore((s) => s.setPhotoPreviews);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Image generation files
-  const [imageGenerationPrompt, setImageGenerationPrompt] = useState('');
-  const [imageReferenceFiles, setImageReferenceFiles] = useState<File[]>([]);
-  const [imageReferencePreviews, setImageReferencePreviews] = useState<string[]>([]);
+  // Image generation files (#1031: formDraftStore に一本化。ハンドラ内でのみ読む)
+  const setImageGenerationPrompt = useFormDraftStore((s) => s.setImageGenerationPrompt);
+  const setImageReferenceFiles = useFormDraftStore((s) => s.setImageReferenceFiles);
+  const setImageReferencePreviews = useFormDraftStore((s) => s.setImageReferencePreviews);
   const imageGenerateInputRef = useRef<HTMLInputElement>(null);
 
   // レシピモーダルが開いたとき、お気に入り状態を取得
@@ -2534,7 +2513,7 @@ export default function WeeklyMenuPage() {
         const res = await fetch('/api/pantry');
         if (res.ok) {
           const data = await res.json();
-          setFridgeItems(data.items || []);
+          usePantryStore.getState().setFridgeItems(data.items || []);
         }
       } catch (e) {
         console.error("Failed to fetch pantry:", e);
@@ -2954,23 +2933,24 @@ export default function WeeklyMenuPage() {
 
   // Add pantry item
   const addPantryItem = async () => {
+    const { newFridgeName, newFridgeAmount, newFridgeExpiry } = useFormDraftStore.getState();
     if (!newFridgeName) return;
     try {
       const res = await fetch('/api/pantry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          name: newFridgeName, 
-          amount: newFridgeAmount, 
-          category: "other", 
-          expirationDate: newFridgeExpiry || null 
+        body: JSON.stringify({
+          name: newFridgeName,
+          amount: newFridgeAmount,
+          category: "other",
+          expirationDate: newFridgeExpiry || null
         })
       });
       if (res.ok) {
         const { item } = await res.json();
-        setFridgeItems(prev => [...prev, item]);
-        setNewFridgeName(""); 
-        setNewFridgeAmount(""); 
+        usePantryStore.getState().addFridgeItem(item);
+        setNewFridgeName("");
+        setNewFridgeAmount("");
         setNewFridgeExpiry("");
         setActiveModal('fridge');
       }
@@ -2980,28 +2960,29 @@ export default function WeeklyMenuPage() {
   const deletePantryItem = async (id: string) => {
     try {
       await fetch(`/api/pantry/${id}`, { method: 'DELETE' });
-      setFridgeItems(prev => prev.filter(i => i.id !== id));
+      usePantryStore.getState().removeFridgeItem(id);
     } catch (e) { alert("削除に失敗しました"); }
   };
 
   // Add shopping item
   const addShoppingItem = async () => {
+    const { newShoppingName, newShoppingAmount, newShoppingCategory } = useFormDraftStore.getState();
     if (!newShoppingName || !currentPlan) return;
     try {
       const res = await fetch('/api/shopping-list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           shoppingListId: activeShoppingList?.id,
-          itemName: newShoppingName, 
-          quantity: newShoppingAmount, 
+          itemName: newShoppingName,
+          quantity: newShoppingAmount,
           category: newShoppingCategory
         })
       });
       if (res.ok) {
         const { item } = await res.json();
-        setShoppingList(prev => [...prev, item]);
-        setNewShoppingName(""); 
+        setShoppingList([...useShoppingStore.getState().shoppingList, item]);
+        setNewShoppingName("");
         setNewShoppingAmount(""); 
         setNewShoppingCategory("食材");
         setActiveModal('shopping');
@@ -3012,24 +2993,24 @@ export default function WeeklyMenuPage() {
   // チェックボックスのトグル（楽観的更新）
   const toggleShoppingItem = (id: string, currentChecked: boolean) => {
     // 即座にUIを更新
-    setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
-    
+    setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
+
     // 裏でAPI呼び出し（永続化）- レスポンスを待たない
-    fetch(`/api/shopping-list/${id}`, { 
-        method: 'PATCH', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ isChecked: !currentChecked }) 
-    }).catch(e => { 
+    fetch(`/api/shopping-list/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isChecked: !currentChecked })
+    }).catch(e => {
       console.error('Failed to save check state:', e);
       // エラー時はロールバック
-      setShoppingList(prev => prev.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i)); 
+      setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i));
     });
   };
 
   const deleteShoppingItem = async (id: string) => {
     // 楽観的UI更新
-    const previousList = shoppingList;
-    setShoppingList(prev => prev.filter(i => i.id !== id));
+    const previousList = useShoppingStore.getState().shoppingList;
+    setShoppingList(previousList.filter(i => i.id !== id));
     try {
       const res = await fetch(`/api/shopping-list/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
@@ -3400,12 +3381,12 @@ export default function WeeklyMenuPage() {
     const newQuantity = item.quantityVariants[nextIndex]?.display || item.quantity;
     
     // 即座にUIを更新（楽観的更新）
-    setShoppingList(prev => prev.map(i => 
-      i.id === itemId 
+    setShoppingList(useShoppingStore.getState().shoppingList.map(i =>
+      i.id === itemId
         ? { ...i, selectedVariantIndex: nextIndex, quantity: newQuantity }
         : i
     ));
-    
+
     // 裏でAPIを呼び出し（永続化）- レスポンスを待たない
     fetch(`/api/shopping-list/${itemId}`, {
       method: 'PATCH',
@@ -3414,8 +3395,8 @@ export default function WeeklyMenuPage() {
     }).catch(e => {
       console.error('Failed to save variant change:', e);
       // エラー時はロールバック
-      setShoppingList(prev => prev.map(i => 
-        i.id === itemId 
+      setShoppingList(useShoppingStore.getState().shoppingList.map(i =>
+        i.id === itemId
           ? { ...i, selectedVariantIndex: item.selectedVariantIndex, quantity: item.quantity }
           : i
       ));
@@ -3492,7 +3473,7 @@ export default function WeeklyMenuPage() {
       });
       if (res.ok) {
         const { items } = await res.json();
-        setShoppingList(prev => [...prev, ...items]);
+        setShoppingList([...useShoppingStore.getState().shoppingList, ...items]);
         setActiveModal(null);
         setSuccessMessage({ 
           title: '買い物リストに追加しました ✓', 
@@ -3513,8 +3494,9 @@ export default function WeeklyMenuPage() {
     const weekStartDate = formatLocalDate(weekStart);
     setIsGenerating(true);
     setActiveModal(null); // モーダルを閉じて一覧画面に戻る
-    
+
     try {
+      const { aiChatInput, selectedConditions } = useFormDraftStore.getState();
       const preferences = {
         useFridgeFirst: selectedConditions.includes('冷蔵庫の食材を優先'),
         quickMeals: selectedConditions.includes('時短メニュー中心'),
@@ -3525,8 +3507,8 @@ export default function WeeklyMenuPage() {
       const response = await fetch("/api/ai/menu/weekly/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          startDate: weekDates[0]?.dateStr, 
+        body: JSON.stringify({
+          startDate: weekDates[0]?.dateStr,
           note: aiChatInput + (selectedConditions.length > 0 ? `\n【条件】${selectedConditions.join('、')}` : ''),
           preferences,
         }),
@@ -3564,20 +3546,21 @@ export default function WeeklyMenuPage() {
 
   // Generate single meal with AI
   const handleGenerateSingleMeal = async () => {
+    const { addMealKey, addMealDayIndex, selectedConditions, aiChatInput } = useFormDraftStore.getState();
     if (!addMealKey) return;
-    
+
     const dayDate = weekDates[addMealDayIndex]?.dateStr;
-    
+
     // 生成開始前の該当食事タイプの数を記録
     const currentDay = currentPlan?.days?.find((d: any) => d.dayDate === dayDate);
     const initialMealCount = currentDay?.meals?.filter((m: any) => m.mealType === addMealKey).length || 0;
-    
+
     setGeneratingMeal({ dayIndex: addMealDayIndex, mealType: addMealKey });
     setActiveModal(null);
-    
+
     try {
       const preferences: Record<string, boolean> = {};
-      selectedConditions.forEach(c => {
+      selectedConditions.forEach((c: string) => {
         if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
         if (c === '時短メニュー中心') preferences.quickMeals = true;
         if (c === '和食多め') preferences.japaneseStyle = true;
@@ -3635,8 +3618,9 @@ export default function WeeklyMenuPage() {
 
   // Add meal with specific mode
   const handleAddMealWithMode = async (mode: MealMode) => {
+    const { addMealKey, addMealDayIndex, selectedCatalogProduct } = useFormDraftStore.getState();
     if (!addMealKey) return;
-    
+
     const dayDate = weekDates[addMealDayIndex]?.dateStr;
     const defaultNames: Record<MealMode, string> = {
       cook: '自炊メニュー',
@@ -3704,10 +3688,11 @@ export default function WeeklyMenuPage() {
     
     setIsRegenerating(true);
     setRegeneratingMealId(regeneratingMeal.id);
-    
+
     try {
+      const { selectedConditions, aiChatInput } = useFormDraftStore.getState();
       const preferences: Record<string, boolean> = {};
-      selectedConditions.forEach(c => {
+      selectedConditions.forEach((c: string) => {
         if (c === '冷蔵庫の食材を優先') preferences.useFridgeFirst = true;
         if (c === '時短メニュー中心') preferences.quickMeals = true;
         if (c === '和食多め') preferences.japaneseStyle = true;
@@ -3832,7 +3817,9 @@ export default function WeeklyMenuPage() {
 
   const saveEditMeal = async () => {
     if (!editingMeal || !currentPlan) return;
-    
+
+    const { editMealName, editMealMode } = useFormDraftStore.getState();
+
     try {
       await fetch(`/api/meal-plans/meals/${editingMeal.id}`, {
         method: 'PATCH',
@@ -3842,12 +3829,12 @@ export default function WeeklyMenuPage() {
           mode: editMealMode
         })
       });
-      
+
       // Update local state
       const updatedDays = currentPlan.days?.map(day => ({
         ...day,
-        meals: day.meals?.map(m => 
-          m.id === editingMeal.id 
+        meals: day.meals?.map(m =>
+          m.id === editingMeal.id
             ? { ...m, dishName: editMealName, mode: editMealMode }
             : m
         )
@@ -3928,26 +3915,27 @@ export default function WeeklyMenuPage() {
   // Add dish to manual edit
   const addManualDish = () => {
     setSelectedCatalogProduct(null);
-    setManualDishes(prev => [...prev, { name: '', calories_kcal: 0, role: 'side' }]);
+    setManualDishes([...useFormDraftStore.getState().manualDishes, { name: '', calories_kcal: 0, role: 'side' }]);
   };
 
   // Remove dish from manual edit
   const removeManualDish = (index: number) => {
     setSelectedCatalogProduct(null);
-    setManualDishes(prev => prev.filter((_, i) => i !== index));
+    setManualDishes(useFormDraftStore.getState().manualDishes.filter((_, i) => i !== index));
   };
 
   // Update dish in manual edit
   const updateManualDish = (index: number, field: keyof DishDetail, value: string | number) => {
     setSelectedCatalogProduct(null);
-    setManualDishes(prev => prev.map((dish, i) => 
+    setManualDishes(useFormDraftStore.getState().manualDishes.map((dish, i) =>
       i === index ? { ...dish, [field]: value } : dish
     ));
   };
 
   const applyCatalogProductToManualEdit = (product: CatalogProductSummary) => {
     setSelectedCatalogProduct(product);
-    setManualMode((prev) => (prev === 'out' ? 'out' : 'buy'));
+    const prevManualMode = useFormDraftStore.getState().manualMode;
+    setManualMode(prevManualMode === 'out' ? 'out' : 'buy');
     setCatalogQuery(product.name);
     setManualDishes([
       {
@@ -3967,16 +3955,17 @@ export default function WeeklyMenuPage() {
   // Save manual edit
   const saveManualEdit = async () => {
     if (!manualEditMeal || !currentPlan) return;
-    
+
+    const { manualDishes, manualMode, selectedCatalogProduct } = useFormDraftStore.getState();
     const validDishes = manualDishes.filter(d => d.name.trim());
     if (validDishes.length === 0) {
       alert('少なくとも1つの料理名を入力してください');
       return;
     }
-    
+
     const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? d.cal ?? 0), 0);
     const dishName = validDishes.map(d => d.name).join('、');
-    
+
     try {
       await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
         method: 'PATCH',
@@ -4029,31 +4018,32 @@ export default function WeeklyMenuPage() {
     const files = e.target.files;
     if (files && files.length > 0) {
       const newFiles = Array.from(files);
-      setPhotoFiles(prev => [...prev, ...newFiles]);
-      
+      setPhotoFiles([...useFormDraftStore.getState().photoFiles, ...newFiles]);
+
       // プレビュー画像を生成
       newFiles.forEach(file => {
         const reader = new FileReader();
         reader.onloadend = () => {
-          setPhotoPreviews(prev => [...prev, reader.result as string]);
+          setPhotoPreviews([...useFormDraftStore.getState().photoPreviews, reader.result as string]);
         };
         reader.readAsDataURL(file);
       });
     }
   };
-  
+
   // 写真を削除
   const removePhoto = (index: number) => {
-    setPhotoFiles(prev => prev.filter((_, i) => i !== index));
-    setPhotoPreviews(prev => prev.filter((_, i) => i !== index));
+    setPhotoFiles(useFormDraftStore.getState().photoFiles.filter((_, i) => i !== index));
+    setPhotoPreviews(useFormDraftStore.getState().photoPreviews.filter((_, i) => i !== index));
   };
 
   // Analyze photo with AI（複数枚対応）
   const analyzePhotoWithAI = async () => {
+    const { photoFiles } = useFormDraftStore.getState();
     if (photoFiles.length === 0 || !photoEditMeal || !currentPlan) return;
-    
+
     setIsAnalyzingPhoto(true);
-    
+
     try {
       // 複数枚の写真をBase64に変換して送信
       const imageDataArray = await Promise.all(photoFiles.map(async (file) => {
@@ -4129,7 +4119,7 @@ export default function WeeklyMenuPage() {
   const openImageGenerate = () => {
     if (!manualEditMeal) return;
 
-    const promptSource = manualDishes
+    const promptSource = useFormDraftStore.getState().manualDishes
       .map((dish) => dish.name.trim())
       .filter(Boolean)
       .join('、');
@@ -4149,12 +4139,12 @@ export default function WeeklyMenuPage() {
     if (!files || files.length === 0) return;
 
     const newFiles = Array.from(files);
-    setImageReferenceFiles((prev) => [...prev, ...newFiles]);
+    setImageReferenceFiles([...useFormDraftStore.getState().imageReferenceFiles, ...newFiles]);
 
     newFiles.forEach((file) => {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImageReferencePreviews((prev) => [...prev, reader.result as string]);
+        setImageReferencePreviews([...useFormDraftStore.getState().imageReferencePreviews, reader.result as string]);
       };
       reader.readAsDataURL(file);
     });
@@ -4163,13 +4153,14 @@ export default function WeeklyMenuPage() {
   };
 
   const removeImageReference = (index: number) => {
-    setImageReferenceFiles((prev) => prev.filter((_, i) => i !== index));
-    setImageReferencePreviews((prev) => prev.filter((_, i) => i !== index));
+    setImageReferenceFiles(useFormDraftStore.getState().imageReferenceFiles.filter((_, i) => i !== index));
+    setImageReferencePreviews(useFormDraftStore.getState().imageReferencePreviews.filter((_, i) => i !== index));
   };
 
   const generateMealImage = async () => {
     if (!imageGenerateMeal || !currentPlan) return;
 
+    const { imageGenerationPrompt, imageReferenceFiles } = useFormDraftStore.getState();
     const prompt = imageGenerationPrompt.trim();
     if (!prompt) {
       alert('生成したい料理の説明を入力してください');
@@ -5840,12 +5831,12 @@ export default function WeeklyMenuPage() {
                 onClose={() => closeImageGenerateModal(true)}
                 onAddReferenceImages={(files: FileList) => {
                   const newFiles = Array.from(files);
-                  setImageReferenceFiles(prev => [...prev, ...newFiles]);
+                  setImageReferenceFiles([...useFormDraftStore.getState().imageReferenceFiles, ...newFiles]);
                   newFiles.forEach(file => {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                       if (e.target?.result) {
-                        setImageReferencePreviews(prev => [...prev, e.target!.result as string]);
+                        setImageReferencePreviews([...useFormDraftStore.getState().imageReferencePreviews, e.target!.result as string]);
                       }
                     };
                     reader.readAsDataURL(file);
@@ -5863,12 +5854,12 @@ export default function WeeklyMenuPage() {
                 onClose={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }}
                 onPhotoSelect={(files: FileList) => {
                   const newFiles = Array.from(files);
-                  setPhotoFiles(prev => [...prev, ...newFiles]);
+                  setPhotoFiles([...useFormDraftStore.getState().photoFiles, ...newFiles]);
                   newFiles.forEach(file => {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                       if (e.target?.result) {
-                        setPhotoPreviews(prev => [...prev, e.target!.result as string]);
+                        setPhotoPreviews([...useFormDraftStore.getState().photoPreviews, e.target!.result as string]);
                       }
                     };
                     reader.readAsDataURL(file);
