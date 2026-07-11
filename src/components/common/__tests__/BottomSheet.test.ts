@@ -173,6 +173,128 @@ describe('BottomSheet: フォーカス移動 (#1050 UX2-05)', () => {
   });
 });
 
+describe('BottomSheet: 入れ子（複数同時オープン）での Escape (#1050 round-2 Should, #1052 地雷の先回り)', () => {
+  // 以前は各 BottomSheet が document レベルの keydown リスナーを個別に登録し
+  // stopPropagation() のみで多重発火を防ごうとしていたが、stopPropagation() は
+  // 同一ターゲット(document)の他リスナーには効かないため、#1052 で BottomSheet を
+  // 入れ子/重ね掛けすると1回の Escape で全て同時に閉じてしまう実害があった。
+
+  it('2枚重ねて Escape を押すと、後から開いた（最前面の）方だけが閉じる', () => {
+    const onCloseA = vi.fn();
+    const onCloseB = vi.fn();
+
+    // まず A だけを開く
+    act(() => {
+      root.render(
+        h(
+          React.Fragment,
+          null,
+          h(BottomSheet, { isOpen: true, onClose: onCloseA, testId: 'sheet-a' }, h('p', null, 'A'))
+        )
+      );
+    });
+
+    // 続いて A を開いたまま B も開く（B が後から開いた = 最前面）
+    act(() => {
+      root.render(
+        h(
+          React.Fragment,
+          null,
+          h(BottomSheet, { isOpen: true, onClose: onCloseA, testId: 'sheet-a' }, h('p', null, 'A')),
+          h(BottomSheet, { isOpen: true, onClose: onCloseB, testId: 'sheet-b' }, h('p', null, 'B'))
+        )
+      );
+    });
+
+    expect(container.querySelectorAll('[role="dialog"]').length).toBe(2);
+
+    act(() => {
+      pressEscape();
+    });
+
+    expect(onCloseB, '最前面(B)の onClose が呼ばれていません').toHaveBeenCalledTimes(1);
+    expect(onCloseA, '背面(A)の onClose まで呼ばれています（多重発火の回帰）').not.toHaveBeenCalled();
+  });
+
+  it('最前面(B)を閉じた後にもう一度 Escape を押すと、今度は残っている A が閉じる', () => {
+    const onCloseA = vi.fn();
+
+    act(() => {
+      root.render(
+        h(
+          React.Fragment,
+          null,
+          h(BottomSheet, { isOpen: true, onClose: onCloseA, testId: 'sheet-a' }, h('p', null, 'A'))
+        )
+      );
+    });
+    act(() => {
+      root.render(
+        h(
+          React.Fragment,
+          null,
+          h(BottomSheet, { isOpen: true, onClose: onCloseA, testId: 'sheet-a' }, h('p', null, 'A')),
+          h(BottomSheet, { isOpen: true, onClose: () => {}, testId: 'sheet-b' }, h('p', null, 'B'))
+        )
+      );
+    });
+
+    // B を閉じる（unmount 相当: isOpen=false にする）
+    act(() => {
+      root.render(
+        h(
+          React.Fragment,
+          null,
+          h(BottomSheet, { isOpen: true, onClose: onCloseA, testId: 'sheet-a' }, h('p', null, 'A')),
+          h(BottomSheet, { isOpen: false, onClose: () => {}, testId: 'sheet-b' }, h('p', null, 'B'))
+        )
+      );
+    });
+
+    act(() => {
+      pressEscape();
+    });
+
+    expect(onCloseA, 'B を閉じた後は A が最前面になり、Escape で閉じるはず').toHaveBeenCalledTimes(1);
+  });
+
+  it('最前面(B)が closeOnEscape=false の場合、Escape を押しても A・B どちらも閉じない（下のシートへの素通り防止）', () => {
+    const onCloseA = vi.fn();
+    const onCloseB = vi.fn();
+
+    act(() => {
+      root.render(
+        h(
+          React.Fragment,
+          null,
+          h(BottomSheet, { isOpen: true, onClose: onCloseA, testId: 'sheet-a' }, h('p', null, 'A'))
+        )
+      );
+    });
+    act(() => {
+      root.render(
+        h(
+          React.Fragment,
+          null,
+          h(BottomSheet, { isOpen: true, onClose: onCloseA, testId: 'sheet-a' }, h('p', null, 'A')),
+          h(
+            BottomSheet,
+            { isOpen: true, onClose: onCloseB, closeOnEscape: false, testId: 'sheet-b' },
+            h('p', null, 'B')
+          )
+        )
+      );
+    });
+
+    act(() => {
+      pressEscape();
+    });
+
+    expect(onCloseB).not.toHaveBeenCalled();
+    expect(onCloseA, '最前面が Escape 無効でも、下の A まで閉じてはいけない').not.toHaveBeenCalled();
+  });
+});
+
 describe('BottomSheet: 背景スクロールロック (#1050 UX2-05)', () => {
   it('開いている間は document.body.style.overflow が hidden になる', () => {
     act(() => {

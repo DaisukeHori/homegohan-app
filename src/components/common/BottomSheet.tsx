@@ -13,7 +13,7 @@
 // 固定に限定されないアクセシブルモーダルの汎用ラッパーであり、`position` prop で
 // 「中央配置のダイアログ」「下部シート」いずれの見た目にも使える。
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useId, useRef } from "react";
 import FocusTrap from "focus-trap-react";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -79,6 +79,36 @@ function unlockBodyScroll() {
   }
 }
 
+/**
+ * #1050 round-2 (#1052 地雷の先回り, Opus 発見の Should 指摘):
+ * BottomSheet は各インスタンスが独自に document レベルの keydown リスナーを登録して
+ * Escape を処理する。複数の BottomSheet が同時に開いている（入れ子/重ね掛け）場合、
+ * stopPropagation() は同一ターゲット(document)に登録された他のリスナーには効かないため、
+ * 1回の Escape で登録済みの全 BottomSheet が同時に閉じてしまっていた。
+ *
+ * 開いている BottomSheet の id をスタックで管理し、Escape ハンドラは
+ * 「自分が最上位（最後に開いた = 最前面）かどうか」を判定してから処理することで、
+ * 何個開いていても最前面の1枚だけが閉じるようにする。
+ */
+const openSheetStack: string[] = [];
+
+function pushOpenSheet(id: string) {
+  if (!openSheetStack.includes(id)) {
+    openSheetStack.push(id);
+  }
+}
+
+function popOpenSheet(id: string) {
+  const idx = openSheetStack.indexOf(id);
+  if (idx !== -1) {
+    openSheetStack.splice(idx, 1);
+  }
+}
+
+function isTopmostOpenSheet(id: string): boolean {
+  return openSheetStack[openSheetStack.length - 1] === id;
+}
+
 export function BottomSheet({
   isOpen,
   onClose,
@@ -96,6 +126,7 @@ export function BottomSheet({
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const sheetId = useId();
 
   // 背景スクロールロック
   useEffect(() => {
@@ -104,18 +135,30 @@ export function BottomSheet({
     return () => unlockBodyScroll();
   }, [isOpen]);
 
-  // Escape クローズ（FocusTrap 側の escapeDeactivates は使わず、ここで一元管理する）
+  // #1050 round-2: 開いている間だけ自分の id を「開いている BottomSheet スタック」に積む。
+  // closeOnEscape の有無に関わらず登録する（最前面が closeOnEscape=false の場合に
+  // Escape がその下の BottomSheet まで「素通り」して閉じてしまうのを防ぐため）。
+  useEffect(() => {
+    if (!isOpen) return;
+    pushOpenSheet(sheetId);
+    return () => popOpenSheet(sheetId);
+  }, [isOpen, sheetId]);
+
+  // Escape クローズ（FocusTrap 側の escapeDeactivates は使わず、ここで一元管理する）。
+  // #1050 round-2 (#1052 地雷の先回り): 複数の BottomSheet が同時に開いていても、
+  // 自分がスタック最上位（＝最前面）のときだけ閉じる。stopPropagation() は同一ターゲット
+  // (document) の他リスナーには効かないため、判定自体で多重発火を防ぐ。
   useEffect(() => {
     if (!isOpen || !closeOnEscape) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && isTopmostOpenSheet(sheetId)) {
         e.stopPropagation();
         onCloseRef.current();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, closeOnEscape]);
+  }, [isOpen, closeOnEscape, sheetId]);
 
   return (
     <AnimatePresence>
