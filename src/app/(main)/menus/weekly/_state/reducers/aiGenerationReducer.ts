@@ -80,6 +80,9 @@ export function aiGenerationReducer(
         ...state,
         isGenerating: true,
         generatingMeal: action.payload?.meal ?? state.generatingMeal,
+        // UX2-10 の単調増加ガード（GEN_PROGRESS の Math.max クランプ）が新しい世代の生成にまで
+        // 汚染して波及しないよう、生成開始時に必ず前回の進捗をリセットする（防御的 hardening）。
+        generationProgress: null,
       };
 
     // UX2-10: percentage の単調増加ガード。Realtime/ポーリング/復元経路が非同期に競合すると

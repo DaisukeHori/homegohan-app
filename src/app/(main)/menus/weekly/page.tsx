@@ -1056,7 +1056,7 @@ export default function WeeklyMenuPage() {
   useEffect(() => {
     const { date } = initialQueryParamsRef.current;
     if (!date || !weekStartDayLoaded) return;
-    const target = new Date(date);
+    const target = parseLocalDate(date);
     if (Number.isNaN(target.getTime())) return;
     setWeekStart(getWeekStart(target, weekStartDay));
     const dayOfWeekRaw = target.getDay();
@@ -2215,6 +2215,8 @@ export default function WeeklyMenuPage() {
   // サーバーに反映する（ベストエフォート。失敗しても画面の状態は既に止めている）。
   const handleCancelGeneration = useCallback(async () => {
     generationCancelledRef.current = true;
+    // 確認モーダルは中止確定と同時に閉じる（この後 setSuccessMessage で結果を表示する）
+    setShowConfirmCancelGeneration(false);
 
     // アクティブな requestId を localStorage から探す（v4 / weekly / single meal の順）
     let cancelRequestId: string | null = null;
@@ -2273,7 +2275,7 @@ export default function WeeklyMenuPage() {
         console.error('Failed to notify server of cancellation:', e);
       }
     }
-  }, [cleanupRealtime, cleanupPolling, setIsGenerating, setGenerationProgress, setGeneratingMeal, setSuccessMessage]);
+  }, [cleanupRealtime, cleanupPolling, setIsGenerating, setGenerationProgress, setGeneratingMeal, setSuccessMessage, setShowConfirmCancelGeneration]);
 
   // ポーリングで進捗を取得
   const startPolling = useCallback((targetDate: string, requestId: string) => {
@@ -5528,6 +5530,7 @@ export default function WeeklyMenuPage() {
           progress={generationProgress}
           colors={colors}
           phases={generationProgress?.isUltimateMode ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
+          onCancel={() => setShowConfirmCancelGeneration(true)}
         />
       ) : (
         <button
@@ -5998,6 +6001,25 @@ export default function WeeklyMenuPage() {
                 isDeleting={isDeleting}
                 onCancel={() => setShowConfirmDeleteAllShopping(false)}
                 onConfirm={deleteAllShoppingItems}
+              />
+            )}
+
+            {/* UX2-11: AI献立生成の中止確認モーダル（window.confirm は使わず styled モーダルに統一） */}
+            {showConfirmCancelGeneration && (
+              <ConfirmDeleteModal
+                title="AI献立の生成を中止しますか？"
+                message={
+                  <>
+                    ここまでの進捗表示を停止します。バックグラウンドの処理が完了している場合、<br />
+                    後で献立に反映されることがあります。
+                  </>
+                }
+                isDeleting={false}
+                tone="neutral"
+                icon={X}
+                confirmLabel="中止する"
+                onCancel={() => setShowConfirmCancelGeneration(false)}
+                onConfirm={handleCancelGeneration}
               />
             )}
 

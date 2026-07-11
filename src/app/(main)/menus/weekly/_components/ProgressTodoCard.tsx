@@ -96,16 +96,16 @@ export const ProgressTodoCard = ({
                 {progress?.percentage ? `${progress.percentage}%` : ''}
               </span>
             )}
-            {/* UX2-11: 生成中でも中止できるように、常時タップ可能な中止ボタンを表示する */}
+            {/* UX2-11: 生成中でも中止できるように、常時タップ可能な中止ボタンを表示する。
+                確認は window.confirm を使わず、親側の styled ConfirmDeleteModal に一本化するため、
+                ここでは渡された onCancel をそのまま呼ぶだけにする（確認要否は呼び出し元の責務）。 */}
             {!isError && onCancel && (
               <button
                 type="button"
                 aria-label="生成を中止する"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (window.confirm('AIの生成を中止しますか？ここまでの進捗表示は停止します。')) {
-                    onCancel();
-                  }
+                  onCancel();
                 }}
                 className="w-5 h-5 rounded-full flex items-center justify-center"
                 style={{ background: 'rgba(255,255,255,0.2)' }}
