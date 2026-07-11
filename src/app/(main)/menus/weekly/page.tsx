@@ -49,7 +49,7 @@ import { AiAssistantModal } from "./_components/modals/AiAssistantModal";
 import { StatsModal } from "./_components/modals/StatsModal";
 import { ServingsModal } from "./_components/modals/ServingsModal";
 import { AddMealSlotModal } from "./_components/modals/AddMealSlotModal";
-import { ConfirmDeleteModal } from "./_components/modals/ConfirmDeleteModal";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { AiMealModal } from "./_components/modals/AiMealModal";
 import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
 import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
