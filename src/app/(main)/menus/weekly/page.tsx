@@ -1511,6 +1511,23 @@ export default function WeeklyMenuPage() {
         clearInterval(v4PollingIntervalRef.current);
         v4PollingIntervalRef.current = null;
       }
+      // #1033 F1b-06: 再生成/献立改善のフォールバックポーリング・タイムアウトも解放
+      if (regeneratePollingIntervalRef.current) {
+        clearInterval(regeneratePollingIntervalRef.current);
+        regeneratePollingIntervalRef.current = null;
+      }
+      if (regenerateTimeoutRef.current) {
+        clearTimeout(regenerateTimeoutRef.current);
+        regenerateTimeoutRef.current = null;
+      }
+      if (improvePollingIntervalRef.current) {
+        clearInterval(improvePollingIntervalRef.current);
+        improvePollingIntervalRef.current = null;
+      }
+      if (improveTimeoutRef.current) {
+        clearTimeout(improveTimeoutRef.current);
+        improveTimeoutRef.current = null;
+      }
     };
   }, [cleanupRealtime]);
 
@@ -2087,6 +2104,14 @@ export default function WeeklyMenuPage() {
   
   // フォールバックポーリング用の参照
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // #1033 F1b-06: 単品再生成のRealtimeが切断した場合のフォールバックポーリング/タイムアウト用の参照
+  const regeneratePollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const regenerateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // #1033 F1b-06: 献立改善(onImprove)のRealtimeが切断した場合のフォールバックポーリング/タイムアウト用の参照
+  const improvePollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const improveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // V4生成のRealtimeが切断した場合のフォールバックポーリング用の参照
   const v4PollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -3772,12 +3797,115 @@ export default function WeeklyMenuPage() {
   };
   
   // 再生成のRealtime監視
+  // #1033 F1b-06: 週間生成側 subscribeToRequestStatus と同様に、Realtime切断時のフォールバックとして
+  // 3秒ポーリング + 5分の上限タイムアウトを併用する（Realtime単独だとスピナーが取り残される）
   const subscribeToRegenerateStatus = useCallback((requestId: string, weekStartDate: string) => {
-    // 既存のサブスクリプションをクリーンアップ
+    // 既存のサブスクリプション/ポーリング/タイムアウトをクリーンアップ
     cleanupRealtime();
-    
+    if (regeneratePollingIntervalRef.current) {
+      clearInterval(regeneratePollingIntervalRef.current);
+      regeneratePollingIntervalRef.current = null;
+    }
+    if (regenerateTimeoutRef.current) {
+      clearTimeout(regenerateTimeoutRef.current);
+      regenerateTimeoutRef.current = null;
+    }
+
     console.log('📡 Subscribing to Realtime for regenerate requestId:', requestId);
-    
+
+    // Realtime/ポーリング/タイムアウトのいずれかが先に解決したら他を止めるための共有フラグ
+    const resolvedRef = { current: false };
+
+    const finishRegenerate = async (status: 'completed' | 'failed', errorMessage?: string) => {
+      if (resolvedRef.current) return;
+      resolvedRef.current = true;
+      cleanupRealtime();
+      if (regeneratePollingIntervalRef.current) {
+        clearInterval(regeneratePollingIntervalRef.current);
+        regeneratePollingIntervalRef.current = null;
+      }
+      if (regenerateTimeoutRef.current) {
+        clearTimeout(regenerateTimeoutRef.current);
+        regenerateTimeoutRef.current = null;
+      }
+
+      if (status === 'completed') {
+        // 完了したら献立を再取得
+        console.log('✅ Regeneration completed, fetching meal plan...');
+        try {
+          const weekEndDate = addDaysStr(weekStartDate, 6);
+          const planRes = await fetch(`/api/meal-plans?startDate=${weekStartDate}&endDate=${weekEndDate}`);
+          if (planRes.ok) {
+            const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
+            if (dailyMeals && dailyMeals.length > 0) {
+              const newPlan = { days: dailyMeals };
+              const newShoppingList = shoppingListData?.items || [];
+              setCurrentPlan(newPlan);
+              if (newShoppingList.length > 0) setShoppingList(newShoppingList);
+              updateCalendarMealDatesFromDailyMeals(dailyMeals);
+              // キャッシュも更新
+              weekDataCache.current.set(weekStartDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+            }
+          }
+        } catch (e) {
+          console.error('❌ Failed to fetch meal plan after regenerate:', e);
+        }
+        setIsRegenerating(false);
+        setRegeneratingMealId(null);
+      } else {
+        console.log('❌ Regeneration failed');
+        setIsRegenerating(false);
+        setRegeneratingMealId(null);
+        alert(errorMessage || '献立の再生成に失敗しました。もう一度お試しください。');
+      }
+    };
+
+    // 常にポーリングも開始（Realtimeの信頼性が低いため。既存の /status エンドポイントは
+    // weekly_menu_requests を requestId で汎用的に参照するため regenerate リクエストにも使える）
+    const pollRegenerate = async () => {
+      if (resolvedRef.current) return;
+      try {
+        const res = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        if (res.status === 401) {
+          console.warn('[regenerate poll] Session expired (401). Stopping.');
+          resolvedRef.current = true;
+          cleanupRealtime();
+          if (regeneratePollingIntervalRef.current) {
+            clearInterval(regeneratePollingIntervalRef.current);
+            regeneratePollingIntervalRef.current = null;
+          }
+          if (regenerateTimeoutRef.current) {
+            clearTimeout(regenerateTimeoutRef.current);
+            regenerateTimeoutRef.current = null;
+          }
+          setIsRegenerating(false);
+          setRegeneratingMealId(null);
+          window.location.href = '/login';
+          return;
+        }
+        if (!res.ok) return;
+        const data = await res.json();
+        if (resolvedRef.current) return;
+        if (data.status === 'completed') {
+          await finishRegenerate('completed');
+        } else if (data.status === 'failed') {
+          await finishRegenerate('failed', data.errorMessage || data.error_message);
+        }
+      } catch (e) {
+        console.error('Regenerate polling error:', e);
+      }
+    };
+    pollRegenerate();
+    regeneratePollingIntervalRef.current = setInterval(pollRegenerate, 3000);
+
+    // 5分間 completed/failed を受信できなければタイムアウトとしてエラー表示（受入基準: 5分無応答でエラー表示）
+    regenerateTimeoutRef.current = setTimeout(() => {
+      if (!resolvedRef.current) {
+        console.warn('⏱️ Regenerate timed out after 5 minutes with no response');
+        finishRegenerate('failed', '献立の再生成がタイムアウトしました。もう一度お試しください。');
+      }
+    }, 5 * 60 * 1000);
+
     const channel = supabaseRef.current
       .channel(`regenerate-request-${requestId}`)
       .on(
@@ -3790,41 +3918,20 @@ export default function WeeklyMenuPage() {
         },
         async (payload) => {
           console.log('📡 Realtime regenerate update received:', payload.new);
-          const newStatus = (payload.new as { status: string }).status;
-          
+          const newData = payload.new as { status: string; error_message?: string | null };
+          const newStatus = newData.status;
+
           if (newStatus === 'completed') {
-            // 完了したら献立を再取得
-            console.log('✅ Regeneration completed, fetching meal plan...');
-            const weekEndDate = addDaysStr(weekStartDate, 6);
-            const planRes = await fetch(`/api/meal-plans?startDate=${weekStartDate}&endDate=${weekEndDate}`);
-            if (planRes.ok) {
-              const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
-              if (dailyMeals && dailyMeals.length > 0) {
-                const newPlan = { days: dailyMeals };
-                const newShoppingList = shoppingListData?.items || [];
-                setCurrentPlan(newPlan);
-                if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-                updateCalendarMealDatesFromDailyMeals(dailyMeals);
-                // キャッシュも更新
-                weekDataCache.current.set(weekStartDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
-              }
-            }
-            setIsRegenerating(false);
-            setRegeneratingMealId(null);
-            cleanupRealtime();
+            await finishRegenerate('completed');
           } else if (newStatus === 'failed') {
-            console.log('❌ Regeneration failed');
-            setIsRegenerating(false);
-            setRegeneratingMealId(null);
-            cleanupRealtime();
-            alert('献立の再生成に失敗しました。もう一度お試しください。');
+            await finishRegenerate('failed', newData.error_message || undefined);
           }
         }
       )
       .subscribe((status) => {
         console.log('📡 Realtime regenerate subscription status:', status);
       });
-    
+
     realtimeChannelRef.current = channel;
   }, [cleanupRealtime, updateCalendarMealDatesFromDailyMeals]);
 
@@ -6136,34 +6243,103 @@ export default function WeeklyMenuPage() {
             });
 
             if (requestData.requestId) {
+              const improveRequestId = requestData.requestId;
+              // #1033 F1b-06: onImprove も Realtime 単独だとスピナーが取り残されるため、
+              // subscribeToRegenerateStatus と同様に 3秒ポーリング + 5分の上限タイムアウトを併用する
+              if (improvePollingIntervalRef.current) {
+                clearInterval(improvePollingIntervalRef.current);
+                improvePollingIntervalRef.current = null;
+              }
+              if (improveTimeoutRef.current) {
+                clearTimeout(improveTimeoutRef.current);
+                improveTimeoutRef.current = null;
+              }
+
+              const improveResolvedRef = { current: false };
+
+              const finishImprove = async (status: 'completed' | 'failed', errorMessage?: string) => {
+                if (improveResolvedRef.current) return;
+                improveResolvedRef.current = true;
+                if (improvePollingIntervalRef.current) {
+                  clearInterval(improvePollingIntervalRef.current);
+                  improvePollingIntervalRef.current = null;
+                }
+                if (improveTimeoutRef.current) {
+                  clearTimeout(improveTimeoutRef.current);
+                  improveTimeoutRef.current = null;
+                }
+                setIsGenerating(false);
+                setGenerationProgress(null);
+
+                if (status === 'failed') {
+                  alert(errorMessage || '献立の改善に失敗しました。もう一度お試しください。');
+                  return;
+                }
+
+                const startStr = weekDates[0]?.dateStr;
+                const endStr = weekDates[weekDates.length - 1]?.dateStr;
+                if (startStr && endStr) {
+                  try {
+                    const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
+                    if (refreshRes.ok) {
+                      const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
+                      if (dailyMeals && dailyMeals.length > 0) {
+                        const newPlan = { days: dailyMeals };
+                        const newShoppingList = shoppingListData?.items || [];
+                        setCurrentPlan(newPlan);
+                        if (newShoppingList.length > 0) setShoppingList(newShoppingList);
+                        updateCalendarMealDatesFromDailyMeals(dailyMeals);
+                        weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+                      }
+                    }
+                  } catch (e) {
+                    console.error('❌ Failed to fetch meal plan after improve:', e);
+                  }
+                }
+              };
+
               v4Generation.subscribeToProgress(
-                requestData.requestId,
+                improveRequestId,
                 async (progress: any) => {
                   const uiProgress = convertV4ProgressToUIFormat(progress);
                   setGenerationProgress(uiProgress);
 
                   if (progress.status === 'completed' || progress.status === 'failed') {
-                    setIsGenerating(false);
-                    setGenerationProgress(null);
-                    const startStr = weekDates[0]?.dateStr;
-                    const endStr = weekDates[weekDates.length - 1]?.dateStr;
-                    if (startStr && endStr) {
-                      const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
-                      if (refreshRes.ok) {
-                        const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-                        if (dailyMeals && dailyMeals.length > 0) {
-                          const newPlan = { days: dailyMeals };
-                          const newShoppingList = shoppingListData?.items || [];
-                          setCurrentPlan(newPlan);
-                          if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-                          updateCalendarMealDatesFromDailyMeals(dailyMeals);
-                          weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
-                        }
-                      }
-                    }
+                    await finishImprove(progress.status, progress.errorMessage);
                   }
                 }
               );
+
+              // 常にポーリングも開始（Realtimeの信頼性が低いため）
+              const pollImprove = async () => {
+                if (improveResolvedRef.current) return;
+                try {
+                  const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${improveRequestId}`);
+                  if (!statusRes.ok) return;
+                  const { status, errorMessage, error_message: errorMessageSnake, progress: dbProgress } = await statusRes.json();
+                  if (improveResolvedRef.current) return;
+                  if (status === 'completed') {
+                    await finishImprove('completed');
+                  } else if (status === 'failed') {
+                    await finishImprove('failed', errorMessage || errorMessageSnake);
+                  } else if (dbProgress) {
+                    // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
+                    setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress));
+                  }
+                } catch (e) {
+                  console.error('Improve polling error:', e);
+                }
+              };
+              pollImprove();
+              improvePollingIntervalRef.current = setInterval(pollImprove, 3000);
+
+              // 5分間 completed/failed を受信できなければタイムアウトとしてエラー表示
+              improveTimeoutRef.current = setTimeout(() => {
+                if (!improveResolvedRef.current) {
+                  console.warn('⏱️ Improve meal timed out after 5 minutes with no response');
+                  finishImprove('failed', '献立の改善がタイムアウトしました。もう一度お試しください。');
+                }
+              }, 5 * 60 * 1000);
             }
           } catch (error) {
             console.error('Failed to improve meals:', error);
