@@ -5,6 +5,7 @@
  * #1030 round-3 Critical: Bearer トークン (モバイルアプリ) セッションでも
  * frozen_at チェックが効くよう Authorization ヘッダーを createServerClient へ転送する
  * #1030 round-3 Warning: 凍結リダイレクトから /contact を除外する
+ * #1030 round-4 Warning: CRON_SECRET (非 JWT Bearer) は Auth API へ転送しない
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -138,6 +139,20 @@ describe('updateSession — /api/* の frozen_at enforcement (#1030 round-2)', (
     const res = await updateSession(apiRequest('/api/cron/process-menu-queue'));
     expect(res.status).toBe(200);
   });
+
+  // #1030 (round-4 Warning fix): CRON_SECRET (非 JWT) を Auth API へ転送しない
+  it('/api/cron/* の非 JWT Bearer トークン (CRON_SECRET) では Authorization ヘッダーを転送せず Auth API を呼ばない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(
+      apiRequest('/api/cron/process-menu-queue', { authorization: 'Bearer this-is-not-a-jwt-cron-secret' }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
+    const config = mockCreateServerClient.mock.calls[0][2];
+    expect(config.global).toBeUndefined();
+  });
 });
 
 describe('updateSession — Authorization ヘッダーの転送 (#1030 round-3 Critical)', () => {
@@ -150,11 +165,11 @@ describe('updateSession — Authorization ヘッダーの転送 (#1030 round-3 C
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
     mockMaybeSingle.mockResolvedValue({ data: { frozen_at: null, unban_at: null }, error: null });
 
-    await updateSession(apiRequest('/api/pantry', { authorization: 'Bearer mobile-token' }));
+    await updateSession(apiRequest('/api/pantry', { authorization: 'Bearer aaa.bbb.ccc' }));
 
     expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
     const config = mockCreateServerClient.mock.calls[0][2];
-    expect(config.global).toEqual({ headers: { Authorization: 'Bearer mobile-token' } });
+    expect(config.global).toEqual({ headers: { Authorization: 'Bearer aaa.bbb.ccc' } });
   });
 
   it('凍結中ユーザーの Bearer セッションによる API 呼び出しも 403 AUTH_ACCOUNT_FROZEN を返す (Cookie 無しでも frozen_at が効く)', async () => {
@@ -164,9 +179,20 @@ describe('updateSession — Authorization ヘッダーの転送 (#1030 round-3 C
       error: null,
     });
 
-    const res = await updateSession(apiRequest('/api/pantry', { authorization: 'Bearer mobile-token' }));
+    const res = await updateSession(apiRequest('/api/pantry', { authorization: 'Bearer aaa.bbb.ccc' }));
 
     expect(res.status).toBe(403);
+  });
+
+  // #1030 (round-4 Warning fix): 非 JWT の Bearer トークン (CRON_SECRET 等) は転送しない
+  it('非 JWT 形式の Bearer トークンは createServerClient の global.headers へ転送しない (CRON_SECRET 誤転送防止)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    await updateSession(apiRequest('/api/pantry', { authorization: 'Bearer plain-shared-secret-no-dots' }));
+
+    expect(mockCreateServerClient).toHaveBeenCalledTimes(1);
+    const config = mockCreateServerClient.mock.calls[0][2];
+    expect(config.global).toBeUndefined();
   });
 
   it('Authorization ヘッダーが無い場合は global オプションを渡さない (Cookie セッションの既存挙動を維持)', async () => {

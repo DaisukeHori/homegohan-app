@@ -164,7 +164,8 @@ export async function requireOrgRole(
  * @param reason       - impersonate の理由 (audit_log に記録)
  * @returns impersonation_token と expires_at
  * @throws AuthError          - 実行者が未認証の場合
- * @throws ImpersonationError - super_admin 以外が実行した場合 / 対象が拒否設定の場合
+ * @throws ImpersonationError - super_admin 以外が実行した場合 / 対象が拒否設定の場合 /
+ *                              #1030 (round-4): 対象ユーザーが凍結中の場合
  */
 export async function impersonate(
   targetUserId: string,
@@ -177,6 +178,18 @@ export async function impersonate(
     throw new ImpersonationError(
       'AUTH_IMPERSONATION_DENIED',
       'impersonate は super_admin のみ実行可能です',
+    );
+  }
+
+  // #1030 (round-4 Warning fix): 凍結中のユーザーへの成りすましセッションを拒否する。
+  // impersonate は対象ユーザーとして振る舞えるセッションを発行するため、対象が凍結中
+  // (BAN 中) の場合にこれを許すと、frozen_at enforcement (requireUser/requireRole/
+  // middleware) を impersonate 経由で迂回できてしまう。
+  const { frozen_at: targetFrozenAt, unban_at: targetUnbanAt } = await getUserProfile(targetUserId);
+  if (isAccountFrozen({ frozenAt: targetFrozenAt, unbanAt: targetUnbanAt })) {
+    throw new ImpersonationError(
+      'AUTH_IMPERSONATION_TARGET_FROZEN',
+      '凍結中のユーザーへは impersonate できません',
     );
   }
 

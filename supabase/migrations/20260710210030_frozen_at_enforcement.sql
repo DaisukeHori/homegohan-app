@@ -33,6 +33,12 @@ COMMENT ON COLUMN user_profiles.unban_at IS
   'unban_at が過去の場合はアクセス判定時 (requireUser/requireRole/middleware) に '
   '自動解除扱いとする (#1030)。';
 
+-- #1030 (round-2 継承 Warning / round-4 対応): このカラム追加以前に作成された
+-- 一時 BAN は unban_at が admin_audit_logs.details.unban_at にしか記録されて
+-- おらず、本カラムへの backfill が本来必要になるケースがある。
+-- 2026-07-11 時点で本番の frozen_users=0・temp_ban_audit_rows=0 を実測確認済みのため、
+-- backfill 対象データは存在せず追加対応不要と判断した。
+
 -- ─── 2. 特権列ガードトリガーに frozen 系列を追加 (#1030) ─────────────────────────
 -- トリガー本体 (trg_guard_user_profiles_privileged) は 20260511000136 で
 -- 作成済みのため、関数本体の CREATE OR REPLACE のみで反映される。

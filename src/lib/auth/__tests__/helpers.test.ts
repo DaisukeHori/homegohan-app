@@ -324,6 +324,45 @@ describe('impersonate', () => {
     await expect(impersonate('target-user-id', '理由')).rejects.toThrow(AuthError);
   });
 
+  // #1030 (round-4 Warning fix): 凍結中ユーザーへの成りすましを拒否する
+  it('対象ユーザーが frozen_at 中の場合 ImpersonationError(AUTH_IMPERSONATION_TARGET_FROZEN) を throw する', async () => {
+    setupGetUser(fakeSuperAdmin);
+    let userProfilesCallCount = 0;
+    supabaseClient.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'user_profiles') {
+        userProfilesCallCount += 1;
+        if (userProfilesCallCount === 1) {
+          // 1回目: 実行者 (super_admin) のプロフィール取得
+          return makeQueryBuilder({
+            data: { roles: ['super_admin'], organization_id: null, frozen_at: null, unban_at: null },
+            error: null,
+          });
+        }
+        // 2回目: 成りすまし対象のプロフィール取得 (凍結中)
+        return makeQueryBuilder({
+          data: {
+            roles: ['user'],
+            organization_id: null,
+            frozen_at: '2026-07-01T00:00:00.000Z',
+            unban_at: null,
+          },
+          error: null,
+        });
+      }
+      return makeQueryBuilder({ data: null, error: null });
+    });
+
+    let caught: unknown;
+    try {
+      await impersonate('target-user-id', '理由');
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ImpersonationError);
+    expect(caught).toMatchObject({ code: 'AUTH_IMPERSONATION_TARGET_FROZEN' });
+  });
+
   it('admin_audit_logs に action_type=impersonate の記録を挿入する', async () => {
     setupGetUser(fakeSuperAdmin);
     const insertMock = vi.fn().mockResolvedValue({ data: null, error: null });

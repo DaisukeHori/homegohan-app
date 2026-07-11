@@ -3,6 +3,16 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 import { isAccountFrozen } from '@/lib/auth/frozen'
 
+// #1030 (round-4 Warning fix): Authorization ヘッダーが Supabase JWT (dot 区切り
+// 3 セグメント) の Bearer トークンかどうかを軽量に判定する。CRON_SECRET のような
+// 非 JWT の共有シークレットを Supabase クライアントへ転送しないためのガード。
+function isJwtBearerHeader(authHeader: string | null): boolean {
+  if (!authHeader) return false
+  const match = authHeader.match(/^Bearer\s+(.+)$/i)
+  if (!match) return false
+  return match[1].split('.').length === 3
+}
+
 export async function updateSession(request: NextRequest) {
   // APIルートの場合は、セッション更新のみ行い、リダイレクトはしない
   // これにより、不要な getUser() 呼び出しを減らす
@@ -19,7 +29,16 @@ export async function updateSession(request: NextRequest) {
   // Authorization ヘッダーを Supabase クライアントへ転送しないと、cookies ハンドラ
   // 経由のセッション解決に失敗し supabase.auth.getUser() が常に user: null を返す
   // (=Bearer セッションの frozen_at チェックが no-op になる) ため、ここで転送する。
-  const authHeader = request.headers.get('authorization')
+  //
+  // #1030 (round-4 Warning fix): ただし /api/cron/* 等は CRON_SECRET (非 JWT の
+  // 単なる共有シークレット文字列) を `Bearer <secret>` 形式で送ってくる。これを
+  // そのまま Supabase クライアントへ転送すると、毎回 Supabase Auth API への実呼び出し
+  // (JWT として解釈できず必ず 401) が発生し、cron (1分毎 = 1,440回/日) 相当の無駄な
+  // 外部依存を生む。Supabase JWT はドット区切り3セグメント (header.payload.signature)
+  // の形式であるため、その形式でない Bearer トークンは転送せず、従来どおりローカルで
+  // 短絡させる (Cookie も無いため getUser() は外部呼び出しなしで user: null を返す)。
+  const rawAuthHeader = request.headers.get('authorization')
+  const authHeader = isJwtBearerHeader(rawAuthHeader) ? rawAuthHeader : null
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
