@@ -34,6 +34,7 @@ export interface AiGenerationState {
 export type AiGenerationAction =
   | { type: 'GEN_START'; payload?: { meal?: { dayIndex: number; mealType: MealType } } }
   | { type: 'GEN_PROGRESS'; payload: GenerationProgress }
+  | { type: 'GEN_PROGRESS_CLEAR' }
   | { type: 'GEN_SUCCESS' }
   | { type: 'GEN_FAIL'; payload: { error: string | null; requestId: string | null } }
   | { type: 'GEN_FAILED_CLEAR' }
@@ -83,6 +84,11 @@ export function aiGenerationReducer(
 
     case 'GEN_PROGRESS':
       return { ...state, generationProgress: action.payload };
+
+    // F1b-03: 進捗クリア専用。GEN_SUCCESS と違い isGenerating/generatingMeal には触れない
+    // (呼び出し元は生成中の進捗更新の一環として progress のみ null にしたい場合がある)
+    case 'GEN_PROGRESS_CLEAR':
+      return { ...state, generationProgress: null };
 
     case 'GEN_SUCCESS':
       return {

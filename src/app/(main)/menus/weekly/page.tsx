@@ -520,13 +520,18 @@ export default function WeeklyMenuPage() {
   const setExpandedMealId = useCallback((id: string | null) => dispatchWeekView({ type: 'MEAL_EXPAND', payload: id }), []);
 
   const hasAutoExpanded = weekView.hasAutoExpanded;
-  const setHasAutoExpanded = useCallback((_v: boolean) => {
-    // autoExpand は MEAL_AUTO_EXPANDED action で管理。個別 setter は互換用
-    void _v;
+  // F1b-05: true 化は AUTO_EXPAND_SUPPRESS に委譲（自動展開の抑止フラグを正しく立てる）。
+  // false 化は WEEK_SET_START/WEEK_NAVIGATE_* action が既にリセットするため no-op のまま。
+  const setHasAutoExpanded = useCallback((v: boolean) => {
+    if (v) dispatchWeekView({ type: 'AUTO_EXPAND_SUPPRESS' });
   }, []);
 
   const isDayNutritionExpanded = weekView.isDayNutritionExpanded;
-  const setIsDayNutritionExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'DAY_NUTRITION_TOGGLE' }), []);
+  // F1b-04: 無条件 TOGGLE ではなく渡された真偽値（関数の場合は現在値から解決）を反映する
+  const setIsDayNutritionExpanded = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(weekView.isDayNutritionExpanded) : v;
+    dispatchWeekView({ type: 'DAY_NUTRITION_SET', payload: next });
+  }, [weekView.isDayNutritionExpanded]);
 
   const isTodayExpanded = weekView.isTodayExpanded;
   const setIsTodayExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'TODAY_TOGGLE' }), []);
@@ -607,23 +612,21 @@ export default function WeeklyMenuPage() {
   const setGeneratingMeal = useCallback((m: { dayIndex: number; mealType: MealType } | null) => dispatchAiGen({ type: 'GENERATING_MEAL_SET', payload: m }), []);
 
   const generationProgress = aiGen.generationProgress;
+  // F1b-03: functional update を正しく現在値から解決してから dispatch する。
+  // null 解決時は GEN_SUCCESS ではなく GEN_PROGRESS_CLEAR（isGenerating/generatingMeal を巻き込まない）。
   const setGenerationProgress = useCallback((v: typeof aiGen.generationProgress | ((prev: typeof aiGen.generationProgress) => typeof aiGen.generationProgress)) => {
-    if (typeof v === 'function') {
-      // functional update: compat 用 — setGenerationProgress は null のみ渡される
-      // null の場合は GEN_SUCCESS を流用
-      dispatchAiGen({ type: 'GEN_SUCCESS' });
-    } else if (v === null) {
-      dispatchAiGen({ type: 'GEN_SUCCESS' });
+    const next = typeof v === 'function' ? v(aiGen.generationProgress) : v;
+    if (next === null) {
+      dispatchAiGen({ type: 'GEN_PROGRESS_CLEAR' });
     } else {
-      dispatchAiGen({ type: 'GEN_PROGRESS', payload: v });
+      dispatchAiGen({ type: 'GEN_PROGRESS', payload: next });
     }
-  }, []);
+  }, [aiGen.generationProgress]);
 
   const generationFailedError = aiGen.generationFailedError;
-  const setGenerationFailedError = useCallback((err: string | null) => dispatchAiGen({ type: 'GEN_FAIL', payload: { error: err, requestId: null } }), []);
-
   const generationFailedRequestId = aiGen.generationFailedRequestId;
-  const setGenerationFailedRequestId = useCallback((id: string | null) => dispatchAiGen({ type: 'GEN_FAIL', payload: { error: null, requestId: id } }), []);
+  // F1b-02: error/requestId は必ず単一 GEN_FAIL dispatch でセット・単一 GEN_FAILED_CLEAR で解除する。
+  // 個別 setter は二重 dispatch (片方が null で上書き) を招くため廃止し、呼び出し元で直接 dispatch する。
 
   const isRegenerating = aiGen.isRegenerating;
   const setIsRegenerating = useCallback((v: boolean) => {
@@ -1646,8 +1649,10 @@ export default function WeeklyMenuPage() {
                     // 失敗の場合はエラーモーダルを表示してlocalStorageをクリア
                     console.log('❌ 週間献立の生成失敗を復元:', requestId);
                     localStorage.removeItem('weeklyMenuGenerating');
-                    setGenerationFailedError(error_message || '献立の生成に失敗しました。もう一度お試しください。');
-                    setGenerationFailedRequestId(requestId);
+                    dispatchAiGen({
+                      type: 'GEN_FAIL',
+                      payload: { error: error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+                    });
                   } else {
                     // completed の場合はlocalStorageをクリア
                     console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
@@ -2365,8 +2370,10 @@ export default function WeeklyMenuPage() {
           localStorage.removeItem('singleMealGenerating');
           cleanupPolling();
           cleanupRealtime();
-          setGenerationFailedError(data.error_message || '献立の生成に失敗しました。もう一度お試しください。');
-          setGenerationFailedRequestId(requestId);
+          dispatchAiGen({
+            type: 'GEN_FAIL',
+            payload: { error: data.error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+          });
         }
       } catch (e) {
         console.error('Polling error:', e);
@@ -2464,8 +2471,10 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
-              setGenerationFailedError(newData.error_message || '献立の生成に失敗しました。もう一度お試しください。');
-              setGenerationFailedRequestId(requestId);
+              dispatchAiGen({
+                type: 'GEN_FAIL',
+                payload: { error: newData.error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+              });
             }
             // status === 'queued' / 'pending' / 'processing' の場合は継続して監視
           } catch (err) {
@@ -5302,8 +5311,7 @@ export default function WeeklyMenuPage() {
             <button
               data-testid="generation-retry-button"
               onClick={() => {
-                setGenerationFailedError(null);
-                setGenerationFailedRequestId(null);
+                dispatchAiGen({ type: 'GEN_FAILED_CLEAR' });
                 setShowV4Modal(true);
               }}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold"
@@ -5313,8 +5321,7 @@ export default function WeeklyMenuPage() {
             </button>
             <button
               onClick={() => {
-                setGenerationFailedError(null);
-                setGenerationFailedRequestId(null);
+                dispatchAiGen({ type: 'GEN_FAILED_CLEAR' });
               }}
               className="px-3 py-1.5 rounded-lg text-xs"
               style={{ background: colors.border, color: colors.text }}
