@@ -16,6 +16,7 @@
 import React, { useEffect, useId, useRef } from "react";
 import FocusTrap from "focus-trap-react";
 import { AnimatePresence, motion } from "framer-motion";
+import { lockBodyScroll, unlockBodyScroll, pushOpenDialog, popOpenDialog, isTopmostOpenDialog } from "./dialogStack";
 
 export interface BottomSheetProps {
   /** 表示するかどうか。false の間は何もレンダリングしない（AnimatePresence が exit アニメーションを担当） */
@@ -61,61 +62,12 @@ const POSITION_CLASS: Record<NonNullable<BottomSheetProps["position"]>, string> 
   bottom: "items-end justify-center sm:items-center",
 };
 
-/**
- * 背景スクロールロック。BottomSheet が開いている間、body のスクロールを止める。
- * 複数の BottomSheet が同時に開いても、最後に閉じたものが元の overflow に復元する
- * ようネストカウントで管理する。
- */
-let scrollLockCount = 0;
-let previousBodyOverflow: string | null = null;
-
-function lockBodyScroll() {
-  if (typeof document === "undefined") return;
-  if (scrollLockCount === 0) {
-    previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-  }
-  scrollLockCount += 1;
-}
-
-function unlockBodyScroll() {
-  if (typeof document === "undefined") return;
-  scrollLockCount = Math.max(0, scrollLockCount - 1);
-  if (scrollLockCount === 0) {
-    document.body.style.overflow = previousBodyOverflow ?? "";
-    previousBodyOverflow = null;
-  }
-}
-
-/**
- * #1050 round-2 (#1052 地雷の先回り, Opus 発見の Should 指摘):
- * BottomSheet は各インスタンスが独自に document レベルの keydown リスナーを登録して
- * Escape を処理する。複数の BottomSheet が同時に開いている（入れ子/重ね掛け）場合、
- * stopPropagation() は同一ターゲット(document)に登録された他のリスナーには効かないため、
- * 1回の Escape で登録済みの全 BottomSheet が同時に閉じてしまっていた。
- *
- * 開いている BottomSheet の id をスタックで管理し、Escape ハンドラは
- * 「自分が最上位（最後に開いた = 最前面）かどうか」を判定してから処理することで、
- * 何個開いていても最前面の1枚だけが閉じるようにする。
- */
-const openSheetStack: string[] = [];
-
-function pushOpenSheet(id: string) {
-  if (!openSheetStack.includes(id)) {
-    openSheetStack.push(id);
-  }
-}
-
-function popOpenSheet(id: string) {
-  const idx = openSheetStack.indexOf(id);
-  if (idx !== -1) {
-    openSheetStack.splice(idx, 1);
-  }
-}
-
-function isTopmostOpenSheet(id: string): boolean {
-  return openSheetStack[openSheetStack.length - 1] === id;
-}
+// 背景スクロールロック・Escape 多重発火防止のためのダイアログスタックは
+// #1052 で ./dialogStack.ts に切り出した（レガシーモーダル用の useDialogA11y.ts と
+// 同一スタックを共有し、入れ子時の Escape 判定を一致させるため）。
+const pushOpenSheet = pushOpenDialog;
+const popOpenSheet = popOpenDialog;
+const isTopmostOpenSheet = isTopmostOpenDialog;
 
 export function BottomSheet({
   isOpen,

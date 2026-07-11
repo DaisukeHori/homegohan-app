@@ -1,17 +1,17 @@
 "use client";
 
-import React from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useId } from "react";
 import { RefreshCw, X, Sparkles, Check } from "lucide-react";
 import type { PlannedMeal, DishDetail } from "@/types/domain";
 import { todayLocal, formatDateJa } from "@/lib/date-utils";
+import { BottomSheet } from "@/components/common/BottomSheet";
 
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   border: '#E8E8E8',
@@ -62,35 +62,35 @@ export function ImproveMealModal({
   onSelectNextDay,
   onImprove,
 }: ImproveMealModalProps) {
+  // #1052 (体系的 a11y): このモーダルは独自の backdrop/panel を持つ「自己完結型」だったため、
+  // 共通 BottomSheet（role="dialog"/aria-modal/フォーカストラップ/Escape/背景スクロールロック）
+  // への載せ替えが最も安全（他モーダルのような shared backdrop への相乗りが無い）。
+  // isImprovingMeal 中は既存どおり閉じられない（overlay クリック・Escape・X ボタンいずれも無効）。
+  const titleId = useId();
   return (
-    <AnimatePresence>
-      {showImproveMealModal && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => !isImprovingMeal && onClose()}
-        >
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
+    <BottomSheet
+      isOpen={showImproveMealModal}
+      onClose={onClose}
+      ariaLabelledBy={titleId}
+      closeOnOverlayClick={!isImprovingMeal}
+      closeOnEscape={!isImprovingMeal}
+      overlayClassName="z-[60]"
+      panelClassName="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden"
+      testId="improve-meal-modal"
+    >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
               <div className="flex items-center gap-2">
                 <RefreshCw size={20} style={{ color: colors.accent }} />
-                <h2 className="text-lg font-bold" style={{ color: colors.text }}>
+                <h2 id={titleId} className="text-lg font-bold" style={{ color: colors.text }}>
                   献立を改善
                 </h2>
               </div>
               {!isImprovingMeal && (
                 <button
                   onClick={onClose}
-                  className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+                  aria-label="閉じる"
+                  className="p-3 rounded-full hover:bg-gray-100 transition-colors"
                 >
                   <X size={20} style={{ color: colors.textLight }} />
                 </button>
@@ -265,9 +265,6 @@ export function ImproveMealModal({
                 </>
               )}
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    </BottomSheet>
   );
 }

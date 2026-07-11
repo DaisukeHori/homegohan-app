@@ -9,7 +9,7 @@ const colors = {
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   danger: '#D64545',
   dangerLight: '#FDECEC',
   neutral: '#E07A5F',

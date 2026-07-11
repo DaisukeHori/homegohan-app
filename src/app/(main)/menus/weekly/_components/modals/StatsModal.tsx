@@ -1,10 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useId, useRef } from "react";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { BarChart3, X, ChefHat, Flame, Sparkles, Heart, RefreshCw } from "lucide-react";
 import { formatLocalDate, formatDateJa } from "@homegohan/shared";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
@@ -16,7 +18,7 @@ const colors = {
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   success: '#6B9B6B',
@@ -100,8 +102,25 @@ export function StatsModal({
   const today = new Date();
   const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
 
+  // #1052 (体系的 a11y)
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      tabIndex={-1}
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
       className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
@@ -111,10 +130,12 @@ export function StatsModal({
       <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
         <div className="flex items-center gap-2">
           <BarChart3 size={18} color={colors.purple} />
-          <span style={{ fontSize: 15, fontWeight: 600 }}>栄養分析</span>
+          <span id={titleId} style={{ fontSize: 15, fontWeight: 600 }}>栄養分析</span>
         </div>
-        <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-          <X size={14} color={colors.textLight} />
+        <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+          <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+            <X size={14} color={colors.textLight} />
+          </span>
         </button>
       </div>
 
@@ -148,6 +169,7 @@ export function StatsModal({
         <div className="flex px-4 py-2 gap-2" style={{ borderBottom: `1px solid ${colors.border}` }}>
           <button
             onClick={() => onChangeTab('today')}
+            aria-pressed={weeklySummaryTab === 'today'}
             className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
             style={{
               background: weeklySummaryTab === 'today' ? colors.accent : 'transparent',
@@ -158,6 +180,7 @@ export function StatsModal({
           </button>
           <button
             onClick={() => onChangeTab('week')}
+            aria-pressed={weeklySummaryTab === 'week'}
             className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
             style={{
               background: weeklySummaryTab === 'week' ? colors.accent : 'transparent',
@@ -309,5 +332,6 @@ export function StatsModal({
         </div>
       </div>
     </motion.div>
+    </FocusTrap>
   );
 }

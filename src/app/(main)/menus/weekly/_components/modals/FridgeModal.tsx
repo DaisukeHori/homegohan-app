@@ -1,18 +1,20 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { Refrigerator, X, Trash2, Plus, Camera, Pencil, RefreshCw } from "lucide-react";
 import { daysUntilLocal, formatExpiry } from "@homegohan/shared";
 import type { PantryItem } from "@/types/domain";
 import { usePantryStore } from "../../_state";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   success: '#6B9B6B',
@@ -50,8 +52,25 @@ export function FridgeModal({
   const fridgeItems = usePantryStore((s) => s.fridgeItems);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // #1052 (体系的 a11y)
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      tabIndex={-1}
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
       className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] flex flex-col rounded-t-3xl"
@@ -60,11 +79,13 @@ export function FridgeModal({
       <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
         <div className="flex items-center gap-2">
           <Refrigerator size={18} color={colors.blue} />
-          <span style={{ fontSize: 15, fontWeight: 600 }}>冷蔵庫</span>
+          <span id={titleId} style={{ fontSize: 15, fontWeight: 600 }}>冷蔵庫</span>
           <span style={{ fontSize: 11, color: colors.textMuted }}>{fridgeItems.length}品</span>
         </div>
-        <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-          <X size={14} color={colors.textLight} />
+        <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+          <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+            <X size={14} color={colors.textLight} />
+          </span>
         </button>
       </div>
       {isAnalyzingPhoto && (
@@ -89,7 +110,14 @@ export function FridgeModal({
                 role={onEditItem ? "button" : undefined}
                 tabIndex={onEditItem ? 0 : undefined}
                 onClick={() => onEditItem?.(item)}
-                onKeyDown={(e) => { if (onEditItem && e.key === 'Enter') onEditItem(item); }}
+                onKeyDown={(e) => {
+                  // #1052: role="button" のカスタム要素は Enter に加え Space でも
+                  // 活性化できる必要がある（WAI-ARIA APG のボタンパターン）。
+                  if (onEditItem && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onEditItem(item);
+                  }
+                }}
                 className="flex items-center justify-between px-3 py-2.5 rounded-[10px] mb-1.5"
                 style={{
                   background: daysLeft !== null && daysLeft <= 1 ? colors.dangerLight : daysLeft !== null && daysLeft <= 3 ? colors.warningLight : colors.bg,
@@ -167,5 +195,6 @@ export function FridgeModal({
         </button>
       </div>
     </motion.div>
+    </FocusTrap>
   );
 }

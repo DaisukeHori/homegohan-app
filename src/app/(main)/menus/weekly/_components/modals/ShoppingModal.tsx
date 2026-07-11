@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import {
   ShoppingCart, X, Trash2, Plus, Users, Check, RefreshCw
 } from "lucide-react";
@@ -9,13 +10,14 @@ import type { ShoppingListItem } from "@/types/domain";
 import { SHOPPING_LIST_PHASES } from "@homegohan/shared";
 import { ProgressTodoCard } from "../ProgressTodoCard";
 import { useShoppingStore } from "../../_state";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   success: '#6B9B6B',
@@ -58,7 +60,19 @@ export function ShoppingModal({
   const isRegeneratingShoppingList = useShoppingStore((s) => s.isRegeneratingShoppingList);
   const shoppingListProgress = useShoppingStore((s) => s.shoppingListProgress);
 
+  // #1052 (体系的 a11y)
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <div className="fixed inset-0 z-[201] pointer-events-none">
       {/* backdrop: 背後ナビを遮断しモーダルを閉じる (#76) */}
       <div
@@ -66,6 +80,11 @@ export function ShoppingModal({
         onClick={onClose}
       />
       <motion.div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
         className="absolute bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 flex flex-col rounded-t-3xl pointer-events-auto"
@@ -74,7 +93,7 @@ export function ShoppingModal({
         <div className="flex justify-between items-center px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
           <div className="flex items-center gap-2">
             <ShoppingCart size={18} color={colors.accent} />
-            <span style={{ fontSize: 15, fontWeight: 600 }}>買い物リスト</span>
+            <span id={titleId} style={{ fontSize: 15, fontWeight: 600 }}>買い物リスト</span>
             <span style={{ fontSize: 11, color: colors.textMuted }}>{shoppingList.filter(i => !i.isChecked).length}/{shoppingList.length}</span>
             {shoppingListTotalServings !== null && shoppingListTotalServings > 0 && (
               <span style={{ fontSize: 11, color: colors.accent, fontWeight: 600, background: colors.accentLight, padding: '2px 6px', borderRadius: 8 }}>
@@ -86,6 +105,7 @@ export function ShoppingModal({
             {shoppingList.length > 0 && (
               <button
                 onClick={onDeleteAll}
+                aria-label="すべて削除"
                 className="w-7 h-7 rounded-full flex items-center justify-center"
                 style={{ background: colors.bg }}
                 title="すべて削除"
@@ -95,14 +115,17 @@ export function ShoppingModal({
             )}
             <button
               onClick={onOpenServingsModal}
+              aria-label="人数設定"
               className="w-7 h-7 rounded-full flex items-center justify-center"
               style={{ background: colors.bg }}
               title="人数設定"
             >
               <Users size={14} color={colors.textLight} />
             </button>
-            <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-              <X size={14} color={colors.textLight} />
+            <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+              <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                <X size={14} color={colors.textLight} />
+              </span>
             </button>
           </div>
         </div>
@@ -129,13 +152,19 @@ export function ShoppingModal({
                     >
                       <button
                         onClick={() => onToggleItem(item.id, item.isChecked)}
-                        className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{
-                          border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
-                          background: item.isChecked ? colors.success : 'transparent'
-                        }}
+                        aria-label={item.isChecked ? `${item.itemName}を未購入に戻す` : `${item.itemName}を購入済みにする`}
+                        aria-pressed={item.isChecked}
+                        className="min-w-[44px] min-h-[44px] -m-[11px] flex items-center justify-center flex-shrink-0"
                       >
-                        {item.isChecked && <Check size={12} color="#fff" />}
+                        <span
+                          className="w-[22px] h-[22px] rounded-full flex items-center justify-center"
+                          style={{
+                            border: item.isChecked ? 'none' : `2px solid ${colors.border}`,
+                            background: item.isChecked ? colors.success : 'transparent'
+                          }}
+                        >
+                          {item.isChecked && <Check size={12} color="#fff" />}
+                        </span>
                       </button>
                       <span className="flex-1" style={{ fontSize: 14, color: item.isChecked ? colors.textMuted : colors.text, textDecoration: item.isChecked ? 'line-through' : 'none' }}>
                         {item.itemName}
@@ -165,12 +194,19 @@ export function ShoppingModal({
                       >
                         {item.source === 'generated' ? 'AI' : '手動'}
                       </span>
+                      {/* #1052 (タップ領域): 元は w-6 h-6 (24px) で 44px 基準未達だった。
+                          視覚サイズは維持したまま負のマージンでヒット領域のみ 44x44px に拡大する。 */}
                       <button
                         onClick={() => onDeleteItem(item.id)}
-                        className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
-                        style={{ background: 'rgba(0,0,0,0.05)' }}
+                        aria-label={`${item.itemName}を削除`}
+                        className="min-w-[44px] min-h-[44px] -m-[10px] flex items-center justify-center flex-shrink-0"
                       >
-                        <Trash2 size={12} color={colors.textMuted} />
+                        <span
+                          className="w-6 h-6 rounded-md flex items-center justify-center"
+                          style={{ background: 'rgba(0,0,0,0.05)' }}
+                        >
+                          <Trash2 size={12} color={colors.textMuted} />
+                        </span>
                       </button>
                     </div>
                   ))}
@@ -241,5 +277,6 @@ export function ShoppingModal({
         </div>
       </motion.div>
     </div>
+    </FocusTrap>
   );
 }

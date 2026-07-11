@@ -1,18 +1,20 @@
 "use client";
 
-import React from "react";
+import React, { useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
 import { formatLocalDate, formatDateJa } from "@homegohan/shared";
 import { useShoppingStore, useServingsConfigStore } from "../../_state";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
   bg: '#F7F6F3',
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   success: '#6B9B6B',
@@ -67,8 +69,25 @@ export function ShoppingRangeModal({
   currentWeekEndDate.setDate(currentWeekEndDate.getDate() + 6);
   const currentWeekEndStr = formatLocalDate(currentWeekEndDate);
 
+  // #1052 (体系的 a11y): ステップにより見出しが変わるため aria-labelledby ではなく
+  // 動的な aria-label を使う。
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={shoppingRangeStep === 'range' ? '買い物の範囲を選択' : '人数を確認'}
+      tabIndex={-1}
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
       className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl max-h-[75vh] overflow-y-auto"
@@ -83,8 +102,10 @@ export function ShoppingRangeModal({
               <span style={{ fontSize: 15, fontWeight: 600 }}>買い物の範囲を選択</span>
               <span style={{ fontSize: 11, color: colors.textMuted, background: colors.bg, padding: '2px 6px', borderRadius: 6 }}>ステップ 1/2</span>
             </div>
-            <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-              <X size={14} color={colors.textLight} />
+            <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+              <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                <X size={14} color={colors.textLight} />
+              </span>
             </button>
           </div>
 
@@ -142,6 +163,7 @@ export function ShoppingRangeModal({
                                 : [...shoppingRange.todayMeals, mealType];
                               setShoppingRange({ ...shoppingRange, todayMeals: newMeals });
                             }}
+                            aria-pressed={isSelected}
                             className="w-full p-2.5 rounded-lg flex items-center gap-2"
                             style={{ background: isSelected ? `${colors.accent}15` : 'transparent' }}
                           >
@@ -277,6 +299,7 @@ export function ShoppingRangeModal({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShoppingRangeStep('range')}
+                aria-label="前のステップ（範囲選択）に戻る"
                 className="w-7 h-7 rounded-full flex items-center justify-center"
                 style={{ background: colors.bg }}
               >
@@ -285,8 +308,10 @@ export function ShoppingRangeModal({
               <span style={{ fontSize: 15, fontWeight: 600 }}>人数を確認</span>
               <span style={{ fontSize: 11, color: colors.textMuted, background: colors.bg, padding: '2px 6px', borderRadius: 6 }}>ステップ 2/2</span>
             </div>
-            <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-              <X size={14} color={colors.textLight} />
+            <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+              <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+                <X size={14} color={colors.textLight} />
+              </span>
             </button>
           </div>
 
@@ -335,9 +360,12 @@ export function ShoppingRangeModal({
                         border: `1px solid ${value === 0 ? colors.border : colors.success}`
                       }}
                     >
+                      {/* #1052 (タップ領域): 元は w-6 h-8 (24x32px) で 44px 基準未達だった。
+                          視覚サイズは維持したまま負のマージンでヒット領域のみ 44x44px に拡大する。 */}
                       <button
                         onClick={() => updateValue(value - 1)}
-                        className="w-6 h-8 flex items-center justify-center text-lg font-bold"
+                        aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人減らす`}
+                        className="min-w-[44px] min-h-[44px] -mx-[10px] -my-[6px] flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         −
@@ -353,7 +381,8 @@ export function ShoppingRangeModal({
                       </span>
                       <button
                         onClick={() => updateValue(value + 1)}
-                        className="w-6 h-8 flex items-center justify-center text-lg font-bold"
+                        aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人増やす`}
+                        className="min-w-[44px] min-h-[44px] -mx-[10px] -my-[6px] flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         +
@@ -390,5 +419,6 @@ export function ShoppingRangeModal({
         </>
       )}
     </motion.div>
+    </FocusTrap>
   );
 }

@@ -5132,11 +5132,16 @@ export default function WeeklyMenuPage() {
       <div className="flex items-center gap-1.5 mb-2">
         {/* 順序変更ボタン（複数の食事がある場合のみ表示） */}
         {showReorderButtons && (
+          // #1052 (タップ領域): 元は w-5 h-5 (20px) で 44px 基準未達だった。上下ボタンが
+          // gap-0.5 (2px) で隣接しているため、Bug-10 と同じ「負マージンで不可視に拡大」は
+          // 上下ボタンのヒット領域同士が重なり誤タップを招く恐れがあり不採用。
+          // 視覚サイズそのものを w-6 h-6 に少し拡大しつつ aria-label を付与する。
           <div className="flex flex-col gap-0.5">
             <button
               onClick={(e) => { e.stopPropagation(); canUp && reorderMeal(meal.id, 'up'); }}
-              className="w-5 h-5 rounded flex items-center justify-center transition-colors"
-              style={{ 
+              aria-label="この食事を1つ上に移動"
+              className="w-6 h-6 rounded flex items-center justify-center transition-colors"
+              style={{
                 background: canUp ? colors.bg : 'transparent',
                 opacity: canUp ? 1 : 0.3,
                 cursor: canUp ? 'pointer' : 'default',
@@ -5147,8 +5152,9 @@ export default function WeeklyMenuPage() {
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); canDown && reorderMeal(meal.id, 'down'); }}
-              className="w-5 h-5 rounded flex items-center justify-center transition-colors"
-              style={{ 
+              aria-label="この食事を1つ下に移動"
+              className="w-6 h-6 rounded flex items-center justify-center transition-colors"
+              style={{
                 background: canDown ? colors.bg : 'transparent',
                 opacity: canDown ? 1 : 0.3,
                 cursor: canDown ? 'pointer' : 'default',
@@ -5261,11 +5267,14 @@ export default function WeeklyMenuPage() {
           <div className="flex items-center gap-2.5">
             {/* 順序変更ボタン */}
             {showReorderButtons && (
+              // #1052 (タップ領域): 上下ボタンが隣接するため負マージンでの不可視拡大は
+              // 誤タップの恐れがあり不採用。視覚サイズを w-6 h-6 に拡大 + aria-label 付与。
               <div className="flex flex-col gap-0.5 mr-1">
                 <button
                   onClick={(e) => { e.stopPropagation(); canUp && reorderMeal(meal.id, 'up'); }}
-                  className="w-5 h-5 rounded flex items-center justify-center transition-colors"
-                  style={{ 
+                  aria-label="この食事を1つ上に移動"
+                  className="w-6 h-6 rounded flex items-center justify-center transition-colors"
+                  style={{
                     background: canUp ? colors.bg : 'transparent',
                     opacity: canUp ? 1 : 0.3,
                     cursor: canUp ? 'pointer' : 'default',
@@ -5276,8 +5285,9 @@ export default function WeeklyMenuPage() {
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); canDown && reorderMeal(meal.id, 'down'); }}
-                  className="w-5 h-5 rounded flex items-center justify-center transition-colors"
-                  style={{ 
+                  aria-label="この食事を1つ下に移動"
+                  className="w-6 h-6 rounded flex items-center justify-center transition-colors"
+                  style={{
                     background: canDown ? colors.bg : 'transparent',
                     opacity: canDown ? 1 : 0.3,
                     cursor: canDown ? 'pointer' : 'default',

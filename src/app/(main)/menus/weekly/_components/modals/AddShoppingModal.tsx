@@ -1,9 +1,11 @@
 "use client";
 
-import React from "react";
+import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
+import FocusTrap from "focus-trap-react";
 import { X } from "lucide-react";
 import { useFormDraftStore } from "../../_state";
+import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
   bg: '#F7F6F3',
@@ -29,8 +31,25 @@ export function AddShoppingModal({
   const setNewShoppingAmount = useFormDraftStore((s) => s.setNewShoppingAmount);
   const setNewShoppingCategory = useFormDraftStore((s) => s.setNewShoppingCategory);
 
+  // #1052 (体系的 a11y)
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ onClose });
+
   return (
+    <FocusTrap
+      focusTrapOptions={{
+        allowOutsideClick: true,
+        escapeDeactivates: false,
+        fallbackFocus: () => panelRef.current ?? document.body,
+      }}
+    >
     <motion.div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      tabIndex={-1}
       initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
       className="fixed bottom-20 lg:bottom-0 left-0 right-0 lg:left-64 z-[201] px-4 py-4 pb-4 lg:pb-6 rounded-t-3xl"
@@ -38,9 +57,11 @@ export function AddShoppingModal({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex justify-between items-center mb-4">
-        <span style={{ fontSize: 15, fontWeight: 600 }}>買い物リストに追加</span>
-        <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
-          <X size={14} color={colors.textLight} />
+        <span id={titleId} style={{ fontSize: 15, fontWeight: 600 }}>買い物リストに追加</span>
+        <button onClick={onClose} aria-label="閉じる" className="min-w-[44px] min-h-[44px] -m-2 flex items-center justify-center">
+          <span className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
+            <X size={14} color={colors.textLight} />
+          </span>
         </button>
       </div>
       <div className="space-y-3">
@@ -84,5 +105,6 @@ export function AddShoppingModal({
         </button>
       </div>
     </motion.div>
+    </FocusTrap>
   );
 }
