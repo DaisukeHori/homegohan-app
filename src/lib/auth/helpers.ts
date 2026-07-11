@@ -7,7 +7,7 @@
  */
 
 import { type User } from '@supabase/supabase-js';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError, ImpersonationError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
 import { isAccountFrozen } from './frozen';
@@ -68,6 +68,42 @@ function assertNotFrozen(frozenAt: string | null, unbanAt: string | null): void 
   if (isAccountFrozen({ frozenAt, unbanAt })) {
     throw new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています');
   }
+}
+
+/**
+ * user_profiles を service_role (RLS バイパス) で取得する。
+ * #1030 (round-5 Critical fix): user_profiles の SELECT ポリシーは
+ * "Users can view own profile" USING (auth.uid() = id) の1本のみであり、
+ * 実行者以外の行は通常クライアント (createClient(), RLS 有効) では 0 行になる。
+ * impersonate() の対象ユーザー参照など、認可 (super_admin 判定) 通過後に
+ * 他ユーザーの行を読む必要がある箇所は、既存パターン (#1028: freeze/route.ts 等)
+ * に合わせて admin client を使用する。
+ * 対象が存在しない場合は null を返す (RLS による不可視か実在しないかは呼び出し側で
+ * 区別せず、いずれも「対象が見つからない」として扱う)。
+ */
+async function getUserProfileAdmin(userId: string): Promise<{
+  roles: RoleName[];
+  organization_id: string | null;
+  frozen_at: string | null;
+  unban_at: string | null;
+} | null> {
+  const supabaseAdmin = getSupabaseAdmin();
+  const { data: profile, error } = await supabaseAdmin
+    .from('user_profiles')
+    .select('roles, organization_id, frozen_at, unban_at')
+    .eq('id', userId)
+    .single();
+
+  if (error || !profile) {
+    return null;
+  }
+
+  return {
+    roles: (profile.roles ?? ['user']) as RoleName[],
+    organization_id: profile.organization_id ?? null,
+    frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
+    unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -165,7 +201,8 @@ export async function requireOrgRole(
  * @returns impersonation_token と expires_at
  * @throws AuthError          - 実行者が未認証の場合
  * @throws ImpersonationError - super_admin 以外が実行した場合 / 対象が拒否設定の場合 /
- *                              #1030 (round-4): 対象ユーザーが凍結中の場合
+ *                              #1030 (round-4): 対象ユーザーが凍結中の場合 /
+ *                              #1030 (round-5): 対象ユーザーが存在しない場合
  */
 export async function impersonate(
   targetUserId: string,
@@ -181,11 +218,22 @@ export async function impersonate(
     );
   }
 
+  // #1030 (round-5 Critical fix): 対象ユーザーの行は RLS (自分の行のみ SELECT 可) により
+  // 通常クライアントでは読めないため、admin client (service_role) で取得する。
+  // super_admin 判定 (上記) を通過した後にのみ呼び出すこと (認可前に使うと権限昇格になる)。
+  const targetProfile = await getUserProfileAdmin(targetUserId);
+  if (!targetProfile) {
+    throw new ImpersonationError(
+      'AUTH_IMPERSONATION_TARGET_NOT_FOUND',
+      '対象ユーザーが見つかりません',
+    );
+  }
+
   // #1030 (round-4 Warning fix): 凍結中のユーザーへの成りすましセッションを拒否する。
   // impersonate は対象ユーザーとして振る舞えるセッションを発行するため、対象が凍結中
   // (BAN 中) の場合にこれを許すと、frozen_at enforcement (requireUser/requireRole/
   // middleware) を impersonate 経由で迂回できてしまう。
-  const { frozen_at: targetFrozenAt, unban_at: targetUnbanAt } = await getUserProfile(targetUserId);
+  const { frozen_at: targetFrozenAt, unban_at: targetUnbanAt } = targetProfile;
   if (isAccountFrozen({ frozenAt: targetFrozenAt, unbanAt: targetUnbanAt })) {
     throw new ImpersonationError(
       'AUTH_IMPERSONATION_TARGET_FROZEN',

@@ -38,8 +38,18 @@ const supabaseClient = {
   from: vi.fn(),
 };
 
+// #1030 (round-5): user_profiles の SELECT ポリシーは自分の行のみを許可する (RLS)。
+// getUserProfileAdmin() は service_role の admin client を使用して RLS をバイパスするため、
+// 通常クライアント (supabaseClient) とは別のモッククライアントを用意し、
+// 「通常クライアントでは他ユーザー行が 0 行 (RLS 模擬)・admin クライアント経由なら読める」
+// ことを区別できるようにする。
+const supabaseAdminClient = {
+  from: vi.fn(),
+};
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => supabaseClient,
+  getSupabaseAdmin: () => supabaseAdminClient,
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +99,96 @@ function setupUserProfile(
 function setupUserProfileNotFound(userId: string) {
   const profileBuilder = makeQueryBuilder({ data: null, error: { message: 'not found' } });
   supabaseClient.from = vi.fn().mockReturnValue(profileBuilder);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// admin client (getSupabaseAdmin) 用テストヘルパー
+// #1030 (round-5): impersonate() の対象ユーザー取得は RLS バイパスの admin client を
+// 経由するため、通常クライアントとは独立にモックする。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * admin client 経由で対象ユーザーのプロフィールが取得できるケースをセットアップする。
+ */
+function setupTargetProfileAdmin(
+  roles: string[],
+  organization_id: string | null = null,
+  frozen_at: string | null = null,
+  unban_at: string | null = null,
+) {
+  const profileBuilder = makeQueryBuilder({
+    data: { roles, organization_id, frozen_at, unban_at },
+    error: null,
+  });
+  supabaseAdminClient.from = vi.fn().mockImplementation((table: string) => {
+    if (table === 'user_profiles') {
+      return profileBuilder;
+    }
+    return makeQueryBuilder({ data: [], error: null });
+  });
+}
+
+/**
+ * admin client 経由でも対象ユーザーが見つからない (実在しない) ケースをセットアップする。
+ */
+function setupTargetProfileAdminNotFound() {
+  const profileBuilder = makeQueryBuilder({ data: null, error: { message: 'not found' } });
+  supabaseAdminClient.from = vi.fn().mockReturnValue(profileBuilder);
+}
+
+/**
+ * RLS を模擬した通常クライアント (supabaseClient) の user_profiles モックを作る。
+ * `selfId` の行のみ返し、それ以外の id は 0 行 (RLS で不可視) として扱う。
+ * admin_audit_logs 等の他テーブルはデフォルトの空クエリビルダーを返す。
+ */
+function makeRlsAwareUserProfilesFrom(selfId: string, selfProfile: Record<string, unknown>) {
+  return vi.fn().mockImplementation((table: string) => {
+    if (table !== 'user_profiles') {
+      return makeQueryBuilder({ data: [], error: null });
+    }
+    let queriedId: string | undefined;
+    const builder: Record<string, unknown> = {};
+    builder.select = vi.fn().mockReturnValue(builder);
+    builder.eq = vi.fn().mockImplementation((column: string, value: string) => {
+      if (column === 'id') queriedId = value;
+      return builder;
+    });
+    builder.single = vi.fn().mockImplementation(() => {
+      if (queriedId === selfId) {
+        return Promise.resolve({ data: selfProfile, error: null });
+      }
+      // RLS: 自分以外の行は 0 行として扱われる (single() は not-found エラーを返す)
+      return Promise.resolve({ data: null, error: { message: 'RLS: no rows visible' } });
+    });
+    return builder;
+  });
+}
+
+/**
+ * RLS をバイパスする admin client の user_profiles モックを作る。
+ * `profilesById` に登録された id ならどれでも取得できる (service_role 相当)。
+ */
+function makeAdminUserProfilesFrom(profilesById: Record<string, Record<string, unknown>>) {
+  return vi.fn().mockImplementation((table: string) => {
+    if (table !== 'user_profiles') {
+      return makeQueryBuilder({ data: [], error: null });
+    }
+    let queriedId: string | undefined;
+    const builder: Record<string, unknown> = {};
+    builder.select = vi.fn().mockReturnValue(builder);
+    builder.eq = vi.fn().mockImplementation((column: string, value: string) => {
+      if (column === 'id') queriedId = value;
+      return builder;
+    });
+    builder.single = vi.fn().mockImplementation(() => {
+      const profile = queriedId ? profilesById[queriedId] : undefined;
+      if (!profile) {
+        return Promise.resolve({ data: null, error: { message: 'not found' } });
+      }
+      return Promise.resolve({ data: profile, error: null });
+    });
+    return builder;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -290,6 +390,11 @@ describe('requireOrgRole', () => {
 describe('impersonate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 各テストで明示的にセットアップしなければ、admin client への呼び出しは
+    // 「見つからない」を返す (未セットアップ = バグの可能性を潰す安全側デフォルト)。
+    supabaseAdminClient.from = vi.fn().mockReturnValue(
+      makeQueryBuilder({ data: null, error: { message: 'not set up' } }),
+    );
   });
 
   it('super_admin が impersonate すると impersonation_token と expires_at を返す', async () => {
@@ -301,6 +406,8 @@ describe('impersonate', () => {
       }
       return auditBuilder;
     });
+    // #1030 (round-5): 対象ユーザーの取得は admin client 経由。
+    setupTargetProfileAdmin(['user'], null, null, null);
 
     const result = await impersonate('target-user-id', 'テスト目的');
     expect(result).toHaveProperty('impersonation_token');
@@ -324,33 +431,31 @@ describe('impersonate', () => {
     await expect(impersonate('target-user-id', '理由')).rejects.toThrow(AuthError);
   });
 
+  // #1030 (round-5 Critical fix): 対象ユーザーの取得は RLS バイパスの admin client を
+  // 経由する。通常クライアント (supabaseClient) には自分 (super_admin) の行しか無い
+  // (RLS 模擬) にもかかわらず impersonate が成功することで、admin client 経由の
+  // 参照が正しく配線されていることを検証する。
+  it('通常クライアントでは対象ユーザー行が 0 行 (RLS) でも admin client 経由で対象を取得し impersonate が成功する', async () => {
+    setupGetUser(fakeSuperAdmin);
+    const selfProfile = { roles: ['super_admin'], organization_id: null, frozen_at: null, unban_at: null };
+    const targetProfile = { roles: ['user'], organization_id: null, frozen_at: null, unban_at: null };
+
+    // 通常クライアント: fakeSuperAdmin.id の行のみ見える (RLS 模擬)。target-user-id は 0 行。
+    supabaseClient.from = makeRlsAwareUserProfilesFrom(fakeSuperAdmin.id, selfProfile);
+    // admin client: target-user-id も見える (service_role, RLS バイパス)。
+    supabaseAdminClient.from = makeAdminUserProfilesFrom({ 'target-user-id': targetProfile });
+
+    const result = await impersonate('target-user-id', 'RLS回避検証');
+    expect(result).toHaveProperty('impersonation_token');
+    expect(typeof result.impersonation_token).toBe('string');
+  });
+
   // #1030 (round-4 Warning fix): 凍結中ユーザーへの成りすましを拒否する
   it('対象ユーザーが frozen_at 中の場合 ImpersonationError(AUTH_IMPERSONATION_TARGET_FROZEN) を throw する', async () => {
     setupGetUser(fakeSuperAdmin);
-    let userProfilesCallCount = 0;
-    supabaseClient.from = vi.fn().mockImplementation((table: string) => {
-      if (table === 'user_profiles') {
-        userProfilesCallCount += 1;
-        if (userProfilesCallCount === 1) {
-          // 1回目: 実行者 (super_admin) のプロフィール取得
-          return makeQueryBuilder({
-            data: { roles: ['super_admin'], organization_id: null, frozen_at: null, unban_at: null },
-            error: null,
-          });
-        }
-        // 2回目: 成りすまし対象のプロフィール取得 (凍結中)
-        return makeQueryBuilder({
-          data: {
-            roles: ['user'],
-            organization_id: null,
-            frozen_at: '2026-07-01T00:00:00.000Z',
-            unban_at: null,
-          },
-          error: null,
-        });
-      }
-      return makeQueryBuilder({ data: null, error: null });
-    });
+    setupUserProfile(fakeSuperAdmin.id, ['super_admin'], null, null, null);
+    // #1030 (round-5): 対象ユーザー (凍結中) の取得は admin client 経由。
+    setupTargetProfileAdmin(['user'], null, '2026-07-01T00:00:00.000Z', null);
 
     let caught: unknown;
     try {
@@ -361,6 +466,35 @@ describe('impersonate', () => {
 
     expect(caught).toBeInstanceOf(ImpersonationError);
     expect(caught).toMatchObject({ code: 'AUTH_IMPERSONATION_TARGET_FROZEN' });
+  });
+
+  // #1030 (round-5): frozen_at が null の対象は拒否されず成功する (非 frozen の成功ケース)
+  it('対象ユーザーが frozen_at でない場合は成功する', async () => {
+    setupGetUser(fakeSuperAdmin);
+    setupUserProfile(fakeSuperAdmin.id, ['super_admin'], null, null, null);
+    setupTargetProfileAdmin(['user'], null, null, null);
+
+    const result = await impersonate('target-user-id', '理由');
+    expect(result).toHaveProperty('impersonation_token');
+  });
+
+  // #1030 (round-5 Critical fix): 対象ユーザーが実在しない場合は明示的に
+  // ImpersonationError(AUTH_IMPERSONATION_TARGET_NOT_FOUND) を throw する
+  // (getUserProfileAdmin() が null を返すケース)。
+  it('対象ユーザーが存在しない場合 ImpersonationError(AUTH_IMPERSONATION_TARGET_NOT_FOUND) を throw する', async () => {
+    setupGetUser(fakeSuperAdmin);
+    setupUserProfile(fakeSuperAdmin.id, ['super_admin'], null, null, null);
+    setupTargetProfileAdminNotFound();
+
+    let caught: unknown;
+    try {
+      await impersonate('nonexistent-user-id', '理由');
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ImpersonationError);
+    expect(caught).toMatchObject({ code: 'AUTH_IMPERSONATION_TARGET_NOT_FOUND' });
   });
 
   it('admin_audit_logs に action_type=impersonate の記録を挿入する', async () => {
@@ -375,6 +509,7 @@ describe('impersonate', () => {
       }
       return makeQueryBuilder({ data: null, error: null });
     });
+    setupTargetProfileAdmin(['user'], null, null, null);
 
     await impersonate('target-user-id', '監査テスト');
     expect(insertMock).toHaveBeenCalledOnce();
@@ -393,6 +528,7 @@ describe('impersonate', () => {
       }
       return { insert: insertMock };
     });
+    setupTargetProfileAdmin(['user'], null, null, null);
 
     const result = await impersonate('target-user-id', '理由');
     expect(result).toHaveProperty('impersonation_token');
