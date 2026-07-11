@@ -32,6 +32,11 @@ export function getFastLLMClient(): OpenAI {
   fastLLMClient = new OpenAI({
     apiKey,
     baseURL: getFastLLMBaseUrl(),
+    // #1047 F2-15: 呼び出し側が signal を渡し忘れた場合でもハングしないよう、
+    // クライアント全体のデフォルトタイムアウト/リトライを設定する
+    // （個別呼び出しは引き続き AbortSignal.timeout() を渡すことを推奨）。
+    timeout: 25_000,
+    maxRetries: 1,
   });
 
   return fastLLMClient;

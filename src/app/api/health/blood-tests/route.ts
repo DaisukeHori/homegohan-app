@@ -151,6 +151,10 @@ BUN: ${result.bun ?? '-'} mg/dL
     ],
     response_format: { type: 'json_object' },
     max_tokens: 1000,
+  }, {
+    // #1047 F2-15: fast-llm 呼び出しにタイムアウトが無く、Grok側の遅延がそのまま
+    // リクエストをハングさせていた
+    signal: AbortSignal.timeout(25_000),
   });
 
   const content = response.choices[0]?.message?.content;
@@ -224,6 +228,9 @@ eGFR: ${r.egfr ?? '-'} mL/min/1.73m²
     ],
     response_format: { type: 'json_object' },
     max_tokens: 2000,
+  }, {
+    // #1047 F2-15: fast-llm 呼び出しにタイムアウトが無かった
+    signal: AbortSignal.timeout(25_000),
   });
 
   const content = response.choices[0]?.message?.content;

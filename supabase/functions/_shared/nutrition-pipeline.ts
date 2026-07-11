@@ -23,9 +23,10 @@ import {
   initNutritionTotals,
   roundNutrition
 } from './nutrition-calculator-v2.ts'
-import { 
-  verifyNutrition, 
-  createEvidenceInfo, 
+import {
+  verifyNutrition,
+  createEvidenceInfo,
+  applyCalorieCorrection,
   EvidenceInfo,
   MatchedIngredientInfo
 } from './evidence-verifier.ts'
@@ -1006,7 +1007,21 @@ export async function analyzeWithEvidence(
     elapsedMs: evidenceVerificationMs,
     referenceCount: verification.allReferences.length,
   })
-  
+
+  // #1047 F5: 参照値との乖離が50%を超える場合（excessive_deviation）は
+  // 生の計算値をそのまま保存せず、参照値の±50%レンジにクランプした値へ補正する。
+  // 以前は confidenceScore を下げるだけで実際の保存値は補正されていなかった。
+  if (verification.reason === 'excessive_deviation') {
+    console.warn('Step 4: excessive deviation detected, clamping nutrition totals', {
+      dishName: mainDish?.name,
+      calculatedCalories: verification.calculatedCalories,
+      referenceCalories: verification.referenceCalories,
+      recommendedCalories: verification.recommendedCalories,
+      deviationPercent: verification.deviationPercent,
+    })
+    mealTotals = applyCalorieCorrection(mealTotals, verification)
+  }
+
   // 全料理の参照レシピを収集
   const allReferences = verification.allReferences
 

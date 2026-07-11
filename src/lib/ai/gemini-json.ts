@@ -54,7 +54,107 @@ function repairCommonJsonIssues(text: string): string {
     .trim();
 }
 
-function parseGeminiJsonText<T>(rawText: string): T {
+// #1047 F5: 実行時スキーマ検証
+// 以前は JSON.parse に成功しさえすれば型キャスト(`as T`)のみで信頼しており、
+// Gemini が responseJsonSchema と乖離した形（必須フィールド欠落・型不一致・enum外の値など）
+// を返しても検出できなかった。generateGeminiJson に渡された schema（type/required/
+// properties/items/enum のサブセット）に対して簡易的な構造検証を行う。
+interface JsonSchemaLike {
+  type?: string | string[];
+  required?: string[];
+  properties?: Record<string, JsonSchemaLike>;
+  items?: JsonSchemaLike;
+  enum?: unknown[];
+}
+
+function matchesJsonSchemaType(value: unknown, type: string): boolean {
+  switch (type) {
+    case 'object':
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    case 'array':
+      return Array.isArray(value);
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+    case 'integer':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'null':
+      return value === null;
+    default:
+      return true;
+  }
+}
+
+function describeJsonValueType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function collectJsonSchemaErrors(
+  value: unknown,
+  schema: JsonSchemaLike | undefined,
+  path: string,
+  errors: string[],
+  depth = 0,
+): void {
+  if (!schema || typeof schema !== 'object') return;
+
+  if (schema.type) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    if (!types.some((t) => matchesJsonSchemaType(value, t))) {
+      errors.push(`${path}: expected type ${types.join('|')} but got ${describeJsonValueType(value)}`);
+      return;
+    }
+  }
+
+  if (schema.enum && !schema.enum.some((allowed) => allowed === value)) {
+    errors.push(`${path}: value not in enum [${schema.enum.join(', ')}]`);
+  }
+
+  if (Array.isArray(value) && schema.items) {
+    value.forEach((item, index) => collectJsonSchemaErrors(item, schema.items, `${path}[${index}]`, errors, depth + 1));
+  }
+
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    // required は最上位（レスポンス直下）のみ検証する。ネストした配列要素内の
+    // required（例: dishes[].estimatedNutrition）まで厳密に強制すると、
+    // アプリ側の正規化ロジック（normalizeMealRecognitionResult 等）が既に
+    // 欠損値を許容前提で設計されている箇所まで不必要にリトライ/棄却してしまうため。
+    if (depth === 0 && schema.required) {
+      for (const key of schema.required) {
+        if (!(key in obj) || obj[key] === undefined) {
+          errors.push(`${path}.${key}: required property missing`);
+        }
+      }
+    }
+    if (schema.properties) {
+      for (const [key, propSchema] of Object.entries(schema.properties)) {
+        if (key in obj) {
+          collectJsonSchemaErrors(obj[key], propSchema, `${path}.${key}`, errors, depth + 1);
+        }
+      }
+    }
+  }
+}
+
+function assertMatchesSchema<T>(parsed: T, schema: Record<string, unknown> | undefined): T {
+  if (!schema) return parsed;
+  const errors: string[] = [];
+  collectJsonSchemaErrors(parsed, schema as JsonSchemaLike, '$', errors);
+  if (errors.length > 0) {
+    const message = `Gemini JSON failed schema validation: ${errors.slice(0, 5).join('; ')}`;
+    const error = new Error(message) as Error & { schemaErrors?: string[] };
+    error.schemaErrors = errors;
+    throw error;
+  }
+  return parsed;
+}
+
+function parseGeminiJsonText<T>(rawText: string, schema?: Record<string, unknown>): T {
   const attempts = new Set<string>();
   const candidates = [
     rawText.trim(),
@@ -62,13 +162,16 @@ function parseGeminiJsonText<T>(rawText: string): T {
     extractJsonBlock(stripJsonCodeFence(rawText)) ?? '',
   ].filter(Boolean);
 
+  let lastSchemaError: (Error & { schemaErrors?: string[] }) | null = null;
+
   for (const candidate of candidates) {
     if (attempts.has(candidate)) continue;
     attempts.add(candidate);
 
     try {
-      return JSON.parse(candidate) as T;
-    } catch {
+      return assertMatchesSchema(JSON.parse(candidate) as T, schema);
+    } catch (err) {
+      if (err instanceof Error && 'schemaErrors' in err) lastSchemaError = err as Error & { schemaErrors?: string[] };
       // Fall through to repaired attempt.
     }
 
@@ -77,10 +180,16 @@ function parseGeminiJsonText<T>(rawText: string): T {
     attempts.add(repaired);
 
     try {
-      return JSON.parse(repaired) as T;
-    } catch {
+      return assertMatchesSchema(JSON.parse(repaired) as T, schema);
+    } catch (err) {
+      if (err instanceof Error && 'schemaErrors' in err) lastSchemaError = err as Error & { schemaErrors?: string[] };
       // Keep trying candidates.
     }
+  }
+
+  if (lastSchemaError) {
+    (lastSchemaError as Error & { rawText?: string }).rawText = rawText;
+    throw lastSchemaError;
   }
 
   const preview = rawText.slice(0, 240);
@@ -258,7 +367,7 @@ export async function generateGeminiJson<T>({
 
   try {
     return {
-      data: parseGeminiJsonText<T>(rawText),
+      data: parseGeminiJsonText<T>(rawText, schema),
       model,
       rawText,
     };
@@ -280,7 +389,7 @@ export async function generateGeminiJson<T>({
 
     try {
       return {
-        data: parseGeminiJsonText<T>(retryRawText),
+        data: parseGeminiJsonText<T>(retryRawText, schema),
         model,
         rawText: retryRawText,
       };
