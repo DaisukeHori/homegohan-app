@@ -13,6 +13,7 @@ import { getFastLLMApiKey, getFastLLMChatCompletionsUrl, getFastLLMModel } from 
 import { withOpenAIUsageContext, generateExecutionId } from "../_shared/llm-usage.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import { requireAuth } from "../_shared/auth.ts";
+import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
 
 // ============================================
 // CORS
@@ -38,12 +39,7 @@ function withCors(res: Response): Response {
 // ============================================
 // 型定義
 // ============================================
-
-interface InputIngredient {
-  name: string;
-  amount?: string | null;
-  count: number;
-}
+// InputIngredient は _shared/shopping-list-aggregation.ts からimport（#1046 F5-13）
 
 interface QuantityVariant {
   display: string;
@@ -429,7 +425,10 @@ async function processRegeneration(
     if (mealsError) throw mealsError;
 
     // 材料を抽出（人数倍率適用）
-    const ingredientsMap = new Map<string, InputIngredient>();
+    // #1046 F5-13: 各出現を { name, amount_g } のフラットな配列として集め、
+    // 名前だけをキーに amount_g を確定合算(aggregateIngredientOccurrences)する。
+    // 合算(200g+300g→500g)を LLM のプロンプト任せにしない。
+    const ingredientOccurrences: Array<{ name: string; amount_g: number }> = [];
     let totalMeals = 0; // 食事数（人数ではなく食事の回数）
 
     (dailyMeals || []).forEach((dailyMeal: any) => {
@@ -446,54 +445,22 @@ async function processRegeneration(
         if (servings === 0) return;
 
         totalMeals += 1; // 食事数をカウント（人数ではない）
-        
+
         if (meal.dishes && Array.isArray(meal.dishes)) {
           meal.dishes.forEach((dish: any) => {
             if (dish.ingredients && Array.isArray(dish.ingredients)) {
               dish.ingredients.forEach((ing: any) => {
                 const parsed = parseIngredientAmount(ing);
-                if (!parsed) return;
-                
-                const { name, amount_g } = parsed;
-                const scaledAmount = amount_g * servings;
-                const amountStr = scaledAmount > 0 ? `${Math.round(scaledAmount)}g` : null;
-
-                if (name) {
-                  const key = `${name}|${amountStr || ""}`;
-                  const existing = ingredientsMap.get(key);
-                  if (existing) {
-                    existing.count++;
-                  } else {
-                    ingredientsMap.set(key, {
-                      name: name.trim(),
-                      amount: amountStr,
-                      count: 1,
-                    });
-                  }
-                }
+                if (!parsed || !parsed.name) return;
+                ingredientOccurrences.push({ name: parsed.name, amount_g: parsed.amount_g * servings });
               });
             }
           });
         } else if (meal.ingredients && Array.isArray(meal.ingredients)) {
           meal.ingredients.forEach((ingredient: string) => {
             const parsed = parseIngredientAmount(ingredient);
-            if (!parsed) return;
-            
-            const { name, amount_g } = parsed;
-            const scaledAmount = amount_g * servings;
-            const amountStr = scaledAmount > 0 ? `${Math.round(scaledAmount)}g` : null;
-            const key = `${name}|${amountStr || ""}`;
-            
-            const existing = ingredientsMap.get(key);
-            if (existing) {
-              existing.count++;
-            } else {
-              ingredientsMap.set(key, {
-                name: name.trim(),
-                amount: amountStr,
-                count: 1,
-              });
-            }
+            if (!parsed || !parsed.name) return;
+            ingredientOccurrences.push({ name: parsed.name, amount_g: parsed.amount_g * servings });
           });
         }
       });
@@ -501,7 +468,7 @@ async function processRegeneration(
 
     console.log(`Total meals calculated: ${totalMeals}`);
 
-    const rawIngredients = Array.from(ingredientsMap.values());
+    const rawIngredients = aggregateIngredientOccurrences(ingredientOccurrences);
 
     // 既存のアクティブな買い物リストをアーカイブ
     await supabase

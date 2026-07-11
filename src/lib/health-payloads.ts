@@ -361,18 +361,22 @@ export function sanitizeHealthRecordPayload(
       if (value !== undefined) data[field] = value;
     }
 
+    // #1046 F2-13: sleep_quality/overall_condition/mood_score/energy_level/stress_level は
+    // 記録画面(renderScoreButtons, 1-5の絵文字5段階)・AI相談プロンプト(x/5表記)が
+    // いずれも1-5スケールで運用されているが、サニタイザだけmax=10のままだったため、
+    // UI上ありえない6-10の値もAPIレベルでは通過してしまっていた。実態のUI(1-5)に統一する。
     const integerFieldOpts: Record<string, { min?: number; max?: number; label?: string }> = {
       systolic_bp: { min: 30, max: 300, label: '収縮期血圧 (mmHg)' },
       diastolic_bp: { min: 20, max: 200, label: '拡張期血圧 (mmHg)' },
       heart_rate: { min: 20, max: 300, label: '心拍数 (bpm)' },
-      sleep_quality: { min: 1, max: 10, label: '睡眠の質 (1-10)' },
+      sleep_quality: { min: 1, max: 5, label: '睡眠の質 (1-5)' },
       water_intake: { min: 0, max: 10000, label: '水分摂取量 (mL)' },
       step_count: { min: 0, max: 100000, label: '歩数' },
       bowel_movement: { min: 0, max: 20, label: '排便回数' },
-      overall_condition: { min: 1, max: 10, label: '全体的な体調 (1-10)' },
-      mood_score: { min: 1, max: 10, label: '気分スコア (1-10)' },
-      energy_level: { min: 1, max: 10, label: 'エネルギーレベル (1-10)' },
-      stress_level: { min: 1, max: 10, label: 'ストレスレベル (1-10)' },
+      overall_condition: { min: 1, max: 5, label: '全体的な体調 (1-5)' },
+      mood_score: { min: 1, max: 5, label: '気分スコア (1-5)' },
+      energy_level: { min: 1, max: 5, label: 'エネルギーレベル (1-5)' },
+      stress_level: { min: 1, max: 5, label: 'ストレスレベル (1-5)' },
     };
     const integerFields = [
       'systolic_bp',

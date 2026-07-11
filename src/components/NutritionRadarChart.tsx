@@ -55,6 +55,51 @@ const DISPLAY_CAP = 200;
 // Component
 // ============================================
 
+export interface NutritionRadarChartDatum {
+  nutrient: string;
+  value: number;
+  fullValue: number;
+  actualValue: number;
+  unit: string;
+  dri: number;
+  // UX3-20: 塩分・コレステロール等の上限系（DG/UL）栄養素かどうか
+  isUpperLimit: boolean;
+}
+
+// レーダーチャート用のデータを生成（純粋関数として切り出し、ユニットテスト可能にする）
+export function buildNutritionRadarChartData(
+  nutrients: string[],
+  nutrition: Record<string, number>
+): NutritionRadarChartDatum[] {
+  return nutrients.map(key => {
+    const def = getNutrientDefinition(key);
+    const value = nutrition[key] ?? 0;
+    const percentage = calculateDriPercentage(key, value);
+
+    return {
+      nutrient: def?.label ?? key,
+      value: Math.min(percentage, 150), // 150%でキャップ（表示上）
+      fullValue: percentage,
+      actualValue: value,
+      unit: def?.unit ?? '',
+      dri: def?.dri ?? 0,
+      isUpperLimit: def?.isUpperLimit ?? false,
+    };
+  });
+}
+
+// 全体の達成率（平均）を計算する純粋関数
+// UX3-20: 塩分・コレステロールのような「控えめに」が推奨される上限系栄養素は、
+// 過剰摂取するほど達成率(%)が上振れするため、そのまま平均に含めると
+// 摂りすぎているのに平均達成率が上がって見える逆転現象が起きる。
+// レーダー自体には引き続き表示しつつ、平均達成率の算出からは除外する。
+export function calculateAverageAchievementPercentage(chartData: NutritionRadarChartDatum[]): number {
+  const targetData = chartData.filter(d => !d.isUpperLimit);
+  if (targetData.length === 0) return 0;
+  const total = targetData.reduce((sum, d) => sum + d.fullValue, 0);
+  return Math.round(total / targetData.length);
+}
+
 export function NutritionRadarChart({
   nutrition,
   selectedNutrients,
@@ -65,30 +110,15 @@ export function NutritionRadarChart({
   // 表示する栄養素（ユーザー設定 or デフォルト）
   const nutrients = selectedNutrients?.length ? selectedNutrients : DEFAULT_RADAR_NUTRIENTS;
 
-  // レーダーチャート用のデータを生成
-  const chartData = useMemo(() => {
-    return nutrients.map(key => {
-      const def = getNutrientDefinition(key);
-      const value = nutrition[key] ?? 0;
-      const percentage = calculateDriPercentage(key, value);
-      
-      return {
-        nutrient: def?.label ?? key,
-        value: Math.min(percentage, 150), // 150%でキャップ（表示上）
-        fullValue: percentage,
-        actualValue: value,
-        unit: def?.unit ?? '',
-        dri: def?.dri ?? 0,
-      };
-    });
-  }, [nutrients, nutrition]);
+  const chartData = useMemo(
+    () => buildNutritionRadarChartData(nutrients, nutrition),
+    [nutrients, nutrition]
+  );
 
-  // 全体の達成率（平均）
-  const averagePercentage = useMemo(() => {
-    if (chartData.length === 0) return 0;
-    const total = chartData.reduce((sum, d) => sum + d.fullValue, 0);
-    return Math.round(total / chartData.length);
-  }, [chartData]);
+  const averagePercentage = useMemo(
+    () => calculateAverageAchievementPercentage(chartData),
+    [chartData]
+  );
 
   // 表示用の達成率（DISPLAY_CAP で上限ガード）— Bug-21
   const displayPercentage = Math.min(averagePercentage, DISPLAY_CAP);

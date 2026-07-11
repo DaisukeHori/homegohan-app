@@ -51,6 +51,9 @@ export interface DishNutrition {
   role: string
   ingredients: IngredientNutrition[]
   totals: NutritionTotals
+  // #1046 F5-12: totals は表示用に丸め済み。複数料理を合算する側は
+  // 丸め済み値を再度足し合わせて誤差を累積させないよう、この生値(未丸め)を使うこと。
+  rawTotals: NutritionTotals
 }
 
 export interface IngredientNutrition {
@@ -275,7 +278,10 @@ export function calculateDishNutrition(
     name: dishName,
     role: dishRole,
     ingredients,
+    // totals は表示用に丸めるが、rawTotals は未丸めのまま保持し、
+    // 複数料理の合算(calculateMealNutrition 等)で二重丸めが発生しないようにする(#1046 F5-12)。
     totals: roundNutrition(totals),
+    rawTotals: totals,
   }
 }
 
@@ -284,13 +290,16 @@ export function calculateDishNutrition(
 // ============================================
 
 export function calculateMealNutrition(dishes: DishNutrition[]): MealNutrition {
-  let totals = initNutritionTotals()
+  // #1046 F5-12: 既に丸め済みの dish.totals を合算して再度丸めると
+  // 品数が多いほど微量栄養素の誤差が累積する。未丸めの rawTotals を合算し、
+  // 最終出力(食事単位)でのみ丸める。
+  let rawTotals = initNutritionTotals()
   let matchedCount = 0
   let totalIngredients = 0
 
   for (const dish of dishes) {
-    totals = sumNutrition(totals, dish.totals)
-    
+    rawTotals = sumNutrition(rawTotals, dish.rawTotals ?? dish.totals)
+
     for (const ingredient of dish.ingredients) {
       totalIngredients++
       if (ingredient.matchedId) {
@@ -301,7 +310,7 @@ export function calculateMealNutrition(dishes: DishNutrition[]): MealNutrition {
 
   return {
     dishes,
-    totals: roundNutrition(totals),
+    totals: roundNutrition(rawTotals),
     matchedCount,
     totalIngredients,
     matchRate: totalIngredients > 0 ? matchedCount / totalIngredients : 0,
