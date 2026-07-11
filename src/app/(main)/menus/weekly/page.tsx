@@ -34,6 +34,7 @@ import remarkGfm from "remark-gfm";
 import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
 import { ProgressTodoCard } from "./_components/ProgressTodoCard";
 import { CancelGenerationConfirmModal } from "./_components/CancelGenerationConfirmModal";
+import { GenerationResultDialogContent } from "./_components/GenerationResultDialogContent";
 import { FamilyViewSwitcher } from "@/components/membership/FamilyViewSwitcher";
 import { useFamilyView } from "@/hooks/useFamilyView";
 import type { FamilyMember } from "@/schemas/membership";
@@ -70,7 +71,7 @@ const NutritionRadarChart = dynamic(
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, Plus, Check, Calendar,
-  Flame, Refrigerator, Trash2, AlertTriangle, Info,
+  Flame, Refrigerator, Trash2, AlertTriangle,
   BarChart3, ShoppingCart, ChevronDown, ChevronRight, ChevronLeft, ChevronUp,
   Clock, Users, BookOpen, Heart, RefreshCw, Send, Package,
   Camera, Pencil, Image as ImageIcon, GripVertical, ArrowUp, ArrowDown
@@ -3472,8 +3473,16 @@ export default function WeeklyMenuPage() {
         const err = await res.json();
         throw new Error(err.error || '再生成に失敗しました');
       }
-    } catch (e: any) { 
-      alert(e.message || "再生成に失敗しました"); 
+    } catch (e: any) {
+      // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約し、
+      // 直前の呼び出しをそのまま再実行できる「もう一度試す」を付ける
+      // （calculateDateRange/currentPlan は関数内で毎回読み直すため再実行は安全）。
+      setSuccessMessage({
+        title: '買い物リストの再生成に失敗しました',
+        message: e.message || '再生成に失敗しました。もう一度お試しください。',
+        type: 'error',
+        onRetry: () => regenerateShoppingList(),
+      });
       setIsRegeneratingShoppingList(false);
       setShoppingListProgress(null);
       localStorage.removeItem('shoppingListRegenerating');
@@ -3715,13 +3724,26 @@ export default function WeeklyMenuPage() {
         }
       } else {
         const err = await res.json();
-        alert(`エラー: ${err.error || '生成に失敗しました'}`);
+        // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
+        // addMealKey/addMealDayIndex/selectedConditions/aiChatInput は失敗時にクリアされないため
+        // handleGenerateSingleMeal を再実行するだけで安全にリトライできる。
+        setSuccessMessage({
+          title: '食事の生成に失敗しました',
+          message: err.error || '生成に失敗しました。もう一度お試しください。',
+          type: 'error',
+          onRetry: () => handleGenerateSingleMeal(),
+        });
         setGeneratingMeal(null);
         localStorage.removeItem('singleMealGenerating');
       }
     } catch (error) {
       console.error('Meal generation error:', error);
-      alert('エラーが発生しました');
+      setSuccessMessage({
+        title: '食事の生成に失敗しました',
+        message: 'エラーが発生しました。もう一度お試しください。',
+        type: 'error',
+        onRetry: () => handleGenerateSingleMeal(),
+      });
       setGeneratingMeal(null);
       localStorage.removeItem('singleMealGenerating');
     }
@@ -3865,13 +3887,26 @@ export default function WeeklyMenuPage() {
         }
       } else {
         const err = await res.json();
-        alert(`エラー: ${err.error || '再生成に失敗しました'}`);
+        // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
+        // この時点では regeneratingMeal はまだクリアされておらず（クリアは成功時のみ）、
+        // モーダルも開いたままのため handleRegenerateMeal を再実行するだけで安全にリトライできる。
+        setSuccessMessage({
+          title: '食事の再生成に失敗しました',
+          message: err.error || '再生成に失敗しました。もう一度お試しください。',
+          type: 'error',
+          onRetry: () => handleRegenerateMeal(),
+        });
         setIsRegenerating(false);
         setRegeneratingMealId(null);
       }
     } catch (error) {
       console.error('Regenerate error:', error);
-      alert('エラーが発生しました');
+      setSuccessMessage({
+        title: '食事の再生成に失敗しました',
+        message: 'エラーが発生しました。もう一度お試しください。',
+        type: 'error',
+        onRetry: () => handleRegenerateMeal(),
+      });
       setIsRegenerating(false);
       setRegeneratingMealId(null);
     }
@@ -3937,7 +3972,16 @@ export default function WeeklyMenuPage() {
         console.log('❌ Regeneration failed');
         setIsRegenerating(false);
         setRegeneratingMealId(null);
-        alert(errorMessage || '献立の再生成に失敗しました。もう一度お試しください。');
+        // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
+        // ここは Realtime/ポーリングで非同期に検知した失敗で、対象の regeneratingMeal は
+        // 初回リクエスト成功時点で既にクリア済みのため、直前の呼び出しをそのまま安全に
+        // 再実行する手段が無い。onRetry は付けず、対象の食事を再度タップして
+        // 「再操作」できることが伝わる明確な文言にする（#1050 のリトライ方針の代替条項）。
+        setSuccessMessage({
+          title: '食事の再生成に失敗しました',
+          message: errorMessage || '献立の再生成に失敗しました。対象の食事をもう一度タップしてお試しください。',
+          type: 'error',
+        });
       }
     };
 
@@ -4309,12 +4353,25 @@ export default function WeeklyMenuPage() {
         setIsAnalyzingPhoto(false);
       } else {
         const err = await res.json();
-        alert(`エラー: ${err.error || '解析に失敗しました'}`);
+        // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
+        // photoFiles/photoEditMeal は失敗時にクリアされず、写真編集モーダルも開いたままのため
+        // analyzePhotoWithAI を再実行するだけで安全にリトライできる。
+        setSuccessMessage({
+          title: '写真解析に失敗しました',
+          message: err.error || '解析に失敗しました。もう一度お試しください。',
+          type: 'error',
+          onRetry: () => analyzePhotoWithAI(),
+        });
         setIsAnalyzingPhoto(false);
       }
     } catch (error) {
       console.error('Photo analysis error:', error);
-      alert('エラーが発生しました');
+      setSuccessMessage({
+        title: '写真解析に失敗しました',
+        message: 'エラーが発生しました。もう一度お試しください。',
+        type: 'error',
+        onRetry: () => analyzePhotoWithAI(),
+      });
       setIsAnalyzingPhoto(false);
     }
   };
@@ -4461,9 +4518,206 @@ export default function WeeklyMenuPage() {
       });
     } catch (error) {
       console.error('Meal image generation error:', error);
-      alert(error instanceof Error ? error.message : '画像生成に失敗しました');
+      // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
+      // imageGenerateMeal/プロンプト/参照画像は失敗時にクリアされず、画像生成モーダルも
+      // 開いたままのため generateMealImage を再実行するだけで安全にリトライできる。
+      setSuccessMessage({
+        title: '画像生成に失敗しました',
+        message: error instanceof Error ? error.message : '画像生成に失敗しました。もう一度お試しください。',
+        type: 'error',
+        onRetry: () => generateMealImage(),
+      });
     } finally {
       setIsGeneratingMealImage(false);
+    }
+  };
+
+  // 献立改善（AI栄養士の提案を反映）
+  // #1050 round-2 (UX2-02残): 以前は ImproveMealModal の onImprove に匿名関数として
+  // 直接渡していたため、失敗時の「もう一度試す」から自分自身を再実行できなかった。
+  // 名前付き関数として切り出し、失敗ハンドラから handleImprove を再度呼べるようにする。
+  const handleImprove = async () => {
+    if (improveMealTargets.length === 0) {
+      alert('改善する食事を選択してください');
+      return;
+    }
+
+    setIsImprovingMeal(true);
+
+    try {
+      const targetDateStr = improveNextDay
+        ? weekDates[selectedDayIndex + 1]?.dateStr
+        : weekDates[selectedDayIndex]?.dateStr;
+
+      if (!targetDateStr) {
+        alert('対象日が見つかりません');
+        setIsImprovingMeal(false);
+        return;
+      }
+
+      const analysisDate = weekDates[selectedDayIndex]?.dateStr;
+      const userComment = nutritionFeedback
+        ? `${analysisDate}の栄養分析に基づくAI栄養士の提案を参考に改善してください：\n${nutritionFeedback}`
+        : undefined;
+
+      const targetSlots = improveMealTargets.map(mealType => ({
+        date: targetDateStr,
+        mealType,
+      }));
+
+      const requestRes = await fetch('/api/ai/menu/v4/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetSlots,
+          resolveExistingMeals: true,
+          note: userComment,
+          constraints: {},
+        }),
+      });
+
+      if (!requestRes.ok) {
+        const errorData = await requestRes.json().catch(() => ({}));
+        throw new Error(errorData.error || 'リクエストの作成に失敗しました');
+      }
+
+      const requestData = await requestRes.json();
+
+      setShowImproveMealModal(false);
+      setShowNutritionDetailModal(false);
+
+      const totalSlotsCount = targetSlots.length;
+      setIsGenerating(true);
+      // UX2-12: 改善対象スロットのみを「考え中」表示の対象にする
+      setGenTargetSlotKeys(targetSlots);
+      setGenerationProgress({
+        phase: 'analyzing',
+        message: 'AI栄養士の提案を反映中...',
+        percentage: 5,
+        totalSlots: totalSlotsCount,
+        completedSlots: 0,
+      });
+
+      if (requestData.requestId) {
+        const improveRequestId = requestData.requestId;
+        // #1033 F1b-06: onImprove も Realtime 単独だとスピナーが取り残されるため、
+        // subscribeToRegenerateStatus と同様に 3秒ポーリング + 5分の上限タイムアウトを併用する
+        if (improvePollingIntervalRef.current) {
+          clearInterval(improvePollingIntervalRef.current);
+          improvePollingIntervalRef.current = null;
+        }
+        if (improveTimeoutRef.current) {
+          clearTimeout(improveTimeoutRef.current);
+          improveTimeoutRef.current = null;
+        }
+
+        const improveResolvedRef = { current: false };
+
+        const finishImprove = async (status: 'completed' | 'failed', errorMessage?: string) => {
+          if (improveResolvedRef.current) return;
+          improveResolvedRef.current = true;
+          if (improvePollingIntervalRef.current) {
+            clearInterval(improvePollingIntervalRef.current);
+            improvePollingIntervalRef.current = null;
+          }
+          if (improveTimeoutRef.current) {
+            clearTimeout(improveTimeoutRef.current);
+            improveTimeoutRef.current = null;
+          }
+          setIsGenerating(false);
+          setGenerationProgress(null);
+
+          if (status === 'failed') {
+            // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
+            // improveMealTargets/improveNextDay/selectedDayIndex はこの非同期失敗検知時点でも
+            // クリアされていないため、改善対象選択モーダルを再度開けばそのままリトライできる。
+            setSuccessMessage({
+              title: '献立の改善に失敗しました',
+              message: errorMessage || '献立の改善に失敗しました。もう一度お試しください。',
+              type: 'error',
+              onRetry: () => setShowImproveMealModal(true),
+            });
+            return;
+          }
+
+          const startStr = weekDates[0]?.dateStr;
+          const endStr = weekDates[weekDates.length - 1]?.dateStr;
+          if (startStr && endStr) {
+            try {
+              const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
+              if (refreshRes.ok) {
+                const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
+                if (dailyMeals && dailyMeals.length > 0) {
+                  const newPlan = { days: dailyMeals };
+                  const newShoppingList = shoppingListData?.items || [];
+                  setCurrentPlan(newPlan);
+                  if (newShoppingList.length > 0) setShoppingList(newShoppingList);
+                  updateCalendarMealDatesFromDailyMeals(dailyMeals);
+                  weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+                }
+              }
+            } catch (e) {
+              console.error('❌ Failed to fetch meal plan after improve:', e);
+            }
+          }
+        };
+
+        v4Generation.subscribeToProgress(
+          improveRequestId,
+          async (progress: any) => {
+            const uiProgress = convertV4ProgressToUIFormat(progress);
+            setGenerationProgress(uiProgress);
+
+            if (progress.status === 'completed' || progress.status === 'failed') {
+              await finishImprove(progress.status, progress.errorMessage);
+            }
+          }
+        );
+
+        // 常にポーリングも開始（Realtimeの信頼性が低いため）
+        const pollImprove = async () => {
+          if (improveResolvedRef.current) return;
+          try {
+            const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${improveRequestId}`);
+            if (!statusRes.ok) return;
+            const { status, errorMessage, error_message: errorMessageSnake, progress: dbProgress } = await statusRes.json();
+            if (improveResolvedRef.current) return;
+            if (status === 'completed') {
+              await finishImprove('completed');
+            } else if (status === 'failed') {
+              await finishImprove('failed', errorMessage || errorMessageSnake);
+            } else if (dbProgress) {
+              // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
+              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress));
+            }
+          } catch (e) {
+            console.error('Improve polling error:', e);
+          }
+        };
+        pollImprove();
+        improvePollingIntervalRef.current = setInterval(pollImprove, 3000);
+
+        // 5分間 completed/failed を受信できなければタイムアウトとしてエラー表示
+        improveTimeoutRef.current = setTimeout(() => {
+          if (!improveResolvedRef.current) {
+            console.warn('⏱️ Improve meal timed out after 5 minutes with no response');
+            finishImprove('failed', '献立の改善がタイムアウトしました。もう一度お試しください。');
+          }
+        }, 5 * 60 * 1000);
+      }
+    } catch (error) {
+      console.error('Failed to improve meals:', error);
+      // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
+      // ここはモーダルがまだ開いたままの初回リクエスト失敗のため、handleImprove を
+      // そのまま再実行するだけで安全にリトライできる。
+      setSuccessMessage({
+        title: '献立の改善に失敗しました',
+        message: '献立の改善に失敗しました。もう一度お試しください。',
+        type: 'error',
+        onRetry: () => handleImprove(),
+      });
+    } finally {
+      setIsImprovingMeal(false);
     }
   };
 
@@ -6157,52 +6411,17 @@ export default function WeeklyMenuPage() {
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
               className="fixed inset-0 z-[301] flex items-center justify-center p-4"
             >
-              <div
-                className="w-full max-w-xs rounded-2xl p-6 text-center"
-                style={{ background: colors.card }}
-              >
-                {/* UX2-01: エラー通知が緑チェックの成功モーダルと同じ見た目で出ていた問題の是正。
-                    type: 'error' は AlertTriangle + 赤系、'info' は Info + ニュートラル系、
-                    未指定（既定 'success'）は従来どおり Check + 緑系。 */}
-                <div
-                  data-testid="success-message-icon"
-                  className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
-                  style={{
-                    background: successMessage.type === 'error'
-                      ? colors.dangerLight
-                      : successMessage.type === 'info'
-                        ? colors.bg
-                        : (colors.successLight || 'rgba(34, 197, 94, 0.1)'),
-                  }}
-                >
-                  {successMessage.type === 'error' ? (
-                    <AlertTriangle size={32} color={colors.danger} />
-                  ) : successMessage.type === 'info' ? (
-                    <Info size={32} color={colors.textLight} />
-                  ) : (
-                    <Check size={32} color={colors.success} />
-                  )}
-                </div>
-                <h3 data-testid="success-message-title" style={{ fontSize: 18, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
-                  {successMessage.title}
-                </h3>
-                <p data-testid="success-message-body" style={{ fontSize: 14, color: colors.textLight, marginBottom: 20 }}>
-                  {successMessage.message}
-                </p>
-                <button
-                  onClick={() => {
-                    // Bug-4対策: 生成完了モーダルを閉じる際に献立データを再取得してキャッシュ不整合を防ぐ
-                    if (successMessage?.refreshOnDismiss) {
-                      refreshMealPlan();
-                    }
-                    setSuccessMessage(null);
-                  }}
-                  className="w-full p-3 rounded-xl font-semibold"
-                  style={{ background: colors.accent, color: '#fff' }}
-                >
-                  OK
-                </button>
-              </div>
+              <GenerationResultDialogContent
+                message={successMessage}
+                onDismiss={() => {
+                  // Bug-4対策: 生成完了モーダルを閉じる際に献立データを再取得してキャッシュ不整合を防ぐ
+                  // （onRetry 分岐の「閉じる」ボタンでは retry 操作自体が最新化を担うため対象外）
+                  if (!successMessage.onRetry && successMessage?.refreshOnDismiss) {
+                    refreshMealPlan();
+                  }
+                  setSuccessMessage(null);
+                }}
+              />
             </motion.div>
           </>
         )}
@@ -6329,174 +6548,7 @@ export default function WeeklyMenuPage() {
             setImproveMealTargets(['breakfast', 'lunch', 'dinner']);
           }
         }}
-        onImprove={async () => {
-          if (improveMealTargets.length === 0) {
-            alert('改善する食事を選択してください');
-            return;
-          }
-
-          setIsImprovingMeal(true);
-
-          try {
-            const targetDateStr = improveNextDay
-              ? weekDates[selectedDayIndex + 1]?.dateStr
-              : weekDates[selectedDayIndex]?.dateStr;
-
-            if (!targetDateStr) {
-              alert('対象日が見つかりません');
-              setIsImprovingMeal(false);
-              return;
-            }
-
-            const analysisDate = weekDates[selectedDayIndex]?.dateStr;
-            const userComment = nutritionFeedback
-              ? `${analysisDate}の栄養分析に基づくAI栄養士の提案を参考に改善してください：\n${nutritionFeedback}`
-              : undefined;
-
-            const targetSlots = improveMealTargets.map(mealType => ({
-              date: targetDateStr,
-              mealType,
-            }));
-
-            const requestRes = await fetch('/api/ai/menu/v4/generate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                targetSlots,
-                resolveExistingMeals: true,
-                note: userComment,
-                constraints: {},
-              }),
-            });
-
-            if (!requestRes.ok) {
-              const errorData = await requestRes.json().catch(() => ({}));
-              throw new Error(errorData.error || 'リクエストの作成に失敗しました');
-            }
-
-            const requestData = await requestRes.json();
-
-            setShowImproveMealModal(false);
-            setShowNutritionDetailModal(false);
-
-            const totalSlotsCount = targetSlots.length;
-            setIsGenerating(true);
-            // UX2-12: 改善対象スロットのみを「考え中」表示の対象にする
-            setGenTargetSlotKeys(targetSlots);
-            setGenerationProgress({
-              phase: 'analyzing',
-              message: 'AI栄養士の提案を反映中...',
-              percentage: 5,
-              totalSlots: totalSlotsCount,
-              completedSlots: 0,
-            });
-
-            if (requestData.requestId) {
-              const improveRequestId = requestData.requestId;
-              // #1033 F1b-06: onImprove も Realtime 単独だとスピナーが取り残されるため、
-              // subscribeToRegenerateStatus と同様に 3秒ポーリング + 5分の上限タイムアウトを併用する
-              if (improvePollingIntervalRef.current) {
-                clearInterval(improvePollingIntervalRef.current);
-                improvePollingIntervalRef.current = null;
-              }
-              if (improveTimeoutRef.current) {
-                clearTimeout(improveTimeoutRef.current);
-                improveTimeoutRef.current = null;
-              }
-
-              const improveResolvedRef = { current: false };
-
-              const finishImprove = async (status: 'completed' | 'failed', errorMessage?: string) => {
-                if (improveResolvedRef.current) return;
-                improveResolvedRef.current = true;
-                if (improvePollingIntervalRef.current) {
-                  clearInterval(improvePollingIntervalRef.current);
-                  improvePollingIntervalRef.current = null;
-                }
-                if (improveTimeoutRef.current) {
-                  clearTimeout(improveTimeoutRef.current);
-                  improveTimeoutRef.current = null;
-                }
-                setIsGenerating(false);
-                setGenerationProgress(null);
-
-                if (status === 'failed') {
-                  alert(errorMessage || '献立の改善に失敗しました。もう一度お試しください。');
-                  return;
-                }
-
-                const startStr = weekDates[0]?.dateStr;
-                const endStr = weekDates[weekDates.length - 1]?.dateStr;
-                if (startStr && endStr) {
-                  try {
-                    const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
-                    if (refreshRes.ok) {
-                      const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-                      if (dailyMeals && dailyMeals.length > 0) {
-                        const newPlan = { days: dailyMeals };
-                        const newShoppingList = shoppingListData?.items || [];
-                        setCurrentPlan(newPlan);
-                        if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-                        updateCalendarMealDatesFromDailyMeals(dailyMeals);
-                        weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
-                      }
-                    }
-                  } catch (e) {
-                    console.error('❌ Failed to fetch meal plan after improve:', e);
-                  }
-                }
-              };
-
-              v4Generation.subscribeToProgress(
-                improveRequestId,
-                async (progress: any) => {
-                  const uiProgress = convertV4ProgressToUIFormat(progress);
-                  setGenerationProgress(uiProgress);
-
-                  if (progress.status === 'completed' || progress.status === 'failed') {
-                    await finishImprove(progress.status, progress.errorMessage);
-                  }
-                }
-              );
-
-              // 常にポーリングも開始（Realtimeの信頼性が低いため）
-              const pollImprove = async () => {
-                if (improveResolvedRef.current) return;
-                try {
-                  const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${improveRequestId}`);
-                  if (!statusRes.ok) return;
-                  const { status, errorMessage, error_message: errorMessageSnake, progress: dbProgress } = await statusRes.json();
-                  if (improveResolvedRef.current) return;
-                  if (status === 'completed') {
-                    await finishImprove('completed');
-                  } else if (status === 'failed') {
-                    await finishImprove('failed', errorMessage || errorMessageSnake);
-                  } else if (dbProgress) {
-                    // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-                    setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress));
-                  }
-                } catch (e) {
-                  console.error('Improve polling error:', e);
-                }
-              };
-              pollImprove();
-              improvePollingIntervalRef.current = setInterval(pollImprove, 3000);
-
-              // 5分間 completed/failed を受信できなければタイムアウトとしてエラー表示
-              improveTimeoutRef.current = setTimeout(() => {
-                if (!improveResolvedRef.current) {
-                  console.warn('⏱️ Improve meal timed out after 5 minutes with no response');
-                  finishImprove('failed', '献立の改善がタイムアウトしました。もう一度お試しください。');
-                }
-              }, 5 * 60 * 1000);
-            }
-          } catch (error) {
-            console.error('Failed to improve meals:', error);
-            alert('献立の改善に失敗しました。もう一度お試しください。');
-          } finally {
-            setIsImprovingMeal(false);
-          }
-        }}
+        onImprove={handleImprove}
       />
     </div>
   );

@@ -15,6 +15,15 @@ export interface UiFlagMessage {
   message: string;
   refreshOnDismiss?: boolean;
   type?: UiFlagMessageType;
+  /**
+   * #1050 round-2 (UX2-02 残課題): AI 生成関連の alert() をこのモーダルに集約する際、
+   * 「もう一度試す」で直前の操作を再実行できるようにするための任意コールバック。
+   * 指定時は OK ボタンの代わりに「もう一度試す」+「閉じる」の2ボタンを表示する
+   * （既存の type:'success'|'info' 用途との後方互換のため、未指定時は従来どおり単一 OK ボタン）。
+   */
+  onRetry?: () => void;
+  /** onRetry ボタンのラベル。省略時は「もう一度試す」 */
+  retryLabel?: string;
 }
 
 export interface UiFlagState {

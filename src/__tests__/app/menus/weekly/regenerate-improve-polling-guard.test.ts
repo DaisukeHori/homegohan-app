@@ -66,13 +66,13 @@ describe('page.tsx regenerate/improve polling guard (#1033 F1b-06 regression)', 
   });
 
   it('onImprove ハンドラがステータスAPIへのフォールバックポーリングを持つこと', () => {
-    const body = extractFunctionBody(pageSource, 'onImprove={async () => {');
+    const body = extractFunctionBody(pageSource, 'const handleImprove = async () => {');
     expect(body).toMatch(/\/api\/ai\/menu\/weekly\/status\?requestId=/);
     expect(body).toMatch(/setInterval\(/);
   });
 
   it('onImprove ハンドラが5分の上限タイムアウトを持つこと', () => {
-    const body = extractFunctionBody(pageSource, 'onImprove={async () => {');
+    const body = extractFunctionBody(pageSource, 'const handleImprove = async () => {');
     expect(body).toMatch(/setTimeout\(/);
     expect(body).toMatch(/5\s*\*\s*60\s*\*\s*1000/);
   });
