@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   Scale, Heart, Moon, Droplets, Activity, Thermometer,
   ArrowLeft, Save, ChevronDown, ChevronUp, Smile, Frown, Meh,
-  Footprints, Brain, Sparkles, AlertCircle
+  Footprints, Brain, Sparkles, AlertCircle, AlertTriangle
 } from 'lucide-react';
 
 const colors = {
@@ -51,6 +51,25 @@ interface FormData {
   daily_note: string;
 }
 
+const initialFormData: FormData = {
+  weight: '',
+  body_fat_percentage: '',
+  systolic_bp: '',
+  diastolic_bp: '',
+  heart_rate: '',
+  body_temp: '',
+  sleep_hours: '',
+  sleep_quality: null,
+  water_intake: '',
+  step_count: '',
+  bowel_movement: '',
+  overall_condition: null,
+  mood_score: null,
+  energy_level: null,
+  stress_level: null,
+  daily_note: '',
+};
+
 export default function HealthRecordPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -64,25 +83,15 @@ export default function HealthRecordPage() {
   
   const today = todayLocal();
   const [recordDate, setRecordDate] = useState(today);
-  
-  const [formData, setFormData] = useState<FormData>({
-    weight: '',
-    body_fat_percentage: '',
-    systolic_bp: '',
-    diastolic_bp: '',
-    heart_rate: '',
-    body_temp: '',
-    sleep_hours: '',
-    sleep_quality: null,
-    water_intake: '',
-    step_count: '',
-    bowel_movement: '',
-    overall_condition: null,
-    mood_score: null,
-    energy_level: null,
-    stress_level: null,
-    daily_note: '',
-  });
+  // #1051 UX3-04: 日付切替の確認・「未保存の変更」判定のため、最後に読み込んだ
+  // (=保存済みとみなせる) フォーム内容を別途保持する
+  const [loadedFormData, setLoadedFormData] = useState<FormData>(initialFormData);
+  const [pendingDate, setPendingDate] = useState<string | null>(null);
+  const [showDateConfirm, setShowDateConfirm] = useState(false);
+  // #1051 UX3-05: 保存失敗を無反応にせず、入力を保持したままエラーを表示する
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const [formData, setFormData] = useState<FormData>(initialFormData);
 
   const fetchRecord = useCallback(async () => {
     setLoading(true);
@@ -90,26 +99,33 @@ export default function HealthRecordPage() {
       const res = await fetch(`/api/health/records/${recordDate}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.record) {
-          setFormData({
-            weight: data.record.weight?.toString() || '',
-            body_fat_percentage: data.record.body_fat_percentage?.toString() || '',
-            systolic_bp: data.record.systolic_bp?.toString() || '',
-            diastolic_bp: data.record.diastolic_bp?.toString() || '',
-            heart_rate: data.record.heart_rate?.toString() || '',
-            body_temp: data.record.body_temp?.toString() || '',
-            sleep_hours: data.record.sleep_hours?.toString() || '',
-            sleep_quality: data.record.sleep_quality || null,
-            water_intake: data.record.water_intake?.toString() || '',
-            step_count: data.record.step_count?.toString() || '',
-            bowel_movement: data.record.bowel_movement?.toString() || '',
-            overall_condition: data.record.overall_condition || null,
-            mood_score: data.record.mood_score || null,
-            energy_level: data.record.energy_level || null,
-            stress_level: data.record.stress_level || null,
-            daily_note: data.record.daily_note || '',
-          });
-        }
+        // #1051 UX3-04: その日の記録が無い場合にフォームをリセットせず、
+        // 前に選択していた日の値が残ったまま「記録する」を押すと別日に誤保存されていた。
+        const nextFormData: FormData = data.record
+          ? {
+              weight: data.record.weight?.toString() || '',
+              body_fat_percentage: data.record.body_fat_percentage?.toString() || '',
+              systolic_bp: data.record.systolic_bp?.toString() || '',
+              diastolic_bp: data.record.diastolic_bp?.toString() || '',
+              heart_rate: data.record.heart_rate?.toString() || '',
+              body_temp: data.record.body_temp?.toString() || '',
+              sleep_hours: data.record.sleep_hours?.toString() || '',
+              sleep_quality: data.record.sleep_quality || null,
+              water_intake: data.record.water_intake?.toString() || '',
+              step_count: data.record.step_count?.toString() || '',
+              bowel_movement: data.record.bowel_movement?.toString() || '',
+              overall_condition: data.record.overall_condition || null,
+              mood_score: data.record.mood_score || null,
+              energy_level: data.record.energy_level || null,
+              stress_level: data.record.stress_level || null,
+              daily_note: data.record.daily_note || '',
+            }
+          : { ...initialFormData };
+        setFormData(nextFormData);
+        setLoadedFormData(nextFormData);
+      } else {
+        setFormData({ ...initialFormData });
+        setLoadedFormData({ ...initialFormData });
       }
     } catch (error) {
       console.error('Failed to fetch record:', error);
@@ -121,8 +137,33 @@ export default function HealthRecordPage() {
     void fetchRecord();
   }, [fetchRecord]);
 
+  // #1051 UX3-04: 日付を切り替える前に未保存の変更がないか確認する
+  const hasUnsavedChanges = () => JSON.stringify(formData) !== JSON.stringify(loadedFormData);
+
+  const handleDateInputChange = (nextDate: string) => {
+    if (nextDate === recordDate) return;
+    if (hasUnsavedChanges()) {
+      setPendingDate(nextDate);
+      setShowDateConfirm(true);
+      return;
+    }
+    setRecordDate(nextDate);
+  };
+
+  const confirmDateChange = () => {
+    if (pendingDate) setRecordDate(pendingDate);
+    setPendingDate(null);
+    setShowDateConfirm(false);
+  };
+
+  const cancelDateChange = () => {
+    setPendingDate(null);
+    setShowDateConfirm(false);
+  };
+
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       const payload: Record<string, any> = {
         record_date: recordDate,
@@ -154,9 +195,15 @@ export default function HealthRecordPage() {
 
       if (res.ok) {
         router.push('/health');
+        return;
       }
+
+      // #1051 UX3-05: 失敗時に無反応にせず、入力を保持したまま再試行できるようにする
+      const data = await res.json().catch(() => null);
+      setSaveError(data?.error || '保存に失敗しました。もう一度お試しください。');
     } catch (error) {
       console.error('Failed to save:', error);
+      setSaveError('保存に失敗しました。もう一度お試しください。');
     }
     setSaving(false);
   };
@@ -221,16 +268,61 @@ export default function HealthRecordPage() {
         <input
           type="date"
           value={recordDate}
-          onChange={(e) => setRecordDate(e.target.value)}
+          onChange={(e) => handleDateInputChange(e.target.value)}
           max={today}
           className="w-full p-3 rounded-xl font-medium"
-          style={{ 
+          style={{
             backgroundColor: colors.card,
             color: colors.text,
             border: `1px solid ${colors.border}`,
           }}
         />
       </div>
+
+      {/* #1051 UX3-05: 保存失敗を無反応にせず表示する */}
+      {saveError && (
+        <div className="px-4 mb-4">
+          <div className="flex items-start gap-2 p-3 rounded-lg" style={{ backgroundColor: colors.errorLight }}>
+            <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.error }} />
+            <p className="text-sm" style={{ color: colors.error }}>{saveError}</p>
+          </div>
+        </div>
+      )}
+
+      {/* #1051 UX3-04: 未保存の変更がある状態で日付を切り替えようとした時の確認モーダル */}
+      {showDateConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-full max-w-sm p-6 rounded-2xl"
+            style={{ backgroundColor: colors.card }}
+          >
+            <h3 className="text-lg font-bold mb-2" style={{ color: colors.text }}>
+              入力内容が保存されていません
+            </h3>
+            <p className="text-sm mb-6" style={{ color: colors.textMuted }}>
+              日付を変更すると、この日の未保存の入力内容は失われます。移動しますか？
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={cancelDateChange}
+                className="flex-1 py-3 rounded-full font-bold"
+                style={{ backgroundColor: colors.bg, color: colors.text }}
+              >
+                入力に戻る
+              </button>
+              <button
+                onClick={confirmDateChange}
+                className="flex-1 py-3 rounded-full font-bold text-white"
+                style={{ backgroundColor: colors.error }}
+              >
+                移動する
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* 体組成セクション */}
       <div className="px-4 mb-4">
