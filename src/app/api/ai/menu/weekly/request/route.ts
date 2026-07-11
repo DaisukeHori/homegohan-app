@@ -8,6 +8,7 @@ import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-job
 import { createLogger } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
+import { todayLocal } from '@/lib/date-utils';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -17,12 +18,6 @@ function addDays(dateStr: string, days: number): string {
   const date = new Date(dateStr);
   date.setDate(date.getDate() + days);
   return date.toISOString().split('T')[0];
-}
-
-// 今日の日付を取得（ローカルタイムゾーン）
-function getTodayStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
 function isPlainObject(value: unknown): value is Record<string, any> {
@@ -139,7 +134,7 @@ export async function POST(request: Request) {
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     // 2. 今日以降の日付の既存食事を削除（Edge Functionが新規INSERTするため）
-    const todayStr = getTodayStr();
+    const todayStr = todayLocal();
     // #1042: 削除前に旧値をスナップショットしておく（生成失敗時のロールバック用）。
     // 「先に削除→後で書き込み」を維持しつつ、失敗時に元の献立を復元できるようにする。
     const deletedMealsSnapshot: PlannedMealSnapshotRow[] = [];

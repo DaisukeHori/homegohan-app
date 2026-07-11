@@ -8,6 +8,7 @@ import { logToServer } from "@/lib/db-logger";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
   Sparkles, Check, Calendar, Clock, Sun, Coffee, Moon,
@@ -38,7 +39,9 @@ const colors = {
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 type DishDetail = { name: string; cal: number; calories_kcal?: number; role: string; ingredient?: string };
-type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result' | 'weight-result' | 'classify-failed';
+// UX2-14: 'analyze-timeout' は photoMode が既知（auto 以外）の状態でのタイムアウト専用ステップ。
+// 'classify-failed'（写真の種類が判別できない）とは原因も文言も異なるため区別する。
+type Step = 'mode-select' | 'capture' | 'analyzing' | 'result' | 'select-date' | 'fridge-result' | 'health-result' | 'weight-result' | 'classify-failed' | 'analyze-timeout';
 type PhotoMode = 'auto' | 'meal' | 'fridge' | 'health_checkup' | 'weight_scale';
 type ClassifyResult = PhotoMode | 'unknown';
 
@@ -266,6 +269,11 @@ export default function MealCaptureModal() {
   const [fridgeSummary, setFridgeSummary] = useState('');
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
   const [isSavingFridge, setIsSavingFridge] = useState(false);
+  // UX2-04: 「入れ替える」は既存の冷蔵庫データを全削除する破壊的操作なのに確認が無かった。
+  // 対象件数（既存の冷蔵庫食材数）を明示した確認ダイアログを挟む。
+  const [showFridgeReplaceConfirm, setShowFridgeReplaceConfirm] = useState(false);
+  const [existingFridgeCount, setExistingFridgeCount] = useState<number | null>(null);
+  const [isCheckingFridgeCount, setIsCheckingFridgeCount] = useState(false);
 
   // 健康診断解析結果
   const [healthData, setHealthData] = useState<HealthCheckupData>({});
@@ -281,6 +289,8 @@ export default function MealCaptureModal() {
   const [isSavingWeight, setIsSavingWeight] = useState(false);
   const [showWeightSuccessModal, setShowWeightSuccessModal] = useState(false);
   const [savedWeight, setSavedWeight] = useState<number | null>(null);
+  // UX2-15: 解析済み結果を破棄して閉じる確認モーダル
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   // オートモード判別結果
   const [detectedType, setDetectedType] = useState<string | null>(null);
@@ -374,18 +384,25 @@ export default function MealCaptureModal() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSandboxMode]);
 
-  // analyzing ステップに 45 秒の上限タイマー — タイムアウト時は classify-failed に遷移
+  // analyzing ステップに 45 秒の上限タイマー
+  // UX2-14: photoMode が既知（auto 以外）の場合は「種類判別できませんでした」画面ではなく、
+  // 通信確認+同モード再解析を促す専用のタイムアウト画面（analyze-timeout）に遷移する。
+  // auto モードのみ、判別自体が目的なので従来どおり classify-failed に遷移する。
   useEffect(() => {
     if (step !== 'analyzing') return;
     const timer = setTimeout(() => {
-      setDetectedDescription('AI 解析がタイムアウトしました。もう一度お試しください');
-      setDetectedType('unknown');
-      setDetectedConfidence(0);
-      setClassificationCandidates([]);
-      setStep('classify-failed');
+      if (photoMode === 'auto') {
+        setDetectedDescription('AI 解析がタイムアウトしました。もう一度お試しください');
+        setDetectedType('unknown');
+        setDetectedConfidence(0);
+        setClassificationCandidates([]);
+        setStep('classify-failed');
+      } else {
+        setStep('analyze-timeout');
+      }
     }, 45_000);
     return () => clearTimeout(timer);
-  }, [step]);
+  }, [step, photoMode]);
 
   const weekDates = getWeekDates(weekStart);
   const todayStr = formatLocalDate(new Date());
@@ -933,6 +950,26 @@ export default function MealCaptureModal() {
     }
   };
 
+  // UX2-04: 「入れ替える」クリック時。既存の冷蔵庫食材数を確認してから破壊操作の確認を出す
+  // （件数取得に失敗しても、件数無しのメッセージで確認自体はブロックしない）。
+  const handleFridgeReplaceClick = async () => {
+    setIsCheckingFridgeCount(true);
+    try {
+      const res = await fetch('/api/pantry');
+      if (res.ok) {
+        const data = await res.json();
+        setExistingFridgeCount((data.items || []).length);
+      } else {
+        setExistingFridgeCount(null);
+      }
+    } catch {
+      setExistingFridgeCount(null);
+    } finally {
+      setIsCheckingFridgeCount(false);
+    }
+    setShowFridgeReplaceConfirm(true);
+  };
+
   // 健康診断データを保存
   const saveHealthCheckup = async () => {
     setIsSavingHealth(true);
@@ -1027,8 +1064,10 @@ export default function MealCaptureModal() {
       });
       
       if (res.ok) {
-        // 成功したら献立表ページへ
-        router.push('/menus/weekly');
+        // UX2-16: 保存成功のフィードバックが無いまま遷移し、別週保存だと保存先が分からない問題への対応。
+        // 献立表ページに保存日・食事種別・成功フラグをクエリで渡し、対象週を初期選択の上でトースト表示する。
+        const params = new URLSearchParams({ date: selectedDate, mealType: selectedMealType, saved: '1' });
+        router.push(`/menus/weekly?${params.toString()}`);
       } else {
         const err = await res.json();
         alert(`保存に失敗しました: ${err.error || '不明なエラー'}`);
@@ -1054,8 +1093,8 @@ export default function MealCaptureModal() {
     setWeekStart(newStart);
   };
 
-  // 閉じる
-  const handleClose = () => {
+  // 実際に閉じる処理（確認後 or 確認不要なステップから呼ばれる）
+  const doClose = () => {
     // WebView ネイティブアプリ環境では ReactNativeWebView に back メッセージを送る
     const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
     if (w.ReactNativeWebView) {
@@ -1068,6 +1107,16 @@ export default function MealCaptureModal() {
     } else {
       router.push('/home');
     }
+  };
+
+  // UX2-15: 解析済み結果（result 以降）を X で閉じようとした場合は破棄確認を挟む
+  const RESULT_STEPS: Step[] = ['result', 'select-date', 'fridge-result', 'health-result', 'weight-result'];
+  const handleClose = () => {
+    if (RESULT_STEPS.includes(step)) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    doClose();
   };
 
   return (
@@ -1089,6 +1138,7 @@ export default function MealCaptureModal() {
             {step === 'health-result' && '健康診断結果'}
             {step === 'weight-result' && '体重計読み取り結果'}
             {step === 'classify-failed' && '判別できませんでした'}
+            {step === 'analyze-timeout' && 'タイムアウトしました'}
           </span>
         </div>
         <div className="w-10" />
@@ -1762,8 +1812,8 @@ export default function MealCaptureModal() {
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>追記する</span>
               </button>
               <button
-                onClick={() => saveFridgeItems('replace')}
-                disabled={isSavingFridge}
+                onClick={handleFridgeReplaceClick}
+                disabled={isSavingFridge || isCheckingFridgeCount}
                 className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
                 style={{ background: colors.accent }}
               >
@@ -2303,6 +2353,65 @@ export default function MealCaptureModal() {
           </motion.div>
         )}
 
+        {/* UX2-14: タイムアウト画面（photoMode が既知の場合）。判別失敗ではなく通信状況の確認と同モードでの再解析を促す */}
+        {step === 'analyze-timeout' && (
+          <motion.div
+            key="analyze-timeout"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 flex flex-col items-center justify-center p-6"
+          >
+            <div className="text-6xl mb-4">📶</div>
+            <h2 className="text-xl font-bold mb-2 text-center" style={{ color: colors.text }}>
+              解析がタイムアウトしました
+            </h2>
+            <p className="text-center mb-8" style={{ color: colors.textLight, fontSize: 14 }}>
+              通信状況をご確認のうえ、もう一度お試しください。
+              {photoMode !== 'auto' && `「${PHOTO_MODES[photoMode].label}」として再解析します。`}
+            </p>
+
+            <div className="w-full max-w-xs space-y-3">
+              <button
+                onClick={() => {
+                  void analyzeResolvedMode(photoMode as Exclude<ClassifyResult, 'unknown'>);
+                }}
+                className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+                style={{ background: colors.accent }}
+              >
+                <RefreshCw size={18} color="#fff" />
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
+                  同じモードで再解析
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setPhotoFiles([]);
+                  setPhotoPreviews([]);
+                  setStep('capture');
+                }}
+                className="w-full py-4 rounded-xl flex items-center justify-center gap-2"
+                style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+              >
+                <Camera size={18} color={colors.textLight} />
+                <span style={{ fontSize: 15, fontWeight: 500, color: colors.textLight }}>
+                  撮り直す
+                </span>
+              </button>
+
+              <button
+                onClick={() => setStep('mode-select')}
+                className="w-full py-3 rounded-xl"
+              >
+                <span style={{ fontSize: 14, fontWeight: 500, color: colors.textMuted }}>
+                  モードを選び直す
+                </span>
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {/* 体重保存成功モーダル */}
         {showWeightSuccessModal && savedWeight && (
           <motion.div
@@ -2333,6 +2442,70 @@ export default function MealCaptureModal() {
               </button>
             </motion.div>
           </motion.div>
+        )}
+
+        {/* UX2-15: 解析済み結果を破棄して閉じる確認モーダル */}
+        {showDiscardConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={() => setShowDiscardConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-white rounded-2xl p-6 mx-4 text-center max-w-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-5xl mb-3">⚠️</div>
+              <h3 className="text-lg font-bold mb-2" style={{ color: colors.text }}>
+                破棄して閉じますか？
+              </h3>
+              <p className="text-sm mb-6" style={{ color: colors.textLight }}>
+                解析した結果はまだ保存されていません。閉じると内容は失われます。
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    setShowDiscardConfirm(false);
+                    doClose();
+                  }}
+                  className="w-full py-3 rounded-xl"
+                  style={{ background: colors.accent }}
+                >
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>破棄して閉じる</span>
+                </button>
+                <button
+                  onClick={() => setShowDiscardConfirm(false)}
+                  className="w-full py-3 rounded-xl"
+                  style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                >
+                  <span style={{ fontSize: 15, fontWeight: 500, color: colors.textLight }}>キャンセル</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* UX2-04: 「入れ替える」の破壊操作確認（対象件数を明示） */}
+        {showFridgeReplaceConfirm && (
+          <ConfirmDeleteModal
+            title="冷蔵庫の食材を入れ替えますか？"
+            message={
+              existingFridgeCount !== null
+                ? `既存の${existingFridgeCount}件の食材が削除され、写真から検出された${fridgeIngredients.length}件に入れ替わります。この操作は取り消せません。`
+                : `既存の食材が削除され、写真から検出された${fridgeIngredients.length}件に入れ替わります。この操作は取り消せません。`
+            }
+            isDeleting={isSavingFridge}
+            tone="danger"
+            confirmLabel="入れ替える"
+            onCancel={() => setShowFridgeReplaceConfirm(false)}
+            onConfirm={async () => {
+              setShowFridgeReplaceConfirm(false);
+              await saveFridgeItems('replace');
+            }}
+          />
         )}
     </div>
   );

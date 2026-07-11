@@ -1,10 +1,10 @@
 "use client";
 
-import React from "react";
+import React, { useId } from "react";
 import dynamic from "next/dynamic";
-import { motion, AnimatePresence } from "framer-motion";
 import { BarChart3, X, Heart, Sparkles, RefreshCw } from "lucide-react";
-import { NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, calculateDriPercentage, getNutrientDefinition } from "@homegohan/shared";
+import { NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, calculateDriPercentage, getNutrientDefinition, formatDateJa } from "@homegohan/shared";
+import { BottomSheet } from "@/components/common/BottomSheet";
 
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
@@ -16,7 +16,7 @@ const colors = {
   card: '#FFFFFF',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
   accentLight: '#FDF0ED',
   success: '#6B9B6B',
@@ -84,34 +84,32 @@ export function NutritionDetailModal({
 }: NutritionDetailModalProps) {
   const selectedDay = weekDates[selectedDayIndex];
 
+  // #1052 (体系的 a11y): 独自の backdrop/panel を持つ「自己完結型」モーダルだったため、
+  // 共通 BottomSheet（role="dialog"/aria-modal/フォーカストラップ/Escape/背景スクロールロック）
+  // への載せ替えが最も安全（他モーダルのような shared backdrop への相乗りが無い）。
+  const titleId = useId();
+
   return (
-    <AnimatePresence>
-      {showNutritionDetailModal && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+    <BottomSheet
+      isOpen={showNutritionDetailModal}
+      onClose={onClose}
+      ariaLabelledBy={titleId}
+      overlayClassName="z-50"
+      panelClassName="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-xl"
+      testId="nutrition-detail-modal"
+    >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: colors.border }}>
               <div className="flex items-center gap-2">
                 <BarChart3 size={20} style={{ color: colors.accent }} />
-                <h2 className="text-lg font-bold" style={{ color: colors.text }}>
-                  {selectedDay?.date.getMonth() + 1}/{selectedDay?.date.getDate()} の栄養分析
+                <h2 id={titleId} className="text-lg font-bold" style={{ color: colors.text }}>
+                  {selectedDay?.dateStr && formatDateJa(selectedDay.dateStr)} の栄養分析
                 </h2>
               </div>
               <button
                 onClick={onClose}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+                aria-label="閉じる"
+                className="p-3 rounded-full hover:bg-gray-100 transition-colors"
               >
                 <X size={20} style={{ color: colors.textLight }} />
               </button>
@@ -190,24 +188,44 @@ export function NutritionDetailModal({
               </div>
 
               {/* 献立改善ボタン */}
-              {nutritionFeedback && !isLoadingFeedback ? (
-                <div className="mb-4">
-                  <>
-                    <div style={{ marginBottom: 12 }}></div>
-                    <button
-                      onClick={onOpenImprove}
-                      className="w-full p-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all hover:opacity-90"
-                      style={{ background: colors.accent, color: '#fff', fontSize: 12 }}
-                    >
-                      <RefreshCw size={14} />
-                      この提案で献立を改善
-                    </button>
-                  </>
-                </div>
-              ) : (
+              {/* UX2-03: 従来は `nutritionFeedback && !isLoadingFeedback` の否定 = 「フィードバックが
+                  無ければ常にスピナー」という判定だったため、isLoadingFeedback が false になっても
+                  nutritionFeedback が空（想定外レスポンス等）だと「分析を準備中...」が実質的に
+                  永久に表示され続けた。isLoadingFeedback を最優先で判定し、ローディング終了後は
+                  取得成功/失敗を明確に分岐させ、失敗時は再試行ボタンを表示する。 */}
+              {isLoadingFeedback ? (
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
                   <span style={{ fontSize: 11, color: colors.textLight }}>分析を準備中...</span>
+                </div>
+              ) : nutritionFeedback ? (
+                <div className="mb-4">
+                  <button
+                    onClick={onOpenImprove}
+                    className="w-full p-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all hover:opacity-90"
+                    style={{ background: colors.accent, color: '#fff', fontSize: 12 }}
+                  >
+                    <RefreshCw size={14} />
+                    この提案で献立を改善
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2 mb-4 p-2.5 rounded-lg" style={{ background: colors.bg }}>
+                  <span style={{ fontSize: 11, color: colors.textMuted }}>栄養分析を取得できませんでした</span>
+                  <button
+                    data-testid="nutrition-feedback-retry"
+                    onClick={() => {
+                      const currentDateStr = weekDates[selectedDayIndex]?.dateStr;
+                      if (currentDateStr) {
+                        onRefetchFeedback(currentDateStr);
+                      }
+                    }}
+                    className="text-[11px] px-2.5 py-1.5 rounded-lg flex items-center gap-1 flex-shrink-0"
+                    style={{ background: colors.accent, color: '#fff' }}
+                  >
+                    <RefreshCw size={11} />
+                    再試行
+                  </button>
                 </div>
               )}
 
@@ -352,9 +370,6 @@ export function NutritionDetailModal({
                 )}
               </div>
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    </BottomSheet>
   );
 }

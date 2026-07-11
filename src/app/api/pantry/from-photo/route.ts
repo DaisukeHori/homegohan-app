@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { Tables } from '@homegohan/shared';
+import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 
 /**
  * 冷蔵庫写真解析結果をpantry_itemsに保存
@@ -47,9 +48,9 @@ function mapCategory(category: string | undefined): string {
 function estimateExpirationDate(daysRemaining: number | undefined): string | null {
   if (daysRemaining === undefined || daysRemaining < 0) return null;
 
-  const date = new Date();
+  const date = parseLocalDate(todayLocal());
   date.setDate(date.getDate() + daysRemaining);
-  return date.toISOString().split('T')[0];
+  return formatLocalDate(date);
 }
 
 export async function POST(request: Request) {
@@ -128,7 +129,7 @@ export async function POST(request: Request) {
             amount: ingredient.amount || null,
             category,
             expiration_date: expirationDate,
-            added_at: new Date().toISOString().split('T')[0],
+            added_at: todayLocal(),
           })
           .select()
           .single();
@@ -182,7 +183,7 @@ export async function POST(request: Request) {
               amount: ingredient.amount || null,
               category,
               expiration_date: expirationDate,
-              added_at: new Date().toISOString().split('T')[0],
+              added_at: todayLocal(),
             })
             .select()
             .single();

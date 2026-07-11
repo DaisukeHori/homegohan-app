@@ -34,6 +34,7 @@ export interface AiGenerationState {
 export type AiGenerationAction =
   | { type: 'GEN_START'; payload?: { meal?: { dayIndex: number; mealType: MealType } } }
   | { type: 'GEN_PROGRESS'; payload: GenerationProgress }
+  | { type: 'GEN_PROGRESS_CLEAR' }
   | { type: 'GEN_SUCCESS' }
   | { type: 'GEN_FAIL'; payload: { error: string | null; requestId: string | null } }
   | { type: 'GEN_FAILED_CLEAR' }
@@ -79,10 +80,28 @@ export function aiGenerationReducer(
         ...state,
         isGenerating: true,
         generatingMeal: action.payload?.meal ?? state.generatingMeal,
+        // UX2-10 の単調増加ガード（GEN_PROGRESS の Math.max クランプ）が新しい世代の生成にまで
+        // 汚染して波及しないよう、生成開始時に必ず前回の進捗をリセットする（防御的 hardening）。
+        generationProgress: null,
       };
 
-    case 'GEN_PROGRESS':
-      return { ...state, generationProgress: action.payload };
+    // UX2-10: percentage の単調増加ガード。Realtime/ポーリング/復元経路が非同期に競合すると
+    // 古いイベントが後着して進捗が逆行し得るため、同一生成中は前回値を下回らないようにクランプする。
+    case 'GEN_PROGRESS': {
+      const prevPercentage = state.generationProgress?.percentage ?? 0;
+      return {
+        ...state,
+        generationProgress: {
+          ...action.payload,
+          percentage: Math.max(action.payload.percentage, prevPercentage),
+        },
+      };
+    }
+
+    // F1b-03: 進捗クリア専用。GEN_SUCCESS と違い isGenerating/generatingMeal には触れない
+    // (呼び出し元は生成中の進捗更新の一環として progress のみ null にしたい場合がある)
+    case 'GEN_PROGRESS_CLEAR':
+      return { ...state, generationProgress: null };
 
     case 'GEN_SUCCESS':
       return {

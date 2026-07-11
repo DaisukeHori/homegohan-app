@@ -21,6 +21,7 @@ import {
 import {
   MOCK_MENU_RESPONSE,
 } from "@homegohan/handson-tour-shared";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 
 // ============================================
 // Types
@@ -460,10 +461,17 @@ function V4GenerateModalNormal({
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // モーダルが開くたびに isSubmitting をリセット
+  // UX2-04: 既存献立を上書きする破壊的な生成（「既存の献立も作り直す」/ 1日献立変更 /
+  // AI献立だけ変更 等、plannedMealId 付きスロットを含む生成）の前に対象件数付きで確認する。
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [pendingOverwriteSlots, setPendingOverwriteSlots] = useState<TargetSlot[] | null>(null);
+
+  // モーダルが開くたびに isSubmitting / 上書き確認状態をリセット
   useEffect(() => {
     if (isOpen) {
       setIsSubmitting(false);
+      setShowOverwriteConfirm(false);
+      setPendingOverwriteSlots(null);
     }
   }, [isOpen]);
 
@@ -532,22 +540,11 @@ function V4GenerateModalNormal({
     }
   }, [selectedMode, mealPlanDays, effectiveStartDate, weekEndDate, rangeStart, rangeEnd, includeExisting, singleDayDate]);
 
-  // Handle generate
-  const handleGenerate = async () => {
-    // 連打防止
-    if (isSubmitting || isGenerating) return;
-    
-    const slots = buildTargetSlots();
-    const validation = validateSlotCount(slots);
-    
-    if (!validation.valid) {
-      alert(validation.message);
-      return;
-    }
-
+  // 実際に onGenerate を呼び出す（上書き確認が不要な場合はそのまま、必要な場合は確認後に呼ばれる）
+  const runGenerate = async (slots: TargetSlot[]) => {
     // 即座にローディング状態に
     setIsSubmitting(true);
-    
+
     try {
       await onGenerate({
         targetSlots: slots,
@@ -560,6 +557,42 @@ function V4GenerateModalNormal({
       setIsSubmitting(false);
     }
     // 成功時はモーダルが閉じるので isSubmitting のリセットは不要
+  };
+
+  // Handle generate
+  const handleGenerate = async () => {
+    // 連打防止
+    if (isSubmitting || isGenerating) return;
+
+    const slots = buildTargetSlots();
+    const validation = validateSlotCount(slots);
+
+    if (!validation.valid) {
+      alert(validation.message);
+      return;
+    }
+
+    // UX2-04: plannedMealId が付いたスロット = 既存の献立を上書きする破壊的操作。
+    // 「既存の献立も作り直す」チェックや「1日献立変更」「AI献立だけ変更」等はここに該当する。
+    // 単食の削除には確認があるのに、これらの大規模上書きには確認が無かった逆転を解消する。
+    const overwriteCount = slots.filter((s) => s.plannedMealId).length;
+    if (overwriteCount > 0) {
+      setPendingOverwriteSlots(slots);
+      setShowOverwriteConfirm(true);
+      return;
+    }
+
+    await runGenerate(slots);
+  };
+
+  // 上書き確認モーダルで「上書きして生成する」が押されたときの処理
+  const handleConfirmOverwrite = async () => {
+    const slots = pendingOverwriteSlots;
+    setShowOverwriteConfirm(false);
+    setPendingOverwriteSlots(null);
+    if (slots) {
+      await runGenerate(slots);
+    }
   };
 
   // Toggle constraint
@@ -625,6 +658,7 @@ function V4GenerateModalNormal({
   ];
 
   return (
+    <>
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
@@ -860,6 +894,21 @@ function V4GenerateModalNormal({
         </motion.div>
       </motion.div>
     </AnimatePresence>
+
+    {/* UX2-04: 既存献立の上書き確認（対象件数を明示） */}
+    {showOverwriteConfirm && pendingOverwriteSlots && (
+      <ConfirmDeleteModal
+        title="既存の献立を上書きしますか？"
+        message={`${pendingOverwriteSlots.filter((s) => s.plannedMealId).length}件の献立が上書きされます。この操作は取り消せません。`}
+        isDeleting={isSubmitting}
+        tone="danger"
+        icon={AlertTriangle}
+        confirmLabel="上書きして生成する"
+        onCancel={() => { setShowOverwriteConfirm(false); setPendingOverwriteSlots(null); }}
+        onConfirm={handleConfirmOverwrite}
+      />
+    )}
+    </>
   );
 }
 

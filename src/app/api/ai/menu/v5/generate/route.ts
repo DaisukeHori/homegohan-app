@@ -14,6 +14,7 @@ import type {
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { todayLocal } from '@/lib/date-utils';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
@@ -84,11 +85,6 @@ function addDays(dateStr: string, days: number): string {
   const date = new Date(`${dateStr}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
-}
-
-function getTodayStr(): string {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
 }
 
 export const maxDuration = 30;
@@ -179,7 +175,7 @@ export async function POST(request: Request) {
 
     const contextStartDate = addDays(startDate, -7);
     const contextEndDate = addDays(endDate, 7);
-    const todayStr = getTodayStr();
+    const todayStr = todayLocal();
 
     const [existingMealsResult, pantryResult, profileResult] = await Promise.all([
       supabase

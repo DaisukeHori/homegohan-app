@@ -53,7 +53,9 @@ export type WeekViewAction =
   | { type: 'CALENDAR_MEAL_DATES_MERGE'; payload: Set<string> }
   | { type: 'MEAL_EXPAND'; payload: string | null }
   | { type: 'MEAL_AUTO_EXPANDED'; payload: { mealId: string; dayIndex: number } }
+  | { type: 'AUTO_EXPAND_SUPPRESS' }
   | { type: 'DAY_NUTRITION_TOGGLE' }
+  | { type: 'DAY_NUTRITION_SET'; payload: boolean }
   | { type: 'TODAY_TOGGLE' }
   | { type: 'PLAN_SET'; payload: WeekPlan | null };
 
@@ -98,8 +100,17 @@ export function weekViewReducer(
   action: WeekViewAction,
 ): WeekViewState {
   switch (action.type) {
+    // UX2-24: 前週/次週ボタンでの週送りは、選択中の曜日位置（selectedDayIndex）を維持する
+    // （従来はここも WEEK_SET_START と同じ扱いで常に週頭にリセットされていた）
     case 'WEEK_NAVIGATE_NEXT':
     case 'WEEK_NAVIGATE_PREV':
+      return {
+        ...state,
+        weekStart: action.payload,
+        hasAutoExpanded: false,
+      };
+
+    // カレンダーからの日付選択・生成中リクエスト復元時の週遷移は、従来どおり週頭（0日目）にリセットする
     case 'WEEK_SET_START':
       return {
         ...state,
@@ -148,8 +159,18 @@ export function weekViewReducer(
         hasAutoExpanded: true,
       };
 
+    // F1b-05: ユーザーがカレンダーから明示的に日付を選択した際に
+    // 「次の食事への自動展開」エフェクトを抑止するためのフラグのみを立てる。
+    // MEAL_AUTO_EXPANDED と違い selectedDayIndex/expandedMealId は上書きしない。
+    case 'AUTO_EXPAND_SUPPRESS':
+      return { ...state, hasAutoExpanded: true };
+
     case 'DAY_NUTRITION_TOGGLE':
       return { ...state, isDayNutritionExpanded: !state.isDayNutritionExpanded };
+
+    // F1b-04: 呼び出し元が渡した真偽値をそのまま反映する（無条件トグルにしない）
+    case 'DAY_NUTRITION_SET':
+      return { ...state, isDayNutritionExpanded: action.payload };
 
     case 'TODAY_TOGGLE':
       return { ...state, isTodayExpanded: !state.isTodayExpanded };

@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronUp, ChevronDown, Check } from "lucide-react";
+import { ChevronUp, ChevronDown, Check, X } from "lucide-react";
 import type { PhaseDefinition } from "@homegohan/shared";
 import { PROGRESS_PHASES } from "@homegohan/shared";
 
@@ -11,6 +11,8 @@ interface ProgressTodoCardProps {
   colors: { accent: string; purple: string };
   phases?: PhaseDefinition[];
   defaultMessage?: string;
+  /** UX2-11: 生成を中止するハンドラ。渡された場合のみ「中止する」ボタンを表示する */
+  onCancel?: () => void;
 }
 
 export const ProgressTodoCard = ({
@@ -18,6 +20,7 @@ export const ProgressTodoCard = ({
   colors: cardColors,
   phases = PROGRESS_PHASES,
   defaultMessage = 'AIが献立を生成中...',
+  onCancel,
 }: ProgressTodoCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -92,6 +95,23 @@ export const ProgressTodoCard = ({
               <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
                 {progress?.percentage ? `${progress.percentage}%` : ''}
               </span>
+            )}
+            {/* UX2-11: 生成中でも中止できるように、常時タップ可能な中止ボタンを表示する。
+                確認は window.confirm を使わず、親側の styled ConfirmDeleteModal に一本化するため、
+                ここでは渡された onCancel をそのまま呼ぶだけにする（確認要否は呼び出し元の責務）。 */}
+            {!isError && onCancel && (
+              <button
+                type="button"
+                aria-label="生成を中止する"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCancel();
+                }}
+                className="w-5 h-5 rounded-full flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,0.2)' }}
+              >
+                <X size={11} color="#fff" />
+              </button>
             )}
             {isExpanded ? (
               <ChevronUp size={14} color="rgba(255,255,255,0.7)" />

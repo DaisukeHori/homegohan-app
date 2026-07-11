@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
 import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
 import type { Tables } from '@homegohan/shared';
+import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 
 /**
  * Get meals for a date range (日付ベースモデル対応)
@@ -50,16 +51,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ dailyMeal, meals });
   }
 
-  // 日付範囲指定の場合（デフォルトは今週）
-  const today = new Date();
+  // 日付範囲指定の場合（デフォルトは今週、JST基準）
+  const today = parseLocalDate(todayLocal());
   const defaultStart = new Date(today);
   defaultStart.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
   const defaultEnd = new Date(defaultStart);
   defaultEnd.setDate(defaultStart.getDate() + 6);
 
-  const formatDate = (d: Date) => d.toISOString().split('T')[0];
-  const queryStartDate = startDate || formatDate(defaultStart);
-  const queryEndDate = endDate || formatDate(defaultEnd);
+  const queryStartDate = startDate || formatLocalDate(defaultStart);
+  const queryEndDate = endDate || formatLocalDate(defaultEnd);
 
   const { data, error } = await supabase
     .from('user_daily_meals')

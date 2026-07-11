@@ -42,7 +42,7 @@ const colors = {
   dangerBorder: '#F5C2C0',
   text: '#2D2D2D',
   textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
+  textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   grid: '#E8E8E8',
 };
 
@@ -134,45 +134,91 @@ export function NutritionRadarChart({
     return null;
   };
 
+  // #1052 (体系的 a11y): 推移グラフ同様に <svg> へ role/aria-label がゼロだった問題への対応。
+  // recharts の SVG はマウスホバーのツールチップでしか各栄養素の詳細を出せずキーボード/
+  // スクリーンリーダーから内容を辿れないため、role="img" + aria-label で概要を、
+  // 視覚上は隠す（sr-only）データテーブルで全栄養素の詳細を代替提供する。
+  const chartAriaLabel = `栄養素レーダーチャート。平均達成率${displayPercentage}${isCapped ? '%以上' : '%'}${
+    showOverconsumptionWarning ? '。過剰摂取の可能性がある栄養素があります' : ''
+  }。詳細は表を参照してください。`;
+
+  // #1052 (レビュー残指摘: mini radar の accessible name): onTap 指定時（day-card の
+  // mini radar 等）は外側ラッパーに role="button" を付与するが、WAI-ARIA 上 button は
+  // children-presentational（子孫が名前計算に取り込まれる/アクセシビリティツリーから
+  // 実質剪定される）ため、明示的な aria-label を付けないと sr-only データテーブルの
+  // 全セル文字列がボタン名に平坦化されてしまう。ここで chartAriaLabel 相当の要約に
+  // 操作案内を足した文言を明示的に aria-label として与える。
+  const interactiveAriaLabel = onTap ? `${chartAriaLabel}タップで詳細を表示します。` : undefined;
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!onTap) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onTap();
+    }
+  };
+
   return (
+    <>
     <div
       className={`relative ${onTap ? 'cursor-pointer' : ''}`}
       onClick={onTap}
+      onKeyDown={onTap ? handleKeyDown : undefined}
+      role={onTap ? 'button' : undefined}
+      aria-label={interactiveAriaLabel}
+      tabIndex={onTap ? 0 : undefined}
       style={{ width: size, height: size }}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <RadarChart data={chartData} margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
-          <PolarGrid stroke={colors.grid} />
-          <PolarAngleAxis
-            dataKey="nutrient"
-            tick={showLabels ? { fill: colors.textMuted, fontSize: 9 } : false}
-          />
-          <PolarRadiusAxis
-            angle={90}
-            domain={[0, 150]}
-            tick={false}
-            axisLine={false}
-          />
-          {/* 100%ライン（推奨量） */}
-          <Radar
-            name="推奨量"
-            dataKey={() => 100}
-            stroke={colors.grid}
-            strokeDasharray="3 3"
-            fill="none"
-          />
-          {/* 実際の値 */}
-          <Radar
-            name="摂取量"
-            dataKey="value"
-            stroke={colors.accent}
-            strokeWidth={2}
-            fill={colors.accentLight}
-            fillOpacity={0.6}
-          />
-          <Tooltip content={<CustomTooltip />} />
-        </RadarChart>
-      </ResponsiveContainer>
+      {/* #1052 (Opus 指摘の Critical 修正): role="img" は WAI-ARIA 上、子孫をアクセシビリティ
+          ツリーから剪定する。以前は sr-only データテーブルや過剰摂取アラート(role="alert")を
+          この role="img" の子孫に置いていたため、支援技術から到達不能になっていた。
+          そのため role="img" はチャート本体（recharts の SVG）だけを包み、テーブルとアラートは
+          兄弟要素として配置する。
+          また、この内側ラッパーに幅/高さ 100% を明示的に継承させないと、外側の固定サイズ
+          (width/height=size) が ResponsiveContainer の height="100%" まで伝播せず、
+          高さ 0 に解決してチャートが描画されない回帰を招くため w-full h-full を必須で付与する。 */}
+      <div
+        role="img"
+        aria-label={chartAriaLabel}
+        className="w-full h-full"
+      >
+        {/* 装飾的な SVG 本体自体も aria-hidden にし、二重読み上げを防止する */}
+        <div aria-hidden="true" className="w-full h-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <RadarChart data={chartData} margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+              <PolarGrid stroke={colors.grid} />
+              <PolarAngleAxis
+                dataKey="nutrient"
+                tick={showLabels ? { fill: colors.textMuted, fontSize: 9 } : false}
+              />
+              <PolarRadiusAxis
+                angle={90}
+                domain={[0, 150]}
+                tick={false}
+                axisLine={false}
+              />
+              {/* 100%ライン（推奨量） */}
+              <Radar
+                name="推奨量"
+                dataKey={() => 100}
+                stroke={colors.grid}
+                strokeDasharray="3 3"
+                fill="none"
+              />
+              {/* 実際の値 */}
+              <Radar
+                name="摂取量"
+                dataKey="value"
+                stroke={colors.accent}
+                strokeWidth={2}
+                fill={colors.accentLight}
+                fillOpacity={0.6}
+              />
+              <Tooltip content={<CustomTooltip />} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
 
       {/* 中央に達成率表示 */}
       <div
@@ -218,6 +264,40 @@ export function NutritionRadarChart({
         </div>
       )}
     </div>
+
+    {/* #1052 (レビュー残指摘: mini radar の accessible name): スクリーンリーダー向け
+        データテーブル代替（視覚上は非表示）。role="img" だけでなく、外側の相互作用
+        ラッパー（onTap 指定時は role="button"）の外にも配置する。role="button" は
+        children-presentational のため、内側に置いたままだと onTap 指定時（day-card の
+        mini radar 等）にテーブルの全セル文字列がボタン名へ平坦化されたり、テーブルの
+        セマンティクスが支援技術から到達不能になる。外に出すことで、モーダル用途
+        （onTap 非指定）では従来どおり露出したまま、mini radar 用途でも平坦化されずに
+        独立した表として読み上げ可能になる。 */}
+    <table
+      className="sr-only"
+      data-testid="radar-chart-data-table"
+    >
+      <caption>栄養素ごとの摂取量と推奨量に対する達成率</caption>
+      <thead>
+        <tr>
+          <th scope="col">栄養素</th>
+          <th scope="col">摂取量</th>
+          <th scope="col">推奨量</th>
+          <th scope="col">達成率</th>
+        </tr>
+      </thead>
+      <tbody>
+        {chartData.map((d) => (
+          <tr key={d.nutrient}>
+            <th scope="row">{d.nutrient}</th>
+            <td>{d.actualValue.toFixed(1)}{d.unit}</td>
+            <td>{d.dri}{d.unit}</td>
+            <td>{d.fullValue}%</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    </>
   );
 }
 

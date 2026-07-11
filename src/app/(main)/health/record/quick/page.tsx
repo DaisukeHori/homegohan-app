@@ -8,6 +8,7 @@ import {
   Camera, ArrowLeft, Scale, Sparkles, CheckCircle2,
   Upload, X, Loader2
 } from 'lucide-react';
+import { todayLocal } from '@/lib/date-utils';
 
 const colors = {
   bg: '#FAF9F7',
@@ -86,7 +87,7 @@ export default function QuickRecordPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           weight: parseFloat(weight),
-          record_date: new Date().toISOString().split('T')[0],
+          record_date: todayLocal(),
         }),
       });
 
