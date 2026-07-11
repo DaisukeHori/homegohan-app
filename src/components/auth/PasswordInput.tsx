@@ -34,7 +34,6 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputPro
         <button
           type="button"
           onClick={() => setVisible((v) => !v)}
-          tabIndex={-1}
           aria-label={visible ? hideLabel : showLabel}
           className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
         >

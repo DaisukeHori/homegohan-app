@@ -21,6 +21,16 @@ function rateLimitKeyFor(email: string): string {
   return `${RATE_LIMIT_KEY_PREFIX}:${email}`;
 }
 
+// #1057 (round-2 Suggestion fix): login→signup のクロスリンクは redirect のみ
+// 伝播し email を落としていたため、切替時に事前入力が失われていた。両方伝播する。
+function buildSignupHref(redirect: string | null, email: string): string {
+  const params = new URLSearchParams();
+  if (redirect) params.set('redirect', redirect);
+  if (email) params.set('email', email);
+  const query = params.toString();
+  return query ? `/signup?${query}` : '/signup';
+}
+
 function LoginContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +40,9 @@ function LoginContent() {
 
   // #1057 (UX1-01): invite/[token]/page.tsx が付与する `redirect` も `next` と同様に扱う
   const rawRedirectParam = searchParams.get('next') ?? searchParams.get('redirect');
+  // #1057 (round-2 Warning fix): invite/[token]/page.tsx は `/login?redirect=...&email=...`
+  // で email も渡すが、signup 側のみ事前入力していた不整合を解消する
+  const prefilledEmail = searchParams.get('email') ?? '';
 
   // URLからエラーパラメータを読み取る
   useEffect(() => {
@@ -228,6 +241,7 @@ function LoginContent() {
               name="email"
               type="email"
               placeholder="name@example.com"
+              defaultValue={prefilledEmail}
               required
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
@@ -278,7 +292,7 @@ function LoginContent() {
         <p className="text-center text-sm text-gray-500">
           アカウントをお持ちでないですか？{" "}
           <Link
-            href={rawRedirectParam ? `/signup?redirect=${encodeURIComponent(rawRedirectParam)}` : '/signup'}
+            href={buildSignupHref(rawRedirectParam, prefilledEmail)}
             className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4"
           >
             無料で登録

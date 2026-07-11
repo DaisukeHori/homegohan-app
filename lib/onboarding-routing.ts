@@ -17,6 +17,16 @@ function isOnboardingPath(pathname: string): boolean {
   return pathname === "/onboarding" || pathname.startsWith("/onboarding/");
 }
 
+// #1057 (round-2 Critical fix): middleware の publicPaths による '/invite' 除外は
+// 未認証ユーザーの分岐にしか効かない。認証済みだがオンボーディング未完了のユーザーが
+// 招待リンク(サインアップ/ログイン後に /invite/[token] へ戻ってくる遷移)を踏むと、
+// 以下の not_started/in_progress 分岐で強制的に /onboarding/welcome (or /resume) へ
+// 差し戻され、招待コンテキストが失われていた。/invite・/invite/[token] は
+// オンボーディング状態に関わらず素通りさせる。
+function isInvitePath(pathname: string): boolean {
+  return pathname === "/invite" || pathname.startsWith("/invite/");
+}
+
 export function resolveOnboardingRedirect(input: OnboardingRedirectInput): string | null {
   const pathname = input.pathname;
   const roles = input.roles ?? [];
@@ -43,6 +53,10 @@ export function resolveOnboardingRedirect(input: OnboardingRedirectInput): strin
 
   if (pathname === "/" || pathname === "/home") {
     return target;
+  }
+
+  if (isInvitePath(pathname)) {
+    return null;
   }
 
   if (!onboardingPath) {
