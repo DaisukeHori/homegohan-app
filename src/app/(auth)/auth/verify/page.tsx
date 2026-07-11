@@ -2,21 +2,27 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import { AlertCircle } from "lucide-react";
 
 function VerifyContent() {
   const [isResending, setIsResending] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
+  const [resendError, setResendError] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const email = searchParams.get('email');
+  // #1057 (UX1-01): signup から引き継いだ招待リダイレクト先(あれば)をメール確認リンクにも伝播
+  const safeRedirect = getSafeRedirectPath(searchParams.get('redirect'));
   const supabase = createClient();
 
   const handleResend = async () => {
+    setResendError(null);
     if (!email) {
-      alert('メールアドレスが見つかりません。サインアップページから再度お試しください。');
+      // #1057 (UX1-07): native alert() → 既存の赤インラインエラーに統一
+      setResendError('メールアドレスが見つかりません。サインアップページから再度お試しください。');
       return;
     }
 
@@ -26,13 +32,13 @@ function VerifyContent() {
         type: 'signup',
         email: email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${window.location.origin}/auth/callback${safeRedirect ? `?next=${encodeURIComponent(safeRedirect)}` : ''}`,
         },
       });
 
       if (error) {
         console.error('Resend error:', error);
-        alert(`再送信に失敗しました: ${error.message}`);
+        setResendError(`再送信に失敗しました: ${error.message}`);
         return;
       }
 
@@ -40,7 +46,7 @@ function VerifyContent() {
       setTimeout(() => setResendSuccess(false), 5000);
     } catch (error: any) {
       console.error('Resend error:', error);
-      alert(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
+      setResendError(`予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`);
     } finally {
       setIsResending(false);
     }
@@ -75,17 +81,18 @@ function VerifyContent() {
       </div>
 
       <div className="pt-4 space-y-4 w-full">
-        <Button 
-          variant="outline" 
-          className="w-full py-6 rounded-full border-gray-200 hover:bg-gray-50 font-bold text-gray-700"
-          onClick={() => window.open('https://gmail.com', '_blank')}
+        {/* #1057 (UX1-10): Gmail 固定のリンクだと他のメールサービス利用者には無関係な
+            導線になるため、端末の既定メールアプリを開く mailto: リンクに変更 */}
+        <a
+          href="mailto:"
+          className="inline-flex items-center justify-center w-full py-6 rounded-full border border-gray-200 hover:bg-gray-50 font-bold text-gray-700 transition-colors"
         >
           メールアプリを開く
-        </Button>
-        
+        </a>
+
         <p className="text-xs text-gray-400">
           メールが届かない場合は、迷惑メールフォルダをご確認いただくか、<br/>
-          <button 
+          <button
             onClick={handleResend}
             disabled={isResending}
             className="text-[#FF8A65] font-bold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
@@ -101,6 +108,17 @@ function VerifyContent() {
           >
             ✓ 確認メールを再送信しました
           </motion.p>
+        )}
+        {resendError && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            role="alert"
+            className="flex items-start gap-2 p-3 rounded-xl bg-red-50 border border-red-200 text-left"
+          >
+            <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+            <p className="text-sm font-medium text-red-800">{resendError}</p>
+          </motion.div>
         )}
       </div>
       

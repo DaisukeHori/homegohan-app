@@ -29,6 +29,9 @@ export function FamilyInviteAcceptModal({
   const [shareMenu, setShareMenu] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #1057 (UX1-08): 誤タップでの即時拒否確定を防ぐ確認ステップ
+  // (onboarding/resume ページのリセット確認モーダルと同パターン)
+  const [showRejectConfirm, setShowRejectConfirm] = useState(false);
 
   const expiresDate = new Date(expiresAt).toLocaleDateString('ja-JP');
 
@@ -83,6 +86,7 @@ export function FamilyInviteAcceptModal({
 
   const handleReject = async () => {
     setError(null);
+    setShowRejectConfirm(false);
     setLoading(true);
     try {
       await fetch(`/api/family/invites/${token}/reject`, { method: 'POST' });
@@ -183,7 +187,7 @@ export function FamilyInviteAcceptModal({
 
           <div className="flex gap-2">
             <button
-              onClick={handleReject}
+              onClick={() => setShowRejectConfirm(true)}
               disabled={loading}
               className="flex-1 rounded-full border border-red-200 py-3 text-red-500 font-medium text-sm hover:bg-red-50 transition-colors disabled:opacity-50"
             >
@@ -201,6 +205,36 @@ export function FamilyInviteAcceptModal({
           </div>
         </div>
       </div>
+
+      {/* #1057 (UX1-08): 拒否確認モーダル — 誤タップでの即時確定・招待者への再送依頼のみが
+          リカバリー手段になってしまう事故を防ぐ */}
+      {showRejectConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">確認</h3>
+            <p className="text-gray-600 text-sm mb-6">
+              {familyName}への招待を拒否します。<br />
+              取り消す場合は招待者に再送を依頼する必要があります。よろしいですか？
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowRejectConfirm(false)}
+                disabled={loading}
+                className="flex-1 py-3 rounded-full border-2 border-gray-200 text-gray-600 font-bold transition-colors hover:bg-gray-50 disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={loading}
+                className="flex-1 py-3 rounded-full bg-red-500 hover:bg-red-600 text-white font-bold transition-colors disabled:opacity-50"
+              >
+                {loading ? '処理中…' : '拒否する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
