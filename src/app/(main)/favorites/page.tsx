@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Heart, Search, X, ChevronLeft, RefreshCw, Utensils, SortAsc, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { FavoriteRecipeModal } from "./_components/FavoriteRecipeModal";
 
 // カラーパレット（アプリ共通）
 const colors = {
@@ -49,6 +50,12 @@ export default function FavoritesPage() {
   const [hasMore, setHasMore] = useState(false);
   // 初回フェッチかどうか（初回のみ全画面ローディングを表示し、以降の検索/並び替えは小スピナーに留める）
   const isFirstFetchRef = useRef(true);
+  // UX2-06: recipeUuid を保持しているのに未使用で、削除しかできなかった問題への対応。
+  // タップでレシピ詳細（材料・作り方・買い物追加）を表示する。
+  // selectedFavorite は閉じるアニメーション中も内容を保持するため isRecipeModalOpen とは
+  // 別の state にしている（isRecipeModalOpen=false で閉じアニメーションのみ発火させる）。
+  const [selectedFavorite, setSelectedFavorite] = useState<FavoriteItem | null>(null);
+  const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
@@ -110,6 +117,11 @@ export default function FavoritesPage() {
     } finally {
       setRemovingId(null);
     }
+  };
+
+  const openRecipeDetail = (item: FavoriteItem) => {
+    setSelectedFavorite(item);
+    setIsRecipeModalOpen(true);
   };
 
   const formatDate = (iso: string) => {
@@ -299,6 +311,16 @@ export default function FavoritesPage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: -20 }}
                   transition={{ duration: 0.2 }}
+                  onClick={() => openRecipeDetail(item)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${item.recipeName} のレシピを見る`}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openRecipeDetail(item);
+                    }
+                  }}
                   style={{
                     background: colors.card,
                     border: `1px solid ${colors.border}`,
@@ -307,6 +329,7 @@ export default function FavoritesPage() {
                     display: "flex",
                     alignItems: "center",
                     gap: 12,
+                    cursor: "pointer",
                   }}
                 >
                   {/* Icon */}
@@ -357,7 +380,10 @@ export default function FavoritesPage() {
 
                   {/* Remove button */}
                   <button
-                    onClick={() => handleRemove(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemove(item);
+                    }}
                     disabled={removingId === item.id}
                     aria-label="お気に入りから削除"
                     style={{
@@ -415,6 +441,13 @@ export default function FavoritesPage() {
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
+
+      {/* UX2-06: レシピ詳細（材料・作り方・買い物追加） */}
+      <FavoriteRecipeModal
+        isOpen={isRecipeModalOpen}
+        favorite={selectedFavorite}
+        onClose={() => setIsRecipeModalOpen(false)}
+      />
     </div>
   );
 }
