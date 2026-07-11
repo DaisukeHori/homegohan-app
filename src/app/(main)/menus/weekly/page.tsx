@@ -33,6 +33,7 @@ import remarkGfm from "remark-gfm";
 // ProfileReminderBanner は "use client" + isVisible:false 初期値のため SSR でも安全
 import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
 import { ProgressTodoCard } from "./_components/ProgressTodoCard";
+import { CancelGenerationConfirmModal } from "./_components/CancelGenerationConfirmModal";
 import { FamilyViewSwitcher } from "@/components/membership/FamilyViewSwitcher";
 import { useFamilyView } from "@/hooks/useFamilyView";
 import type { FamilyMember } from "@/schemas/membership";
@@ -68,7 +69,7 @@ const NutritionRadarChart = dynamic(
 );
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
-  Sparkles, Zap, X, Plus, Check, Calendar,
+  Sparkles, Zap, Plus, Check, Calendar,
   Flame, Refrigerator, Trash2, AlertTriangle, Info,
   BarChart3, ShoppingCart, ChevronDown, ChevronRight, ChevronLeft, ChevronUp,
   Clock, Users, BookOpen, Heart, RefreshCw, Send, Package,
@@ -6026,25 +6027,6 @@ export default function WeeklyMenuPage() {
               />
             )}
 
-            {/* UX2-11: AI献立生成の中止確認モーダル（window.confirm は使わず styled モーダルに統一） */}
-            {showConfirmCancelGeneration && (
-              <ConfirmDeleteModal
-                title="AI献立の生成を中止しますか？"
-                message={
-                  <>
-                    ここまでの進捗表示を停止します。バックグラウンドの処理が完了している場合、<br />
-                    後で献立に反映されることがあります。
-                  </>
-                }
-                isDeleting={false}
-                tone="neutral"
-                icon={X}
-                confirmLabel="中止する"
-                onCancel={() => setShowConfirmCancelGeneration(false)}
-                onConfirm={handleCancelGeneration}
-              />
-            )}
-
             {/* AI Single Meal Modal */}
             {activeModal === 'aiMeal' && (
               <AiMealModal
@@ -6137,6 +6119,20 @@ export default function WeeklyMenuPage() {
             )}
           </>
         )}
+      </AnimatePresence>
+
+      {/* UX2-11: AI献立生成の中止確認モーダル（window.confirm は使わず styled モーダルに統一）。
+          #1050 round-2: 生成中は setActiveModal(null) でモーダル一覧を閉じているため、
+          {activeModal && ...} ゲート内にネストしていると生成中に到達不能だった。
+          独立コンポーネント化し、activeModal の状態に関係なく描画される
+          独立した <AnimatePresence> の直下に置く（型シグネチャに activeModal が無いことで
+          再度 activeModal 依存へ戻ることをコンパイル時に防ぐ意図もある）。 */}
+      <AnimatePresence>
+        <CancelGenerationConfirmModal
+          show={showConfirmCancelGeneration}
+          onCancel={() => setShowConfirmCancelGeneration(false)}
+          onConfirm={handleCancelGeneration}
+        />
       </AnimatePresence>
 
       {/* 完了モーダル */}

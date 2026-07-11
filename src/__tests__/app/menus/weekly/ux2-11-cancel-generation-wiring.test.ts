@@ -50,20 +50,25 @@ describe('page.tsx: AI生成「中止する」配線 (#1054 UX2-11 回帰防止)
     ).toBeGreaterThan(0);
   });
 
-  it('showConfirmCancelGeneration を条件に中止確認モーダルが描画され、onConfirm が handleCancelGeneration であること', () => {
-    const match = pageSource.match(
-      /\{showConfirmCancelGeneration\s*&&\s*\(([\s\S]*?)\/>\s*\)\}/
-    );
+  it('CancelGenerationConfirmModal に show=showConfirmCancelGeneration と onConfirm=handleCancelGeneration が配線されていること', () => {
+    // #1050 round-2: 中止確認モーダルは {activeModal && (...)} ゲート内の到達不能バグを
+    // 修正するため <CancelGenerationConfirmModal /> として切り出された
+    // (src/app/(main)/menus/weekly/_components/CancelGenerationConfirmModal.tsx)。
+    // 到達可能性そのもの（activeModal ゲートの外側にあること）は
+    // cancel-generation-modal-reachability.test.ts の AST ベース検証が担当し、
+    // ここでは prop の配線のみを検査する。
+    const match = pageSource.match(/<CancelGenerationConfirmModal[\s\S]*?\/>/);
     expect(
       match,
-      'showConfirmCancelGeneration を条件にした確認モーダルの描画ブロックが見つかりません'
+      'page.tsx に <CancelGenerationConfirmModal /> の呼び出しが見つかりません'
     ).not.toBeNull();
 
-    const block = match![1];
-    expect(block).toMatch(/onConfirm=\{handleCancelGeneration\}/);
-    expect(block).toMatch(/onCancel=\{?\(\)\s*=>\s*setShowConfirmCancelGeneration\(false\)\}?/);
+    const call = match![0];
+    expect(call).toMatch(/show=\{showConfirmCancelGeneration\}/);
+    expect(call).toMatch(/onConfirm=\{handleCancelGeneration\}/);
+    expect(call).toMatch(/onCancel=\{?\(\)\s*=>\s*setShowConfirmCancelGeneration\(false\)\}?/);
     // window.confirm には戻さない（styled モーダルへの統一を維持）
-    expect(block).not.toMatch(/window\.confirm/);
+    expect(call).not.toMatch(/window\.confirm/);
   });
 
   it('handleCancelGeneration が確定後に showConfirmCancelGeneration を false に戻すこと（モーダルが閉じ残らない）', () => {
