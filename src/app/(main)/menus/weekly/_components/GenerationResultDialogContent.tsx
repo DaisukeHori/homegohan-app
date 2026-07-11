@@ -2,19 +2,10 @@
 
 import { AlertTriangle, Info, Check } from "lucide-react";
 import type { UiFlagMessage } from "../_state/reducers/uiFlagReducer";
-
-const colors = {
-  card: "#FFFFFF",
-  text: "#2D2D2D",
-  textLight: "#6B6B6B",
-  border: "#E8E6E1",
-  accent: "#E07A5F",
-  danger: "#D64545",
-  dangerLight: "#FDECEC",
-  bg: "#F7F6F3",
-  success: "#4CAF50",
-  successLight: "rgba(34, 197, 94, 0.1)",
-};
+// #1050 レビュー残ポリッシュ (Opus 再レビュー Warning): 独自の colors 定義が weekly
+// page.tsx の正本と乖離していた（success/successLight/border が別値）ため、
+// 唯一の正本 ./colors.ts から import する形に統一（成功モーダルの見た目回帰を是正）。
+import { colors } from "./colors";
 
 export interface GenerationResultDialogContentProps {
   message: UiFlagMessage;
@@ -49,7 +40,7 @@ export function GenerationResultDialogContent({ message, onDismiss }: Generation
             ? colors.dangerLight
             : message.type === 'info'
               ? colors.bg
-              : (colors.successLight || 'rgba(34, 197, 94, 0.1)'),
+              : colors.successLight,
         }}
       >
         {message.type === 'error' ? (

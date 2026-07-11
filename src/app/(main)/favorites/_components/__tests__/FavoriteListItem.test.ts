@@ -149,4 +149,16 @@ describe('FavoriteListItem: キーボード削除リグレッション (#1050 ro
     const removeBtn = getRemoveButton();
     expect(removeBtn.disabled).toBe(true);
   });
+
+  it('(e) 「レシピを見る」ボタンの内側に <div>/<p> が無い（#1050 レビュー残ポリッシュ: button のコンテンツモデル適合、span に置換済み）', () => {
+    render();
+    const openBtn = getOpenButton();
+    expect(
+      openBtn.querySelector('div, p'),
+      'button 内に非 phrasing content (div/p) が残っています'
+    ).toBeNull();
+    // 見た目維持の確認: レシピ名と日付テキストは引き続き読める
+    expect(openBtn.textContent).toContain(ITEM.recipeName);
+    expect(openBtn.textContent).toContain('に追加');
+  });
 });

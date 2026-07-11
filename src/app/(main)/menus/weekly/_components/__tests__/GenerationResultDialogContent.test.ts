@@ -15,6 +15,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 
 import { GenerationResultDialogContent } from '../GenerationResultDialogContent';
+import { colors } from '../colors';
 import type { UiFlagMessage } from '../../_state/reducers/uiFlagReducer';
 
 const h = React.createElement;
@@ -126,3 +127,44 @@ describe('GenerationResultDialogContent: onRetry 配線 (#1050 round-2 UX2-02残
     expect(container.querySelector('[data-testid="success-message-body"]')?.textContent).toBe('本文B');
   });
 });
+
+describe('GenerationResultDialogContent: 配色は weekly page.tsx の正本と一致する (#1050 レビュー残ポリッシュ, 視覚回帰是正)', () => {
+  // Opus 再レビューの Warning: 以前はこのコンポーネントが独自に colors を再定義しており、
+  // page.tsx の正本 (success #6B9B6B / successLight #EDF5ED / border #E8E8E8) と乖離していた
+  // （旧値: success #4CAF50 / successLight rgba(34,197,94,0.1) / border #E8E6E1）。
+  // ./colors.ts を単一の正本にしたため、page.tsx の実値をハードコードして直接照合する。
+  const PAGE_CANONICAL = {
+    success: '#6B9B6B',
+    successLight: '#EDF5ED',
+    border: '#E8E8E8',
+  };
+
+  it('正本 colors モジュールの success/successLight/border が page.tsx の実値と一致する（二重定義の再発防止）', () => {
+    expect(colors.success).toBe(PAGE_CANONICAL.success);
+    expect(colors.successLight).toBe(PAGE_CANONICAL.successLight);
+    expect(colors.border).toBe(PAGE_CANONICAL.border);
+  });
+
+  it('成功メッセージ(type未指定)のアイコン背景・Checkアイコン色が正本の success 系カラーになる', () => {
+    render({ title: '献立が完成しました！', message: 'AIが献立を作成しました。' }, () => {});
+    const icon = container.querySelector('[data-testid="success-message-icon"]') as HTMLElement;
+    expect(icon.style.background).toBe(hexToRgb(PAGE_CANONICAL.successLight));
+    const svgPath = icon.querySelector('svg');
+    expect(svgPath?.getAttribute('color') ?? svgPath?.getAttribute('stroke')).toBe(PAGE_CANONICAL.success);
+  });
+
+  it('onRetry ありの「閉じる」ボタン背景が正本の border カラーになる', () => {
+    render({ title: '失敗', message: 'エラー', type: 'error', onRetry: () => {} }, () => {});
+    const closeBtn = container.querySelector('[data-testid="success-message-close-button"]') as HTMLElement;
+    expect(closeBtn.style.background).toBe(hexToRgb(PAGE_CANONICAL.border));
+  });
+});
+
+// jsdom は style.background に hex を設定すると rgb(...) 表記で正規化するため、
+// テストの期待値も同じ正規化を通してから比較する。
+function hexToRgb(hex: string): string {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) return hex;
+  const [, r, g, b] = m;
+  return `rgb(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)})`;
+}

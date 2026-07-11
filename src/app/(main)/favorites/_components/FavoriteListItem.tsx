@@ -88,8 +88,11 @@ export function FavoriteListItem({
           color: "inherit",
         }}
       >
-        {/* Icon */}
-        <div
+        {/* Icon
+            #1050 レビュー残ポリッシュ (Opus 再レビュー Suggestion): <button> のコンテンツモデルは
+            phrasing content 限定で <div>/<p> は非適合。見た目を変えずに <span> + 明示 display で
+            置き換え、合法な HTML 構造にする。 */}
+        <span
           style={{
             width: 44,
             height: 44,
@@ -102,12 +105,13 @@ export function FavoriteListItem({
           }}
         >
           <Utensils size={20} color={colors.favRed} />
-        </div>
+        </span>
 
         {/* Info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p
+        <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <span
             style={{
+              display: "block",
               fontWeight: 600,
               fontSize: 15,
               color: colors.text,
@@ -118,8 +122,8 @@ export function FavoriteListItem({
             }}
           >
             {item.recipeName}
-          </p>
-          <p
+          </span>
+          <span
             style={{
               fontSize: 12,
               color: colors.textMuted,
@@ -131,8 +135,8 @@ export function FavoriteListItem({
           >
             <Clock size={11} />
             {formatDate(item.likedAt)} に追加
-          </p>
-        </div>
+          </span>
+        </span>
       </button>
 
       {/* Remove button */}

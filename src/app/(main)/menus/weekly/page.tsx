@@ -35,6 +35,7 @@ import { ProfileReminderBanner } from "@/components/ProfileReminderBanner";
 import { ProgressTodoCard } from "./_components/ProgressTodoCard";
 import { CancelGenerationConfirmModal } from "./_components/CancelGenerationConfirmModal";
 import { GenerationResultDialogContent } from "./_components/GenerationResultDialogContent";
+import { colors } from "./_components/colors";
 import { FamilyViewSwitcher } from "@/components/membership/FamilyViewSwitcher";
 import { useFamilyView } from "@/hooks/useFamilyView";
 import type { FamilyMember } from "@/schemas/membership";
@@ -137,26 +138,8 @@ const ALL_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'mi
 // LegacyDishDetail は _state/types.ts (Issue #1031 Step 0 で移設、formDraftStore と共有)
 
 // Reference UI Color Palette
-const colors = {
-  bg: '#F7F6F3',
-  card: '#FFFFFF',
-  text: '#2D2D2D',
-  textLight: '#6B6B6B',
-  textMuted: '#A0A0A0',
-  accent: '#E07A5F',
-  accentLight: '#FDF0ED',
-  success: '#6B9B6B',
-  successLight: '#EDF5ED',
-  warning: '#E5A84B',
-  warningLight: '#FEF9EE',
-  purple: '#7C6BA0',
-  purpleLight: '#F5F3F8',
-  blue: '#5B8BC7',
-  blueLight: '#EEF4FB',
-  border: '#E8E8E8',
-  danger: '#D64545',
-  dangerLight: '#FDECEC',
-};
+// #1050 レビュー残ポリッシュ: この配色定義が正本。GenerationResultDialogContent.tsx 等の
+// 独自コピーによる乖離を防ぐため ./_components/colors.ts に切り出し、import して使う。
 
 // アイコンマッピング (Lucide) — MODE_CONFIG の iconKey を解決するため WEB 専用で保持
 const MODE_ICON_MAP: Record<string, typeof ChefHat> = {

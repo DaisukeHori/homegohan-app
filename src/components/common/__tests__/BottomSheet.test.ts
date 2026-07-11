@@ -293,6 +293,46 @@ describe('BottomSheet: 入れ子（複数同時オープン）での Escape (#10
     expect(onCloseB).not.toHaveBeenCalled();
     expect(onCloseA, '最前面が Escape 無効でも、下の A まで閉じてはいけない').not.toHaveBeenCalled();
   });
+
+  it('isOpen=true のまま unmount（isOpen=false を経由しない DOM ツリーからの除去）されても openSheetStack から pop される（幽霊エントリ無し）', () => {
+    // #1050 レビュー残ポリッシュ (Opus 再レビュー Suggestion): Escape クローズは
+    // isTopmostOpenSheet(自分のid) === stack末尾 で判定するため、もし unmount 時に
+    // pop が漏れて幽霊エントリがスタックに残ると、後から単独で開いた別の BottomSheet の
+    // id が (ゴーストが上に居座って) 末尾ではなくなり、Escape を押しても
+    // 自分がトップだと判定できず閉じなくなる。これを実際に検知できる形で検証する。
+    const onCloseGhostSource = vi.fn();
+    const onCloseB = vi.fn();
+
+    // A（後で isOpen=false を経由せず、いきなりツリーから消す）を単独で開く
+    act(() => {
+      root.render(
+        h(BottomSheet, { isOpen: true, onClose: onCloseGhostSource, testId: 'sheet-ghost' }, h('p', null, 'A'))
+      );
+    });
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+
+    // isOpen=false にはせず、コンポーネント自体をツリーから除去（真の unmount）。
+    // React はこの場合も直前のエフェクトのクリーンアップ（popOpenSheet）を実行する。
+    act(() => {
+      root.render(h('div', null));
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+
+    // 直後に別の BottomSheet を単独で開く（スタックが正しく空なら、これが必ず最前面になる）
+    act(() => {
+      root.render(h(BottomSheet, { isOpen: true, onClose: onCloseB, testId: 'sheet-b' }, h('p', null, 'B')));
+    });
+
+    act(() => {
+      pressEscape();
+    });
+
+    expect(
+      onCloseB,
+      '単独で開いた B が Escape で閉じません（先に unmount した A の幽霊エントリがスタック最上位に残っている疑い）'
+    ).toHaveBeenCalledTimes(1);
+    expect(onCloseGhostSource).not.toHaveBeenCalled();
+  });
 });
 
 describe('BottomSheet: hideOverlayBackground (#1050 round-2 E, 二重backdrop対策)', () => {
