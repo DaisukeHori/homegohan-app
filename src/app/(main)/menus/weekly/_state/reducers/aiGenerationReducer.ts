@@ -82,8 +82,18 @@ export function aiGenerationReducer(
         generatingMeal: action.payload?.meal ?? state.generatingMeal,
       };
 
-    case 'GEN_PROGRESS':
-      return { ...state, generationProgress: action.payload };
+    // UX2-10: percentage の単調増加ガード。Realtime/ポーリング/復元経路が非同期に競合すると
+    // 古いイベントが後着して進捗が逆行し得るため、同一生成中は前回値を下回らないようにクランプする。
+    case 'GEN_PROGRESS': {
+      const prevPercentage = state.generationProgress?.percentage ?? 0;
+      return {
+        ...state,
+        generationProgress: {
+          ...action.payload,
+          percentage: Math.max(action.payload.percentage, prevPercentage),
+        },
+      };
+    }
 
     // F1b-03: 進捗クリア専用。GEN_SUCCESS と違い isGenerating/generatingMeal には触れない
     // (呼び出し元は生成中の進捗更新の一環として progress のみ null にしたい場合がある)

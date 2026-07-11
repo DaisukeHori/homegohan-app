@@ -55,6 +55,8 @@ export interface ModalState {
   showNutritionDetailModal: boolean;
   // #1053: 買い物リスト全削除の確認（window.confirm 廃止、styled モーダルに統一）
   showConfirmDeleteAllShopping: boolean;
+  // UX2-11: AI生成の中止確認（window.confirm 未使用のまま統一）
+  showConfirmCancelGeneration: boolean;
 
   // 削除中フラグ
   isDeleting: boolean;
@@ -87,6 +89,8 @@ export type ModalAction =
   | { type: 'NUTRITION_DETAIL_MODAL_CLOSE' }
   | { type: 'CONFIRM_DELETE_ALL_SHOPPING_OPEN' }
   | { type: 'CONFIRM_DELETE_ALL_SHOPPING_CLOSE' }
+  | { type: 'CONFIRM_CANCEL_GENERATION_OPEN' }
+  | { type: 'CONFIRM_CANCEL_GENERATION_CLOSE' }
   | { type: 'IS_DELETING_SET'; payload: boolean };
 
 // -------------------------------------------------------
@@ -109,6 +113,7 @@ export const initialModalState: ModalState = {
   showImproveMealModal: false,
   showNutritionDetailModal: false,
   showConfirmDeleteAllShopping: false,
+  showConfirmCancelGeneration: false,
   isDeleting: false,
 };
 
@@ -186,6 +191,12 @@ export function modalReducer(
 
     case 'CONFIRM_DELETE_ALL_SHOPPING_CLOSE':
       return { ...state, showConfirmDeleteAllShopping: false };
+
+    case 'CONFIRM_CANCEL_GENERATION_OPEN':
+      return { ...state, showConfirmCancelGeneration: true };
+
+    case 'CONFIRM_CANCEL_GENERATION_CLOSE':
+      return { ...state, showConfirmCancelGeneration: false };
 
     case 'IS_DELETING_SET':
       return { ...state, isDeleting: action.payload };

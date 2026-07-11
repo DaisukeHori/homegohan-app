@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Heart, Search, X, ChevronLeft, RefreshCw, Utensils, SortAsc, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -37,22 +37,37 @@ export default function FavoritesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  // UX2-19: 検索中は既存リストを残したまま小スピナーのみ表示するための状態（全画面ローディングとは分離）
+  const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // UX2-19: 1キーストロークごとの全画面ローディングを防ぐため、実際の検索実行は300ms debounceする
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sort, setSort] = useState<SortOption>("newest");
   const [removingId, setRemovingId] = useState<string | null>(null);
   // #263: offset-based pagination
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  // 初回フェッチかどうか（初回のみ全画面ローディングを表示し、以降の検索/並び替えは小スピナーに留める）
+  const isFirstFetchRef = useRef(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const fetchFavorites = useCallback(async (nextOffset = 0) => {
     if (nextOffset === 0) {
-      setLoading(true);
+      if (isFirstFetchRef.current) {
+        setLoading(true);
+      } else {
+        setIsSearching(true);
+      }
     } else {
       setLoadingMore(true);
     }
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(nextOffset), sort });
-      if (searchQuery) params.set("q", searchQuery);
+      if (debouncedQuery) params.set("q", debouncedQuery);
       const res = await fetch(`/api/favorites?${params}`);
       if (!res.ok) throw new Error("Failed to fetch favorites");
       const data = await res.json();
@@ -70,8 +85,10 @@ export default function FavoritesPage() {
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      setIsSearching(false);
+      isFirstFetchRef.current = false;
     }
-  }, [searchQuery, sort]);
+  }, [debouncedQuery, sort]);
 
   useEffect(() => {
     setOffset(0);
@@ -188,7 +205,11 @@ export default function FavoritesPage() {
             padding: "8px 12px",
           }}
         >
-          <Search size={16} color={colors.textMuted} />
+          {isSearching ? (
+            <RefreshCw size={16} color={colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+          ) : (
+            <Search size={16} color={colors.textMuted} />
+          )}
           <input
             type="text"
             placeholder="レシピ名で検索..."

@@ -101,3 +101,60 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+// UX2-11: AI 生成の中止。weekly_menu_requests.status の CHECK 制約に 'cancelled' は
+// 存在しない（migration 追加は本 Issue のスコープ外のため報告のみ）。既存の 'failed' + 判別可能な
+// error_message で「ユーザーによる中止」を表現する。既に completed/failed の場合は上書きしない。
+export async function POST(request: Request) {
+  const supabase = await createClient();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  let body: { requestId?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  const { requestId } = body;
+  if (!requestId) {
+    return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
+  }
+
+  try {
+    const { data: existing, error: fetchError } = await supabase
+      .from('weekly_menu_requests')
+      .select('id, status')
+      .eq('id', requestId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+    if (!existing) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    // 既に確定済み（completed/failed）の場合は上書きしない
+    if (existing.status === 'completed' || existing.status === 'failed') {
+      return NextResponse.json({ status: existing.status, cancelled: false });
+    }
+
+    const { error: updateError } = await supabase
+      .from('weekly_menu_requests')
+      .update({
+        status: 'failed',
+        error_message: '中止しました',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', requestId)
+      .eq('user_id', user.id);
+
+    if (updateError) throw updateError;
+
+    return NextResponse.json({ status: 'failed', cancelled: true });
+  } catch (error: any) {
+    console.error('Cancel request error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

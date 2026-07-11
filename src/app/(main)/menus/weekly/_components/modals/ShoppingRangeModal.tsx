@@ -4,6 +4,7 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
+import { formatLocalDate, formatDateJa } from "@homegohan/shared";
 import { useShoppingStore, useServingsConfigStore } from "../../_state";
 
 const colors = {
@@ -21,13 +22,20 @@ const colors = {
 
 interface ShoppingRangeModalProps {
   isTodayExpanded: boolean;
+  /** カレンダーで現在表示中の週の開始日（UX2-09: 「表示中の週」選択肢用） */
+  currentWeekStart: Date;
   onClose: () => void;
   onToggleTodayExpanded: (expanded: boolean) => void;
   onGenerate: (servingsConfig: ServingsConfig | null) => Promise<void>;
 }
 
+// UX2-09: 「日付範囲」文字列を作る（単日なら1つ、範囲なら「〜」で連結）
+const formatDateRangeLabel = (startStr: string, endStr: string): string =>
+  startStr === endStr ? formatDateJa(startStr) : `${formatDateJa(startStr)}〜${formatDateJa(endStr)}`;
+
 export function ShoppingRangeModal({
   isTodayExpanded,
+  currentWeekStart,
   onClose,
   onToggleTodayExpanded,
   onGenerate,
@@ -38,6 +46,26 @@ export function ShoppingRangeModal({
   const setShoppingRangeStep = useShoppingStore((s) => s.setShoppingRangeStep);
   const servingsConfig = useServingsConfigStore((s) => s.servingsConfig);
   const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
+
+  // UX2-09: 各選択肢に具体的な日付範囲を併記する
+  const now = new Date();
+  const todayStr = formatLocalDate(now);
+  const tomorrowDate = new Date(now);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowStr = formatLocalDate(tomorrowDate);
+  const dayAfterDate = new Date(now);
+  dayAfterDate.setDate(dayAfterDate.getDate() + 2);
+  const dayAfterStr = formatLocalDate(dayAfterDate);
+  const daysEndDate = new Date(now);
+  daysEndDate.setDate(daysEndDate.getDate() + shoppingRange.daysCount - 1);
+  const daysEndStr = formatLocalDate(daysEndDate);
+  const weekEndDate = new Date(now);
+  weekEndDate.setDate(weekEndDate.getDate() + 6);
+  const weekEndStr = formatLocalDate(weekEndDate);
+  const currentWeekStartStr = formatLocalDate(currentWeekStart);
+  const currentWeekEndDate = new Date(currentWeekStart);
+  currentWeekEndDate.setDate(currentWeekEndDate.getDate() + 6);
+  const currentWeekEndStr = formatLocalDate(currentWeekEndDate);
 
   return (
     <motion.div
@@ -80,6 +108,7 @@ export function ShoppingRangeModal({
               >
                 <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'today' ? '#fff' : colors.text }}>
                   今日の分
+                  <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateJa(todayStr)}）</span>
                 </span>
                 {shoppingRange.type === 'today' && (
                   <ChevronDown
@@ -146,6 +175,7 @@ export function ShoppingRangeModal({
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'tomorrow' ? '#fff' : colors.text }}>
                 明日の分
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateJa(tomorrowStr)}）</span>
               </span>
             </button>
 
@@ -160,6 +190,22 @@ export function ShoppingRangeModal({
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'dayAfterTomorrow' ? '#fff' : colors.text }}>
                 明後日の分
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateJa(dayAfterStr)}）</span>
+              </span>
+            </button>
+
+            {/* 表示中の週（UX2-09: 今日起点ではなく、カレンダーで開いている週） */}
+            <button
+              onClick={() => setShoppingRange({ ...shoppingRange, type: 'currentWeek' })}
+              className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+              style={{
+                background: shoppingRange.type === 'currentWeek' ? colors.accent : colors.bg,
+                border: `1px solid ${shoppingRange.type === 'currentWeek' ? colors.accent : colors.border}`
+              }}
+            >
+              <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'currentWeek' ? '#fff' : colors.text }}>
+                表示中の週
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateRangeLabel(currentWeekStartStr, currentWeekEndStr)}）</span>
               </span>
             </button>
 
@@ -175,6 +221,7 @@ export function ShoppingRangeModal({
               >
                 <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'days' ? '#fff' : colors.text }}>
                   {shoppingRange.daysCount}日分
+                  <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateRangeLabel(todayStr, daysEndStr)}）</span>
                 </span>
               </button>
 
@@ -204,7 +251,8 @@ export function ShoppingRangeModal({
               }}
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'week' ? '#fff' : colors.text }}>
-                1週間分
+                1週間分（今日から）
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>{formatDateRangeLabel(todayStr, weekEndStr)}</span>
               </span>
             </button>
           </div>

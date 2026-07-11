@@ -147,14 +147,21 @@ export default function HomePage() {
     return () => clearTimeout(timer);
   }, [checkinFeedback]);
 
+  // UX2-20: 「今日のコンディション」保存フィードバック（数秒で自動フェードアウト）
+  const [conditionFeedback, setConditionFeedback] = useState<string | null>(null);
+  useEffect(() => {
+    if (!conditionFeedback) return;
+    const timer = setTimeout(() => setConditionFeedback(null), 2500);
+    return () => clearTimeout(timer);
+  }, [conditionFeedback]);
+  const handleUpdateActivityLevel = async (id: string, label: string) => {
+    await updateActivityLevel(id);
+    setConditionFeedback(`「${label}」として記録しました`);
+  };
+
   const completionRate = dailySummary.totalCount > 0
     ? Math.round((dailySummary.completedCount / dailySummary.totalCount) * 100)
     : 0;
-
-  const nextMeal = todayPlan?.meals.find(m =>
-    !m.isCompleted && (m.mealType === currentMealTypeState ||
-      ['breakfast', 'lunch', 'dinner'].indexOf(m.mealType) > ['breakfast', 'lunch', 'dinner'].indexOf(currentMealTypeState))
-  );
 
   return (
     <div className="min-h-screen pb-24 lg:pb-8" style={{ background: colors.bg }}>
@@ -430,19 +437,40 @@ export default function HomePage() {
               ].map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => updateActivityLevel(item.id)}
-                  className={`flex-1 px-2 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-all ${
-                    activityLevel === item.id 
-                      ? 'bg-gray-900 text-white shadow-md' 
+                  onClick={() => handleUpdateActivityLevel(item.id, item.label)}
+                  className={`flex-1 px-1.5 py-2.5 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 transition-all ${
+                    activityLevel === item.id
+                      ? 'bg-gray-900 text-white shadow-md'
                       : 'text-gray-600 hover:bg-gray-50'
                   }`}
                 >
                   <span className="text-base">{item.icon}</span>
-                  <span className="text-xs font-bold hidden sm:inline">{item.label}</span>
+                  {/* UX2-20: モバイルでもラベルを表示する（従来は sm 以上でのみ表示） */}
+                  <span className="text-[10px] sm:text-xs font-bold leading-tight">{item.label}</span>
                 </button>
               ))}
             </div>
           </div>
+          {/* UX2-20: 機能説明（何のための入力かを1行で伝える） */}
+          <p className="text-[11px] text-gray-400 mt-1.5 px-1">
+            今日の体調を記録すると、献立の提案に反映されます
+          </p>
+          {/* UX2-20: 保存フィードバック */}
+          <AnimatePresence>
+            {conditionFeedback && (
+              <motion.p
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                role="status"
+                aria-live="polite"
+                className="text-xs font-bold mt-1.5 px-1"
+                style={{ color: colors.success }}
+              >
+                {conditionFeedback}
+              </motion.p>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* ========== Performance OS v3: 次の一手 + 30秒チェックイン ========== */}

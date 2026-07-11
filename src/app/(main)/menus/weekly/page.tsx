@@ -440,6 +440,216 @@ const isDateInWeek = (date: Date, weekStartDate: Date): boolean => {
   return dateStart >= weekStartDate && dateStart <= weekEnd;
 };
 
+// UX2-10: V4進捗をUI形式に変換するヘルパー関数。
+// モジュールスコープの純関数として定義し、生成進捗の変換ロジックをこの1箇所に統一する
+// （以前は復元/handleV4Generate/ポーリング等4箇所に類似ロジックが重複し、計算式が不一致だった）。
+// 単調増加ガードは呼び出し側の aiGenerationReducer(GEN_PROGRESS) で行う。
+const convertV4ProgressToUIFormat = (progress: {
+  phase?: string;
+  message?: string;
+  percentage?: number;
+  currentStep?: number;
+  totalSteps?: number;
+  completedSlots?: number;
+  totalSlots?: number;
+}) => {
+  const completedSlots = progress.completedSlots || 0;
+  const totalSlots = progress.totalSlots || 0;
+
+  // 既にUI形式の場合はそのまま返す（totalSlotsを追加）
+  if (progress.phase && progress.percentage !== undefined) {
+    return {
+      phase: progress.phase,
+      message: progress.message || '',
+      percentage: progress.percentage,
+      totalSlots,
+      completedSlots,
+    };
+  }
+
+  // V4形式の場合はUI形式に変換
+  if (progress.currentStep !== undefined && progress.totalSteps !== undefined) {
+    const message = progress.message || 'AIが献立を生成中...';
+    const currentStep = progress.currentStep;
+    const isUltimateMode = progress.totalSteps === 6;
+
+    let phase = 'generating';
+    let percentage = 0;
+
+    if (isUltimateMode) {
+      // 究極モード（6ステップ）
+      // Step 1 (0-25%): 生成フェーズ
+      if (currentStep === 1 || currentStep === 0) {
+        if (message.includes('ユーザー情報') || message.includes('取得中')) {
+          phase = 'user_context';
+          percentage = 3;
+        } else if (message.includes('参考') || message.includes('検索中')) {
+          phase = 'search_references';
+          percentage = 6;
+        } else if (message.includes('生成完了')) {
+          phase = 'step1_complete';
+          percentage = 25;
+        } else {
+          phase = 'generating';
+          percentage = 8 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 15);
+        }
+      }
+      // Step 2 (25-38%): レビューフェーズ
+      else if (currentStep === 2) {
+        if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
+          phase = 'reviewing';
+          percentage = 28;
+        } else if (message.includes('改善中')) {
+          phase = 'fixing';
+          percentage = 32;
+        } else if (message.includes('レビュー完了')) {
+          phase = 'step2_complete';
+          percentage = 38;
+        } else {
+          phase = 'reviewing';
+          percentage = 30;
+        }
+      }
+      // Step 3 (38-48%): 栄養計算フェーズ（究極モードでは保存しない）
+      else if (currentStep === 3) {
+        if (message.includes('栄養計算') || message.includes('栄養')) {
+          phase = 'calculating';
+          percentage = 42;
+        } else if (message.includes('完了')) {
+          phase = 'step3_complete';
+          percentage = 48;
+        } else {
+          phase = 'calculating';
+          percentage = 45;
+        }
+      }
+      // Step 4 (48-62%): 栄養バランス詳細分析
+      else if (currentStep === 4) {
+        phase = 'nutrition_analyzing';
+        const match = message.match(/(\d+)\/(\d+)/);
+        if (match) {
+          const current = parseInt(match[1]);
+          const total = parseInt(match[2]);
+          percentage = 50 + Math.round((current / Math.max(total, 1)) * 12);
+        } else {
+          percentage = 55;
+        }
+      }
+      // Step 5 (62-82%): 献立改善
+      else if (currentStep === 5) {
+        phase = 'improving';
+        const match = message.match(/(\d+)\/(\d+)/);
+        if (match) {
+          const current = parseInt(match[1]);
+          const total = parseInt(match[2]);
+          percentage = 65 + Math.round((current / Math.max(total, 1)) * 17);
+        } else {
+          percentage = 70;
+        }
+      }
+      // Step 6 (82-100%): 最終保存
+      else if (currentStep === 6) {
+        if (message.includes('完了') || message.includes('完成')) {
+          phase = 'completed';
+          percentage = 100;
+        } else {
+          phase = 'final_saving';
+          const match = message.match(/(\d+)\/(\d+)/);
+          if (match) {
+            const current = parseInt(match[1]);
+            const total = parseInt(match[2]);
+            percentage = 85 + Math.round((current / Math.max(total, 1)) * 13);
+          } else {
+            percentage = 90;
+          }
+        }
+      }
+    } else {
+      // 通常モード（3ステップ）
+      // Step 1 (0-40%): 生成フェーズ
+      if (currentStep === 1 || currentStep === 0) {
+        if (message.includes('ユーザー情報') || message.includes('取得中')) {
+          phase = 'user_context';
+          percentage = 5;
+        } else if (message.includes('参考') || message.includes('検索中')) {
+          phase = 'search_references';
+          percentage = 10;
+        } else {
+          phase = 'generating';
+          percentage = 12 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 28);
+        }
+      }
+      // Step 2 (40-75%): レビューフェーズ
+      else if (currentStep === 2) {
+        if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
+          phase = 'reviewing';
+          percentage = 47;
+        } else if (message.includes('改善中')) {
+          phase = 'fixing';
+          const match = message.match(/(\d+)\/(\d+)/);
+          if (match) {
+            const current = parseInt(match[1]);
+            const total = parseInt(match[2]);
+            percentage = 58 + Math.round((current / Math.max(total, 1)) * 12);
+          } else {
+            percentage = 60;
+          }
+        } else if (message.includes('問題なし')) {
+          phase = 'no_issues';
+          percentage = 72;
+        } else if (message.includes('レビュー完了')) {
+          phase = 'step2_complete';
+          percentage = 75;
+        } else {
+          phase = 'reviewing';
+          percentage = 50;
+        }
+      }
+      // Step 3 (75-100%): 保存フェーズ
+      else if (currentStep === 3) {
+        if (message.includes('栄養計算') || message.includes('栄養')) {
+          phase = 'calculating';
+          percentage = 80;
+        } else if (message.includes('保存中')) {
+          phase = 'saving';
+          const match = message.match(/(\d+)\/(\d+)/);
+          if (match) {
+            const current = parseInt(match[1]);
+            const total = parseInt(match[2]);
+            percentage = 88 + Math.round((current / Math.max(total, 1)) * 10);
+          } else {
+            percentage = 90;
+          }
+        } else if (message.includes('完了') || message.includes('保存しました')) {
+          phase = 'completed';
+          percentage = 100;
+        } else {
+          phase = 'saving';
+          percentage = 88;
+        }
+      }
+    }
+
+    return {
+      phase,
+      message,
+      percentage: Math.round(percentage),
+      totalSlots,
+      completedSlots,
+      isUltimateMode,
+    };
+  }
+
+  // フォールバック
+  return {
+    phase: 'generating',
+    message: progress.message || 'AIが献立を生成中...',
+    percentage: 0,
+    totalSlots,
+    completedSlots,
+  };
+};
+
 // ============================================
 // Main Component
 // ============================================
@@ -477,6 +687,9 @@ export default function WeeklyMenuPage() {
 
   const weekStart = weekView.weekStart;
   const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
+  // UX2-24: 前週/次週ボタン専用。selectedDayIndex をリセットしない WEEK_NAVIGATE_* を dispatch する
+  const navigateWeekPrev = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_NAVIGATE_PREV', payload: d }), []);
+  const navigateWeekNext = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_NAVIGATE_NEXT', payload: d }), []);
 
   const selectedDayIndex = weekView.selectedDayIndex;
   const setSelectedDayIndex = useCallback((idx: number) => dispatchWeekView({ type: 'DAY_SELECT', payload: idx }), []);
@@ -602,6 +815,13 @@ export default function WeeklyMenuPage() {
     else dispatchModal({ type: 'CONFIRM_DELETE_ALL_SHOPPING_CLOSE' });
   }, []);
 
+  // UX2-11: AI生成の中止確認（window.confirm は使わず #1053 と同じ styled モーダルに統一）
+  const showConfirmCancelGeneration = modal.showConfirmCancelGeneration;
+  const setShowConfirmCancelGeneration = useCallback((v: boolean) => {
+    if (v) dispatchModal({ type: 'CONFIRM_CANCEL_GENERATION_OPEN' });
+    else dispatchModal({ type: 'CONFIRM_CANCEL_GENERATION_CLOSE' });
+  }, []);
+
   const isDeleting = modal.isDeleting;
   const setIsDeleting = useCallback((v: boolean) => dispatchModal({ type: 'IS_DELETING_SET', payload: v }), []);
 
@@ -609,9 +829,23 @@ export default function WeeklyMenuPage() {
   // aiGenerationReducer から分解
   // -------------------------------------------------------
   const isGenerating = aiGen.isGenerating;
+  // UX2-12: 週間生成の対象スロット（`${date}::${mealType}`）。既知の場合のみ EmptySlot の
+  // 「AIが考え中」表示をこの集合でスコープする。不明な生成経路（復元等）では null のままとし、
+  // 従来どおり「今日以降の全スロット」表示にフォールバックする（過剰表示 > 誤って非表示、を優先）。
+  const [genTargetSlotKeys, setGenTargetSlotKeysState] = useState<Set<string> | null>(null);
+  const setGenTargetSlotKeys = useCallback((slots: TargetSlot[] | null) => {
+    setGenTargetSlotKeysState(slots ? new Set(slots.map(s => `${s.date}::${s.mealType}`)) : null);
+  }, []);
   const setIsGenerating = useCallback((v: boolean) => {
-    if (v) dispatchAiGen({ type: 'GEN_START' });
-    else dispatchAiGen({ type: 'GEN_SUCCESS' });
+    if (v) {
+      // UX2-11: 新しい生成が始まったら「中止済み」ガードをリセットする
+      generationCancelledRef.current = false;
+      dispatchAiGen({ type: 'GEN_START' });
+    } else {
+      dispatchAiGen({ type: 'GEN_SUCCESS' });
+      // UX2-12: 生成終了時は対象スロット情報もクリアする
+      setGenTargetSlotKeysState(null);
+    }
   }, []);
 
   const generatingMeal = aiGen.generatingMeal;
@@ -808,6 +1042,60 @@ export default function WeeklyMenuPage() {
     };
     fetchWeekStartDay();
   }, []);
+
+  // UX2-16/UX2-31: meals/new・meals/[id] からの遷移（?date=&mealType=&saved=1 / ?date=&meal=）を
+  // 初回レンダリング時にスナップショット。後段の router.replace でクエリが消えても参照できるようにする。
+  const initialQueryParamsRef = useRef({
+    date: searchParams.get('date'),
+    saved: searchParams.get('saved') === '1',
+    mealType: searchParams.get('mealType'),
+    mealId: searchParams.get('meal'),
+  });
+
+  // UX2-16: ?date= があれば対象日を含む週・曜日を初期選択する
+  useEffect(() => {
+    const { date } = initialQueryParamsRef.current;
+    if (!date || !weekStartDayLoaded) return;
+    const target = new Date(date);
+    if (Number.isNaN(target.getTime())) return;
+    setWeekStart(getWeekStart(target, weekStartDay));
+    const dayOfWeekRaw = target.getDay();
+    const startOffset = weekStartDay === 'sunday' ? 0 : 1;
+    let dayIndex = dayOfWeekRaw - startOffset;
+    if (dayIndex < 0) dayIndex += 7;
+    setSelectedDayIndex(dayIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStartDayLoaded, weekStartDay]);
+
+  // UX2-16: ?saved=1 なら保存成功のフィードバックを表示し、URL からクエリを除去する（多重表示防止）
+  useEffect(() => {
+    const { date, saved, mealType } = initialQueryParamsRef.current;
+    if (!saved) return;
+    const mealLabel = mealType && (mealType in MEAL_LABELS) ? MEAL_LABELS[mealType as MealType] : '食事';
+    setSuccessMessage({
+      title: '保存しました',
+      message: date ? `${formatDateJa(date)}の${mealLabel}に保存しました` : `${mealLabel}を保存しました`,
+    });
+    router.replace('/menus/weekly', { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // UX2-31: ?meal= があれば、該当献立を展開して編集モーダルを直接開く（従来は献立表トップに飛ぶだけだった）。
+  // openManualEdit はファイル後方で定義されるため前方参照になるが、useEffect は render 完了後に実行されるため問題ない
+  // （本ファイルの subscribeToRequestStatus 等と同じ確立済みパターン）。
+  const appliedMealParamRef = useRef(false);
+  useEffect(() => {
+    const { mealId } = initialQueryParamsRef.current;
+    if (!mealId || appliedMealParamRef.current || !currentPlan) return;
+    const found = currentPlan.days?.flatMap(d => d.meals || []).find(m => m.id === mealId);
+    if (found) {
+      appliedMealParamRef.current = true;
+      setExpandedMealId(found.id);
+      openManualEdit(found);
+      router.replace('/menus/weekly', { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPlan]);
 
   // Fetch holidays for displayed year
   useEffect(() => {
@@ -1086,6 +1374,11 @@ export default function WeeklyMenuPage() {
       console.error('V4 generation error:', error);
       setIsGenerating(false);
       setGenerationProgress(null);  // 進捗表示をクリア
+      // UX2-11: ユーザーが「中止する」を押した後に届く遅延イベントでは alert を出さない
+      if (generationCancelledRef.current) {
+        generationCancelledRef.current = false;
+        return;
+      }
       alert(error);
     },
   });
@@ -1132,93 +1425,12 @@ export default function WeeklyMenuPage() {
         // まだ進行中の場合、UI状態を復元して進捗追跡を再開
         setIsGenerating(true);
 
-        // 現在の進捗をDBの値から復元（メッセージベースでフェーズを判定）
-        const dbProgress = currentStatus?.progress || {};
-        const currentStep = dbProgress.currentStep || 1;
-        const dbTotalSlots = dbProgress.totalSlots || totalSlots || 1;
-        const completedSlots = dbProgress.completedSlots || 0;
-        const dbMessage = dbProgress.message || '';
-
-        // メッセージからフェーズとパーセンテージを判定（リアルタイム更新と同じロジック）
-        let initialPhase = 'generating';
-        let initialPercentage = 10;
-
-        if (currentStep === 1 || currentStep === 0) {
-          if (dbMessage.includes('ユーザー情報') || dbMessage.includes('コンテキスト')) {
-            initialPhase = 'user_context';
-            initialPercentage = 3;
-          } else if (dbMessage.includes('参考レシピ') || dbMessage.includes('検索中')) {
-            initialPhase = 'search_references';
-            initialPercentage = 8;
-          } else if (dbMessage.includes('生成中') || dbMessage.includes('献立をAIが作成')) {
-            initialPhase = 'generating';
-            initialPercentage = 15 + Math.round((completedSlots / dbTotalSlots) * 25);
-          } else if (dbMessage.includes('生成完了')) {
-            initialPhase = 'step1_complete';
-            initialPercentage = 40;
-          } else {
-            initialPhase = 'generating';
-            initialPercentage = 12;
-          }
-        } else if (currentStep === 2) {
-          if (dbMessage.includes('バランス') || dbMessage.includes('チェック中') || dbMessage.includes('重複')) {
-            initialPhase = 'reviewing';
-            initialPercentage = 47;
-          } else if (dbMessage.includes('改善中')) {
-            initialPhase = 'fixing';
-            initialPercentage = 60;
-          } else if (dbMessage.includes('問題なし')) {
-            initialPhase = 'no_issues';
-            initialPercentage = 72;
-          } else if (dbMessage.includes('レビュー完了')) {
-            initialPhase = 'step2_complete';
-            initialPercentage = 75;
-          } else {
-            initialPhase = 'reviewing';
-            initialPercentage = 45;
-          }
-        } else if (currentStep === 3) {
-          if (dbMessage.includes('栄養価') || dbMessage.includes('計算')) {
-            initialPhase = 'calculating';
-            initialPercentage = 80;
-          } else if (dbMessage.includes('保存')) {
-            initialPhase = 'saving';
-            initialPercentage = 85 + Math.round((completedSlots / dbTotalSlots) * 10);
-          } else {
-            initialPhase = 'saving';
-            initialPercentage = 85;
-          }
-        }
-
-        setGenerationProgress({
-          phase: initialPhase,
-          message: dbMessage || '生成状況を確認中...',
-          percentage: initialPercentage,
-          totalSlots: dbTotalSlots,
-          completedSlots,
-        });
+        // 現在の進捗をDBの値から復元（UX2-10: 変換ロジックはconvertV4ProgressToUIFormatに一本化）
+        const dbProgress = currentStatus?.progress || { totalSlots };
+        setGenerationProgress(convertV4ProgressToUIFormat(dbProgress));
 
         // 進捗追跡を再開
         v4Generation.subscribeToProgress(requestId, (progress) => {
-          const message = progress.message || '';
-          let phase = 'generating';
-          let percentage = 10;
-
-          const progressCurrentStep = progress.currentStep || 1;
-          const progressTotalSlots = progress.totalSlots || totalSlots || 1;
-          const progressCompletedSlots = progress.completedSlots || 0;
-
-          if (progressCurrentStep === 1 || progressCurrentStep === 0) {
-            phase = 'generating';
-            percentage = 5 + Math.round((progressCompletedSlots / progressTotalSlots) * 35);
-          } else if (progressCurrentStep === 2) {
-            phase = 'nutrition';
-            percentage = 40 + Math.round((progressCompletedSlots / progressTotalSlots) * 40);
-          } else if (progressCurrentStep === 3) {
-            phase = 'saving';
-            percentage = 85 + Math.round((progressCompletedSlots / progressTotalSlots) * 10);
-          }
-
           // 完了/失敗判定
           if (progress.status === 'completed') {
             setIsGenerating(false);
@@ -1232,17 +1444,16 @@ export default function WeeklyMenuPage() {
             setIsGenerating(false);
             setGenerationProgress(null);
             localStorage.removeItem('v4MenuGenerating');
+            // UX2-11: ユーザーが「中止する」を押した後に届く遅延イベントでは alert を出さない
+            if (generationCancelledRef.current) {
+              generationCancelledRef.current = false;
+              return;
+            }
             alert(progress.errorMessage || '生成に失敗しました');
             return;
           }
 
-          setGenerationProgress({
-            phase,
-            message,
-            percentage,
-            totalSlots: progressTotalSlots,
-            completedSlots: progressCompletedSlots,
-          });
+          setGenerationProgress(convertV4ProgressToUIFormat(progress));
         });
       } catch (e) {
         console.error('[restore] Failed to restore V4 generation:', e);
@@ -1270,7 +1481,9 @@ export default function WeeklyMenuPage() {
         ultimateMode: params.ultimateMode ?? false,
       });
       setShowV4Modal(false);
-      
+      // UX2-12: この生成の対象スロットを記録し、EmptySlot の「考え中」表示を対象外の日・スロットに出さない
+      setGenTargetSlotKeys(params.targetSlots);
+
       // 初期進捗を設定（totalSlotsを含める）
       const initialTotalSlots = result?.totalSlots || params.targetSlots.length;
       setGenerationProgress({
@@ -1339,151 +1552,8 @@ export default function WeeklyMenuPage() {
               v4PollingIntervalRef.current = null;
             }
           }
-          // Edge Functionからの progress: { currentStep, totalSteps, message, completedSlots, totalSlots }
-          // フロントエンドが期待: { phase, message, percentage }
-          // PROGRESS_PHASES の phase 名に合わせる
-          
-          const message = progress.message || '';
-          let phase = 'generating';
-          let percentage = 0;
-          
-          const currentStep = progress.currentStep || 1;
-          const totalSlots = progress.totalSlots || 1;
-          const completedSlots = progress.completedSlots || 0;
-          
-          // Step 1 (0-40%): 生成フェーズ
-          if (currentStep === 1 || currentStep === 0) {
-            if (message.includes('ユーザー情報') || message.includes('コンテキスト')) {
-              phase = 'user_context';
-              percentage = 3;
-            } else if (message.includes('参考レシピ') || message.includes('検索')) {
-              phase = 'search_references';
-              percentage = 8;
-            } else if (message.includes('献立をAIが作成') || message.includes('生成中')) {
-              phase = 'generating';
-              percentage = 15 + (completedSlots / totalSlots) * 25; // 15-40%
-            } else if (message.includes('生成完了')) {
-              phase = 'step1_complete';
-              percentage = 40;
-            } else {
-              phase = 'generating';
-              percentage = 12;
-            }
-          }
-          // Step 2 (40-75%): レビューフェーズ
-          else if (currentStep === 2) {
-            if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
-              phase = 'reviewing';
-              percentage = 47;
-            } else if (message.includes('改善中')) {
-              phase = 'fixing';
-              // (0/2) のような部分から進捗を抽出
-              const match = message.match(/(\d+)\/(\d+)/);
-              if (match) {
-                const current = parseInt(match[1]);
-                const total = parseInt(match[2]);
-                // 改善が始まったら review_done を通過済み
-                percentage = 58 + Math.round((current / Math.max(total, 1)) * 12); // 58-70%
-              } else {
-                percentage = 60;
-              }
-            } else if (message.includes('問題なし')) {
-              phase = 'no_issues';
-              percentage = 72;
-            } else if (message.includes('レビュー完了')) {
-              phase = 'step2_complete';
-              percentage = 75;
-            } else {
-              phase = 'reviewing';
-              percentage = 50;
-            }
-          }
-          // Step 3 (75-100% for 3-step normal mode / 38-48% for 6-step Ultimate Mode)
-          else if (currentStep === 3) {
-            const isUltimateMode = (progress.totalSteps || 3) === 6;
-            if (isUltimateMode) {
-              // Ultimate Mode Step 3: 栄養計算フェーズ (38-48%)
-              if (message.includes('完了')) {
-                phase = 'step3_complete';
-                percentage = 48;
-              } else {
-                phase = 'calculating';
-                percentage = 42;
-              }
-            } else {
-              // 通常モード Step 3: 保存フェーズ (75-100%)
-              if (message.includes('栄養計算') || message.includes('栄養')) {
-                phase = 'calculating';
-                percentage = 80;
-              } else if (message.includes('保存中')) {
-                phase = 'saving';
-                // (0/16) のような部分から進捗を抽出
-                const match = message.match(/(\d+)\/(\d+)/);
-                if (match) {
-                  const current = parseInt(match[1]);
-                  const total = parseInt(match[2]);
-                  percentage = 88 + Math.round((current / Math.max(total, 1)) * 10); // 88-98%
-                } else {
-                  percentage = 90;
-                }
-              } else if (message.includes('完了') || message.includes('保存しました')) {
-                phase = 'completed';
-                percentage = 100;
-              } else {
-                phase = 'saving';
-                percentage = 88;
-              }
-            }
-          }
-          // Step 4 (48-62%): Ultimate Mode 栄養バランス詳細分析
-          else if (currentStep === 4) {
-            phase = 'nutrition_analyzing';
-            const match = message.match(/(\d+)\/(\d+)/);
-            if (match) {
-              const current = parseInt(match[1]);
-              const total = parseInt(match[2]);
-              percentage = 50 + Math.round((current / Math.max(total, 1)) * 12);
-            } else {
-              percentage = 55;
-            }
-          }
-          // Step 5 (62-82%): Ultimate Mode 献立改善
-          else if (currentStep === 5) {
-            phase = 'improving';
-            const match = message.match(/(\d+)\/(\d+)/);
-            if (match) {
-              const current = parseInt(match[1]);
-              const total = parseInt(match[2]);
-              percentage = 65 + Math.round((current / Math.max(total, 1)) * 17);
-            } else {
-              percentage = 70;
-            }
-          }
-          // Step 6 (82-100%): Ultimate Mode 最終保存
-          else if (currentStep === 6) {
-            if (message.includes('完了') || message.includes('完成')) {
-              phase = 'completed';
-              percentage = 100;
-            } else {
-              phase = 'final_saving';
-              const match = message.match(/(\d+)\/(\d+)/);
-              if (match) {
-                const current = parseInt(match[1]);
-                const total = parseInt(match[2]);
-                percentage = 85 + Math.round((current / Math.max(total, 1)) * 13);
-              } else {
-                percentage = 90;
-              }
-            }
-          }
-          
-          setGenerationProgress({
-            phase,
-            message: progress.message || `${completedSlots}/${totalSlots} 件完了`,
-            percentage: Math.round(percentage),
-            totalSlots,
-            completedSlots,
-          });
+          // UX2-10: 変換ロジックはconvertV4ProgressToUIFormatに一本化（重複実装の解消）
+          setGenerationProgress(convertV4ProgressToUIFormat(progress));
         });
       }
     } catch (error) {
@@ -1879,6 +1949,8 @@ export default function WeeklyMenuPage() {
   const setNewFridgeName = useFormDraftStore((s) => s.setNewFridgeName);
   const setNewFridgeAmount = useFormDraftStore((s) => s.setNewFridgeAmount);
   const setNewFridgeExpiry = useFormDraftStore((s) => s.setNewFridgeExpiry);
+  // UX2-18: 冷蔵庫アイテムの編集モード切り替え
+  const setEditingFridgeItemId = useFormDraftStore((s) => s.setEditingFridgeItemId);
   const setNewShoppingName = useFormDraftStore((s) => s.setNewShoppingName);
   const setNewShoppingAmount = useFormDraftStore((s) => s.setNewShoppingAmount);
   const setNewShoppingCategory = useFormDraftStore((s) => s.setNewShoppingCategory);
@@ -2122,6 +2194,10 @@ export default function WeeklyMenuPage() {
   // V4生成のRealtimeが切断した場合のフォールバックポーリング用の参照
   const v4PollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // UX2-11: ユーザーが「中止する」を押した後に届く遅延イベント（失敗コールバック等）で
+  // 生の error_message がそのまま alert 表示されないようにするガード
+  const generationCancelledRef = useRef(false);
+
   // 週データキャッシュ（前後の週をプリフェッチして高速化）
   const weekDataCache = useRef<Map<string, { plan: WeekPlan | null; shoppingList: ShoppingListItem[]; fetchedAt: number }>>(new Map());
   
@@ -2133,212 +2209,71 @@ export default function WeeklyMenuPage() {
     }
   }, []);
 
-  // V4進捗をUI形式に変換するヘルパー関数
-  const convertV4ProgressToUIFormat = useCallback((progress: {
-    phase?: string;
-    message?: string;
-    percentage?: number;
-    currentStep?: number;
-    totalSteps?: number;
-    completedSlots?: number;
-    totalSlots?: number;
-  }) => {
-    const completedSlots = progress.completedSlots || 0;
-    const totalSlots = progress.totalSlots || 0;
-    
-    // 既にUI形式の場合はそのまま返す（totalSlotsを追加）
-    if (progress.phase && progress.percentage !== undefined) {
-      return {
-        phase: progress.phase,
-        message: progress.message || '',
-        percentage: progress.percentage,
-        totalSlots,
-        completedSlots,
-      };
-    }
-    
-    // V4形式の場合はUI形式に変換
-    if (progress.currentStep !== undefined && progress.totalSteps !== undefined) {
-      const message = progress.message || 'AIが献立を生成中...';
-      const currentStep = progress.currentStep;
-      const isUltimateMode = progress.totalSteps === 6;
+  // UX2-11: AI 生成の「中止する」ハンドラ。
+  // weekly_menu_requests.status に 'cancelled' 値は無い（CHECK 制約、migration 追加はスコープ外）ため
+  // 最低限「クライアント側の追跡を止めて明示する」を必須要件とし、可能なら status=failed（中止相当）も
+  // サーバーに反映する（ベストエフォート。失敗しても画面の状態は既に止めている）。
+  const handleCancelGeneration = useCallback(async () => {
+    generationCancelledRef.current = true;
 
-      let phase = 'generating';
-      let percentage = 0;
-
-      if (isUltimateMode) {
-        // 究極モード（6ステップ）
-        // Step 1 (0-25%): 生成フェーズ
-        if (currentStep === 1 || currentStep === 0) {
-          if (message.includes('ユーザー情報') || message.includes('取得中')) {
-            phase = 'user_context';
-            percentage = 3;
-          } else if (message.includes('参考') || message.includes('検索中')) {
-            phase = 'search_references';
-            percentage = 6;
-          } else if (message.includes('生成完了')) {
-            phase = 'step1_complete';
-            percentage = 25;
-          } else {
-            phase = 'generating';
-            percentage = 8 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 15);
-          }
+    // アクティブな requestId を localStorage から探す（v4 / weekly / single meal の順）
+    let cancelRequestId: string | null = null;
+    for (const key of ['v4MenuGenerating', 'weeklyMenuGenerating', 'singleMealGenerating']) {
+      const stored = localStorage.getItem(key);
+      if (!stored) continue;
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed?.requestId) {
+          cancelRequestId = parsed.requestId;
+          break;
         }
-        // Step 2 (25-38%): レビューフェーズ
-        else if (currentStep === 2) {
-          if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
-            phase = 'reviewing';
-            percentage = 28;
-          } else if (message.includes('改善中')) {
-            phase = 'fixing';
-            percentage = 32;
-          } else if (message.includes('レビュー完了')) {
-            phase = 'step2_complete';
-            percentage = 38;
-          } else {
-            phase = 'reviewing';
-            percentage = 30;
-          }
-        }
-        // Step 3 (38-48%): 栄養計算フェーズ（究極モードでは保存しない）
-        else if (currentStep === 3) {
-          if (message.includes('栄養計算') || message.includes('栄養')) {
-            phase = 'calculating';
-            percentage = 42;
-          } else if (message.includes('完了')) {
-            phase = 'step3_complete';
-            percentage = 48;
-          } else {
-            phase = 'calculating';
-            percentage = 45;
-          }
-        }
-        // Step 4 (48-62%): 栄養バランス詳細分析
-        else if (currentStep === 4) {
-          phase = 'nutrition_analyzing';
-          const match = message.match(/(\d+)\/(\d+)/);
-          if (match) {
-            const current = parseInt(match[1]);
-            const total = parseInt(match[2]);
-            percentage = 50 + Math.round((current / Math.max(total, 1)) * 12);
-          } else {
-            percentage = 55;
-          }
-        }
-        // Step 5 (62-82%): 献立改善
-        else if (currentStep === 5) {
-          phase = 'improving';
-          const match = message.match(/(\d+)\/(\d+)/);
-          if (match) {
-            const current = parseInt(match[1]);
-            const total = parseInt(match[2]);
-            percentage = 65 + Math.round((current / Math.max(total, 1)) * 17);
-          } else {
-            percentage = 70;
-          }
-        }
-        // Step 6 (82-100%): 最終保存
-        else if (currentStep === 6) {
-          if (message.includes('完了') || message.includes('完成')) {
-            phase = 'completed';
-            percentage = 100;
-          } else {
-            phase = 'final_saving';
-            const match = message.match(/(\d+)\/(\d+)/);
-            if (match) {
-              const current = parseInt(match[1]);
-              const total = parseInt(match[2]);
-              percentage = 85 + Math.round((current / Math.max(total, 1)) * 13);
-            } else {
-              percentage = 90;
-            }
-          }
-        }
-      } else {
-        // 通常モード（3ステップ）
-        // Step 1 (0-40%): 生成フェーズ
-        if (currentStep === 1 || currentStep === 0) {
-          if (message.includes('ユーザー情報') || message.includes('取得中')) {
-            phase = 'user_context';
-            percentage = 5;
-          } else if (message.includes('参考') || message.includes('検索中')) {
-            phase = 'search_references';
-            percentage = 10;
-          } else {
-            phase = 'generating';
-            percentage = 12 + Math.round((completedSlots / Math.max(totalSlots, 1)) * 28);
-          }
-        }
-        // Step 2 (40-75%): レビューフェーズ
-        else if (currentStep === 2) {
-          if (message.includes('バランス') || message.includes('チェック中') || message.includes('重複')) {
-            phase = 'reviewing';
-            percentage = 47;
-          } else if (message.includes('改善中')) {
-            phase = 'fixing';
-            const match = message.match(/(\d+)\/(\d+)/);
-            if (match) {
-              const current = parseInt(match[1]);
-              const total = parseInt(match[2]);
-              percentage = 58 + Math.round((current / Math.max(total, 1)) * 12);
-            } else {
-              percentage = 60;
-            }
-          } else if (message.includes('問題なし')) {
-            phase = 'no_issues';
-            percentage = 72;
-          } else if (message.includes('レビュー完了')) {
-            phase = 'step2_complete';
-            percentage = 75;
-          } else {
-            phase = 'reviewing';
-            percentage = 50;
-          }
-        }
-        // Step 3 (75-100%): 保存フェーズ
-        else if (currentStep === 3) {
-          if (message.includes('栄養計算') || message.includes('栄養')) {
-            phase = 'calculating';
-            percentage = 80;
-          } else if (message.includes('保存中')) {
-            phase = 'saving';
-            const match = message.match(/(\d+)\/(\d+)/);
-            if (match) {
-              const current = parseInt(match[1]);
-              const total = parseInt(match[2]);
-              percentage = 88 + Math.round((current / Math.max(total, 1)) * 10);
-            } else {
-              percentage = 90;
-            }
-          } else if (message.includes('完了') || message.includes('保存しました')) {
-            phase = 'completed';
-            percentage = 100;
-          } else {
-            phase = 'saving';
-            percentage = 88;
-          }
-        }
+      } catch {
+        // 破損データは無視
       }
-
-      return {
-        phase,
-        message,
-        percentage: Math.round(percentage),
-        totalSlots,
-        completedSlots,
-        isUltimateMode,
-      };
     }
-    
-    // フォールバック
-    return {
-      phase: 'generating',
-      message: progress.message || 'AIが献立を生成中...',
-      percentage: 0,
-      totalSlots,
-      completedSlots,
-    };
-  }, []);
+
+    // クライアント側の追跡を即座に停止（Realtime/ポーリング/フォールバックタイマー）
+    cleanupRealtime();
+    cleanupPolling();
+    if (v4PollingIntervalRef.current) {
+      clearInterval(v4PollingIntervalRef.current);
+      v4PollingIntervalRef.current = null;
+    }
+    if (improvePollingIntervalRef.current) {
+      clearInterval(improvePollingIntervalRef.current);
+      improvePollingIntervalRef.current = null;
+    }
+    if (improveTimeoutRef.current) {
+      clearTimeout(improveTimeoutRef.current);
+      improveTimeoutRef.current = null;
+    }
+
+    localStorage.removeItem('v4MenuGenerating');
+    localStorage.removeItem('weeklyMenuGenerating');
+    localStorage.removeItem('singleMealGenerating');
+
+    setIsGenerating(false);
+    setGenerationProgress(null);
+    setGeneratingMeal(null);
+
+    setSuccessMessage({
+      title: '生成の追跡を中止しました',
+      message: 'この画面での進捗表示を停止しました。バックグラウンドの処理が完了している場合、後で献立に反映されることがあります。',
+    });
+
+    // サーバー側にも中止を通知（ベストエフォート）
+    if (cancelRequestId) {
+      try {
+        await fetch('/api/ai/menu/weekly/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId: cancelRequestId }),
+        });
+      } catch (e) {
+        console.error('Failed to notify server of cancellation:', e);
+      }
+    }
+  }, [cleanupRealtime, cleanupPolling, setIsGenerating, setGenerationProgress, setGeneratingMeal, setSuccessMessage]);
 
   // ポーリングで進捗を取得
   const startPolling = useCallback((targetDate: string, requestId: string) => {
@@ -2415,7 +2350,7 @@ export default function WeeklyMenuPage() {
     poll();
     // 3秒ごとにポーリング
     pollingIntervalRef.current = setInterval(poll, 3000);
-  }, [cleanupPolling, cleanupRealtime, convertV4ProgressToUIFormat, updateCalendarMealDatesFromDailyMeals]);
+  }, [cleanupPolling, cleanupRealtime, updateCalendarMealDatesFromDailyMeals]);
 
   // Realtime で生成完了を監視（常にポーリングも並行実行）
   const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string) => {
@@ -2535,7 +2470,7 @@ export default function WeeklyMenuPage() {
         startPolling(targetDate, requestId);
       }
     }, 5000);
-  }, [cleanupRealtime, cleanupPolling, startPolling, convertV4ProgressToUIFormat, updateCalendarMealDatesFromDailyMeals]);
+  }, [cleanupRealtime, cleanupPolling, startPolling, updateCalendarMealDatesFromDailyMeals]);
 
   // ポーリングのクリーンアップ（アンマウント時）
   useEffect(() => {
@@ -2838,22 +2773,19 @@ export default function WeeklyMenuPage() {
   }, [activeModal, weeklySummaryTab, lastFeedbackDate]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
   
   // Week Navigation
+  // UX2-24: 週送りしても選択中の曜日位置（dayIndex）は維持する（従来は常に週頭にリセットされていた）
   const goToPreviousWeek = () => {
     const newStart = new Date(weekStart);
     newStart.setDate(weekStart.getDate() - 7);
-    setWeekStart(newStart);
-    setSelectedDayIndex(0);
-    setHasAutoExpanded(false); // 週が変わったらリセット
+    navigateWeekPrev(newStart);
     setExpandedMealId(null);
     setIsDayNutritionExpanded(false);
   };
-  
+
   const goToNextWeek = () => {
     const newStart = new Date(weekStart);
     newStart.setDate(weekStart.getDate() + 7);
-    setWeekStart(newStart);
-    setSelectedDayIndex(0);
-    setHasAutoExpanded(false); // 週が変わったらリセット
+    navigateWeekNext(newStart);
     setExpandedMealId(null);
     setIsDayNutritionExpanded(false);
   };
@@ -2977,30 +2909,59 @@ export default function WeeklyMenuPage() {
     pendingToggleWeeklyRef.current.delete(mealId);
   };
 
-  // Add pantry item
+  // UX2-18: 保存中フラグ（追加・編集・写真解析の共通ローディング表示に使用）
+  const [isSavingFridgeItem, setIsSavingFridgeItem] = useState(false);
+  const [isAnalyzingFridgePhoto, setIsAnalyzingFridgePhoto] = useState(false);
+
+  // Add or update pantry item (UX2-18: editingFridgeItemId があれば PATCH、無ければ POST)
   const addPantryItem = async () => {
-    const { newFridgeName, newFridgeAmount, newFridgeExpiry } = useFormDraftStore.getState();
+    const { newFridgeName, newFridgeAmount, newFridgeExpiry, editingFridgeItemId } = useFormDraftStore.getState();
     if (!newFridgeName) return;
+    setIsSavingFridgeItem(true);
     try {
-      const res = await fetch('/api/pantry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newFridgeName,
-          amount: newFridgeAmount,
-          category: "other",
-          expirationDate: newFridgeExpiry || null
-        })
-      });
-      if (res.ok) {
-        const { item } = await res.json();
-        usePantryStore.getState().addFridgeItem(item);
-        setNewFridgeName("");
-        setNewFridgeAmount("");
-        setNewFridgeExpiry("");
-        setActiveModal('fridge');
+      if (editingFridgeItemId) {
+        const res = await fetch(`/api/pantry/${editingFridgeItemId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newFridgeName,
+            amount: newFridgeAmount,
+            expirationDate: newFridgeExpiry || null,
+          })
+        });
+        if (res.ok) {
+          const { item } = await res.json();
+          usePantryStore.getState().updateFridgeItem(editingFridgeItemId, item);
+          useFormDraftStore.getState().resetFridgeForm();
+          setActiveModal('fridge');
+        } else {
+          alert('更新に失敗しました');
+        }
+      } else {
+        const res = await fetch('/api/pantry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newFridgeName,
+            amount: newFridgeAmount,
+            category: "other",
+            expirationDate: newFridgeExpiry || null
+          })
+        });
+        if (res.ok) {
+          const { item } = await res.json();
+          usePantryStore.getState().addFridgeItem(item);
+          useFormDraftStore.getState().resetFridgeForm();
+          setActiveModal('fridge');
+        } else {
+          alert('追加に失敗しました');
+        }
       }
-    } catch (e) { alert("追加に失敗しました"); }
+    } catch (e) {
+      alert(useFormDraftStore.getState().editingFridgeItemId ? '更新に失敗しました' : '追加に失敗しました');
+    } finally {
+      setIsSavingFridgeItem(false);
+    }
   };
 
   const deletePantryItem = async (id: string) => {
@@ -3008,6 +2969,66 @@ export default function WeeklyMenuPage() {
       await fetch(`/api/pantry/${id}`, { method: 'DELETE' });
       usePantryStore.getState().removeFridgeItem(id);
     } catch (e) { alert("削除に失敗しました"); }
+  };
+
+  // UX2-18: 一覧の食材タップで編集フォームを開く（/pantry ページとの機能非対称解消の一環）
+  const startEditFridgeItem = (item: { id: string; name: string; amount: string | null; expirationDate: string | null }) => {
+    setNewFridgeName(item.name);
+    setNewFridgeAmount(item.amount || '');
+    setNewFridgeExpiry(item.expirationDate || '');
+    setEditingFridgeItemId(item.id);
+    setActiveModal('addFridge');
+  };
+
+  // UX2-18: /pantry ページと同じ「写真で追加」を FridgeModal からも実行できるようにする
+  const handleFridgePhotoSelected = async (file: File) => {
+    setIsAnalyzingFridgePhoto(true);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), "")
+      );
+      const analyzeRes = await fetch('/api/ai/analyze-fridge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType: file.type || 'image/jpeg' }),
+      });
+      if (!analyzeRes.ok) {
+        const data = await analyzeRes.json().catch(() => ({}));
+        throw new Error(data.error || '解析に失敗しました');
+      }
+      const analyzed = await analyzeRes.json();
+      const ingredients = (analyzed.detailedIngredients || []).map((it: { name: string; quantity?: string; category?: string; freshness?: string; daysRemaining?: number }) => ({
+        name: it.name,
+        amount: it.quantity || null,
+        category: it.category || undefined,
+        daysRemaining: it.daysRemaining,
+        freshness: it.freshness,
+      }));
+      if (ingredients.length === 0) {
+        alert('食材を検出できませんでした');
+        return;
+      }
+      const saveRes = await fetch('/api/pantry/from-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ingredients, mode: 'append' }),
+      });
+      if (!saveRes.ok) {
+        const data = await saveRes.json().catch(() => ({}));
+        throw new Error(data.error || '保存に失敗しました');
+      }
+      // from-photo のレスポンスは snake_case のため、camelCase の一覧を取り直す
+      const listRes = await fetch('/api/pantry');
+      if (listRes.ok) {
+        const { items } = await listRes.json();
+        usePantryStore.getState().setFridgeItems(items || []);
+      }
+    } catch (e: any) {
+      alert(e?.message || '写真からの追加に失敗しました');
+    } finally {
+      setIsAnalyzingFridgePhoto(false);
+    }
   };
 
   // Add shopping item
@@ -3344,6 +3365,16 @@ export default function WeeklyMenuPage() {
           mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
         };
       }
+      // UX2-09: 「表示中の週」= カレンダーで現在開いている週（今日起点の1週間分とは独立）
+      case 'currentWeek': {
+        const currentWeekEnd = new Date(weekStart);
+        currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
+        return {
+          startDate: formatLocalDate(weekStart),
+          endDate: formatLocalDate(currentWeekEnd),
+          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
+        };
+      }
       default:
         return {
           startDate: todayStr,
@@ -3351,7 +3382,7 @@ export default function WeeklyMenuPage() {
           mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
         };
     }
-  }, [shoppingRange]);
+  }, [shoppingRange, weekStart]);
 
   // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {
@@ -3703,10 +3734,14 @@ export default function WeeklyMenuPage() {
       });
       
       if (res.ok) {
+        const created = await res.json().catch(() => null);
+        const newMealId: string | undefined = created?.meal?.id;
+
         // Refresh data
         const targetDate = formatLocalDate(weekStart);
         const endDate = addDaysStr(targetDate, 6);
         const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+        let createdMeal: PlannedMeal | undefined;
         if (refreshRes.ok) {
           const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
           if (dailyMeals && dailyMeals.length > 0) {
@@ -3716,13 +3751,25 @@ export default function WeeklyMenuPage() {
             updateCalendarMealDatesFromDailyMeals(dailyMeals);
             // キャッシュも更新
             weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+            if (newMealId) {
+              createdMeal = newPlan.days
+                .flatMap((d: { meals?: PlannedMeal[] }) => d.meals || [])
+                .find((m: PlannedMeal) => m.id === newMealId);
+            }
           }
         }
         setSelectedCatalogProduct(null);
         setCatalogQuery('');
         setCatalogResults([]);
         setCatalogSearchError('');
-        setActiveModal(null);
+
+        // UX2-32: 自炊追加は「自炊メニュー」のダミー名のまま確定してしまうため、
+        // 追加直後に手動編集（命名）ステップを開く
+        if (mode === 'cook' && createdMeal) {
+          openManualEdit(createdMeal);
+        } else {
+          setActiveModal(null);
+        }
       }
     } catch (e) {
       alert('追加に失敗しました');
@@ -4706,9 +4753,17 @@ export default function WeeklyMenuPage() {
   const EmptySlot = ({ mealKey, dayIndex }: { mealKey: MealType; dayIndex: number }) => {
     // 単一食事の追加生成中かどうか
     const isGeneratingThis = generatingMeal?.dayIndex === dayIndex && generatingMeal?.mealType === mealKey;
-    // 週間献立生成中で、この日が今日以降かどうか
+    // 週間献立生成中で、このスロットが生成対象かどうか
+    // UX2-12: 対象スロットが判明している場合はそれだけを対象にし、生成対象でない日・スロットまで
+    // 「AIが考え中」を出さないようにする。不明な場合（復元経路等）は従来どおり今日以降で表示。
     const dayDate = weekDates[dayIndex]?.dateStr;
-    const isWeeklyGeneratingThis = isGenerating && dayDate && dayDate >= todayStr;
+    const isWeeklyGeneratingThis = Boolean(
+      isGenerating && dayDate && (
+        genTargetSlotKeys
+          ? genTargetSlotKeys.has(`${dayDate}::${mealKey}`)
+          : dayDate >= todayStr
+      )
+    );
     
     if (isGeneratingThis || isWeeklyGeneratingThis) {
       return (
@@ -5788,16 +5843,20 @@ export default function WeeklyMenuPage() {
             {activeModal === 'fridge' && (
               <FridgeModal
                 onClose={() => setActiveModal(null)}
-                onOpenAddFridge={() => setActiveModal('addFridge')}
+                onOpenAddFridge={() => { useFormDraftStore.getState().resetFridgeForm(); setActiveModal('addFridge'); }}
                 onDeleteItem={deletePantryItem}
+                onEditItem={startEditFridgeItem}
+                onPhotoSelected={handleFridgePhotoSelected}
+                isAnalyzingPhoto={isAnalyzingFridgePhoto}
               />
             )}
 
-            {/* Add Fridge Item Modal */}
+            {/* Add/Edit Fridge Item Modal */}
             {activeModal === 'addFridge' && (
               <AddFridgeModal
                 onAdd={addPantryItem}
-                onClose={() => setActiveModal('fridge')}
+                onClose={() => { useFormDraftStore.getState().resetFridgeForm(); setActiveModal('fridge'); }}
+                submitting={isSavingFridgeItem}
               />
             )}
 
@@ -5831,6 +5890,7 @@ export default function WeeklyMenuPage() {
             {activeModal === 'shoppingRange' && (
               <ShoppingRangeModal
                 isTodayExpanded={isTodayExpanded}
+                currentWeekStart={weekStart}
                 onClose={() => { setActiveModal('shopping'); setShoppingRangeStep('range'); }}
                 onToggleTodayExpanded={setIsTodayExpanded}
                 onGenerate={async (cfg) => {
@@ -6265,6 +6325,8 @@ export default function WeeklyMenuPage() {
 
             const totalSlotsCount = targetSlots.length;
             setIsGenerating(true);
+            // UX2-12: 改善対象スロットのみを「考え中」表示の対象にする
+            setGenTargetSlotKeys(targetSlots);
             setGenerationProgress({
               phase: 'analyzing',
               message: 'AI栄養士の提案を反映中...',

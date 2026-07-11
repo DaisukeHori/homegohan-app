@@ -100,8 +100,17 @@ export function weekViewReducer(
   action: WeekViewAction,
 ): WeekViewState {
   switch (action.type) {
+    // UX2-24: 前週/次週ボタンでの週送りは、選択中の曜日位置（selectedDayIndex）を維持する
+    // （従来はここも WEEK_SET_START と同じ扱いで常に週頭にリセットされていた）
     case 'WEEK_NAVIGATE_NEXT':
     case 'WEEK_NAVIGATE_PREV':
+      return {
+        ...state,
+        weekStart: action.payload,
+        hasAutoExpanded: false,
+      };
+
+    // カレンダーからの日付選択・生成中リクエスト復元時の週遷移は、従来どおり週頭（0日目）にリセットする
     case 'WEEK_SET_START':
       return {
         ...state,

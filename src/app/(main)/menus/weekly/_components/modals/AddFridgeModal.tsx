@@ -4,6 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useFormDraftStore } from "../../_state";
+import { PantryItemForm, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 
 const colors = {
   bg: '#F7F6F3',
@@ -18,18 +19,34 @@ const colors = {
 interface AddFridgeModalProps {
   onAdd: () => void;
   onClose: () => void;
+  /** 保存中の場合は送信ボタンを disabled にする（UX2-18: 編集フォーム共通化に伴い追加） */
+  submitting?: boolean;
 }
 
 export function AddFridgeModal({
   onAdd,
   onClose,
+  submitting = false,
 }: AddFridgeModalProps) {
   const newFridgeName = useFormDraftStore((s) => s.newFridgeName);
   const newFridgeAmount = useFormDraftStore((s) => s.newFridgeAmount);
   const newFridgeExpiry = useFormDraftStore((s) => s.newFridgeExpiry);
+  const editingFridgeItemId = useFormDraftStore((s) => s.editingFridgeItemId);
   const setNewFridgeName = useFormDraftStore((s) => s.setNewFridgeName);
   const setNewFridgeAmount = useFormDraftStore((s) => s.setNewFridgeAmount);
   const setNewFridgeExpiry = useFormDraftStore((s) => s.setNewFridgeExpiry);
+
+  const values: PantryItemFormValues = {
+    name: newFridgeName,
+    amount: newFridgeAmount,
+    expirationDate: newFridgeExpiry,
+  };
+
+  const handleChange = (next: PantryItemFormValues) => {
+    if (next.name !== newFridgeName) setNewFridgeName(next.name);
+    if (next.amount !== newFridgeAmount) setNewFridgeAmount(next.amount);
+    if (next.expirationDate !== newFridgeExpiry) setNewFridgeExpiry(next.expirationDate);
+  };
 
   return (
     <motion.div
@@ -40,44 +57,21 @@ export function AddFridgeModal({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex justify-between items-center mb-4">
-        <span style={{ fontSize: 15, fontWeight: 600 }}>食材を追加</span>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>
+          {editingFridgeItemId ? '食材を編集' : '食材を追加'}
+        </span>
         <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
           <X size={14} color={colors.textLight} />
         </button>
       </div>
-      <div className="space-y-3">
-        <input
-          type="text"
-          value={newFridgeName}
-          onChange={(e) => setNewFridgeName(e.target.value)}
-          placeholder="食材名（例: 鶏もも肉）"
-          className="w-full p-3 rounded-xl text-[14px] outline-none"
-          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-        />
-        <input
-          type="text"
-          value={newFridgeAmount}
-          onChange={(e) => setNewFridgeAmount(e.target.value)}
-          placeholder="量（例: 300g）"
-          className="w-full p-3 rounded-xl text-[14px] outline-none"
-          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-        />
-        <input
-          type="date"
-          value={newFridgeExpiry}
-          onChange={(e) => setNewFridgeExpiry(e.target.value)}
-          className="w-full p-3 rounded-xl text-[14px] outline-none"
-          style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
-        />
-        <button
-          onClick={onAdd}
-          disabled={!newFridgeName}
-          className="w-full p-3 rounded-xl font-semibold text-[14px] disabled:opacity-50"
-          style={{ background: colors.accent, color: '#fff' }}
-        >
-          追加する
-        </button>
-      </div>
+      {/* UX2-18: 追加・編集フォームを共通コンポーネント化 */}
+      <PantryItemForm
+        values={values}
+        onChange={handleChange}
+        onSubmit={onAdd}
+        isEditing={Boolean(editingFridgeItemId)}
+        submitting={submitting}
+      />
     </motion.div>
   );
 }

@@ -27,6 +27,8 @@ interface FormDraftState {
   newFridgeName: string;
   newFridgeAmount: string;
   newFridgeExpiry: string;
+  // UX2-18: 編集対象アイテムID（null なら新規追加、非 null なら編集モード）
+  editingFridgeItemId: string | null;
 
   // 買い物リスト追加フォーム
   newShoppingName: string;
@@ -66,6 +68,7 @@ interface FormDraftActions {
   setNewFridgeName: (name: string) => void;
   setNewFridgeAmount: (amount: string) => void;
   setNewFridgeExpiry: (expiry: string) => void;
+  setEditingFridgeItemId: (id: string | null) => void;
   setNewShoppingName: (name: string) => void;
   setNewShoppingAmount: (amount: string) => void;
   setNewShoppingCategory: (category: string) => void;
@@ -101,6 +104,7 @@ const initialState: FormDraftState = {
   newFridgeName: '',
   newFridgeAmount: '',
   newFridgeExpiry: '',
+  editingFridgeItemId: null,
   newShoppingName: '',
   newShoppingAmount: '',
   // #1031 round-2: 旧 page.tsx local useState の既定値 "食材" と一致させる。
@@ -134,6 +138,7 @@ export const useFormDraftStore = create<FormDraftState & FormDraftActions>()((se
   setNewFridgeName: (name) => set({ newFridgeName: name }),
   setNewFridgeAmount: (amount) => set({ newFridgeAmount: amount }),
   setNewFridgeExpiry: (expiry) => set({ newFridgeExpiry: expiry }),
+  setEditingFridgeItemId: (id) => set({ editingFridgeItemId: id }),
   setNewShoppingName: (name) => set({ newShoppingName: name }),
   setNewShoppingAmount: (amount) => set({ newShoppingAmount: amount }),
   setNewShoppingCategory: (category) => set({ newShoppingCategory: category }),
@@ -169,6 +174,7 @@ export const useFormDraftStore = create<FormDraftState & FormDraftActions>()((se
       newFridgeName: initialState.newFridgeName,
       newFridgeAmount: initialState.newFridgeAmount,
       newFridgeExpiry: initialState.newFridgeExpiry,
+      editingFridgeItemId: initialState.editingFridgeItemId,
     }),
 
   resetShoppingForm: () =>
