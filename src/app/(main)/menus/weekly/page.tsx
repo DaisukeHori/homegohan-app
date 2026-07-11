@@ -2893,18 +2893,26 @@ export default function WeeklyMenuPage() {
   
   const handleUpdateMeal = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
     if (!currentPlan || !mealId) return;
+    // 楽観的UI更新（失敗時にロールバックするため元の状態を保持）
+    const previousPlan = currentPlan;
     const updatedDays = currentPlan.days?.map(day => {
       if (day.id !== dayId) return day;
       return { ...day, meals: day.meals?.map(meal => meal.id === mealId ? { ...meal, ...updates } : meal) };
     });
     setCurrentPlan({ ...currentPlan, days: updatedDays });
     try {
-      await fetch(`/api/meal-plans/meals/${mealId}`, {
+      const res = await fetch(`/api/meal-plans/meals/${mealId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
-    } catch (e) { console.error('Failed to update meal:', e); }
+      if (!res.ok) throw new Error('Update failed');
+    } catch (e) {
+      console.error('Failed to update meal:', e);
+      // 失敗したら元に戻す
+      setCurrentPlan(previousPlan);
+      alert('更新に失敗しました');
+    }
   };
   
   // #322: meal toggle debounce timer (メモリリーク防止のため cleanup は下の useEffect で実施)
@@ -3007,10 +3015,13 @@ export default function WeeklyMenuPage() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ isChecked: !currentChecked })
+    }).then(res => {
+      if (!res.ok) throw new Error('Update failed');
     }).catch(e => {
       console.error('Failed to save check state:', e);
       // エラー時はロールバック
       setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i));
+      alert('更新に失敗しました');
     });
   };
 
@@ -3399,6 +3410,8 @@ export default function WeeklyMenuPage() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ selectedVariantIndex: nextIndex })
+    }).then(res => {
+      if (!res.ok) throw new Error('Update failed');
     }).catch(e => {
       console.error('Failed to save variant change:', e);
       // エラー時はロールバック
@@ -3407,6 +3420,7 @@ export default function WeeklyMenuPage() {
           ? { ...i, selectedVariantIndex: item.selectedVariantIndex, quantity: item.quantity }
           : i
       ));
+      alert('更新に失敗しました');
     });
   };
 
@@ -3826,9 +3840,24 @@ export default function WeeklyMenuPage() {
     if (!editingMeal || !currentPlan) return;
 
     const { editMealName, editMealMode } = useFormDraftStore.getState();
+    const editingMealId = editingMeal.id;
+
+    // 楽観的UI更新（失敗時にロールバックするため元の状態を保持）
+    const previousPlan = currentPlan;
+    const updatedDays = currentPlan.days?.map(day => ({
+      ...day,
+      meals: day.meals?.map(m =>
+        m.id === editingMealId
+          ? { ...m, dishName: editMealName, mode: editMealMode }
+          : m
+      )
+    }));
+    setCurrentPlan({ ...currentPlan, days: updatedDays });
+    setActiveModal(null);
+    setEditingMeal(null);
 
     try {
-      await fetch(`/api/meal-plans/meals/${editingMeal.id}`, {
+      const res = await fetch(`/api/meal-plans/meals/${editingMealId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3836,20 +3865,10 @@ export default function WeeklyMenuPage() {
           mode: editMealMode
         })
       });
-
-      // Update local state
-      const updatedDays = currentPlan.days?.map(day => ({
-        ...day,
-        meals: day.meals?.map(m =>
-          m.id === editingMeal.id
-            ? { ...m, dishName: editMealName, mode: editMealMode }
-            : m
-        )
-      }));
-      setCurrentPlan({ ...currentPlan, days: updatedDays });
-      setActiveModal(null);
-      setEditingMeal(null);
+      if (!res.ok) throw new Error('Update failed');
     } catch (e) {
+      // 失敗したら元に戻す
+      setCurrentPlan(previousPlan);
       alert('更新に失敗しました');
     }
   };
