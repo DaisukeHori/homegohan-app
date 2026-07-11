@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { validatePassword, PASSWORD_MIN_LENGTH } from "@/lib/auth/validate-password";
 import { Lock, CheckCircle2, AlertCircle, Eye, EyeOff } from "lucide-react";
 
 export default function ResetPasswordPage() {
@@ -35,8 +36,11 @@ export default function ResetPasswordPage() {
       return;
     }
 
-    if (password.length < 6) {
-      setError("パスワードは6文字以上で設定してください");
+    // #1057 (UX1-05): signup と要件を統一(以前は6文字のみでOKだったため
+    // `123456` のような弱いパスワードでリセットが成立してしまっていた)
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
       return;
     }
 
@@ -154,7 +158,7 @@ export default function ResetPasswordPage() {
                   新しいパスワードを設定
                 </h1>
                 <p className="text-sm text-gray-500">
-                  6文字以上の新しいパスワードを入力してください。
+                  {PASSWORD_MIN_LENGTH}文字以上、英字と数字を含む新しいパスワードを入力してください。
                 </p>
               </div>
 
@@ -170,7 +174,7 @@ export default function ResetPasswordPage() {
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
                       required
-                      minLength={6}
+                      minLength={PASSWORD_MIN_LENGTH}
                       className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-200 focus:border-[#E07A5F] focus:ring-2 focus:ring-[#E07A5F]/20 outline-none transition-all"
                     />
                     <button
@@ -193,7 +197,7 @@ export default function ResetPasswordPage() {
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
                     required
-                    minLength={6}
+                    minLength={PASSWORD_MIN_LENGTH}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#E07A5F] focus:ring-2 focus:ring-[#E07A5F]/20 outline-none transition-all"
                   />
                 </div>

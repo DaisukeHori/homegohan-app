@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/auth/PasswordInput";
 import { createClient } from "@/lib/supabase/client";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { useState, useEffect, Suspense } from "react";
@@ -11,8 +12,24 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
 
 // #287: rate limit 検知用の定数
-const RATE_LIMIT_KEY = 'auth_last_fail_ts';
+const RATE_LIMIT_KEY_PREFIX = 'auth_last_fail_ts';
 const RATE_LIMIT_WINDOW_MS = 30_000; // 30秒
+
+// #1057 (UX1-16): 家族共有端末で他ユーザーのログイン失敗に巻き込まれないよう、
+// メールアドレス単位でクールダウンを分離する
+function rateLimitKeyFor(email: string): string {
+  return `${RATE_LIMIT_KEY_PREFIX}:${email}`;
+}
+
+// #1057 (round-2 Suggestion fix): login→signup のクロスリンクは redirect のみ
+// 伝播し email を落としていたため、切替時に事前入力が失われていた。両方伝播する。
+function buildSignupHref(redirect: string | null, email: string): string {
+  const params = new URLSearchParams();
+  if (redirect) params.set('redirect', redirect);
+  if (email) params.set('email', email);
+  const query = params.toString();
+  return query ? `/signup?${query}` : '/signup';
+}
 
 function LoginContent() {
   const [isLoading, setIsLoading] = useState(false);
@@ -20,6 +37,12 @@ function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
+
+  // #1057 (UX1-01): invite/[token]/page.tsx が付与する `redirect` も `next` と同様に扱う
+  const rawRedirectParam = searchParams.get('next') ?? searchParams.get('redirect');
+  // #1057 (round-2 Warning fix): invite/[token]/page.tsx は `/login?redirect=...&email=...`
+  // で email も渡すが、signup 側のみ事前入力していた不整合を解消する
+  const prefilledEmail = searchParams.get('email') ?? '';
 
   // URLからエラーパラメータを読み取る
   useEffect(() => {
@@ -37,10 +60,14 @@ function LoginContent() {
     try {
       setIsLoading(true);
       setError(null);
+      // #1057 (UX1-01 round-2): メール/パスワードログインと同様、招待コンテキスト
+      // (next/redirect) を Google OAuth の callback にも伝播する
+      const safeNext = getSafeRedirectPath(rawRedirectParam);
+      const callbackUrl = `${window.location.origin}/auth/callback${safeNext ? `?next=${encodeURIComponent(safeNext)}` : ''}`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?next=/home`,
+          redirectTo: callbackUrl,
         },
       });
       if (error) throw error;
@@ -56,8 +83,15 @@ function LoginContent() {
     e.preventDefault();
     setError(null);
 
+    const formData = new FormData(e.currentTarget);
+    // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
+    const email = (formData.get('email') as string).trim().toLowerCase();
+    const password = formData.get('password') as string;
+    const rateLimitKey = rateLimitKeyFor(email);
+
     // #287: client-side rate limit チェック（30秒以内の再試行を弾く）
-    const lastFailTs = parseInt(localStorage.getItem(RATE_LIMIT_KEY) || '0', 10);
+    // #1057 (UX1-16): キーをメールアドレス単位に分割済み
+    const lastFailTs = parseInt(localStorage.getItem(rateLimitKey) || '0', 10);
     const now = Date.now();
     if (lastFailTs && now - lastFailTs < RATE_LIMIT_WINDOW_MS) {
       const remaining = Math.ceil((RATE_LIMIT_WINDOW_MS - (now - lastFailTs)) / 1000);
@@ -66,10 +100,6 @@ function LoginContent() {
     }
 
     setIsLoading(true);
-    const formData = new FormData(e.currentTarget);
-    // #288: 大文字メールを正規化して既存アカウントとの混同を防ぐ
-    const email = (formData.get('email') as string).trim().toLowerCase();
-    const password = formData.get('password') as string;
 
     try {
       const { error } = await supabase.auth.signInWithPassword({
@@ -95,7 +125,7 @@ function LoginContent() {
 
         if (isRateLimit || isInvalidCredentials) {
           // #287: rate limit または認証失敗 → 最終失敗時刻を記録
-          localStorage.setItem(RATE_LIMIT_KEY, String(Date.now()));
+          localStorage.setItem(rateLimitKey, String(Date.now()));
           if (isRateLimit) {
             setError('しばらくしてから再度お試しください。');
           } else {
@@ -110,7 +140,7 @@ function LoginContent() {
       }
 
       // ログイン成功時は失敗タイムスタンプをクリア
-      localStorage.removeItem(RATE_LIMIT_KEY);
+      localStorage.removeItem(rateLimitKey);
 
       // ユーザーロールとオンボーディング状態を確認してリダイレクト先を決定
       const { data: { user } } = await supabase.auth.getUser();
@@ -125,7 +155,7 @@ function LoginContent() {
 
         // セッション切れリダイレクト元の URL があれば優先して戻る
         // #1043: open redirect 防止のため共有ヘルパーで検証(同一オリジンの相対パスのみ許可)
-        const safeNext = getSafeRedirectPath(searchParams.get('next'));
+        const safeNext = getSafeRedirectPath(rawRedirectParam);
 
         if (roles.includes('admin') || roles.includes('super_admin')) {
           router.push('/admin');
@@ -211,6 +241,7 @@ function LoginContent() {
               name="email"
               type="email"
               placeholder="name@example.com"
+              defaultValue={prefilledEmail}
               required
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
@@ -233,10 +264,9 @@ function LoginContent() {
                 忘れた場合
               </Link>
             </div>
-            <Input
+            <PasswordInput
               id="password"
               name="password"
-              type="password"
               required
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
@@ -250,7 +280,7 @@ function LoginContent() {
               className="py-6 rounded-xl border-gray-200 focus:ring-2 focus:ring-[#FF8A65]/20 focus:border-[#FF8A65] transition-all"
             />
           </div>
-          <Button 
+          <Button
             type="submit"
             disabled={isLoading}
             className="w-full py-6 rounded-full bg-[#333] hover:bg-black text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300"
@@ -261,7 +291,10 @@ function LoginContent() {
 
         <p className="text-center text-sm text-gray-500">
           アカウントをお持ちでないですか？{" "}
-          <Link href="/signup" className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4">
+          <Link
+            href={buildSignupHref(rawRedirectParam, prefilledEmail)}
+            className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4"
+          >
             無料で登録
           </Link>
         </p>

@@ -107,7 +107,8 @@ export default function HandsonTourMenuPage() {
       supabase
         .from('user_profiles')
         .select('nickname, allergies, dislikes, cooking_experience')
-        .eq('user_id', user.id)
+        // #1057 (UX1-02 round-2): user_profiles の PK は `id` (`user_id` 列は存在しない)
+        .eq('id', user.id)
         .single()
         .then(({ data }) => {
           if (data) {
@@ -138,6 +139,31 @@ export default function HandsonTourMenuPage() {
 
   const advanceSubStep = (next: SubStepOfStep2) => setSubStep(next);
 
+  // #1057 (UX1-03): ツアー中盤に途中離脱手段が無く完走を強制していたため、
+  // Step0(page.tsx)と同じパターンでスキップを追加する
+  const handleSkip = async () => {
+    if (userId) {
+      fireAnalytics('handson_tour_skipped', {
+        user_id: userId,
+        timestamp: new Date().toISOString(),
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 2,
+        reason: 'user_action',
+      });
+    }
+    try {
+      await fetch('/api/handson-tour/skip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: 2, reason: 'user_action' }),
+      });
+    } catch {
+      // ネットワークエラー時もローカルでスキップ
+    }
+    router.push('/home');
+  };
+
   const handleSandboxComplete = async () => {
     setSubStep('2.8');
     setIsSaving(true);
@@ -154,7 +180,7 @@ export default function HandsonTourMenuPage() {
       });
     }
     try {
-      await fetch('/api/menu-plans/add?source=handson_tour', {
+      const res = await fetch('/api/menu-plans/add?source=handson_tour', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -163,8 +189,36 @@ export default function HandsonTourMenuPage() {
           source: 'handson_tour',
         }),
       });
+      // #1057 (UX1-09): レスポンス失敗を確認せず「成功したふり」で次へ進んでいたため、
+      // API 障害時に何が起きたか観測できなかった。体験モードはブロックせず次へ進めるが、
+      // 失敗は必ず記録する。
+      if (!res.ok && userId) {
+        fireAnalytics('handson_tour_step_error', {
+          user_id: userId,
+          timestamp: new Date().toISOString(),
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 2,
+          sub_step: '2.7',
+          error_code: 'sandbox_save_failed',
+          error_message: 'POST /api/menu-plans/add failed',
+          http_status: res.status,
+        });
+      }
     } catch {
-      // ネットワークエラーはスキップして次へ
+      // ネットワークエラーはスキップして次へ(体験モードのため保存必須ではない)
+      if (userId) {
+        fireAnalytics('handson_tour_step_error', {
+          user_id: userId,
+          timestamp: new Date().toISOString(),
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 2,
+          sub_step: '2.7',
+          error_code: 'sandbox_save_network_error',
+          error_message: 'POST /api/menu-plans/add threw',
+        });
+      }
     } finally {
       setIsSaving(false);
       router.push(HANDSON_TOUR_ROUTES.step3);
@@ -411,7 +465,8 @@ export default function HandsonTourMenuPage() {
           autoAdvanceMs,
           onAutoAdvance,
           primaryAction,
-          showSkip: false,
+          showSkip: true,
+          onSkip: handleSkip,
           accessibilityLabel: HANDSON_TOUR_I18N_JA.tour.step2.intro_title,
         }}
         childProps={{

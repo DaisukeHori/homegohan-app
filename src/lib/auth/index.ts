@@ -17,3 +17,7 @@ export {
 export { AuthError, ForbiddenError, PermError, ImpersonationError } from './errors';
 
 export type { ImpersonationResult } from './types';
+
+export { getSafeRedirectPath, getSafeRedirectPathOrDefault } from './safe-redirect';
+
+export { validatePassword, PASSWORD_MIN_LENGTH, PASSWORD_HINT_TEXT } from './validate-password';

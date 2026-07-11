@@ -230,7 +230,13 @@ async function setupUserSession(
         console.log(`[global-setup] UI ログインにフォールバック (${email}, attempt ${attempt})`);
         await page.goto(`${baseURL}/login`);
         await page.waitForLoadState("networkidle");
-        await page.evaluate(() => { localStorage.removeItem("auth_last_fail_ts"); });
+        // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+        // 変わったため prefix 一致で全て削除する
+        await page.evaluate(() => {
+          Object.keys(localStorage)
+            .filter((k) => k.startsWith("auth_last_fail_ts"))
+            .forEach((k) => localStorage.removeItem(k));
+        });
 
         await page.waitForFunction(
           () => {

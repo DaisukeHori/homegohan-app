@@ -135,6 +135,31 @@ export default function HandsonTourPhotoPage() {
     setSubStep(next);
   };
 
+  // #1057 (UX1-03): ツアー中盤に途中離脱手段が無く完走を強制していたため、
+  // Step0(page.tsx)と同じパターンでスキップを追加する
+  const handleSkip = async () => {
+    if (userId) {
+      fireAnalytics('handson_tour_skipped', {
+        user_id: userId,
+        timestamp: new Date().toISOString(),
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 1,
+        reason: 'user_action',
+      });
+    }
+    try {
+      await fetch('/api/handson-tour/skip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: 1, reason: 'user_action' }),
+      });
+    } catch {
+      // ネットワークエラー時もローカルでスキップ
+    }
+    router.push('/home');
+  };
+
   const handleSandboxComplete = async () => {
     setSubStep('1.7');
     setIsSaving(true);
@@ -155,7 +180,7 @@ export default function HandsonTourPhotoPage() {
       }
     }
     try {
-      await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
+      const res = await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -164,8 +189,36 @@ export default function HandsonTourPhotoPage() {
           source: 'handson_tour',
         }),
       });
+      // #1057 (UX1-09): レスポンス失敗を確認せず「成功したふり」で次へ進んでいたため、
+      // API 障害時に何が起きたか観測できなかった。体験モードはブロックせず次へ進めるが、
+      // 失敗は必ず記録する。
+      if (!res.ok && userId) {
+        fireAnalytics('handson_tour_step_error', {
+          user_id: userId,
+          timestamp: new Date().toISOString(),
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 1,
+          sub_step: '1.6',
+          error_code: 'sandbox_save_failed',
+          error_message: 'POST /api/meal-plans/add-from-photo failed',
+          http_status: res.status,
+        });
+      }
     } catch {
-      // ネットワークエラーはスキップして次へ
+      // ネットワークエラーはスキップして次へ(体験モードのため保存必須ではない)
+      if (userId) {
+        fireAnalytics('handson_tour_step_error', {
+          user_id: userId,
+          timestamp: new Date().toISOString(),
+          platform: 'web' as const,
+          app_version: '1.0.0',
+          step: 1,
+          sub_step: '1.6',
+          error_code: 'sandbox_save_network_error',
+          error_message: 'POST /api/meal-plans/add-from-photo threw',
+        });
+      }
     } finally {
       setIsSaving(false);
       router.push(HANDSON_TOUR_ROUTES.step2);
@@ -413,7 +466,8 @@ export default function HandsonTourPhotoPage() {
           autoAdvanceMs,
           onAutoAdvance,
           primaryAction,
-          showSkip: false,
+          showSkip: true,
+          onSkip: handleSkip,
           accessibilityLabel: i18n.a11y_title,
         }}
         childProps={{

@@ -4,48 +4,45 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/auth/PasswordInput";
 import { createClient } from "@/lib/supabase/client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { validatePassword, PASSWORD_HINT_TEXT } from "@/lib/auth/validate-password";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-// パスワード強度バリデーション
-// 要件: 8文字以上 / 英字を含む / 数字を含む
-function validatePassword(password: string): string | null {
-  if (!password) {
-    return 'パスワードを入力してください';
-  }
-  if (password.length < 8) {
-    return 'パスワードは8文字以上で入力してください';
-  }
-  if (!/[A-Za-z]/.test(password)) {
-    return 'パスワードには英字を含めてください';
-  }
-  if (!/[0-9]/.test(password)) {
-    return 'パスワードには数字を含めてください';
-  }
-  return null;
-}
-
-export default function SignupPage() {
+function SignupContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
+
+  // #1057 (UX1-01): 招待経由サインアップ (invite/[token]/page.tsx が
+  // `/signup?redirect=/invite/xxx&email=...` で遷移させてくる) のコンテキストを保持する。
+  // open redirect 対策は login と同じ共有ヘルパーを再利用。
+  const safeRedirect = getSafeRedirectPath(searchParams.get('redirect'));
+  const prefilledEmail = searchParams.get('email') ?? '';
+
+  const buildCallbackUrl = () =>
+    `${window.location.origin}/auth/callback${safeRedirect ? `?next=${encodeURIComponent(safeRedirect)}` : ''}`;
 
   const handleGoogleSignup = async () => {
     try {
       setIsLoading(true);
+      setFormError(null);
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: buildCallbackUrl(),
         },
       });
       if (error) throw error;
     } catch (error) {
       console.error('Error signing up with Google:', error);
-      alert('Google登録に失敗しました。');
+      // #1057 (UX1-07): native alert() → 既存の赤インラインエラーに統一
+      setFormError('Google登録に失敗しました。しばらくしてからお試しください。');
     } finally {
       setIsLoading(false);
     }
@@ -60,6 +57,7 @@ export default function SignupPage() {
     const password = formData.get('password') as string;
 
     // クライアント側でパスワード強度をチェック (Bug-33)
+    // #1057 (UX1-05): reset-password と共通のバリデーションヘルパーを使用
     const pwdError = validatePassword(password);
     if (pwdError) {
       setPasswordError(pwdError);
@@ -74,7 +72,7 @@ export default function SignupPage() {
         email,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: buildCallbackUrl(),
         },
       });
 
@@ -113,10 +111,13 @@ export default function SignupPage() {
           return;
         }
         // メール確認が必要な場合
-        router.push(`/auth/verify?email=${encodeURIComponent(email)}`);
+        // #1057 (UX1-01): 招待コンテキスト (redirect) を verify 画面にも引き継ぐ
+        const verifyParams = new URLSearchParams({ email });
+        if (safeRedirect) verifyParams.set('redirect', safeRedirect);
+        router.push(`/auth/verify?${verifyParams.toString()}`);
       } else if (data.session) {
         // 自動ログインされた場合（メール確認が不要な設定の場合）
-        router.push('/onboarding');
+        router.push(safeRedirect ?? '/onboarding');
       }
     } catch (error: any) {
       console.error('Signup error:', error);
@@ -182,6 +183,8 @@ export default function SignupPage() {
               type="email"
               placeholder="name@example.com"
               required
+              // #1057 (UX1-01): 招待メールから来た場合はメールアドレスを事前入力
+              defaultValue={prefilledEmail}
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
                 if (target.validity.valueMissing) {
@@ -198,10 +201,9 @@ export default function SignupPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">パスワード</Label>
-            <Input
+            <PasswordInput
               id="password"
               name="password"
-              type="password"
               required
               aria-invalid={passwordError ? 'true' : 'false'}
               aria-describedby={passwordError ? 'password-error' : 'password-hint'}
@@ -229,7 +231,7 @@ export default function SignupPage() {
               </p>
             ) : (
               <p id="password-hint" className="text-xs text-gray-400">
-                8文字以上、英字と数字を含めてください
+                {PASSWORD_HINT_TEXT}
               </p>
             )}
           </div>
@@ -249,7 +251,10 @@ export default function SignupPage() {
 
         <p className="text-center text-sm text-gray-500">
           すでにアカウントをお持ちですか？{" "}
-          <Link href="/login" className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4">
+          <Link
+            href={safeRedirect ? `/login?redirect=${encodeURIComponent(safeRedirect)}` : '/login'}
+            className="font-bold text-[#FF8A65] hover:text-[#FF7043] hover:underline underline-offset-4"
+          >
             ログイン
           </Link>
         </p>
@@ -259,5 +264,13 @@ export default function SignupPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-8">読み込み中...</div>}>
+      <SignupContent />
+    </Suspense>
   );
 }

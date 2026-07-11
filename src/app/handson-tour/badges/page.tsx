@@ -89,7 +89,8 @@ export default function HandsonTourBadgesPage() {
       supabase
         .from('user_profiles')
         .select('nickname')
-        .eq('user_id', user.id)
+        // #1057 (UX1-02 round-2): user_profiles の PK は `id` (`user_id` 列は存在しない)
+        .eq('id', user.id)
         .single()
         .then(({ data }) => {
           if (data?.nickname) setNickname(safeNickname(data.nickname));
@@ -122,6 +123,31 @@ export default function HandsonTourBadgesPage() {
   }, [userId]);
 
   const advanceSubStep = (next: SubStepOfStep3) => setSubStep(next);
+
+  // #1057 (UX1-03): ツアー中盤に途中離脱手段が無く完走を強制していたため、
+  // Step0(page.tsx)と同じパターンでスキップを追加する
+  const handleSkip = async () => {
+    if (userId) {
+      fireAnalytics('handson_tour_skipped', {
+        user_id: userId,
+        timestamp: new Date().toISOString(),
+        platform: 'web' as const,
+        app_version: '1.0.0',
+        step: 3,
+        reason: 'user_action',
+      });
+    }
+    try {
+      await fetch('/api/handson-tour/skip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: 3, reason: 'user_action' }),
+      });
+    } catch {
+      // ネットワークエラー時もローカルでスキップ
+    }
+    router.push('/home');
+  };
 
   const bubble = buildBubble(subStep, nickname);
   const i18n = HANDSON_TOUR_I18N_JA.tour.step3;
@@ -214,7 +240,8 @@ export default function HandsonTourBadgesPage() {
           autoAdvanceMs={autoAdvanceMs}
           onAutoAdvance={onAutoAdvance}
           primaryAction={primaryAction}
-          showSkip={false}
+          showSkip={true}
+          onSkip={handleSkip}
           accessibilityLabel={personalize(HANDSON_TOUR_I18N_JA.tour.step3.a11y_title, { nickname })}
         />
       )}

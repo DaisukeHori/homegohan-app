@@ -90,4 +90,40 @@ describe("resolveOnboardingRedirect", () => {
       }),
     ).toBe("/admin");
   });
+
+  // #1057 (round-2 Critical fix): 認証済み・オンボーディング未完了ユーザーが
+  // 招待リンク (/invite/[token]) を踏んでも強制オンボーディングリダイレクトで
+  // 招待コンテキストを失わないことを保証する
+  it("#1057: allows not_started users to reach /invite/[token] without forcing onboarding", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/invite/abc123",
+        roles: [],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("#1057: allows in-progress users to reach /invite/[token] without forcing resume", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/invite/abc123",
+        roles: [],
+        onboardingStartedAt: "2026-03-01T00:00:00Z",
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("#1057: allows not_started users to reach bare /invite without forcing onboarding", () => {
+    expect(
+      resolveOnboardingRedirect({
+        pathname: "/invite",
+        roles: [],
+        onboardingStartedAt: null,
+        onboardingCompletedAt: null,
+      }),
+    ).toBeNull();
+  });
 });
