@@ -37,7 +37,7 @@ afterAll(async () => {
   // Unfreeze target user before cleanup
   await supabaseAdmin
     .from('user_profiles')
-    .update({ frozen_at: null, frozen_reason: null, frozen_by: null })
+    .update({ frozen_at: null, frozen_reason: null, frozen_by: null, unban_at: null })
     .eq('id', targetUser.userId);
 
   await Promise.all([

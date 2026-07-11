@@ -60,11 +60,32 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ data: result });
   } catch (err) {
     if (err instanceof ImpersonationError) {
+      // #1030 (round-5): 対象ユーザー不在は 404、それ以外 (権限/凍結) は 403。
+      const status = err.code === 'AUTH_IMPERSONATION_TARGET_NOT_FOUND' ? 404 : 403;
       return NextResponse.json(
         { error: { code: err.code, message: err.message } },
+        { status },
+      );
+    }
+    // #1030 (round-5): impersonate() 内で再度 getAuthUser() を呼んでいるため、
+    // requireRole 通過後にセッションが失効した場合など AuthError/ForbiddenError が
+    // ここで throw される可能性がある。素通しで 500 にせず防御的にハンドリングする。
+    if (err instanceof AuthError) {
+      return NextResponse.json(
+        { error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } },
+        { status: 401 },
+      );
+    }
+    if (err instanceof ForbiddenError) {
+      return NextResponse.json(
+        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
         { status: 403 },
       );
     }
-    throw err;
+    console.error('[api/admin/users/[id]/impersonate] POST error:', err);
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'impersonate 処理に失敗しました' } },
+      { status: 500 },
+    );
   }
 }

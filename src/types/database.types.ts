@@ -6515,6 +6515,7 @@ export type Database = {
           temperature_preference: string | null
           texture_preferences: string[] | null
           travel_frequency: string | null
+          unban_at: string | null
           updated_at: string | null
           wake_time: string | null
           water_cutting: boolean | null
@@ -6648,6 +6649,7 @@ export type Database = {
           temperature_preference?: string | null
           texture_preferences?: string[] | null
           travel_frequency?: string | null
+          unban_at?: string | null
           updated_at?: string | null
           wake_time?: string | null
           water_cutting?: boolean | null
@@ -6781,6 +6783,7 @@ export type Database = {
           temperature_preference?: string | null
           texture_preferences?: string[] | null
           travel_frequency?: string | null
+          unban_at?: string | null
           updated_at?: string | null
           wake_time?: string | null
           water_cutting?: boolean | null

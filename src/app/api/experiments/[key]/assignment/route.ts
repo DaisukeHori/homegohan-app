@@ -22,7 +22,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth/helpers';
-import { AuthError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   ExperimentNotRunningError,
@@ -42,6 +42,14 @@ export async function GET(_request: Request, { params }: Params) {
       return NextResponse.json(
         { error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } },
         { status: 401 },
+      );
+    }
+    // #1030: requireUser() は frozen_at がセットされたアカウントに対して
+    // ForbiddenError('AUTH_ACCOUNT_FROZEN') を throw する。
+    if (err instanceof ForbiddenError) {
+      return NextResponse.json(
+        { error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } },
+        { status: 403 },
       );
     }
     throw err;

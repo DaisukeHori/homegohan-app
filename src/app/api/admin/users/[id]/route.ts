@@ -9,6 +9,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { UserPatchBodySchema } from '@/lib/admin/users-schemas';
+import { isAccountFrozen } from '@/lib/auth/frozen';
 
 export const dynamic = 'force-dynamic';
 
@@ -129,10 +130,16 @@ export async function GET(_request: Request, { params }: Params) {
       ban_history: banHistory,
       support_ticket_count: supportTicketCount,
       active_subscription: activeSubscription,
-      is_banned: (profile as { frozen_at?: string | null }).frozen_at != null,
+      // #1030: 一時 BAN は unban_at 経過後に自動解除扱いとする (判定時比較)。
+      // frozen_at が NOT NULL のままでも unban_at が過去なら is_banned=false を返す。
+      is_banned: isAccountFrozen({
+        frozenAt: (profile as { frozen_at?: string | null }).frozen_at ?? null,
+        unbanAt: (profile as { unban_at?: string | null }).unban_at ?? null,
+      }),
       frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
       frozen_reason: (profile as { frozen_reason?: string | null }).frozen_reason ?? null,
       frozen_by: (profile as { frozen_by?: string | null }).frozen_by ?? null,
+      unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
       last_login_at: profile.last_login_at ?? null,
       registered_at: profile.created_at,
     },

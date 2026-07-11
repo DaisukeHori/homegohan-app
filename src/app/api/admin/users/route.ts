@@ -8,6 +8,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { UsersSearchSchema } from '@/lib/admin/users-schemas';
+import { isAccountFrozen } from '@/lib/auth/frozen';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,7 +59,8 @@ export async function GET(request: Request) {
       created_at,
       frozen_at,
       frozen_reason,
-      frozen_by
+      frozen_by,
+      unban_at
     `,
       { count: 'exact' },
     );
@@ -75,11 +77,23 @@ export async function GET(request: Request) {
     query = query.contains('roles', [params.role]);
   }
 
-  // ステータスフィルタ (凍結状態は frozen_at IS NOT NULL で判定)
+  // ステータスフィルタ
+  // #1030 round-2: is_banned (レスポンス側) は isAccountFrozen (unban_at 考慮) で
+  // 判定するため、フィルタ条件も同じ意味論に揃える。frozen_at IS NOT NULL だけで
+  // 判定すると、一時 BAN が期限切れ (unban_at <= now) になったユーザーが
+  // status=banned で検索すると is_banned: false のまま一覧に出てしまい、
+  // status=active からは除外され続ける不整合が生じる。
+  const nowIso = new Date().toISOString();
   if (params.status === 'banned') {
-    query = query.not('frozen_at', 'is', null);
+    // 凍結中 かつ (無期限 BAN または unban_at が未到来)
+    query = query
+      .not('frozen_at', 'is', null)
+      .or(`unban_at.is.null,unban_at.gt.${nowIso}`);
   } else if (params.status === 'active') {
-    query = query.is('frozen_at', null);
+    // 未凍結、または一時 BAN が期限切れ (unban_at が過去) で自動解除扱い
+    query = query.or(
+      `frozen_at.is.null,and(frozen_at.not.is.null,unban_at.not.is.null,unban_at.lte.${nowIso})`,
+    );
   }
 
   // 登録日フィルタ
@@ -123,10 +137,15 @@ export async function GET(request: Request) {
     nickname: u.nickname,
     plan_key: u.plan_key_cached ?? 'free',
     roles: u.roles ?? ['user'],
-    is_banned: (u as { frozen_at?: string | null }).frozen_at != null,
+    // #1030: 一時 BAN は unban_at 経過後に自動解除扱いとする (判定時比較)。
+    is_banned: isAccountFrozen({
+      frozenAt: (u as { frozen_at?: string | null }).frozen_at ?? null,
+      unbanAt: (u as { unban_at?: string | null }).unban_at ?? null,
+    }),
     frozen_at: (u as { frozen_at?: string | null }).frozen_at ?? null,
     frozen_reason: (u as { frozen_reason?: string | null }).frozen_reason ?? null,
     frozen_by: (u as { frozen_by?: string | null }).frozen_by ?? null,
+    unban_at: (u as { unban_at?: string | null }).unban_at ?? null,
     last_login_at: u.last_login_at,
     registered_at: u.created_at,
     meal_count: 0, // 集計は別クエリが必要

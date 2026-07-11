@@ -229,6 +229,8 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     expect(updatePayload.frozen_at).toEqual(expect.any(String));
     expect(updatePayload.frozen_by).toBe('admin-1');
     expect(updatePayload).not.toHaveProperty('roles');
+    // #1030: unban_at も user_profiles に永続化されること (判定時比較による自動解除のため)
+    expect(updatePayload.unban_at).toEqual(expect.any(String));
 
     // #1041 round-2 (D/F): service-role を使うこと
     expect(mockGetSupabaseAdmin).toHaveBeenCalled();

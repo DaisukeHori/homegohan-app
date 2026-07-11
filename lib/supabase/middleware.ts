@@ -1,6 +1,17 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { resolveOnboardingRedirect } from '@/lib/onboarding-routing'
+import { isAccountFrozen } from '@/lib/auth/frozen'
+
+// #1030 (round-4 Warning fix): Authorization ヘッダーが Supabase JWT (dot 区切り
+// 3 セグメント) の Bearer トークンかどうかを軽量に判定する。CRON_SECRET のような
+// 非 JWT の共有シークレットを Supabase クライアントへ転送しないためのガード。
+function isJwtBearerHeader(authHeader: string | null): boolean {
+  if (!authHeader) return false
+  const match = authHeader.match(/^Bearer\s+(.+)$/i)
+  if (!match) return false
+  return match[1].split('.').length === 3
+}
 
 export async function updateSession(request: NextRequest) {
   // APIルートの場合は、セッション更新のみ行い、リダイレクトはしない
@@ -12,10 +23,28 @@ export async function updateSession(request: NextRequest) {
     request,
   })
 
+  // #1030 (round-3 Critical fix): モバイルアプリ (apps/mobile/src/lib/api.ts) は
+  // Cookie セッションを持たず、Authorization: Bearer <token> ヘッダーのみで
+  // API を呼び出す。lib/supabase/server.ts の createClient() と同様に
+  // Authorization ヘッダーを Supabase クライアントへ転送しないと、cookies ハンドラ
+  // 経由のセッション解決に失敗し supabase.auth.getUser() が常に user: null を返す
+  // (=Bearer セッションの frozen_at チェックが no-op になる) ため、ここで転送する。
+  //
+  // #1030 (round-4 Warning fix): ただし /api/cron/* 等は CRON_SECRET (非 JWT の
+  // 単なる共有シークレット文字列) を `Bearer <secret>` 形式で送ってくる。これを
+  // そのまま Supabase クライアントへ転送すると、毎回 Supabase Auth API への実呼び出し
+  // (JWT として解釈できず必ず 401) が発生し、cron (1分毎 = 1,440回/日) 相当の無駄な
+  // 外部依存を生む。Supabase JWT はドット区切り3セグメント (header.payload.signature)
+  // の形式であるため、その形式でない Bearer トークンは転送せず、従来どおりローカルで
+  // 短絡させる (Cookie も無いため getUser() は外部呼び出しなしで user: null を返す)。
+  const rawAuthHeader = request.headers.get('authorization')
+  const authHeader = isJwtBearerHeader(rawAuthHeader) ? rawAuthHeader : null
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
       cookies: {
         get(name: string) {
           return request.cookies.get(name)?.value
@@ -50,12 +79,49 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  // APIルートの場合はセッション更新のみ（getUser()は各ルートで行う）
+  // APIルートの場合はセッション更新のみ（詳細な認可は各ルートで行う）
   // これにより、ミドルウェアでの認証チェックを最小限に抑える
   if (isApiRoute) {
     // getSession()でセッションを取得し、必要に応じてトークンをリフレッシュ
     // getUser()よりも軽量で、サーバーへの追加リクエストを行わない
     await supabase.auth.getSession()
+
+    // #1030 (round-2 Critical fix): requireUser/requireRole を経由せず
+    // supabase.auth.getUser() を直接呼ぶだけの API route が多数存在し
+    // (meal-plans/pantry/recipes/health 等)、frozen_at を一切検査しないまま
+    // 素通りしていた。ページナビゲーションと同様にここで凍結判定を行い、
+    // 凍結中のアカウントは全 API 呼び出しを 403 で拒否する。
+    // 認証・プロフィール取得自体に失敗した場合は各 route 側のチェックに委ねる
+    // (#348 と同様、一時的な DB/ネットワーク障害で全 API を誤って止めないための
+    // fail-open。frozen かどうか確定できた場合のみブロックする)。
+    try {
+      const { data: { user: apiUser }, error: apiUserError } = await supabase.auth.getUser()
+
+      if (!apiUserError && apiUser) {
+        const { data: apiProfile, error: apiProfileError } = await supabase
+          .from('user_profiles')
+          .select('frozen_at, unban_at')
+          .eq('id', apiUser.id)
+          .maybeSingle()
+
+        if (!apiProfileError) {
+          const apiFrozen = isAccountFrozen({
+            frozenAt: apiProfile?.frozen_at ?? null,
+            unbanAt: apiProfile?.unban_at ?? null,
+          })
+
+          if (apiFrozen) {
+            return NextResponse.json(
+              { error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } },
+              { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
+            )
+          }
+        }
+      }
+    } catch {
+      // 認証基盤の一時障害時は各 route 側の getUser()/requireUser() チェックに委ねる
+    }
+
     return supabaseResponse
   }
 
@@ -113,17 +179,45 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user) {
-    // user_profiles からオンボーディング状態を取得
+    // user_profiles からオンボーディング状態・凍結状態を取得
     // #348: error を必ず捕捉し、DB 参照失敗時はリダイレクト判定をスキップする
     // (RLS 拒否・カラム不在・ネットワーク障害などで data=null になった場合に
     //  not_started 扱いで /onboarding/welcome へ飛ばしてしまうバグを防ぐ)
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('roles, onboarding_started_at, onboarding_completed_at')
+      .select('roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at')
       .eq('id', user.id)
       .maybeSingle()
 
     if (!profileError) {
+      // #1030: frozen_at がセットされ (かつ一時 BAN が未解除の) アカウントは
+      // /frozen へリダイレクトする。無限リダイレクトを避けるため /frozen 自体は除外。
+      const frozen = isAccountFrozen({
+        frozenAt: profile?.frozen_at ?? null,
+        unbanAt: profile?.unban_at ?? null,
+      })
+
+      if (frozen) {
+        // #1030 (round-3 Warning fix): /frozen ページの「サポートに問い合わせる」
+        // リンク (href="/contact") は publicPaths には含まれるが、この凍結リダイレクト
+        // 判定は isPublicPath を考慮せず無条件に実行されるため、ログイン中の凍結
+        // ユーザーが /contact に遷移しても即座に /frozen へ差し戻され、唯一の異議
+        // 申し立て導線が事実上のデッドリンクになっていた。/contact のみ除外する。
+        const frozenExemptPaths = ['/frozen', '/contact']
+        const isFrozenExemptPath = frozenExemptPaths.some(
+          (path) =>
+            request.nextUrl.pathname === path ||
+            request.nextUrl.pathname.startsWith(path + '/'),
+        )
+        if (!isFrozenExemptPath) {
+          const url = request.nextUrl.clone()
+          url.pathname = '/frozen'
+          url.search = ''
+          return NextResponse.redirect(url)
+        }
+        return supabaseResponse
+      }
+
       const redirectPath = resolveOnboardingRedirect({
         pathname: request.nextUrl.pathname,
         roles: profile?.roles || [],

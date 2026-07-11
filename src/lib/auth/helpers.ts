@@ -7,9 +7,10 @@
  */
 
 import { type User } from '@supabase/supabase-js';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError, ImpersonationError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
+import { isAccountFrozen } from './frozen';
 
 export { type RoleName, type OrgRoleName, type UserProfile };
 
@@ -31,13 +32,18 @@ async function getAuthUser(): Promise<User> {
 }
 
 /**
- * user_profiles テーブルから roles と organization_id を取得する。
+ * user_profiles テーブルから roles と organization_id、凍結状態 (frozen_at/unban_at) を取得する。
  */
-async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; organization_id: string | null }> {
+async function getUserProfile(userId: string): Promise<{
+  roles: RoleName[];
+  organization_id: string | null;
+  frozen_at: string | null;
+  unban_at: string | null;
+}> {
   const supabase = createClient();
   const { data: profile, error } = await supabase
     .from('user_profiles')
-    .select('roles, organization_id')
+    .select('roles, organization_id, frozen_at, unban_at')
     .eq('id', userId)
     .single();
 
@@ -48,6 +54,55 @@ async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; orga
   return {
     roles: (profile.roles ?? ['user']) as RoleName[],
     organization_id: profile.organization_id ?? null,
+    frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
+    unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
+  };
+}
+
+/**
+ * #1030: frozen_at がセットされ、かつ一時 BAN の unban_at が未到来の場合に
+ * ForbiddenError('AUTH_ACCOUNT_FROZEN') を throw する。
+ * unban_at 経過後 (一時 BAN の自動解除) は許可する (判定時比較)。
+ */
+function assertNotFrozen(frozenAt: string | null, unbanAt: string | null): void {
+  if (isAccountFrozen({ frozenAt, unbanAt })) {
+    throw new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています');
+  }
+}
+
+/**
+ * user_profiles を service_role (RLS バイパス) で取得する。
+ * #1030 (round-5 Critical fix): user_profiles の SELECT ポリシーは
+ * "Users can view own profile" USING (auth.uid() = id) の1本のみであり、
+ * 実行者以外の行は通常クライアント (createClient(), RLS 有効) では 0 行になる。
+ * impersonate() の対象ユーザー参照など、認可 (super_admin 判定) 通過後に
+ * 他ユーザーの行を読む必要がある箇所は、既存パターン (#1028: freeze/route.ts 等)
+ * に合わせて admin client を使用する。
+ * 対象が存在しない場合は null を返す (RLS による不可視か実在しないかは呼び出し側で
+ * 区別せず、いずれも「対象が見つからない」として扱う)。
+ */
+async function getUserProfileAdmin(userId: string): Promise<{
+  roles: RoleName[];
+  organization_id: string | null;
+  frozen_at: string | null;
+  unban_at: string | null;
+} | null> {
+  const supabaseAdmin = getSupabaseAdmin();
+  const { data: profile, error } = await supabaseAdmin
+    .from('user_profiles')
+    .select('roles, organization_id, frozen_at, unban_at')
+    .eq('id', userId)
+    .single();
+
+  if (error || !profile) {
+    return null;
+  }
+
+  return {
+    roles: (profile.roles ?? ['user']) as RoleName[],
+    organization_id: profile.organization_id ?? null,
+    frozen_at: (profile as { frozen_at?: string | null }).frozen_at ?? null,
+    unban_at: (profile as { unban_at?: string | null }).unban_at ?? null,
   };
 }
 
@@ -57,9 +112,14 @@ async function getUserProfile(userId: string): Promise<{ roles: RoleName[]; orga
 
 /**
  * Supabase auth で取得した user を返す。未認証なら 401 相当の AuthError を throw する。
+ * #1030: frozen_at がセットされている(かつ一時 BAN 未解除)場合は 403 相当の
+ * ForbiddenError('AUTH_ACCOUNT_FROZEN') を throw する。
  */
 export async function requireUser(): Promise<User> {
-  return getAuthUser();
+  const user = await getAuthUser();
+  const { frozen_at, unban_at } = await getUserProfile(user.id);
+  assertNotFrozen(frozen_at, unban_at);
+  return user;
 }
 
 /**
@@ -69,13 +129,14 @@ export async function requireUser(): Promise<User> {
  * @param allowedRoles - 許可するロールの配列
  * @returns 認証済みユーザーの UserProfile
  * @throws AuthError (401) - 未認証の場合
- * @throws ForbiddenError (403) - ロール不足の場合
+ * @throws ForbiddenError (403) - ロール不足の場合、または #1030: アカウント凍結中の場合
  */
 export async function requireRole(
   allowedRoles: ReadonlyArray<RoleName>,
 ): Promise<UserProfile> {
   const user = await getAuthUser();
-  const { roles, organization_id } = await getUserProfile(user.id);
+  const { roles, organization_id, frozen_at, unban_at } = await getUserProfile(user.id);
+  assertNotFrozen(frozen_at, unban_at);
 
   if (!roles.some((r) => allowedRoles.includes(r))) {
     throw new ForbiddenError(
@@ -139,7 +200,9 @@ export async function requireOrgRole(
  * @param reason       - impersonate の理由 (audit_log に記録)
  * @returns impersonation_token と expires_at
  * @throws AuthError          - 実行者が未認証の場合
- * @throws ImpersonationError - super_admin 以外が実行した場合 / 対象が拒否設定の場合
+ * @throws ImpersonationError - super_admin 以外が実行した場合 / 対象が拒否設定の場合 /
+ *                              #1030 (round-4): 対象ユーザーが凍結中の場合 /
+ *                              #1030 (round-5): 対象ユーザーが存在しない場合
  */
 export async function impersonate(
   targetUserId: string,
@@ -152,6 +215,29 @@ export async function impersonate(
     throw new ImpersonationError(
       'AUTH_IMPERSONATION_DENIED',
       'impersonate は super_admin のみ実行可能です',
+    );
+  }
+
+  // #1030 (round-5 Critical fix): 対象ユーザーの行は RLS (自分の行のみ SELECT 可) により
+  // 通常クライアントでは読めないため、admin client (service_role) で取得する。
+  // super_admin 判定 (上記) を通過した後にのみ呼び出すこと (認可前に使うと権限昇格になる)。
+  const targetProfile = await getUserProfileAdmin(targetUserId);
+  if (!targetProfile) {
+    throw new ImpersonationError(
+      'AUTH_IMPERSONATION_TARGET_NOT_FOUND',
+      '対象ユーザーが見つかりません',
+    );
+  }
+
+  // #1030 (round-4 Warning fix): 凍結中のユーザーへの成りすましセッションを拒否する。
+  // impersonate は対象ユーザーとして振る舞えるセッションを発行するため、対象が凍結中
+  // (BAN 中) の場合にこれを許すと、frozen_at enforcement (requireUser/requireRole/
+  // middleware) を impersonate 経由で迂回できてしまう。
+  const { frozen_at: targetFrozenAt, unban_at: targetUnbanAt } = targetProfile;
+  if (isAccountFrozen({ frozenAt: targetFrozenAt, unbanAt: targetUnbanAt })) {
+    throw new ImpersonationError(
+      'AUTH_IMPERSONATION_TARGET_FROZEN',
+      '凍結中のユーザーへは impersonate できません',
     );
   }
 
