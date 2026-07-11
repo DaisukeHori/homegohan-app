@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { BackButton } from "@/components/ui/shared/BackButton";
-import { THEME_LABELS_REQUEST } from "@homegohan/shared";
+import { THEME_LABELS_REQUEST, todayLocal } from "@homegohan/shared";
 
 // ステップ定義
 const STEPS = [
@@ -30,7 +30,7 @@ export default function MenuRequestWizard() {
   const [formData, setFormData] = useState({
     imageUrl: '',
     ingredients: [] as string[],
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: todayLocal(),
     cookingTimeWeekday: 30,
     cookingTimeWeekend: 60,
     themes: [] as string[],

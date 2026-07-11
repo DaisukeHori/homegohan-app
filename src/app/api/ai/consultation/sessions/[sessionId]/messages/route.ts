@@ -3,6 +3,7 @@ import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
 
 // メッセージ一覧取得
 export async function GET(
@@ -49,11 +50,11 @@ export async function GET(
 
 // ユーザーの詳細情報を取得してシステムプロンプトを構築
 async function buildSystemPrompt(supabase: any, userId: string): Promise<string> {
-  // 日付計算を先に行う
-  const today = new Date().toISOString().split('T')[0];
-  const oneWeekLater = new Date();
+  // 日付計算を先に行う（JST基準）
+  const today = todayLocal();
+  const oneWeekLater = parseLocalDate(today);
   oneWeekLater.setDate(oneWeekLater.getDate() + 7);
-  const fourteenDaysAgo = new Date();
+  const fourteenDaysAgo = parseLocalDate(today);
   fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
 
   // ===== 並列クエリ実行（レイテンシー改善） =====
@@ -85,7 +86,7 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
       .gt('user_daily_meals.day_date', today)
-      .lte('user_daily_meals.day_date', oneWeekLater.toISOString().split('T')[0])
+      .lte('user_daily_meals.day_date', formatLocalDate(oneWeekLater))
       .limit(30),
 
     // 4. 過去14日の食事
@@ -93,14 +94,14 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode,
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
-      .gte('user_daily_meals.day_date', fourteenDaysAgo.toISOString().split('T')[0])
+      .gte('user_daily_meals.day_date', formatLocalDate(fourteenDaysAgo))
       .lt('user_daily_meals.day_date', today)
       .limit(50),
 
     // 5. 健康記録（過去14日）
     supabase.from('health_records').select('*')
       .eq('user_id', userId)
-      .gte('record_date', fourteenDaysAgo.toISOString().split('T')[0])
+      .gte('record_date', formatLocalDate(fourteenDaysAgo))
       .order('record_date', { ascending: false })
       .limit(14),
 
@@ -468,24 +469,25 @@ ${importantMessages.map((m: any) => {
   const currentMinutes = jstNow.getMinutes();
   const currentTimeStr = `${currentHour}:${currentMinutes.toString().padStart(2, '0')}`;
   
-  const todayDisplay = new Date().toLocaleDateString('ja-JP', { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric', 
-    weekday: 'long' 
+  const todayDisplay = now.toLocaleDateString('ja-JP', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+    timeZone: 'Asia/Tokyo',
   });
 
-  // 明日の日付
-  const tomorrow = new Date(now);
+  // 明日の日付（JST基準）
+  const tomorrow = parseLocalDate(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const tomorrowStr = formatLocalDate(tomorrow);
 
-  // 来週月曜日の日付
-  const weekStart = new Date(now);
+  // 来週月曜日の日付（JST基準）
+  const weekStart = parseLocalDate(today);
   const dayOfWeek = weekStart.getDay(); // 0=日, 1=月, ..., 6=土
   const daysUntilNextMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
   weekStart.setDate(weekStart.getDate() + daysUntilNextMonday);
-  const weekStartStr = weekStart.toISOString().split('T')[0];
+  const weekStartStr = formatLocalDate(weekStart);
 
   // 現在時刻に基づく食事の解釈ルール
   let mealInterpretation = '';

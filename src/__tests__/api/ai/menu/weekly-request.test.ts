@@ -178,6 +178,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 describe('POST /api/ai/menu/weekly/request', () => {
@@ -243,5 +244,33 @@ describe('POST /api/ai/menu/weekly/request', () => {
 
     await flushBackground();
     expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('#1035: TZ=UTC ランタイムで JST 早朝でも「昨日」の献立を削除しない（今日以降のみ処理）', async () => {
+    // Vercel Node ランタイムを模して TZ=UTC を強制する
+    vi.stubEnv('TZ', 'UTC');
+    // JST 2026-07-06 00:30 = UTC 2026-07-05 15:30（UTC 基準だと「今日」は 07-05 に誤判定されうる境界）
+    vi.setSystemTime(new Date('2026-07-05T15:30:00Z'));
+
+    const localStartDate = '2026-06-30'; // 週の開始（過去日）
+    // addDays(startDate, 6) = 2026-07-06（JSTの「今日」）のみ既存献立ありとする
+    userDailyMealsQueue.length = 0;
+    plannedMealsSelectQueue.length = 0;
+    userDailyMealsQueue.push({ data: { id: 'day-today' }, error: null });
+    plannedMealsSelectQueue.push({ data: [existingBreakfast], error: null });
+
+    mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: true, attempts: 1, response: new Response() });
+
+    const res = await POST(makeRequest({ startDate: localStartDate }));
+    expect(res.status).toBe(200);
+
+    // 「今日以降」と判定された日だけ user_daily_meals に問い合わせる。
+    // UTC ベースの旧実装（todayStr='2026-07-05'）だと 07-05（昨日）・07-06（今日）の
+    // 2日分が対象になってしまうが、修正後は 07-06 の1日のみ。
+    expect(mockUserDailyMealsMaybeSingle).toHaveBeenCalledTimes(1);
+
+    // 削除（スナップショット退避）されるのは今日分のみで、昨日の献立・完食記録は保持される
+    const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
+    expect(insertPayload.generated_data).toEqual({ snapshot: [existingBreakfast] });
   });
 });

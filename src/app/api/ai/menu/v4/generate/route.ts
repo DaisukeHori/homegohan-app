@@ -18,6 +18,7 @@ import type { Tables } from '@homegohan/shared';
 import { fromTargetSlots } from '@/lib/converter';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { todayLocal } from '@/lib/date-utils';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -188,7 +189,7 @@ export async function POST(request: Request) {
     // 5-7. 並列でデータ取得（パフォーマンス最適化）
     const contextStartDate = addDays(startDate, -7); // 7 days before
     const contextEndDate = addDays(endDate, 7); // 7 days after
-    const todayStr = getTodayStr();
+    const todayStr = todayLocal();
 
     // 並列実行: 既存メニュー、冷蔵庫、ユーザープロフィール
     const [existingMealsResult, pantryResult, profileResult] = await Promise.all([
@@ -373,9 +374,4 @@ function addDays(dateStr: string, days: number): string {
   const date = new Date(dateStr);
   date.setDate(date.getDate() + days);
   return date.toISOString().split('T')[0];
-}
-
-function getTodayStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }

@@ -12,6 +12,7 @@ import {
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 
 // シンプルなマークダウンパーサー
 const parseMarkdown = (text: string): string => {
@@ -180,16 +181,16 @@ export default function AIChatBubble() {
   // to *tomorrow* rather than today to avoid silently overwriting today's
   // existing menu when the user opens this modal for a future day.
   const computeDefaultDayMenuDate = (): string => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = todayLocal();
     if (typeof window !== 'undefined') {
       const fromWeekly = window.__weeklyCurrentDate;
       if (typeof fromWeekly === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fromWeekly)) {
         if (fromWeekly !== todayStr) return fromWeekly;
       }
     }
-    const tomorrow = new Date();
+    const tomorrow = parseLocalDate(todayStr);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split('T')[0];
+    return formatLocalDate(tomorrow);
   };
   const [selectedDate, setSelectedDate] = useState<string>(() => computeDefaultDayMenuDate());
 
@@ -1396,11 +1397,11 @@ export default function AIChatBubble() {
                   type="date"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={todayLocal()}
                   max={(() => {
-                    const maxDate = new Date();
+                    const maxDate = parseLocalDate(todayLocal());
                     maxDate.setDate(maxDate.getDate() + 14);
-                    return maxDate.toISOString().split('T')[0];
+                    return formatLocalDate(maxDate);
                   })()}
                   className="w-full px-4 py-3 rounded-xl border text-center"
                   style={{

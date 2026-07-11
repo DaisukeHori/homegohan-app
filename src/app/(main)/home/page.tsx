@@ -6,6 +6,7 @@ import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { useHomeData } from "@/hooks/useHomeData";
 import { Icons } from "@/components/icons";
+import { todayLocal, parseLocalDate } from "@/lib/date-utils";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Calendar, Coffee, Sun, Moon, Sparkles,
@@ -74,8 +75,8 @@ export default function HomePage() {
 
   useEffect(() => {
     const now = new Date();
-    setClientDate(now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }));
-    setTodayISODate(now.toISOString().split('T')[0]);
+    setClientDate(now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Tokyo' }));
+    setTodayISODate(todayLocal());
     const hour = now.getHours();
     if (hour < 5) setGreeting('おやすみなさい');
     else if (hour < 11) setGreeting('おはようございます');
@@ -1006,7 +1007,7 @@ export default function HomePage() {
                 </div>
                 <div className="space-y-2">
                   {expiringItems.slice(0, 3).map(item => {
-                    const daysLeft = Math.ceil((new Date(item.expirationDate!).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                    const daysLeft = Math.ceil((parseLocalDate(item.expirationDate!).getTime() - parseLocalDate(todayLocal()).getTime()) / (1000 * 60 * 60 * 24));
                     return (
                       <div key={item.id} className="flex justify-between items-center">
                         <span className="text-sm text-amber-900">{item.name}</span>

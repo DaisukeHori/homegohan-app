@@ -4,6 +4,7 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RefreshCw, X, Sparkles, Check } from "lucide-react";
 import type { PlannedMeal, DishDetail } from "@/types/domain";
+import { todayLocal } from "@/lib/date-utils";
 
 const colors = {
   bg: '#F7F6F3',
@@ -111,7 +112,7 @@ export function ImproveMealModal({
                     <p style={{ fontSize: 12, color: colors.textLight }}>対象日</p>
                     <p style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
                       {weekDates[selectedDayIndex]?.date.getMonth() + 1}月{weekDates[selectedDayIndex]?.date.getDate()}日（{weekDates[selectedDayIndex]?.dayOfWeek}）
-                      {weekDates[selectedDayIndex]?.dateStr === new Date().toISOString().split('T')[0] && (
+                      {weekDates[selectedDayIndex]?.dateStr === todayLocal() && (
                         <span className="ml-2 text-xs px-2 py-0.5 rounded-full" style={{ background: colors.accentLight, color: colors.accent }}>今日</span>
                       )}
                     </p>
@@ -138,7 +139,7 @@ export function ImproveMealModal({
                     {(() => {
                       const targetDateStr = weekDates[selectedDayIndex]?.dateStr;
                       const targetDay = currentPlanDays?.find((d: MealPlanDay) => d.dayDate === targetDateStr);
-                      const todayStr = new Date().toISOString().split('T')[0];
+                      const todayStr = todayLocal();
                       const isPast = targetDateStr && targetDateStr < todayStr;
 
                       if (isPast) {
