@@ -142,54 +142,77 @@ export function NutritionRadarChart({
     showOverconsumptionWarning ? '。過剰摂取の可能性がある栄養素があります' : ''
   }。詳細は表を参照してください。`;
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!onTap) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onTap();
+    }
+  };
+
   return (
     <div
       className={`relative ${onTap ? 'cursor-pointer' : ''}`}
       onClick={onTap}
+      onKeyDown={onTap ? handleKeyDown : undefined}
+      role={onTap ? 'button' : undefined}
+      tabIndex={onTap ? 0 : undefined}
       style={{ width: size, height: size }}
-      role="img"
-      aria-label={chartAriaLabel}
     >
-      {/* グラフ本体（recharts の SVG）は role="img" の親に集約するため装飾扱いにする */}
-      <div aria-hidden="true">
-        <ResponsiveContainer width="100%" height="100%">
-          <RadarChart data={chartData} margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
-            <PolarGrid stroke={colors.grid} />
-            <PolarAngleAxis
-              dataKey="nutrient"
-              tick={showLabels ? { fill: colors.textMuted, fontSize: 9 } : false}
-            />
-            <PolarRadiusAxis
-              angle={90}
-              domain={[0, 150]}
-              tick={false}
-              axisLine={false}
-            />
-            {/* 100%ライン（推奨量） */}
-            <Radar
-              name="推奨量"
-              dataKey={() => 100}
-              stroke={colors.grid}
-              strokeDasharray="3 3"
-              fill="none"
-            />
-            {/* 実際の値 */}
-            <Radar
-              name="摂取量"
-              dataKey="value"
-              stroke={colors.accent}
-              strokeWidth={2}
-              fill={colors.accentLight}
-              fillOpacity={0.6}
-            />
-            <Tooltip content={<CustomTooltip />} />
-          </RadarChart>
-        </ResponsiveContainer>
+      {/* #1052 (Opus 指摘の Critical 修正): role="img" は WAI-ARIA 上、子孫をアクセシビリティ
+          ツリーから剪定する。以前は sr-only データテーブルや過剰摂取アラート(role="alert")を
+          この role="img" の子孫に置いていたため、支援技術から到達不能になっていた。
+          そのため role="img" はチャート本体（recharts の SVG）だけを包み、テーブルとアラートは
+          兄弟要素として配置する。
+          また、この内側ラッパーに幅/高さ 100% を明示的に継承させないと、外側の固定サイズ
+          (width/height=size) が ResponsiveContainer の height="100%" まで伝播せず、
+          高さ 0 に解決してチャートが描画されない回帰を招くため w-full h-full を必須で付与する。 */}
+      <div
+        role="img"
+        aria-label={chartAriaLabel}
+        className="w-full h-full"
+      >
+        {/* 装飾的な SVG 本体自体も aria-hidden にし、二重読み上げを防止する */}
+        <div aria-hidden="true" className="w-full h-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <RadarChart data={chartData} margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+              <PolarGrid stroke={colors.grid} />
+              <PolarAngleAxis
+                dataKey="nutrient"
+                tick={showLabels ? { fill: colors.textMuted, fontSize: 9 } : false}
+              />
+              <PolarRadiusAxis
+                angle={90}
+                domain={[0, 150]}
+                tick={false}
+                axisLine={false}
+              />
+              {/* 100%ライン（推奨量） */}
+              <Radar
+                name="推奨量"
+                dataKey={() => 100}
+                stroke={colors.grid}
+                strokeDasharray="3 3"
+                fill="none"
+              />
+              {/* 実際の値 */}
+              <Radar
+                name="摂取量"
+                dataKey="value"
+                stroke={colors.accent}
+                strokeWidth={2}
+                fill={colors.accentLight}
+                fillOpacity={0.6}
+              />
+              <Tooltip content={<CustomTooltip />} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
-      {/* スクリーンリーダー向けデータテーブル代替（視覚上は非表示）。
-          ホバーでしか出ないツールチップの内容を、キーボード/スクリーンリーダーでも
-          辿れるようにする。 */}
+      {/* スクリーンリーダー向けデータテーブル代替（視覚上は非表示）。role="img" の兄弟として
+          配置することで剪定されず、ホバーでしか出ないツールチップの内容をキーボード/
+          スクリーンリーダーでも辿れるようにする。 */}
       <table
         className="sr-only"
         data-testid="radar-chart-data-table"

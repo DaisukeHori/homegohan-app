@@ -114,3 +114,137 @@ describe('NutritionRadarChart: グラフの a11y (#1052)', () => {
     expect(img!.getAttribute('aria-label')).not.toBe('栄養素レーダーチャート');
   });
 });
+
+describe('NutritionRadarChart: 構造回帰テスト (#1052 敵対レビュー統合修正)', () => {
+  // Opus 指摘: role="img" は WAI-ARIA 上、子孫をアクセシビリティツリーから剪定する。
+  // sr-only データテーブルと過剰摂取アラート(role="alert")が role="img" の子孫のままだと
+  // 支援技術に一切露出しない（せっかくの a11y 対応が非機能化し、既存の alert も回帰する）。
+  // そのため両者は role="img" の「兄弟」に置く構造でなければならない。
+  // この一群のテストは「1行戻す」= table/alert を role="img" の内側に戻すと落ちる。
+
+  it('sr-only データテーブルは role="img" の子孫ではない（兄弟）', () => {
+    act(() => {
+      root.render(
+        h(NutritionRadarChart, {
+          nutrition: { protein_g: 60, fat_g: 50, carbs_g: 250 },
+          selectedNutrients: ['protein_g', 'fat_g', 'carbs_g'],
+          size: 180,
+          showLabels: true,
+        })
+      );
+    });
+    const table = container.querySelector('[data-testid="radar-chart-data-table"]');
+    expect(table, 'データテーブルが見つかりません').not.toBeNull();
+    expect(
+      table!.closest('[role="img"]'),
+      'sr-only テーブルが role="img" の子孫になっている（支援技術から読み上げ不能）'
+    ).toBeNull();
+  });
+
+  it('過剰摂取アラート(role="alert")は role="img" の子孫ではない（兄弟）', () => {
+    act(() => {
+      root.render(
+        h(NutritionRadarChart, {
+          // fullValue が OVERCONSUMPTION_THRESHOLD(150%) を超えるよう大きな値を渡す
+          // (キーは NUTRIENT_DEFINITIONS に実在する 'proteinG' を使う。DRI=60g に対し
+          // 600g は 1000% となり閾値 150% を大きく超える)
+          nutrition: { proteinG: 600 },
+          selectedNutrients: ['proteinG'],
+          size: 180,
+          showLabels: true,
+        })
+      );
+    });
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert, '過剰摂取アラートが見つかりません（テストの前提条件を確認）').not.toBeNull();
+    expect(
+      alert!.closest('[role="img"]'),
+      'role="alert" が role="img" の子孫になっている（支援技術から読み上げ不能）'
+    ).toBeNull();
+  });
+
+  it('role="img" ラッパーはチャート本体（recharts の SVG）だけを包み、幅/高さ100%を持つ', () => {
+    act(() => {
+      root.render(
+        h(NutritionRadarChart, {
+          nutrition: { protein_g: 60 },
+          selectedNutrients: ['protein_g'],
+          size: 180,
+          showLabels: true,
+        })
+      );
+    });
+    const img = container.querySelector('[role="img"]') as HTMLElement;
+    expect(img).not.toBeNull();
+    // 0高さ回帰の直接的な原因は、中間ラッパーが height:auto になり
+    // ResponsiveContainer(height:100%) が 0 に解決してしまうことだった。
+    // w-full/h-full (width/height:100%) をラッパーが継承していることを構造的に担保する。
+    expect(img.className).toContain('w-full');
+    expect(img.className).toContain('h-full');
+    // テーブルやアラートを飲み込んでいない（子孫に table や alert がない）
+    expect(img.querySelector('[data-testid="radar-chart-data-table"]')).toBeNull();
+    expect(img.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('外側コンテナは固定サイズ(width/height=size)を持ち、role="img" はその内側にある', () => {
+    act(() => {
+      root.render(
+        h(NutritionRadarChart, {
+          nutrition: { protein_g: 60 },
+          selectedNutrients: ['protein_g'],
+          size: 180,
+          showLabels: true,
+        })
+      );
+    });
+    const img = container.querySelector('[role="img"]') as HTMLElement;
+    const outer = img.parentElement as HTMLElement;
+    expect(outer.style.width).toBe('180px');
+    expect(outer.style.height).toBe('180px');
+  });
+
+  it('onTap 指定時、外側コンテナはキーボードで活性化できる（role="button"+tabIndex=0+Enter/Space）', () => {
+    const onTap = vi.fn();
+    act(() => {
+      root.render(
+        h(NutritionRadarChart, {
+          nutrition: { protein_g: 60 },
+          selectedNutrients: ['protein_g'],
+          size: 180,
+          showLabels: true,
+          onTap,
+        })
+      );
+    });
+    // role="img" と role="button" が別要素であること（role="img" は外側コンテナに付いていない）
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.getAttribute('role')).toBe('button');
+    expect(outer.getAttribute('tabindex')).toBe('0');
+
+    act(() => {
+      outer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    });
+    expect(onTap).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      outer.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+    });
+    expect(onTap).toHaveBeenCalledTimes(2);
+  });
+
+  it('onTap 未指定時は外側コンテナに role="button" が付かない（クリック不可な箇所を誤ってキーボードフォーカス可能にしない）', () => {
+    act(() => {
+      root.render(
+        h(NutritionRadarChart, {
+          nutrition: { protein_g: 60 },
+          selectedNutrients: ['protein_g'],
+          size: 180,
+          showLabels: true,
+        })
+      );
+    });
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.getAttribute('role')).toBeNull();
+    expect(outer.getAttribute('tabindex')).toBeNull();
+  });
+});
