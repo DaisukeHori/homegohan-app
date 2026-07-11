@@ -292,7 +292,10 @@ export function ManualEditModal({
                 style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
               />
               {manualDishes.length > 1 && (
-                <button onClick={() => onRemoveDish(idx)} aria-label="この料理を削除" className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: colors.dangerLight }}>
+                // #1052 (タップ領域 / Suggestion D): 32px(w-8 h-8) は44px基準未達だったが、
+                // この行は select/input と横並びの単一ボタンで左右に隣接ボタンが無いため、
+                // ± カウンタ(B)のような不可視ヒット拡大は不要で、通常の視覚サイズ拡大で安全に対応できる。
+                <button onClick={() => onRemoveDish(idx)} aria-label="この料理を削除" className="w-11 h-11 flex-shrink-0 rounded-lg flex items-center justify-center" style={{ background: colors.dangerLight }}>
                   <Trash2 size={14} color={colors.danger} />
                 </button>
               )}

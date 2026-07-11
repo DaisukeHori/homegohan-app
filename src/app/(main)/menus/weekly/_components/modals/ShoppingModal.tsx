@@ -70,6 +70,11 @@ export function ShoppingModal({
       focusTrapOptions={{
         allowOutsideClick: true,
         escapeDeactivates: false,
+        // #1052 (Suggestion D): initialFocus 未指定だと focus-trap-react はダイアログ内の
+        // 最初のフォーカス可能要素へ自動フォーカスする。買い物リストが1件以上あるとそれは
+        // 危険な「すべて削除」ボタンになってしまい、開いた直後に誤って Enter/Space を押すと
+        // 全件削除されるおそれがある。パネル自体(tabIndex=-1)へ寄せて安全にする。
+        initialFocus: () => panelRef.current ?? false,
         fallbackFocus: () => panelRef.current ?? document.body,
       }}
     >
