@@ -47,10 +47,14 @@ function LoginContent() {
     try {
       setIsLoading(true);
       setError(null);
+      // #1057 (UX1-01 round-2): メール/パスワードログインと同様、招待コンテキスト
+      // (next/redirect) を Google OAuth の callback にも伝播する
+      const safeNext = getSafeRedirectPath(rawRedirectParam);
+      const callbackUrl = `${window.location.origin}/auth/callback${safeNext ? `?next=${encodeURIComponent(safeNext)}` : ''}`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?next=/home`,
+          redirectTo: callbackUrl,
         },
       });
       if (error) throw error;

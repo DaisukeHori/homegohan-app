@@ -54,8 +54,12 @@ export async function login(
   // networkidle でネットワーク落ち着きを待つ
   await page.waitForLoadState("networkidle");
   // client-side rate limit key をクリアして「しばらく待って」エラーを回避
+  // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+  // 変わったため prefix 一致で全て削除する
   await page.evaluate(() => {
-    localStorage.removeItem('auth_last_fail_ts');
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('auth_last_fail_ts'))
+      .forEach((k) => localStorage.removeItem(k));
   });
   // React hydration 完了を確認 (button に __reactProps が付くまで)
   await waitForHydration(page).catch(() => {

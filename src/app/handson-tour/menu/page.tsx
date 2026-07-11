@@ -107,7 +107,8 @@ export default function HandsonTourMenuPage() {
       supabase
         .from('user_profiles')
         .select('nickname, allergies, dislikes, cooking_experience')
-        .eq('user_id', user.id)
+        // #1057 (UX1-02 round-2): user_profiles の PK は `id` (`user_id` 列は存在しない)
+        .eq('id', user.id)
         .single()
         .then(({ data }) => {
           if (data) {

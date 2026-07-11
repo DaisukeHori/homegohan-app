@@ -454,7 +454,13 @@ async function doLogin(page: Page, baseURL: string, workerIndex: number): Promis
     try {
       await page.goto(`${baseURL}/login`);
       await page.waitForLoadState("networkidle");
-      await page.evaluate(() => { localStorage.removeItem("auth_last_fail_ts"); });
+      // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+      // 変わったため prefix 一致で全て削除する
+      await page.evaluate(() => {
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith("auth_last_fail_ts"))
+          .forEach((k) => localStorage.removeItem(k));
+      });
 
       // React hydration 確認
       await page.waitForFunction(

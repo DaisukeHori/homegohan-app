@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { getSafeRedirectPathOrDefault } from '@/lib/auth/safe-redirect'
+import { getSafeRedirectPath } from '@/lib/auth/safe-redirect'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -44,7 +44,10 @@ export async function GET(request: Request) {
   const token = requestUrl.searchParams.get('token') // PKCE token
   const type = requestUrl.searchParams.get('type')
   // #1043: open redirect 防止のため共有ヘルパーで検証(同一オリジンの相対パスのみ許可)
-  let next = getSafeRedirectPathOrDefault(requestUrl.searchParams.get('next'), '/home')
+  // #1057 (UX1-01 round-2): クエリの `next` が明示的に指定されているかどうかを
+  // 区別して保持する(admin 以外は onboarding 判定より優先させるため)。
+  const safeNextFromQuery = getSafeRedirectPath(requestUrl.searchParams.get('next'))
+  let next = safeNextFromQuery ?? '/home'
 
   console.log('[auth/callback] Auth params:', { code: !!code, token_hash: !!token_hash, token: !!token, type })
 
@@ -131,29 +134,37 @@ export async function GET(request: Request) {
       profileError: profileError?.message
     })
 
-    // プロファイル取得エラーの場合も安全にオンボーディングへ
     if (profileError) {
       console.error('[auth/callback] Profile fetch error:', profileError)
-      next = '/onboarding/welcome'
-    } else {
-      const roles = profile?.roles || []
+    }
 
-      // 管理者の場合は強制的に管理画面へ
-      if (roles.includes('admin') || roles.includes('super_admin')) {
-        next = '/admin'
-      }
-      // オンボーディング完了済み → ホームへ
-      else if (profile?.onboarding_completed_at) {
-        next = '/home'
-      }
-      // オンボーディング進行中 → 再開ページへ
-      else if (profile?.onboarding_started_at) {
-        next = '/onboarding/resume'
-      }
-      // 未開始またはプロファイルなし → 初回ウェルカムへ
-      else {
-        next = '/onboarding/welcome'
-      }
+    const roles = profile?.roles || []
+
+    // 管理者の場合は強制的に管理画面へ(query の next より優先)
+    if (roles.includes('admin') || roles.includes('super_admin')) {
+      next = '/admin'
+    }
+    // #1057 (UX1-01 round-2): 招待リンク等クエリ由来の安全な遷移先が明示されている場合は、
+    // onboarding 状態判定より優先する(login/page.tsx の safeNext と同じ優先順位)。
+    // login と同様、profile 取得エラー時も safeNext は尊重する。
+    else if (safeNextFromQuery) {
+      next = safeNextFromQuery
+    }
+    // プロファイル取得エラーの場合は安全にオンボーディングへ
+    else if (profileError) {
+      next = '/onboarding/welcome'
+    }
+    // オンボーディング完了済み → ホームへ
+    else if (profile?.onboarding_completed_at) {
+      next = '/home'
+    }
+    // オンボーディング進行中 → 再開ページへ
+    else if (profile?.onboarding_started_at) {
+      next = '/onboarding/resume'
+    }
+    // 未開始またはプロファイルなし → 初回ウェルカムへ
+    else {
+      next = '/onboarding/welcome'
     }
   } else if (!authSuccess) {
     // 認証も失敗し、既存ユーザーもいない場合

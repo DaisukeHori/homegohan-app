@@ -56,8 +56,14 @@ async function clearSession(page: Page): Promise<void> {
 async function _doLogin(page: Page): Promise<void> {
   await page.goto(`${BASE_URL}/login`);
   await page.waitForLoadState("domcontentloaded");
+  // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+  // 変わったため prefix 一致で全て削除する
   await page.evaluate(() => {
-    try { localStorage.removeItem('auth_last_fail_ts'); } catch (_) {}
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('auth_last_fail_ts'))
+        .forEach((k) => localStorage.removeItem(k));
+    } catch (_) {}
   });
   const { email, password } = E2E_USER;
   await page.locator("#email").fill(email);
@@ -162,7 +168,13 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
   test("A-2: 不正な認証情報でログインするとエラーメッセージが表示される", async ({ page }) => {
     // 前のテストで localStorage にレートリミットタイムスタンプが残らないよう初期化
     await page.goto(`${BASE_URL}/login`);
-    await page.evaluate(() => localStorage.removeItem('auth_last_fail_ts'));
+    // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+    // 変わったため prefix 一致で全て削除する
+    await page.evaluate(() => {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('auth_last_fail_ts'))
+        .forEach((k) => localStorage.removeItem(k));
+    });
     await page.waitForLoadState("networkidle");
 
     await page.locator("#email").fill("nonexistent-user-xyz@example.com");
@@ -217,7 +229,13 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
    */
   test("A-4: 大文字を含むメールアドレスでもログインできる", async ({ page }) => {
     await page.goto(`${BASE_URL}/login`);
-    await page.evaluate(() => localStorage.removeItem('auth_last_fail_ts'));
+    // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+    // 変わったため prefix 一致で全て削除する
+    await page.evaluate(() => {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('auth_last_fail_ts'))
+        .forEach((k) => localStorage.removeItem(k));
+    });
     await page.waitForLoadState("networkidle");
 
     // メールを大文字に変換して入力
@@ -246,7 +264,13 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
   test("A-5: ?next=/home を付けてログインすると /home に遷移する", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login?next=/home`);
-    await page.evaluate(() => localStorage.removeItem('auth_last_fail_ts'));
+    // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+    // 変わったため prefix 一致で全て削除する
+    await page.evaluate(() => {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('auth_last_fail_ts'))
+        .forEach((k) => localStorage.removeItem(k));
+    });
     await page.waitForLoadState("networkidle");
 
     await page.locator("#email").fill(E2E_USER.email);
@@ -274,7 +298,13 @@ test.describe("A. ログイン UI の嫌がらせ", () => {
   test("A-6: ?next= に外部 URL を指定してもオープンリダイレクトにならない", async ({ page }) => {
     await clearSession(page);
     await page.goto(`${BASE_URL}/login`);
-    await page.evaluate(() => localStorage.removeItem('auth_last_fail_ts'));
+    // #1057 (UX1-16 round-2): キーがメールアドレス単位 (`auth_last_fail_ts:<email>`) に
+    // 変わったため prefix 一致で全て削除する
+    await page.evaluate(() => {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('auth_last_fail_ts'))
+        .forEach((k) => localStorage.removeItem(k));
+    });
     // ?next= パラメータ付き URL に移動（rate limit キーは既にクリア済み）
     await page.goto(`${BASE_URL}/login?next=https://evil.example.com`);
     await page.waitForLoadState("networkidle");
