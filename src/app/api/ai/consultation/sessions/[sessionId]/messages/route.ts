@@ -4,6 +4,64 @@ import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { todayLocal, parseLocalDate, formatLocalDate } from '@/lib/date-utils';
+import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
+
+// #1047 F2-21: アクション自動実行を self-fetch
+// (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
+// serverless 環境で NEXT_PUBLIC_APP_URL 未設定時に localhost へ fetch してしまい
+// 到達不能で静かに失敗する。ai_action_logs への記録・ステータス確定を含めて
+// execute route と同じ実行ロジックを直接関数呼び出しする。
+async function executeAndFinalizeAction(
+  supabase: any,
+  user: { id: string },
+  sessionId: string,
+  savedAiMessageId: string,
+  proposedActions: { type: string; params?: Record<string, any> },
+): Promise<{ success: boolean; result: any } | null> {
+  const { data: actionLog } = await supabase
+    .from('ai_action_logs')
+    .insert({
+      session_id: sessionId,
+      message_id: savedAiMessageId,
+      action_type: proposedActions.type,
+      action_params: proposedActions.params || {},
+      status: 'pending',
+    })
+    .select('id')
+    .single();
+
+  if (!actionLog) return null;
+
+  try {
+    const executionResult = await runConsultationAction(supabase, user, {
+      id: actionLog.id,
+      action_type: proposedActions.type,
+      action_params: proposedActions.params || {},
+      ai_consultation_sessions: { user_id: user.id },
+    });
+
+    // #1047 F2-21 受入基準: 失敗が pending のまま滞留しないよう、
+    // unknown action type も含めて必ず ai_action_logs のステータスを確定させる。
+    const success = executionResult.unknownActionType ? false : executionResult.success;
+    const result = executionResult.unknownActionType
+      ? { error: 'Unknown action type' }
+      : executionResult.result;
+
+    await supabase
+      .from('ai_action_logs')
+      .update({ status: success ? 'executed' : 'failed', result, executed_at: new Date().toISOString() })
+      .eq('id', actionLog.id);
+
+    return { success, result };
+  } catch (execError) {
+    console.error('Action direct-execution error:', execError);
+    await supabase
+      .from('ai_action_logs')
+      .update({ status: 'failed', executed_at: new Date().toISOString() })
+      .eq('id', actionLog.id);
+    return { success: false, result: null };
+  }
+}
 
 // メッセージ一覧取得
 export async function GET(
@@ -1047,7 +1105,10 @@ export async function POST(
               }
             }
 
-            // 重要度チェック（非同期）
+            // 重要度チェック
+            // #1047 F2-20: 以前は await せず fire-and-forget していたため、serverless
+            // 環境ではレスポンス送出後に関数インスタンスが終了し、DB更新が消失する
+            // ことがあった。応答（SSE最終メッセージ送出）前に、最大5秒だけ待つ。
             const checkImportanceAsync = async () => {
               try {
                 const importanceCheck = await openai.chat.completions.create({
@@ -1058,7 +1119,9 @@ export async function POST(
                   ],
                   max_completion_tokens: 200,
                   response_format: { type: 'json_object' },
-                } as any);
+                } as any, {
+                  signal: AbortSignal.timeout(8_000),
+                });
                 const result = JSON.parse(importanceCheck.choices[0]?.message?.content || '{}');
                 if (result.isImportant) {
                   await supabase.from('ai_consultation_messages').update({
@@ -1069,7 +1132,10 @@ export async function POST(
                 }
               } catch { /* ignore */ }
             };
-            checkImportanceAsync();
+            await Promise.race([
+              checkImportanceAsync(),
+              new Promise((resolve) => setTimeout(resolve, 5_000)),
+            ]);
 
             // AI応答を保存
             const { data: savedAiMessage } = await supabase
@@ -1083,29 +1149,16 @@ export async function POST(
               .select()
               .single();
 
-            // アクション自動実行
-            let actionResult = null;
+            // アクション自動実行（#1047 F2-21: self-fetch をやめ直接関数呼び出し）
+            let actionResult: { success: boolean; result: any } | null = null;
             if (proposedActions && savedAiMessage) {
-              await supabase.from('ai_action_logs').insert({
-                session_id: params.sessionId,
-                message_id: savedAiMessage.id,
-                action_type: proposedActions.type,
-                action_params: proposedActions.params || {},
-                status: 'pending',
-              });
-
-              try {
-                const executeRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/ai/consultation/actions/${savedAiMessage.id}/execute`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Cookie': request.headers.get('cookie') || '',
-                  },
-                });
-                if (executeRes.ok) {
-                  actionResult = await executeRes.json();
-                }
-              } catch { /* ignore */ }
+              actionResult = await executeAndFinalizeAction(
+                supabase,
+                user,
+                params.sessionId,
+                savedAiMessage.id,
+                proposedActions,
+              );
             }
 
             // セッション更新
@@ -1206,12 +1259,16 @@ export async function POST(
       } else {
         // knowledge-gptが失敗した場合、フォールバックで直接OpenAI APIを呼び出す
         console.error('knowledge-gpt failed, falling back to OpenAI:', await knowledgeGptRes.text());
+        // #1047 F2-15: signal は create() の第1引数(ボディ)ではなく第2引数(options)で渡す。
+        // ボディに含めると型キャスト(`as any`)で握りつぶされたまま Grok 側に無効なフィールドとして
+        // 送信され、実質的にタイムアウトなしで呼び出していた。
         const completion = await openai.chat.completions.create({
           model: getFastLLMModel(),
           messages,
           max_completion_tokens: 2000,
-          signal: AbortSignal.timeout(25000),
-        } as any);
+        } as any, {
+          signal: AbortSignal.timeout(25_000),
+        });
         aiContent = completion.choices[0]?.message?.content || aiContent;
       }
     } catch (kgError) {
@@ -1232,8 +1289,8 @@ export async function POST(
       }
     }
 
-    // ユーザーメッセージの重要度をAIに判断させる（非同期・バックグラウンド実行）
-    // レスポンス時間を改善するため、重要度チェックはawaitしない
+    // ユーザーメッセージの重要度をAIに判断させる
+    // #1047 F2-20: 応答が完全に返り切る前に最大5秒だけ待って完了を試みる（下記 Promise.race）
     const checkImportanceAsync = async () => {
       try {
         const importanceCheck = await openai.chat.completions.create({
@@ -1272,7 +1329,10 @@ JSONで回答してください：
           ],
           max_completion_tokens: 200,
           response_format: { type: 'json_object' },
-        } as any);
+        } as any, {
+          // #1047 F2-15: タイムアウトが無くハングし得た
+          signal: AbortSignal.timeout(8_000),
+        });
 
         const importanceResult = JSON.parse(importanceCheck.choices[0]?.message?.content || '{}');
         if (importanceResult.isImportant) {
@@ -1294,8 +1354,13 @@ JSONで回答してください：
       }
     };
 
-    // バックグラウンドで実行（awaitしない）
-    checkImportanceAsync();
+    // #1047 F2-20: 以前は fire-and-forget（await しない）だったため、serverless
+    // 環境ではレスポンス返却後に関数インスタンスが終了し、DB更新が消失することがあった。
+    // 応答前に最大5秒だけ待つ。
+    await Promise.race([
+      checkImportanceAsync(),
+      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    ]);
 
     // AI応答を保存
     const { data: savedAiMessage, error: aiMsgError } = await supabase
@@ -1313,39 +1378,18 @@ JSONで回答してください：
     if (aiMsgError) throw aiMsgError;
 
     // アクションがある場合はai_action_logsに記録し、自動実行
-    let actionResult = null;
+    // #1047 F2-21: self-fetch をやめ直接関数呼び出し
+    let actionResult: { success: boolean; result: any } | null = null;
     if (proposedActions) {
-      const { data: actionLog } = await supabase
-        .from('ai_action_logs')
-        .insert({
-          session_id: params.sessionId,
-          message_id: savedAiMessage.id,
-          action_type: proposedActions.type,
-          action_params: proposedActions.params || {},
-          status: 'pending',
-        })
-        .select('id')
-        .single();
-
-      // アクションを自動実行
-      if (actionLog) {
-        try {
-          const executeRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/ai/consultation/actions/${savedAiMessage.id}/execute`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cookie': request.headers.get('cookie') || '',
-            },
-          });
-          if (executeRes.ok) {
-            actionResult = await executeRes.json();
-            console.log('Action auto-executed:', actionResult);
-          } else {
-            console.error('Action auto-execution failed:', await executeRes.text());
-          }
-        } catch (e) {
-          console.error('Action auto-execution error:', e);
-        }
+      actionResult = await executeAndFinalizeAction(
+        supabase,
+        user,
+        params.sessionId,
+        savedAiMessage.id,
+        proposedActions,
+      );
+      if (actionResult) {
+        console.log('Action auto-executed:', actionResult);
       }
     }
 
