@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Heart, Search, X, ChevronLeft, RefreshCw, Utensils, SortAsc, Clock } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Heart, Search, X, ChevronLeft, RefreshCw, SortAsc } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
 import { FavoriteRecipeModal } from "./_components/FavoriteRecipeModal";
+import { FavoriteListItem } from "./_components/FavoriteListItem";
 
 // カラーパレット（アプリ共通）
 const colors = {
@@ -305,109 +306,14 @@ export default function FavoritesPage() {
           <AnimatePresence>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {favorites.map((item) => (
-                <motion.div
+                <FavoriteListItem
                   key={item.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.2 }}
-                  onClick={() => openRecipeDetail(item)}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`${item.recipeName} のレシピを見る`}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openRecipeDetail(item);
-                    }
-                  }}
-                  style={{
-                    background: colors.card,
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: 16,
-                    padding: "14px 16px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    cursor: "pointer",
-                  }}
-                >
-                  {/* Icon */}
-                  <div
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 12,
-                      background: colors.favRedLight,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Utensils size={20} color={colors.favRed} />
-                  </div>
-
-                  {/* Info */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{
-                        fontWeight: 600,
-                        fontSize: 15,
-                        color: colors.text,
-                        margin: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {item.recipeName}
-                    </p>
-                    <p
-                      style={{
-                        fontSize: 12,
-                        color: colors.textMuted,
-                        margin: "2px 0 0",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                      }}
-                    >
-                      <Clock size={11} />
-                      {formatDate(item.likedAt)} に追加
-                    </p>
-                  </div>
-
-                  {/* Remove button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleRemove(item);
-                    }}
-                    disabled={removingId === item.id}
-                    aria-label="お気に入りから削除"
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: "50%",
-                      background: removingId === item.id ? colors.bg : colors.favRedLight,
-                      border: "none",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      cursor: removingId === item.id ? "default" : "pointer",
-                      flexShrink: 0,
-                      transition: "opacity 0.2s",
-                      opacity: removingId === item.id ? 0.5 : 1,
-                    }}
-                  >
-                    <Heart
-                      size={16}
-                      color={colors.favRed}
-                      fill={removingId === item.id ? "none" : colors.favRed}
-                    />
-                  </button>
-                </motion.div>
+                  item={item}
+                  isRemoving={removingId === item.id}
+                  onOpen={() => openRecipeDetail(item)}
+                  onRemove={() => handleRemove(item)}
+                  formatDate={formatDate}
+                />
               ))}
 
               {/* #263: 次の50件ボタン */}
