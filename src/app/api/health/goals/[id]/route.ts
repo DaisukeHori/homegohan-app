@@ -1,23 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
-
-// #1046 F2-12: Math.abs で符号を潰すと「目標から遠ざかる」変化でも進捗が増えてしまう
-// （例: 80→85kgで目標70kgなのに進捗50%）。target - start の符号を方向として掛け、
-// 目標方向へ進んだ分だけを進捗としてカウントする。0除算はガードし、逆行時は0%にクランプする。
-export function calculateGoalProgressPercentage(
-  startValue: number,
-  targetValue: number,
-  currentValue: number,
-  fallback: number,
-): number {
-  const totalChange = targetValue - startValue;
-  if (totalChange === 0) return fallback;
-
-  const direction = Math.sign(totalChange);
-  const currentChange = (currentValue - startValue) * direction;
-  return Math.min(100, Math.max(0, (currentChange / Math.abs(totalChange)) * 100));
-}
+import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 
 // 目標の取得
 export async function GET(

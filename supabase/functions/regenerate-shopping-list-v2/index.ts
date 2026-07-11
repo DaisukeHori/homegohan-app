@@ -131,10 +131,17 @@ async function markFailed(
 // ============================================
 
 function buildPrompt(ingredients: InputIngredient[]): string {
+  // #1046 round-2 Warning: InputIngredient.count は「この材料が何回の食事出現から
+  // 合算されたか」という集計用の内部カウントであり、amount（確定合算済みの総量）に
+  // 掛け合わせる係数ではない。しかしJSONをそのまま渡すとLLMが amount×count と
+  // 誤読し購入量を水増しする恐れがあるため、count はLLM入力から除去し
+  // name/amount のみを渡す（count はプロンプト生成に不要）。
+  const promptIngredients = ingredients.map(({ name, amount }) => ({ name, amount }));
+
   return `あなたは買い物リストの最適化AIです。スーパーで買い物しやすいリストを作成します。
 
-以下の材料リストを整理してください：
-${JSON.stringify(ingredients, null, 2)}
+以下の材料リストを整理してください（amountは既に合算済みの確定総量です。掛け算や倍量は不要です）：
+${JSON.stringify(promptIngredients, null, 2)}
 
 【タスク1: 表記ゆれの統一】
 同じ材料の異なる表記を統一してマージ

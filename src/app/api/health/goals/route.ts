@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
+import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 
 // 目標一覧の取得
 export async function GET(request: NextRequest) {
@@ -88,13 +89,12 @@ export async function POST(request: NextRequest) {
     startValue = profile?.body_fat_percentage;
   }
 
-  // 進捗率を計算
+  // 進捗率を計算（新規作成時は current_value = start_value のため常に0%になるが、
+  // #1046 round-2 Suggestion: PUT側と同じ calculateGoalProgressPercentage を使い
+  // 重複ロジック・死んだ分岐を解消する）
   let progressPercentage = 0;
   if (startValue !== null) {
-    const totalChange = Math.abs(targetValue - startValue);
-    if (totalChange > 0) {
-      progressPercentage = 0;
-    }
+    progressPercentage = calculateGoalProgressPercentage(startValue, targetValue, startValue, 0);
   }
 
   const { data, error } = await supabase

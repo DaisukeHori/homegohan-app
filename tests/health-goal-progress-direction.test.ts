@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateGoalProgressPercentage } from '../src/app/api/health/goals/[id]/route';
+import { calculateGoalProgressPercentage } from '../src/lib/health-goal-progress';
 
 // #1046 F2-12: 進捗率が変化の「方向」を無視する問題の回帰テスト。
 // Math.abs で符号を潰すと、目標から遠ざかっても進捗が増えてしまっていた
