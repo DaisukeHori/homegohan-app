@@ -4,7 +4,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { BarChart3, X, Heart, Sparkles, RefreshCw } from "lucide-react";
-import { NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, calculateDriPercentage, getNutrientDefinition } from "@homegohan/shared";
+import { NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, calculateDriPercentage, getNutrientDefinition, formatDateJa } from "@homegohan/shared";
 
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
@@ -106,7 +106,7 @@ export function NutritionDetailModal({
               <div className="flex items-center gap-2">
                 <BarChart3 size={20} style={{ color: colors.accent }} />
                 <h2 className="text-lg font-bold" style={{ color: colors.text }}>
-                  {selectedDay?.date.getMonth() + 1}/{selectedDay?.date.getDate()} の栄養分析
+                  {selectedDay?.dateStr && formatDateJa(selectedDay.dateStr)} の栄養分析
                 </h2>
               </div>
               <button

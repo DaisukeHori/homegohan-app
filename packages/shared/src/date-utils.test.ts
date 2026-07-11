@@ -4,8 +4,8 @@
  * Refactor E (PR #908) で packages/shared に集約された純粋日付関数の初の unit test。
  */
 
-import { describe, it, expect } from 'vitest';
-import { formatLocalDate, todayLocal, parseLocalDate, addDays } from './date-utils';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { formatLocalDate, todayLocal, parseLocalDate, addDays, daysUntilLocal, formatExpiry, formatDateJa } from './date-utils';
 
 describe('formatLocalDate', () => {
   it('UTC の真夜中直前 (23:59 JST = 14:59 UTC) を JST 当日として返す', () => {
@@ -124,5 +124,73 @@ describe('addDays', () => {
     const originalTime = base.getTime();
     addDays(base, 10);
     expect(base.getTime()).toBe(originalTime);
+  });
+});
+
+describe('daysUntilLocal (#1053)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('JST 今日と同じ日付なら 0 を返す', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-08T01:00:00Z')); // JST 2026-07-08 10:00
+    expect(daysUntilLocal('2026-07-08')).toBe(0);
+  });
+
+  it('未来日は正の残日数を返す', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-08T01:00:00Z'));
+    expect(daysUntilLocal('2026-07-11')).toBe(3);
+  });
+
+  it('過去日は負の残日数を返す（期限切れ）', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-08T01:00:00Z'));
+    expect(daysUntilLocal('2026-07-05')).toBe(-3);
+  });
+
+  it('null/undefined は null を返す', () => {
+    expect(daysUntilLocal(null)).toBeNull();
+    expect(daysUntilLocal(undefined)).toBeNull();
+  });
+
+  it('UTC 環境で TZ=UTC ランタイムでも JST 早朝の「今日」を正しく 0 と判定する（#1035 と同種のズレ回帰防止）', () => {
+    vi.useFakeTimers();
+    // JST 2026-07-08 06:00 = UTC 2026-07-07 21:00。UTC 基準の new Date() 比較だと前日扱いになりうる境界。
+    vi.setSystemTime(new Date('2026-07-07T21:00:00Z'));
+    expect(daysUntilLocal('2026-07-08', 'Asia/Tokyo')).toBe(0);
+  });
+});
+
+describe('formatExpiry (#1053)', () => {
+  it('null は空文字を返す', () => {
+    expect(formatExpiry(null)).toBe('');
+  });
+
+  it('負の日数は「期限切れ」を返す', () => {
+    expect(formatExpiry(-1)).toBe('期限切れ');
+  });
+
+  it('0 は「今日まで」を返す', () => {
+    expect(formatExpiry(0)).toBe('今日まで');
+  });
+
+  it('1 は「明日まで」を返す', () => {
+    expect(formatExpiry(1)).toBe('明日まで');
+  });
+
+  it('2以上は「あとN日」を返す', () => {
+    expect(formatExpiry(5)).toBe('あと5日');
+  });
+});
+
+describe('formatDateJa (#1053)', () => {
+  it('デフォルト（年なし）で「M月D日」を返す', () => {
+    expect(formatDateJa('2026-07-08')).toBe('7月8日');
+  });
+
+  it('includeYear: true で「YYYY年M月D日」を返す', () => {
+    expect(formatDateJa('2026-07-08', { includeYear: true })).toBe('2026年7月8日');
   });
 });

@@ -26,7 +26,7 @@ import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, formatExpiry, formatDateJa } from "@homegohan/shared";
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
 // #fix/e2e-profile-reminder-banner-chunk: chunk 404 防止のため静的 import に変更
@@ -594,6 +594,12 @@ export default function WeeklyMenuPage() {
   const setShowNutritionDetailModal = useCallback((v: boolean) => {
     if (v) dispatchModal({ type: 'NUTRITION_DETAIL_MODAL_OPEN' });
     else dispatchModal({ type: 'NUTRITION_DETAIL_MODAL_CLOSE' });
+  }, []);
+
+  const showConfirmDeleteAllShopping = modal.showConfirmDeleteAllShopping;
+  const setShowConfirmDeleteAllShopping = useCallback((v: boolean) => {
+    if (v) dispatchModal({ type: 'CONFIRM_DELETE_ALL_SHOPPING_OPEN' });
+    else dispatchModal({ type: 'CONFIRM_DELETE_ALL_SHOPPING_CLOSE' });
   }, []);
 
   const isDeleting = modal.isDeleting;
@@ -3063,17 +3069,20 @@ export default function WeeklyMenuPage() {
     }
   };
 
+  // 買い物リスト全削除の確認モーダルを開く（#1053: window.confirm 廃止、styled モーダルに統一）
+  const requestDeleteAllShopping = () => {
+    if (shoppingList.length === 0) return;
+    setShowConfirmDeleteAllShopping(true);
+  };
+
   // 買い物リスト全削除
   const deleteAllShoppingItems = async () => {
-    if (shoppingList.length === 0) return;
-
-    if (!confirm(`${shoppingList.length}件のアイテムをすべて削除しますか？`)) return;
-
     const previousList = shoppingList;
     const itemIds = shoppingList.map(i => i.id);
 
     // 楽観的UI更新
     setShoppingList([]);
+    setShowConfirmDeleteAllShopping(false);
 
     try {
       const res = await fetch('/api/shopping-list', {
@@ -5373,7 +5382,7 @@ export default function WeeklyMenuPage() {
                     setSelectedDayIndex(idx);
                     setIsDayNutritionExpanded(false);
                   }}
-                  aria-label={`${day.date.getMonth() + 1}月${day.date.getDate()}日 ${day.dayOfWeek}`}
+                  aria-label={`${formatDateJa(day.dateStr)} ${day.dayOfWeek}`}
                   aria-pressed={isSelected}
                   className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-[10px] transition-all relative"
                   style={{
@@ -5489,7 +5498,7 @@ export default function WeeklyMenuPage() {
         <div className="mx-3 mt-2 px-3 py-2 rounded-[10px] flex items-center gap-2" style={{ background: colors.warningLight }}>
           <AlertTriangle size={14} color={colors.warning} />
           <span style={{ fontSize: 11, color: colors.text }}>
-            <strong>早めに使い切り:</strong> {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).map(i => `${i.name}(${getDaysUntil(i.expirationDate)}日)`).join(', ')}
+            <strong>早めに使い切り:</strong> {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).map(i => `${i.name}(${formatExpiry(getDaysUntil(i.expirationDate))})`).join(', ')}
           </span>
         </div>
       )}
@@ -5508,7 +5517,7 @@ export default function WeeklyMenuPage() {
           <div className="flex justify-between items-center">
           <div className="flex items-center gap-1.5">
             <span style={{ fontSize: 16, fontWeight: 600, color: weekDates[selectedDayIndex]?.dateStr < todayStr ? colors.textMuted : colors.text }}>
-              {weekDates[selectedDayIndex]?.date.getMonth() + 1}/{weekDates[selectedDayIndex]?.date.getDate()}（{weekDates[selectedDayIndex]?.dayOfWeek}）
+              {weekDates[selectedDayIndex]?.dateStr && formatDateJa(weekDates[selectedDayIndex].dateStr)}（{weekDates[selectedDayIndex]?.dayOfWeek}）
             </span>
             {weekDates[selectedDayIndex]?.dateStr === todayStr && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: colors.accent, color: '#fff' }}>今日</span>
@@ -5802,7 +5811,7 @@ export default function WeeklyMenuPage() {
                 onOpenShoppingRange={() => setActiveModal('shoppingRange')}
                 onToggleItem={toggleShoppingItem}
                 onDeleteItem={deleteShoppingItem}
-                onDeleteAll={deleteAllShoppingItems}
+                onDeleteAll={requestDeleteAllShopping}
                 onToggleVariant={toggleShoppingVariant}
                 onOpenServingsModal={() => setShowServingsModal(true)}
                 onDismissProgress={() => { setIsRegeneratingShoppingList(false); setShoppingListProgress(null); setShoppingListRequestId(null); }}
@@ -5903,10 +5912,32 @@ export default function WeeklyMenuPage() {
             {/* Delete Confirmation Modal */}
             {activeModal === 'confirmDelete' && deletingMeal && (
               <ConfirmDeleteModal
-                deletingMeal={deletingMeal}
+                title="この食事を削除しますか？"
+                message={
+                  <>
+                    「{deletingMeal.dishName || MEAL_LABELS[deletingMeal.mealType as keyof typeof MEAL_LABELS]}」を削除します。<br />
+                    この操作は取り消せません。
+                  </>
+                }
                 isDeleting={isDeleting}
                 onCancel={() => { setActiveModal(null); setDeletingMeal(null); }}
                 onConfirm={confirmDeleteMeal}
+              />
+            )}
+
+            {/* 買い物リスト全削除の確認モーダル（#1053: window.confirm 廃止） */}
+            {showConfirmDeleteAllShopping && (
+              <ConfirmDeleteModal
+                title="買い物リストをすべて削除しますか？"
+                message={
+                  <>
+                    {shoppingList.length}件のアイテムをすべて削除します。<br />
+                    この操作は取り消せません。
+                  </>
+                }
+                isDeleting={isDeleting}
+                onCancel={() => setShowConfirmDeleteAllShopping(false)}
+                onConfirm={deleteAllShoppingItems}
               />
             )}
 

@@ -4,7 +4,7 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RefreshCw, X, Sparkles, Check } from "lucide-react";
 import type { PlannedMeal, DishDetail } from "@/types/domain";
-import { todayLocal } from "@/lib/date-utils";
+import { todayLocal, formatDateJa } from "@/lib/date-utils";
 
 const colors = {
   bg: '#F7F6F3',
@@ -111,7 +111,7 @@ export function ImproveMealModal({
                   <div className="mb-4 p-3 rounded-lg" style={{ background: colors.bg }}>
                     <p style={{ fontSize: 12, color: colors.textLight }}>対象日</p>
                     <p style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
-                      {weekDates[selectedDayIndex]?.date.getMonth() + 1}月{weekDates[selectedDayIndex]?.date.getDate()}日（{weekDates[selectedDayIndex]?.dayOfWeek}）
+                      {weekDates[selectedDayIndex]?.dateStr && formatDateJa(weekDates[selectedDayIndex].dateStr)}（{weekDates[selectedDayIndex]?.dayOfWeek}）
                       {weekDates[selectedDayIndex]?.dateStr === todayLocal() && (
                         <span className="ml-2 text-xs px-2 py-0.5 rounded-full" style={{ background: colors.accentLight, color: colors.accent }}>今日</span>
                       )}
@@ -230,7 +230,7 @@ export function ImproveMealModal({
                               >
                                 <span>📅</span>
                                 <span>
-                                  {improveNextDay ? '✓ ' : ''}翌日（{nextDay.date.getMonth() + 1}/{nextDay.date.getDate()}）1日を改善
+                                  {improveNextDay ? '✓ ' : ''}翌日（{formatDateJa(nextDay.dateStr)}）1日を改善
                                 </span>
                               </button>
                             );

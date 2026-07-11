@@ -3,7 +3,6 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Trash2 } from "lucide-react";
-import { MEAL_LABELS } from "@homegohan/shared";
 
 const colors = {
   bg: '#F7F6F3',
@@ -15,22 +14,21 @@ const colors = {
   dangerLight: '#FDECEC',
 };
 
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
-
-interface DeletingMeal {
-  dishName?: string;
-  mealType: string;
-}
-
 interface ConfirmDeleteModalProps {
-  deletingMeal: DeletingMeal;
+  /** モーダルタイトル（例: 「この食事を削除しますか？」） */
+  title: string;
+  /** 削除対象の説明文（例: 「〇〇を削除します。この操作は取り消せません。」） */
+  message: React.ReactNode;
   isDeleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
+// #1053: 削除確認の見た目を weekly 全体で統一するため、
+// 表示テキストは呼び出し元から渡す汎用コンポーネントに一般化（旧: 食事削除専用の固定文言）。
 export function ConfirmDeleteModal({
-  deletingMeal,
+  title,
+  message,
   isDeleting,
   onCancel,
   onConfirm,
@@ -53,11 +51,10 @@ export function ConfirmDeleteModal({
             <Trash2 size={24} color={colors.danger} />
           </div>
           <h3 style={{ fontSize: 17, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
-            この食事を削除しますか？
+            {title}
           </h3>
           <p style={{ fontSize: 13, color: colors.textMuted, margin: 0 }}>
-            「{deletingMeal.dishName || MEAL_LABELS[deletingMeal.mealType as MealType]}」を削除します。<br/>
-            この操作は取り消せません。
+            {message}
           </p>
         </div>
         <div className="flex gap-2">

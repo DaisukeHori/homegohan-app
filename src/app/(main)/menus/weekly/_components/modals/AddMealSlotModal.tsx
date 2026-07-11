@@ -3,7 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { X, ChevronRight } from "lucide-react";
-import { MEAL_LABELS } from "@homegohan/shared";
+import { MEAL_LABELS, formatDateJa } from "@homegohan/shared";
 
 const colors = {
   bg: '#F7F6F3',
@@ -60,7 +60,7 @@ export function AddMealSlotModal({
         </button>
       </div>
       <p style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
-        {dayInfo && `${dayInfo.date.getMonth() + 1}/${dayInfo.date.getDate()}（${dayInfo.dayOfWeek}）`}に追加する食事を選んでください
+        {dayInfo && `${formatDateJa(dayInfo.dateStr)}（${dayInfo.dayOfWeek}）`}に追加する食事を選んでください
       </p>
       <div className="flex flex-col gap-2">
         {ALL_MEAL_TYPES.map(type => (

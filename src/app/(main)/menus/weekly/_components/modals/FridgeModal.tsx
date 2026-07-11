@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Refrigerator, X, Trash2, Plus } from "lucide-react";
+import { daysUntilLocal, formatExpiry } from "@homegohan/shared";
 import { usePantryStore } from "../../_state";
 
 const colors = {
@@ -24,14 +25,6 @@ const colors = {
   border: '#E8E8E8',
   danger: '#D64545',
   dangerLight: '#FDECEC',
-};
-
-const getDaysUntil = (dateStr: string | null | undefined): number | null => {
-  if (!dateStr) return null;
-  const target = new Date(dateStr);
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 };
 
 interface FridgeModalProps {
@@ -68,8 +61,8 @@ export function FridgeModal({
         {fridgeItems.length === 0 ? (
           <p className="text-center py-8" style={{ color: colors.textMuted }}>冷蔵庫は空です</p>
         ) : (
-          fridgeItems.sort((a, b) => (getDaysUntil(a.expirationDate) || 999) - (getDaysUntil(b.expirationDate) || 999)).map(item => {
-            const daysLeft = getDaysUntil(item.expirationDate);
+          fridgeItems.sort((a, b) => (daysUntilLocal(a.expirationDate) ?? 999) - (daysUntilLocal(b.expirationDate) ?? 999)).map(item => {
+            const daysLeft = daysUntilLocal(item.expirationDate);
             return (
               <div key={item.id} data-testid="fridge-item" className="flex items-center justify-between px-3 py-2.5 rounded-[10px] mb-1.5" style={{
                 background: daysLeft !== null && daysLeft <= 1 ? colors.dangerLight : daysLeft !== null && daysLeft <= 3 ? colors.warningLight : colors.bg
@@ -84,7 +77,7 @@ export function FridgeModal({
                     fontWeight: 600,
                     color: daysLeft !== null && daysLeft <= 1 ? colors.danger : daysLeft !== null && daysLeft <= 3 ? colors.warning : colors.textMuted,
                   }}>
-                    {daysLeft === null ? '' : daysLeft === 0 ? '今日まで' : daysLeft === 1 ? '明日まで' : `${daysLeft}日`}
+                    {formatExpiry(daysLeft)}
                   </span>
                   <button onClick={() => onDeleteItem(item.id)} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.05)' }}>
                     <Trash2 size={12} color={colors.textMuted} />

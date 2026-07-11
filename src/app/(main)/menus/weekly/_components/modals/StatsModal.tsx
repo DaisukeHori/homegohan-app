@@ -4,6 +4,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { BarChart3, X, ChefHat, Flame, Sparkles, Heart, RefreshCw } from "lucide-react";
+import { formatLocalDate, formatDateJa } from "@homegohan/shared";
 
 const NutritionRadarChart = dynamic(
   () => import("@/components/NutritionRadarChart").then(m => ({ default: m.NutritionRadarChart })),
@@ -174,7 +175,7 @@ export function StatsModal({
               {/* 今日の日付 */}
               <div className="flex items-center justify-between mb-3">
                 <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
-                  {today.getMonth() + 1}月{today.getDate()}日（{dayNames[today.getDay()]}）の栄養
+                  {formatDateJa(formatLocalDate(today))}（{dayNames[today.getDay()]}）の栄養
                 </p>
                 <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: colors.accentLight, color: colors.accent }}>
                   {todayMealCount}食分

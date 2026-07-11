@@ -3,7 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Sparkles, X, Check } from "lucide-react";
-import { AI_CONDITIONS, MEAL_LABELS } from "@homegohan/shared";
+import { AI_CONDITIONS, MEAL_LABELS, formatDateJa } from "@homegohan/shared";
 import { useFormDraftStore } from "../../_state";
 
 const colors = {
@@ -55,7 +55,7 @@ export function AiMealModal({
         <div className="flex items-center gap-2">
           <Sparkles size={18} color={colors.accent} />
           <span style={{ fontSize: 15, fontWeight: 600 }}>
-            {dayInfo && `${dayInfo.date.getMonth() + 1}/${dayInfo.date.getDate()}（${dayInfo.dayOfWeek}）`}の{mealLabel}
+            {dayInfo && `${formatDateJa(dayInfo.dateStr)}（${dayInfo.dayOfWeek}）`}の{mealLabel}
           </span>
         </div>
         <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: colors.bg }}>
