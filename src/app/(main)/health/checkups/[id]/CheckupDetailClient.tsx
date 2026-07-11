@@ -6,10 +6,10 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowLeft, Trash2, Activity, Heart, Droplet, AlertTriangle,
-  CheckCircle2, Sparkles, Calendar, MapPin, Loader2
+  CheckCircle2, Sparkles, Calendar, MapPin, Loader2, Scale,
 } from 'lucide-react';
 import {
-  BLOOD_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex,
+  ALL_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex, getStatusLabel,
   type BiologicalSex, type MetricStatus,
 } from '@/lib/health-blood-test-reference';
 
@@ -80,6 +80,8 @@ export default function CheckupDetailClient({ id }: Props) {
   const [checkup, setCheckup] = useState<HealthCheckup | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // #1051 UX3-05: 削除失敗が無反応になっていたため、モーダルを保持したままエラーを表示する
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   // #1055 UX3-24: 基準値をプロフィールの性別で分岐させる
   const [sex, setSex] = useState<BiologicalSex>(null);
 
@@ -117,15 +119,21 @@ export default function CheckupDetailClient({ id }: Props) {
 
   const handleDelete = async () => {
     setDeleting(true);
+    setDeleteError(null);
     try {
       const res = await fetch(`/api/health/checkups/${id}`, {
         method: 'DELETE',
       });
       if (res.ok) {
         router.push('/health/checkups');
+        return;
       }
+      // #1051 UX3-05: 失敗時に無反応にせず、モーダルを保持したまま再試行できるようにする
+      const data = await res.json().catch(() => null);
+      setDeleteError(data?.error || '削除に失敗しました。もう一度お試しください。');
     } catch (error) {
       console.error('Failed to delete:', error);
+      setDeleteError('削除に失敗しました。もう一度お試しください。');
     }
     setDeleting(false);
   };
@@ -140,6 +148,10 @@ export default function CheckupDetailClient({ id }: Props) {
       case 'high':
       case 'low':
         return { bg: colors.errorLight, text: colors.error };
+      // #1051 UX3-07: 基準値ぎりぎりも一律の赤ではなく「注意」として区別する
+      case 'warning_high':
+      case 'warning_low':
+        return { bg: colors.warningLight, text: colors.warning };
       default:
         return { bg: colors.successLight, text: colors.success };
     }
@@ -147,12 +159,13 @@ export default function CheckupDetailClient({ id }: Props) {
 
   const renderMetricRow = (key: string, value: number | undefined) => {
     if (value === undefined) return null;
-    const def = BLOOD_METRIC_DEFS[key];
+    const def = ALL_METRIC_DEFS[key];
     if (!def) return null;
 
     const status = evaluateStatus(key, value, sex);
     const statusStyle = getStatusStyle(status);
     const rangeText = formatRangeText(getRangeForSex(key, sex));
+    const statusLabel = getStatusLabel(status);
 
     return (
       <div key={key} className="flex items-center justify-between py-2 border-b" style={{ borderColor: colors.border }}>
@@ -168,11 +181,15 @@ export default function CheckupDetailClient({ id }: Props) {
             {value}
           </span>
           <span className="text-xs" style={{ color: colors.textMuted }}>{def.unit}</span>
-          {(status === 'high' || status === 'low') && (
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: statusStyle.text }}
-            />
+          {/* #1051 UX3-07: 色ドットだけでなくテキストラベルも併記する */}
+          {statusLabel && (
+            <span className="flex items-center gap-1">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ backgroundColor: statusStyle.text }}
+              />
+              <span className="text-xs font-medium" style={{ color: statusStyle.text }}>{statusLabel}</span>
+            </span>
           )}
         </div>
       </div>
@@ -373,6 +390,18 @@ export default function CheckupDetailClient({ id }: Props) {
             </p>
           )}
 
+          {/* 身体測定 (#1051 UX3-07: 従来この画面で一切表示されていなかった) */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Scale size={16} style={{ color: colors.accent }} />
+              <span className="text-sm font-bold" style={{ color: colors.textLight }}>身体測定</span>
+            </div>
+            {renderMetricRow('height', checkup.height)}
+            {renderMetricRow('weight', checkup.weight)}
+            {renderMetricRow('bmi', checkup.bmi)}
+            {renderMetricRow('waist_circumference', checkup.waist_circumference)}
+          </div>
+
           {/* 血圧・代謝 */}
           <div className="mb-4">
             <div className="flex items-center gap-2 mb-2">
@@ -451,12 +480,19 @@ export default function CheckupDetailClient({ id }: Props) {
             <h3 className="text-lg font-bold mb-2" style={{ color: colors.text }}>
               記録を削除しますか？
             </h3>
-            <p className="text-sm mb-6" style={{ color: colors.textMuted }}>
+            <p className="text-sm mb-4" style={{ color: colors.textMuted }}>
               この操作は取り消せません。
             </p>
+            {/* #1051 UX3-05: 削除失敗を無反応にせず、モーダルを保持したままエラーを表示する */}
+            {deleteError && (
+              <div className="flex items-start gap-2 p-3 mb-4 rounded-lg" style={{ backgroundColor: colors.errorLight }}>
+                <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.error }} />
+                <p className="text-sm" style={{ color: colors.error }}>{deleteError}</p>
+              </div>
+            )}
             <div className="flex gap-3">
               <button
-                onClick={() => setShowDeleteConfirm(false)}
+                onClick={() => { setShowDeleteConfirm(false); setDeleteError(null); }}
                 className="flex-1 py-3 rounded-full font-bold"
                 style={{ backgroundColor: colors.bg, color: colors.text }}
               >

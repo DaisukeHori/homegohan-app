@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   Scale, Heart, Moon, Droplets, Activity, TrendingUp, TrendingDown,
   Target, Flame, Calendar, ChevronRight, Plus, Camera, Sparkles,
-  Award, Clock, Smile, Frown, Meh, AlertTriangle, CheckCircle2
+  Award, Clock, Smile, Frown, Meh, AlertTriangle, CheckCircle2, Settings
 } from 'lucide-react';
 import { getGoalTypeLabel } from "@/lib/health-goal-types";
 
@@ -81,6 +81,8 @@ export default function HealthDashboardPage() {
   const [quickSleep, setQuickSleep] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // #1051 UX3-05: クイック記録の保存失敗が無反応だったため、モーダルを保持したまま表示する
+  const [quickSaveError, setQuickSaveError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedDateRecord, setSelectedDateRecord] = useState<HealthRecord | null>(null);
   const [loadingSelectedDate, setLoadingSelectedDate] = useState(false);
@@ -159,6 +161,7 @@ export default function HealthDashboardPage() {
     }
 
     setSaving(true);
+    setQuickSaveError(null);
     try {
       const res = await fetch('/api/health/records/quick', {
         method: 'POST',
@@ -177,12 +180,19 @@ export default function HealthDashboardPage() {
         setMessage(data.message);
         setShowQuickRecord(false);
         void fetchData(); // 再取得
-        
+
         // メッセージを3秒後に消す
         setTimeout(() => setMessage(null), 5000);
+        setSaving(false);
+        return;
       }
+
+      // #1051 UX3-05: 失敗時に無反応にせず、モーダルを保持したまま再試行できるようにする
+      const data = await res.json().catch(() => null);
+      setQuickSaveError(data?.error || '記録に失敗しました。もう一度お試しください。');
     } catch (error) {
       console.error('Failed to save:', error);
+      setQuickSaveError('記録に失敗しました。もう一度お試しください。');
     }
     setSaving(false);
   };
@@ -193,6 +203,26 @@ export default function HealthDashboardPage() {
   };
 
   const weightChange = getWeightChange();
+
+  // #1051 UX3-08: 「減少=緑/増加=赤」の固定意味付けは増量目標だと意味が逆になるため、
+  // 目標体重が分かる場合は目標に近づく方向を「良い」とする。目標が無ければ判定しない(中立表示)。
+  const weightGoal = goals.find((g) => g.goal_type === 'weight') ?? null;
+  const getWeightChangeSentiment = (): 'good' | 'bad' | 'neutral' => {
+    if (weightChange === null || weightChange === 0) return 'neutral';
+    if (!weightGoal || todayRecord?.weight == null) return 'neutral';
+    const target = weightGoal.target_value;
+    const current = todayRecord.weight;
+    if (current === target) return 'neutral';
+    const goodDirection: 'up' | 'down' = current > target ? 'down' : 'up';
+    const actualDirection: 'up' | 'down' = weightChange > 0 ? 'up' : 'down';
+    return actualDirection === goodDirection ? 'good' : 'bad';
+  };
+  const weightChangeSentiment = getWeightChangeSentiment();
+  const weightChangeColor = weightChangeSentiment === 'good'
+    ? colors.success
+    : weightChangeSentiment === 'bad'
+      ? colors.error
+      : colors.textMuted;
 
   // 週間カレンダーを生成
   const getWeekDays = () => {
@@ -228,11 +258,22 @@ export default function HealthDashboardPage() {
   return (
     <div className="min-h-screen pb-24" style={{ backgroundColor: colors.bg }}>
       {/* ヘッダー */}
-      <div className="px-4 pt-6 pb-4">
-        <h1 className="text-2xl font-bold" style={{ color: colors.text }}>健康記録</h1>
-        <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
-          毎日の記録があなたの健康を支えます
-        </p>
+      <div className="px-4 pt-6 pb-4 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: colors.text }}>健康記録</h1>
+          <p className="text-sm mt-1" style={{ color: colors.textMuted }}>
+            毎日の記録があなたの健康を支えます
+          </p>
+        </div>
+        {/* #1051 UX3-03: 記録設定(通知設定含む)への導線がURL直打ちでしか無かったため追加 */}
+        <Link
+          href="/health/settings"
+          aria-label="記録設定"
+          className="p-2 -mr-2 -mt-1 rounded-full"
+          style={{ color: colors.textMuted }}
+        >
+          <Settings size={22} />
+        </Link>
       </div>
 
       {/* 成功メッセージ */}
@@ -257,6 +298,17 @@ export default function HealthDashboardPage() {
 
       {/* 連続記録カード */}
       <div className="px-4 mb-4">
+        {/* #1051 UX3-03: 連続記録詳細(/health/streaks)への導線が無くURL直打ちでしか開けなかった */}
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold" style={{ color: colors.text }}>連続記録</h3>
+          <Link
+            href="/health/streaks"
+            className="text-sm flex items-center gap-1"
+            style={{ color: colors.accent }}
+          >
+            詳細を見る <ChevronRight size={16} />
+          </Link>
+        </div>
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -420,7 +472,7 @@ export default function HealthDashboardPage() {
         {!todayRecord ? (
           <motion.button
             whileTap={{ scale: 0.98 }}
-            onClick={() => setShowQuickRecord(true)}
+            onClick={() => { setQuickSaveError(null); setShowQuickRecord(true); }}
             className="w-full p-4 rounded-2xl flex items-center justify-between"
             style={{ 
               backgroundColor: colors.card,
@@ -480,13 +532,13 @@ export default function HealthDashboardPage() {
                 {weightChange !== null && (
                   <div className="flex items-center justify-center gap-1 mt-1">
                     {weightChange < 0 ? (
-                      <TrendingDown size={12} style={{ color: colors.success }} />
+                      <TrendingDown size={12} style={{ color: weightChangeColor }} />
                     ) : weightChange > 0 ? (
-                      <TrendingUp size={12} style={{ color: colors.error }} />
+                      <TrendingUp size={12} style={{ color: weightChangeColor }} />
                     ) : null}
-                    <span 
+                    <span
                       className="text-xs"
-                      style={{ color: weightChange < 0 ? colors.success : weightChange > 0 ? colors.error : colors.textMuted }}
+                      style={{ color: weightChangeColor }}
                     >
                       {weightChange > 0 ? '+' : ''}{weightChange}
                     </span>
@@ -685,6 +737,67 @@ export default function HealthDashboardPage() {
               <p className="text-xs" style={{ color: colors.textMuted }}>目標を管理</p>
             </motion.div>
           </Link>
+
+          {/* #1051 UX3-03: 血液検査/AI分析/チャレンジへの導線が無くURL直打ちでしか開けなかった */}
+          <Link href="/health/blood-tests">
+            <motion.div
+              whileTap={{ scale: 0.98 }}
+              className="p-4 rounded-xl"
+              style={{
+                backgroundColor: colors.card,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+              }}
+            >
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center mb-2"
+                style={{ backgroundColor: colors.errorLight }}
+              >
+                <Droplets size={20} style={{ color: colors.error }} />
+              </div>
+              <p className="font-medium text-sm" style={{ color: colors.text }}>血液検査</p>
+              <p className="text-xs" style={{ color: colors.textMuted }}>検査結果を確認</p>
+            </motion.div>
+          </Link>
+
+          <Link href="/health/insights">
+            <motion.div
+              whileTap={{ scale: 0.98 }}
+              className="p-4 rounded-xl"
+              style={{
+                backgroundColor: colors.card,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+              }}
+            >
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center mb-2"
+                style={{ backgroundColor: colors.purpleLight }}
+              >
+                <Sparkles size={20} style={{ color: colors.purple }} />
+              </div>
+              <p className="font-medium text-sm" style={{ color: colors.text }}>AI分析</p>
+              <p className="text-xs" style={{ color: colors.textMuted }}>気づきを確認</p>
+            </motion.div>
+          </Link>
+
+          <Link href="/health/challenges">
+            <motion.div
+              whileTap={{ scale: 0.98 }}
+              className="p-4 rounded-xl"
+              style={{
+                backgroundColor: colors.card,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+              }}
+            >
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center mb-2"
+                style={{ backgroundColor: colors.warningLight }}
+              >
+                <Award size={20} style={{ color: colors.streak }} />
+              </div>
+              <p className="font-medium text-sm" style={{ color: colors.text }}>チャレンジ</p>
+              <p className="text-xs" style={{ color: colors.textMuted }}>達成に挑戦</p>
+            </motion.div>
+          </Link>
         </div>
       </div>
 
@@ -738,7 +851,7 @@ export default function HealthDashboardPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 z-[60] flex items-end"
-            onClick={() => setShowQuickRecord(false)}
+            onClick={() => { setShowQuickRecord(false); setQuickSaveError(null); }}
           >
             <motion.div
               initial={{ y: '100%' }}
@@ -754,6 +867,14 @@ export default function HealthDashboardPage() {
               <h2 className="text-xl font-bold mb-6" style={{ color: colors.text }}>
                 今日の記録
               </h2>
+
+              {/* #1051 UX3-05: 保存失敗を無反応にせず、入力を保持したままエラーを表示する */}
+              {quickSaveError && (
+                <div className="flex items-start gap-2 p-3 mb-4 rounded-lg" style={{ backgroundColor: colors.errorLight }}>
+                  <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" style={{ color: colors.error }} />
+                  <p className="text-sm" style={{ color: colors.error }}>{quickSaveError}</p>
+                </div>
+              )}
 
               {/* 体重入力 */}
               <div className="mb-6">

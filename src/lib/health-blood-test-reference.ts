@@ -42,6 +42,25 @@ export const BLOOD_METRIC_DEFS: Record<string, MetricDef> = {
   uric_acid: { label: '尿酸', unit: 'mg/dL', male: { low: 3.7, high: 7.8 }, female: { low: 2.6, high: 5.5 } },
 };
 
+/**
+ * 身体測定値の基準値 (#1051 UX3-07)。
+ * 健診詳細画面で身長/体重/BMI/腹囲が一切表示されておらず、異常判定の基準も無かった。
+ * BMI・腹囲は特定健診(メタボ)基準を目安に採用。身長・体重は個人差が大きく単一の
+ * 異常基準を持たないため、範囲を持たせず参考値なしの表示専用項目として扱う
+ * (evaluateStatus は low/high 未設定のため常に 'normal' を返し、色による誤誘導をしない)。
+ */
+export const BODY_METRIC_DEFS: Record<string, MetricDef> = {
+  height: { label: '身長', unit: 'cm', male: {}, female: {} },
+  weight: { label: '体重', unit: 'kg', male: {}, female: {} },
+  bmi: { label: 'BMI', unit: '', male: { low: 18.5, high: 25 }, female: { low: 18.5, high: 25 } },
+  waist_circumference: { label: '腹囲', unit: 'cm', male: { high: 85 }, female: { high: 90 } },
+};
+
+// evaluateStatus/getRangeForSex/getMetricLabel/getMetricUnit は血液検査値・身体測定値の
+// 両方を単一ソースから引けるようにこちらを参照する。checkups詳細画面では身体測定の
+// ラベル・単位取得にも使うためエクスポートする。
+export const ALL_METRIC_DEFS: Record<string, MetricDef> = { ...BLOOD_METRIC_DEFS, ...BODY_METRIC_DEFS };
+
 export type MetricKey = keyof typeof BLOOD_METRIC_DEFS;
 
 function normalizeSex(sex: BiologicalSex): 'male' | 'female' | null {
@@ -68,7 +87,7 @@ function combinedRange(def: MetricDef): SexRange {
 }
 
 export function getRangeForSex(key: string, sex?: BiologicalSex): SexRange | null {
-  const def = BLOOD_METRIC_DEFS[key];
+  const def = ALL_METRIC_DEFS[key];
   if (!def) return null;
   const normalized = normalizeSex(sex);
   if (normalized === 'male') return def.male;
@@ -84,21 +103,47 @@ export function formatRangeText(range: SexRange | null): string {
   return '-';
 }
 
-export type MetricStatus = 'normal' | 'low' | 'high' | 'unknown';
+// #1051 UX3-07: 基準値ちょうどの線で急に「異常」と赤表示するのではなく、
+// 境界に近い(±10%)場合は「注意(やや高め/やや低め)」として区別する。
+const WARNING_BAND_RATIO = 0.1;
+
+export type MetricStatus = 'normal' | 'low' | 'high' | 'warning_low' | 'warning_high' | 'unknown';
 
 export function evaluateStatus(key: string, value: number | null | undefined, sex?: BiologicalSex): MetricStatus {
   if (value == null) return 'unknown';
   const range = getRangeForSex(key, sex);
   if (!range) return 'unknown';
-  if (range.high != null && value > range.high) return 'high';
-  if (range.low != null && value < range.low) return 'low';
+  if (range.high != null) {
+    if (value > range.high) return 'high';
+    if (value >= range.high * (1 - WARNING_BAND_RATIO)) return 'warning_high';
+  }
+  if (range.low != null) {
+    if (value < range.low) return 'low';
+    if (value <= range.low * (1 + WARNING_BAND_RATIO)) return 'warning_low';
+  }
   return 'normal';
 }
 
 export function getMetricLabel(key: string): string | null {
-  return BLOOD_METRIC_DEFS[key]?.label ?? null;
+  return ALL_METRIC_DEFS[key]?.label ?? null;
 }
 
 export function getMetricUnit(key: string): string | null {
-  return BLOOD_METRIC_DEFS[key]?.unit ?? null;
+  return ALL_METRIC_DEFS[key]?.unit ?? null;
+}
+
+// #1051 UX3-07: 色(赤/オレンジのドット)だけに頼らず、状態をテキストでも示す。
+export function getStatusLabel(status: MetricStatus): string | null {
+  switch (status) {
+    case 'high':
+      return '基準超';
+    case 'low':
+      return '基準未満';
+    case 'warning_high':
+      return 'やや高め';
+    case 'warning_low':
+      return 'やや低め';
+    default:
+      return null;
+  }
 }

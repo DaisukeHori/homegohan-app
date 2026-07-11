@@ -22,6 +22,7 @@ const colors = {
   success: '#4CAF50',
   successLight: '#E8F5E9',
   error: '#F44336',
+  errorLight: '#FFEBEE',
   purple: '#7C4DFF',
   purpleLight: '#EDE7F6',
   blue: '#2196F3',
@@ -398,14 +399,39 @@ export default function HealthGraphsPage() {
     );
   };
 
-  const metricConfig = {
-    weight: { icon: Scale, label: '体重', unit: 'kg', color: colors.accent },
-    body_fat: { icon: Scale, label: '体脂肪率', unit: '%', color: colors.purple },
-    bp: { icon: Heart, label: '血圧', unit: 'mmHg', color: colors.error },
-    sleep: { icon: Moon, label: '睡眠', unit: '時間', color: colors.blue },
+  // #1051 UX3-08: 「減少=緑/増加=赤」の固定意味付けは指標によって意味が逆になる
+  // (例: 睡眠時間の減少は改善ではない)。指標ごとに「良い方向」を持たせる。
+  // 体重のみ目標体重との大小関係で動的に決まるため null にし、後段の getChangeSentiment で判定する。
+  const metricConfig: Record<Metric, { icon: typeof Scale; label: string; unit: string; color: string; goodDirection: 'up' | 'down' | null }> = {
+    weight: { icon: Scale, label: '体重', unit: 'kg', color: colors.accent, goodDirection: null },
+    body_fat: { icon: Scale, label: '体脂肪率', unit: '%', color: colors.purple, goodDirection: 'down' },
+    bp: { icon: Heart, label: '血圧', unit: 'mmHg', color: colors.error, goodDirection: 'down' },
+    sleep: { icon: Moon, label: '睡眠', unit: '時間', color: colors.blue, goodDirection: 'up' },
   };
 
   const currentMetric = metricConfig[metric];
+
+  // #1051 UX3-08: 体重は目標体重が分かっている場合のみ、目標に近づく方向を「良い」とする。
+  // 目標未設定時は判定できないため中立表示にする(誤った「改善/悪化」を主張しない)。
+  const getChangeSentiment = (): 'good' | 'bad' | 'neutral' => {
+    if (change === null || change === 0) return 'neutral';
+    let goodDirection = metricConfig[metric].goodDirection;
+    if (metric === 'weight') {
+      const currentValue = graphData.filter(d => d.value !== null).slice(-1)[0]?.value;
+      goodDirection = (targetWeight != null && currentValue != null && currentValue !== targetWeight)
+        ? (currentValue > targetWeight ? 'down' : 'up')
+        : null;
+    }
+    if (goodDirection == null) return 'neutral';
+    const actualDirection: 'up' | 'down' = change > 0 ? 'up' : 'down';
+    return actualDirection === goodDirection ? 'good' : 'bad';
+  };
+  const changeSentiment = getChangeSentiment();
+  const changeColor = changeSentiment === 'good'
+    ? colors.success
+    : changeSentiment === 'bad'
+      ? colors.error
+      : colors.textMuted;
 
   return (
     <div className="min-h-screen pb-24" style={{ backgroundColor: colors.bg }}>
@@ -487,20 +513,20 @@ export default function HealthGraphsPage() {
               </div>
             </div>
             {change !== null && (
-              <div 
+              <div
                 className="flex items-center gap-1 px-3 py-1 rounded-full"
-                style={{ 
-                  backgroundColor: change < 0 ? colors.successLight : change > 0 ? '#FFEBEE' : colors.bg,
+                style={{
+                  backgroundColor: changeSentiment === 'good' ? colors.successLight : changeSentiment === 'bad' ? colors.errorLight : colors.bg,
                 }}
               >
                 {change < 0 ? (
-                  <TrendingDown size={16} style={{ color: colors.success }} />
+                  <TrendingDown size={16} style={{ color: changeColor }} />
                 ) : change > 0 ? (
-                  <TrendingUp size={16} style={{ color: colors.error }} />
+                  <TrendingUp size={16} style={{ color: changeColor }} />
                 ) : null}
-                <span 
+                <span
                   className="text-sm font-medium"
-                  style={{ color: change < 0 ? colors.success : change > 0 ? colors.error : colors.textMuted }}
+                  style={{ color: changeColor }}
                 >
                   {change > 0 ? '+' : ''}{change} {currentMetric.unit}
                 </span>
@@ -595,8 +621,10 @@ export default function HealthGraphsPage() {
                 <p className="font-medium" style={{ color: colors.success }}>
                   目標体重: {targetWeight}kg
                 </p>
+                {/* #1051 UX3-08: 「あと」に符号付きの差分をそのまま出すと増量目標で
+                    負の値になり意味が伝わらないため、絶対値+「目標まで」に統一する */}
                 <p className="text-sm" style={{ color: colors.success }}>
-                  あと {((graphData.filter(d => d.value !== null).slice(-1)[0]?.value || 0) - targetWeight).toFixed(1)}kg
+                  目標まであと {Math.abs((graphData.filter(d => d.value !== null).slice(-1)[0]?.value || 0) - targetWeight).toFixed(1)}kg
                 </p>
               </div>
             </div>

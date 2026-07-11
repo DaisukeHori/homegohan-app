@@ -8,7 +8,7 @@ import {
   Calendar, TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
 import {
-  BLOOD_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex,
+  BLOOD_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex, getStatusLabel,
   type BiologicalSex,
 } from "@/lib/health-blood-test-reference";
 
@@ -153,14 +153,16 @@ export default function BloodTestsPage() {
             <Droplet size={48} className="mx-auto mb-4" style={{ color: colors.textMuted }} />
             <p className="font-medium mb-2" style={{ color: colors.text }}>血液検査結果がありません</p>
             <p className="text-sm" style={{ color: colors.textMuted }}>
-              カメラで健診結果を撮影すると自動で記録されます
+              健診結果をカメラで撮影すると自動で記録されます
             </p>
+            {/* #1051 UX3-02: 血液検査の記録は健診アップロード導線でしか作れないため、
+                誤って食事スキャン(/meals/new)に誘導していたのを修正する */}
             <Link
-              href="/meals/new"
+              href="/health/checkups/new"
               className="inline-flex items-center gap-2 mt-4 px-5 py-2 rounded-xl text-sm font-medium text-white"
               style={{ backgroundColor: colors.accent }}
             >
-              写真で記録する
+              健診結果を記録する
             </Link>
           </div>
         </div>
@@ -226,24 +228,32 @@ export default function BloodTestsPage() {
                           const def = BLOOD_METRIC_DEFS[key];
                           const status = evaluateStatus(key, value, sex);
                           const isAbnormal = status === "high" || status === "low";
+                          // #1051 UX3-07: 基準ぎりぎりも一律の異常扱いにせず「注意」として区別する
+                          const isWarning = status === "warning_high" || status === "warning_low";
+                          const statusColor = isAbnormal ? colors.error : isWarning ? colors.warning : colors.text;
+                          const statusLabel = getStatusLabel(status);
                           const rangeText = formatRangeText(getRangeForSex(key, sex));
                           return (
                             <div
                               key={key}
                               className="p-3 rounded-xl"
-                              style={{ backgroundColor: isAbnormal ? colors.errorLight : colors.bg }}
+                              style={{ backgroundColor: isAbnormal ? colors.errorLight : isWarning ? colors.warningLight : colors.bg }}
                             >
                               <p className="text-xs mb-1" style={{ color: colors.textMuted }}>{def.label}</p>
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <p
                                   className="font-bold text-base"
-                                  style={{ color: isAbnormal ? colors.error : colors.text }}
+                                  style={{ color: statusColor }}
                                 >
                                   {String(value)}
                                   <span className="text-xs font-normal ml-1" style={{ color: colors.textMuted }}>{def.unit}</span>
                                 </p>
-                                {isAbnormal && (
-                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.error }} />
+                                {/* #1051 UX3-07: 色ドットだけでなくテキストラベルも併記する */}
+                                {statusLabel && (
+                                  <span className="flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColor }} />
+                                    <span className="text-[10px] font-medium" style={{ color: statusColor }}>{statusLabel}</span>
+                                  </span>
                                 )}
                               </div>
                               <p className="text-xs mt-0.5" style={{ color: colors.textMuted }}>
