@@ -69,7 +69,7 @@ const NutritionRadarChart = dynamic(
 import {
   ChefHat, Store, UtensilsCrossed, FastForward,
   Sparkles, Zap, X, Plus, Check, Calendar,
-  Flame, Refrigerator, Trash2, AlertTriangle,
+  Flame, Refrigerator, Trash2, AlertTriangle, Info,
   BarChart3, ShoppingCart, ChevronDown, ChevronRight, ChevronLeft, ChevronUp,
   Clock, Users, BookOpen, Heart, RefreshCw, Send, Package,
   Camera, Pencil, Image as ImageIcon, GripVertical, ArrowUp, ArrowDown
@@ -1379,7 +1379,8 @@ export default function WeeklyMenuPage() {
         generationCancelledRef.current = false;
         return;
       }
-      alert(error);
+      // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
+      dispatchAiGen({ type: 'GEN_FAIL', payload: { error, requestId: null } });
     },
   });
 
@@ -1418,7 +1419,11 @@ export default function WeeklyMenuPage() {
         if (currentStatus?.status === 'failed') {
           console.log('[restore] Generation failed');
           localStorage.removeItem('v4MenuGenerating');
-          alert(currentStatus.errorMessage || '生成に失敗しました');
+          // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
+          dispatchAiGen({
+            type: 'GEN_FAIL',
+            payload: { error: currentStatus.errorMessage || '生成に失敗しました', requestId },
+          });
           return;
         }
 
@@ -1441,15 +1446,20 @@ export default function WeeklyMenuPage() {
             return;
           }
           if (progress.status === 'failed') {
-            setIsGenerating(false);
-            setGenerationProgress(null);
             localStorage.removeItem('v4MenuGenerating');
             // UX2-11: ユーザーが「中止する」を押した後に届く遅延イベントでは alert を出さない
             if (generationCancelledRef.current) {
               generationCancelledRef.current = false;
+              setIsGenerating(false);
+              setGenerationProgress(null);
               return;
             }
-            alert(progress.errorMessage || '生成に失敗しました');
+            // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
+            // (GEN_FAIL が isGenerating/generationProgress のクリアも兼ねる)
+            dispatchAiGen({
+              type: 'GEN_FAIL',
+              payload: { error: progress.errorMessage || '生成に失敗しました', requestId },
+            });
             return;
           }
 
@@ -1530,10 +1540,13 @@ export default function WeeklyMenuPage() {
               v4ResolvedRef.current = true;
               clearInterval(v4PollingIntervalRef.current!);
               v4PollingIntervalRef.current = null;
-              setIsGenerating(false);
-              setGenerationProgress(null);
               localStorage.removeItem('v4MenuGenerating');
-              alert('献立の生成に失敗しました。もう一度お試しください。');
+              // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
+              // (GEN_FAIL が isGenerating/generationProgress のクリアも兼ねる)
+              dispatchAiGen({
+                type: 'GEN_FAIL',
+                payload: { error: '献立の生成に失敗しました。もう一度お試しください。', requestId: v4RequestId },
+              });
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
               setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress));
@@ -1647,7 +1660,7 @@ export default function WeeklyMenuPage() {
             // #77: 5xx エラー時もユーザーに通知
             console.error('自動クリーンアップ API エラー:', cleanupRes.status);
             if (cleanupRes.status >= 500) {
-              setSuccessMessage({ title: 'エラー', message: 'サーバーに一時的な問題が発生しました。しばらく待ってから再読み込みしてください。' });
+              setSuccessMessage({ title: 'エラー', message: 'サーバーに一時的な問題が発生しました。しばらく待ってから再読み込みしてください。', type: 'error' });
             }
           }
         } catch (e) {
@@ -1661,7 +1674,7 @@ export default function WeeklyMenuPage() {
           // #77: pending API 5xx をユーザー可視エラーに昇格
           if (weeklyRes.status >= 500) {
             console.error('weekly pending API エラー:', weeklyRes.status);
-            setSuccessMessage({ title: 'エラー', message: '献立生成状況の確認中にエラーが発生しました。ページを再読み込みしてください。' });
+            setSuccessMessage({ title: 'エラー', message: '献立生成状況の確認中にエラーが発生しました。ページを再読み込みしてください。', type: 'error' });
           }
           if (weeklyRes.ok) {
             const data = await weeklyRes.json();
@@ -2729,6 +2742,15 @@ export default function WeeklyMenuPage() {
               supabase.removeChannel(channel);
             }
           };
+        } else {
+          // UX2-03: 「キャッシュ済み」でも「生成中」でもない想定外のレスポンス形状
+          // (例: cached=true だが feedback/praiseComment が空、status が想定外の値等) に
+          // フォールスルーすると setIsLoadingFeedback(false) が一度も呼ばれず
+          // 「分析を準備中...」のスピナーが永久に止まらなかった。
+          // 他の失敗経路 (!res.ok / catch) と同じ文言・挙動に揃えて解除する
+          // （これにより既存の「再分析」ボタンが再試行導線として機能する）。
+          setNutritionFeedback('分析結果を取得できませんでした。');
+          setIsLoadingFeedback(false);
         }
       } else {
         setNutritionFeedback('分析結果を取得できませんでした。');
@@ -6143,11 +6165,27 @@ export default function WeeklyMenuPage() {
                 className="w-full max-w-xs rounded-2xl p-6 text-center"
                 style={{ background: colors.card }}
               >
-                <div 
+                {/* UX2-01: エラー通知が緑チェックの成功モーダルと同じ見た目で出ていた問題の是正。
+                    type: 'error' は AlertTriangle + 赤系、'info' は Info + ニュートラル系、
+                    未指定（既定 'success'）は従来どおり Check + 緑系。 */}
+                <div
+                  data-testid="success-message-icon"
                   className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
-                  style={{ background: colors.successLight || 'rgba(34, 197, 94, 0.1)' }}
+                  style={{
+                    background: successMessage.type === 'error'
+                      ? colors.dangerLight
+                      : successMessage.type === 'info'
+                        ? colors.bg
+                        : (colors.successLight || 'rgba(34, 197, 94, 0.1)'),
+                  }}
                 >
-                  <Check size={32} color={colors.success} />
+                  {successMessage.type === 'error' ? (
+                    <AlertTriangle size={32} color={colors.danger} />
+                  ) : successMessage.type === 'info' ? (
+                    <Info size={32} color={colors.textLight} />
+                  ) : (
+                    <Check size={32} color={colors.success} />
+                  )}
                 </div>
                 <h3 data-testid="success-message-title" style={{ fontSize: 18, fontWeight: 600, color: colors.text, marginBottom: 8 }}>
                   {successMessage.title}
