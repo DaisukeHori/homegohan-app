@@ -43,6 +43,14 @@ export interface BottomSheetProps {
   panelStyle?: React.CSSProperties;
   /** オーバーレイ（背景）に付与する追加クラス。z-index の上書き等 */
   overlayClassName?: string;
+  /**
+   * #1050 round-2 (E, Sonnet5 Suggestion): 呼び出し元が既に別の半透明背景（例:
+   * weekly page.tsx の {activeModal && ...} 共有バックドロップ）を表示している場合に、
+   * この BottomSheet 自身の rgba(0,0,0,0.5) 背景を重ねないためのオプション。
+   * true にすると背景色を出さない（クリックで閉じる・レイアウト・z-index 等は維持）。
+   * 既定 false（従来どおりのオーバーレイ背景を表示）。
+   */
+  hideOverlayBackground?: boolean;
   /** data-testid（テスト・E2E 用） */
   testId?: string;
 }
@@ -121,6 +129,7 @@ export function BottomSheet({
   panelClassName = "",
   panelStyle,
   overlayClassName = "",
+  hideOverlayBackground = false,
   testId,
 }: BottomSheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -183,7 +192,7 @@ export function BottomSheet({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             className={`${DEFAULT_OVERLAY_CLASS} ${POSITION_CLASS[position]} ${overlayClassName}`}
-            style={{ background: "rgba(0,0,0,0.5)" }}
+            style={{ background: hideOverlayBackground ? "transparent" : "rgba(0,0,0,0.5)" }}
             onClick={() => {
               if (closeOnOverlayClick) onCloseRef.current();
             }}

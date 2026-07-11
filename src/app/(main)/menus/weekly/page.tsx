@@ -3418,6 +3418,8 @@ export default function WeeklyMenuPage() {
       setSuccessMessage({
         title: '献立がありません',
         message: 'この週には献立データがありません。先に献立を生成してください。',
+        // #1050 round-2 (E, cheap): 成功でも失敗でもない案内のため type:'info' 化（UX2-01 の設計整合）
+        type: 'info',
       });
       setActiveModal(null);
       return;
@@ -3437,6 +3439,8 @@ export default function WeeklyMenuPage() {
       setSuccessMessage({
         title: '献立がありません',
         message: 'この期間には献立データがありません。先に献立を生成してください。',
+        // #1050 round-2 (E, cheap): 成功でも失敗でもない案内のため type:'info' 化（UX2-01 の設計整合）
+        type: 'info',
       });
       setIsRegeneratingShoppingList(false);
       setShoppingListProgress(null);
@@ -6250,6 +6254,10 @@ export default function WeeklyMenuPage() {
             )}
 
             {/* Delete Confirmation Modal */}
+            {/* #1050 round-2 (E, Sonnet5 Suggestion): この ConfirmDeleteModal は
+                {activeModal && (...)} の共有バックドロップ（直上の motion.div, z-[200]）の
+                内側で使われているため、BottomSheet 自身の背景も表示すると二重に暗くなる。
+                hideOverlayBackground で自前の背景を出さないようにする。 */}
             {activeModal === 'confirmDelete' && deletingMeal && (
               <ConfirmDeleteModal
                 title="この食事を削除しますか？"
@@ -6262,10 +6270,12 @@ export default function WeeklyMenuPage() {
                 isDeleting={isDeleting}
                 onCancel={() => { setActiveModal(null); setDeletingMeal(null); }}
                 onConfirm={confirmDeleteMeal}
+                hideOverlayBackground
               />
             )}
 
             {/* 買い物リスト全削除の確認モーダル（#1053: window.confirm 廃止） */}
+            {/* #1050 round-2 (E): 同上の理由で hideOverlayBackground を指定 */}
             {showConfirmDeleteAllShopping && (
               <ConfirmDeleteModal
                 title="買い物リストをすべて削除しますか？"
@@ -6278,6 +6288,7 @@ export default function WeeklyMenuPage() {
                 isDeleting={isDeleting}
                 onCancel={() => setShowConfirmDeleteAllShopping(false)}
                 onConfirm={deleteAllShoppingItems}
+                hideOverlayBackground
               />
             )}
 

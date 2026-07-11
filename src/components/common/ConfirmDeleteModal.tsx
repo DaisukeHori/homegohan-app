@@ -35,6 +35,13 @@ interface ConfirmDeleteModalProps {
    * 常時マウントして isOpen で開閉を切り替える新しい使い方をする場合は明示的に渡す。
    */
   isOpen?: boolean;
+  /**
+   * #1050 round-2 (E, Sonnet5 Suggestion): 呼び出し元が既に別の半透明背景（例:
+   * weekly page.tsx の {activeModal && ...} 共有バックドロップ）の内側でこのモーダルを
+   * 使う場合、BottomSheet 自身の背景を重ねて二重に暗くなるのを避けるためのオプション。
+   * 既定 false（従来どおり自前の背景を表示。他ルートからの再利用ではこの既定を維持する）。
+   */
+  hideOverlayBackground?: boolean;
 }
 
 // #1053: 削除確認の見た目を weekly 全体で統一するため、
@@ -54,6 +61,7 @@ export function ConfirmDeleteModal({
   icon: Icon = Trash2,
   tone = 'danger',
   isOpen = true,
+  hideOverlayBackground = false,
 }: ConfirmDeleteModalProps) {
   const toneColor = tone === 'danger' ? colors.danger : colors.neutral;
   const toneColorLight = tone === 'danger' ? colors.dangerLight : colors.neutralLight;
@@ -68,6 +76,7 @@ export function ConfirmDeleteModal({
       panelClassName="w-full max-w-sm rounded-2xl p-5"
       panelStyle={{ background: colors.card }}
       testId="confirm-delete-modal"
+      hideOverlayBackground={hideOverlayBackground}
     >
       <div className="flex flex-col items-center text-center mb-5">
         <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ background: toneColorLight }}>

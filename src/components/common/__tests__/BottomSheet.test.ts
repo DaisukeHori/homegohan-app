@@ -295,6 +295,40 @@ describe('BottomSheet: 入れ子（複数同時オープン）での Escape (#10
   });
 });
 
+describe('BottomSheet: hideOverlayBackground (#1050 round-2 E, 二重backdrop対策)', () => {
+  it('既定では自前の半透明背景 (rgba(0,0,0,0.5)) を表示する', () => {
+    act(() => {
+      root.render(h(BottomSheet, { isOpen: true, onClose: () => {} }, h('p', null, '中身')));
+    });
+    const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog.style.background).toBe('rgba(0, 0, 0, 0.5)');
+  });
+
+  it('hideOverlayBackground=true のときは背景を出さない（呼び出し元の共有バックドロップとの二重darkening回避）', () => {
+    act(() => {
+      root.render(
+        h(BottomSheet, { isOpen: true, onClose: () => {}, hideOverlayBackground: true }, h('p', null, '中身'))
+      );
+    });
+    const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog.style.background).toBe('transparent');
+  });
+
+  it('hideOverlayBackground=true でも背景クリックでの onClose は引き続き機能する（見た目のみの変更）', () => {
+    const onClose = vi.fn();
+    act(() => {
+      root.render(
+        h(BottomSheet, { isOpen: true, onClose, hideOverlayBackground: true }, h('p', null, '中身'))
+      );
+    });
+    const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+    act(() => {
+      dialog.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('BottomSheet: 背景スクロールロック (#1050 UX2-05)', () => {
   it('開いている間は document.body.style.overflow が hidden になる', () => {
     act(() => {

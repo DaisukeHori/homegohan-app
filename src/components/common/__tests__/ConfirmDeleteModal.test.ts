@@ -169,3 +169,38 @@ describe('ConfirmDeleteModal: BottomSheet 化による新規 a11y (#1050 UX2-05)
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 });
+
+describe('ConfirmDeleteModal: hideOverlayBackground (#1050 round-2 E, 二重backdrop対策)', () => {
+  it('既定では背景を表示する（他ルートからの再利用時の見た目を変えない）', () => {
+    act(() => {
+      root.render(
+        h(ConfirmDeleteModal, {
+          title: '削除しますか？',
+          message: '取り消せません',
+          isDeleting: false,
+          onCancel: () => {},
+          onConfirm: () => {},
+        })
+      );
+    });
+    const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog.style.background).toBe('rgba(0, 0, 0, 0.5)');
+  });
+
+  it('hideOverlayBackground=true を BottomSheet まで転送し、背景を出さない', () => {
+    act(() => {
+      root.render(
+        h(ConfirmDeleteModal, {
+          title: '削除しますか？',
+          message: '取り消せません',
+          isDeleting: false,
+          onCancel: () => {},
+          onConfirm: () => {},
+          hideOverlayBackground: true,
+        })
+      );
+    });
+    const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog.style.background).toBe('transparent');
+  });
+});
