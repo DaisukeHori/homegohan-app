@@ -113,6 +113,26 @@ describe('ShoppingRangeModal: Step2 人数±ボタンのタップ領域とaria-l
     expect(updated?.byDayMeal?.monday?.breakfast).toBe(3);
   });
 
+  it('#1052 レビュー残指摘: ±ボタンの垂直負マージンは -my-1（計8px）で ServingsModal と揃い、行間 mb-2（8px）を超えない', () => {
+    // -my-[6px]（計12px）だと同一列・隣接曜日の同操作ボタン間で約4px縦オーバーラップして
+    // いた。ServingsModal と同じ -my-1（計8px=行間ぴったり）に揃え、オーバーラップを解消する。
+    render();
+    const allDayMealButtons = Array.from(
+      container.querySelectorAll('button[aria-label*="の人数を1人"]')
+    ) as HTMLButtonElement[];
+    expect(allDayMealButtons.length).toBeGreaterThan(0);
+    for (const btn of allDayMealButtons) {
+      expect(
+        btn.className,
+        `${btn.getAttribute('aria-label')} が -my-1 を使用していません: ${btn.className}`
+      ).toContain('-my-1');
+      expect(
+        btn.className,
+        `${btn.getAttribute('aria-label')} が過大な -my-[6px] を使用しています: ${btn.className}`
+      ).not.toContain('-my-[6px]');
+    }
+  });
+
   it('敵対レビュー統合修正の回帰テスト: ±ボタンは水平方向の負マージン(-mx)を使わない（隣の食事列との水平衝突防止）', () => {
     render();
     const allDayMealButtons = Array.from(

@@ -372,7 +372,7 @@ export function ShoppingRangeModal({
                       <button
                         onClick={() => updateValue(value - 1)}
                         aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人減らす`}
-                        className="w-6 min-h-[44px] -my-[6px] flex items-center justify-center text-lg font-bold"
+                        className="w-6 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         −
@@ -389,7 +389,7 @@ export function ShoppingRangeModal({
                       <button
                         onClick={() => updateValue(value + 1)}
                         aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人増やす`}
-                        className="w-6 min-h-[44px] -my-[6px] flex items-center justify-center text-lg font-bold"
+                        className="w-6 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         +

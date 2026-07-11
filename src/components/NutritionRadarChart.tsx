@@ -142,6 +142,14 @@ export function NutritionRadarChart({
     showOverconsumptionWarning ? '。過剰摂取の可能性がある栄養素があります' : ''
   }。詳細は表を参照してください。`;
 
+  // #1052 (レビュー残指摘: mini radar の accessible name): onTap 指定時（day-card の
+  // mini radar 等）は外側ラッパーに role="button" を付与するが、WAI-ARIA 上 button は
+  // children-presentational（子孫が名前計算に取り込まれる/アクセシビリティツリーから
+  // 実質剪定される）ため、明示的な aria-label を付けないと sr-only データテーブルの
+  // 全セル文字列がボタン名に平坦化されてしまう。ここで chartAriaLabel 相当の要約に
+  // 操作案内を足した文言を明示的に aria-label として与える。
+  const interactiveAriaLabel = onTap ? `${chartAriaLabel}タップで詳細を表示します。` : undefined;
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!onTap) return;
     if (e.key === 'Enter' || e.key === ' ') {
@@ -151,11 +159,13 @@ export function NutritionRadarChart({
   };
 
   return (
+    <>
     <div
       className={`relative ${onTap ? 'cursor-pointer' : ''}`}
       onClick={onTap}
       onKeyDown={onTap ? handleKeyDown : undefined}
       role={onTap ? 'button' : undefined}
+      aria-label={interactiveAriaLabel}
       tabIndex={onTap ? 0 : undefined}
       style={{ width: size, height: size }}
     >
@@ -210,34 +220,6 @@ export function NutritionRadarChart({
         </div>
       </div>
 
-      {/* スクリーンリーダー向けデータテーブル代替（視覚上は非表示）。role="img" の兄弟として
-          配置することで剪定されず、ホバーでしか出ないツールチップの内容をキーボード/
-          スクリーンリーダーでも辿れるようにする。 */}
-      <table
-        className="sr-only"
-        data-testid="radar-chart-data-table"
-      >
-        <caption>栄養素ごとの摂取量と推奨量に対する達成率</caption>
-        <thead>
-          <tr>
-            <th scope="col">栄養素</th>
-            <th scope="col">摂取量</th>
-            <th scope="col">推奨量</th>
-            <th scope="col">達成率</th>
-          </tr>
-        </thead>
-        <tbody>
-          {chartData.map((d) => (
-            <tr key={d.nutrient}>
-              <th scope="row">{d.nutrient}</th>
-              <td>{d.actualValue.toFixed(1)}{d.unit}</td>
-              <td>{d.dri}{d.unit}</td>
-              <td>{d.fullValue}%</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
       {/* 中央に達成率表示 */}
       <div
         className="absolute inset-0 flex items-center justify-center pointer-events-none"
@@ -282,6 +264,40 @@ export function NutritionRadarChart({
         </div>
       )}
     </div>
+
+    {/* #1052 (レビュー残指摘: mini radar の accessible name): スクリーンリーダー向け
+        データテーブル代替（視覚上は非表示）。role="img" だけでなく、外側の相互作用
+        ラッパー（onTap 指定時は role="button"）の外にも配置する。role="button" は
+        children-presentational のため、内側に置いたままだと onTap 指定時（day-card の
+        mini radar 等）にテーブルの全セル文字列がボタン名へ平坦化されたり、テーブルの
+        セマンティクスが支援技術から到達不能になる。外に出すことで、モーダル用途
+        （onTap 非指定）では従来どおり露出したまま、mini radar 用途でも平坦化されずに
+        独立した表として読み上げ可能になる。 */}
+    <table
+      className="sr-only"
+      data-testid="radar-chart-data-table"
+    >
+      <caption>栄養素ごとの摂取量と推奨量に対する達成率</caption>
+      <thead>
+        <tr>
+          <th scope="col">栄養素</th>
+          <th scope="col">摂取量</th>
+          <th scope="col">推奨量</th>
+          <th scope="col">達成率</th>
+        </tr>
+      </thead>
+      <tbody>
+        {chartData.map((d) => (
+          <tr key={d.nutrient}>
+            <th scope="row">{d.nutrient}</th>
+            <td>{d.actualValue.toFixed(1)}{d.unit}</td>
+            <td>{d.dri}{d.unit}</td>
+            <td>{d.fullValue}%</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    </>
   );
 }
 
