@@ -26,7 +26,7 @@ import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, formatExpiry, formatDateJa } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa } from "@homegohan/shared";
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
 // #fix/e2e-profile-reminder-banner-chunk: chunk 404 防止のため静的 import に変更
@@ -6469,8 +6469,15 @@ export default function WeeklyMenuPage() {
 }
 
 // V4用の日付加算ヘルパー
+// #1035残: 旧実装は `new Date(dateStr)`(UTC深夜0時解釈)→ローカル getDate/setDate→toISOString(UTC)
+// という parse/format のタイムゾーン不一致があり、非JST(特に西経)クライアントで週境界が1日ズレていた。
+// parseLocalDate/addDays（ホストのローカル暦フィールドのみで完結する純粋関数）で解析・加算し、
+// 同じくホストのローカル暦フィールド(getFullYear/getMonth/getDate)でそのまま文字列化することで、
+// 実行環境のタイムゾーンに関わらず常に同じカレンダー演算結果になるようにする。
 function addDaysStr(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split('T')[0];
+  const date = addDays(parseLocalDate(dateStr), days);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
