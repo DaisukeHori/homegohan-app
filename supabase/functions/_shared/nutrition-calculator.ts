@@ -292,8 +292,16 @@ export const INGREDIENT_ALIASES: Record<string, string[]> = {
 };
 
 // 栄養値を加算するヘルパー関数
+// #1046 F5-11: 廃棄率(discard_rate_percent)を可食部補正として適用する。
+// v2(nutrition-calculator-v2.ts の calculateIngredientNutrition)と同じ計算式に揃え、
+// 皮付き野菜・骨付き肉等で栄養が過大計上されるv1/v2間の不一致を解消する。
 export function addNutritionFromMatch(totals: NutritionTotals, matched: any, amount_g: number) {
-  const factor = amount_g / 100.0;
+  const discardRateRaw = typeof matched?.discard_rate_percent === 'string'
+    ? parseFloat(matched.discard_rate_percent)
+    : matched?.discard_rate_percent;
+  const discardRate = Number.isFinite(discardRateRaw) ? discardRateRaw : 0;
+  const effectiveAmount_g = amount_g * (1 - discardRate / 100);
+  const factor = effectiveAmount_g / 100.0;
   const add = (key: keyof NutritionTotals, v: number | string | null | undefined) => {
     // DBからの値は文字列の場合があるので、parseFloatで変換
     const num = typeof v === 'string' ? parseFloat(v) : v;
@@ -505,8 +513,9 @@ export async function embedTexts(texts: string[], dimensions = DATASET_EMBEDDING
 
 // DBに実際に存在するカラムのみを選択
 // 存在しないカラム: sugar_g, saturated_fat_g, monounsaturated_fat_g, polyunsaturated_fat_g
+// #1046 F5-11: discard_rate_percent（廃棄率）を選択に含め、可食部補正をv2と揃える
 const INGREDIENT_SELECT = `
-  id, name, name_norm,
+  id, name, name_norm, discard_rate_percent,
   calories_kcal, protein_g, fat_g, carbs_g, fiber_g, salt_eq_g,
   potassium_mg, calcium_mg, phosphorus_mg, magnesium_mg, iron_mg, zinc_mg, iodine_ug,
   cholesterol_mg,

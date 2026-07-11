@@ -115,6 +115,26 @@ describe('health payload sanitizers', () => {
     expect(sanitizeHealthRecordPayload({ systolic_bp: 500 }).errors.length).toBeGreaterThan(0);
     expect(sanitizeHealthRecordPayload({ systolic_bp: 10 }).errors.length).toBeGreaterThan(0);
   });
+
+  // #1046 F2-13: mood/sleep_quality等のスコア系は記録画面(renderScoreButtons、
+  // 1-5の絵文字5段階)・AI相談プロンプト(x/5表記)がいずれも1-5スケールで運用されているが、
+  // サニタイザだけmax=10のままだったため、UI上ありえない6-10の値も通過してしまっていた。
+  it('rejects out-of-range 1-5 scale score fields (mood_score:8 must be 400)', () => {
+    expect(sanitizeHealthRecordPayload({ mood_score: 8 }).errors.length).toBeGreaterThan(0);
+    expect(sanitizeHealthRecordPayload({ sleep_quality: 8 }).errors.length).toBeGreaterThan(0);
+    expect(sanitizeHealthRecordPayload({ overall_condition: 8 }).errors.length).toBeGreaterThan(0);
+    expect(sanitizeHealthRecordPayload({ energy_level: 8 }).errors.length).toBeGreaterThan(0);
+    expect(sanitizeHealthRecordPayload({ stress_level: 8 }).errors.length).toBeGreaterThan(0);
+  });
+
+  it('accepts the 1-5 scale boundary values and rejects 0/6', () => {
+    for (const field of ['mood_score', 'sleep_quality', 'overall_condition', 'energy_level', 'stress_level']) {
+      expect(sanitizeHealthRecordPayload({ [field]: 1 }).errors).toEqual([]);
+      expect(sanitizeHealthRecordPayload({ [field]: 5 }).errors).toEqual([]);
+      expect(sanitizeHealthRecordPayload({ [field]: 0 }).errors.length).toBeGreaterThan(0);
+      expect(sanitizeHealthRecordPayload({ [field]: 6 }).errors.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('RECORD_DATE_PATTERN', () => {

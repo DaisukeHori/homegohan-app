@@ -13,6 +13,11 @@ export interface NutrientDefinition {
   decimals: number;      // 小数点以下桁数
   category: 'basic' | 'mineral' | 'vitamin' | 'fat'; // カテゴリ
   description?: string;  // 説明
+  // #1046 UX3-20: 塩分・コレステロール等「控えめに」が推奨される上限系(DG/UL)栄養素か。
+  // true の場合、レーダーチャートの「平均達成率」計算からは除外する
+  // （過剰摂取が平均を押し上げて見かけ上スコアが良く見えてしまうのを防ぐ）。
+  // 個別の過剰摂取警告(達成率そのものの表示)には引き続き使用される。
+  isUpperLimit?: boolean;
 }
 
 // 栄養素定義マスター
@@ -26,7 +31,7 @@ export const NUTRIENT_DEFINITIONS: NutrientDefinition[] = [
   { key: 'sugarG', label: '糖質', unit: 'g', dri: 250, decimals: 1, category: 'basic', description: '即効性のあるエネルギー' },
 
   // === ミネラル ===
-  { key: 'sodiumG', label: '塩分', unit: 'g', dri: 7.5, decimals: 1, category: 'mineral', description: '目標量（控えめに）' },
+  { key: 'sodiumG', label: '塩分', unit: 'g', dri: 7.5, decimals: 1, category: 'mineral', description: '目標量（控えめに）', isUpperLimit: true },
   { key: 'potassiumMg', label: 'カリウム', unit: 'mg', dri: 2500, decimals: 0, category: 'mineral', description: '血圧調整・むくみ防止' },
   { key: 'calciumMg', label: 'カルシウム', unit: 'mg', dri: 700, decimals: 0, category: 'mineral', description: '骨・歯の形成' },
   { key: 'magnesiumMg', label: 'マグネシウム', unit: 'mg', dri: 340, decimals: 0, category: 'mineral', description: '酵素反応の補助' },
@@ -48,8 +53,8 @@ export const NUTRIENT_DEFINITIONS: NutrientDefinition[] = [
   { key: 'folicAcidUg', label: '葉酸', unit: 'µg', dri: 240, decimals: 0, category: 'vitamin', description: '細胞分裂・胎児発育' },
 
   // === 脂質詳細 ===
-  { key: 'saturatedFatG', label: '飽和脂肪酸', unit: 'g', dri: 16, decimals: 1, category: 'fat', description: '摂りすぎ注意' },
-  { key: 'cholesterolMg', label: 'コレステロール', unit: 'mg', dri: 300, decimals: 0, category: 'fat', description: '細胞膜・ホルモン材料' },
+  { key: 'saturatedFatG', label: '飽和脂肪酸', unit: 'g', dri: 16, decimals: 1, category: 'fat', description: '摂りすぎ注意', isUpperLimit: true },
+  { key: 'cholesterolMg', label: 'コレステロール', unit: 'mg', dri: 300, decimals: 0, category: 'fat', description: '細胞膜・ホルモン材料', isUpperLimit: true },
 ];
 
 // キーからNutrientDefinitionを取得

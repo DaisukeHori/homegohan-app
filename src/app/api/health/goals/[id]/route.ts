@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
+import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 
 // 目標の取得
 export async function GET(
@@ -82,11 +83,12 @@ export async function PUT(
 
   let progressPercentage = existing.progress_percentage;
   if (currentValue !== null && existing.start_value !== null && targetValue !== null) {
-    const totalChange = Math.abs(targetValue - existing.start_value);
-    const currentChange = Math.abs(currentValue - existing.start_value);
-    if (totalChange > 0) {
-      progressPercentage = Math.min(100, (currentChange / totalChange) * 100);
-    }
+    progressPercentage = calculateGoalProgressPercentage(
+      existing.start_value,
+      targetValue,
+      currentValue,
+      progressPercentage,
+    );
   }
 
   // マイルストーン達成チェック
