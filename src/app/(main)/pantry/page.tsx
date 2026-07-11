@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 
 const colors = {
   bg: "#FAF9F7",
@@ -57,6 +58,9 @@ export default function PantryPage() {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [showManualForm, setShowManualForm] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
+  // UX2-04: 「全て置き換え」は既存の食材を全削除する破壊的操作なのに確認が無かった。
+  // 対象件数を明示した確認ダイアログを挟む。
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
 
   const fetchItems = useCallback(async () => {
     try {
@@ -155,6 +159,16 @@ export default function PantryPage() {
       setError(err.message || "保存中にエラーが発生しました");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // UX2-04: 「全て置き換え」クリック時。既存食材がある場合のみ確認を挟む
+  // （空の状態から追加する場合は何も失われないため確認不要）。
+  const handleReplaceClick = () => {
+    if (items.length > 0) {
+      setShowReplaceConfirm(true);
+    } else {
+      handleSaveIngredients("replace");
     }
   };
 
@@ -374,7 +388,7 @@ export default function PantryPage() {
                 {saving ? "保存中…" : "追加保存"}
               </button>
               <button
-                onClick={() => handleSaveIngredients("replace")}
+                onClick={handleReplaceClick}
                 disabled={saving}
                 className="flex-1 py-2 rounded-xl text-sm font-medium"
                 style={{ backgroundColor: colors.card, color: colors.accent, border: `1px solid ${colors.accent}` }}
@@ -525,6 +539,22 @@ export default function PantryPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* UX2-04: 「全て置き換え」の破壊操作確認（対象件数を明示） */}
+      {showReplaceConfirm && (
+        <ConfirmDeleteModal
+          title="食材を全て置き換えますか？"
+          message={`既存の${items.length}件の食材が削除され、写真から検出された${analysisResult?.detailedIngredients.length ?? 0}件に置き換わります。この操作は取り消せません。`}
+          isDeleting={saving}
+          tone="danger"
+          confirmLabel="置き換える"
+          onCancel={() => setShowReplaceConfirm(false)}
+          onConfirm={async () => {
+            setShowReplaceConfirm(false);
+            await handleSaveIngredients("replace");
+          }}
+        />
+      )}
     </div>
   );
 }

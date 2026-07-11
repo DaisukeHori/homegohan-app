@@ -8,6 +8,7 @@ import { logToServer } from "@/lib/db-logger";
 import { formatLocalDate } from "@homegohan/shared";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
 import { motion, AnimatePresence } from "framer-motion";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
   Sparkles, Check, Calendar, Clock, Sun, Coffee, Moon,
@@ -268,6 +269,11 @@ export default function MealCaptureModal() {
   const [fridgeSummary, setFridgeSummary] = useState('');
   const [fridgeSuggestions, setFridgeSuggestions] = useState<string[]>([]);
   const [isSavingFridge, setIsSavingFridge] = useState(false);
+  // UX2-04: 「入れ替える」は既存の冷蔵庫データを全削除する破壊的操作なのに確認が無かった。
+  // 対象件数（既存の冷蔵庫食材数）を明示した確認ダイアログを挟む。
+  const [showFridgeReplaceConfirm, setShowFridgeReplaceConfirm] = useState(false);
+  const [existingFridgeCount, setExistingFridgeCount] = useState<number | null>(null);
+  const [isCheckingFridgeCount, setIsCheckingFridgeCount] = useState(false);
 
   // 健康診断解析結果
   const [healthData, setHealthData] = useState<HealthCheckupData>({});
@@ -942,6 +948,26 @@ export default function MealCaptureModal() {
     } finally {
       setIsSavingFridge(false);
     }
+  };
+
+  // UX2-04: 「入れ替える」クリック時。既存の冷蔵庫食材数を確認してから破壊操作の確認を出す
+  // （件数取得に失敗しても、件数無しのメッセージで確認自体はブロックしない）。
+  const handleFridgeReplaceClick = async () => {
+    setIsCheckingFridgeCount(true);
+    try {
+      const res = await fetch('/api/pantry');
+      if (res.ok) {
+        const data = await res.json();
+        setExistingFridgeCount((data.items || []).length);
+      } else {
+        setExistingFridgeCount(null);
+      }
+    } catch {
+      setExistingFridgeCount(null);
+    } finally {
+      setIsCheckingFridgeCount(false);
+    }
+    setShowFridgeReplaceConfirm(true);
   };
 
   // 健康診断データを保存
@@ -1786,8 +1812,8 @@ export default function MealCaptureModal() {
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>追記する</span>
               </button>
               <button
-                onClick={() => saveFridgeItems('replace')}
-                disabled={isSavingFridge}
+                onClick={handleFridgeReplaceClick}
+                disabled={isSavingFridge || isCheckingFridgeCount}
                 className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60"
                 style={{ background: colors.accent }}
               >
@@ -2460,6 +2486,26 @@ export default function MealCaptureModal() {
               </div>
             </motion.div>
           </motion.div>
+        )}
+
+        {/* UX2-04: 「入れ替える」の破壊操作確認（対象件数を明示） */}
+        {showFridgeReplaceConfirm && (
+          <ConfirmDeleteModal
+            title="冷蔵庫の食材を入れ替えますか？"
+            message={
+              existingFridgeCount !== null
+                ? `既存の${existingFridgeCount}件の食材が削除され、写真から検出された${fridgeIngredients.length}件に入れ替わります。この操作は取り消せません。`
+                : `既存の食材が削除され、写真から検出された${fridgeIngredients.length}件に入れ替わります。この操作は取り消せません。`
+            }
+            isDeleting={isSavingFridge}
+            tone="danger"
+            confirmLabel="入れ替える"
+            onCancel={() => setShowFridgeReplaceConfirm(false)}
+            onConfirm={async () => {
+              setShowFridgeReplaceConfirm(false);
+              await saveFridgeItems('replace');
+            }}
+          />
         )}
     </div>
   );
