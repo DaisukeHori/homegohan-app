@@ -130,13 +130,19 @@ export function ServingsModal({
                       border: `1px solid ${value === 0 ? colors.border : colors.success}`
                     }}
                   >
-                    {/* #1052 (タップ領域): 元々は w-7 h-9 (28x36px) で 44px 基準未達だった。
-                        視覚サイズは維持したまま min-w/min-h + 負のマージンでヒット領域のみ
-                        44x44px に拡大する（ホーム Bug-10 と同じパターン）。 */}
+                    {/* #1052 (タップ領域 / Sonnet 指摘の Critical 修正):
+                        当初は min-w/min-h + 負の「水平」マージン(-mx)でヒット領域を44x44pxへ
+                        拡大していたが、grid-cols-4 gap-2 の狭いセルでは -mx が隣の食事列
+                        （朝/昼/夜）の±ボタンのヒット領域と水平方向に重なり、375px幅の実機で
+                        「朝の+」を押すと「昼の−」が発火する誤操作を招いていた
+                        （elementFromPoint が後続DOM要素をヒットさせるため）。
+                        そのため水平方向のマージン拡張は完全に撤回し、ヒット領域拡大は
+                        「垂直方向のみ」（-my）に限定する。水平方向は幅を固定値のまま
+                        （視覚サイズ維持）にとどめ、隣接セルへ侵食しない。 */}
                     <button
                       onClick={() => updateValue(day, meal, value - 1)}
                       aria-label={`${dayLabels[day]}曜${MEAL_TIME_LABELS[meal]}の人数を1人減らす`}
-                      className="min-w-[44px] min-h-[44px] -mx-2 -my-1 flex items-center justify-center text-lg font-bold"
+                      className="w-7 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                       style={{ color: value === 0 ? colors.textMuted : colors.success }}
                     >
                       −
@@ -153,7 +159,7 @@ export function ServingsModal({
                     <button
                       onClick={() => updateValue(day, meal, value + 1)}
                       aria-label={`${dayLabels[day]}曜${MEAL_TIME_LABELS[meal]}の人数を1人増やす`}
-                      className="min-w-[44px] min-h-[44px] -mx-2 -my-1 flex items-center justify-center text-lg font-bold"
+                      className="w-7 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                       style={{ color: value === 0 ? colors.textMuted : colors.success }}
                     >
                       +

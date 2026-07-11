@@ -360,12 +360,19 @@ export function ShoppingRangeModal({
                         border: `1px solid ${value === 0 ? colors.border : colors.success}`
                       }}
                     >
-                      {/* #1052 (タップ領域): 元は w-6 h-8 (24x32px) で 44px 基準未達だった。
-                          視覚サイズは維持したまま負のマージンでヒット領域のみ 44x44px に拡大する。 */}
+                      {/* #1052 (タップ領域 / Sonnet 指摘の Critical 修正):
+                          当初は min-w/min-h + 負の「水平」マージン(-mx-[10px])でヒット領域を
+                          44x44pxへ拡大していたが、grid-cols-4 gap-2 の狭いセルでは -mx が
+                          隣の食事列（朝/昼/夜）の±ボタンのヒット領域と水平方向に重なり、
+                          375px幅の実機で「朝の+」を押すと「昼の−」が発火する誤操作を招いていた
+                          （elementFromPoint が後続DOM要素をヒットさせるため）。
+                          そのため水平方向のマージン拡張は完全に撤回し、ヒット領域拡大は
+                          「垂直方向のみ」（-my）に限定する。水平方向は幅を固定値のまま
+                          （視覚サイズ維持）にとどめ、隣接セルへ侵食しない。 */}
                       <button
                         onClick={() => updateValue(value - 1)}
                         aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人減らす`}
-                        className="min-w-[44px] min-h-[44px] -mx-[10px] -my-[6px] flex items-center justify-center text-lg font-bold"
+                        className="w-6 min-h-[44px] -my-[6px] flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         −
@@ -382,7 +389,7 @@ export function ShoppingRangeModal({
                       <button
                         onClick={() => updateValue(value + 1)}
                         aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人増やす`}
-                        className="min-w-[44px] min-h-[44px] -mx-[10px] -my-[6px] flex items-center justify-center text-lg font-bold"
+                        className="w-6 min-h-[44px] -my-[6px] flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
                         +
