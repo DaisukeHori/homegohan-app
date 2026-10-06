@@ -62,5 +62,17 @@ SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
 SUPABASE_INTEGRATION_TEST=1
 ENVFILE
 
+# Edge Functions をローカルで動かす (supabase functions serve) 用の env。
+# Deno.env は Next.js の環境変数を読まないため別ファイルが必要。
+# AI キーはクラウド環境変数のダミー値をそのまま渡し、実キーは API認証情報のプロキシが付与する。
+# Stripe は本番でも未設定 (mock モード) のため渡さない。
+cat > supabase/functions/.env <<FNENV
+GOOGLE_AI_STUDIO_API_KEY=${GOOGLE_AI_STUDIO_API_KEY:-}
+XAI_API_KEY=${XAI_API_KEY:-}
+OPENAI_API_KEY=${OPENAI_API_KEY:-}
+GEMINI_IMAGE_MODEL=${GEMINI_IMAGE_MODEL:-}
+FNENV
+
 echo "[supabase-local] 起動完了: ${API_URL}"
+echo "  Edge Functions: supabase functions serve --env-file supabase/functions/.env"
 echo "  次: npm run dev  /  npx vitest run --config vitest.integration.config.ts"

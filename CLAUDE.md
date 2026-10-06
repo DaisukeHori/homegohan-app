@@ -84,7 +84,9 @@ CI では GitHub Secrets に登録する。
 
 ### 環境変数・シークレット
 - 環境変数欄にはシークレットを入れない (環境を使う全員に見える)。
-- AI / Stripe(テスト) キーは環境設定の **「API認証情報」** に登録し、プロキシがヘッダを付与する。コードの未設定チェックを通すため環境変数側にはダミー値 `injected-by-proxy` を入れる。
+- AI キー (Gemini / xAI / OpenAI) は環境設定の **「API認証情報」** に登録し、プロキシがヘッダを付与する。コードの未設定チェックを通すため環境変数側にはダミー値 `injected-by-proxy` を入れる。Edge Functions 用には `cccloud-supabase-local.sh` が `supabase/functions/.env` に同じ値を書き出す。
+- **Stripe キーは入れない**。本番 (Vercel / Supabase secrets) にも未設定で、未設定時の mock モードが正。ダミーを入れると price-change が「Stripe 同期必須」扱いになり 502 になる。
+- 本番の `GEMINI_IMAGE_MODEL` は `gemini-2.5-flash-image` (2026-10 時点、Vercel production)。
 - 環境変数に `NEXT_PUBLIC_SUPABASE_URL` 等の Supabase 系・`PLAYWRIGHT_BASE_URL`・`TZ`・`GH_TOKEN` は **入れない** (前 2 つは .env.local より優先されローカル Supabase / ローカル dev に向かなくなる。TZ は CI が UTC 前提、GH_TOKEN は GitHub プロキシが認証する)。
 
 ### 利用可能なコマンド (Cloud 動作可)
