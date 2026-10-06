@@ -2,6 +2,7 @@
  * Test user creation and cleanup helpers
  * Creates real Supabase auth users with operator roles for integration testing
  */
+import { createClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from './supabase';
 
 export interface TestUser {
@@ -36,12 +37,15 @@ export async function createTestUserWithRoles(params: {
   const userId = authData.user.id;
 
   // Upsert user_profiles with roles
+  // user_profiles の必須列は nickname / age_group / gender (display_name 列は存在しない)
   const { error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .upsert(
       {
         id: userId,
-        display_name: `Test ${params.roles.join('+')}`,
+        nickname: `Test ${params.roles.join('+')}`,
+        age_group: '30s',
+        gender: 'other',
         roles: params.roles,
       },
       { onConflict: 'id' }
@@ -63,8 +67,16 @@ export async function createTestUserWithRoles(params: {
     // Fall back to password sign-in via anon client
   }
 
-  // Use sign in with password via admin to get access token
-  const signInResult = await supabaseAdmin.auth.signInWithPassword({
+  // Use sign in with password to get access token.
+  // 共有の supabaseAdmin でサインインすると、以後の supabaseAdmin の要求がこのユーザーの
+  // JWT で送られ service_role でなくなる (supabase-js がセッションを保持する) ため、
+  // サインインは使い捨てのクライアントで行う。
+  const signInClient = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+  const signInResult = await signInClient.auth.signInWithPassword({
     email: params.email,
     password,
   });
