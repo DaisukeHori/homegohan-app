@@ -5,6 +5,15 @@ import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
 import { renderOrgTransferCompletedEmail } from '@/lib/emails/membership/org-transfer-completed';
 
+// #1236: RPC の生メッセージ (エラーコード文字列) を画面に出さず、利用者向けの文言にする
+const TRANSFER_ACCEPT_MESSAGES: Record<string, string> = {
+  TRANSFER_ACCEPTOR_NOT_IN_ORG: 'あなたは現在この組織のメンバーではないため、オーナー権限を引き継げません。',
+  TRANSFER_PROPOSAL_NOT_FOUND: '譲渡提案が見つかりません。',
+  TRANSFER_PROPOSAL_EXPIRED: '譲渡提案の有効期限が切れています。',
+  TRANSFER_NOT_PENDING: 'この譲渡提案は既に処理済みです。',
+  NOT_AUTHENTICATED: '認証が必要です。',
+};
+
 export async function POST(
   _request: Request,
   { params }: { params: { id: string } },
@@ -33,7 +42,8 @@ export async function POST(
 
   if (rpcError) {
     const { code, status } = mapPgErrorToHttp(rpcError.message);
-    return NextResponse.json({ error: { code, message: rpcError.message } }, { status });
+    const message = TRANSFER_ACCEPT_MESSAGES[code] ?? '組織オーナー権限の引き継ぎに失敗しました。';
+    return NextResponse.json({ error: { code, message } }, { status });
   }
 
   // 完了メール通知 (失敗してもレスポンスは成功)

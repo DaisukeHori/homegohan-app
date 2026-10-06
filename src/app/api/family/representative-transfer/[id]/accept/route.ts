@@ -38,6 +38,24 @@ export async function POST(
         { status: 409 },
       );
     }
+    // #1237: 承諾時点で家族の active な大人 / 代表者でない (脱退・除名済み等)
+    if (error.message?.includes('TRANSFER_ACCEPTOR_NOT_IN_FAMILY')) {
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_FAMILY,
+            message: 'あなたは現在この家族のメンバーではないため、代表者権限を引き継げません。',
+          },
+        },
+        { status: 403 },
+      );
+    }
+    if (error.message?.includes('TRANSFER_PROPOSAL_EXPIRED')) {
+      return NextResponse.json(
+        { error: { code: MembershipErrorCode.TRANSFER_PROPOSAL_EXPIRED, message: '譲渡提案の有効期限が切れています。' } },
+        { status: 410 },
+      );
+    }
     const { code, status } = mapPgErrorToHttp(error.message ?? '');
     return NextResponse.json(
       { error: { code, message: '代表者譲渡の承諾に失敗しました' } },

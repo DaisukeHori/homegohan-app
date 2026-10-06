@@ -78,4 +78,19 @@ describe("mapPgErrorToHttp", () => {
     // TARGET_NOT_IN_ORG に NOT_IN_ORG (既存コード) が部分一致で誤爆しないことも確認
     expect(mapPgErrorToHttp("ERROR: TARGET_NOT_IN_ORG").code).not.toBe(MembershipErrorCode.NOT_IN_ORG);
   });
+
+  it("#1236: TRANSFER_ACCEPTOR_NOT_IN_ORG が 403 に正しく解決し NOT_IN_ORG に化けない", () => {
+    const r = mapPgErrorToHttp("ERROR:  TRANSFER_ACCEPTOR_NOT_IN_ORG");
+    expect(r.code).toBe(MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_ORG);
+    expect(r.status).toBe(403);
+    expect(r.code).not.toBe(MembershipErrorCode.NOT_IN_ORG);
+    expect(r.code).not.toBe(MembershipErrorCode.TARGET_NOT_IN_ORG);
+  });
+
+  it("#1237: TRANSFER_ACCEPTOR_NOT_IN_FAMILY が 403 に正しく解決し NOT_IN_FAMILY に化けない", () => {
+    const r = mapPgErrorToHttp("ERROR:  TRANSFER_ACCEPTOR_NOT_IN_FAMILY");
+    expect(r.code).toBe(MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_FAMILY);
+    expect(r.status).toBe(403);
+    expect(r.code).not.toBe(MembershipErrorCode.NOT_IN_FAMILY);
+  });
 });

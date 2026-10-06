@@ -44,6 +44,9 @@ export enum MembershipErrorCode {
   // が実際に RAISE するコード。TRANSFER_NOT_FOUND/TRANSFER_NOT_PENDING とは別の文字列。
   TRANSFER_PROPOSAL_NOT_FOUND = 'TRANSFER_PROPOSAL_NOT_FOUND',
   TRANSFER_PROPOSAL_EXPIRED = 'TRANSFER_PROPOSAL_EXPIRED',
+  // #1236 / #1237: accept_*_transfer が承諾時点の当事者性再検証で RAISE するコード
+  TRANSFER_ACCEPTOR_NOT_IN_ORG = 'TRANSFER_ACCEPTOR_NOT_IN_ORG',
+  TRANSFER_ACCEPTOR_NOT_IN_FAMILY = 'TRANSFER_ACCEPTOR_NOT_IN_FAMILY',
   // misc
   NOT_AUTHENTICATED = 'NOT_AUTHENTICATED',
   RATE_LIMITED = 'RATE_LIMITED',
@@ -86,6 +89,8 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.TRANSFER_NOT_PENDING]: 409,
   [MembershipErrorCode.TRANSFER_PROPOSAL_NOT_FOUND]: 404,
   [MembershipErrorCode.TRANSFER_PROPOSAL_EXPIRED]: 410,
+  [MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_ORG]: 403,
+  [MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_FAMILY]: 403,
   [MembershipErrorCode.NOT_AUTHENTICATED]: 401,
   [MembershipErrorCode.RATE_LIMITED]: 429,
   [MembershipErrorCode.RPC_FAILED]: 500,
