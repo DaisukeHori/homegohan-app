@@ -98,7 +98,7 @@ CI では GitHub Secrets に登録する。
 | 型チェック | `npm run typecheck` |
 | Vitest unit | `npm test` (シークレット不要) |
 | Vitest integration | `npx vitest run --config vitest.integration.config.ts` (要ローカル Supabase) |
-| Playwright E2E (ローカル) | `npm run test:e2e` (要 `npx playwright install chromium`) |
+| Playwright E2E (ローカル) | `npm run test:e2e` (Chromium は環境セットアップで導入済み、テストユーザーは `cccloud-supabase-local.sh` が作成。環境変数に `E2E_USER_EMAIL` / `PLAYWRIGHT_BASE_URL` は入れない) |
 | migration 新規作成 | `supabase migration new <name>` → `supabase db reset` で全適用確認 |
 | CI 結果確認 | `gh run list` / `gh run view <id> --log-failed` |
 
@@ -109,7 +109,7 @@ CI では GitHub Secrets に登録する。
 - 本番 Supabase への `supabase link` / `db push` (鍵を置かない方針)
 
 ### Network
-環境のネットワークアクセスは `Custom` (デフォルトリスト込み) + `deno.land` / `dl.deno.land` / `jsr.io` / `esm.sh` / `homegohan-app.vercel.app`。
+環境のネットワークアクセスは `Custom` (デフォルトリスト込み) + `deno.land` / `dl.deno.land` / `jsr.io` / `esm.sh` / `homegohan-app.vercel.app` / `cdn.playwright.dev` / `playwright.download.prss.microsoft.com`。
 Supabase のローカルイメージ (public.ecr.aws) と Gemini (`*.googleapis.com`) はデフォルトリストに含まれる。API認証情報に登録したホストはネットワーク設定と無関係に到達可能。
 
 ### 引き継ぎ

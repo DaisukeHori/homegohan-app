@@ -62,6 +62,12 @@ SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
 SUPABASE_INTEGRATION_TEST=1
 ENVFILE
 
+# E2E 用テストユーザー (e2e-user-01〜10@homegohan.test) をローカル DB に作成し、
+# E2E_USER_0X_EMAIL / E2E_USER_0X_PASSWORD を .env.local に追記する。
+# Playwright の global-setup はこれを読むマルチユーザーモードで動く
+# (クラウド環境変数に E2E_USER_EMAIL を入れると単一ユーザーモードになるので入れない)。
+npx --yes tsx scripts/create-e2e-accounts.ts || echo "[supabase-local] WARN: E2E ユーザー作成に失敗 (E2E 以外は利用可)"
+
 # Edge Functions をローカルで動かす (supabase functions serve) 用の env。
 # Deno.env は Next.js の環境変数を読まないため別ファイルが必要。
 # AI キーはクラウド環境変数のダミー値をそのまま渡し、実キーは API認証情報のプロキシが付与する。
