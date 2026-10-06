@@ -1,0 +1,72 @@
+name: security-regression
+
+# 認可 / RLS のセキュリティ回帰テスト (#1231 配下の修正の再発防止)。
+#
+# 本番には接続しない。PR の migration を含むローカル Supabase
+# (本番スキーマのベースライン + 本番台帳より新しい migration。scripts/supabase-local.sh)
+# とローカルの Next dev サーバに対して、次を実行する:
+#   - tests/integration/rls/       supabase-js で PostgREST / RPC を直接叩く RLS・RPC の検証
+#   - tests/integration/security/  API ルートを Bearer JWT で叩く越境・権限昇格の検証
+#
+# 本番には merge 後にしか migration が当たらないため、本番向けの検証では修正 PR 自身が
+# merge 前に緑にならない。ローカルスタックで回すことで修正 PR 自身をゲートにできる。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: security-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  security-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start local Supabase (baseline + new migrations)
+        run: bash scripts/supabase-local.sh start
+
+      - name: Write .env.local for the local stack
+        run: bash scripts/supabase-local.sh env .env.local
+
+      - name: Start Next dev server
+        run: |
+          nohup npm run dev > /tmp/next-dev.log 2>&1 &
+          for i in $(seq 1 120); do
+            if curl -s -o /dev/null http://localhost:3000/login; then break; fi
+            sleep 2
+          done
+          curl -s -o /dev/null -w 'GET /login -> %{http_code}\n' http://localhost:3000/login
+
+      - name: Run security regression tests
+        run: >
+          npx vitest run --config vitest.integration.config.ts --passWithNoTests
+          tests/integration/rls tests/integration/security
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          echo "::group::next dev log"; tail -n 300 /tmp/next-dev.log || true; echo "::endgroup::"
+          echo "::group::containers"; docker ps -a || true; echo "::endgroup::"
+
+      - name: Stop local Supabase
+        if: always()
+        run: bash scripts/supabase-local.sh stop || true

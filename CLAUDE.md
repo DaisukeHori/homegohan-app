@@ -68,6 +68,22 @@ CI では GitHub Secrets に登録する。
 
 ---
 
+## ローカル / CI の Supabase (ベースライン方式)
+
+`supabase/migrations/` は空 DB から再生できない (#1116) ため、ローカルと CI では本番スキーマの読み取り専用スナップショット (`supabase/baseline/`) を出発点にし、本番台帳より新しい migration だけを上に積む。詳細は `supabase/baseline/README.md`。
+
+```bash
+bash scripts/supabase-local.sh start            # 起動
+bash scripts/supabase-local.sh env .env.local   # 接続情報を .env.local へ
+bash scripts/supabase-local.sh reset            # migration を追加・変更したら (= db reset)
+npx vitest run --config vitest.integration.config.ts tests/integration/rls   # RLS / 権限の回帰テスト
+```
+
+- リポジトリの `supabase/` に対して `supabase start` / `supabase db reset` を直接実行しない (#1116 で途中停止する)。
+- PR では `.github/workflows/security-regression.yml` が同じ方法でローカルスタックを立て、`tests/integration/rls/` と `tests/integration/security/` を実行する。
+
+---
+
 ## Claude Code Cloud (claude.ai/code) 動作要件
 
 ### 起動時 setup
