@@ -70,44 +70,45 @@ CI では GitHub Secrets に登録する。
 
 ## Claude Code Cloud (claude.ai/code) 動作要件
 
-### 起動時 setup
-- `.claude/settings.json` の SessionStart hook、または環境設定 UI の "Setup Script" に
-  `bash scripts/setup-cccloud.sh` を登録すると依存解決される
-- スクリプトは Cloud 環境のみで動作 (`CLAUDE_CODE_REMOTE` 等を検知)、ローカルでは no-op
+### 基本方針
+- クラウド環境は **本番 Supabase に接続しない**。開発・テストは Docker 上のローカル Supabase で行う。
+- 本番へのスキーマ反映は PR → main マージ → `deploy-supabase-migrations.yml` (CI) のみ。Edge Functions も `deploy-supabase-functions.yml` が main push で反映する。
+- 本番の状態調査は **読み取り専用 Supabase コネクタ** (`https://mcp.supabase.com/mcp?project_ref=flmeolcfutuwwbjmzyoz&read_only=true`) のみ使う。書き込み可能な Supabase コネクタはこのリポジトリのセッションでは使わない。
+- 本番 / ステージングへの E2E は CI (`e2e.yml`) を起動し、結果を `gh run view` で読む。
+- 本番データの修正 (stuck ジョブ掃除・embedding 再生成等) はクラウドで行わず、堀さんのローカル Mac で実施する。
 
-### 環境変数
-必須・任意の全変数は `.env.example` 参照。CCCloud では環境設定 UI の Environment Variables に同形式で貼り付け。
-**注: 現状 CCCloud に専用シークレットストアは無し**。シークレット値は環境を編集できる人全員から見える前提で扱うこと (Stripe live key 等は CCCloud に置かない方針推奨)。
+### 起動時 setup
+- 環境の「セットアップスクリプト」: Node 20 / gh / Supabase CLI 2.62.10 / Deno をインストール (環境キャッシュされる)
+- `.claude/settings.json` の SessionStart hook: `scripts/setup-cccloud.sh` (npm ci 等)。ローカルでは no-op
+- integration test / dev server を使う前に `bash scripts/cccloud-supabase-local.sh` を実行するとローカル Supabase が起動し `.env.local` が生成される
+
+### 環境変数・シークレット
+- 環境変数欄にはシークレットを入れない (環境を使う全員に見える)。
+- AI / Stripe(テスト) キーは環境設定の **「API認証情報」** に登録し、プロキシがヘッダを付与する。コードの未設定チェックを通すため環境変数側にはダミー値 `injected-by-proxy` を入れる。
+- 環境変数に `NEXT_PUBLIC_SUPABASE_URL` 等の Supabase 系・`PLAYWRIGHT_BASE_URL`・`TZ`・`GH_TOKEN` は **入れない** (前 2 つは .env.local より優先されローカル Supabase / ローカル dev に向かなくなる。TZ は CI が UTC 前提、GH_TOKEN は GitHub プロキシが認証する)。
 
 ### 利用可能なコマンド (Cloud 動作可)
 | 用途 | コマンド |
 |---|---|
+| ローカル Supabase 起動 | `bash scripts/cccloud-supabase-local.sh` |
 | 開発サーバー | `npm run dev` |
 | Lint | `npm run lint` |
 | 型チェック | `npm run typecheck` |
-| Vitest unit | `npm test` |
-| Playwright E2E | `npm run test:e2e` (要 PLAYWRIGHT_BASE_URL or 起動済 dev) |
-| Supabase migration 確認 | `npx supabase@2.62.10 db diff` 等 |
+| Vitest unit | `npm test` (シークレット不要) |
+| Vitest integration | `npx vitest run --config vitest.integration.config.ts` (要ローカル Supabase) |
+| Playwright E2E (ローカル) | `npm run test:e2e` (要 `npx playwright install chromium`) |
+| migration 新規作成 | `supabase migration new <name>` → `supabase db reset` で全適用確認 |
+| CI 結果確認 | `gh run list` / `gh run view <id> --log-failed` |
 
 ### Cloud で **実行不可** なコマンド
 - `npm run mobile:ios` / `mobile:android` (Xcode / Android SDK / シミュレータ依存)
 - `eas build --local` (CocoaPods / Xcode 依存、TestFlight 提出は堀さんローカル)
-- 任意の MCP ツール (ProxmoxMCP / SSH-MCP / Cloudflare 等のローカル MCP は CCCloud では未登録)
+- ローカル MCP (ProxmoxMCP / SSH-MCP / Cloudflare 等)
+- 本番 Supabase への `supabase link` / `db push` (鍵を置かない方針)
 
-### Network 制約
-CCCloud のデフォルト `Trusted` レベルでは Stripe / Supabase / Vercel API はホワイトリスト外。アクセス必要なら環境設定 > Network access で `Custom` を選び以下を追加:
-```
-*.supabase.co
-api.stripe.com
-api.vercel.com
-api.x.ai
-generativelanguage.googleapis.com
-api.openai.com
-api.resend.com
-us.i.posthog.com
-*.upstash.io
-```
-または `Full` (全許可)。
+### Network
+環境のネットワークアクセスは `Custom` (デフォルトリスト込み) + `deno.land` / `dl.deno.land` / `jsr.io` / `esm.sh` / `homegohan-app.vercel.app`。
+Supabase のローカルイメージ (public.ecr.aws) と Gemini (`*.googleapis.com`) はデフォルトリストに含まれる。API認証情報に登録したホストはネットワーク設定と無関係に到達可能。
 
 ### 引き継ぎ
 新セッション開始時は `docs/handover/2026-05-08.md` を Read してから着手 (リポジトリ内に複製済み、CCCloud / ローカル両方から読める)。
