@@ -74,7 +74,7 @@ CI では GitHub Secrets に登録する。
 - クラウド環境は **本番 Supabase に接続しない**。開発・テストは Docker 上のローカル Supabase で行う。
 - 本番へのスキーマ反映は PR → main マージ → `deploy-supabase-migrations.yml` (CI) のみ。Edge Functions も `deploy-supabase-functions.yml` が main push で反映する。
 - 本番の状態調査は **読み取り専用 Supabase コネクタ** (`https://mcp.supabase.com/mcp?project_ref=flmeolcfutuwwbjmzyoz&read_only=true`) のみ使う。書き込み可能な Supabase コネクタはこのリポジトリのセッションでは使わない。
-- 本番 / ステージングへの E2E は CI (`e2e.yml`) を起動し、結果を `gh run view` で読む。
+- E2E はクラウドのマシン上で実行する。通常はローカル Supabase + `npm run dev` に対して `npm run test:e2e` (全 spec 実行可)。本番 (Vercel) に対しては `bash scripts/cccloud-e2e-prod.sh` (service_role を使わない MVP スイートのみ。本番にテストデータが作られる点に注意)。
 - 本番データの修正 (stuck ジョブ掃除・embedding 再生成等) はクラウドで行わず、堀さんのローカル Mac で実施する。
 
 ### 起動時 setup
@@ -100,6 +100,7 @@ CI では GitHub Secrets に登録する。
 | Vitest integration | `npx vitest run --config vitest.integration.config.ts` (要ローカル Supabase) |
 | Playwright E2E (ローカル) | `npm run test:e2e` (Chromium は環境セットアップで導入済み、テストユーザーは `cccloud-supabase-local.sh` が作成。環境変数に `E2E_USER_EMAIL` / `PLAYWRIGHT_BASE_URL` は入れない) |
 | migration 新規作成 | `supabase migration new <name>` → `supabase db reset` で全適用確認 |
+| 本番 E2E (MVP) | `bash scripts/cccloud-e2e-prod.sh` (要 PROD_E2E_USER_EMAIL / PROD_E2E_USER_PASSWORD / PROD_SUPABASE_ANON_KEY) |
 | CI 結果確認 | `gh run list` / `gh run view <id> --log-failed` |
 
 ### Cloud で **実行不可** なコマンド
@@ -109,7 +110,7 @@ CI では GitHub Secrets に登録する。
 - 本番 Supabase への `supabase link` / `db push` (鍵を置かない方針)
 
 ### Network
-環境のネットワークアクセスは `Custom` (デフォルトリスト込み) + `deno.land` / `dl.deno.land` / `jsr.io` / `esm.sh` / `homegohan-app.vercel.app` / `cdn.playwright.dev` / `playwright.download.prss.microsoft.com`。
+環境のネットワークアクセスは `Custom` (デフォルトリスト込み) + `deno.land` / `dl.deno.land` / `jsr.io` / `esm.sh` / `homegohan-app.vercel.app` / `cdn.playwright.dev` / `playwright.download.prss.microsoft.com` / `flmeolcfutuwwbjmzyoz.supabase.co` (本番 E2E のログイン用)。
 Supabase のローカルイメージ (public.ecr.aws) と Gemini (`*.googleapis.com`) はデフォルトリストに含まれる。API認証情報に登録したホストはネットワーク設定と無関係に到達可能。
 
 ### 引き継ぎ
