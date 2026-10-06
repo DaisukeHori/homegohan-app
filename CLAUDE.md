@@ -78,7 +78,7 @@ CI では GitHub Secrets に登録する。
 - 本番データの修正 (stuck ジョブ掃除・embedding 再生成等) はクラウドで行わず、堀さんのローカル Mac で実施する。
 
 ### 起動時 setup
-- 環境の「セットアップスクリプト」: Node 20 / gh / Supabase CLI 2.62.10 / Deno をインストール (環境キャッシュされる)
+- 環境の「セットアップスクリプト」: Node 22 / gh / Supabase CLI 2.62.10 / Deno をインストール (環境キャッシュされる)
 - `.claude/settings.json` の SessionStart hook: `scripts/setup-cccloud.sh` (npm ci 等)。ローカルでは no-op
 - integration test / dev server を使う前に `bash scripts/cccloud-supabase-local.sh` を実行するとローカル Supabase が起動し `.env.local` が生成される
 
