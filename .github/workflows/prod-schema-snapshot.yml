@@ -1,0 +1,165 @@
+name: Prod Schema Snapshot (read-only)
+
+# 本番 Supabase (flmeolcfutuwwbjmzyoz) のスキーマとカタログを **読み取り専用** で書き出し、
+# ローカル / CI 用ベースライン (supabase/baseline/) の素材を artifact に保存する。
+#
+# 背景 (#1116 / #1243 / #1064):
+#   supabase/migrations は空 DB から再生できない (基盤テーブルが migration 外で作られている)。
+#   そこで本番スキーマをベースラインとしてローカル / CI でのみ使う。本番の migration 台帳には触れない。
+#
+# 本番への書き込みはしない:
+#   - supabase migration list / db dump は読み取りのみ (pg_dump は READ ONLY トランザクションで動く)
+#   - カタログ照会 (scripts/baseline/snapshot_catalog.sql) は BEGIN TRANSACTION READ ONLY 内で実行し ROLLBACK
+#   - db push / migration repair / SQL 実行系のコマンドは使わない
+#
+# 出力の扱い:
+#   - リポジトリへは書き戻さない。artifact (1 日保持) から人が取り出し、内容を確認してから commit する
+#   - public リポジトリのため、秘密情報らしき文字列は scripts/baseline/redact_secrets.py で
+#     マスクしてから artifact に入れる (ログには件数と位置だけを出す)
+#   - ユーザーデータは取得しない。データを取るのは下記 REFERENCE_TABLES (マスタ) のみ
+#
+# 実行契機: workflow_dispatch、またはこのファイル / supabase/baseline/refresh-request.txt を変更した PR
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/prod-schema-snapshot.yml'
+      - 'supabase/baseline/refresh-request.txt'
+
+concurrency:
+  group: prod-schema-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SUPABASE_PROJECT_ID: flmeolcfutuwwbjmzyoz
+  # データも取得するマスタテーブル (個人情報を含まないもののみ)。
+  # 家族・組織の作成 RPC が参照する料金プラン等、ローカルのテストに必要なもの。
+  REFERENCE_TABLES: 'public.subscription_plans public.feature_packages public.badges public.sport_presets'
+
+jobs:
+  snapshot:
+    # fork からの PR では secrets が無いため実行しない
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create snapshot directory
+        run: mkdir -p snapshot
+
+      - name: Link Supabase project
+        run: npx --yes supabase@2.62.10 link --project-ref "$SUPABASE_PROJECT_ID"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Fetch migration ledger (read-only)
+        run: npx --yes supabase@2.62.10 migration list --linked > snapshot/migration_list.txt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Dump production schema (read-only, schema only)
+        # 既定の除外 (auth / storage / realtime 等の Supabase 管理スキーマ) を使い、
+        # public を含むアプリのスキーマ全体を書き出す
+        run: npx --yes supabase@2.62.10 db dump --linked -f snapshot/prod_schema.sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Export catalogs and reference data (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_IMAGE="public.ecr.aws/supabase/postgres:$(cat supabase/.temp/postgres-version)"
+          DB_URL="$(cat supabase/.temp/pooler-url)?sslmode=require"
+          # カタログ照会 (READ ONLY トランザクション内、最後は ROLLBACK)
+          docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e PGPASSWORD \
+            -v "$PWD/snapshot:/out" -v "$PWD/scripts/baseline:/q:ro" -w /out \
+            "$PG_IMAGE" psql "$DB_URL" -X -q -f /q/snapshot_catalog.sql
+          # マスタテーブルのデータ (pg_dump は READ ONLY トランザクションで動く)
+          TABLE_ARGS=()
+          for t in $REFERENCE_TABLES; do TABLE_ARGS+=(--table "$t"); done
+          docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e PGPASSWORD \
+            -v "$PWD/snapshot:/out" \
+            "$PG_IMAGE" pg_dump "$DB_URL" --data-only --column-inserts --no-owner --no-privileges \
+            "${TABLE_ARGS[@]}" -f /out/prod_reference_data.sql
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Write manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, datetime
+
+          with open("snapshot/migration_list.txt", encoding="utf-8") as fh:
+              lines = fh.readlines()
+          paired, local_only, remote_only = [], [], []
+          for raw in lines:
+              line = raw.rstrip("\n")
+              if not (line.startswith("|") and line.endswith("|")):
+                  continue
+              cols = [c.strip() for c in line[1:-1].split("|")]
+              if len(cols) < 2:
+                  continue
+              local, remote = cols[0], cols[1]
+              if not (re.fullmatch(r"[0-9]*", local) and re.fullmatch(r"[0-9]*", remote)):
+                  continue
+              if local and remote:
+                  paired.append(remote)
+              elif local:
+                  local_only.append(local)
+              elif remote:
+                  remote_only.append(remote)
+          remote_versions = paired + remote_only
+          manifest = {
+              "captured_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "source": "production (read-only snapshot)",
+              "git_sha": os.environ.get("GITHUB_SHA", ""),
+              "supabase_cli": "2.62.10",
+              "postgres_version": open("supabase/.temp/postgres-version", encoding="utf-8").read().strip(),
+              "ledger_max_version": max(remote_versions) if remote_versions else None,
+              "ledger_count": len(remote_versions),
+              "local_only": local_only,
+              "remote_only": remote_only,
+              "reference_tables": os.environ["REFERENCE_TABLES"].split(),
+          }
+          with open("snapshot/manifest.json", "w", encoding="utf-8") as fh:
+              json.dump(manifest, fh, ensure_ascii=False, indent=2)
+              fh.write("\n")
+          print(json.dumps({k: manifest[k] for k in ("captured_at", "ledger_max_version", "ledger_count", "local_only", "remote_only")}, ensure_ascii=False))
+          PY
+
+      - name: Redact secrets
+        run: python3 scripts/baseline/redact_secrets.py snapshot/
+
+      - name: Summary (counts only)
+        shell: bash
+        run: |
+          {
+            echo "## prod schema snapshot (read-only)"
+            echo ""
+            echo "- prod_schema.sql: $(wc -l < snapshot/prod_schema.sql) lines"
+            echo "- prod_reference_data.sql: $(grep -c '^INSERT INTO' snapshot/prod_reference_data.sql || true) rows"
+            for f in snapshot/*.csv; do echo "- $(basename "$f"): $(( $(wc -l < "$f") - 1 )) rows"; done
+            echo ""
+            echo '```json'
+            cat snapshot/manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-schema-snapshot
+          path: snapshot/
+          retention-days: 1
