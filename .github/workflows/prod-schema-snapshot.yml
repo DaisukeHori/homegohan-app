@@ -4,8 +4,8 @@ name: Prod Schema Snapshot (read-only)
 # ローカル / CI 用ベースライン (supabase/baseline/) の素材を artifact に保存する。
 #
 # 背景 (#1116 / #1243 / #1064):
-#   supabase/migrations は空 DB から再生できない (基盤テーブルが migration 外で作られている)。
-#   そこで本番スキーマをベースラインとしてローカル / CI でのみ使う。本番の migration 台帳には触れない。
+#   本番スキーマをベースラインとしてローカル / CI でのみ使う (検証とドリフト調査にも使う)。本番の migration 台帳には触れない。
+#   かつて supabase/migrations は空 DB から再生できなかったが、#1116 でこのベースラインを最も古い migration に統合した。
 #
 # 本番への書き込みはしない:
 #   - supabase migration list / db dump は読み取りのみ (pg_dump は READ ONLY トランザクションで動く)

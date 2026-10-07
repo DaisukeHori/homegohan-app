@@ -78,7 +78,9 @@ CI では GitHub Secrets に登録する。
 
 ## ローカル / CI の Supabase (ベースライン方式)
 
-`supabase/migrations/` は空 DB から再生できない (#1116) ため、ローカルと CI では本番スキーマの読み取り専用スナップショット (`supabase/baseline/`) を出発点にし、本番台帳より新しい migration だけを上に積む。詳細は `supabase/baseline/README.md`。
+ローカルと CI では本番スキーマの読み取り専用スナップショット (`supabase/baseline/`) を出発点にし、本番台帳より新しい migration だけを上に積む。詳細は `supabase/baseline/README.md`。
+
+`supabase/migrations/` は #1116 で空 DB から流し直せるようにした。本番台帳の最大 version (`20261007112200`) 以下の migration は、最も古いファイル `20251126124224_create_meal_planner_tables.sql` に本番スキーマのベースラインとして統合し、ほかはプレースホルダにしてある (統合前の中身は git 履歴)。これらは本番では適用済みのため実行されない。**既存の migration ファイルは編集せず、変更は必ず新しい migration として追加する。**
 
 ```bash
 bash scripts/supabase-local.sh start            # 起動
@@ -87,7 +89,8 @@ bash scripts/supabase-local.sh reset            # migration を追加・変更�
 npx vitest run --config vitest.integration.config.ts tests/integration/rls   # RLS / 権限の回帰テスト
 ```
 
-- リポジトリの `supabase/` に対して `supabase start` / `supabase db reset` を直接実行しない (#1116 で途中停止する)。
+- リポジトリの `supabase/` に対して `supabase start` / `supabase db reset` を直接実行しない (ローカル専用の設定 (project_id・認証のレート制限の緩和) と Kong の再起動対策は `scripts/supabase-local.sh` が入れる)。
+- CI の `deploy-supabase-migrations.yml` は `supabase db diff --linked` で、空のシャドウ DB に全 migration を流してから本番と比べる。流せなければジョブが失敗する。
 - PR では `.github/workflows/security-regression.yml` が同じ方法でローカルスタックを立て、`tests/integration/rls/` と `tests/integration/security/` を実行する。
 
 ---

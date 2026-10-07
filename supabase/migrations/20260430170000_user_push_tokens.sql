@@ -1,20 +1,6 @@
-CREATE TABLE IF NOT EXISTS user_push_tokens (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  expo_push_token text NOT NULL,
-  platform text NOT NULL CHECK (platform IN ('ios', 'android', 'web')),
-  device_name text,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now(),
-  UNIQUE (user_id, expo_push_token)
-);
-
-ALTER TABLE user_push_tokens ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "user can manage own" ON user_push_tokens
-  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "service_role can read" ON user_push_tokens
-  FOR SELECT USING (auth.role() = 'service_role');
-
-CREATE INDEX idx_user_push_tokens_user_id ON user_push_tokens(user_id);
+-- migration: 20260430170000_user_push_tokens.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;

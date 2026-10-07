@@ -1,23 +1,6 @@
-with ministop_source as (
-  select id
-  from public.catalog_sources
-  where code = 'ministop_jp'
-)
-update public.catalog_source_categories c
-set
-  list_url = case c.category_code
-    when 'onigiri' then 'https://www.ministop.co.jp/syohin/tennai-tezukuri/'
-    when 'bento' then 'https://www.ministop.co.jp/syohin/tennai-tezukuri/'
-    else c.list_url
-  end,
-  metadata_json = coalesce(c.metadata_json, '{}'::jsonb) || jsonb_build_object(
-    'seed_type', 'strong_category_seed',
-    'source_code', 'ministop_jp',
-    'legacy_category_blocked', c.category_code in ('onigiri', 'bento'),
-    'fallback_seed_url', 'https://www.ministop.co.jp/syohin/tennai-tezukuri/',
-    'requires_inline_catalog_parser', c.category_code in ('onigiri', 'bento')
-  ),
-  updated_at = now()
-from ministop_source s
-where c.source_id = s.id
-  and c.category_code in ('onigiri', 'bento');
+-- migration: 20260317161000_fix_ministop_catalog_seeds.sql
+-- #1116: この version の中身は 20251126124224_create_meal_planner_tables.sql (本番スキーマのベースライン) に統合した。
+-- 本番では適用済み (台帳に記録済み) のため、本番でこのファイルが実行されることはない。
+-- 空の DB に流すときも、変更はベースラインに含まれているため何もしない。
+-- 統合前の中身は git の履歴 (コミット 6014b17 以前) を参照。
+SELECT 1;
