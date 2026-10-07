@@ -1,4 +1,5 @@
 schema,name,identity_args,security_definer,volatile,config,owner,acl,kind
+public,accept_child_promotion,"p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres}",f
 public,accept_family_invite,"p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,accept_family_representative_transfer,p_proposal_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,accept_org_invite,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres}",f
@@ -20,14 +21,18 @@ public,fill_derived_recipes_magnesium_mg,"",f,v,"",postgres,"{=X/postgres,postgr
 public,fill_planned_meals_magnesium_mg,"",f,v,"",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,get_7d_checkin_averages,"p_user_id uuid, p_date date",f,s,"",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,get_invite_details,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,get_promotion_details,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}",f
 public,guard_family_groups_privileged,"",f,v,"",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,guard_family_members_privileged,"",f,v,"",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,guard_organizations_privileged,"",f,v,"",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,guard_user_profiles_privileged,"",f,v,"",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,guard_user_profiles_privileged_on_insert,"",f,v,"search_path=""""",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,increment_recipe_like_count,"p_recipe_id text, p_recipe_uuid uuid",t,v,search_path=public,postgres,"{postgres=X/postgres,service_role=X/postgres}",f
 public,increment_recipe_view_count,recipe_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,invoke_catalog_import,p_function_name text,t,v,search_path=public,postgres,"{postgres=X/postgres,service_role=X/postgres}",f
-public,is_inactive_user,p_user_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,is_active_family_adult,p_family_id uuid,t,s,"search_path=""""",postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,is_active_family_member,p_family_id uuid,t,s,"search_path=""""",postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,is_inactive_user,p_user_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,service_role=X/postgres}",f
 public,leave_family,"",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,leave_org,"",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,list_families_with_inactive_representative,"",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
@@ -41,16 +46,18 @@ public,organizations_owner_id_unchanged,"p_org_id uuid, p_new_owner_id uuid",t,s
 public,paste_meal_to_family,"p_source_meal_id uuid, p_target_user_ids uuid[]",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,preview_family_invite,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,preview_org_invite,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
-public,promote_child_to_user,"p_member_id uuid, p_email text",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
-public,promote_child_to_user,"p_member_id uuid, p_user_id uuid",t,v,search_path=public,postgres,"{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,promote_child_to_user,"p_member_id uuid, p_email text",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres}",f
 public,propose_family_representative_transfer,"p_family_id uuid, p_to_user_id uuid",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,propose_org_owner_transfer,"p_organization_id uuid, p_to_user_id uuid",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,reject_child_promotion,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres}",f
 public,reject_family_invite,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,reject_org_invite,p_token text,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,release_user_membership,p_user_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,service_role=X/postgres}",f
 public,remove_family_member,"p_family_id uuid, p_member_id uuid",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,remove_org_member,"p_organization_id uuid, p_user_id uuid",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
+public,request_child_promotion,"p_member_id uuid, p_email text",t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres}",f
 public,reset_e2e_test_users,"",t,v,"",postgres,"{postgres=X/postgres,service_role=X/postgres}",f
+public,revoke_child_promotion,p_member_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres}",f
 public,revoke_family_invite,p_invite_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,revoke_org_invite,p_invite_id uuid,t,v,search_path=public,postgres,"{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f
 public,search_dataset_ingredients_by_embedding,"query_embedding vector, match_count integer",f,s,"",postgres,"{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",f

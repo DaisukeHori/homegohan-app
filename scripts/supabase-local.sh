@@ -125,13 +125,13 @@ prepare() {
   # Edge Functions はリポジトリのものを参照する
   ln -sfn "$ROOT/supabase/functions" "$WORK/supabase/functions"
 
-  # 1) ベースライン: 本番スキーマ → 関数の EXECUTE 権限 → storage 設定 → マスタデータ。
+  # 1) ベースライン: 本番スキーマ → 関数の EXECUTE 権限 → テーブルの権限 → storage 設定 → マスタデータ。
   #    pg_dump 由来の SET (search_path='' 等) が後続 migration のセッションに残らないよう最後に RESET ALL
   local baseline_file="$WORK/supabase/migrations/${version}_prod_baseline.sql"
   {
     echo "-- supabase/baseline から scripts/supabase-local.sh が生成したベースライン (本番 snapshot)"
     echo "-- 本番台帳の最大 version $version までを含む。このファイルを編集しないこと。"
-    for part in prod_schema.sql prod_function_acl.sql prod_storage.sql prod_reference_data.sql; do
+    for part in prod_schema.sql prod_function_acl.sql prod_table_acl.sql prod_storage.sql prod_reference_data.sql; do
       if [ -f "$BASELINE_DIR/$part" ]; then
         echo
         echo "-- ===== $part ====="
@@ -194,6 +194,10 @@ cmd_start() {
 cmd_reset() {
   ensure_docker
   prepare
+  db_reset_with_retry
+}
+
+db_reset_with_retry() {
   # db reset は最後にコンテナを再起動し、Kong 経由で Storage API (バケット一覧) を呼ぶ。
   # Storage の起動が間に合わないと Kong が 502 等を返し、DB への適用は終わっているのに
   # 非ゼロで終了する。このときに限り 1 回だけやり直す (migration の失敗などは再実行しない)。
@@ -286,7 +290,7 @@ cmd_verify() {
     fi
     cli start "${args[@]}"
   else
-    cli db reset
+    db_reset_with_retry
   fi
   local db_url out
   db_url="$(cli status -o env 2>/dev/null | sed -n 's/^DB_URL="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p')"

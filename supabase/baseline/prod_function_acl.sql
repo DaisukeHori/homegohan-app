@@ -3,6 +3,8 @@
 -- 引数の型名は public 前提で書かれている (直前の prod_schema.sql が search_path を空にするため戻す)
 SELECT pg_catalog.set_config('search_path', 'public, extensions', false);
 
+REVOKE ALL ON ROUTINE public."accept_child_promotion"(p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."accept_child_promotion"(p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean) TO "authenticated";
 REVOKE ALL ON ROUTINE public."accept_family_invite"(p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."accept_family_invite"(p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."accept_family_invite"(p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean) TO "service_role";
@@ -72,6 +74,9 @@ REVOKE ALL ON ROUTINE public."get_invite_details"(p_token text) FROM PUBLIC, ano
 GRANT EXECUTE ON ROUTINE public."get_invite_details"(p_token text) TO "anon";
 GRANT EXECUTE ON ROUTINE public."get_invite_details"(p_token text) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."get_invite_details"(p_token text) TO "service_role";
+REVOKE ALL ON ROUTINE public."get_promotion_details"(p_token text) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."get_promotion_details"(p_token text) TO "anon";
+GRANT EXECUTE ON ROUTINE public."get_promotion_details"(p_token text) TO "authenticated";
 REVOKE ALL ON ROUTINE public."guard_family_groups_privileged"() FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."guard_family_groups_privileged"() TO PUBLIC;
 GRANT EXECUTE ON ROUTINE public."guard_family_groups_privileged"() TO "anon";
@@ -92,6 +97,11 @@ GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged"() TO PUBLIC;
 GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged"() TO "anon";
 GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged"() TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged"() TO "service_role";
+REVOKE ALL ON ROUTINE public."guard_user_profiles_privileged_on_insert"() FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged_on_insert"() TO PUBLIC;
+GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged_on_insert"() TO "anon";
+GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged_on_insert"() TO "authenticated";
+GRANT EXECUTE ON ROUTINE public."guard_user_profiles_privileged_on_insert"() TO "service_role";
 REVOKE ALL ON ROUTINE public."increment_recipe_like_count"(p_recipe_id text, p_recipe_uuid uuid) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."increment_recipe_like_count"(p_recipe_id text, p_recipe_uuid uuid) TO "service_role";
 REVOKE ALL ON ROUTINE public."increment_recipe_view_count"(recipe_id uuid) FROM PUBLIC, anon, authenticated, service_role;
@@ -99,8 +109,13 @@ GRANT EXECUTE ON ROUTINE public."increment_recipe_view_count"(recipe_id uuid) TO
 GRANT EXECUTE ON ROUTINE public."increment_recipe_view_count"(recipe_id uuid) TO "service_role";
 REVOKE ALL ON ROUTINE public."invoke_catalog_import"(p_function_name text) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."invoke_catalog_import"(p_function_name text) TO "service_role";
+REVOKE ALL ON ROUTINE public."is_active_family_adult"(p_family_id uuid) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."is_active_family_adult"(p_family_id uuid) TO "authenticated";
+GRANT EXECUTE ON ROUTINE public."is_active_family_adult"(p_family_id uuid) TO "service_role";
+REVOKE ALL ON ROUTINE public."is_active_family_member"(p_family_id uuid) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."is_active_family_member"(p_family_id uuid) TO "authenticated";
+GRANT EXECUTE ON ROUTINE public."is_active_family_member"(p_family_id uuid) TO "service_role";
 REVOKE ALL ON ROUTINE public."is_inactive_user"(p_user_id uuid) FROM PUBLIC, anon, authenticated, service_role;
-GRANT EXECUTE ON ROUTINE public."is_inactive_user"(p_user_id uuid) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."is_inactive_user"(p_user_id uuid) TO "service_role";
 REVOKE ALL ON ROUTINE public."leave_family"() FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."leave_family"() TO "authenticated";
@@ -148,17 +163,14 @@ GRANT EXECUTE ON ROUTINE public."preview_org_invite"(p_token text) TO "authentic
 GRANT EXECUTE ON ROUTINE public."preview_org_invite"(p_token text) TO "service_role";
 REVOKE ALL ON ROUTINE public."promote_child_to_user"(p_member_id uuid, p_email text) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."promote_child_to_user"(p_member_id uuid, p_email text) TO "authenticated";
-GRANT EXECUTE ON ROUTINE public."promote_child_to_user"(p_member_id uuid, p_email text) TO "service_role";
-REVOKE ALL ON ROUTINE public."promote_child_to_user"(p_member_id uuid, p_user_id uuid) FROM PUBLIC, anon, authenticated, service_role;
-GRANT EXECUTE ON ROUTINE public."promote_child_to_user"(p_member_id uuid, p_user_id uuid) TO "anon";
-GRANT EXECUTE ON ROUTINE public."promote_child_to_user"(p_member_id uuid, p_user_id uuid) TO "authenticated";
-GRANT EXECUTE ON ROUTINE public."promote_child_to_user"(p_member_id uuid, p_user_id uuid) TO "service_role";
 REVOKE ALL ON ROUTINE public."propose_family_representative_transfer"(p_family_id uuid, p_to_user_id uuid) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."propose_family_representative_transfer"(p_family_id uuid, p_to_user_id uuid) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."propose_family_representative_transfer"(p_family_id uuid, p_to_user_id uuid) TO "service_role";
 REVOKE ALL ON ROUTINE public."propose_org_owner_transfer"(p_organization_id uuid, p_to_user_id uuid) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."propose_org_owner_transfer"(p_organization_id uuid, p_to_user_id uuid) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."propose_org_owner_transfer"(p_organization_id uuid, p_to_user_id uuid) TO "service_role";
+REVOKE ALL ON ROUTINE public."reject_child_promotion"(p_token text) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."reject_child_promotion"(p_token text) TO "authenticated";
 REVOKE ALL ON ROUTINE public."reject_family_invite"(p_token text) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."reject_family_invite"(p_token text) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."reject_family_invite"(p_token text) TO "service_role";
@@ -173,8 +185,12 @@ GRANT EXECUTE ON ROUTINE public."remove_family_member"(p_family_id uuid, p_membe
 REVOKE ALL ON ROUTINE public."remove_org_member"(p_organization_id uuid, p_user_id uuid) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."remove_org_member"(p_organization_id uuid, p_user_id uuid) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."remove_org_member"(p_organization_id uuid, p_user_id uuid) TO "service_role";
+REVOKE ALL ON ROUTINE public."request_child_promotion"(p_member_id uuid, p_email text) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."request_child_promotion"(p_member_id uuid, p_email text) TO "authenticated";
 REVOKE ALL ON ROUTINE public."reset_e2e_test_users"() FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."reset_e2e_test_users"() TO "service_role";
+REVOKE ALL ON ROUTINE public."revoke_child_promotion"(p_member_id uuid) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON ROUTINE public."revoke_child_promotion"(p_member_id uuid) TO "authenticated";
 REVOKE ALL ON ROUTINE public."revoke_family_invite"(p_invite_id uuid) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON ROUTINE public."revoke_family_invite"(p_invite_id uuid) TO "authenticated";
 GRANT EXECUTE ON ROUTINE public."revoke_family_invite"(p_invite_id uuid) TO "service_role";
