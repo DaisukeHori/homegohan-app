@@ -8,6 +8,7 @@ import { Icons } from "@/components/icons";
 import AIChatBubble from "@/components/AIChatBubble";
 import { createClient } from "@/lib/supabase/client";
 import { clearUserScopedLocalStorage } from "@/lib/user-storage";
+import { isOrgAdmin } from "@/lib/auth/org-admin";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
 
@@ -94,6 +95,7 @@ export default function MainLayout({
 }) {
   const pathname = usePathname();
   const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [isOrgAdminUser, setIsOrgAdminUser] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {
@@ -102,12 +104,13 @@ export default function MainLayout({
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('roles')
+          .select('roles, org_role, organization_id')
           .eq('id', user.id)
           .single();
         if (profile?.roles) {
           setUserRoles(profile.roles);
         }
+        setIsOrgAdminUser(isOrgAdmin(profile));
       }
     };
     fetchUserRoles();
@@ -160,8 +163,8 @@ export default function MainLayout({
     if (hasRole('support') || hasRole('admin') || hasRole('super_admin')) {
       items.push(ADMIN_MENU_ITEMS.support);
     }
-    // org_adminロールを持っている場合
-    if (hasRole('org_admin')) {
+    // 所属組織の owner / admin の場合 (#1235: roles の org_admin では判定しない)
+    if (isOrgAdminUser) {
       items.push(ADMIN_MENU_ITEMS.org_admin);
     }
     

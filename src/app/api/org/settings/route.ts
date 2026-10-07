@@ -1,7 +1,7 @@
 /**
  * GET /api/org/settings — 組織設定取得
  * PUT /api/org/settings — 組織設定更新
- * 権限: org_admin (自組織のみ)
+ * 権限: 所属組織の org_role が owner / admin (自組織のみ、#1235)
  *
  * E2E: w5-13-new-features-adversarial A-1, A-4, A-7
  */
@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { isOrgAdmin } from '@/lib/auth/org-admin';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -30,12 +31,12 @@ export async function GET() {
 
     const { data: profile } = await supabase
       .from('user_profiles')
-      .select('organization_id, roles')
+      .select('organization_id, org_role')
       .eq('id', user.id)
       .single();
 
-    if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
-      throw new ForbiddenError('PERM_DENIED', 'org_admin role required');
+    if (!isOrgAdmin(profile)) {
+      throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
     }
 
     const { data: org, error: orgError } = await supabase
@@ -83,12 +84,12 @@ export async function PUT(request: Request) {
 
     const { data: profile } = await supabase
       .from('user_profiles')
-      .select('organization_id, roles')
+      .select('organization_id, org_role')
       .eq('id', user.id)
       .single();
 
-    if (!profile?.roles?.includes('org_admin') || !profile?.organization_id) {
-      throw new ForbiddenError('PERM_DENIED', 'org_admin role required');
+    if (!isOrgAdmin(profile)) {
+      throw new ForbiddenError('PERM_DENIED', 'owner/admin role required');
     }
 
     let body: unknown;

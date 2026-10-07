@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
+import { isOrgAdmin as isOrgAdminProfile } from "@/lib/auth/org-admin";
 
 const orgNavItems = [
   { href: "/org/dashboard", label: "ダッシュボード", icon: "📊" },
@@ -39,12 +40,12 @@ export default function OrgLayout({
 
           const { data: profile, error: profileError } = await supabase
             .from('user_profiles')
-            .select('roles, organization_id, organizations(name)')
+            .select('org_role, organization_id, organizations(name)')
             .eq('id', user.id)
             .single();
 
-          const roles = profile?.roles || [];
-          if (profileError || !roles.includes('org_admin') || !profile?.organization_id) {
+          // #1235: 組織の管理者は所属組織の org_role が owner / admin のユーザー
+          if (profileError || !isOrgAdminProfile(profile)) {
             router.push("/home"); // Not an org admin
             return;
           }
