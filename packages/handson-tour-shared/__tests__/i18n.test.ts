@@ -1,7 +1,7 @@
 // i18n キー網羅テスト + placeholder consume テスト
 // Canonical: docs/design/family/09-onboarding-handson-tour/14-mocks-i18n.md §7.1 §7.2
-// JA: 83 キー全件の存在確認 (セクション別件数: step0:7 / step1:15 / step2:18 / step3:14 / step4:13 / step5:2 / cooking_experience:3 / a11y:9 / common:6)
-// EN: 同じキーセットで存在確認
+// JA: 87 キー全件の存在確認 (セクション別件数: step0:7 / step1:15 / step2:18 / step3:14 / step4:13 / step5:2 / cooking_experience:3 / a11y:9 / common:6)
+// EN: 同じキーセットで存在確認 (件数だけでなく、キー名と placeholder も JA と一致することを確認する)
 
 import { describe, it, expect } from 'vitest';
 import { HANDSON_TOUR_I18N_JA, HANDSON_TOUR_I18N_EN } from '../src/i18n';
@@ -10,8 +10,8 @@ import { personalize } from '../src/personalize';
 describe('i18n keys completeness', () => {
   const t = HANDSON_TOUR_I18N_JA.tour;
 
-  // ====== step0 (8 キー) ======
-  it('step0: 8 keys exist', () => {
+  // ====== step0 (7 キー) ======
+  it('step0: 7 keys exist', () => {
     expect(t.step0.title).toBeDefined();
     expect(t.step0.subtitle).toBeDefined();
     expect(t.step0.start_button).toBeDefined();
@@ -19,13 +19,13 @@ describe('i18n keys completeness', () => {
     expect(t.step0.a11y_title).toBeDefined();
     expect(t.step0.a11y_start_hint).toBeDefined();
     expect(t.step0.a11y_later_hint).toBeDefined();
-    // step0 has 7 defined keys; count check
+    // 件数チェック (上の 7 キー以外が増減したら気づけるようにする)
     const keys = Object.keys(t.step0);
     expect(keys.length).toBe(7);
   });
 
-  // ====== step1 (14 キー) ======
-  it('step1: 14 keys exist', () => {
+  // ====== step1 (15 キー) ======
+  it('step1: 15 keys exist', () => {
     expect(t.step1.intro_title).toBeDefined();
     expect(t.step1.intro_hint).toBeDefined();
     expect(t.step1.camera_bubble).toBeDefined();
@@ -45,8 +45,8 @@ describe('i18n keys completeness', () => {
     expect(keys.length).toBe(15);
   });
 
-  // ====== step2 (14 キー) ======
-  it('step2: 14 keys exist', () => {
+  // ====== step2 (18 キー) ======
+  it('step2: 18 keys exist', () => {
     expect(t.step2.intro_title).toBeDefined();
     expect(t.step2.intro_hint).toBeDefined();
     expect(t.step2.flags_bubble).toBeDefined();
@@ -69,8 +69,8 @@ describe('i18n keys completeness', () => {
     expect(keys.length).toBe(18);
   });
 
-  // ====== step3 (13 キー) ======
-  it('step3: 13 keys exist', () => {
+  // ====== step3 (14 キー) ======
+  it('step3: 14 keys exist', () => {
     expect(t.step3.loading_text).toBeDefined();
     expect(t.step3.intro_title).toBeDefined();
     expect(t.step3.intro_hint).toBeDefined();
@@ -278,5 +278,58 @@ describe('HANDSON_TOUR_I18N_EN keys completeness', () => {
     expect(result).not.toContain('{');
     expect(result).not.toContain('}');
     expect(result).toContain('Hanako');
+  });
+});
+
+// 件数が同じでも「キーが 1 つ欠けて別のキーが 1 つ増えた」場合は上の件数テストでは気づけない。
+// また翻訳で {nickname} などを落としたり綴りを間違えると、画面にそのまま波括弧が出る
+// (または名前が差し込まれない) ため、キー名と placeholder も JA と EN で突き合わせる。
+describe('HANDSON_TOUR_I18N_EN は JA と同じキー名・placeholder を持つ', () => {
+  const ja = HANDSON_TOUR_I18N_JA.tour;
+  const en = HANDSON_TOUR_I18N_EN.tour;
+  const sections = Object.keys(ja) as Array<keyof typeof ja>;
+
+  /** "{nickname} さん ... {percent}" から ["{nickname}", "{percent}"] を並べ替えて返す */
+  const placeholdersOf = (text: string): string[] => (text.match(/\{[A-Za-z_]+\}/g) ?? []).sort();
+
+  it('同じセクションを持つ', () => {
+    expect(Object.keys(en).sort()).toEqual(Object.keys(ja).sort());
+  });
+
+  it.each(sections)('%s: キー名が JA と完全に一致する', (section) => {
+    expect(Object.keys(en[section]).sort()).toEqual(Object.keys(ja[section]).sort());
+  });
+
+  it('全キーで placeholder が JA と一致する', () => {
+    const mismatches: string[] = [];
+    for (const section of sections) {
+      const jaSection = ja[section] as Record<string, string>;
+      const enSection = en[section] as Record<string, string>;
+      for (const key of Object.keys(jaSection)) {
+        const jaPlaceholders = placeholdersOf(jaSection[key]);
+        const enPlaceholders = placeholdersOf(enSection[key] ?? '');
+        if (jaPlaceholders.join(',') !== enPlaceholders.join(',')) {
+          mismatches.push(`${section}.${key}: ja=[${jaPlaceholders}] en=[${enPlaceholders}]`);
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it('badge_disclaimer_title 以外に、空文字のままの文言が無い (JA / EN とも)', () => {
+    // badge_disclaimer_title は今のところ空文字のまま (キーだけ用意してあり、どの画面も参照していない)。
+    // それ以外のキーが空だと、その部分の画面が空白になる。
+    const allowedEmpty = new Set(['step4.badge_disclaimer_title']);
+    const empty: string[] = [];
+    for (const [lang, tour] of [['ja', ja], ['en', en]] as const) {
+      for (const section of sections) {
+        for (const [key, value] of Object.entries(tour[section] as Record<string, string>)) {
+          if (value === '' && !allowedEmpty.has(`${section}.${key}`)) {
+            empty.push(`${lang}.${section}.${key}`);
+          }
+        }
+      }
+    }
+    expect(empty).toEqual([]);
   });
 });
