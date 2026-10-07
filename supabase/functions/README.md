@@ -75,7 +75,8 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 
 | 関数名 | 説明 |
 |--------|------|
-| `generate-menu-v4` | 献立生成 v4（メイン） |
+| `generate-menu-v5` | 献立生成 v5（**本番主系**）。テンプレート起点の生成で、多様性チェックと栄養の外れ値の再生成つき。呼び分けは下の「献立生成 v4 と v5 の使い分け」を参照 |
+| `generate-menu-v4` | 献立生成 v4（**非推奨**）。feature flag OFF 時のフォールバック。ただし `POST /api/ai/nutrition-analysis` は、フラグに関係なく今も直接呼ぶ。また v5 が共通部品を import しているため削除不可。詳しくは下の「献立生成 v4 と v5 の使い分け」を参照 |
 | `knowledge-gpt` | 知識検索・レシピ検索 |
 | `normalize-shopping-list` | 買い物リスト正規化 |
 | `analyze-meal-photo` | 食事写真分析（Gemini） |
@@ -89,6 +90,69 @@ supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
 | `regenerate-embeddings` | 埋め込み再生成 |
 | `regenerate-shopping-list-v2` | 買い物リスト再生成 v2 |
 | `import-convenience-catalog` | Firecrawl scrape + OpenAI fallback でコンビニ商品カタログを取り込む |
+| `import-seven-eleven-catalog` | `import-convenience-catalog` と同じ取り込み処理を、セブン-イレブン（`seven_eleven_jp`）に固定したもの |
+| `import-familymart-catalog` | 同上。ファミリーマート（`familymart_jp`）に固定 |
+| `import-lawson-catalog` | 同上。ローソン（`lawson_jp`）に固定 |
+| `import-natural-lawson-catalog` | 同上。ナチュラルローソン（`natural_lawson_jp`）に固定 |
+| `import-ministop-catalog` | 同上。ミニストップ（`ministop_jp`）に固定 |
+| `generate-hint` | 食事データ（自炊率・平均カロリーなど）から短いヒントを AI で生成し、`user_hints` に保存する。ユーザーの JWT で認証する（呼び出し元: `POST /api/ai/hint`） |
+| `process-meal-image-jobs` | 料理画像の生成ジョブ（`meal_image_jobs`）を処理する。Google GenAI で画像を作って保存し、`planned_meals` に反映する。内部専用で、献立の生成・保存・編集のあとに起動される |
+| `stripe-price-sync` | プランの価格変更時に、Stripe に新しい Price を作り、旧 Price を無効化する（無効化に失敗しても続行する）。内部専用（呼び出し元: `POST /api/super-admin/plans/[id]/price-change`） |
+
+チェーン別の `import-*-catalog`（5 関数）はバッチ専用の関数です。呼び出し元は、DB 関数 `invoke_catalog_import()`（呼べる関数名は許可リスト方式）と、管理画面の `POST /api/admin/catalog/import` です。
+
+### 献立生成 v4 と v5 の使い分け
+
+2026-10-07 時点の `main` の実コードで確認した内容です。
+
+- **本番主系は `generate-menu-v5`** です。`generate-menu-v4` は `@deprecated` ですが、**まだ削除できません**（理由は後述）。
+- 多くの API は、v4 と v5 のどちらを呼ぶかを feature flag で決めます（フラグに関係なく固定のものは下の表を参照）。フラグは `menu_generation_v5_wrapped` と `menu_generation_v5_direct` の 2 つで、コード上の既定値はどちらも `true`（ON ＝ v5）です（`src/lib/menu-generation-feature-flags.ts` の `DEFAULT_FEATURE_FLAGS`）。
+- どちらのエンジンで動いたかは、`weekly_menu_requests.mode`（`v5` / `v4`）で分かります。
+
+#### 呼び出し元とエンジンの対応
+
+| 呼び出し元 | 切り替えフラグ | フラグ ON（既定） | フラグ OFF |
+|-----------|---------------|------------------|-----------|
+| `POST /api/ai/menu/weekly/request`（週間献立） | `menu_generation_v5_wrapped` | v5 | v4 |
+| `POST /api/ai/menu/meal/generate`（1 食の新規生成） | `menu_generation_v5_wrapped` | v5 | v4 |
+| `POST /api/ai/menu/meal/regenerate`（1 食の作り直し） | `menu_generation_v5_wrapped` | v5 | v4 |
+| `POST /api/ai/menu/day/regenerate`（1 日の作り直し） | `menu_generation_v5_wrapped` | v5 | v4 |
+| AI 相談のアクション実行（`src/lib/ai/consultation-action-executor.ts`。`/api/ai/consultation/**` から呼ばれる） | `menu_generation_v5_wrapped` | v5 | v4 |
+| `POST /api/ai/menu/v4/generate`（汎用の献立生成。URL は v4 だが、ON の間は v5 を呼ぶ） | `menu_generation_v5_direct` | v5 | v4 |
+| `POST /api/ai/menu/v5/generate`（キューに積む）→ cron `GET /api/cron/process-menu-queue` が実行 | なし | v5（固定） | v5（固定） |
+| `POST /api/ai/nutrition-analysis`（ホーム画面で AI の栄養提案を実行したとき） | なし | **v4（固定）** | **v4（固定）** |
+
+#### v4 を削除できない理由
+
+1. `POST /api/ai/nutrition-analysis` が、フラグに関係なく v4 を直接呼びます（Web は `src/hooks/useHomeData.ts`、モバイルは `apps/mobile/src/hooks/useHomeData.ts` の `executeNutritionSuggestion` から呼ばれます）。
+2. v5 と `_shared/save-meal.ts` が、`generate-menu-v4/` にある共通部品を import しています。`index.ts` 以外は消せません。
+   - `step-utils.ts`（v5 と `_shared/save-meal.ts` が使用）
+   - `reference-menu-utils.ts`（v5 が使用）
+   - `context-utils.ts`（v5 が使用）
+
+v4 を廃止するときは、1 と 2 を先に解消してください（`nutrition-analysis` の呼び先を v5 に替える、共通部品を `_shared/` などへ移す）。そのあとで、各 API ルートなどにある v4 の分岐（`callGenerateMenuV4WithRetry` など）と `generate-menu-v4/index.ts` を削除できます。
+
+#### フラグの値の決まり方（注意）
+
+- `loadFeatureFlags()` は、`system_settings` の `key = 'feature_flags'` の行を読み、コード上の既定値に DB の値を上書きして使います。行が読めないときは既定値のままです。値は `PUT /api/super-admin/settings`（super_admin 限定）で書き換えられます。
+- 上の API ルートは、**ログインしているユーザー自身のセッション**でこの行を読みます。`system_settings` を SELECT できるのは `admin` / `super_admin` だけです（RLS。本番スキーマのスナップショット `supabase/baseline/prod_schema.sql` の `Admins can view system settings`）。そのため**一般ユーザーの操作では DB の値は読めず、常に既定値（ON ＝ v5）になります**。
+- 結果として、DB 上でフラグを OFF にしても、v4 に切り替わるのは admin / super_admin 自身の操作だけです。一般ユーザー全員を v4 に戻す手段としては、現状は使えません。
+
+#### 名前が紛らわしいもの
+
+- `POST /api/ai/menu/v4/generate`: URL は v4 ですが、`menu_generation_v5_direct` が ON の間は v5 を呼びます。
+- `src/lib/generate-menu-v4-retry.ts` の `invokeGenerateMenuV4WithRetry`: 名前は v4 ですが、中身は汎用のリトライ関数です（`consultation-action-executor.ts` では v5 の呼び出しにも使います）。そのため v5 の呼び出しが失敗しても、エラーメッセージは `generate-menu-v4 failed after ...` と出ます。
+- `_shared/v4-fast-llm.ts` / `_shared/v4-nutrition-adapter.ts`: 名前は v4 ですが、v5 も使う共通部品です。
+
+#### 呼び出し元を再確認するには
+
+```bash
+# Next.js 側: フラグ判定と、v4 / v5 の呼び出し元
+grep -rn "generate-menu-v[45]\|menu_generation_v5" src --include=*.ts --include=*.tsx
+
+# Edge Functions 側: v4 ディレクトリの共通部品を import しているファイル
+grep -rn "generate-menu-v4/" supabase/functions --include=*.ts
+```
 
 ## ディレクトリ構成
 
