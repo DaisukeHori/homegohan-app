@@ -19,7 +19,7 @@ import { createLogger } from '@/lib/db-logger';
  * 最低限の制限をかけつつ warn ログを出す。
  */
 
-export type RateLimitCategory = 'generation' | 'analysis' | 'image';
+export type RateLimitCategory = 'generation' | 'analysis' | 'image' | 'export';
 
 interface CategoryPreset {
   max: number;
@@ -32,10 +32,13 @@ interface CategoryPreset {
 // - analysis: 画像解析・軽量AI呼び出し系（analyze-fridge/meal-photo/health-checkup/
 //   weight-scale, classify-photo, hint, nutrition analysis/feedback 等）
 // - image: 画像生成（最も高コスト）。分あたりに加えて日次クォータも課す
+// - export: 個人データエクスポート（#1131。AI は使わないが全テーブルを走査する重い読み取り）。
+//   正当な再実行（失敗後のやり直し等）は妨げず、連打による DB 負荷だけ防ぐ。10 分あたり 5 回
 const CATEGORY_PRESETS: Record<RateLimitCategory, CategoryPreset> = {
   generation: { max: 5, windowSec: 60 },
   analysis: { max: 10, windowSec: 60 },
   image: { max: 1, windowSec: 60 },
+  export: { max: 5, windowSec: 10 * 60 },
 };
 
 // image カテゴリのみ、分あたり制限に加えて日次クォータを追加で課す。
