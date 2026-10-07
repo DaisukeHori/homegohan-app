@@ -167,7 +167,9 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
       // (旧方式のトークン付き URL には決してフォールバックしない)。
       let target = buildWebUrl(nextPath);
       try {
-        // access_token の残りが少なければ先に更新する (Web 側 setSession による refresh_token のローテーションを避ける)
+        // access_token の残りが少なければ先に更新する。Web 側は残りが 150 秒未満の access_token には code を発行せず 401 を返すうえ、
+        // Web 側 setSession による refresh_token のローテーションも避けたいため (閾値の根拠は webViewBridge.ts の BRIDGE_MIN_TOKEN_TTL_SEC)。
+        // 更新に失敗して残りが Web 側の下限を割る場合は null が返り、code 発行を呼ばずに直接 URL へ倒れる
         const session = await getSessionForBridge(supabase.auth);
         if (session) {
           // ネイティブが Bearer で code を発行してもらい、WebView の URL には code だけを載せる (#1036)
@@ -249,6 +251,14 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID }) => {
         onMessage={(event) => {
           // window.ReactNativeWebView はどのオリジンのページにも存在する。
           // 送信元が自アプリのオリジンでなければ、tab-navigate / download 等のメッセージは一切処理しない。
+          // event.nativeEvent.url に入るもの (react-native-webview 13.13.5 のソースで確認):
+          //   - iOS: メッセージを送ったフレームの request URL (WKScriptMessage.frameInfo.request)
+          //   - Android: WebMessageListener に対応した WebView では、送ったフレームのオリジン。
+          //     非対応の古い WebView (fallback の JavascriptInterface) ではトップフレームの URL (getUrl())
+          // 最後のケースでは、自オリジンのページに他オリジンの iframe があると、その中からのメッセージもこのゲートを通る。
+          // 現状の Web は CSP (next.config.mjs: default-src 'self' で frame-src の指定なし) が外部 iframe を読み込ませないので実害は無い。
+          // 動画などの外部埋め込みを足すときは、CSP とあわせて Android 実機で確認すること
+          // (onShouldStartLoadWithRequest 側の Android の注記は webViewBridge.ts の NavigationRequestLike を参照)
           if (!isOwnOrigin(event.nativeEvent.url)) return;
           try {
             const data = JSON.parse(event.nativeEvent.data);
